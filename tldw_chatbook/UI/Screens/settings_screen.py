@@ -94,6 +94,7 @@ from ...Chat.console_provider_endpoints import (
 from ...Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
     build_entry_mutation,
+    entry_for,
     load_custom_endpoints,
     validate_entry,
 )
@@ -149,6 +150,9 @@ from ...Workspaces.registry_service import (
     WorkspaceRegistryServiceError,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.Console.console_endpoint_template_modal import (
+    ConsoleEndpointTemplateModal,
+)
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
@@ -16368,10 +16372,7 @@ class SettingsScreen(BaseAppScreen):
                 yield Button(
                     "Rename",
                     id=f"settings-cep-rename-{slug}",
-                    tooltip=(
-                        "Rename this endpoint. The slug (its provider "
-                        "id) never changes."
-                    ),
+                    tooltip="Rename this endpoint. Its id never changes.",
                 )
                 yield Button(
                     "Edit",
@@ -16380,6 +16381,15 @@ class SettingsScreen(BaseAppScreen):
                         "Edit the endpoint URL, credential variable, or "
                         "model list. Existing conversations re-resolve "
                         "on their next send."
+                    ),
+                )
+                yield Button(
+                    "Duplicate",
+                    id=f"settings-cep-duplicate-{slug}",
+                    tooltip=(
+                        "Create another endpoint from this one via the "
+                        "template flow: same family, new URL (a full copy "
+                        "stays one row below the preselected starter)."
                     ),
                 )
                 yield Button(
@@ -16426,7 +16436,9 @@ class SettingsScreen(BaseAppScreen):
                         placeholder="http://127.0.0.1:8080",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Env var", classes="settings-input-label")
+                    yield Static(
+                        "Credential env var (name)", classes="settings-input-label"
+                    )
                     yield Input(
                         value=entry.api_key_env or "",
                         id="settings-cep-edit-key-env",
@@ -16659,6 +16671,7 @@ class SettingsScreen(BaseAppScreen):
         for prefix, handler in (
             ("rename-", self._custom_endpoint_open_rename),
             ("edit-", self._custom_endpoint_open_edit),
+            ("duplicate-", self._custom_endpoint_duplicate_requested),
             ("delete-", self._custom_endpoint_delete_requested),
             ("detach-", self._custom_endpoint_detach_requested),
             ("convert-", self._custom_endpoint_convert_requested),
@@ -16670,6 +16683,59 @@ class SettingsScreen(BaseAppScreen):
                 if remainder:
                     handler(remainder)
                 return
+
+    @on(ConsoleEndpointTemplateModal.EndpointCreated)
+    def _custom_endpoint_created_from_template(
+        self, event: ConsoleEndpointTemplateModal.EndpointCreated
+    ) -> None:
+        """Confirm a template-modal creation opened from this panel (H5)."""
+        event.stop()
+        entry = entry_for(self._custom_endpoints_view_config(), event.provider_id)
+        name = entry.display_name if entry is not None else event.provider_id
+        self._custom_endpoints_report(f"Created endpoint '{name}'.")
+
+    def _custom_endpoint_duplicate_requested(self, slug: str) -> None:
+        """Open the template modal seeded from this row's entry (H5).
+
+        Mirrors the Console settings modal's ``_open_endpoint_template_modal``
+        seam: the shared app config mapping plus configured provider models.
+        The modal reports back through ``EndpointCreated``, confirmed above.
+        Qodo PR-2646: the visible rows render from the freshest on-disk
+        registry (``_custom_endpoints_view_config``), so seed the modal from
+        that same truth -- the shared in-memory snapshot can lag the disk
+        (its mirror is best-effort and read-only configs skip it), and a
+        stale snapshot would silently open a blank template. A slug that no
+        longer resolves anywhere is reported instead of a blank fallback.
+        """
+        provider_id = f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}"
+        config = self._app_config_mapping()
+        if isinstance(config, MutableMapping):
+            # Mirror the fresh registry section into the shared mapping so
+            # the modal sees -- and pokes -- the mapping the app shares.
+            self._poke_custom_endpoints_into_app_config()
+            config = self._app_config_mapping()
+        if entry_for(config, provider_id) is None:
+            fresh = self._custom_endpoints_view_config()
+            if entry_for(fresh, provider_id) is None:
+                self._custom_endpoints_status_update(
+                    f"Endpoint '{slug}' is no longer available; "
+                    "the list was refreshed."
+                )
+                self._refresh_custom_endpoints_section()
+                return
+            config = fresh
+        providers_models = getattr(self.app_instance, "providers_models", None)
+        self.app.push_screen(
+            ConsoleEndpointTemplateModal(
+                app_config=config,
+                providers_models=(
+                    dict(providers_models)
+                    if isinstance(providers_models, Mapping)
+                    else {}
+                ),
+                template_provider=provider_id,
+            )
+        )
 
     def _custom_endpoint_open_rename(self, slug: str) -> None:
         self._custom_endpoint_rename_slug = slug
