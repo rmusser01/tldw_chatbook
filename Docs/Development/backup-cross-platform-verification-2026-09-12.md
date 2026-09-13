@@ -4,6 +4,21 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Revision `ae901141df253ba8705589b4bb85ec1d3790031d` confirms the Windows
+restart correction in [34727849451](https://github.com/rmusser01/tldw_chatbook/actions/runs/34727849451).
+Native294/294 and product75/77 pass, with no skips. Support71, plain,
+encrypted, encrypted-credentials and two-profile groups pass. Replacement and
+later rollback both start the fresh process and inspect the archive, then fail
+first restore preview with `backup_operation_failed`. Neither begins replacement
+publication or later rollback. The existing bounded exception observer is now
+also installed in the fresh test driver to identify the original preview error.
+All123 artifact hashes verify, with clean9,853-file source and installed2,030-file
+receipts; source archive SHA256 is
+`8d4043ed62225ffe0bda94ea5deeb1332e0877b238b98b64f932225344d0d667`.
+Actual macOS combined replacement/later rollback passes192.22 seconds. Linux
+passes87 reader checks17.66 seconds and combined282.21 seconds; public source
+SHA256 is `ae44214a6c9fb3ba4ab865f6f40733ab92320e6eea24db2648f876f475bda28f`.
+
 Revision `95f22d9126708499a52c648599fbd2c498713a22` passes every actual
 installed macOS product flow: F9 three modes (90.46 seconds), two-profile restore
 and open (48.97 seconds), combined replacement/later rollback (181.76 seconds).
@@ -33,8 +48,8 @@ The Windows test observes a private PID/creation-time receipt and actual fresh
 process completion within the original total deadline; it still requires the
 unchanged restored-content/result assertions. Four observer regressions cover
 delayed completion, timeout cleanup, identity mismatch and missing receipt.
-Production and helper Bandit report zero findings; Ruff is clean. Native Windows
-verification of this restart correction remains pending.
+Production and helper Bandit report zero findings; Ruff is clean. The subsequent
+Windows run above confirms restart and exposes the remaining preview failure.
 
 Current correction replaces startup readmission's 10ms timer polling with a
 completion future posted by the same native worker after all cleanup. Its owning

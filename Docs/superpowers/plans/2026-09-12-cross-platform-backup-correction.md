@@ -21,7 +21,7 @@ Root owns Linux native operations, integration imports and release contracts.
 Preserve containment, permissions, exclusive rename and failure propagation.
 
 ## Stage 3 — Actual product verification
-Status: In Progress. Production95f22 passes full macOS/Linux suites and Windows seed/F9three/two-profile/support65/native294. Both Windows replacement flows now reach restart but fail in Windows CRT execve (access violation or truncated argv). Windows restart now uses standard Popen with explicit standard handles and private environment, then exits the old process without waiting; POSIXexecve unchanged. New2spawn tests RED/GREEN;14restart checks and9finalfocused checks pass; independent review andstaticchecks pass. Full nativeWindows verification of the restart correction is next. Testfreshchild observation preserves the original total deadline.
+Status: In Progress. Revision ae901 confirms Windows restart: both fresh drivers inspect the archive, then fail first restore preview with backup_operation_failed before replacement or later rollback begins. Native294 and product75 pass; two product cases fail. The existing bounded error observer is now installed in the fresh test driver to identify the original preview exception. Actual macOS combined passes192.22s; Linux readers87 and combined282.21s pass. Test fresh-child observation preserves the original total deadline.
 Use installed package, private profile and synthetic data on supplied Linux host,
 GitHub Actions Windows runner and local macOS. Create and verify backups, restore
 and open them, then exercise replacement and retained-copy rollback. Fix failures.
