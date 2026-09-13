@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03 11:45'
-updated_date: '2026-09-13 01:29'
+updated_date: '2026-09-13 02:12'
 labels:
   - agents
   - console
@@ -39,5 +39,13 @@ Scope notes from the phase-2 review record:
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes, amendment. ADR path: backlog/decisions/155-agent-worktree-recovery.md. Reason: restore ordinary local Git with exact selected writable authority and explicit limits, then finish confirmation and durable ownership/recovery. Current spec: Docs/superpowers/specs/2026-09-12-agent-worktree-restoration-design.md. First slice: Docs/superpowers/plans/2026-09-12-agent-worktree-creation-restoration.md. Keep automatic deletion disabled. Application checks do not promise atomic protection against an external process replacing Git metadata during a command. The former qualified-backend blocker is superseded by the user-approved restoration scope. Tasks remain In Progress until their actual acceptance criteria and targeted verification are complete. Recovery migration remains 19 to 20 after caps (ADR-158).
+ADR required: yes, existing amended decision.
+ADR path: backlog/decisions/155-agent-worktree-recovery.md; backlog/decisions/158-agent-runs-migration-order-after-worktree-qualification.md.
+Reason: ordinary local Git with exact selected writable authority, durable original-base/ownership, positive physical completion, and user-confirmed recovery.
+Spec: Docs/superpowers/specs/2026-09-12-agent-worktree-restoration-design.md.
+1. Creation restoration (Docs/superpowers/plans/2026-09-12-agent-worktree-creation-restoration.md): implemented and independently reviewed at a11db916ff/d63d4f2a19.
+2. Durable storage and completion callbacks (Docs/superpowers/plans/2026-09-12-agent-worktree-records-and-drain.md): implemented and reviewed at4756f88793/94f7110db1; schema20 retains caps.
+3. Connect actual child ownership (Docs/superpowers/plans/2026-09-12-agent-worktree-ownership-integration.md), then confirmed operations (Docs/superpowers/plans/2026-09-12-agent-worktree-confirmed-operations.md).
+4. Wire visible confirmation and retained manual recovery (Docs/superpowers/plans/2026-09-12-agent-worktree-console-recovery.md), verify real Git/SQLite and mounted wide/narrow UI, independently review and close only when all AC are met.
+Automatic deletion remains disabled. Command-boundary checks do not promise atomic protection against concurrent external Git metadata replacement. The former qualified-backend blocker is superseded by the user-approved scope. Current review/evidence/rulings: Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md.
 <!-- SECTION:PLAN:END -->
