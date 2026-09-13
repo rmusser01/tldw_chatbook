@@ -23,6 +23,10 @@ elif route=='evals':
  from tldw_chatbook.DB.Evals_DB import EvalsDB
  db=EvalsDB(root/'evals.db',client_id='test')
  get,close=db.get_connection,db.close
+elif route=='notifications':
+ from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+ db=ClientNotificationsDB(root/'notifications.db')
+ get,close=db._held_connection,db.close
 elif route=='collections':
  from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
  db=LibraryCollectionsDB(root/'collections.db')
@@ -90,7 +94,7 @@ print('retired and reopened')
 """
 
 
-@pytest.mark.parametrize("route", ["notes", "media", "prompts", "collections", "evals"])
+@pytest.mark.parametrize("route", ["notes", "media", "prompts", "collections", "evals", "notifications"])
 @pytest.mark.parametrize(
     "outcome",
     ["success", "error", "borrowed", "transaction", "operation", "reopen", "cancel"],

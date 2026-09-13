@@ -69,6 +69,7 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             "db.prompts.primary": "close_connection",
             "db.library_collections": "close",
             "db.evals": "close",
+            "notifications.client": "close",
         }
         with storage._lock:
             participants = tuple(_installed_repositories)
