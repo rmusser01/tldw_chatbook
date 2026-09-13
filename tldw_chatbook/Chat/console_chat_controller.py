@@ -267,6 +267,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
+from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
@@ -12378,10 +12379,17 @@ class ConsoleChatController:
             model,
         )
         target_provider = provider_config_key(target_defaults.provider)
+        # CE-001: ``settings.provider`` and the remembered-draft keys are
+        # provider IDENTITY values, not config-table lookup keys -- a dashed
+        # ``custom-ep:<slug>`` id canonicalized here would arrive at the
+        # provider Select as an illegal underscored value and crash the app.
+        # Registry ids keep their dashed spelling; config-key lookups below
+        # still use ``target_provider``.
+        target_provider_id = provider_identity_key(target_defaults.provider)
         target_model = normalize_console_model_value(target_defaults.model)
-        target_key = (target_provider, target_model)
+        target_key = (target_provider_id, target_model)
         current_key = (
-            provider_config_key(state.settings.provider),
+            provider_identity_key(state.settings.provider),
             normalize_console_model_value(state.settings.model),
         )
         remembered_target = next(
@@ -12421,7 +12429,10 @@ class ConsoleChatController:
         if inherited_dirty_fields:
             target_defaults = build_target_default_console_session_settings(
                 app_config,
-                target_provider,
+                # Identity spelling: the dashed registry id must resolve
+                # through entry_for, which the mangled key does not for
+                # hyphenated slugs (CE-001).
+                target_provider_id,
                 target_model,
                 excluded_model_profile_fields=inherited_dirty_fields,
             )
@@ -12495,7 +12506,7 @@ class ConsoleChatController:
 
         unsupported_provider_fields = FULL_MODEL_DEFAULT_FIELDS - supported_fields
         settings_changes: dict[str, object | None] = {
-            "provider": target_provider,
+            "provider": target_provider_id,
             "model": target_model,
             "character_label": state.settings.character_label,
             "system_prompt": state.settings.system_prompt,

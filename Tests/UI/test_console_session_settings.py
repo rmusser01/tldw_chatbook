@@ -6358,6 +6358,123 @@ async def test_console_settings_modal_entry_url_not_captured_into_provider_draft
         assert modal._current_base_url_value("custom-ep:gpu-box") is None
 
 
+def _registry_rebase_harness(**kwargs) -> tuple[ModalHarness, ConsoleSettingsModal]:
+    """Mounted modal wired with the REAL controller rebaser (CE-001 setup).
+
+    The suite's existing custom-ep tests mount the modal without
+    ``draft_rebaser``, so ``_switch_provider`` never enters the production
+    rebase path -- exactly why the CE-001 crash escaped them. This harness
+    binds the real ``ConsoleChatController.rebase_console_settings_draft``
+    so selection messages exercise ``_switch_provider -> _rebase_to ->
+    _apply_rebased_state`` as in the live app.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    controller = ConsoleChatController.__new__(ConsoleChatController)
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=app.app_config,
+        providers_models={"llama_cpp": ["model-a"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+        draft_rebaser=controller.rebase_console_settings_draft,
+        **kwargs,
+    )
+    return app, modal
+
+
+async def _unreachable_connection_tester(
+    _identity: ProviderDraftIdentity,
+) -> ProviderProbeResult:
+    """Offline probe seam: entry discovery settles unreachable instantly."""
+    return ProviderProbeResult("unreachable", (), "connection_error")
+
+
+@pytest.mark.asyncio
+async def test_endpoint_created_message_switches_selection_without_crash() -> None:
+    """CE-001 regression: the automatic post-Create switch must not crash.
+
+    Posting the template modal's EndpointCreated (the real create-switch
+    message) drives Select.Changed -> _switch_provider -> _rebase_to ->
+    _apply_rebased_state; the rebased settings.provider must stay the dashed
+    registry id the Select's options carry, not the config-key canonicalized
+    ``custom_ep:...`` spelling that raised InvalidSelectValueError live.
+    """
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    app, modal = _registry_rebase_harness(
+        connection_tester=_unreachable_connection_tester
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        modal.post_message(
+            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
+        )
+        await pilot.pause()
+
+        provider_select = modal.query_one("#console-settings-provider", Select)
+        assert provider_select.value == "custom-ep:gpu-box"
+        assert modal._active_provider == "custom-ep:gpu-box"
+        assert modal._draft.settings.provider == "custom-ep:gpu-box"
+
+
+@pytest.mark.asyncio
+async def test_provider_picker_selection_message_switches_entry_without_crash() -> None:
+    """CE-001 regression (explicit selection): picking a registry entry from
+    the provider picker must rebase and re-project the dashed id, not crash
+    with an illegal Select value."""
+    app, modal = _registry_rebase_harness(
+        connection_tester=_unreachable_connection_tester
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        modal.post_message(ConsoleProviderPicker.ProviderSelected("custom-ep:gpu-box"))
+        await pilot.pause()
+
+        provider_select = modal.query_one("#console-settings-provider", Select)
+        assert provider_select.value == "custom-ep:gpu-box"
+        assert modal._active_provider == "custom-ep:gpu-box"
+        assert modal._draft.settings.provider == "custom-ep:gpu-box"
+
+
+def test_suspended_draft_snapshot_accepts_registry_provider_identity() -> None:
+    """CE-001 (snapshot layer): a suspended draft captured while a registry
+    entry is selected must validate -- the dashed ``custom-ep:<slug>`` id is
+    a legal provider identity, not a rejected snapshot value."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="custom-ep:gpu-box", model="model-a", base_url=None
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-provider": "custom-ep:gpu-box"},
+        provider_model_drafts={"custom-ep:gpu-box": "model-a"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    assert snapshot.settings.provider == "custom-ep:gpu-box"
+    assert snapshot.provider_model_drafts == {"custom-ep:gpu-box": "model-a"}
+
+    restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
+    assert restored is not None
+    assert restored.settings.provider == "custom-ep:gpu-box"
+    assert restored.raw_values["console-settings-provider"] == "custom-ep:gpu-box"
+    assert restored.provider_model_drafts == {"custom-ep:gpu-box": "model-a"}
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_provider_options_end_with_new_endpoint_sentinel() -> (
     None
