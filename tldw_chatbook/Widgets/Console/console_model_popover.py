@@ -659,7 +659,19 @@ class ConsoleModelPopover(
         self.call_after_refresh(self._sync_responsive_width)
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Recompute the fold affordance when the terminal size changes."""
+        """Re-sync the fold hint and the responsive width tier on resize.
+
+        One terminal resize now drives two syncs, each re-run after the
+        resize settles via ``call_after_refresh``: the narrow-height fold
+        affordance (``_sync_fold_hint``) and the wide-terminal width tier
+        (``_sync_responsive_width``), which itself re-chains the fold hint
+        because a tier flip changes body overflow.
+
+        Args:
+            _event: The terminal resize event; unused directly because
+                the wide tier reads the app viewport width, not the
+                event's size.
+        """
         self.call_after_refresh(self._sync_fold_hint)
         self.call_after_refresh(self._sync_responsive_width)
 

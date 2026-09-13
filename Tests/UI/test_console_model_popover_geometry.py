@@ -29,6 +29,12 @@ POPOVER_WIDE_VIEWPORT_COLUMNS = 150
 POPOVER_WIDE_MAX_WIDTH = 170
 #: Base tier: the fixed compact width the popover has always used.
 POPOVER_BASE_WIDTH = 60
+#: Wide-tier container width as a percentage of the viewport, mirroring
+#: ``width: 85%`` on ``#console-model-popover.-console-popover-wide`` in
+#: ``ConsoleModelPopover.DEFAULT_CSS``. Production keeps this value only in
+#: CSS (the Python side toggles the class, never the width); if that rule
+#: changes, this mirror must change with it.
+POPOVER_WIDE_WIDTH_PERCENT = 85
 
 
 class PopoverGeometryHarness(ConsolidatedCSSApp):
@@ -38,7 +44,15 @@ class PopoverGeometryHarness(ConsolidatedCSSApp):
 
 
 def build_geometry_popover() -> ConsoleModelPopover:
-    """Build one ready-to-mount quick popover with a minimal draft."""
+    """Build one ready-to-mount quick popover with a minimal draft.
+
+    Returns:
+        A ready-to-mount ``ConsoleModelPopover`` wired with an identity
+        draft rebaser, a live committer that fails any test that submits,
+        and an always-ready readiness resolver: pushing it onto a harness
+        app exercises the real provider/model controls with no controller
+        or database behind them.
+    """
 
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
@@ -129,7 +143,8 @@ async def test_console_model_popover_wide_tier_engages_at_150_viewport_columns(
         assert container.has_class("-console-popover-wide") is expect_wide
         if expect_wide:
             assert container.region.width == min(
-                POPOVER_WIDE_MAX_WIDTH, int(app.size.width * 85 / 100)
+                POPOVER_WIDE_MAX_WIDTH,
+                int(app.size.width * POPOVER_WIDE_WIDTH_PERCENT / 100),
             )
         else:
             assert container.region.width == POPOVER_BASE_WIDTH
@@ -188,7 +203,72 @@ async def test_console_model_popover_wide_tier_tracks_live_resize_across_thresho
         )
         if expect_wide_after_resize:
             assert container.region.width == min(
-                POPOVER_WIDE_MAX_WIDTH, int(end_size[0] * 85 / 100)
+                POPOVER_WIDE_MAX_WIDTH,
+                int(end_size[0] * POPOVER_WIDE_WIDTH_PERCENT / 100),
             )
         else:
             assert container.region.width == POPOVER_BASE_WIDTH
+
+
+@pytest.mark.parametrize(
+    ("size", "force_wide", "expect_wide"),
+    (
+        ((149, 40), True, False),
+        ((150, 40), False, True),
+        ((200, 50), False, True),
+    ),
+    ids=["below-threshold-forced-on", "at-threshold-forced-off", "wide-forced-off"],
+)
+@pytest.mark.asyncio
+async def test_sync_responsive_width_direct_call_corrects_container_tier(
+    size: tuple[int, int],
+    force_wide: bool,
+    expect_wide: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A direct ``_sync_responsive_width`` call maps viewport to tier class.
+
+    The harness tests above prove the tier end-to-end (CSS geometry plus
+    mount/resize wiring); this unit layer isolates the toggle itself:
+    starting from a deliberately wrong container class, one direct call
+    must restore the tier from the app viewport width alone, on both
+    sides of the 150-column threshold, and schedule the fold-hint re-sync
+    because a tier flip changes body overflow.
+
+    A regression that stops toggling, reads the container's own width
+    instead of the viewport, or moves the threshold leaves the forced
+    wrong class in place and fails this test.
+
+    Args:
+        size: Terminal size (columns, rows) the harness app runs at.
+        force_wide: The wrong tier class seeded onto the container before
+            the direct call; the call must flip it back off below the
+            threshold and back on at/above it.
+        expect_wide: The tier the container must carry after the direct
+            call settles.
+        monkeypatch: Records the callbacks the call schedules instead of
+            running them.
+    """
+    app = PopoverGeometryHarness()
+    popover = build_geometry_popover()
+
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(popover)
+        await pilot.pause()
+        await pilot.pause()
+
+        container = popover.query_one("#console-model-popover")
+        container.set_class(force_wide, "-console-popover-wide")
+
+        scheduled: list[object] = []
+        monkeypatch.setattr(
+            popover,
+            "call_after_refresh",
+            lambda callback, *args, **kwargs: scheduled.append(callback),
+        )
+        popover._sync_responsive_width()
+
+        assert container.has_class("-console-popover-wide") is expect_wide
+        assert [getattr(callback, "__name__", None) for callback in scheduled] == [
+            "_sync_fold_hint"
+        ]
