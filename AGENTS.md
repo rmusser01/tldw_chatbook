@@ -237,8 +237,8 @@ Critical files for common tasks:
 ## Design Language (UI Tokens) — ADR-150
 
 All UI work is governed by a design-token system. **Read
-`backlog/docs/design-language.md` before creating or modifying any screen,
-widget, or stylesheet.**
+`backlog/docs/design-language.md` and `backlog/docs/component-patterns.md`
+(ADR-161) before creating or modifying any screen, widget, or stylesheet.**
 
 Hard rules:
 

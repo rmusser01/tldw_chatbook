@@ -4,6 +4,7 @@ title: Split the agentic terminal CSS grab-bag and ratchet rule count
 status: To Do
 assignee: []
 created_date: '2026-08-29'
+updated_date: '2026-09-13 23:54'
 labels:
   - performance
   - ui
@@ -40,7 +41,12 @@ still scanned. Only deleting rules, or swapping stylesheet sources per screen, r
 <!-- AC:END -->
 
 ## Implementation Notes
+
 <!-- SECTION:NOTES:BEGIN -->
+Superseded by task-32532 (component-pattern library; ADR-161). The monolith split lands as plan Tasks 9-10. Close when the size-ceiling test ships.
+
+Prior analysis (2026-08-29 review pass), preserved for the Task 9-10 implementers:
+
 NOT IMPLEMENTED in the 2026-08-29 review pass. Recorded here so the next person does not
 re-derive the analysis.
 

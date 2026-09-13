@@ -135,6 +135,8 @@ Every interactive control must define, at minimum:
 When asking an agent (or planning yourself) for new UI, describe it in the
 language:
 
+The reusable component vocabulary itself is cataloged in backlog/docs/component-patterns.md (ADR-161); compose from the catalog first.
+
 1. **Layout law:** which shell pattern (sidebar screen, three-pane
    workbench, modal dialog, compact strip) and which layout tokens apply.
 2. **Component inventory:** which existing components/classes
