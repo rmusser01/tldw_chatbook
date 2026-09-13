@@ -40,23 +40,27 @@ supersedes its pending-integration and remaining-work labels.
   targeted gates from the earlier continuation integration failures and
   historical test-isolation qualifications. The partial parent reconciliation
   and combined branch review are now complete; parent closure remains open.
-- **Worktree restoration in progress:** The user approved correcting the blanket
+- **Worktree creation restored and reviewed:** The user approved correcting the blanket
   restriction in `93ee16a144`/`534ad2c890`. ADR-155 now selects ordinary local Git
   with exact selected writable repository authority and fresh identity checks.
   The copied-metadata replacement experiment remains evidence of a concurrent
-  replacement limit; no external backend is missing. Creation restoration is
-  being implemented under
+  replacement limit; no external backend is missing. Creation restoration
+  (`a11db916ff`, regression fix `d63d4f2a19`) passed targeted real-Git/controller
+  tests and independent review under
   [the current plan](../../Docs/superpowers/plans/2026-09-12-agent-worktree-creation-restoration.md).
-  Automatic deletion remains disabled. Confirmed merge/discard and durable
-  recovery remain unfinished; they are the next implementation slices.
+  Automatic deletion remains disabled. Schema20 ownership records and positive
+  physical completion callbacks (`4756f88793`, review fix `94f7110db1`) also passed
+  targeted SQLite/lifetime tests and independent review. Their actual creation
+  call-site integration is in progress; confirmed operations and Console recovery
+  remain unfinished.
 - **Final integration review complete:** all four identified integration defects
   are fixed and independently re-reviewed in `7852cf47ba`, including replacement
   of obsolete worktree-positive continuation tests and the required diagnostic
   inventory refresh. No new Critical/Important finding remains in that correction.
   The [complete review, evidence and 50-ruling record](../../Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md)
   preserves historical failures, decisions and process qualifications.
-- **Remaining functional work:** Restore selected-authority creation; persist
-  worktree ownership/base and positive writer completion; wire the Console
+- **Remaining functional work:** Connect durable records to actual child execution
+  and cleanup completion; finish confirmed operations; wire the Console
   confirmation card and prior-turn recovery list. TASK-31210, TASK-31211 and
   parent TASK-13154 remain In Progress. Earlier work is committed locally;
   this restoration is ongoing. No new PR, push or merge was performed.
