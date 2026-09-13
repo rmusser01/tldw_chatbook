@@ -373,6 +373,21 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 classes="library-canvas-action",
                 compact=True,
             )
+            # task-32535: offered only for a real vault, exactly as Import
+            # once offers it -- and saying the same thing, because the two
+            # paths now run the same pass over the same folder.
+            if setup.obsidian_vault:
+                yield Checkbox(
+                    "Obsidian vault",
+                    value=setup.obsidian_mode,
+                    id="notes-sync-obsidian",
+                )
+                yield Static(
+                    "Skips .obsidian/, .trash/ and Templates/, and empty files. "
+                    "Note properties become the title and keywords and stay in the note.",
+                    classes="destination-purpose",
+                    markup=False,
+                )
             yield Static("Notes destination", markup=False)
             with Horizontal(classes="ds-toolbar"):
                 yield Button(
@@ -1315,6 +1330,13 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         field = fields.get(event.input.id or "")
         if field:
             self.post_message(self.SetupChanged(field, event.value))
+
+    @on(Checkbox.Changed)
+    def _obsidian_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "notes-sync-obsidian":
+            self.post_message(
+                self.SetupChanged("obsidian_mode", "on" if event.value else "off")
+            )
 
     @on(Button.Pressed)
     def _button_pressed(self, event: Button.Pressed) -> None:

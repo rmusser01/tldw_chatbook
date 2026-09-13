@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import Never, Protocol
+
+from tldw_chatbook.Notes.note_import_discovery import OBSIDIAN_MARKER_DIRECTORY
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LASTING_SYNC_HISTORY_PAGE_SIZE,
@@ -49,6 +52,21 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncDirection,
     NotesSyncOperationState,
 )
+
+
+def _carries_obsidian_marker(folder: str) -> bool:
+    """Return whether the chosen folder is an Obsidian vault (task-32535).
+
+    The same marker Import once looks for. An unreadable or missing folder is
+    simply not a vault -- setup validation already has the say on those.
+    """
+
+    if not folder.strip():
+        return False
+    try:
+        return (Path(folder) / OBSIDIAN_MARKER_DIRECTORY).is_dir()
+    except OSError:
+        return False
 
 
 class LastingSyncRuntimePort(Protocol):
@@ -767,6 +785,15 @@ class LibraryNotesSyncController:
 
     def set_setup(self, field: str, value: str) -> None:
         self._state = set_setup_value(self._state, field, value)
+        if field == "folder":
+            # task-32535: the toggle is only offered for a real vault, so
+            # detection re-runs on every folder change -- the user may pick a
+            # vault, change their mind, and pick a plain folder.
+            self._state = set_setup_value(
+                self._state,
+                "obsidian_vault",
+                "on" if _carries_obsidian_marker(self._state.setup.folder) else "off",
+            )
         self._publish()
 
     async def check_root(self, root_id: str) -> None:
@@ -878,6 +905,7 @@ class LibraryNotesSyncController:
                     canonical_path=setup.folder,
                     note_scope_id=setup.note_scope_id,
                     direction=direction,
+                    obsidian_mode=setup.obsidian_vault and setup.obsidian_mode,
                 )
             )
         except Exception as error:

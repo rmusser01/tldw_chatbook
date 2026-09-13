@@ -146,6 +146,14 @@ class LastingSyncSetup:
     )
     validation_message: str = "Choose a display name, folder, and local destination."
     can_check: bool = False
+    obsidian_vault: bool = False
+    """Whether the chosen folder carries Obsidian's own ``.obsidian/`` marker."""
+    obsidian_mode: bool = True
+    """Whether a detected vault's folders and empty files are skipped.
+
+    task-32535: default-on, as Import once offers it. It only means anything
+    for a detected vault -- a plain folder is never treated as one.
+    """
 
     def __post_init__(self) -> None:
         if self.destination not in _DESTINATIONS:
@@ -163,7 +171,15 @@ class LastingSyncSetup:
             )
         ):
             raise ValueError("setup text must be bounded single-line text")
-        if type(self.server_available) is not bool or type(self.can_check) is not bool:
+        if any(
+            type(value) is not bool
+            for value in (
+                self.server_available,
+                self.can_check,
+                self.obsidian_vault,
+                self.obsidian_mode,
+            )
+        ):
             raise TypeError("setup flags must be booleans")
 
     def __repr__(self) -> str:
@@ -607,6 +623,8 @@ def set_setup_value(
         "destination",
         "note_scope_id",
         "direction",
+        "obsidian_vault",
+        "obsidian_mode",
     }:
         raise ValueError("unknown setup field")
     if type(value) is not str:
@@ -615,8 +633,14 @@ def set_setup_value(
         raise ValueError("unknown destination")
     if field == "direction" and value not in _DIRECTIONS:
         raise ValueError("unknown direction")
+    if field.startswith("obsidian_"):
+        if value not in {"on", "off"}:
+            raise ValueError("obsidian flags are 'on' or 'off'")
+        setting: str | bool = value == "on"
+    else:
+        setting = value
 
-    setup = replace(snapshot.setup, **{field: value})  # type: ignore[arg-type]
+    setup = replace(snapshot.setup, **{field: setting})  # type: ignore[arg-type]
     missing: list[str] = []
     if not setup.display_name.strip():
         missing.append("display name")

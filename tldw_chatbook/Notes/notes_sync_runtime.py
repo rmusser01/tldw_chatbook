@@ -380,8 +380,12 @@ class NotesSyncRootSetup:
     canonical_path: str
     note_scope_id: str
     direction: NotesSyncDirection
+    obsidian_mode: bool = True
+    """Whether the vault's own folders and empty files are skipped (task-32535)."""
 
     def __post_init__(self) -> None:
+        if type(self.obsidian_mode) is not bool:
+            raise TypeError("obsidian_mode must be a boolean")
         if (
             type(self.display_name) is not str
             or not self.display_name.strip()
