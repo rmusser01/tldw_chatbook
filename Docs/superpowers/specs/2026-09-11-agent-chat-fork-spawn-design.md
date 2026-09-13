@@ -177,17 +177,20 @@ with the misnomer `fork_conversation_into_workspace`):
    `load_console_conversation_tree` uses). **The read must be uncapped —
    silent truncation of long chats is a bug, and a >cap-length fork is a
    required test.**
-2. Create the target through `Chat/chat_persistence_service.create_conversation`
-   (:216) — carries title, workspace scope, identity, system prompt
-   (possibly overridden by `instructions`), speech prefs, metadata — with the
-   two lineage columns passed through (the service's `extra_fields`
-   passthrough already reaches `add_conversation`, `DB/ChaChaNotes_DB.py:7610`).
-3. Loop `db.add_message` (:9524) remapping parents, inside one transaction
-   (`db.transaction()`); chunked inserts so a large copy does not hold an
-   oversized single statement batch (FTS triggers fire per row; cost is
-   bounded and off the UI thread). Atomic: a mid-copy failure rolls back and
-   creates nothing.
-4. `set_conversation_active_leaf` (:9096) to the copied leaf.
+2. Open ONE `db.transaction()` and create the target inside it through
+   `Chat/chat_persistence_service.create_conversation` (:216) — carries
+   title, workspace scope, identity, system prompt (possibly overridden by
+   `instructions`), speech prefs, metadata — passing the two lineage columns
+   through the service's explicit validated `parent_conversation_id` /
+   `forked_from_message_id` parameters. Creation shares the copy's
+   transaction (the DB's nested `transaction()` levels make the outer one
+   authoritative), so a mid-copy failure rolls the target back too: a
+   failed fork creates nothing.
+3. Still inside that transaction, loop `db.add_message` (:9524) remapping
+   parents; chunked inserts so a large copy does not hold an oversized
+   single statement batch (FTS triggers fire per row; cost is bounded and
+   off the UI thread).
+4. `set_conversation_active_leaf` (:9096) to the copied leaf, then commit.
 
 No schema migration: both lineage columns already exist (index included,
 :482) and are simply never written by the Console today.
