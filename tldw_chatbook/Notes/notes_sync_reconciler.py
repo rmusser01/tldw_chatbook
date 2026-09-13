@@ -6,7 +6,9 @@ import hashlib
 import json
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from pathlib import PurePosixPath
 
+from tldw_chatbook.Notes.note_import_discovery import OBSIDIAN_SKIPPED_ROOT_FOLDERS
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncAction,
     NotesSyncActionKind,
@@ -66,6 +68,8 @@ class BindingObservation:
     bound: bool = True
     baseline_serialization: NotesSyncSerializationProfile | None = None
     serialization: NotesSyncSerializationProfile | None = None
+    file_blank: bool = False
+    """Whether the file on disk holds nothing but whitespace (task-32535)."""
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.binding_id, field_name="binding_id")
@@ -107,7 +111,10 @@ class BindingObservation:
                 "note_implied_relative_path",
                 normalize_notes_sync_relative_path(self.note_implied_relative_path),
             )
-        if type(self.duplicate_authority) is not bool or type(self.bound) is not bool:
+        if any(
+            type(value) is not bool
+            for value in (self.duplicate_authority, self.bound, self.file_blank)
+        ):
             raise TypeError("binding flags must be booleans.")
 
     def __repr__(self) -> str:
@@ -132,6 +139,14 @@ class ReconciliationInput:
     root_overlap: bool = False
     write_capable: bool = True
     capability_generation: int = 0
+    obsidian_mode: bool = False
+    """Whether the vault's own folders and empty files are left alone.
+
+    task-32535: Import once already skips ``.obsidian/``, ``.trash/`` and
+    ``Templates/`` at the vault root with a reason. Keeping a folder synced
+    made notes out of all three, so the same pass runs here behind the same
+    per-root toggle.
+    """
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
@@ -149,7 +164,12 @@ class ReconciliationInput:
                 raise ValueError(f"{name} must be non-negative.")
         if any(
             type(value) is not bool
-            for value in (self.root_available, self.root_overlap, self.write_capable)
+            for value in (
+                self.root_available,
+                self.root_overlap,
+                self.write_capable,
+                self.obsidian_mode,
+            )
         ):
             raise TypeError("root capability flags must be booleans.")
         if (
@@ -303,6 +323,7 @@ def _observation_token(request: ReconciliationInput) -> str:
         "root_overlap": request.root_overlap,
         "write_capable": request.write_capable,
         "capability_generation": request.capability_generation,
+        "obsidian_mode": request.obsidian_mode,
         "bindings": [
             {
                 "binding_id": binding.binding_id,
@@ -320,6 +341,7 @@ def _observation_token(request: ReconciliationInput) -> str:
                 "note_implied_relative_path": binding.note_implied_relative_path,
                 "duplicate_authority": binding.duplicate_authority,
                 "bound": binding.bound,
+                "file_blank": binding.file_blank,
                 "baseline_serialization": (
                     None
                     if binding.baseline_serialization is None
@@ -387,6 +409,29 @@ def _empty_plan(
         managed_placement_effects=(),
         deletion_groups=(),
     )
+
+
+def _obsidian_item_skip(binding: BindingObservation) -> ReconciliationItemSkip | None:
+    """Return why the Obsidian pass leaves this discovered file alone, if it does.
+
+    task-32535: only files the sync has never bound. An already-synced note
+    emptied in Chatbook is an edit to carry back to disk, not a file to drop,
+    and a folder the user later named ``Templates`` keeps its synced notes.
+    """
+
+    if binding.bound or binding.file_digest is None:
+        return None
+    parts = PurePosixPath(binding.relative_path).parts
+    reason = (
+        OBSIDIAN_SKIPPED_ROOT_FOLDERS.get(parts[0].casefold())
+        if len(parts) > 1
+        else None
+    )
+    if reason is None and binding.file_blank:
+        reason = "empty_file"
+    if reason is None:
+        return None
+    return ReconciliationItemSkip(binding.relative_path, reason)
 
 
 def _plan_unbound(
@@ -643,8 +688,14 @@ def plan_reconciliation(request: ReconciliationInput) -> ReconciliationPlan:
     actions: list[NotesSyncAction] = []
     attention: list[ReconciliationAttention] = []
     effects: list[ManagedPlacementEffect] = []
+    item_skips: list[ReconciliationItemSkip] = []
     for binding in sorted(request.bindings, key=lambda item: item.binding_id):
         if not binding.bound:
+            if request.obsidian_mode:
+                item_skip = _obsidian_item_skip(binding)
+                if item_skip is not None:
+                    item_skips.append(item_skip)
+                    continue
             action, issue = _plan_unbound(request, token, binding)
             effect = None
         else:
@@ -677,6 +728,7 @@ def plan_reconciliation(request: ReconciliationInput) -> ReconciliationPlan:
         skips=(),
         managed_placement_effects=tuple(effects),
         deletion_groups=deletion_groups,
+        item_skips=tuple(item_skips),
     )
 
 
