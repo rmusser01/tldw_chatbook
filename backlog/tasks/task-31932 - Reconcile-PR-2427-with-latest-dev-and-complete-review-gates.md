@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 17:14'
-updated_date: '2026-09-13 16:48'
+updated_date: '2026-09-13 17:29'
 labels: []
 dependencies: []
 ---
@@ -456,6 +456,10 @@ User approved the bounded Lab-only CSS deferral on 2026-09-13. Execute the exist
 Lab missing-sheet cause confirmed by two observation-only RED tests (sheet absent), two existing-loader GREEN controls, then 19 unchanged compact/custom-memory cases passing after three fixture setup corrections. Independent bounded review approves; complete Models/vLLM 215-case qualification remains running. Dev fetched at1103b28f711073291fc073ed27592546fec53607 (369 incoming paths); save recoverable local checkpoint, then follow recorded exact-head rebase and review procedure. Task remains In Progress; no merge readiness claim.
 
 Frozen Lab qualification terminal: complete Models and vLLM files215/215 passed721.82s, exit0; log /private/tmp/pr2427-lab-fixture-complete.iajmRb/complete.log. All test processes exited before replay. Approved Lab patch saved0d7865cdda with recoveryref codex/pr2427-pre-1103b28f71-lab-css-20260913. Rebase1103 integration not yet verified; native cleanup, separate Console failures and controller-size review remain open.
+
+Replayed all 286 commits onto dev1103 (local1746), preserving upstream endpoint/persona/worktree behavior in existing owners. Reviewed duplicate method removal preserves effective ASTs. New Notes activation fixture: same test passes before with52SQLite handles and after with0; complete5fileLibrary148passed, final0SQLite/0locks. Focused Console owner migrations10fail/1pass RED to11pass GREEN, exact assertions retained. Compile-only615changed Python files clean after duplicate fixture-keyword removal. Current qualification and docs-only dev4cba delta tracked in latest-dev plan; task remains In Progress and PR not merged.
+
+Post-1103 qualification: complete Library148pass/0SQLite/0locks; merged fixture95pass; CSS+boot67pass with unchanged768000 cap; latency10pass. Complete Console1013pass/15fail/2skip and resume15pass/7fail: all22failures reproduce on saved2a controls, remain open. Library size guard33pass/14fail unchanged. Full Console native retention111SQLite/0locks and CSS fastpath20SQLite/1lock remain unclosed. Diagnostics, scoped static checks,615filecompile and independent integration reviews recorded. Publishing checkpoint, not merge readiness; new Qodo review required.
 <!-- SECTION:NOTES:END -->
 
 145. Complete folder-navigation/rename/scoped-sync/canvas-defect qualification finishes 149 passed/3 failed, with 24 retained SQLite handles attributed to two uniquely owned temporary databases in the folder-navigator file. Restore the filter-clear fake's existing settled-focus collaborator without replacing production behavior or weakening its trusted-range assertions. Prove the mounted topology Back scroll failure is a settlement-readiness issue using the existing queued-restoration boundary before adding a bounded exact-scroll wait; retain the exact receipt offset, selection, ranges and focus oracles. For the two attributed database owners, protect setup/body failure paths from allocation onward and use the existing bounded same-file quiescence barrier after worker/app settlement, with zero-registry assertions and no global cleanup. Require RED owner evidence, exact-finalizer setup/body/foreign-path controls as appropriate, complete owning-file native GREEN, and independent review. Do not modify production or any source imported by the still-running shell/reader/residency cohort. ADR required: no. ADR path: existing Notes return/settlement and database ownership contracts. Reason: current-collaborator/readiness fixture reconciliation and disposal of exact test-owned resources, not a new runtime policy.

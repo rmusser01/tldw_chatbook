@@ -6761,7 +6761,9 @@ def test_screen_send_selection_keeps_hyphenated_registry_entry_identity() -> Non
         },
     }
     screen = SimpleNamespace(
-        _provider_readiness_app_config=lambda: app_config,
+        app_instance=SimpleNamespace(app_config=app_config),
+        _console_derivation_memo=None,
+        _console_config_snapshot_is_disk_loaded=lambda _config: False,
         _ensure_console_chat_store=lambda: None,
         _config_section=lambda config, key: dict(config.get(key, {})),
         _workspace=SimpleNamespace(
@@ -6772,8 +6774,8 @@ def test_screen_send_selection_keeps_hyphenated_registry_entry_identity() -> Non
         _normalize_llamacpp_base_url=lambda value: value,
     )
 
-    selection = ChatScreen._build_console_provider_selection_from_settings(
-        screen,
+    build_console_provider_selection_controller(screen)
+    selection = screen._provider_selection._build_console_provider_selection_from_settings(
         None,
         ConsoleSessionSettings(provider="custom-ep:gpu-box", model="model-a"),
         legacy_model=None,
@@ -6966,6 +6968,10 @@ def _endpoint_command_screen_double(
     store.create_session(settings=settings)
     screen = ChatScreen.__new__(ChatScreen)
 
+    build_console_settings_controllers(screen)
+    build_console_provider_selection_controller(screen)
+    screen._context_cost = SimpleNamespace()
+
     def push_screen(modal, callback=None):
         stack.append(modal)
         pushes.append(modal)
@@ -6974,47 +6980,25 @@ def _endpoint_command_screen_double(
     fake_app = SimpleNamespace(screen_stack=stack, push_screen=push_screen)
     monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
     screen.app_instance = SimpleNamespace(
-        pending_handoffs=chat_screen_module.PendingHandoffStore()
+        pending_handoffs=PendingHandoffStore()
     )
     screen._session = SimpleNamespace(
         _ensure_active_console_session_settings=lambda: settings
     )
     screen._ensure_console_chat_store = lambda: store
-    screen._console_settings_context_estimate_for_session = lambda *_a, **_k: (
-        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
-    )
-    screen._active_console_settings_context_estimate = lambda: (
-        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
-    )
-    screen._active_console_context_control_state = lambda **_k: None
-    screen._console_context_control_state_for_session = lambda *_a, **_k: None
-    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
-        run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
-        effective_thinking_history_policy_for_session=(
-            lambda _session_id: _async_return("auto")
-        ),
-        reset_active_context_memory=lambda _session_id: None,
-        undo_context_memory_reset=lambda: None,
-        reset_all_context_memories=lambda _session_id: None,
-        compact_context_now=lambda _session_id: None,
-        rebase_console_settings_draft=lambda draft, **_k: draft,
-    )
-    screen._provider_readiness_app_config = lambda: {
+    _install_open_settings_dependencies(screen)
+    screen._provider_selection._provider_readiness_app_config = lambda: {
         "api_settings": {"llama_cpp": {}}
     }
-    screen._global_chat_display_name = lambda: "Ada"
+    screen._settings_durability._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(provider, **_kwargs):
         provider_calls.append(str(provider))
         return {"llama_cpp": ["model-a"]}
 
-    screen._providers_models_for_console_settings = provider_models
+    screen._provider_selection._providers_models_for_console_settings = provider_models
     return screen
-
-
-async def _async_return(value):
-    return value
 
 
 @pytest.mark.asyncio

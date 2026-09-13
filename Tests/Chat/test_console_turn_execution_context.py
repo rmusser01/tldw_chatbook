@@ -3094,14 +3094,19 @@ def _identity_selection_screen(store, global_name="Rowan"):
     Mirrors test_screen_selection_builder_targets_session_without_switching_view
     and adds the display-name accessor the identity resolver reads.
     """
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_provider_selection_controller,
+    )
 
     fake_screen = SimpleNamespace(
         _console_derivation_memo=None,
-        _provider_readiness_app_config=lambda: {
-            "api_settings": {"openai": {"model": "configured"}},
-            "console": {},
-        },
+        app_instance=SimpleNamespace(
+            app_config={
+                "api_settings": {"openai": {"model": "configured"}},
+                "console": {},
+            }
+        ),
+        _console_config_snapshot_is_disk_loaded=lambda _config: False,
         _ensure_console_chat_store=lambda: store,
         _session=SimpleNamespace(
             _console_session_settings=lambda session_id: store.session_settings(
@@ -3119,18 +3124,11 @@ def _identity_selection_screen(store, global_name="Rowan"):
             )
         ),
         _normalize_llamacpp_base_url=lambda value: value,
-        _global_chat_display_name=lambda: global_name,
+        _settings_durability=SimpleNamespace(
+            _global_chat_display_name=lambda: global_name,
+        ),
     )
-    fake_screen._build_console_provider_selection_uncached = (
-        lambda session_id=None: ChatScreen._build_console_provider_selection_uncached(
-            fake_screen, session_id
-        )
-    )
-    fake_screen._build_console_provider_selection_from_settings = (
-        lambda *args, **kwargs: ChatScreen._build_console_provider_selection_from_settings(
-            fake_screen, *args, **kwargs
-        )
-    )
+    build_console_provider_selection_controller(fake_screen)
     return fake_screen
 
 
@@ -3147,15 +3145,13 @@ def _persona_session(store, *, settings_prompt="Guide STALE as Archivist."):
 
 
 def test_screen_selection_re_expands_persona_template_with_override_name():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     store = ConsoleChatStore()
     session = _persona_session(store)
     session.user_display_name_override = "Wren"
     fake_screen = _identity_selection_screen(store)
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, session.id
+    selection = fake_screen._provider_selection._build_console_provider_selection(
+        session.id
     )
 
     # Stale settings projection must NOT leak onto the wire: the live
@@ -3164,22 +3160,18 @@ def test_screen_selection_re_expands_persona_template_with_override_name():
 
 
 def test_screen_selection_persona_without_override_uses_global_name():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     store = ConsoleChatStore()
     session = _persona_session(store)
     fake_screen = _identity_selection_screen(store)
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, session.id
+    selection = fake_screen._provider_selection._build_console_provider_selection(
+        session.id
     )
 
     assert selection.system_prompt == "Guide Rowan as Archivist."
 
 
 def test_screen_selection_keeps_settings_prompt_for_template_less_persona():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     store = ConsoleChatStore()
     session = store.create_session(
         title="Chat with Archivist",
@@ -3191,16 +3183,14 @@ def test_screen_selection_keeps_settings_prompt_for_template_less_persona():
     )
     fake_screen = _identity_selection_screen(store)
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, session.id
+    selection = fake_screen._provider_selection._build_console_provider_selection(
+        session.id
     )
 
     assert selection.system_prompt == "Custom persona prompt."
 
 
 def test_screen_selection_keeps_settings_prompt_when_persona_name_unresolved():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     store = ConsoleChatStore()
     session = store.create_session(
         title="Chat",
@@ -3213,16 +3203,14 @@ def test_screen_selection_keeps_settings_prompt_when_persona_name_unresolved():
     )
     fake_screen = _identity_selection_screen(store)
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, session.id
+    selection = fake_screen._provider_selection._build_console_provider_selection(
+        session.id
     )
 
     assert selection.system_prompt == "Guide Rowan."
 
 
 def test_screen_selection_re_expands_character_template_parity():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     store = ConsoleChatStore()
     session = store.create_session(
         title="Chat with Kestrel",
@@ -3236,8 +3224,8 @@ def test_screen_selection_re_expands_character_template_parity():
     session.character_system_template = "You are {{char}}. Help {{user}}."
     fake_screen = _identity_selection_screen(store)
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, session.id
+    selection = fake_screen._provider_selection._build_console_provider_selection(
+        session.id
     )
 
     assert selection.system_prompt == "You are Kestrel. Help Rowan."

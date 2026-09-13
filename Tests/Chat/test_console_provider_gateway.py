@@ -9207,7 +9207,7 @@ async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outag
     a provider outage.
     """
 
-    from types import MappingProxyType
+    from types import MappingProxyType, SimpleNamespace
 
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
     from tldw_chatbook.Chat.provider_test_evidence import (
@@ -9215,7 +9215,9 @@ async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outag
         ProviderDraftIdentity,
     )
     from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_settings_controllers,
+    )
 
     frozen_tool_call = MappingProxyType(
         {
@@ -9259,14 +9261,15 @@ async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outag
         async def complete_auxiliary(request, **kwargs):
             return await gateway.complete_auxiliary(request, **kwargs)
 
-    class _Screen:
-        @staticmethod
-        def _build_console_provider_selection_for_settings(_session_id, _settings):
-            return object()
-
-        @staticmethod
-        def _ensure_console_provider_gateway():
-            return _ProviderTestGateway()
+    screen = SimpleNamespace(
+        _provider_selection=SimpleNamespace(
+            _build_console_provider_selection_for_settings=(
+                lambda _session_id, _settings: object()
+            ),
+        ),
+        _ensure_console_provider_gateway=lambda: _ProviderTestGateway(),
+    )
+    build_console_settings_controllers(screen)
 
     request = ConsoleGenerationTestRequest(
         settings=ConsoleSessionSettings(
@@ -9283,7 +9286,9 @@ async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outag
         ),
     )
 
-    result = await ChatScreen._test_console_generation(_Screen(), "session-1", request)
+    result = await screen._settings_navigation._test_console_generation(
+        "session-1", request
+    )
 
     assert (result.generation, result.category) == ("failed", "bad_request")
 

@@ -72,6 +72,7 @@ def _fake(select_mode):
         _opened=[],
         _reader_synced=0,
         _reader_started=[],
+        query=lambda _selector: (),  # Detached fixture has no toolbar widgets.
         _sync_library_conversation_reader=lambda: None,
         _start_library_conversation_reader_selection=lambda conversation_id: None,
     )
@@ -287,7 +288,6 @@ def test_conversations_empty_console_uses_existing_live_work_route():
 def test_conversations_empty_clear_filter_requests_unfiltered_page_one():
     calls = []
     fake = SimpleNamespace(
-        _library_unavailable_browse_scope=None,
         _conversations_state=SimpleNamespace(loading=False),
         # task-32199: the handler branches on the unavailable-browse scope
         # before it requests a page; ``None`` is the ordinary local scope.

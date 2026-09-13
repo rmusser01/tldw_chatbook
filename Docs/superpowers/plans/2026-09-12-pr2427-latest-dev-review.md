@@ -388,3 +388,91 @@ All worker test processes exited before rebase. Together with the complete
 the bounded Lab patch on its saved base, not the incoming dev integration or
 the separate previously recorded failures. Full Ruff and changed-range format
 checks pass for the two corrected fixture files.
+
+### Completed 1103 integration and post-rebase qualification
+
+All 286 commits replayed onto `1103b28f711073291fc073ed27592546fec53607`,
+ending at `1746c4e4731b1693510f1d4a545622eeaa285184`. No commits were skipped.
+The recovered range-diff retains the Lab patch unchanged. Independent Console
+and Library reviews found no dropped incoming behavior in the combined ports.
+Root removed the first obsolete button handler and ten duplicate sidebar
+methods; every effective method's AST remains identical. New chat-creation,
+worktree, persona/resume, exact-modal sink and dashed-endpoint identity behavior
+is retained on the existing owners. Added the missing type-only modal import.
+
+Incoming tests calling retired screen facades now use the real existing
+controller builders. Exact endpoint layering, identity expansion and gateway
+error assertions are unchanged; the runtime view-hook census now includes the
+incoming disposable worktree-merge projection. Focused native controls:
+10 failed / 1 passed before, 11 passed after, zero retained SQLite/lock handles.
+Logs: `/private/tmp/pr2427-console-ports-{red.VBuLe5,green.bUsRmj}/pytest.log`.
+
+The new lasting-root activation test bypassed the exact Notes authority fixture:
+it passed but retained 52 SQLite-named handles. It now uses the existing
+`_real_notes_authority`, with runtime startup and shutdown inside that lifetime.
+Its original assertions are preserved. The same test passes with zero final
+SQLite handles and instance locks. Independent cleanup review approves this
+bounded repair. The complete five-file Library cohort passes all 148 cases in
+191.60s, with zero SQLite handles and instance locks at final observation.
+Reports: `/private/tmp/pr2427-rebase-1103.B6Z6f1/notes-activation-{control,fixed}`
+and `library-complete`.
+
+A compile-only inventory of all 615 changed Python files caught duplicated
+fixture keyword arguments in raw-shell integration, Console activity, and
+Library multiselect tests. Removed only redundant identical entries. Their
+complete three-file run then exposed one missing detached `query` seam in the
+multiselect fixture; it now explicitly has no mounted toolbar widgets, keeping
+all selection/reader assertions. Compile-only verification now reports no errors.
+
+Reviewed all six newly retained Console diagnostic statements against saved PR
+and incoming dev: persona startup, resumed identity lookup, and durable chat
+creation reporting remain upstream statements. Existing generator rebuilt the
+inventory: 612 owners, 1403 TASK-492 calls, 55 TASK-31551 calls, 7753 TASK-494
+calls, unchanged 12 sink files. CSS generation reproduces the source sheets.
+Backlog identity/path guard passes 4,087 files. No task IDs changed here.
+
+Remote PR remains `2a02db0d20b7734d1ea2e4606ec83b5a4da19f17`. Fetched dev
+advanced to `4cba44e6124a107cfb3210bf0985b84d514a96da`: two documentation-only
+commits containing endpoint UAT evidence. After all running tests terminate,
+save this integration checkpoint, preserve a recovery ref and replay that exact
+delta. Complete Console/CSS/boot qualification and final review remain pending;
+none of these results close the previously recorded controller-size, resource,
+intermittent or final-head Qodo gates. No merge is authorized by this checkpoint.
+
+Post-rebase complete-file results (all under
+`/private/tmp/pr2427-rebase-1103.B6Z6f1`):
+
+- `merged-fixtures-final`: all 95 cases pass in 26.33s.
+- `css-and-boot`: all 67 cases pass in 139.44s, including the unchanged
+  768,000-byte cap. Native final observation retains 20 SQLite-named handles
+  and one instance lock, attributed to the fastpath fixture; this is not a
+  resource-cleanup success claim.
+- `latency`: both CI-selected files pass all 10 cases in 42.60s. The previously
+  intermittent seeded-Library teardown did not reproduce in this run.
+- `console-complete`: 1,013 passed, 15 failed, two skipped in 546.93s. The
+  15 exact failures also fail on saved PR `2a02db0d20` in 18.76s, under
+  `console-failures-saved-base`; no new passing-to-failing case was identified.
+  Full-cohort final observation retains 111 SQLite-named handles and no instance
+  locks. Do not compare that aggregate directly to a differently sized cohort.
+- `console-resume`: 15 passed / seven failed in 37.39s. All seven fail with
+  matching symptoms on saved PR `2a02db0d20` in 18.09s (`resume-saved-base`).
+  Test bodies are unchanged across the rebase. These remain existing failures.
+- `library-ratchet`: 33 passed / 14 size failures in 0.80s. No cap changed.
+
+All 615 changed Python files compile without execution. Scoped fatal Ruff and
+diff checks pass. Notes journey formatting passes for the whole file; changed
+ranges in the other edited fixtures are formatted with AST equality checks,
+without normalizing unrelated pre-existing style. The exact current Qodo
+thread inventory still has only `PRRT_kwDOOcyyl86hU_qn` unresolved, with its
+existing acknowledgment retained. The summary at head2a still omits 50 lower
+priority findings; publication must trigger a fresh review before calling the
+review complete. This checkpoint qualifies the approved Lab/rebase repair,
+not the outstanding lifecycle, retention or controller-size work.
+
+Matched native 15-case controls are also terminal: saved2a has 15 failures /
+62 final SQLite handles / one instance lock; current integration has the same
+15 failures / 68 SQLite handles / one lock (17.55s). The extra six handles need
+attribution; do not describe all retention as unchanged merely because assertion
+failures predate rebase. Reviewer classifies 14 failures as concrete stale
+fixture/contract mismatches and one as a real successor-screen attachment defect;
+none is fixed by this checkpoint. No test process remains active before replay.

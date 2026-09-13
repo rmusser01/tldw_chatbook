@@ -548,9 +548,12 @@ async def test_real_runtime_resume_after_pause_returns_the_root_to_service(
     notes_path, state_path, sync_root = _seed_real_conflict_authority(
         tmp_path, diverge=False
     )
-    async with _real_conflict_stack(
-        notes_path, state_path
-    ) as (owner, database, interop, controller):
+    async with _real_conflict_stack(notes_path, state_path) as (
+        owner,
+        database,
+        interop,
+        controller,
+    ):
         await controller.pause_root("root-1")
         paused = controller.snapshot.roots[0]
         assert (paused.status_label, paused.next_action_label) == ("Ⅱ Paused", "Resume")
@@ -628,9 +631,12 @@ async def test_real_runtime_resumes_a_root_the_old_resume_left_paused_on_disk(
     assert {binding.state for binding in store.list_bindings("root-1")} == {
         NotesSyncBindingState.PAUSED
     }
-    async with _real_conflict_stack(
-        notes_path, state_path
-    ) as (owner, database, interop, controller):
+    async with _real_conflict_stack(notes_path, state_path) as (
+        owner,
+        database,
+        interop,
+        controller,
+    ):
         await controller.resume_root("root-1")
 
         resumed = controller.snapshot.roots[0]
@@ -678,96 +684,92 @@ async def test_activating_a_lasting_root_refreshes_a_seeded_notes_list(
         (vault / f"synced-{index}.md").write_text(
             f"# Synced {index}\n\nbody {index}\n", encoding="utf-8"
         )
-    database = CharactersRAGDB(notes_path, client_id="task-32518")
-    folders = LocalNoteFolderRepository(database)
-    for index in range(2):
-        assert database.add_note(
-            f"Existing {index}", f"existing body {index}", f"existing-{index}"
+    with _real_notes_authority(notes_path.parent, notes_path, "task-32518") as (
+        database,
+        folders,
+        _interop,
+        scope_service,
+    ):
+        for index in range(2):
+            assert database.add_note(
+                f"Existing {index}", f"existing body {index}", f"existing-{index}"
+            )
+        folders.create_folder(
+            name="Existing folder", parent_id=None, folder_id="folder-existing"
         )
-    folders.create_folder(
-        name="Existing folder", parent_id=None, folder_id="folder-existing"
-    )
-    interop = NotesInteropService(
-        base_db_directory=notes_path.parent,
-        api_client_id="task-32518",
-        global_db_to_use=database,
-    )
-    scope_service = NotesScopeService(
-        local_notes_service=interop,
-        server_service=None,
-        folder_repository=folders,
-    )
-    owner = build_notes_sync_runtime_owner(
-        notes_scope_service=scope_service,
-        cutover_admitted=True,
-        profile_process_is_sole=True,
-        database_path=state_path,
-        migrate_legacy=lambda: None,
-        local_user_id="user-1",
-        recovery_capacity_bytes=1024 * 1024,
-    )
-    await owner.start()
-    app = _build_test_app()
-    _seed_conversations(app, [])
-    app.notes_scope_service = scope_service
-    app.notes_sync_runtime_owner = owner
-    host = _JourneyHarness(app)
-    try:
-        async with host.run_test(size=(120, 40)) as pilot:
-            screen = _active_library_screen(host)
-            await _wait_for_library_shell(screen, pilot)
-            screen.query_one("#library-row-browse-notes", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
-            await _wait_for_condition(
-                pilot,
-                lambda: "Notes (2)" in _painted_text(host),
-                message="seeded list never painted its count",
+        owner = None
+        try:
+            owner = build_notes_sync_runtime_owner(
+                notes_scope_service=scope_service,
+                cutover_admitted=True,
+                profile_process_is_sole=True,
+                database_path=state_path,
+                migrate_legacy=lambda: None,
+                local_user_id="user-1",
+                recovery_capacity_bytes=1024 * 1024,
             )
-            assert "Existing folder" in _painted_text(host)
+            await owner.start()
+            app = _build_test_app()
+            _seed_conversations(app, [])
+            app.notes_scope_service = scope_service
+            app.notes_sync_runtime_owner = owner
+            host = _JourneyHarness(app)
+            async with host.run_test(size=(120, 40)) as pilot:
+                screen = _active_library_screen(host)
+                await _wait_for_library_shell(screen, pilot)
+                screen.query_one("#library-row-browse-notes", Button).press()
+                await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+                await _wait_for_condition(
+                    pilot,
+                    lambda: "Notes (2)" in _painted_text(host),
+                    message="seeded list never painted its count",
+                )
+                assert "Existing folder" in _painted_text(host)
 
-            screen.query_one("#library-notes-add-from-files", Button).press()
-            await _wait_for_selector(screen, pilot, "#notes-add-keep-synced")
-            screen.query_one("#notes-add-keep-synced", Button).press()
-            await _wait_for_selector(screen, pilot, "#notes-sync-display-name")
-            controller = screen._library_notes_sync_controller
-            controller.set_setup("display_name", "Vault sync")
-            controller.set_setup("folder", str(vault))
-            await pilot.pause()
-            screen.query_one("#notes-sync-check", Button).press()
-            activate = await _wait_for_selector(screen, pilot, "#notes-sync-activate")
-            await _wait_for_condition(
-                pilot,
-                lambda: not activate.disabled,
-                message=f"review never admitted activation: {controller.snapshot.status_line}",
-            )
-            activate.press()
-            await _wait_for_selector(screen, pilot, "#notes-sync-receipt")
-            assert "3 applied · durable receipt recorded" in _painted_text(host)
-            assert database.count_notes() == 5
+                screen.query_one("#library-notes-add-from-files", Button).press()
+                await _wait_for_selector(screen, pilot, "#notes-add-keep-synced")
+                screen.query_one("#notes-add-keep-synced", Button).press()
+                await _wait_for_selector(screen, pilot, "#notes-sync-display-name")
+                controller = screen._library_notes_sync_controller
+                controller.set_setup("display_name", "Vault sync")
+                controller.set_setup("folder", str(vault))
+                await pilot.pause()
+                screen.query_one("#notes-sync-check", Button).press()
+                activate = await _wait_for_selector(
+                    screen, pilot, "#notes-sync-activate"
+                )
+                await _wait_for_condition(
+                    pilot,
+                    lambda: not activate.disabled,
+                    message=f"review never admitted activation: {controller.snapshot.status_line}",
+                )
+                activate.press()
+                await _wait_for_selector(screen, pilot, "#notes-sync-receipt")
+                assert "3 applied · durable receipt recorded" in _painted_text(host)
+                assert database.count_notes() == 5
 
-            screen.query_one("#notes-sync-back", Button).press()
-            await _wait_for_condition(
-                pilot,
-                lambda: screen._notes_state.view == "list",
-                message="lasting Back did not return to Notes",
-            )
-            await _wait_for_condition(
-                pilot,
-                lambda: "Notes (5)" in _painted_text(host),
-                message="list count never refreshed after activation",
-            )
-            await _wait_for_condition(
-                pilot,
-                lambda: "Sync managed" in _painted_text(host),
-                message="managed folder row never painted after activation",
-            )
-            painted = _painted_text(host)
-            assert "Vault sync" in painted
-            assert "Existing folder" in painted
-    finally:
-        await owner.shutdown()
-        interop.close_all_user_connections()
-        database.close_connection()
+                screen.query_one("#notes-sync-back", Button).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: screen._notes_state.view == "list",
+                    message="lasting Back did not return to Notes",
+                )
+                await _wait_for_condition(
+                    pilot,
+                    lambda: "Notes (5)" in _painted_text(host),
+                    message="list count never refreshed after activation",
+                )
+                await _wait_for_condition(
+                    pilot,
+                    lambda: "Sync managed" in _painted_text(host),
+                    message="managed folder row never painted after activation",
+                )
+                painted = _painted_text(host)
+                assert "Vault sync" in painted
+                assert "Existing folder" in painted
+        finally:
+            if owner is not None:
+                await owner.shutdown()
 
 
 @pytest.mark.asyncio
@@ -1226,9 +1228,10 @@ async def test_lasting_setup_keeps_server_unavailable_copy_painted(
         await pilot.pause()
         # task-32294: the WHOLE reason, inside the reason's own box, with the
         # terminal's wrap collapsed -- not three substrings of the screen.
-        assert str(server_reason.renderable).lower() in _painted_widget_text(
-            host, server_reason
-        ).lower(), _painted_widget_text(host, server_reason)
+        assert (
+            str(server_reason.renderable).lower()
+            in _painted_widget_text(host, server_reason).lower()
+        ), _painted_widget_text(host, server_reason)
         assert (
             screen.query_one("#notes-sync-back", Button)
             in host.screen._compositor.visible_widgets
@@ -2109,12 +2112,12 @@ async def test_folder_files_and_session_git_use_supported_40x20_navigator(
             visible = pilot.app.screen._compositor.visible_widgets
             assert session_git.is_mounted and session_git not in visible
             assert (
-                workspace.query_one("#library-file-notes-items-grip", Button)
-                in visible
+                workspace.query_one("#library-file-notes-items-grip", Button) in visible
             ), "the grip that reopens the work pane must at least be on screen"
             workspace.query_one("#file-notes-manage", Button).press()
             await _wait_until(
-                pilot, lambda: workspace.work_mode == "manage",
+                pilot,
+                lambda: workspace.work_mode == "manage",
                 "Folder Files Manage mode did not open at 40x20",
             )
             session_git.scroll_visible(animate=False)
