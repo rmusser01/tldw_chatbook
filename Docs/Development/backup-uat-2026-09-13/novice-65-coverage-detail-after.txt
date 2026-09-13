@@ -1,0 +1,40 @@
+
+  Backup & Restore
+
+                        Create backup                                            Inspect / restore
+
+
+                       Recovery copies                                           Restored profiles
+
+
+  No operation started
+
+  ChaNotes.db-shm
+  sqlite.transient: intentionally_excluded —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/home/.local/share/tldw_cli/default_user/tldw_chatbook_not
+  ifications.db-wal
+  sqlite.transient: intentionally_excluded —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/home/.local/share/tldw_cli/default_user/tldw_chatbook_not
+  ifications.db-shm
+  sqlite.transient: intentionally_excluded —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/home/.local/share/tldw_cli/default_user/tldw_chatbook_Cha
+  ChaNotes.db-wal
+  sqlite.transient: intentionally_excluded —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/home/.local/share/tldw_cli/default_user/tldw_chatbook_Cha
+  ChaNotes.db-shm
+  sqlite.transient: intentionally_excluded —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/home/.local/share/tldw_cli/default_user/tldw_chatbook_Cha
+  ChaNotes.db-wal
+  sqlite.transient: intentionally_excluded —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/home/.local/share/tldw_cli/default_user/tldw_chatbook_Cha
+  ChaNotes.db-shm
+  recovery.control: intentionally_excluded —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/home/.config/tldw_cli/recovery-bootstrap
+  unknown: unsupported —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/home/.config/tldw_cli/config.toml.lock
+  unsupported                                                                                                        ▁
+  unsupported_owner                                                                                                  ▁
+
+  Review the displayed coverage. Backup pauses writers for capture, then resumes them before packaging.
+            Review                    Create backup               Cancel operation                    Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to S▏^p Palette Menu

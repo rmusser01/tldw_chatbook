@@ -1,0 +1,24 @@
+{
+  "revision": "49923b824dbc6a180a10eeeb55e938de9efe907c",
+  "wheel_sha256": "2329f9240560ee4e3a7f769dc57abd364934816a7029cf343ed0c5f06777e9f3",
+  "installed_files_checked": 2849,
+  "installed_files_changed": [],
+  "original_note_preserved": true,
+  "ui_archives_created": {
+    "novice": false,
+    "power": false
+  },
+  "isolated_destination_entries": [],
+  "restore_directory_inputs": 23,
+  "actions_recorded": 223,
+  "backup_failure_observation_seconds": {
+    "novice": {
+      "still_running_at": 26,
+      "failed_by": 129
+    },
+    "power": {
+      "still_running_at": 59,
+      "failed_by": 142
+    }
+  }
+}

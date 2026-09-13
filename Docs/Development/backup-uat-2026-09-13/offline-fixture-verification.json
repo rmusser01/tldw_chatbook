@@ -1,0 +1,19 @@
+{
+  "artifact": "offline fixture; not UI backup success",
+  "files": 134,
+  "payload_bytes": 26716920,
+  "consistency": "partial",
+  "sha256": "c6f97ef4a00a597bdd5374bdf8ae523677463f6a319aef80ea5ad5a8c7f10673",
+  "saved_note_rows": [
+    [
+      "Novice backup acceptance note",
+      "My first saved note must survive backup and restore. Reference NOVICE-20260913."
+    ]
+  ],
+  "lock_exclusions": [
+    {
+      "logical_id": "shared_config:unknown:config.toml.lock",
+      "reason": "unsupported"
+    }
+  ]
+}
