@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 20:22
+updated_date: 2026-09-13 20:28
 ---
 
 ## Description
@@ -178,6 +178,7 @@ Final pre-push scripts/preflight.sh passes all seven derived-artifact checks, in
 UAT remediation in progress: actual mounted novice profile now previews Complete and captures a verified Complete archive with ordinary storage readmission (diagnostic-live-5, SHA256 658cc3cf233a767394694c04a5f605e32323e765d63f0785f075e093a70a19fd). Fixed exact config lock classification, obsolete Console unsaved snapshot fields, finite worker DB retirement including preference pruning, accepted appearance reads during pause, and retained boot jobs on pause refusal. 1800-file actual isolated publication/reopen passes 65.61s; removed unsafe new aggregate journal cap after independent review and added prepublication event headroom. Scoped Bandit baseline comparison44→44, zero new. Stage2/3 independent implementation /root/uat_restore_destinations: resolver/shared paths+UI32 passing and real134file archive staging passing; remaining review/native/persona UAT not yet complete. Tests retain exact selected config for interpreter lifetime via existing private_profile_test; no production guard bypass.
 UAT remediation continues: native qualification support now includes actual mounted Console/Settings capture, an 1,800-file isolated publication, destination derivation and guidance regressions. Updated the user guide to describe one new folder/name per profile and explicit external folders. A broad local run had 164 passes and 17 subprocess startup/environment failures; rerun with existing-venv access is underway and is not yet acceptance evidence. Original failed UAT report is preserved.
 Live-capture corrections approved by independent reviewer:129 scoped regressions passed; raw-closed AgentRuns/Workspace cache leak reproduced then fixed using existing native retirement evidence;37 final finite-worker tests passed. Actual mounted Console and Settings each produced a verified Complete archive and accepted post-backup writes. Native restore/finalization47passed; the sole profile-lifetime fixture correction then passed separately. Bandit44current/44baseline,0newfindings. Restorer destination/guidance review remains active; task and persona acceptance remain In Progress.
+Destination/guidance remediation independently approved after correcting all review findings. New profile layout derives installed owner paths and shared aliases; replacement Files needing setup uses one explicit private parent outside profile/control storage; actual parent guards run at preview; malformed IDs/TOML tables fail safely; failed operations display bounded corrective guidance; extraction labels show nonempty file counts/examples. Final agent59passes, independent37passes, native installed replacement1pass149.85sec (includes untouchedabort andcredentialreview); installed plain/encrypted/encrypted-credential isolatedrestore+open3passes204.62sec. 1,800-file record-limit/publication regressions approved; laterrollback rerun active. No new backup modes/dependencies/Go. PR update and repeat keyboard UAT/platform evidence still pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

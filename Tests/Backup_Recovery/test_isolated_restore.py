@@ -5,12 +5,15 @@ from threading import Event
 import pytest
 
 from Tests.Backup_Recovery.test_archive_reader import archive as zip_archive
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Backup_Recovery import archive_reader, crypto
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 
 
-def test_actual_bound_profile_stages_new_isolated_config_without_source_changes(
-    tmp_path, monkeypatch, helper_resource_root
+@pytest.mark.asyncio
+@private_profile_test
+async def test_actual_bound_profile_stages_new_isolated_config_without_source_changes(
+    tmp_path, monkeypatch, helper_resource_root, request
 ):
     from Tests.Backup_Recovery.test_current_generation_requirements import (
         _healthy_replacement,

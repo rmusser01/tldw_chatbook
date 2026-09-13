@@ -315,12 +315,15 @@ def test_source_alias_changed_before_publication_is_rechecked(tmp_path, monkeypa
 def test_explicit_directory_metadata_and_media_storage_roundtrip(tmp_path):
     capture = captured(tmp_path)
     doc = json.loads(capture.manifest_bytes)
+    for directory in doc["directories"]:
+        directory["synthetic"] = False
     doc["directories"].append(
         {
             "logical_id": "folder",
             "root_id": "root",
             "parent_id": "root",
             "relative_path": "folder",
+            "synthetic": False,
             "metadata": {"version": 1, "mtime_ns": 123456789, "mode": 493},
         }
     )

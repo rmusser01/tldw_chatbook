@@ -9,9 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -41,7 +41,7 @@ def pinned_directory(root: Path, *, _close: Callable[[int], None] | None = None)
         (_close or os.close)(parent)
 
 
-def _read(parent: int, name: str) -> dict:
+def _read(parent: int, name: str, *, max_bytes: int = MAX_RECORD) -> dict:
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
     try:
         info = os.fstat(fd)
@@ -52,8 +52,10 @@ def _read(parent: int, name: str) -> dict:
             or info.st_mode & 0o077
         ):
             raise ValueError("unsafe_record")
-        data = os.read(fd, MAX_RECORD + 1)
-        if len(data) > MAX_RECORD:
+        if info.st_size > max_bytes:
+            raise ValueError("oversized_record")
+        data = os.read(fd, max_bytes + 1)
+        if len(data) > max_bytes:
             raise ValueError("oversized_record")
 
         def unique(pairs):

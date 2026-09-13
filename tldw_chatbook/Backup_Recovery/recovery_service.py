@@ -74,6 +74,74 @@ def _selected_recovered_media(*, recheck_after=True):
             raise ValueError("recovered_review_changed")
 
 
+_OWNER_LABELS = {
+    "config": "Profile settings",
+    "config.history": "Previous settings",
+    "db.chachanotes.primary": "Notes and chats",
+    "chat.attachments": "Chat attachments",
+    "db.agent_runs": "Agent history",
+    "db.media.primary": "Media library",
+    "db.prompts.primary": "Saved prompts",
+    "notes.sync_bindings": "Note sync settings",
+    "quiz.local": "Quizzes",
+    "study.local": "Study progress",
+    "external.files": "External files",
+    "persona.assets": "Persona artwork",
+    "persona.visual_identity_builtin": "Bundled persona artwork",
+    "chat.dictionaries": "Chat dictionaries",
+    "runtime.source_state": "Runtime settings",
+    "eval.definitions": "Evaluation definitions",
+    "mcp.targets": "MCP server settings",
+    "notifications.client": "Notifications",
+    "ui.state": "Interface preferences",
+    "db.evals": "Evaluation results",
+    "db.workspaces": "Workspaces",
+    "db.subscriptions": "Subscriptions",
+    "db.scheduled_tasks": "Scheduled tasks",
+    "db.library_collections": "Library collections",
+    "db.library_ingest_jobs": "Library imports",
+}
+
+
+def owner_label(owner: str) -> str:
+    """Name installed storage categories without trusting imported display text."""
+    return _OWNER_LABELS.get(owner, "Other saved data")
+
+
+_ISSUE_MESSAGES = {
+    "restore_setup_parent_required": "Choose an existing private Files needing setup directory outside profile and recovery storage. Restored files will remain inactive there.",
+    "isolated_destination_parent_overlaps_control": "Choose a folder beneath a separate private restore directory, outside recovery control storage.",
+    "private_destination_parent_required": "Choose a restore folder beneath a private directory owned by your user, with access limited to you.",
+    "invalid_config_shape": "Choose a valid profile backup; these configuration tables cannot be restored. Manual extraction can recover the saved files.",
+    "config_profile_unverified": "Choose a backup with a verified profile identity, or use manual extraction for its saved files.",
+    "destination_exists": "Choose a new folder that does not already exist.",
+    "destination_alias": "Choose a direct local folder path without symbolic links or aliases.",
+    "invalid_destination": "Choose an absolute local folder path.",
+    "destination_overlap": "Choose separate folders; profile destinations cannot contain each other.",
+    "destination_collision": "Choose distinct destinations for independent saved content.",
+    "archive_destination_alias": "Choose a restore folder outside the archive inspection folder.",
+    "explicit_destination_required": "Choose a destination for each profile and external folder.",
+    "profile_identity_required": "Enter a new display name and folder for every isolated profile.",
+    "owner_relocation_unverified": "Review the destination choices. This saved content cannot use the selected folder layout; use manual extraction if its installed location is unavailable.",
+    "shared_target_split": "Review the destinations: shared database content must stay together in one local profile.",
+    "target_unverified": "Choose an existing local configuration whose stored-data locations can be verified.",
+    "target_changed": "The selected destination changed. Review restore again.",
+    "archive_unlock_failed": "Check the backup password and inspect again.",
+    "insufficient_space": "Choose a location with more free space and review again.",
+    "permission_denied": "Choose a local folder you can read and write.",
+    "backup_operation_failed": "Review the selected file and local folders, then try again. Open the detailed recovery evidence if the problem continues.",
+}
+
+
+def issue_message(code: str) -> str:
+    """Explain bounded local failures without rendering arbitrary exception text."""
+    if code == "password_required":
+        return "Enter the backup password and inspect again."
+    return _ISSUE_MESSAGES.get(
+        code, "Review the recovery status and selected local paths before trying again."
+    )
+
+
 def issue_code(error: Exception, *, kind: str = "") -> str:
     """Only fixed local codes cross into a view; arbitrary exception text stays out."""
     from .capture import CaptureReviewRequired
@@ -102,7 +170,14 @@ def issue_code(error: Exception, *, kind: str = "") -> str:
         return "destination_exists"
     if isinstance(error, PermissionError):
         return "permission_denied"
+    if isinstance(error, ValueError) and error.args and type(error.args[0]) is str:
+        code = error.args[0]
+        if code in _ISSUE_MESSAGES:
+            return code
+        if code.startswith("owner_relocation_unverified:"):
+            return "owner_relocation_unverified"
     known = {
+        "password_required",
         "insufficient_space",
         "scope_changed",
         "target_changed",
@@ -140,6 +215,7 @@ class RecoveryService:
     """
 
     issue_code = staticmethod(issue_code)
+    issue_message = staticmethod(issue_message)
 
     def __init__(self, control_root):
         self.control_root = Path(control_root)
@@ -359,6 +435,17 @@ class RecoveryService:
     def summary(self, operation_id):
         """Present inert verified metadata without exposing secret payloads/locators."""
         doc = archive_reader.verify_sealed(self.inspection(operation_id))
+        group_details = {}
+        files_by_id = {row.logical_id: row for row in doc.files}
+        for group in doc.dependency_groups:
+            files = [files_by_id[key] for key in group.members if key in files_by_id]
+            labels = sorted({owner_label(row.owner_id) for row in files})
+            group_details[group.group_id] = {
+                "label": ", ".join(labels) if labels else "Empty saved folder",
+                "file_count": len(files),
+                "payload_bytes": sum(row.size for row in files),
+                "sample_files": tuple(row.relative_path for row in files[:3]),
+            }
         root_owners = {}
         for item in doc.files:
             root_owners.setdefault(item.root_id, set()).add(item.owner_id)
@@ -373,13 +460,8 @@ class RecoveryService:
             for row in doc.directories
             if row.parent_id is None
         )
-        config_profiles = {
-            row.logical_id.split(":")[1]
-            for row in doc.files
-            if row.owner_id == "config"
-            and len(row.logical_id.split(":")) == 3
-            and row.logical_id.startswith("profile:")
-        }
+        from .destinations import destination_slots, requires_setup_destination
+
         return MappingProxyType(
             {
                 "format_version": doc.format_version,
@@ -391,10 +473,14 @@ class RecoveryService:
                 "file_count": len(doc.files),
                 "payload_bytes": sum(row.size for row in doc.files),
                 "owners": tuple(row.owner_id for row in doc.owners),
+                "owner_labels": tuple(
+                    dict.fromkeys(owner_label(row.owner_id) for row in doc.owners)
+                ),
                 "dependency_groups": tuple(
                     MappingProxyType(
                         {
                             "group_id": row.group_id,
+                            **group_details[row.group_id],
                             "members": row.members,
                             "complete": row.complete,
                         }
@@ -407,35 +493,37 @@ class RecoveryService:
                 ),
                 "report": doc.report.lines,
                 "roots": roots,
-                "destination_slots": tuple(
-                    MappingProxyType(
-                        {
-                            "logical_id": row["logical_id"],
-                            "kind": "archive_root",
-                            "owners": row["owners"],
-                        }
-                    )
-                    for row in roots
-                    if row["owners"] != ("recovery.credentials",)
-                )
-                + tuple(
-                    MappingProxyType(
-                        {
-                            "logical_id": f"profile:{profile}:paths.data_dir",
-                            "kind": "data_root",
-                            "owners": ("config",),
-                        }
-                    )
-                    for profile in sorted(config_profiles)
-                ),
+                "destination_slots": destination_slots(doc),
+                "setup_destination_required": requires_setup_destination(doc),
                 "archive_verified": True,
             }
         )
 
     def preview_restore(self, inspection_id, **choices):
+        from .destinations import (
+            check_config_destinations,
+            check_isolated_parents,
+            resolve_destinations,
+        )
         from .restore_plan import plan_restore
 
-        return plan_restore(self.inspection(inspection_id), **choices)
+        if choices.get("setup_parent") is not None:
+            from .destinations import check_setup_parent
+            from .service_storage import work_root
+
+            check_setup_parent(
+                choices["setup_parent"],
+                (self.control_root, work_root(self.control_root)),
+            )
+        archive = self.inspection(inspection_id)
+        if "profile_bases" in choices:
+            plan = resolve_destinations(archive, **choices)
+        else:
+            plan = plan_restore(archive, **choices)
+            check_config_destinations(archive, plan)
+        if plan.mode == "isolated":
+            check_isolated_parents(plan, self.control_root)
+        return plan
 
     def start_extraction_preview(
         self, inspection_id, *, group_ids, destination, limits=None

@@ -16,13 +16,13 @@ Reason: Correct observed defects within the approved backup design and existing 
 **Goal:** Let users select a new local location per profile and explicit locations for independent external content; derive required shared/owner paths from installed policy.
 **Success Criteria:** A normal profile restores without entering hashed internal roots; the reviewed destinations pass owner relocation checks and open with the saved note. Existing explicit low-level restore API remains checked.
 **Tests:** Real archive fixtures, shared DB and owner path layout, multiple profiles, custom paths, and GUI keyboard workflow.
-**Status:** In Progress
+**Status:** Complete — derived destinations, earlier refusal, isolated restore/open, and native replacement passed; independent review approved.
 
 ## Stage 3: Review and failure guidance
 **Goal:** Explain coverage, credential requirements, extraction contents, and failures using user-facing descriptions; correct F9 documentation.
 **Success Criteria:** Acknowledged Partial coverage is accurately shown; users can identify nonempty files for recovery; known errors give corrective actions without exposing arbitrary exception text.
 **Tests:** Relevant UI/service behavior and nonempty extraction; inspect actual terminal output.
-**Status:** In Progress
+**Status:** Complete — bounded guidance, coverage and extraction labels verified by focused UI tests; terminal acceptance remains Stage 5.
 
 ## Stage 4: Large archives and earlier review findings
 **Goal:** Keep valid larger backups restorable within explicit bounded descriptor/journal limits; correct the stale directory metadata assertion.

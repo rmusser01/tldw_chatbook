@@ -16,7 +16,8 @@ from tldw_chatbook.Utils.platform_files import os
 
 from .admission import Admission, fcntl
 from .archive_models import Metadata
-from .bootstrap import _read
+from .bootstrap import MAX_RECORD, _read
+from .limits import RECOVERY_RECORD_BYTES
 from .native_files import create_private_directory, flush_directory, pinned_directory
 from .native_platform import flush_file
 from .qualification import qualified_for
@@ -1510,7 +1511,9 @@ class Journal:
         for index, name in enumerate(names):
             if name != f"{index:06d}.json":
                 raise ValueError("journal_sequence_invalid")
-            record = _Event.model_validate(_read(parent, name))
+            record = _Event.model_validate(
+                _read(parent, name, max_bytes=RECOVERY_RECORD_BYTES)
+            )
             if (
                 record.operation_id != self.operation_id
                 or record.sequence != index
@@ -1556,7 +1559,9 @@ class Journal:
             self._append(parent, event, evidence)
 
     @staticmethod
-    def _flush_record(parent: int, name: str, expected: dict) -> None:
+    def _flush_record(
+        parent: int, name: str, expected: dict, *, max_bytes: int = MAX_RECORD
+    ) -> None:
         """Reestablish durability of a complete but possibly unflushed record."""
 
         def identity(info):
@@ -1572,7 +1577,7 @@ class Journal:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
         try:
             before = os.fstat(fd)
-            if _read(parent, name) != expected:
+            if _read(parent, name, max_bytes=max_bytes) != expected:
                 raise ValueError("durable_record_changed")
             named = os.stat(name, dir_fd=parent, follow_symlinks=False)
             if identity(named) != identity(before):
@@ -1588,7 +1593,10 @@ class Journal:
     def _flush_records(self, parent: int) -> None:
         """Revalidate and flush accepted history under the held journal lock."""
         for row in self._records(parent):
-            self._flush_record(parent, f"{row.sequence:06d}.json", row.model_dump())
+            self._flush_record(
+                parent, f"{row.sequence:06d}.json", row.model_dump(),
+                max_bytes=RECOVERY_RECORD_BYTES,
+            )
         flush_directory(parent)
 
     def _append(self, parent: int, event: str, evidence: Mapping[str, object]) -> None:
@@ -1605,7 +1613,7 @@ class Journal:
             evidence=validated,
         )
         encoded = _encoded(record)
-        if len(encoded) > 1048576:
+        if len(encoded) > RECOVERY_RECORD_BYTES:
             raise ValueError("journal_record_limit")
         Admission._write_new_record(parent, f"{len(records):06d}.json", encoded)
         flush_directory(parent)

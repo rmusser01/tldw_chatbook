@@ -553,7 +553,11 @@ async def test_replacement_omissions_require_explicit_review_after_untouched_abo
                         await asyncio.sleep(.02)
                 mapping = dict((*original.destinations, *original.selectors))
                 for index, slot in enumerate(screen._inspection_summary["destination_slots"]):
-                    screen.query_one(f"#backup-root-{index}", Input).value = str(mapping[slot["logical_id"]])
+                    screen.query_one(f"#backup-root-{index}", Input).value = (
+                        str(tmp_path / "unused-isolated-choice")
+                        if slot["kind"] == "profile_base"
+                        else str(mapping[slot["logical_id"]])
+                    )
                 screen.query_one("#backup-restore-mode", Select).value = "replace"
                 screen.query_one("#backup-target-config", Input).value = str(selector)
                 screen.query_one("#backup-profile-name-0", Input).value = "Local"

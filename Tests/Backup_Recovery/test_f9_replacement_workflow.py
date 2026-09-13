@@ -154,8 +154,13 @@ def headless(app,*args,**kwargs):
     while not screen.query_one('#backup-restore-form').display:await asyncio.sleep(.03)
    print('FRESH_ARCHIVE_INSPECTED',flush=True)
    for index,slot in enumerate(screen._inspection_summary['destination_slots']):
-    screen.query_one(f'#backup-root-{index}',Input).value=saved['mapping'][slot['logical_id']]
-   screen.query_one('#backup-profile-name-0',Input).value=saved['name']
+    if slot['kind']=='external_root':
+     screen.query_one(f'#backup-root-{index}',Input).value=saved['mapping'][slot['logical_id']]
+   assert screen.query_one('#backup-profile-name-0',Input).disabled
+   if screen._inspection_summary['setup_destination_required']:
+    setup_parent=Path.home()/'files-needing-setup'
+    setup_parent.mkdir(mode=0o700,exist_ok=True)
+    screen.query_one('#backup-setup-parent',Input).value=str(setup_parent)
    screen.query_one('#backup-rollback-password',Input).value='test-only-new-safety-password'
    screen.query_one('#backup-rollback-confirm',Input).value='test-only-new-safety-password'
    await pilot.pause()

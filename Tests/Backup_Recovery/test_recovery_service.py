@@ -251,12 +251,11 @@ if sys.argv[1]=='interrupted':
   raise OSError('fixture after actual catalog registration')
  ProfileCatalog.register=interrupted
 elif sys.argv[1]=='before_prepared':
- from tldw_chatbook.Backup_Recovery import isolated_restore
- finish=isolated_restore._finish_isolated
- def before_prepared(*args):
-  args[-1].set()
-  return finish(*args)
- isolated_restore._finish_isolated=before_prepared
+ from tldw_chatbook.Backup_Recovery.journal import Journal
+ finish=Journal.prepare_publication
+ def before_prepared(*args, **kwargs):
+  raise InterruptedError("cancelled")
+ Journal.prepare_publication=before_prepared
 try:
  inspection=service.start_inspection(archive.path,password=None)
  assert service.wait(inspection,timeout=15)['state']=='succeeded'
@@ -268,7 +267,7 @@ try:
   journal_operation=service.pending_operations()[0]['operation_id']
   service.close();service=RecoveryService(control)
   ProfileCatalog.register=register
-  if finish is not None:isolated_restore._finish_isolated=finish
+  if finish is not None:Journal.prepare_publication=finish
   assert service.status(journal_operation)['actions']==('finish',)
   recovery=service.start_recovery(journal_operation,action='finish')
   state=service.wait(recovery,timeout=30)

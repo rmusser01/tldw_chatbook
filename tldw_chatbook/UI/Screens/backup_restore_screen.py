@@ -161,9 +161,17 @@ class BackupRestoreScreen(Screen):
                     )
                     yield Button("Continue in recovery mode", id="backup-restart")
                     yield Static(
-                        "Choose local destination roots. Archived paths are never defaults."
+                        "Choose a new folder and display name for each isolated profile. Required database and application folders are arranged automatically."
                     )
                     yield Vertical(id="backup-destination-slots", classes="backup-form")
+                    with Vertical(id="backup-setup-destination", classes="backup-form"):
+                        yield Static(
+                            "Files needing setup — existing private folder outside profile and recovery storage"
+                        )
+                        yield Input(
+                            placeholder="Existing private local directory",
+                            id="backup-setup-parent",
+                        )
                     yield Static(
                         "For replacement: selected existing profile configuration"
                     )
@@ -600,7 +608,11 @@ class BackupRestoreScreen(Screen):
         widgets = []
         self.query_one("#backup-list-title", Static).update(
             ("Recovery copies" if mode == "copies" else "Restored profiles")
-            + (": " + issue if issue else "")
+            + (
+                ": " + self.service.issue_message(issue) + f" ({issue})"
+                if issue
+                else ""
+            )
         )
         for identifier in (
             "backup-copy-password",
@@ -825,7 +837,11 @@ class BackupRestoreScreen(Screen):
         self._rollback_plan = plan
         self._rollback_availability = availability
         if issue:
-            message = "Rollback review refused: " + issue
+            message = (
+                "Rollback review refused: "
+                + self.service.issue_message(issue)
+                + f" ({issue})"
+            )
         else:
             message = (
                 f"Recovery copy: {operation}\nRestore: {plan.restore}\nRetire: {plan.retire}\nPreserve: {plan.preserve}\nIssues: {plan.issues}\n"
@@ -860,7 +876,9 @@ class BackupRestoreScreen(Screen):
                 else "release_capability_unavailable"
             )
             self.query_one("#backup-message", Static).update(
-                "Rollback unavailable: " + reason
+                "Rollback unavailable: "
+                + self.service.issue_message(reason)
+                + f" ({reason})"
             )
             return
         old = self._input("backup-copy-password")
@@ -934,7 +952,9 @@ class BackupRestoreScreen(Screen):
             self.service.start_delete_copy(self._delete_copy_id, user_selected=True)
         except (OSError, ValueError, RuntimeError) as error:
             self.query_one("#backup-message", Static).update(
-                "Deletion refused: " + self.service.issue_code(error)
+                "Deletion refused: "
+                + self.service.issue_message(self.service.issue_code(error))
+                + f" ({self.service.issue_code(error)})"
             )
         self._delete_copy_id = None
         self.query_one("#backup-delete-copy", Button).disabled = True
@@ -951,7 +971,9 @@ class BackupRestoreScreen(Screen):
             self._show_mode("inspect")
         except (OSError, ValueError, RuntimeError) as error:
             self.query_one("#backup-message", Static).update(
-                "Inspection refused: " + self.service.issue_code(error)
+                "Inspection refused: "
+                + self.service.issue_message(self.service.issue_code(error))
+                + f" ({self.service.issue_code(error)})"
             )
         finally:
             self._clear_passwords()
@@ -982,7 +1004,9 @@ class BackupRestoreScreen(Screen):
             )
         except (OSError, ValueError, RuntimeError) as error:
             self.query_one("#backup-message", Static).update(
-                "Recovery refused: " + self.service.issue_code(error)
+                "Recovery refused: "
+                + self.service.issue_message(self.service.issue_code(error))
+                + f" ({self.service.issue_code(error)})"
             )
         finally:
             self._clear_passwords()
@@ -1162,7 +1186,9 @@ class BackupRestoreScreen(Screen):
             return
         if preview is None:
             self.query_one("#backup-message", Static).update(
-                "Source review failed: " + reviewed
+                "Source review failed: "
+                + self.service.issue_message(reviewed)
+                + f" ({reviewed})"
             )
             return
         details = preview
@@ -1181,7 +1207,11 @@ class BackupRestoreScreen(Screen):
             "Complete coverage" if preview.complete else "Partial coverage",
             "Archive classification: Complete"
             if details["complete"]
-            else "Archive classification: Partial — acknowledgement required to Create",
+            else (
+                "Archive classification: Partial — acknowledged"
+                if reviewed[2]["allow_partial"]
+                else "Archive classification: Partial — acknowledgement required to Create"
+            ),
             details["maintenance"],
         ]
         available, reason = self._backup_availability
@@ -1222,7 +1252,9 @@ class BackupRestoreScreen(Screen):
                 else "release_capability_unavailable"
             )
             self.query_one("#backup-message", Static).update(
-                "Backup unavailable: " + reason
+                "Backup unavailable: "
+                + self.service.issue_message(reason)
+                + f" ({reason})"
             )
             return
         profiles, destination, options = self._reviewed
@@ -1368,7 +1400,10 @@ class BackupRestoreScreen(Screen):
         if result.get("journal_operation_id"):
             text += "\nRecovery operation: " + result["journal_operation_id"]
         if current["issues"]:
-            text += "\n" + ", ".join(current["issues"])
+            text += "\n" + "\n".join(
+                self.service.issue_message(code) + f" ({code})"
+                for code in current["issues"]
+            )
         review_issues = tuple(current.get("review_issues", ()))
         if review_issues:
             text += "\nReview: " + ", ".join(review_issues)
@@ -1554,7 +1589,7 @@ class BackupRestoreScreen(Screen):
             f"Files: {summary['file_count']} · Payload bytes: {summary['payload_bytes']}",
             f"Consistency: {summary['consistency']}",
             f"Credentials: {summary['credential_policy']}",
-            "Owners: " + ", ".join(summary["owners"]),
+            "Contents: " + ", ".join(summary["owner_labels"]),
             "Required capabilities: " + ", ".join(summary["required_capabilities"]),
         ]
         rows.extend(
@@ -1566,31 +1601,64 @@ class BackupRestoreScreen(Screen):
         await slots.remove_children()
         for index, slot in enumerate(summary["destination_slots"]):
             await slots.mount(
-                Static(f"{slot['logical_id']} ({slot['kind']})", markup=False),
+                Static(
+                    slot["label"]
+                    + (
+                        " — new local folder"
+                        if slot["kind"] == "profile_base"
+                        else " — independent content"
+                    ),
+                    markup=False,
+                ),
                 Input(
                     placeholder="Absolute local directory", id=f"backup-root-{index}"
                 ),
             )
         for index, profile in enumerate(summary["profile_ids"]):
             await slots.mount(
-                Static(f"New display name for {profile}", markup=False),
+                Static(
+                    f"Profile {index + 1} — new display name (isolated restore)",
+                    markup=False,
+                ),
                 Input(
-                    placeholder="Optional local profile name",
+                    placeholder="Required new profile display name",
                     id=f"backup-profile-name-{index}",
                 ),
             )
+        for index, profile in enumerate(summary["profile_ids"]):
+            if index:
+                await slots.mount(
+                    Static(
+                        f"Profile {index + 1} — existing configuration to replace",
+                        markup=False,
+                    ),
+                    Input(
+                        placeholder="Existing local config.toml",
+                        id=f"backup-target-config-{index}",
+                    ),
+                )
+        self._sync_replacement_host()
         groups = self.query_one("#backup-inert-groups", Vertical)
         await groups.remove_children()
         for index, group in enumerate(summary["dependency_groups"]):
             await groups.mount(
                 Checkbox(
-                    Text(f"{group['group_id']}: {len(group['members'])} members"),
+                    Text(
+                        f"{group['label']}: {group['file_count']} files · {group['payload_bytes']} bytes"
+                        + (
+                            "\nExamples: " + ", ".join(group["sample_files"])
+                            if group["sample_files"]
+                            else " — no file content"
+                        )
+                    ),
                     id=f"backup-inert-group-{index}",
+                    disabled=group["file_count"] == 0,
                 )
             )
         if not self.is_mounted or operation != self._summary_requested:
             return
         self._inspection_id, self._inspection_summary = operation, summary
+        self._sync_replacement_host()
         self.query_one("#backup-restore-form").display = self._mode == "inspect"
         self.query_one("#backup-inert-form").display = self._mode == "inspect"
 
@@ -1638,12 +1706,17 @@ class BackupRestoreScreen(Screen):
             return
         self._extraction_plan = plan
         self.query_one("#backup-start-extraction", Button).disabled = plan is None
-        text = "Extraction review refused: " + str(issue)
+        text = (
+            "Extraction review refused: "
+            + self.service.issue_message(issue)
+            + f" ({issue})"
+        )
         if plan is not None:
             text = (
                 f"Inert extraction to {plan.destination}\n"
                 f"Groups: {', '.join(plan.group_ids)}\n"
-                f"Payload: {plan.payload_bytes} bytes\n"
+                f"Files: {len(plan.files)} · Payload: {plan.payload_bytes} bytes\n"
+                f"Examples: {', '.join(row.relative_path for row in plan.files[:3])}\n"
                 f"Unselected dependencies: {plan.unselected_dependencies}"
             )
         self.query_one("#backup-inert-preview", Static).update(text)
@@ -1656,7 +1729,9 @@ class BackupRestoreScreen(Screen):
             self.service.start_extraction(self._inspection_id, self._extraction_plan)
         except (OSError, ValueError, RuntimeError) as error:
             self.query_one("#backup-inert-preview", Static).update(
-                "Extraction could not start: " + self.service.issue_code(error)
+                "Extraction could not start: "
+                + self.service.issue_message(self.service.issue_code(error))
+                + f" ({self.service.issue_code(error)})"
             )
         self._invalidate()
         self._refresh_status()
@@ -1673,6 +1748,8 @@ class BackupRestoreScreen(Screen):
             return
         destinations = {}
         for index, slot in enumerate(self._inspection_summary["destination_slots"]):
+            if mode == "replace" and slot["kind"] == "profile_base":
+                continue
             path = Path(self._input(f"backup-root-{index}")).expanduser()
             if not path.is_absolute():
                 self.query_one("#backup-message", Static).update(
@@ -1685,34 +1762,63 @@ class BackupRestoreScreen(Screen):
             for index, profile in enumerate(self._inspection_summary["profile_ids"])
             if self._input(f"backup-profile-name-{index}").strip()
         }
-        target = (
-            Path(self._input("backup-target-config")).expanduser()
-            if mode == "replace"
-            else None
-        )
-        if target is not None and not target.is_absolute():
+        if mode == "isolated" and set(names) != set(
+            self._inspection_summary["profile_ids"]
+        ):
             self.query_one("#backup-message", Static).update(
-                "Choose the existing local profile configuration to replace."
+                "Enter a new display name for every profile."
             )
             return
+        target = {}
+        if mode == "replace":
+            for index, profile in enumerate(self._inspection_summary["profile_ids"]):
+                identifier = "backup-target-config" + (f"-{index}" if index else "")
+                path = Path(self._input(identifier)).expanduser()
+                if not path.is_absolute():
+                    self.query_one("#backup-message", Static).update(
+                        "Choose the existing local profile configuration to replace."
+                    )
+                    return
+                target[profile] = path
+        bases = {
+            slot["logical_id"]: destinations[slot["logical_id"]]
+            for slot in self._inspection_summary["destination_slots"]
+            if slot["kind"] == "profile_base" and mode == "isolated"
+        }
+        external = {
+            slot["logical_id"]: destinations[slot["logical_id"]]
+            for slot in self._inspection_summary["destination_slots"]
+            if slot["kind"] == "external_root"
+        }
+        setup_parent = None
+        if mode == "replace" and self._inspection_summary["setup_destination_required"]:
+            setup_parent = Path(self._input("backup-setup-parent")).expanduser()
+            if not setup_parent.is_absolute():
+                self.query_one("#backup-message", Static).update(
+                    self.service.issue_message("restore_setup_parent_required")
+                )
+                return
         self._invalidate()
         self._preview_restore(
             self.app,
             self._revision,
             self._inspection_id,
             mode,
-            destinations,
+            (bases, external, setup_parent),
             names,
             target,
             tuple(
                 box.name
                 for box in self.query(".backup-acknowledge-restore-credential")
-                if mode == "replace" and box.value and box.name in self._restore_review_codes_seen
+                if mode == "replace"
+                and box.value
+                and box.name in self._restore_review_codes_seen
             ),
             tuple(
                 box.name
                 for box in self.query(".backup-safety-member")
-                if mode == "replace" and box.value
+                if mode == "replace"
+                and box.value
                 and box.name in {row[0] for row in self._safety_scope_seen}
             ),
         )
@@ -1724,13 +1830,16 @@ class BackupRestoreScreen(Screen):
         try:
             inventory = (
                 None
-                if target is None
-                else self.service.preview_backup((target,), options={})
+                if not target
+                else self.service.preview_backup(tuple(target.values()), options={})
             )
             plan = self.service.preview_restore(
                 inspection,
                 mode=mode,
-                destinations=destinations,
+                profile_bases=destinations[0],
+                external_destinations=destinations[1],
+                setup_parent=destinations[2],
+                target_configs=target,
                 target=inventory,
                 profile_names=names,
                 acknowledged_credential_issues=acknowledged,
@@ -1754,7 +1863,9 @@ class BackupRestoreScreen(Screen):
         if plan is None:
             self._restore_availability = None
             self.query_one("#backup-restore-preview", Static).update(
-                "Restore review refused: " + issue
+                "Restore review refused: "
+                + self.service.issue_message(issue)
+                + f" ({issue})"
             )
             return
         choices = tuple(
@@ -1797,6 +1908,7 @@ class BackupRestoreScreen(Screen):
             "Reviewed local restore plan",
             "Restored execution remains inactive until owner review and setup.",
         ]
+        rows.extend(f"Local profile name: {name}" for _, name in plan.profile_names)
         for label, entries in (
             ("Restore", plan.restore),
             ("Retire", plan.retire),
@@ -1839,7 +1951,9 @@ class BackupRestoreScreen(Screen):
                 else "release_capability_unavailable"
             )
             self.query_one("#backup-message", Static).update(
-                "Replacement unavailable: " + reason
+                "Replacement unavailable: "
+                + self.service.issue_message(reason)
+                + f" ({reason})"
             )
             return
         password = None
@@ -1896,7 +2010,9 @@ class BackupRestoreScreen(Screen):
                 "replacement_restore": "Restore could not start: ",
                 "later_rollback": "Rollback refused: ",
             }[kind]
-            self.query_one("#backup-message", Static).update(label + issue)
+            self.query_one("#backup-message", Static).update(
+                label + self.service.issue_message(issue) + f" ({issue})"
+            )
             return
         if kind == "backup":
             self._requested_backup_operation = operation
@@ -1910,6 +2026,18 @@ class BackupRestoreScreen(Screen):
         return callable(getattr(self.app, "request_recovery_restart", None))
 
     def _sync_replacement_host(self):
+        replacing = self.query_one("#backup-restore-mode", Select).value == "replace"
+        self.query_one("#backup-setup-destination").display = replacing and bool(
+            (self._inspection_summary or {}).get("setup_destination_required")
+        )
+        for index, slot in enumerate(
+            (self._inspection_summary or {}).get("destination_slots", ())
+        ):
+            if slot["kind"] == "profile_base":
+                self.query_one(f"#backup-root-{index}", Input).disabled = replacing
+        for name in self.query("Input"):
+            if (name.id or "").startswith("backup-profile-name-"):
+                name.disabled = replacing
         required = (
             self.query_one("#backup-restore-mode", Select).value == "replace"
             and self._requires_recovery_restart()

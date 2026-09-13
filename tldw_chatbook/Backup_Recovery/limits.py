@@ -2,6 +2,10 @@
 
 from dataclasses import dataclass
 
+# Recovery descriptors contain per-file identities and local target paths, so
+# they are larger than bootstrap enrollment records or archive manifests.
+RECOVERY_RECORD_BYTES = 64 * 1024**2
+
 
 @dataclass(frozen=True)
 class ArchiveLimits:

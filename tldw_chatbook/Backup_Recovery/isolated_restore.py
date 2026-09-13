@@ -45,8 +45,8 @@ def restore_isolated(
         admission_authority,
     )
     from .journal import Journal, observe_artifact
-    from .native_files import create_private_directory, pinned_directory
-    from .restore_plan import RestorePlan, _ancestor, recheck_targets
+    from .native_files import create_private_directory
+    from .restore_plan import RestorePlan, recheck_targets
     from .space import require_capacity
     from .staging import stage_restore
     from .storage_admission import acquire_storage
@@ -85,19 +85,9 @@ def restore_isolated(
     if not control_root.is_absolute() or ".." in control_root.parts:
         raise ValueError("invalid_control_root")
     root = bootstrap.default_bootstrap_root()
-    ancestors = sorted(
-        {_ancestor(path) for _, path in (*plan.destinations, *plan.selectors)}
-    )
-    if any(
-        bootstrap._overlap(parent, control_root) or bootstrap._overlap(parent, root)
-        for parent in ancestors
-    ):
-        raise ValueError("isolated_destination_parent_overlaps_control")
-    for parent in ancestors:
-        with pinned_directory(parent) as fd:
-            info = os.fstat(fd)
-            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
-                raise ValueError("private_destination_parent_required")
+    from .destinations import check_isolated_parents
+
+    ancestors = check_isolated_parents(plan, control_root)
     if not control_root.exists():
         create_private_directory(control_root)
     operation_id = uuid4().hex
@@ -198,10 +188,11 @@ def _finish_isolated(
             records = journal._records(parent)
         if not any(row.event == "prepared" for row in records):
             from .bootstrap import _read
+            from .limits import RECOVERY_RECORD_BYTES
             from .native_files import pinned_directory
 
             with pinned_directory(candidate) as parent:
-                descriptor = _read(parent, "candidate.json")
+                descriptor = _read(parent, "candidate.json", max_bytes=RECOVERY_RECORD_BYTES)
             journal.prepare_publication(
                 candidate,
                 plan,

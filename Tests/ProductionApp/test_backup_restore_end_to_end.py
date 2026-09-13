@@ -136,7 +136,8 @@ async def main():
  app.app_config.setdefault('first_run',{})['setup_completed']=True
  note=app.chachanotes_db.add_note('UI captured note','Captured through F9')
  destination=Path.home()/('ui.tldw-backup.zip.age' if encrypted else 'ui.tldw-backup.zip')
- restored=fixture/'restored';restored.mkdir(mode=0o700)
+ restore_parent=fixture/'restore-locations';restore_parent.mkdir(mode=0o700)
+ restored=restore_parent/'restored'
  async with app.run_test(headless=False,size=(120,42)) as pilot:
   from contextlib import contextmanager
   ui_events=[]
@@ -272,27 +273,9 @@ async def main():
   await ready(lambda:screen.query_one('#backup-restore-form').display)
   assert screen._inspection_summary['archive_verified']
   assert not screen.query_one('#backup-inspect-password',Input).value
-  roots={row.logical_id:row for row in doc.directories if row.parent_id is None}
-  producers={row.logical_id:row for row in doc.producer_inventory}
-  ordinary={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local','db.prompts.primary','chatbooks.registry','db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','db.agent_runs','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local'}
-  trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles','persona.assets':'persona_visual'}
-  assert not any(tuple(slot.get('owners',()))==('recovery.credentials',) for slot in screen._inspection_summary['destination_slots'])
-  for index,slot in enumerate(screen._inspection_summary['destination_slots']):
-   key=slot['logical_id']
-   if slot['kind']=='data_root':target=restored/'data'
-   else:
-    root=roots[key];owner=producers[key].owner_id
-    if root.synthetic:
-     if owner in {'config','config.history','runtime.source_state','ui.state','ui.emoji_recents'}:target=restored/'config'
-     elif owner=='eval.definitions':target=restored/'inactive-eval'
-     else:
-      assert owner in ordinary,(key,owner)
-      target=restored/'data'/'recovered-ui'
-    elif owner=='persona.visual_identity_builtin':target=restored/'inactive-builtin'
-    else:
-     assert owner in trees,(key,owner)
-     target=restored/'data'/'recovered-ui'/trees[owner]
-   screen.query_one(f'#backup-root-{index}',Input).value=str(target)
+  slots=screen._inspection_summary['destination_slots']
+  assert len(slots)==1 and slots[0]['kind']=='profile_base',slots
+  screen.query_one('#backup-root-0',Input).value=str(restored)
   screen.query_one('#backup-profile-name-0',Input).value='recovered-ui'
   await press('#backup-review-restore')
   await ready(lambda:not screen.query_one('#backup-start-restore',Button).disabled)

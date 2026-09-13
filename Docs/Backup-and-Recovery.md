@@ -1,19 +1,19 @@
 # Local backup and recovery
 
-Chatbook's **Backup & Restore** screen opens with F9. A backup is a local
+Chatbook's **Backup & Restore** screen opens from **F4 → Settings → Backup & Restore**, or **Ctrl+P → backup**. A backup is a local
 recovery archive, separate from a Chatbook content export. It covers selected
 Chatbook-owned data; it does not back up a remote tldw server, the operating
 system, or the application installer.
 
 Complete backup and replacement have separate availability checks. They require
 a matching qualified platform, the Python encryption backend, and supported storage
-locations. F9 shows availability alongside coverage and required space. Follow the
+locations. The screen shows availability alongside coverage and required space. Follow the
 operation's actual review and refusal messages; platform support alone does not
 establish that a particular selection can be captured or restored.
 
 ## Create a backup
 
-1. Open F9 and choose **Create backup**. Review the listed profile configurations;
+1. Open **Backup & Restore** and choose **Create backup**. Review the listed profile configurations;
    add another configuration explicitly if it is not listed. The default selection
    includes known owned profile data.
 2. Choose a new output file. Use `.tldw-backup.zip` for a plaintext archive or
@@ -50,8 +50,13 @@ Choose **Inspect / restore**, select the archive, supply its password when neede
 and choose **Inspect**. Inspection verifies the archive before destination review.
 Archive paths never authorize writes to those locations on your computer.
 
-For **Restore as isolated profile**, choose new local destination roots and profile
-names using the displayed slots. Choose **Review restore**, read the affected data
+For **Restore as isolated profile**, choose one new local folder and name for each
+profile, plus a destination for each included external folder. Chatbook derives
+the configuration and database paths, keeping shared databases together.
+Place new profile folders beneath an existing private restore directory that is
+separate from Chatbook's recovery storage. Review identifies unsuitable parents
+before you confirm.
+Choose **Review restore**, read the affected data
 and setup requirements, then **Confirm reviewed restore**. After successful
 validation and publication, use **Restored profiles** to open the profile in a
 separate process. Opening it does not switch the running application's storage.
@@ -74,7 +79,9 @@ These results mean different things:
 | Needs setup | Restored capabilities or missing assets still need local review. |
 
 For manual file recovery, use **Review extraction** and **Confirm inert
-extraction** with selected groups and a new directory. Extracted files are inert
+extraction** with selected groups and a new directory. Group labels show file
+counts and sizes; choose a group containing files to recover saved content.
+Extracted files are inert
 bytes: this does not register, migrate, or open a working profile.
 
 ## Replace existing stored data
@@ -83,6 +90,10 @@ Choose **Replace selected stored data** and identify the existing local profile
 configuration. From the normal application, **Continue in recovery mode** closes
 Chatbook before replacement review. Enter passwords and inspect the archive again
 in the fresh recovery screen; approval does not carry across the restart.
+
+When **Files needing setup** is shown, choose an existing private folder outside
+profile and recovery storage. Chatbook places those inactive recovered files there
+without mixing them into the running profile's configuration.
 
 Review the exact restore, retirement, and preservation lists. Preserved items can
 be selected explicitly for inclusion in the safety copy where the review offers

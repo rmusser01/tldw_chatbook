@@ -12,7 +12,7 @@ from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader as reader
 from .archive_models import SealedArchive
-from .limits import ArchiveLimits
+from .limits import RECOVERY_RECORD_BYTES, ArchiveLimits
 from .native_files import (
     create_private_directory,
     create_private_file,
@@ -51,7 +51,7 @@ def _copy(source, destination, cancel):
     return total, digest.hexdigest()
 
 
-def _config_targets(data, profile, config_target, doc, plan, owners):
+def _config_targets(data, profile, config_target, doc, plan, owners, *, derive=False):
     """Check installed inert selectors using the reviewed final config location."""
     from .config_adapter import _CONFIG_HISTORY
     from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
@@ -77,7 +77,24 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
     from .recovered_media import _RecoveredAdapter
 
     databases = {owner: key for owner, key, _, _ in DATABASE_PATHS}
-    for payload in doc.files:
+    derived = {}
+    records = list(doc.files)
+    if derive:
+        from types import SimpleNamespace
+
+        producer = {row.logical_id: row for row in doc.producer_inventory}
+        occupied = {row.root_id for row in doc.files}
+        records.extend(
+            SimpleNamespace(
+                **row.model_dump(), owner_id=producer[row.logical_id].owner_id
+            )
+            for row in doc.directories
+            if row.parent_id is None
+            and not row.synthetic
+            and row.root_id not in occupied
+            and row.logical_id in producer
+        )
+    for payload in records:
         if (
             not payload.logical_id.startswith(f"profile:{profile}:")
             or payload.logical_id not in selected
@@ -91,6 +108,9 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
         if payload.owner_id == "config":
             expected = config_target
         elif payload.owner_id == "config.history":
+            if derive:
+                derived[payload.root_id] = config_target.parent
+                continue
             destination = selected[payload.logical_id]
             if destination.parent == config_target.parent and (
                 destination == config_target.with_suffix(config_target.suffix + ".bak")
@@ -119,6 +139,8 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
                 owner.owner_id in {"mcp.local", "mcp.permissions", "mcp.context"}
                 and payload.logical_id not in canonical_ids
             ):
+                if derive:
+                    raise ValueError("owner_relocation_unverified:" + payload.owner_id)
                 owner.validate_retained_destination(
                     profile, payload, doc, plan, expected, config_target
                 )
@@ -130,6 +152,12 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
                 if owner.owner_id == "mcp.history"
                 else None
             )
+            if (
+                derive
+                and suffix
+                and Path(payload.relative_path).name == expected.name + suffix
+            ):
+                expected = expected.with_name(expected.name + suffix)
             if suffix and selected[payload.logical_id] == expected.with_name(
                 expected.name + suffix
             ):
@@ -148,9 +176,10 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
             )
         elif type(owner) is _Diagnostics:
             expected = owner._restore_path(configured, payload.relative_path)
-            if selected[payload.logical_id] != expected:
-                raise ValueError("owner_relocation_unverified:diagnostics.logs")
-            continue
+            if not derive:
+                if selected[payload.logical_id] != expected:
+                    raise ValueError("owner_relocation_unverified:diagnostics.logs")
+                continue
         elif type(owner) is _Generated:
             expected = user_data_dir(configured) / "generated_images"
             relative = Path(payload.relative_path)
@@ -166,7 +195,8 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
                 or len(relative.parts) < 2
                 or relative.parts[0] != "saved"
                 or ".." in relative.parts
-                or selected[payload.logical_id] != expected / relative
+                or not derive
+                and selected[payload.logical_id] != expected / relative
             ):
                 raise ValueError("owner_relocation_unverified:generation.assets")
         elif isinstance(owner, _Definition):
@@ -200,6 +230,19 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
             expected = database_path(configured, "chachanotes_db_path")
         else:
             raise ValueError("owner_relocation_unverified:" + payload.owner_id)
+        if derive:
+            root = directories[payload.root_id]
+            destination = expected
+            if root.synthetic:
+                relative = Path(payload.relative_path)
+                for _ in relative.parts:
+                    destination = destination.parent
+                if destination / relative != expected:
+                    raise ValueError("owner_relocation_unverified:" + payload.owner_id)
+            if payload.root_id in derived and derived[payload.root_id] != destination:
+                raise ValueError("owner_relocation_unverified:" + payload.owner_id)
+            derived[payload.root_id] = destination
+            continue
         destination = selected[payload.logical_id]
         root = directories[payload.root_id]
         if destination == expected or (
@@ -209,6 +252,7 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
         ):
             continue
         raise ValueError("owner_relocation_unverified:" + payload.owner_id)
+    return derived
 
 
 def _items(doc, plan):
@@ -939,11 +983,14 @@ def stage_restore(
             "isolated_profiles": list(isolated_profiles),
             "retained_credentials": retained_credentials,
         }
+        encoded_descriptor = json.dumps(descriptor, sort_keys=True).encode()
+        if len(encoded_descriptor) > RECOVERY_RECORD_BYTES:
+            raise ValueError("recovery_record_limit")
         with (
             create_private_file(stage / "candidate.json") as fd,
             os.fdopen(os.dup(fd), "wb") as output,
         ):
-            output.write(json.dumps(descriptor, sort_keys=True).encode())
+            output.write(encoded_descriptor)
         if journal is not None:
             journal.record_candidate(stage, plan, archive)
         successful = True

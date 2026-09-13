@@ -83,6 +83,10 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_skills_chatbooks_capture.py::test_exact_script_output_topology_and_unsupported_config",
     "Tests/Backup_Recovery/test_related_path_admission.py",
     "Tests/Backup_Recovery/test_scheduler_native_pause_intent.py",
+    "Tests/Backup_Recovery/test_mounted_console_backup.py",
+    "Tests/Backup_Recovery/test_large_recovery_records.py::test_large_collection_completes_actual_isolated_publication",
+    "Tests/Backup_Recovery/test_restore_destinations.py",
+    "Tests/UI/test_backup_restore_destinations.py",
 )
 _RESTORE_DIAGNOSTIC_TESTS = (
     (

@@ -11,7 +11,7 @@ from threading import Event
 from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader as reader
-from .admission import Admission, fcntl
+from .admission import Admission
 from .bootstrap import _key, _overlap, _read, _records, _registry
 from .capture import _item_validator
 from .journal import (
@@ -29,7 +29,7 @@ from .journal import (
     _states,
     observe_artifact,
 )
-from .limits import ArchiveLimits
+from .limits import RECOVERY_RECORD_BYTES, ArchiveLimits
 from .native_files import (
     _rename_new,
     create_private_directory,
@@ -502,7 +502,7 @@ def _descriptor(candidate, plan):
     with pinned_directory(candidate) as fd:
         if os.fstat(fd).st_uid != os.geteuid() or os.fstat(fd).st_mode & 0o077:
             raise ValueError("private_candidate_required")
-        document = _read(fd, "candidate.json")
+        document = _read(fd, "candidate.json", max_bytes=RECOVERY_RECORD_BYTES)
     if (
         document.get("archive_digest") != plan.archive_digest
         or document.get("target_fingerprint") != plan.target_fingerprint
@@ -1371,6 +1371,22 @@ def _prepare(
             )
         if tokenizer_directories:
             recheck_targets(plan)
+        from .journal import MAX_EVENTS
+
+        # A replacement unit needs at most six forward move records and four
+        # reverse move records. Reserve additional records for reconciliation,
+        # directory metadata, credential recovery and activation before any
+        # target or credential mutation. Count publication units: a new tree
+        # containing many files is still published with one directory move.
+        required_events = (
+            len(records) + 100
+            + 12 * len(artifacts)
+            + 8 * len(directory_metadata)
+            + 8 * len(document.get("credential_scopes", {}))
+            + 12 * (len(isolated_profiles) + len(replacement_profiles))
+        )
+        if required_events >= MAX_EVENTS:
+            raise ValueError("recovery_event_budget")
         journal._append(
             parent,
             "prepared",
@@ -1765,7 +1781,7 @@ def _validate_installed(journal, candidate, plan, *, session=None):
         if not _matches(receipt.descriptor, str(candidate / "candidate.json")):
             raise ValueError("candidate_receipt_changed")
         with pinned_directory(candidate) as fd:
-            descriptor = _read(fd, "candidate.json")
+            descriptor = _read(fd, "candidate.json", max_bytes=RECOVERY_RECORD_BYTES)
         with reader._regular(journal.root / "verified-manifest.json") as stream:
             info = os.fstat(stream.fileno())
             if (
