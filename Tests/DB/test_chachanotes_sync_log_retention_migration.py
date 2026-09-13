@@ -98,6 +98,18 @@ def db(tmp_path: Path):
     instance.close_connection()
 
 
+def _tombstone_v44_message(db: CharactersRAGDB, message_id: str) -> None:
+    """Seed the legacy row with real v44 triggers, before semantic ownership."""
+    with db.transaction() as cursor:
+        assert _version(cursor.connection) == 44
+        cursor.execute(
+            "UPDATE messages SET deleted = 1, version = 2, last_modified = ?, "
+            "client_id = ? WHERE id = ? AND version = 1 AND deleted = 0",
+            (db._get_current_utc_timestamp_iso(), db.client_id, message_id),
+        )
+        assert cursor.rowcount == 1
+
+
 def test_schema_version_is_at_least_46(db):
     """The exact pin moved with the newest step (see this module's docstring)."""
     assert _version(db.get_connection()) >= 46
@@ -138,7 +150,7 @@ def test_upgrading_a_real_v44_database_purges_its_backlog(tmp_path: Path):
                 "content": deleted_body,
             }
         )
-        historical.soft_delete_message(deleted_id, expected_version=1)
+        _tombstone_v44_message(historical, deleted_id)
         edited_id = historical.add_message(
             {
                 "conversation_id": conversation_id,
@@ -146,10 +158,20 @@ def test_upgrading_a_real_v44_database_purges_its_backlog(tmp_path: Path):
                 "content": superseded_body,
             }
         )
-        historical.update_message(
-            edited_id, {"content": "second"}, expected_version=1
-        )
-        historical.update_message(edited_id, {"content": kept_body}, expected_version=2)
+        for version, content in ((2, "second"), (3, kept_body)):
+            with historical.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE messages SET content = ?, version = ?, last_modified = ? "
+                    "WHERE id = ? AND version = ?",
+                    (
+                        content,
+                        version,
+                        historical._get_current_utc_timestamp_iso(),
+                        edited_id,
+                        version - 1,
+                    ),
+                )
+                assert cursor.rowcount == 1
         with historical.transaction() as conn:
             conn.execute(
                 "INSERT INTO sync_log(entity, entity_id, operation, timestamp, "
@@ -230,7 +252,7 @@ def test_a_failure_mid_step_rewinds_to_v44_with_nothing_applied(
                 "content": f"body {needle}",
             }
         )
-        historical.soft_delete_message(message_id, expected_version=1)
+        _tombstone_v44_message(historical, message_id)
         rows_before = historical.get_connection().execute(
             "SELECT COUNT(*) FROM sync_log"
         ).fetchone()[0]
@@ -406,7 +428,7 @@ def test_upgrading_reindexes_only_live_rows_into_messages_fts(tmp_path: Path):
                 "content": f"gone {needle}",
             }
         )
-        historical.soft_delete_message(gone_id, expected_version=1)
+        _tombstone_v44_message(historical, gone_id)
 
     migrated = CharactersRAGDB(db_path, client_id="v46-upgrade")
     try:

@@ -73,6 +73,7 @@ _PLAN_COOKIE = "canvas_plan"
 _BOOT_TTL_SECONDS = 30.0
 _FRAME_TTL_SECONDS = 20.0
 _ACTION_TTL_SECONDS = 30.0
+_REQUEST_BODY_TIMEOUT_SECONDS = 30.0
 _BROWSER_SESSION_TTL_SECONDS = 30 * 60.0
 _BRIDGE_SETTLEMENT_TTL_SECONDS = 300.0
 _MAX_BRIDGE_SETTLEMENTS = 64
@@ -1602,6 +1603,8 @@ class CanvasGateway:
             response = await handler(request)
         except web.HTTPException as exc:
             response = _error_response("request_refused", exc.status)
+            if exc.keep_alive is False:
+                response.force_close()
         except Exception:  # noqa: BLE001 - HTTP boundary returns a content-free refusal
             response = _error_response("gateway_unavailable", 503)
         response.headers["Cache-Control"] = "no-store"
@@ -2402,7 +2405,15 @@ class CanvasGateway:
         )
 
     async def _read_json(self, request: web.Request) -> object:
-        body = await request.content.read(self._max_request_bytes + 1)
+        try:
+            async with asyncio.timeout(_REQUEST_BODY_TIMEOUT_SECONDS):
+                body = await request.content.readexactly(self._max_request_bytes + 1)
+        except asyncio.IncompleteReadError as exc:
+            body = exc.partial
+        except TimeoutError:
+            response = web.HTTPRequestTimeout()
+            response.force_close()
+            raise response from None
         if len(body) > self._max_request_bytes:
             raise web.HTTPRequestEntityTooLarge(
                 max_size=self._max_request_bytes, actual_size=len(body)

@@ -199,7 +199,7 @@ async def test_the_footer_chip_follows_an_in_flight_write_too(tmp_path) -> None:
             assert ("esc", "back to list") in screen._footer_shortcut_registration[1]
 
             screen._prompts_state.mutation_in_flight = True
-            screen._sync_library_prompt_mutation_presentation()
+            screen._prompts_controller._sync_library_prompt_mutation_presentation()
             await pilot.pause()
 
             chips = screen._footer_shortcut_registration[1]
@@ -208,7 +208,7 @@ async def test_the_footer_chip_follows_an_in_flight_write_too(tmp_path) -> None:
 
             # ...and it settles back when the write finishes.
             screen._prompts_state.mutation_in_flight = False
-            screen._sync_library_prompt_mutation_presentation()
+            screen._prompts_controller._sync_library_prompt_mutation_presentation()
             await pilot.pause()
             assert (
                 "esc",
@@ -235,7 +235,7 @@ async def test_a_busy_editor_that_is_also_dirty_names_the_blocker_that_wins(
             ) in screen._footer_shortcut_registration[1]
 
             screen._prompts_state.mutation_in_flight = True
-            screen._sync_library_prompt_mutation_presentation()
+            screen._prompts_controller._sync_library_prompt_mutation_presentation()
             await pilot.pause()
 
             chips = screen._footer_shortcut_registration[1]

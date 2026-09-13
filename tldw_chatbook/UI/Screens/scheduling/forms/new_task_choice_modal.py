@@ -26,7 +26,7 @@ NewTaskChoice = Literal["reminder", "recurring_question"]
 class NewTaskChoiceModal(SafeModalDismissMixin, ModalScreen[NewTaskChoice | None]):
     """Ask which kind of scheduled task to create."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     NewTaskChoiceModal {
         align: center middle;
     }
@@ -55,7 +55,7 @@ class NewTaskChoiceModal(SafeModalDismissMixin, ModalScreen[NewTaskChoice | None
         align-horizontal: right;
     }
 
-    NewTaskChoiceModal .new-task-choice-actions Button {
+    NewTaskChoiceModal .new-task-choice-actions Button.new-task-choice-action {
         width: auto;
         margin-left: 1;
     }
@@ -80,12 +80,21 @@ class NewTaskChoiceModal(SafeModalDismissMixin, ModalScreen[NewTaskChoice | None
                 markup=False,
             )
             with Horizontal(classes="new-task-choice-actions"):
-                yield Button("Cancel", id="new-task-choice-cancel")
                 yield Button(
-                    "Recurring question…", id="new-task-choice-automation"
+                    "Cancel",
+                    id="new-task-choice-cancel",
+                    classes="new-task-choice-action",
                 )
                 yield Button(
-                    "Scheduled task…", id="new-task-choice-reminder", variant="primary"
+                    "Recurring question…",
+                    id="new-task-choice-automation",
+                    classes="new-task-choice-action",
+                )
+                yield Button(
+                    "Scheduled task…",
+                    id="new-task-choice-reminder",
+                    classes="new-task-choice-action",
+                    variant="primary",
                 )
 
     def on_mount(self) -> None:

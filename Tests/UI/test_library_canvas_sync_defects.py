@@ -114,7 +114,9 @@ def paged_notes_app_factory(tmp_path):
 
     yield build
     for db in databases:
-        db.close_connection()
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert db.registered_connection_count() == 0
 
 
 async def _open_notes_canvas(host, pilot):

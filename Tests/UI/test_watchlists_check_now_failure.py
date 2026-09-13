@@ -183,14 +183,24 @@ async def test_the_sources_status_column_shows_the_failure_after_the_toast_has_g
 async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
     """AC#3: the level that hid TASK-1100 for three UAT runs."""
     app = _build_test_app()
-    _seed_source(app)
+    source_id = _seed_source(app)
     app.notify = Notified()
 
+    accepted_sources: list[tuple[int, ...]] = []
+
+    async def boom(source_ids):
+        accepted_sources.append(tuple(source_ids))
+        raise ValueError("invalid literal for int() with base 10")
+
+    # Local Check now is owned by the operation coordinator. Mocking the
+    # legacy controller leaves the real coordinator free to fetch this test's
+    # seeded public URL whenever DNS is available (TASK-31914).
     records: list[tuple[str, str]] = []
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen, pane = await _open_sources(pilot, host)
+        app.watchlists_operation_coordinator.accept_checks = boom
 
         # The production app configures Loguru during startup. Observe the
         # boundary only after that lifecycle step, and remove the sink before
@@ -202,11 +212,6 @@ async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
             level="DEBUG",
         )
         try:
-
-            async def boom(**kwargs):
-                raise ValueError("invalid literal for int() with base 10")
-
-            screen._controller.check_now = boom
             pane.select_source_by_id(str(pane.sources[0]["id"]))
             await pilot.pause(0.2)
             records.clear()
@@ -218,6 +223,7 @@ async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
         finally:
             logger.remove(sink_id)
 
+    assert accepted_sources == [(source_id,)]
     check_records = [
         (level, message)
         for level, message in records

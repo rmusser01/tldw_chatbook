@@ -134,6 +134,51 @@ DEFERRAL_SHIMS = frozenset(
 #   UNREACHABLE   -- the module has no importer anywhere in the repo.
 #
 CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
+    (
+        "tldw_chatbook/UI/Console_Modules/left_rail.py",
+        "ConsoleLeftRail.sync_model_recovery",
+        "title",
+    ): "NEEDS-LAYOUT: section title has content-driven height inside an auto-height header.",
+    (
+        "tldw_chatbook/UI/Console_Modules/left_rail.py",
+        "ConsoleLeftRail.sync_model_recovery",
+        "self.query_one('#console-context-recovery-copy', Static)",
+    ): "NEEDS-LAYOUT: recovery copy wraps and its containing row is display-toggled.",
+    (
+        "tldw_chatbook/UI/Console_Modules/left_rail.py",
+        "ConsoleLeftRail.sync_model_recovery",
+        "self.query_one('#console-default-recovery-copy', Static)",
+    ): "NEEDS-LAYOUT: recovery copy wraps and its containing row is display-toggled.",
+    (
+        "tldw_chatbook/UI/Screens/scheduling/definition_detail.py",
+        "DefinitionDetail.set_definition",
+        "self._question_static",
+    ): "NEEDS-LAYOUT: the question card is height:auto and wraps its body text.",
+    (
+        "tldw_chatbook/UI/Screens/scheduling/definition_detail.py",
+        "DefinitionDetail._refresh_why_note",
+        "self._why_static",
+    ): "NEEDS-LAYOUT: .follow-why is height:auto in both docked and pushed detail panes.",
+    (
+        "tldw_chatbook/Widgets/Chat_Widgets/chat_question_card.py",
+        "ChatQuestionCard._sync_deadline",
+        "label",
+    ): "NEEDS-LAYOUT: #question-deadline is height:auto and countdown copy can wrap.",
+    (
+        "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
+        "ConsoleSessionSwitcherModal._update_hints",
+        "hints",
+    ): "NEEDS-LAYOUT: #console-switcher-hints wraps into up to two rows.",
+    (
+        "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
+        "ConsoleSessionSwitcherModal._update_receipt_status",
+        "status",
+    ): "NEEDS-LAYOUT: storage-readiness status is display-toggled on this path.",
+    (
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "ChatScreen._sync_console_live_work_readiness_rows",
+        "widget",
+    ): "NOT-PER-TICK: equality-gated on the row's current renderable before updating copy and classes.",
     # -- tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py
     (
         "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
@@ -160,10 +205,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/UI/Research_Window.py",
         "ResearchWindow._update_detail",
         "self.query_one('#research-run-detail', Static)",
-    ): (
-        "NEEDS-LAYOUT: run detail is a height:auto block that grows with "
-        "events."
-    ),
+    ): ("NEEDS-LAYOUT: run detail is a height:auto block that grows with events."),
     # -- tldw_chatbook/UI/Screens/chat_screen.py
     #    (dict/set receivers formerly carried NOT-A-WIDGET rows here; they are
     #    now auto-classified by _receiver_is_provably_collection, TASK-23028)
@@ -171,10 +213,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "ChatScreen._sync_console_agent_section",
         "fleet_summary",
-    ): (
-        "NEEDS-LAYOUT: height:auto summary whose line count tracks the "
-        "fleet size."
-    ),
+    ): ("NEEDS-LAYOUT: height:auto summary whose line count tracks the fleet size."),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "ChatScreen._sync_console_agent_section",
@@ -190,8 +229,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "ChatScreen._sync_console_mode_bar",
         "mode_bar",
     ): (
-        "NEEDS-LAYOUT: the mode bar's chip row wraps, so its height is "
-        "content-driven."
+        "NEEDS-LAYOUT: the mode bar's chip row wraps, so its height is content-driven."
     ),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
@@ -203,15 +241,12 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     ),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_settings_summary",
+        "ChatScreen._apply_console_settings_summary_state",
         "recovery",
-    ): (
-        "NEEDS-LAYOUT: the readiness row is display-toggled on the same "
-        "path."
-    ),
+    ): ("NEEDS-LAYOUT: the readiness row is display-toggled on the same path."),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_settings_summary",
+        "ChatScreen._apply_console_settings_summary_state",
         "self.query_one('#console-model-section-max-tokens .console-model-section-value', Static)",
     ): (
         "NEEDS-LAYOUT: as above -- shares the wrapped .console-model- "
@@ -219,12 +254,12 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     ),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_settings_summary",
+        "ChatScreen._apply_console_settings_summary_state",
         "self.query_one('#console-model-section-model .console-model-section-value', Static)",
     ): "NEEDS-LAYOUT: as above -- wrapped value, auto height capped at 3.",
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_settings_summary",
+        "ChatScreen._apply_console_settings_summary_state",
         "self.query_one('#console-model-section-provider .console-model-section-value', Static)",
     ): (
         "NEEDS-LAYOUT: .console-model-section-value is text-wrap:wrap with "
@@ -233,7 +268,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     ),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_settings_summary",
+        "ChatScreen._apply_console_settings_summary_state",
         "self.query_one('#console-model-section-temperature .console-model-section-value', Static)",
     ): (
         "NEEDS-LAYOUT: as above -- shares the wrapped .console-model- "
@@ -290,10 +325,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/Console/console_composer_bar.py",
         "ConsoleComposerBar.set_pending_attachment_label",
         "indicator",
-    ): (
-        "NEEDS-LAYOUT: attachment indicator is width:auto and display- "
-        "toggled."
-    ),
+    ): ("NEEDS-LAYOUT: attachment indicator is width:auto and display- toggled."),
     (
         "tldw_chatbook/Widgets/Console/console_composer_bar.py",
         "ConsoleComposerBar.set_voice_status",
@@ -314,18 +346,12 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/Console/console_session_surface.py",
         "ConsoleSessionSurface.set_session_title",
         "header",
-    ): (
-        "NEEDS-LAYOUT: session title width is auto and tracks the title "
-        "text."
-    ),
+    ): ("NEEDS-LAYOUT: session title width is auto and tracks the title text."),
     (
         "tldw_chatbook/Widgets/Console/console_session_surface.py",
         "ConsoleSessionSurface.show_fleet_coachmark",
         "content",
-    ): (
-        "NEEDS-LAYOUT: the fleet coachmark is a display-toggled auto-sized "
-        "callout."
-    ),
+    ): ("NEEDS-LAYOUT: the fleet coachmark is a display-toggled auto-sized callout."),
     (
         "tldw_chatbook/Widgets/Console/console_session_surface.py",
         "ConsoleSessionSurface.sync_inline_guidance",
@@ -334,20 +360,14 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     # -- tldw_chatbook/Widgets/Console/console_status_chips.py
     (
         "tldw_chatbook/Widgets/Console/console_status_chips.py",
-        "ConsoleStatusChips.sync_cost_state",
+        "ConsoleStatusChips._apply_cost_chip_label",
         "chip",
-    ): (
-        "NEEDS-LAYOUT: chips are width:auto -- the label length IS the "
-        "width."
-    ),
+    ): ("NEEDS-LAYOUT: chips are width:auto -- the label length IS the width."),
     (
         "tldw_chatbook/Widgets/Console/console_status_chips.py",
         "ConsoleStatusChips.sync_run_chip",
         "chip",
-    ): (
-        "NEEDS-LAYOUT: chips are width:auto -- the label length IS the "
-        "width."
-    ),
+    ): ("NEEDS-LAYOUT: chips are width:auto -- the label length IS the width."),
     # -- tldw_chatbook/Widgets/Console/console_transcript.py
     (
         "tldw_chatbook/Widgets/Console/console_transcript.py",
@@ -379,18 +399,12 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._apply_opened_document",
         "self.query_one('#file-notes-breadcrumb', Static)",
-    ): (
-        "NEEDS-LAYOUT: the breadcrumb wraps, so its row count tracks the "
-        "path."
-    ),
+    ): ("NEEDS-LAYOUT: the breadcrumb wraps, so its row count tracks the path."),
     (
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._dismiss_reload_confirmation",
         "self.query_one('#file-notes-reload-confirm-copy', Static)",
-    ): (
-        "NEEDS-LAYOUT: the reload-confirm callout is display-toggled and "
-        "auto-sized."
-    ),
+    ): ("NEEDS-LAYOUT: the reload-confirm callout is display-toggled and auto-sized."),
     (
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._set_action_status",
@@ -433,52 +447,34 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/audio_troubleshooting_dialog.py",
         "AudioTroubleshootingDialog._update_level_meter",
         "meter",
-    ): (
-        "NOT-A-WIDGET: ProgressBar.update(progress=...) has no layout "
-        "kwarg."
-    ),
+    ): ("NOT-A-WIDGET: ProgressBar.update(progress=...) has no layout kwarg."),
     # -- tldw_chatbook/Widgets/detailed_progress.py
     (
         "tldw_chatbook/Widgets/detailed_progress.py",
         "DetailedProgressBar._update_metrics",
         "self.query_one('#elapsed-time', Static)",
-    ): (
-        "UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or "
-        "tests)."
-    ),
+    ): ("UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or tests)."),
     (
         "tldw_chatbook/Widgets/detailed_progress.py",
         "DetailedProgressBar._update_metrics",
         "self.query_one('#memory-usage', Static)",
-    ): (
-        "UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or "
-        "tests)."
-    ),
+    ): ("UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or tests)."),
     (
         "tldw_chatbook/Widgets/detailed_progress.py",
         "DetailedProgressBar._update_metrics",
         "self.query_one('#remaining-time', Static)",
-    ): (
-        "UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or "
-        "tests)."
-    ),
+    ): ("UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or tests)."),
     (
         "tldw_chatbook/Widgets/detailed_progress.py",
         "DetailedProgressBar._update_metrics",
         "self.query_one('#speed-metric', Static)",
-    ): (
-        "UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or "
-        "tests)."
-    ),
+    ): ("UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or tests)."),
     # -- tldw_chatbook/Widgets/loading_states.py
     (
         "tldw_chatbook/Widgets/loading_states.py",
         "InlineLoader._update_dots",
         "self",
-    ): (
-        "UNREACHABLE: Widgets/loading_states.py has no importer (prod or "
-        "tests)."
-    ),
+    ): ("UNREACHABLE: Widgets/loading_states.py has no importer (prod or tests)."),
     # -- tldw_chatbook/Widgets/splash_screen.py
     (
         "tldw_chatbook/Widgets/splash_screen.py",
@@ -491,21 +487,15 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     ),
     (
         "tldw_chatbook/Widgets/splash_screen.py",
-        "SplashScreen._update_animation",
+        "SplashScreen._render_animation_frame",
         "self.effect_handler",
-    ): (
-        "NOT-A-WIDGET: the effect handler's own frame producer, not a "
-        "Static."
-    ),
+    ): ("NOT-A-WIDGET: the effect handler's own frame producer, not a Static."),
     # -- tldw_chatbook/Widgets/status_dashboard.py
     (
         "tldw_chatbook/Widgets/status_dashboard.py",
         "StatusDashboard._update_time_display",
         "time_display",
-    ): (
-        "UNREACHABLE: Widgets/status_dashboard.py has no importer (prod or "
-        "tests)."
-    ),
+    ): ("UNREACHABLE: Widgets/status_dashboard.py has no importer (prod or tests)."),
 }
 
 
@@ -533,6 +523,18 @@ CLASSIFIED_ROOTS: dict[tuple[str, str, str], str] = {}
 #: the census walks out of it).
 EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
     {
+        (
+            "set_interval",
+            "tldw_chatbook/Widgets/Chat_Widgets/chat_question_card.py",
+            "ChatQuestionCard",
+            "_tick_deadline",
+        ),
+        (
+            "set_interval",
+            "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
+            "ConsoleSessionSwitcherModal",
+            "_poll_active_projection",
+        ),
         # kind, file, class, callback
         (
             "_create_interval",

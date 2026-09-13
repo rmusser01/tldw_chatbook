@@ -15,7 +15,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
-from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS, app_css_text
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleDisplayRow,
     ConsoleInspectorAction,
@@ -1125,7 +1125,7 @@ def test_inspector_row_status_class_has_a_stylesheet_rule(class_name):
     count is above zero and its text says only "N pending", so a pending
     approval was pixel-identical to none pending.
     """
-    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    stylesheet = app_css_text()
     assert f".{class_name}" in stylesheet, (
         f"{class_name} is attached in Python but has no rule in the bundled "
         "stylesheet, so the status channel it encodes paints nothing"
@@ -1189,7 +1189,7 @@ def test_session_settings_title_is_styled_as_a_heading():
     ``.console-settings-row`` lines beneath it and the section boundary was
     invisible.
     """
-    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    stylesheet = app_css_text()
     start = stylesheet.index(".console-settings-title")
     block = stylesheet[start : stylesheet.index("}", start)]
     assert "text-style: bold" in block, (
@@ -1401,7 +1401,7 @@ def test_disabled_inspector_action_has_a_legible_style_in_the_app_stylesheet():
     override has to live in the app stylesheet and has to state a colour
     bright enough to survive the halving.
     """
-    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    stylesheet = app_css_text()
     assert "Button.console-inspector-action:disabled" in stylesheet, (
         "no app-stylesheet rule for a disabled Inspector action, so its "
         "label renders at Textual's dimmed default"

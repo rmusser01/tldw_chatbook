@@ -103,14 +103,38 @@ def test_optional_feature_metadata_covers_pyproject_extras():
     )
     declared_extras = set(pyproject["project"]["optional-dependencies"])
 
-    assert set(OPTIONAL_FEATURES) == declared_extras
+    core_features = {
+        key for key, info in OPTIONAL_FEATURES.items() if info.extra is None
+    }
+    extra_features = {
+        key for key, info in OPTIONAL_FEATURES.items() if info.extra is not None
+    }
+    assert core_features == {"diarization_onnx"}
+    assert extra_features == declared_extras
+    assert set(OPTIONAL_FEATURES) == declared_extras | core_features
     for extra in declared_extras:
         info = get_optional_feature_info(extra)
         assert info.extra == extra
+        assert info.capability_tier == "advanced"
+        assert info.source_install_command == f'pip install -e ".[{extra}]"'
+        assert info.package_install_command == f'pip install "tldw_chatbook[{extra}]"'
         assert info.owner != "optional dependency"
         assert info.feature_area
         assert info.recovery_action
         assert info.unavailable_what
+
+
+def test_core_backed_diarization_metadata_uses_baseline_recovery_commands():
+    from tldw_chatbook.Utils.optional_deps import get_optional_feature_info
+
+    info = get_optional_feature_info("diarization_onnx")
+    assert info.extra is None
+    assert info.capability_tier == "baseline"
+    assert info.source_install_command == "pip install -e ."
+    assert info.package_install_command == "pip install tldw_chatbook"
+    assert info.recovery_action == "Meetings"
+    assert info.unavailable_what == "Live speaker labels without torch"
+    assert info.owner == "Library import/media"
 
 
 def test_optional_feature_metadata_groups_release_capabilities_without_core_install():
@@ -130,6 +154,7 @@ def test_optional_feature_metadata_groups_release_capabilities_without_core_inst
     assert "embeddings_rag" in groups["RAG and retrieval"]
     assert "mcp" in groups["MCP integration"]
     assert "web" in groups["Web access"]
+    assert "diarization_onnx" in groups["Media ingestion and transcription"]
 
 
 @pytest.mark.parametrize(

@@ -25,8 +25,7 @@ import pytest
 from rich.markup import escape as escape_markup
 from textual.widgets import Button, Checkbox, Input, Select, TextArea
 
-import tldw_chatbook
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.word_bench.models import BenchConfig, PreflightResult, Snippet, Target
 from tldw_chatbook.Evals.word_bench.storage import (
@@ -50,11 +49,6 @@ from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.inspector import EvalsInspector
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen, EvalsSelection
 
-_BUNDLED_CSS_PATH = str(
-    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
-)
-
-
 class _FakeOrchestrator:
     def __init__(self, db: EvalsDB) -> None:
         self.db = db
@@ -75,7 +69,7 @@ class _FakeAppInstance:
 
 
 class EvalsHarness(ConsolidatedCSSApp):
-    CSS_PATH = _BUNDLED_CSS_PATH
+    CSS_PATH = list(APP_STYLESHEETS)
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()

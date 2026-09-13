@@ -378,7 +378,8 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
                 ConsoleComposerBar,
             )
             assert restored_composer.draft_text() == draft
-            assert restored_chat is not chat
+            # Console is installed and reused on warm navigation (TASK-31520).
+            assert restored_chat is chat
             assert (
                 restored_chat._video._ensure_console_video_store()
                 is app.generated_video_store
@@ -500,7 +501,9 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
                 HandoffChannel.CHAT,
                 _chat_handoff("first"),
             )
-            first_consumer = asyncio.create_task(chat._consume_pending_chat_handoff())
+            first_consumer = asyncio.create_task(
+                chat._session._consume_pending_chat_handoff()
+            )
             await asyncio.wait_for(first_started.wait(), timeout=6.0)
             app.pending_handoffs.stage(
                 HandoffChannel.CHAT,
@@ -513,7 +516,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
             assert chat._pending_console_launch_context is not None
             assert chat._pending_console_launch_context.title == "first"
 
-            await chat._consume_pending_chat_handoff()
+            await chat._session._consume_pending_chat_handoff()
 
             assert not app.pending_handoffs.has_pending(HandoffChannel.CHAT)
             assert app.pending_handoffs.claim(HandoffChannel.CHAT) is None
@@ -525,7 +528,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
 
             with monkeypatch.context() as failure_patch:
                 failure_patch.setattr(
-                    chat,
+                    chat._session,
                     "_stage_handoff_as_console_live_work",
                     fail_native_staging,
                 )
@@ -534,10 +537,10 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
                     _chat_handoff("retry-after-failure"),
                 )
                 with pytest.raises(RuntimeError, match="PRIVATE_HANDOFF_FAILURE"):
-                    await chat._consume_pending_chat_handoff()
+                    await chat._session._consume_pending_chat_handoff()
             assert app.pending_handoffs.has_pending(HandoffChannel.CHAT)
 
-            await chat._consume_pending_chat_handoff()
+            await chat._session._consume_pending_chat_handoff()
             assert not app.pending_handoffs.has_pending(HandoffChannel.CHAT)
 
             cancellation_started = asyncio.Event()
@@ -559,7 +562,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
                     _chat_handoff("retry-after-cancellation"),
                 )
                 cancelled_consumer = asyncio.create_task(
-                    chat._consume_pending_chat_handoff()
+                    chat._session._consume_pending_chat_handoff()
                 )
                 await asyncio.wait_for(cancellation_started.wait(), timeout=6.0)
                 cancelled_consumer.cancel()
@@ -567,7 +570,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
                     await cancelled_consumer
             assert app.pending_handoffs.has_pending(HandoffChannel.CHAT)
 
-            await chat._consume_pending_chat_handoff()
+            await chat._session._consume_pending_chat_handoff()
             assert not app.pending_handoffs.has_pending(HandoffChannel.CHAT)
     finally:
         await _close_production_app(app)
@@ -600,7 +603,7 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
                     target_session_id=session_id,
                 ),
             )
-            await chat._consume_pending_console_prompt_insert()
+            await chat._prompts._consume_pending_console_prompt_insert()
             assert not app.pending_handoffs.has_pending(
                 HandoffChannel.CONSOLE_PROMPT_INSERT
             )
@@ -617,7 +620,7 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
                     target_session_id=session_id,
                 ),
             )
-            await chat._consume_pending_console_prompt_insert()
+            await chat._prompts._consume_pending_console_prompt_insert()
             assert app.pending_handoffs.has_pending(
                 HandoffChannel.CONSOLE_PROMPT_INSERT
             )

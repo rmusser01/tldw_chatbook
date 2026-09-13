@@ -7,6 +7,10 @@ from typing import Any
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
+
 from Tests.Chat.test_console_automatic_library_preparation import (
     _PolicyCoordinator,
     _capture_staged_evidence,

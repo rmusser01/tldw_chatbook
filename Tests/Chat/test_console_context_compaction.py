@@ -85,6 +85,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.console_trace_provenance import ConsoleRequestRoute
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRestoreTarget,
     continuation_owner_group,
@@ -439,41 +440,44 @@ def test_memory_survives_restart_but_not_branch_edit_or_reset(tmp_path) -> None:
     first_db.close_connection()
 
     reopened_db = CharactersRAGDB(path, client_id="memory-reopened")
-    repository = ConsoleContextRepository(reopened_db)
-    loaded = repository.list_active_memories(str(conversation_id))
-    selected = select_effective_memory(
-        str(conversation_id),
-        snapshots,
-        memories=loaded,
-        scopes=(repository.load_memory_scope(record.memory_id),),
-        selection_candidates=repository.list_active_memory_selections(
-            str(conversation_id)
-        ),
-        legacy=NO_LEGACY_MEMORY,
-    )
-    assert selected.kind is EffectiveMemoryKind.GENERATED_PREFIX
+    try:
+        repository = ConsoleContextRepository(reopened_db)
+        loaded = repository.list_active_memories(str(conversation_id))
+        selected = select_effective_memory(
+            str(conversation_id),
+            snapshots,
+            memories=loaded,
+            scopes=(repository.load_memory_scope(record.memory_id),),
+            selection_candidates=repository.list_active_memory_selections(
+                str(conversation_id)
+            ),
+            legacy=NO_LEGACY_MEMORY,
+        )
+        assert selected.kind is EffectiveMemoryKind.GENERATED_PREFIX
 
-    edited_branch = (
-        snapshots[0],
-        replace(snapshots[1], version=2, content="edited answer"),
-    )
-    stale = select_effective_memory(
-        str(conversation_id),
-        edited_branch,
-        memories=loaded,
-        scopes=(repository.load_memory_scope(record.memory_id),),
-        selection_candidates=repository.list_active_memory_selections(
-            str(conversation_id)
-        ),
-        legacy=NO_LEGACY_MEMORY,
-    )
-    assert stale.kind is EffectiveMemoryKind.RAW
-    assert repository.deactivate_memory(
-        record.memory_id,
-        expected_revision=record.revision,
-        reset_at="2026-08-10T12:00:00Z",
-    )
-    assert repository.list_active_memories(str(conversation_id)) == ()
+        edited_branch = (
+            snapshots[0],
+            replace(snapshots[1], version=2, content="edited answer"),
+        )
+        stale = select_effective_memory(
+            str(conversation_id),
+            edited_branch,
+            memories=loaded,
+            scopes=(repository.load_memory_scope(record.memory_id),),
+            selection_candidates=repository.list_active_memory_selections(
+                str(conversation_id)
+            ),
+            legacy=NO_LEGACY_MEMORY,
+        )
+        assert stale.kind is EffectiveMemoryKind.RAW
+        assert repository.deactivate_memory(
+            record.memory_id,
+            expected_revision=record.revision,
+            reset_at="2026-08-10T12:00:00Z",
+        )
+        assert repository.list_active_memories(str(conversation_id)) == ()
+    finally:
+        reopened_db.close_connection()
 
 
 def test_compactable_units_are_post_boundary_and_exclude_active_request() -> None:
@@ -1544,11 +1548,13 @@ class _Gateway:
         self.text = text
         self.output_tokens = output_tokens
         self.calls = 0
+        self.routes = []
         self.started: asyncio.Event | None = None
         self.release: asyncio.Event | None = None
 
     async def complete_auxiliary(self, request, *, route=None):
         self.calls += 1
+        self.routes.append(route)
         if self.started is not None:
             self.started.set()
         if self.release is not None:
@@ -1800,7 +1806,8 @@ async def test_automatic_compaction_commits_prefix_scope_selection_and_provenanc
     None
 ):
     repository = _Repository()
-    service = ConsoleCompactionService(repository, _Gateway(text="New prefix memory."))
+    gateway = _Gateway(text="New prefix memory.")
+    service = ConsoleCompactionService(repository, gateway)
     plan, prompt, prefix, admission, _commit = _transaction_inputs()
     plan = replace(
         plan,
@@ -1834,6 +1841,7 @@ async def test_automatic_compaction_commits_prefix_scope_selection_and_provenanc
     )
 
     assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.routes == [ConsoleRequestRoute.AUTO_COMPACTION]
     assert len(repository.commits) == 1
     stored = repository.commits[0]
     assert stored.scope.coverage_kind is MemoryCoverageKind.PREFIX
@@ -2312,6 +2320,7 @@ async def test_manual_transaction_commits_range_through_exact_branch_cas() -> No
     assert repository.memories == [result.memory]
     assert result.memory is not None
     assert result.memory.summary_text == "Compact range facts."
+    assert gateway.routes == [ConsoleRequestRoute.MANUAL_SUMMARY]
     assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.SUCCEEDED
 
 
@@ -2362,7 +2371,7 @@ async def test_manual_transaction_projection_failure_finishes_failed_ledger(
     raising_call: int,
 ) -> None:
     class NoUsageGateway(_Gateway):
-        async def complete_auxiliary(self, request):
+        async def complete_auxiliary(self, request, *, route=None):
             self.calls += 1
             return AuxiliaryCompletionResult(
                 provider="openai",
@@ -2403,7 +2412,7 @@ async def test_manual_transaction_projection_failure_finishes_failed_ledger(
 @pytest.mark.asyncio
 async def test_manual_transaction_rejects_unreported_output_over_cap() -> None:
     class NoUsageGateway(_Gateway):
-        async def complete_auxiliary(self, request):
+        async def complete_auxiliary(self, request, *, route=None):
             self.calls += 1
             return AuxiliaryCompletionResult(
                 provider="openai",
@@ -2672,7 +2681,7 @@ async def test_manual_transaction_repository_cas_stale_has_no_partial_write() ->
 @pytest.mark.asyncio
 async def test_manual_transaction_cancellation_finishes_content_free_ledger() -> None:
     class CancelledGateway:
-        async def complete_auxiliary(self, _request):
+        async def complete_auxiliary(self, _request, *, route=None):
             raise asyncio.CancelledError
 
     repository = _Repository()

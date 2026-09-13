@@ -62,7 +62,7 @@ class ToolProfileRow:
 class ToolProfilesPanel(Vertical):
     """Render immutable profile facts and emit explicit management requests."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ToolProfilesPanel {
         width: 100%;
         height: auto;
@@ -93,7 +93,7 @@ class ToolProfilesPanel(Vertical):
         color: $text-muted;
     }
 
-    ToolProfilesPanel Button {
+    ToolProfilesPanel Button.tool-profile-button {
         width: auto;
         min-width: 8;
         height: 1;
@@ -103,7 +103,7 @@ class ToolProfilesPanel(Vertical):
         margin-right: 1;
     }
 
-    ToolProfilesPanel .tool-profile-actions Button {
+    ToolProfilesPanel .tool-profile-actions Button.tool-profile-button {
         margin-right: 0;
     }
     """
@@ -224,7 +224,7 @@ class ToolProfilesPanel(Vertical):
         return Button(
             label,
             id=button_id,
-            classes="console-action-subdued",
+            classes="console-action-subdued tool-profile-button",
             compact=True,
             disabled=disabled,
             tooltip=tooltip,
@@ -249,7 +249,7 @@ class ToolProfilesPanel(Vertical):
             yield Button(
                 "Import Tool Pack",
                 id="tool-profiles-import",
-                classes="console-action-subdued",
+                classes="console-action-subdued tool-profile-button",
                 compact=True,
                 disabled=self._listing.unavailable_category is not None,
                 tooltip="Inspect a Tool Pack before importing an unbound profile.",

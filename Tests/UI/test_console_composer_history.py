@@ -17,6 +17,10 @@ import json
 import pytest
 from textual.widgets import Static
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_console_native_chat_flow import (
     _configure_native_ready_console,
 )
@@ -327,7 +331,7 @@ async def test_console_ghost_text_renders_and_right_arrow_accepts(
     history_path = tmp_path / "prompt_history.jsonl"
     _seed_history_file(history_path, "explain quantum computing")
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Console_Modules.prompts.default_prompt_history_path",
+        "tldw_chatbook.Chat.prompt_history.default_prompt_history_path",
         lambda: history_path,
     )
     app = _build_test_app()
@@ -341,7 +345,7 @@ async def test_console_ghost_text_renders_and_right_arrow_accepts(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         # The screen shares ONE history store between composer and controller.
-        assert composer._prompt_history is console._ensure_console_prompt_history()
+        assert composer._prompt_history is console._prompts._ensure_console_prompt_history()
         composer.focus()
         await pilot.pause(0.3)  # let the mount-time history load land
         composer._cursor_blink_timer.pause()
@@ -374,7 +378,7 @@ async def test_console_up_down_recall_gated_to_boundary_rows(tmp_path, monkeypat
     history_path = tmp_path / "prompt_history.jsonl"
     _seed_history_file(history_path, "first prompt", "second prompt")
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Console_Modules.prompts.default_prompt_history_path",
+        "tldw_chatbook.Chat.prompt_history.default_prompt_history_path",
         lambda: history_path,
     )
     app = _build_test_app()
@@ -430,7 +434,7 @@ async def test_console_send_records_to_shared_prompt_history(tmp_path, monkeypat
 
     history_path = tmp_path / "prompt_history.jsonl"
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Console_Modules.prompts.default_prompt_history_path",
+        "tldw_chatbook.Chat.prompt_history.default_prompt_history_path",
         lambda: history_path,
     )
     gateway = CapturingGateway()

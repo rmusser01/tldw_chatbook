@@ -9,6 +9,8 @@ operable menu.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.widgets import Button
 
@@ -313,6 +315,70 @@ def _copy_target(**overrides):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message_count", [0, 1])
+async def test_persisted_copy_eligibility_reads_in_a_borrow_safe_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    message_count: int,
+) -> None:
+    """The persisted probe uses a transaction without owning its caller's.
+
+    Args:
+        monkeypatch: Fixture used to observe the real database read boundary.
+        tmp_path: Isolated directory for the real SQLite database.
+        message_count: Whether the persisted conversation has a message.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    database = CharactersRAGDB(str(tmp_path / "eligibility.db"), "eligibility")
+    try:
+        async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+            screen = pilot.app.screen
+            screen.app_instance.chachanotes_db = database
+            conversation_id = database.add_conversation({"title": "Eligibility"})
+            if message_count:
+                database.add_message(
+                    {
+                        "conversation_id": conversation_id,
+                        "sender": "user",
+                        "content": "present",
+                    }
+                )
+            connection = database.get_connection()
+            connection.commit()
+            assert not connection.in_transaction
+
+            original = database.get_messages_for_conversation
+            transaction_states: list[bool] = []
+
+            def observed_read(*args, **kwargs):
+                transaction_states.append(database.get_connection().in_transaction)
+                return original(*args, **kwargs)
+
+            monkeypatch.setattr(
+                database, "get_messages_for_conversation", observed_read
+            )
+            assert screen._row_actions._console_target_has_messages(
+                "", conversation_id
+            ) is bool(message_count)
+            assert transaction_states == [True]
+
+            connection.execute("BEGIN")
+            try:
+                assert screen._row_actions._console_target_has_messages(
+                    "", conversation_id
+                ) is bool(message_count)
+                assert connection.in_transaction
+                assert transaction_states == [True, True]
+            finally:
+                connection.rollback()
+    finally:
+        with database.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert database.registered_connection_count() == 0
+
+
+@pytest.mark.asyncio
 async def test_root_menu_offers_copy_as_with_disclosure_glyph() -> None:
     """The Copy as opener carries the ▸ like the other page openers."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
@@ -386,7 +452,7 @@ async def test_copy_clean_routes_to_clipboard_with_markdown(
             }
         )
         monkeypatch.setattr(
-            screen,
+            screen._row_actions,
             "_console_conversation_state",
             lambda cid: "in-progress",
         )
@@ -443,7 +509,7 @@ async def test_save_writes_validated_markdown_file(monkeypatch, tmp_path) -> Non
             }
         )
         monkeypatch.setattr(
-            screen,
+            screen._row_actions,
             "_console_conversation_state",
             lambda cid: "in-progress",
         )
@@ -454,11 +520,11 @@ async def test_save_writes_validated_markdown_file(monkeypatch, tmp_path) -> Non
         )
 
         async def _fake_save(t):
-            markdown = screen._render_console_conversation_markdown(t, "clean")
+            markdown = screen._row_actions._render_console_conversation_markdown(t, "clean")
             assert markdown is not None
-            await screen._write_console_markdown_file(str(target), markdown)
+            await screen._row_actions._write_console_markdown_file(str(target), markdown)
 
-        monkeypatch.setattr(screen, "_save_console_conversation_markdown", _fake_save)
+        monkeypatch.setattr(screen._row_actions, "_save_console_conversation_markdown", _fake_save)
         screen.on_conversation_action_chosen(
             ConversationActionChosen("save-markdown", _copy_target(conversation_id=conv_id))
         )

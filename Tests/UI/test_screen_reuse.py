@@ -22,7 +22,32 @@ from pathlib import Path
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
+
+
+def _build_test_app():
+    from tldw_chatbook.app import TldwCli
+
+    return TldwCli()
+
+
+@pytest.fixture(autouse=True)
+def close_owned_real_app_notifications(
+    request, monkeypatch, close_owned_console_resources, close_owned_console_test_apps
+):
+    """Register the additional notification store owned by each real app."""
+    build_app = request.module._build_test_app
+
+    def build_owned_app():
+        app = build_app()
+        close_owned_console_resources.callback(app.client_notifications_db.close)
+        return app
+
+    monkeypatch.setattr(request.module, "_build_test_app", build_owned_app)
 
 
 def _scratch_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -89,9 +114,8 @@ async def test_reusable_route_returns_the_same_instance(
     (a re-mint would build a second full tree before the first's removal).
     """
     _scratch_env(monkeypatch, tmp_path)
-    from tldw_chatbook.app import TldwCli
 
-    app = TldwCli()
+    app = _build_test_app()
     async with app.run_test(size=(170, 48)) as pilot:
         await _boot_settled(app)
         await _settle(pilot, passes=20)
@@ -129,9 +153,8 @@ async def test_resume_retriggers_home_refresh(
     Deleting Home's resume hook must fail THIS test, not a user report.
     """
     _scratch_env(monkeypatch, tmp_path)
-    from tldw_chatbook.app import TldwCli
 
-    app = TldwCli()
+    app = _build_test_app()
     async with app.run_test(size=(170, 48)) as pilot:
         await _boot_settled(app)
         await _settle(pilot, passes=20)
@@ -173,9 +196,8 @@ async def test_identity_flip_invalidates_the_cached_instance(
     """A cached instance is scoped to the runtime identity that built it."""
     _scratch_env(monkeypatch, tmp_path)
     from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
-    from tldw_chatbook.app import TldwCli
 
-    app = TldwCli()
+    app = _build_test_app()
     async with app.run_test(size=(170, 48)) as pilot:
         await _boot_settled(app)
         await _settle(pilot, passes=20)
@@ -213,12 +235,11 @@ async def test_non_reusable_route_still_gets_fresh_instances(
     ``on_unmount`` teardown is exactly the change this guard makes loud.
     """
     _scratch_env(monkeypatch, tmp_path)
-    from tldw_chatbook.app import TldwCli
 
     route = resolve_screen_route("settings")
     assert route is not None and route.reusable is False
 
-    app = TldwCli()
+    app = _build_test_app()
     async with app.run_test(size=(170, 48)) as pilot:
         await _boot_settled(app)
         await _settle(pilot, passes=20)

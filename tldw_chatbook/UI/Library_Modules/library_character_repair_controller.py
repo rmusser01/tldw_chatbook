@@ -275,15 +275,15 @@ class LibraryCharacterRepairController:
 class LibraryCharacterRepairDialog(ModalScreen[None]):
     """Library-owned explicit selection and two-step repair presentation."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     LibraryCharacterRepairDialog { align: center middle; }
     LibraryCharacterRepairDialog > Container {
         width: 76; max-width: 96%; height: auto; max-height: 90%;
         border: thick $accent; background: $surface; padding: 1 2;
     }
-    LibraryCharacterRepairDialog Select { width: 100%; }
-    LibraryCharacterRepairDialog Horizontal { height: auto; }
-    LibraryCharacterRepairDialog Button { min-width: 14; margin-right: 1; }
+    LibraryCharacterRepairDialog Select.character-repair-select { width: 100%; }
+    LibraryCharacterRepairDialog Horizontal.character-repair-actions { height: auto; }
+    LibraryCharacterRepairDialog Button.character-repair-action { min-width: 14; margin-right: 1; }
     """
 
     def __init__(
@@ -308,23 +308,38 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
                 prompt="Choose a replacement; nothing is preselected",
                 allow_blank=True,
                 id="library-character-repair-candidate",
+                classes="character-repair-select",
             )
             yield Static(
                 self.controller.status_copy,
                 id="library-character-repair-status",
             )
             yield Button(
-                "Next 20 characters", id="library-character-repair-next", disabled=True
+                "Next 20 characters",
+                id="library-character-repair-next",
+                disabled=True,
+                classes="character-repair-action",
             )
-            with Horizontal():
-                yield Button("Refresh", id="library-character-repair-refresh")
-                yield Button("Repair", id="library-character-repair-apply")
-                yield Button("Cancel", id="library-character-repair-cancel")
+            with Horizontal(classes="character-repair-actions"):
+                for label, action in (
+                    ("Refresh", "refresh"),
+                    ("Repair", "apply"),
+                    ("Cancel", "cancel"),
+                ):
+                    yield Button(
+                        label,
+                        id=f"library-character-repair-{action}",
+                        classes="character-repair-action",
+                    )
 
     def on_mount(self) -> None:
         """Load candidates off the UI thread after controls exist."""
 
         self._start_refresh()
+
+    def _set_status(self, message: str) -> None:
+        """Update the existing repair status without replacing its widget."""
+        self.query_one("#library-character-repair-status", Static).update(message)
 
     def _set_busy(self, busy: bool, *, lock_cancel: bool = False) -> None:
         for selector in (
@@ -348,9 +363,7 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
         token = object()
         self._operation_token = token
         self._set_busy(True)
-        self.query_one("#library-character-repair-status", Static).update(
-            "Refreshing authoritative repair choices…"
-        )
+        self._set_status("Refreshing authoritative repair choices…")
         self.run_worker(
             self._refresh_owned(token, offset=offset),
             exclusive=False,
@@ -364,9 +377,7 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
             )
         except Exception:  # noqa: BLE001 - service boundary becomes retry UI
             if self._operation_token is token and self.is_mounted:
-                self.query_one("#library-character-repair-status", Static).update(
-                    "Refresh failed. Retry or cancel."
-                )
+                self._set_status("Refresh failed. Retry or cancel.")
                 self._set_busy(False)
             return
         if self._operation_token is not token or not self.is_mounted:
@@ -387,9 +398,7 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
         self.query_one("#library-character-repair-old-identity", Static).update(
             f"Historical identity: {self.controller.historical_identity_copy}"
         )
-        self.query_one("#library-character-repair-status", Static).update(
-            self.controller.status_copy
-        )
+        self._set_status(self.controller.status_copy)
         self.query_one("#library-character-repair-apply", Button).label = "Repair"
         self._operation_token = None
         self._set_busy(False)
@@ -411,13 +420,9 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
         button.disabled = not selected or self._operation_token is not None
         if selected:
             old, selected = self.controller.identity_comparison or ("", "")
-            self.query_one("#library-character-repair-status", Static).update(
-                f"Replace {old} with {selected}. Press Repair to review."
-            )
+            self._set_status(f"Replace {old} with {selected}. Press Repair to review.")
         else:
-            self.query_one("#library-character-repair-status", Static).update(
-                self.controller.status_copy
-            )
+            self._set_status(self.controller.status_copy)
 
     @on(Button.Pressed, "#library-character-repair-refresh")
     def _refresh(self, event: Button.Pressed) -> None:
@@ -436,14 +441,10 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
         button = event.button
         if button.label.plain == "Repair":
             if not self.controller.request_confirmation():
-                self.query_one("#library-character-repair-status", Static).update(
-                    "Choose a replacement before repairing."
-                )
+                self._set_status("Choose a replacement before repairing.")
                 return
             button.label = "Confirm repair"
-            self.query_one("#library-character-repair-status", Static).update(
-                "Confirm the old and selected identities before applying."
-            )
+            self._set_status("Confirm the old and selected identities before applying.")
             return
         token = object()
         admitted = self.controller.prepare_confirmed_repair()
@@ -470,9 +471,7 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
         except Exception:  # noqa: BLE001 - service boundary becomes retry UI
             if self._operation_token is token and self.is_mounted:
                 self._operation_token = None
-                self.query_one("#library-character-repair-status", Static).update(
-                    "Repair failed. Retry or cancel."
-                )
+                self._set_status("Repair failed. Retry or cancel.")
                 self.query_one(
                     "#library-character-repair-apply", Button
                 ).label = "Repair"
@@ -482,9 +481,7 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
             return
         self.controller.apply_repair_result(result, context)
         self._operation_token = None
-        self.query_one("#library-character-repair-status", Static).update(
-            self.controller.status_copy
-        )
+        self._set_status(self.controller.status_copy)
         if result is CharacterRepairResult.APPLIED:
             self.dismiss(None)
         else:

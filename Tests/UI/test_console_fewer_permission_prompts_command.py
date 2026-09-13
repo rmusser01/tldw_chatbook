@@ -9,6 +9,7 @@ from tldw_chatbook.MCP.permission_prompt_reducer import (
     PermissionPromptRecommendation,
     PermissionPromptReport,
 )
+from tldw_chatbook.UI.Console_Modules.wiring import build_console_commands_controller
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -31,8 +32,11 @@ def _screen_with_service(service: object) -> tuple[ChatScreen, list[str], list[b
     async def append_message(message: str) -> None:
         messages.append(message)
 
-    screen._append_native_console_system_message = append_message
-    screen._clear_console_composer_draft = lambda: clears.append(True)
+    screen._message = SimpleNamespace(
+        _append_native_console_system_message=append_message,
+    )
+    build_console_commands_controller(screen)
+    screen._commands._clear_console_composer_draft = lambda: clears.append(True)
     return screen, messages, clears
 
 
@@ -60,8 +64,8 @@ async def test_fewer_permission_prompts_command_renders_report_and_clears_draft(
     service = _PromptReductionService(report)
     screen, messages, clears = _screen_with_service(service)
 
-    await ChatScreen._console_command_fewer_permission_prompts(
-        screen, CommandParse("command", "fewer-permission-prompts", "")
+    await screen._commands._console_command_fewer_permission_prompts(
+        CommandParse("command", "fewer-permission-prompts", "")
     )
 
     assert service.calls == 1
@@ -77,8 +81,8 @@ async def test_fewer_permission_prompts_command_reports_missing_mcp_service():
     """Catches silently consuming the command when MCP services are unavailable."""
     screen, messages, clears = _screen_with_service(service=None)
 
-    await ChatScreen._console_command_fewer_permission_prompts(
-        screen, CommandParse("command", "fewer-permission-prompts", "")
+    await screen._commands._console_command_fewer_permission_prompts(
+        CommandParse("command", "fewer-permission-prompts", "")
     )
 
     assert clears == [True]

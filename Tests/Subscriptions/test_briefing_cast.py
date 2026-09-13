@@ -34,10 +34,9 @@ import threading
 import pytest
 from loguru import logger
 
-from tldw_chatbook import config as app_config
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-from tldw_chatbook.Subscriptions import briefing_cast
+from tldw_chatbook.Subscriptions import briefing_cast, briefing_service
 from tldw_chatbook.Subscriptions.briefing_cast import (
     APP_DEFAULT_PRESET_NAME,
     ScriptCastError,
@@ -411,7 +410,9 @@ async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(
-        app_config, "default_api_endpoint", "local-llama", raising=False
+        briefing_service,
+        "resolve_persisted_briefing_defaults",
+        lambda: ("local-llama", "local-model"),
     )
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
@@ -458,7 +459,9 @@ async def test_no_preset_provider_or_model_falls_back_to_the_app_default(
     names.
     """
     monkeypatch.setattr(
-        app_config, "default_api_endpoint", "local-llama", raising=False
+        briefing_service,
+        "resolve_persisted_briefing_defaults",
+        lambda: ("local-llama", "local-model"),
     )
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
@@ -1157,7 +1160,9 @@ async def test_generate_script_from_text_app_default_when_preset_id_is_none(
     is a single unbound "Narrator" speaker (there is no other source for a
     roster when no preset supplies one)."""
     monkeypatch.setattr(
-        app_config, "default_api_endpoint", "local-llama", raising=False
+        briefing_service,
+        "resolve_persisted_briefing_defaults",
+        lambda: ("local-llama", "local-model"),
     )
     subs_db = _db(tmp_path)
     chacha_db = _chacha_db(tmp_path)

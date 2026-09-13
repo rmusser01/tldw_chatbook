@@ -67,6 +67,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "fleet survivor count failed for a session": (),
     },
     "tldw_chatbook/Chat/console_chat_store.py": {
+        "Workspace default Persona notice could not be shown": (),
         "Failed to reconcile restored Chat sync intent": (),
         "Failed to project Sync v2 continuation owner": (),
         "Failed to project Sync v2 Chat tombstone": (),
@@ -206,6 +207,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         # reviewed diagnostic may change metadata, not start capturing
         # exceptions.
         "Failed to restore a Library note": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": {
+        "canvas sync failed": ("kind",),
     },
     # "canvas sync failed" was dropped from this registry in 51533602c4
     # (TASK-32089): that diagnostic now deliberately keeps its traceback
@@ -610,6 +614,10 @@ def _commit_available(revision: str) -> bool:
 _TASK_15743_STACKED = "fdee8a31f"
 _TASK_15743_REPAIRED = "afee9672a"
 _TASK_15743_CURRENT_OWNERS = {
+    (
+        "tldw_chatbook/UI/Screens/library_screen.py",
+        "Failed to load Library conversations page.",
+    ): "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py",
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "console fleet wake mount-claim failed",
@@ -1040,6 +1048,43 @@ def _run_metadata_guard(
         {relative: {"reviewed diagnostic": ()}},
     )
     test_reviewed_diagnostic_changes_are_metadata_only()
+
+
+@pytest.mark.parametrize("private_value", ["str(exc)", "rule", "workspace_id"])
+def test_metadata_guard_rejects_positional_private_values(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, private_value: str
+) -> None:
+    """Reject private payload expressions even with a fixed diagnostic template.
+
+    Args:
+        monkeypatch: Redirect the guard to its isolated source fixture.
+        tmp_path: Own the synthetic diagnostic source.
+        private_value: Private expression that must not become reviewed metadata.
+    """
+    source = (
+        "from loguru import logger\n"
+        f"logger.warning('reviewed diagnostic: {{}}', {private_value})\n"
+    )
+    with pytest.raises(AssertionError, match="fields.*expected"):
+        _run_metadata_guard(monkeypatch, tmp_path, source)
+
+
+@pytest.mark.parametrize("copies", [0, 2])
+def test_metadata_guard_rejects_missing_or_duplicate_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, copies: int
+) -> None:
+    """Require exactly one occurrence of each reviewed diagnostic.
+
+    Args:
+        monkeypatch: Redirect the guard to its isolated source fixture.
+        tmp_path: Own the synthetic diagnostic source.
+        copies: Missing or duplicate count that must fail the guard.
+    """
+    source = "from loguru import logger\n" + (
+        "logger.warning('reviewed diagnostic')\n" * copies
+    )
+    with pytest.raises(AssertionError, match="expected one diagnostic"):
+        _run_metadata_guard(monkeypatch, tmp_path, source)
 
 
 def test_metadata_guard_rejects_dynamic_exception_capture(
@@ -3456,8 +3501,8 @@ def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
         "owner_files": 1,
         "persistent_sink_files": 1,
         "task_492_calls": 0,
-        "task_494_calls": 1,
         "task_31551_calls": 0,
+        "task_494_calls": 1,
         "path_privacy_candidate_calls": 0,
     }
 

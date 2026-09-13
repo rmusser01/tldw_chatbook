@@ -76,8 +76,9 @@ from Tests.UI.console_controller_stubs import (
     stub_message_controller,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+import tldw_chatbook.UI.Console_Modules.message as message_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.review_selection import (
     ConsoleReviewSelectionController,
 )
@@ -450,23 +451,19 @@ async def _async_noop() -> None:
 def _attach_message_controller(screen: ChatScreen) -> None:
     """Give a bypassed-``__init__`` screen shell its ``_message`` controller.
 
-    The citation cluster stays screen-owned, but several members it reaches
-    moved to ``ConsoleMessageController`` (wave-3 console decomposition,
-    task 1) and are reached here through ``ChatScreen``'s delegations/proxy
-    properties: ``_native_console_messages``,
-    ``_console_citation_message_body``, and the
-    ``_console_original_attempt_previews``/``_pending_console_swipe_
-    selection`` state these tests assign directly. ``ChatScreen.__new__``
-    skips the construction ``__init__`` would do, so it is done here.
+    Citation UI and workers stay screen-owned; identity and eligibility
+    policy live beside the message helpers in ``ConsoleMessageController``.
+    The screen still proxies original-attempt and swipe-selection state.
+    ``ChatScreen.__new__`` skips controller construction, so it is done here.
 
-    Only the store accessors are wired for real -- that is all
-    ``_native_console_messages`` reads.
+    Store access and the screen-owned refresh hook are wired for discovery.
     """
     stub_message_controller(
         screen,
         context="test_console_citation_sources._bare_screen",
         chat_store_accessor=lambda: screen._console_chat_store,
         current_chat_store_accessor=lambda: screen._console_chat_store,
+        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         current_chat_controller_accessor=lambda: getattr(
             screen, "_console_chat_controller", None
         ),
@@ -511,16 +508,14 @@ def _bare_screen(
         present_trajectory=lambda _launch: None,
         notify=lambda *args, **kwargs: None,
     )
-    screen._console_citation_counts = {}
     screen._console_annotation_previews = {}
     screen._console_annotation_loaded_conversation = None
     # Dev's turn-activity line (task-17652 era): the sync path reads
     # self._agent.console_turn_activity() every tick.
-    screen._agent = SimpleNamespace(console_turn_activity=lambda: "")
-    screen._console_citation_resolved_signatures = {}
-    screen._console_citation_input_signature = None
-    screen._console_citation_repository_token = None
-    screen._console_citation_request_generation = 0
+    screen._agent = SimpleNamespace(
+        console_turn_activity=lambda: "",
+        console_turn_activity_abandon_action=lambda: "",
+    )
     screen._last_native_transcript_refresh_key = None
     # This detached fixture exercises citation rendering without a mounted
     # Change Review runtime. Production wiring supplies the projection.
@@ -591,18 +586,21 @@ async def test_discovery_queries_only_complete_persisted_assistants_with_two_arg
     ]
     repository = _FakeRepository(_active_result(_trace()))
     screen = _bare_screen(messages, repository)
-    signature = screen._console_citation_signature(messages)
-    screen._console_citation_input_signature = signature
-    screen._console_citation_request_generation = 1
+    signature = screen._message._console_citation_signature(messages)
+    screen._message._console_citation_input_signature = signature
+    screen._message._console_citation_request_generation = 1
 
-    await screen._discover_console_citation_counts(repository, signature, 1)
+    await screen._message._discover_console_citation_counts(repository, signature, 1)
 
     assert repository.calls == [("persisted-ok", "Answer [S1].")]
     assert repository.verified_results == [repository.result]
-    assert screen._console_citation_counts == {"assistant-ok": 2}
-    assert all(type(value) is int for value in screen._console_citation_counts.values())
-    assert "trace" not in repr(screen._console_citation_counts).lower()
-    assert "snapshot" not in repr(screen._console_citation_counts).lower()
+    assert screen._message._console_citation_counts == {"assistant-ok": 2}
+    assert all(
+        type(value) is int
+        for value in screen._message._console_citation_counts.values()
+    )
+    assert "trace" not in repr(screen._message._console_citation_counts).lower()
+    assert "snapshot" not in repr(screen._message._console_citation_counts).lower()
 
 
 def test_citation_count_read_hides_verified_active_revoked_trace(tmp_path) -> None:
@@ -646,7 +644,7 @@ def test_citation_count_read_hides_verified_active_revoked_trace(tmp_path) -> No
         )
         assert repository.verify_active_trace_result(active) is True
 
-        counts = ChatScreen._read_console_citation_counts(
+        counts = ConsoleMessageController._read_console_citation_counts(
             repository,
             (("assistant-native", "message-1", "Answer [S1].", "complete"),),
         )
@@ -670,12 +668,12 @@ def test_citation_count_read_logs_unexpected_lookup_failure(
     )
     log_exception = Mock()
     monkeypatch.setattr(
-        chat_screen_module,
+        message_module,
         "logger",
         SimpleNamespace(exception=log_exception),
     )
 
-    counts = ChatScreen._read_console_citation_counts(
+    counts = ConsoleMessageController._read_console_citation_counts(
         repository,
         (("assistant-native", "message-1", current_body, "complete"),),
     )
@@ -711,13 +709,41 @@ async def test_discovery_requires_active_summary_and_repository_verification(
     repository = _FakeRepository(result, verified=verified)
     messages = [_message("assistant", persisted_message_id="persisted")]
     screen = _bare_screen(messages, repository)
-    signature = screen._console_citation_signature(messages)
-    screen._console_citation_input_signature = signature
-    screen._console_citation_request_generation = 1
+    signature = screen._message._console_citation_signature(messages)
+    screen._message._console_citation_input_signature = signature
+    screen._message._console_citation_request_generation = 1
 
-    await screen._discover_console_citation_counts(repository, signature, 1)
+    await screen._message._discover_console_citation_counts(repository, signature, 1)
 
-    assert screen._console_citation_counts == {"assistant": 0}
+    assert screen._message._console_citation_counts == {"assistant": 0}
+
+
+def test_citation_currentness_observes_replaced_store_and_repository() -> None:
+    """A modal must not keep authority captured before a store/repository swap."""
+    app_db = object()
+    repository = _FakeRepository(_active_result(_trace()), db=app_db)
+    message = _message("assistant", persisted_message_id="persisted")
+    screen = _bare_screen([message], repository, app_db=app_db)
+    token, _ = screen._message._console_citation_repository_readiness()
+    request = dict(
+        native_message_id="assistant",
+        persisted_message_id="persisted",
+        current_body="Answer [S1].",
+        repository=repository,
+        repository_token=token,
+    )
+    assert screen._message._console_citation_modal_request_is_current(**request)
+
+    screen._console_chat_store = _FakeStore([], session_id="replacement")
+    assert screen._message._console_citation_signature([]) == ("replacement", ())
+    assert not screen._message._console_citation_modal_request_is_current(**request)
+
+    screen._console_chat_store = _FakeStore([message])
+    assert screen._message._console_citation_modal_request_is_current(**request)
+    screen.app_instance.citation_trace_repository = _FakeRepository(
+        _active_result(_trace()), db=app_db
+    )
+    assert not screen._message._console_citation_modal_request_is_current(**request)
 
 
 def test_stable_repository_and_identical_signature_dispatch_only_one_worker() -> None:
@@ -732,8 +758,8 @@ def test_stable_repository_and_identical_signature_dispatch_only_one_worker() ->
 
     screen.run_worker = capture_worker
 
-    screen._sync_console_citation_count_discovery(messages)
-    screen._sync_console_citation_count_discovery(messages)
+    screen._message._sync_console_citation_count_discovery(messages)
+    screen._message._sync_console_citation_count_discovery(messages)
 
     assert len(dispatched) == 1
     assert dispatched[0][1] == {
@@ -764,7 +790,7 @@ async def test_late_discovery_is_discarded_after_signature_or_generation_change(
         elif stale_change == "session":
             screen._console_chat_store.active_session_id = "session-2"
         else:
-            screen._console_citation_request_generation += 1
+            screen._message._console_citation_request_generation += 1
 
     repository = _FakeRepository(
         _active_result(_trace()),
@@ -772,15 +798,15 @@ async def test_late_discovery_is_discarded_after_signature_or_generation_change(
         db=app_db,
     )
     screen = _bare_screen([message], repository, app_db=app_db)
-    signature = screen._console_citation_signature([message])
-    screen._console_citation_input_signature = signature
-    screen._console_citation_request_generation = 1
+    signature = screen._message._console_citation_signature([message])
+    screen._message._console_citation_input_signature = signature
+    screen._message._console_citation_request_generation = 1
 
-    await screen._discover_console_citation_counts(repository, signature, 1)
+    await screen._message._discover_console_citation_counts(repository, signature, 1)
 
     assert repository.calls == [("persisted", "Answer [S1].")]
     assert stale_applied
-    assert screen._console_citation_counts == {}
+    assert screen._message._console_citation_counts == {}
 
 
 def test_repository_absence_or_database_mismatch_fails_closed() -> None:
@@ -790,13 +816,13 @@ def test_repository_absence_or_database_mismatch_fails_closed() -> None:
         (_FakeRepository(_active_result(_trace()), db=object()), object()),
     ):
         screen = _bare_screen(messages, repository, app_db=app_db)
-        screen._console_citation_counts = {"stale": 9}
+        screen._message._console_citation_counts = {"stale": 9}
         dispatched: list[object] = []
         screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
 
-        screen._sync_console_citation_count_discovery(messages)
+        screen._message._sync_console_citation_count_discovery(messages)
 
-        assert screen._console_citation_counts == {}
+        assert screen._message._console_citation_counts == {}
         assert dispatched == []
 
 
@@ -849,12 +875,14 @@ async def test_repository_error_isolated_to_message_and_other_count_still_resolv
         _message("assistant-good", persisted_message_id="persisted-good"),
     ]
     screen = _bare_screen(messages, repository)
-    signature = screen._console_citation_signature(messages)
-    screen._console_citation_input_signature = signature
-    screen._console_citation_request_generation = 1
+    signature = screen._message._console_citation_signature(messages)
+    screen._message._console_citation_input_signature = signature
+    screen._message._console_citation_request_generation = 1
 
     try:
-        await screen._discover_console_citation_counts(repository, signature, 1)
+        await screen._message._discover_console_citation_counts(
+            repository, signature, 1
+        )
     except RuntimeError as error:
         pytest.fail(f"best-effort footer discovery leaked repository error: {error}")
 
@@ -862,7 +890,7 @@ async def test_repository_error_isolated_to_message_and_other_count_still_resolv
         ("persisted-bad", "Answer [S1]."),
         ("persisted-good", "Answer [S1]."),
     ]
-    assert screen._console_citation_counts == {
+    assert screen._message._console_citation_counts == {
         "assistant-bad": 0,
         "assistant-good": 2,
     }
@@ -877,7 +905,7 @@ async def _dispatch_and_run(
         (coroutine, kwargs)
     )
 
-    screen._sync_console_citation_count_discovery(messages)
+    screen._message._sync_console_citation_count_discovery(messages)
 
     assert len(dispatched) == 1
     coroutine, kwargs = dispatched[0]
@@ -909,7 +937,7 @@ async def test_new_eligible_message_queries_only_new_entry_after_history_resolve
     assert repository.calls[len(historical_calls) :] == [
         ("persisted-3", "Answer [S1].")
     ]
-    assert screen._console_citation_counts == {
+    assert screen._message._console_citation_counts == {
         "assistant-1": 2,
         "assistant-2": 2,
         "assistant-3": 2,
@@ -921,13 +949,13 @@ def _seed_resolved_counts(
     messages: list[ConsoleChatMessage],
     counts: dict[str, int],
 ) -> None:
-    signature = screen._console_citation_signature(messages)
-    screen._console_citation_input_signature = signature
-    screen._console_citation_repository_token = (
-        screen._console_citation_repository_readiness()[0]
+    signature = screen._message._console_citation_signature(messages)
+    screen._message._console_citation_input_signature = signature
+    screen._message._console_citation_repository_token = (
+        screen._message._console_citation_repository_readiness()[0]
     )
-    screen._console_citation_counts = dict(counts)
-    screen._console_citation_resolved_signatures = {
+    screen._message._console_citation_counts = dict(counts)
+    screen._message._console_citation_resolved_signatures = {
         item[0]: item for item in signature[1]
     }
 
@@ -950,9 +978,9 @@ def test_changed_and_removed_entries_clear_only_their_own_cached_count() -> None
     )
 
     messages[0].content = "Changed answer [S1]."
-    changed_screen._sync_console_citation_count_discovery(messages)
+    changed_screen._message._sync_console_citation_count_discovery(messages)
 
-    assert changed_screen._console_citation_counts == {"assistant-2": 1}
+    assert changed_screen._message._console_citation_counts == {"assistant-2": 1}
     assert len(changed_workers) == 1
     changed_workers[0].close()
 
@@ -972,9 +1000,9 @@ def test_changed_and_removed_entries_clear_only_their_own_cached_count() -> None
     )
 
     removed_screen._console_chat_store.messages = removed_messages[1:]
-    removed_screen._sync_console_citation_count_discovery(removed_messages[1:])
+    removed_screen._message._sync_console_citation_count_discovery(removed_messages[1:])
 
-    assert removed_screen._console_citation_counts == {"assistant-2": 1}
+    assert removed_screen._message._console_citation_counts == {"assistant-2": 1}
     assert removed_workers == []
 
 
@@ -997,7 +1025,7 @@ async def test_zero_result_is_cached_and_not_requeried_on_unrelated_changes() ->
     screen = _bare_screen(messages, repository)
 
     await _dispatch_and_run(screen, messages)
-    assert screen._console_citation_counts == {"assistant-uncited": 0}
+    assert screen._message._console_citation_counts == {"assistant-uncited": 0}
 
     messages.append(_message("assistant-2", persisted_message_id="persisted-2"))
     await _dispatch_and_run(screen, messages)
@@ -1011,7 +1039,7 @@ async def test_zero_result_is_cached_and_not_requeried_on_unrelated_changes() ->
     ]
     transcript = ConsoleTranscript()
     transcript.set_messages(messages)
-    transcript.set_citation_counts(screen._console_citation_counts)
+    transcript.set_citation_counts(screen._message._console_citation_counts)
     citation_row_ids = {
         row.message.id
         for row in transcript._flat_transcript_rows()
@@ -1030,20 +1058,20 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
     screen._console_chat_controller = None
     screen._console_original_attempt_previews = {}
     screen._pending_console_swipe_selection = None
-    screen._sync_console_citation_count_discovery = lambda _messages: None
+    screen._message._sync_console_citation_count_discovery = lambda _messages: None
     screen._console_chat_store.session_context_summary = lambda _session_id: (
         None,
         None,
     )
     screen._current_console_run_status_value = lambda: "idle"
-    screen._console_presentation_context = lambda: None
+    screen._message._console_presentation_context = lambda: None
     screen._image._build_console_image_specs = lambda _messages: {}
     screen._image._build_generation_card_specs = lambda _messages: {}
     screen._ensure_console_image_view = lambda: (
         None,
         SimpleNamespace(pending_ids=lambda _message_ids: ()),
     )
-    screen._recent_console_image_messages = lambda _messages: ()
+    screen._message._recent_console_image_messages = lambda _messages: ()
     screen._image._pending_console_generation_card_images = (
         lambda _messages, _card_specs: ()
     )
@@ -1072,7 +1100,7 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
         set_annotation_previews=Mock(),
         apply_turn_activity=Mock(return_value=""),
         set_original_attempt_previews=Mock(),
-        set_summary_boundary=Mock(),
+        set_memory_banner_presentation=Mock(),
         sync_jump_indicator=Mock(),
         set_image_specs=Mock(),
         set_generation_card_specs=Mock(),
@@ -1083,7 +1111,7 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
     screen._console_transcript_region_or_none = lambda: None
 
     await screen._sync_native_console_transcript()
-    screen._console_citation_counts = {"assistant-uncited": 0}
+    screen._message._console_citation_counts = {"assistant-uncited": 0}
     await screen._sync_native_console_transcript()
 
     assert transcript.refresh_messages.await_count == 1
@@ -1098,9 +1126,9 @@ async def test_replacement_worker_includes_unchanged_entry_still_unresolved() ->
     dispatched: list[object] = []
     screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
 
-    screen._sync_console_citation_count_discovery(messages)
+    screen._message._sync_console_citation_count_discovery(messages)
     messages.append(_message("assistant-2", persisted_message_id="persisted-2"))
-    screen._sync_console_citation_count_discovery(messages)
+    screen._message._sync_console_citation_count_discovery(messages)
 
     assert len(dispatched) == 2
     dispatched[0].close()
@@ -1131,7 +1159,7 @@ async def test_existing_focused_sources_row_stays_mounted_for_unrelated_new_entr
     async with app.run_test() as pilot:
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.set_messages(messages)
-        transcript.set_citation_counts(screen._console_citation_counts)
+        transcript.set_citation_counts(screen._message._console_citation_counts)
         await transcript.refresh_messages()
         existing_button = transcript.query_one("#console-citation-sources-assistant-1")
         existing_button.focus()
@@ -1139,9 +1167,9 @@ async def test_existing_focused_sources_row_stays_mounted_for_unrelated_new_entr
         assert existing_button.has_focus
 
         messages.append(_message("assistant-2", persisted_message_id="persisted-2"))
-        screen._sync_console_citation_count_discovery(messages)
+        screen._message._sync_console_citation_count_discovery(messages)
         transcript.set_messages(messages)
-        transcript.set_citation_counts(screen._console_citation_counts)
+        transcript.set_citation_counts(screen._message._console_citation_counts)
         await transcript.refresh_messages()
         await pilot.pause()
 
@@ -1162,13 +1190,13 @@ async def test_inflight_result_is_discarded_after_repository_becomes_missing() -
     dispatched: list[object] = []
     screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
 
-    screen._sync_console_citation_count_discovery(messages)
+    screen._message._sync_console_citation_count_discovery(messages)
     assert len(dispatched) == 1
 
     screen.app_instance.citation_trace_repository = None
     await dispatched[0]
 
-    assert screen._console_citation_counts == {}
+    assert screen._message._console_citation_counts == {}
 
 
 @pytest.mark.asyncio
@@ -1183,7 +1211,7 @@ async def test_inflight_result_is_discarded_after_repository_identity_change(
     dispatched: list[object] = []
     screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
 
-    screen._sync_console_citation_count_discovery(messages)
+    screen._message._sync_console_citation_count_discovery(messages)
     assert len(dispatched) == 1
 
     if repository_change == "db-mismatch":
@@ -1195,7 +1223,7 @@ async def test_inflight_result_is_discarded_after_repository_identity_change(
         )
     await dispatched[0]
 
-    assert screen._console_citation_counts == {}
+    assert screen._message._console_citation_counts == {}
 
 
 @pytest.mark.asyncio
@@ -1208,17 +1236,17 @@ async def test_same_transcript_discovers_when_missing_repository_later_appears()
     dispatched: list[object] = []
     screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
 
-    screen._sync_console_citation_count_discovery(messages)
+    screen._message._sync_console_citation_count_discovery(messages)
     assert dispatched == []
 
     repository = _FakeRepository(_active_result(_trace()), db=app_db)
     screen.app_instance.citation_trace_repository = repository
-    screen._sync_console_citation_count_discovery(messages)
+    screen._message._sync_console_citation_count_discovery(messages)
 
     assert len(dispatched) == 1
     await dispatched[0]
     assert repository.calls == [("persisted", "Answer [S1].")]
-    assert screen._console_citation_counts == {"assistant": 2}
+    assert screen._message._console_citation_counts == {"assistant": 2}
 
 
 @pytest.mark.asyncio
@@ -1231,20 +1259,20 @@ async def test_valid_repository_replacement_invalidates_and_requeries_same_trans
     screen = _bare_screen(messages, first_repository, app_db=app_db)
 
     await _dispatch_and_run(screen, messages)
-    assert screen._console_citation_counts == {"assistant": 2}
+    assert screen._message._console_citation_counts == {"assistant": 2}
 
     replacement = _FakeRepository(_active_result(_trace()), db=app_db)
     screen.app_instance.citation_trace_repository = replacement
     dispatched: list[object] = []
     screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
-    screen._sync_console_citation_count_discovery(messages)
+    screen._message._sync_console_citation_count_discovery(messages)
 
-    assert screen._console_citation_counts == {}
-    assert screen._console_citation_resolved_signatures == {}
+    assert screen._message._console_citation_counts == {}
+    assert screen._message._console_citation_resolved_signatures == {}
     assert len(dispatched) == 1
     await dispatched[0]
     assert replacement.calls == [("persisted", "Answer [S1].")]
-    assert screen._console_citation_counts == {"assistant": 2}
+    assert screen._message._console_citation_counts == {"assistant": 2}
 
 
 class _HydrationRepository:
@@ -1379,8 +1407,6 @@ def _citation_harness(
         app_instance=NO_APP,
     )
     screen._console_chat_store = _FakeStore([message])
-    screen._console_citation_counts = {"assistant-1": 2}
-    screen._console_citation_request_generation = 1
     app = _CitationHarnessApp(
         screen,
         repository,
@@ -1394,6 +1420,8 @@ def _citation_harness(
     # that reads it via ``getattr(..., default)`` would then silently take the
     # default branch instead of failing loudly.
     _attach_message_controller(screen)
+    screen._message._console_citation_counts = {"assistant-1": 2}
+    screen._message._console_citation_request_generation = 1
     return app, screen, repository, message
 
 

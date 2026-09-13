@@ -885,6 +885,8 @@ asyncio.run(main())
 
 _APP_EXIT_CHILD = """
 import asyncio, json, sys
+# Reserve the original stdout for the explicit JSON phase protocol.
+sys.stdout = sys.stderr
 from pathlib import Path
 import Tests.conftest
 sys.path.insert(0, str(Path.cwd() / "packages/tldw_profile_core/src"))
@@ -896,6 +898,8 @@ import tldw_chatbook.app as app_module
 
 app_module.get_tts_profiles_db_path = lambda: Path(sys.argv[1])
 app = _build_test_app()
+# Textual forwards headless diagnostics to the stream captured at construction.
+app._original_stdout = sys.stderr
 state, owner_count = sys.argv[2], int(sys.argv[3])
 siblings = []
 statements = []

@@ -171,7 +171,7 @@ async def test_media_previous_page_returns_to_the_page_before_it() -> None:
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_scope == MediaBrowseScope(page=1)
+                controller.state.applied_scope == MediaBrowseScope(page=1)
                 and not screen.query_one("#library-media-next", Button).disabled
             ),
             message="Exact first Media page never applied with Next enabled.",
@@ -181,7 +181,7 @@ async def test_media_previous_page_returns_to_the_page_before_it() -> None:
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_scope == MediaBrowseScope(page=2)
+                controller.state.applied_scope == MediaBrowseScope(page=2)
                 and _page_status(screen) == "21-40 of 45 · Page 2 of 3"
             ),
             message="Media page 2 never applied.",
@@ -193,7 +193,7 @@ async def test_media_previous_page_returns_to_the_page_before_it() -> None:
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_scope == MediaBrowseScope(page=1)
+                controller.state.applied_scope == MediaBrowseScope(page=1)
                 and _page_status(screen) == "1-20 of 45 · Page 1 of 3"
             ),
             message="Previous never returned the exact Media page to 1.",

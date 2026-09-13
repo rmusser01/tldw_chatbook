@@ -434,8 +434,8 @@ async def test_delete_receipt_paints_a_live_undo_on_a_stale_page(size):
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
         controller = screen._library_media_browse_controller
-        controller.freshness = "stale"
-        controller.stale_copy = "Media changed; retry to load a current page."
+        controller.state.freshness = "stale"
+        controller.state.stale_copy = "Media changed; retry to load a current page."
         screen._media_state.delete_receipt_ids = ("local:media:1",)
         _sync_library_canvas(screen, "media")
         receipt = await _wait_for_selector(
@@ -649,7 +649,7 @@ async def test_a_scope_change_clears_the_armed_analyze_choice():
         _sync_library_canvas(screen, "media")
         await _wait_for_selector(screen, pilot, "#library-media-analyze-receipt")
 
-        screen._request_library_media_filter("beta")
+        screen._media_controller._request_library_media_filter("beta")
         await pilot.pause()
         assert screen._media_state.analyze_choice is None
         _sync_library_canvas(screen, "media")
@@ -1653,19 +1653,46 @@ def _plain_local_host() -> LibraryProductionCSSHarness:
 
 
 @pytest.mark.asyncio
-async def test_local_reader_chrome_stops_before_the_sixth_row():
+@pytest.mark.parametrize("delayed_layout", [False, True])
+async def test_local_reader_chrome_stops_before_the_sixth_row(monkeypatch, delayed_layout):
     """task-31277 (critique #4 P2): nine rows of chrome before the first
     content line (measured live at 235x52). The identity line restates what the Media list already
     said, the byline row paints empty when an item has no author or URL,
     and the section header repeats the selected mode tab. Counted from the
     reader pane's top edge to the first content line, inclusive of the
     content box's top border: Back, title, toolbar, mode row, border."""
+    from tldw_chatbook.Widgets.Library.library_media_raw_view import VirtualizedRawContent
+
+    delayed_builds = []
+    if delayed_layout:
+        real_build = VirtualizedRawContent._build_index_now
+
+        def defer_first_layout(body, width):
+            if width > 0 and body.wrap_index is None:
+                if not delayed_builds:
+                    delayed_builds.append(
+                        body.set_timer(0.4, lambda: real_build(body, width))
+                    )
+                return
+            real_build(body, width)
+
+        monkeypatch.setattr(VirtualizedRawContent, "_build_index_now", defer_first_layout)
+
     host = _plain_local_host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
         await _open_first_reader_row(screen, pilot)
         viewer = screen.query_one("#library-media-viewer")
         body = screen.query_one("#library-media-viewer-content-text")
+        if delayed_layout:
+            assert delayed_builds, "the real first-layout boundary must be exercised"
+        # Detail settlement precedes the Raw widget's first positive-width
+        # layout/index. Measure chrome only after real content reaches paint.
+        await _wait_for_condition(
+            pilot,
+            lambda: "Line 1 of recording 1." in _painted(host, viewer.region),
+            message="The settled reader never painted its first content line.",
+        )
         chrome = body.region.y - viewer.region.y
         painted = _painted(host, viewer.region)
         assert chrome <= 5, (chrome, painted.splitlines()[:10])
@@ -1814,7 +1841,7 @@ async def test_reprojection_skips_rows_the_page_does_not_retain():
 
         retained = {
             str(item["id"])
-            for item in screen._library_media_browse_controller.retained_items
+            for item in screen._library_media_browse_controller.state.retained_items
         }
         assert len(retained) == 20, retained
         off_page = [
@@ -1846,8 +1873,8 @@ async def _apply_media_filter(screen, pilot, query: str) -> None:
     await _wait_for_condition(
         pilot,
         lambda: (
-            screen._library_media_browse_controller.applied_scope is not None
-            and screen._library_media_browse_controller.applied_scope.query == query
+            screen._library_media_browse_controller.state.applied_scope is not None
+            and screen._library_media_browse_controller.state.applied_scope.query == query
         ),
         message=f"The media filter never applied query {query!r}.",
     )
@@ -2118,17 +2145,17 @@ async def test_select_mode_empty_refresh_does_not_ask_to_select_nothing():
         assert reason.styles.visibility == "visible"
 
         # A successful refresh empties the list while select mode survives.
-        controller = screen._library_media_browse_controller
+        browse = screen._library_media_browse_controller.state
         service.media_items = []
         screen._request_library_media_browse(
-            controller.mutation_refresh_scope,
+            browse.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_result is not None
-            and controller.applied_result.total == 0
-            and not controller.loading,
+            lambda: browse.applied_result is not None
+            and browse.applied_result.total == 0
+            and not browse.loading,
             message="Empty Media refresh never applied while in select mode.",
         )
         await pilot.pause()
@@ -2628,14 +2655,14 @@ async def _force_media_page_failure(host, screen, pilot, exc: BaseException):
     await _wait_for_condition(
         pilot,
         lambda: (
-            controller.failure is not None
-            and not controller.loading
+            controller.state.failure is not None
+            and not controller.state.loading
             # The callout composes before the row scroll: settle on BOTH the
             # mounted callout and the remounted retained rows, not on the
             # controller alone (a single pause raced the mount elsewhere).
             and bool(screen.query("#library-media-load-failure-copy"))
             and len(screen.query(".library-media-row"))
-            == len(controller.retained_items)
+            == len(controller.state.retained_items)
         ),
         message="The forced Media page failure never settled.",
     )
@@ -2706,7 +2733,7 @@ async def test_media_load_failure_callout_retry_issues_a_new_request():
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading,
+            lambda: not controller.state.loading,
             message="The retried request never settled.",
         )
         await pilot.pause()
@@ -2714,7 +2741,7 @@ async def test_media_load_failure_callout_retry_issues_a_new_request():
         # Still one callout, repainted with the fresh reason -- never a
         # silent press.
         assert len(screen.query("#library-media-load-failure")) == 1
-        assert controller.failure is not None
+        assert controller.state.failure is not None
 
 
 @pytest.mark.asyncio
@@ -2735,12 +2762,12 @@ async def test_media_facet_failure_paints_the_same_callout():
         screen._request_library_media_facets()
         await _wait_for_condition(
             pilot,
-            lambda: controller.facet_failure is not None and not controller.facet_loading,
+            lambda: controller.state.facet_failure is not None and not controller.state.facet_loading,
             message="The forced Media facet failure never settled.",
         )
         await pilot.pause()
 
-        assert controller.page_failure is None
+        assert controller.state.page_failure is None
         callout = screen.query_one("#library-media-load-failure")
         copy = screen.query_one("#library-media-load-failure-copy", Static)
         painted = " ".join(_painted(host, copy.region).split())
@@ -2783,7 +2810,7 @@ async def test_repeated_media_load_failure_names_the_reopen_recovery():
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading,
+            lambda: not controller.state.loading,
             message="The retried request never settled.",
         )
         await pilot.pause()
@@ -2825,7 +2852,7 @@ async def test_changed_page_context_failure_is_not_a_repeated_retry():
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading,
+            lambda: not controller.state.loading,
             message="The page-2 request never settled.",
         )
         await pilot.pause()
@@ -2867,7 +2894,7 @@ async def test_resume_refresh_failure_is_not_a_repeated_retry():
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading,
+            lambda: not controller.state.loading,
             message="The resume refresh never settled.",
         )
         await pilot.pause()
@@ -2901,8 +2928,8 @@ async def test_facet_only_failure_leaves_the_row_supported_actions_live():
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.facet_failure is not None
-                and not controller.facet_loading
+                controller.state.facet_failure is not None
+                and not controller.state.facet_loading
             ),
             message="The forced Media facet failure never settled.",
         )
@@ -2910,8 +2937,8 @@ async def test_facet_only_failure_leaves_the_row_supported_actions_live():
 
         # The page read succeeded, its rows are retained, and the "nothing to
         # select" predicate the whole-list gate reads stays False.
-        assert controller.page_failure is None
-        assert len(controller.retained_items) == 2
+        assert controller.state.page_failure is None
+        assert len(controller.state.retained_items) == 2
         assert not screen._library_media_list_unselectable()
 
         # ...so every action the row data supports stays live and un-gated.
@@ -3564,7 +3591,10 @@ async def test_analysed_secondary_is_bounded_at_custom_items_widths(
         screen._sync_library_media_reader_layout_from_shell()
         await _wait_for_condition(
             pilot,
-            lambda: _items_pane_width(screen) == items_width - 4,
+            lambda: (
+                screen._media_state.reader_layout.items_width == items_width
+                and _items_pane_width(screen) == items_width - 4
+            ),
             message=lambda: (
                 f"Items canvas width={_items_pane_width(screen)}; "
                 f"view={screen._media_state.view}; "
@@ -3854,9 +3884,9 @@ async def _open_media_with_a_failed_first_page(host, pilot, exc: BaseException):
     await _wait_for_condition(
         pilot,
         lambda: (
-            controller.failure is not None
-            and not controller.loading
-            and not controller.retained_items
+            controller.state.failure is not None
+            and not controller.state.loading
+            and not controller.state.retained_items
             and bool(screen.query("#library-media-load-failure-copy"))
         ),
         message="The first-page Media failure never settled.",
@@ -4029,7 +4059,7 @@ async def test_page_failure_that_retains_rows_leaves_export_live():
 
         # The callout IS up (the broad predicate this used to gate on)...
         assert screen.query("#library-media-load-failure-copy")
-        assert screen._library_media_browse_controller.failure is not None
+        assert screen._library_media_browse_controller.state.failure is not None
         assert len(screen.query(".library-media-row")) == 2
         # ...and Export… is still live over the rows that survived it.
         export = screen.query_one("#library-media-export", Button)
@@ -4171,9 +4201,9 @@ async def _apply_media_filter(screen, pilot, query: str) -> None:
     await _wait_for_condition(
         pilot,
         lambda: (
-            screen._library_media_browse_controller.applied_scope is not None
-            and screen._library_media_browse_controller.applied_scope.query == query
-            and not screen._library_media_browse_controller.loading
+            screen._library_media_browse_controller.state.applied_scope is not None
+            and screen._library_media_browse_controller.state.applied_scope.query == query
+            and not screen._library_media_browse_controller.state.loading
         ),
         message=f"The filter {query!r} never applied.",
     )
@@ -4358,7 +4388,7 @@ async def _decoration_fixture(host, pilot):
     _sync_library_canvas(screen, "media")
     for _ in range(3):
         await pilot.pause()
-    items = screen._library_media_browse_controller.retained_items
+    items = screen._library_media_browse_controller.state.retained_items
     assert len(items) == 4, items
     return screen, service, set_id, items, loads
 

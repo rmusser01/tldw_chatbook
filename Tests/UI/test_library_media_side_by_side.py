@@ -58,11 +58,16 @@ def _many_media_items(count: int = 45) -> list[dict[str, object]]:
 
 
 async def _open_media_list(host, pilot):
-    """Select the Media rail row and wait for the list rows to mount."""
+    """Select Media and await mounted rows plus completed entry focus."""
     screen = _active_library_screen(host)
     await _wait_for_library_shell(screen, pilot)
     screen.query_one("#library-row-browse-media").press()
     await _wait_for_selector(screen, pilot, "#library-media-row-1")
+    await _wait_for_condition(
+        pilot,
+        lambda: not screen._library_notes_restoring_focus,
+        message="Media list entry focus restoration never completed.",
+    )
     return screen
 
 
@@ -178,7 +183,7 @@ async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None
         scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
         row.focus()
         await pilot.pause()
-        initial_scope = controller.applied_scope
+        initial_scope = controller.state.applied_scope
         initial_selection = screen._media_state.row_selection.ids
         initial_calls = (len(service.search_calls), len(service.type_calls))
 
@@ -197,7 +202,7 @@ async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None
         # height changes; the semantic row and valid scroll owner survive.
         assert scroll.scroll_y >= 0
         assert 0 <= scroll.scroll_y <= scroll.max_scroll_y
-        assert controller.applied_scope == initial_scope
+        assert controller.state.applied_scope == initial_scope
         assert screen._media_state.row_selection.ids == initial_selection
         assert (len(service.search_calls), len(service.type_calls)) == initial_calls
 
@@ -317,7 +322,7 @@ async def test_compact_media_viewer_back_restores_semantic_row_and_scroll() -> N
         screen, media_id, scroll_offset = await _open_scrolled_compact_media_viewer(
             host, pilot
         )
-        applied_scope = screen._library_media_browse_controller.applied_scope
+        applied_scope = screen._library_media_browse_controller.state.applied_scope
         reads_before_back = len(service.search_calls)
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
@@ -333,7 +338,7 @@ async def test_compact_media_viewer_back_restores_semantic_row_and_scroll() -> N
         )
         scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
         assert (int(scroll.scroll_x), int(scroll.scroll_y)) == scroll_offset
-        assert screen._library_media_browse_controller.applied_scope == applied_scope
+        assert screen._library_media_browse_controller.state.applied_scope == applied_scope
         assert len(service.search_calls) == reads_before_back
 
 
@@ -442,12 +447,12 @@ async def test_compact_media_viewer_back_survives_targeted_reorder() -> None:
         moved["last_modified"] = "2030-01-01T00:00:00Z"
         controller = screen._library_media_browse_controller
         screen._request_library_media_browse(
-            controller.mutation_refresh_scope,
+            controller.state.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading,
+            lambda: not controller.state.loading,
             message="Targeted reorder never settled.",
         )
         await _wait_for_condition(
@@ -484,17 +489,17 @@ async def test_media_reader_back_keeps_a_retained_row_after_origin_removed() -> 
             if service._backing_id(item, index) != removed_backing
         ]
         screen._request_library_media_browse(
-            controller.mutation_refresh_scope,
+            controller.state.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_result is not None
-            and controller.applied_result.total == 44
-            and not controller.loading,
+            lambda: controller.state.applied_result is not None
+            and controller.state.applied_result.total == 44
+            and not controller.state.loading,
             message="Authoritative page without the removed row never applied.",
         )
-        retained_ids = {item["id"] for item in controller.retained_items}
+        retained_ids = {item["id"] for item in controller.state.retained_items}
 
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
@@ -532,7 +537,7 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_browse_controller.applied_scope
+            lambda: screen._library_media_browse_controller.state.applied_scope
             == MediaBrowseScope(page=2),
             message="Restored Media page 2 never applied.",
         )
@@ -569,26 +574,39 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
         ]
         controller = screen._library_media_browse_controller
         screen._request_library_media_browse(
-            controller.mutation_refresh_scope,
+            controller.state.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_scope == MediaBrowseScope(page=1)
-            and not controller.loading,
+            lambda: controller.state.applied_scope == MediaBrowseScope(page=1)
+            and not controller.state.loading,
             message="Shrunken page 2 did not clamp once to page 1.",
         )
         assert [call["offset"] for call in service.search_calls] == [20, 20, 0]
         await _wait_for_condition(
             pilot,
             lambda: getattr(screen.focused, "media_id", None)
-            == controller.retained_items[0]["id"],
+            == controller.state.retained_items[0]["id"],
             message="Clamped page did not fall back to its first authoritative row.",
         )
 
 
 @pytest.mark.asyncio
-async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -> None:
+@pytest.mark.parametrize("completion", ["recovery", "cancelled", "explicit"])
+async def test_compact_media_viewer_back_empty_page_focuses_recovery_control(
+    monkeypatch: pytest.MonkeyPatch,
+    completion: str,
+) -> None:
+    """Settle an empty page after Back without keeping a stale Reader alive.
+
+    Args:
+        monkeypatch: Holds the test service's empty reply until Back is admitted.
+        completion: Recovery, cancellation, or an explicit focus target to verify.
+    """
+    import asyncio
+    from threading import Event
+
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     service = app.media_reading_scope_service
@@ -599,28 +617,90 @@ async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -
             host, pilot
         )
         controller = screen._library_media_browse_controller
-        service.media_items = []
-        screen._request_library_media_browse(
-            controller.mutation_refresh_scope,
-            focus_identity=None,
-        )
-        await _wait_for_condition(
-            pilot,
-            lambda: controller.applied_result is not None
-            and controller.applied_result.total == 0
-            and not controller.loading,
-            message="Exact empty Media result never applied in the viewer.",
-        )
-        reads_before_back = len(service.search_calls)
+        entered, release = Event(), Event()
+        search_media = service.search_media
 
-        screen.query_one("#library-media-back", Button).press()
-        await _wait_for_condition(
-            pilot,
-            lambda: getattr(screen.focused, "id", None)
-            == "library-media-empty-import",
-            message="Empty viewer return did not focus the Import recovery action.",
+        async def held_empty_reply(**kwargs):
+            result = await search_media(**kwargs)
+            assert result["total"] == 0
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 5), "Empty reply not released."
+            return result
+
+        monkeypatch.setattr(service, "search_media", held_empty_reply)
+        pending_empty_focus = []
+        focus_entry = screen._focus_library_list_entry_if_current
+
+        def observe_empty_focus(generation):
+            result = controller.state.applied_result
+            if result is not None and result.total == 0:
+                pending_empty_focus.append(generation)
+                if completion == "cancelled":
+                    return
+            focus_entry(generation)
+
+        monkeypatch.setattr(
+            screen, "_focus_library_list_entry_if_current", observe_empty_focus
         )
-        assert len(service.search_calls) == reads_before_back
+        service.media_items = []
+        reads_before_request = len(service.search_calls)
+        worker = screen._request_library_media_browse(
+            controller.state.mutation_refresh_scope,
+            focus_identity=("#library-media-review-sets" if completion == "explicit" else None),
+        )
+        try:
+            await _wait_for_condition(
+                pilot, entered.is_set, message="Empty Media request did not start."
+            )
+            assert len(service.search_calls) == reads_before_request + 1
+            reads_before_back = len(service.search_calls)
+            assert controller.state.applied_result.total > 0
+            screen.query_one("#library-media-back", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._media_state.view == "list"
+                and screen._library_pending_list_entry_focus,
+                message="Back did not arm its return before the empty reply.",
+            )
+            release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: controller.state.applied_result is not None
+                and controller.state.applied_result.total == 0
+                and not controller.state.loading,
+                message="Exact empty Media result never applied after Back.",
+            )
+            if completion == "cancelled":
+                await _wait_for_condition(
+                    pilot, lambda: bool(pending_empty_focus),
+                    message="Empty return did not queue its guarded focus callback.",
+                )
+                screen._mark_library_notes_user_interaction()
+                sets = screen.query_one("#library-media-review-sets")
+                assert sets.region.area > 0
+                sets.focus()
+                await pilot.pause()
+                assert not screen._library_pending_list_entry_focus
+                assert pending_empty_focus[-1] != screen._library_list_entry_focus_generation
+                focus_entry(pending_empty_focus[-1])
+                assert screen.focused is sets
+            else:
+                expected = (
+                    "library-media-review-sets" if completion == "explicit"
+                    # The retained empty-page toolbar owns the first recovery control.
+                    else "library-media-type-filter"
+                )
+                await _wait_for_condition(
+                    pilot, lambda: getattr(screen.focused, "id", None) == expected,
+                    message="Empty viewer return did not focus its recovery/explicit target.",
+                )
+                if completion == "explicit":
+                    assert pending_empty_focus == []
+            assert len(service.search_calls) == reads_before_back
+        finally:
+            release.set()
+            if worker is not None:
+                await worker.wait()
 
 
 @pytest.mark.asyncio
@@ -806,12 +886,10 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
             lambda: not screen._media_state.reader_layout.library_open,
             message="Library grip did not collapse the Library pane.",
         )
-        # task-31633: with the one-cell grips (AC#2) and list growth (AC#1)
-        # the Items pane is already on its 56-cell comfort ceiling at this
-        # size, so the collapsed rail's cells go to the Reader instead. The
-        # collapse still moves cells -- just not into a pane that is full.
-        assert items.region.width >= initial_width
-        assert shell.work.region.width > initial_reader_width
+        # task-31979: Trash has no loaded item, so its empty Reader stays on
+        # the 46-cell work floor and the collapsed rail's cells widen Items.
+        assert items.region.width > initial_width
+        assert shell.work.region.width == initial_reader_width == 46
 
         search = screen.query_one("#library-media-trash-search", Input)
         search.focus()
@@ -1188,7 +1266,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                 pilot,
                 lambda: (
                     service.page_two_entered.is_set()
-                    and controller.loading
+                    and controller.state.loading
                     and len(screen.query(".library-media-row")) == 20
                     # The retained rows are already in the DOM before the
                     # loading recompose runs, so they cannot stand in for it:
@@ -1201,7 +1279,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                 ),
                 message="Compact page-2 loading never retained its mounted rows.",
             )
-            assert controller.loading is True
+            assert controller.state.loading is True
             assert len(screen.query(".library-media-row")) == 20
             assert screen.query_one("#library-media-next", Button).disabled
             assert screen.query_one("#library-media-previous", Button).disabled
@@ -1210,7 +1288,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    bool(controller.error_copy)
+                    bool(controller.state.error_copy)
                     and bool(screen.query("#library-media-retry"))
                     # task-31632: the Retry mounts INSIDE the failure callout,
                     # which composes before the row scroll -- so its presence
@@ -1231,7 +1309,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.freshness == "stale"
+                    controller.state.freshness == "stale"
                     and bool(screen.query("#library-media-retry"))
                 ),
                 message="Compact double shrink never reached stale recovery.",
@@ -1243,7 +1321,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                 action = screen.query_one(selector, Button)
                 assert action.disabled, selector
                 assert str(action.label).startswith("○"), selector
-                assert action.tooltip == controller.stale_copy, selector
+                assert action.tooltip == controller.state.stale_copy, selector
             assert not screen.query_one("#library-media-retry", Button).disabled
             assert not screen.query_one("#library-media-type-filter", Button).disabled
             # task-31220: rows carry the mutation gate only -- reading an item

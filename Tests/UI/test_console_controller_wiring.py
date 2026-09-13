@@ -122,6 +122,24 @@ def _unmounted_console() -> ChatScreen:
     return ChatScreen(_build_test_app())
 
 
+def test_cached_row_actions_keep_late_bound_dependencies() -> None:
+    """Cached row actions must resolve current replacement dependencies at use."""
+    screen = _unmounted_console()
+    owner = screen._row_actions
+    app, store, files = object(), object(), object()
+    screen.app_instance = app
+    screen._ensure_console_chat_store = lambda: store
+    screen._workspace = SimpleNamespace(
+        activate_workspace_id=lambda value: ("activate", value),
+        _workspace_files_availability_by_id=files,
+    )
+    assert screen._row_actions is owner
+    assert owner.app_instance is app
+    assert owner._ensure_console_chat_store() is store
+    assert owner._files_availability_by_id is files
+    assert owner._activate_workspace("workspace") == ("activate", "workspace")
+
+
 def test_all_six_controllers_are_constructed_with_the_right_classes():
     screen = _unmounted_console()
 
@@ -131,6 +149,97 @@ def test_all_six_controllers_are_constructed_with_the_right_classes():
         assert isinstance(controller, cls), (
             f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
         )
+
+
+def test_message_canvas_ports_observe_replaced_screen_targets() -> None:
+    """Message canvas ports must resolve replacement screen targets lazily."""
+    screen = _unmounted_console()
+    owner = screen._message
+    runtime, composer, app = object(), object(), object()
+    screen._console_runtime = lambda: runtime
+    screen._console_composer_or_none = lambda: composer
+    screen.app_instance = app
+    screen._show_console_canvas_open_failure = lambda url: ("show", url)
+    screen._clear_console_canvas_open_failure = lambda: "clear"
+
+    assert owner._console_runtime() is runtime
+    assert owner._console_composer_or_none() is composer
+    assert owner._canvas_app is app
+    assert owner._show_console_canvas_open_failure("url") == ("show", "url")
+    assert owner._clear_console_canvas_open_failure() == "clear"
+
+
+def test_message_citation_discovery_state_is_private_to_each_view_owner() -> None:
+    """Each message view owner must keep citation discovery state private."""
+    first, second = _unmounted_console(), _unmounted_console()
+    first._message._console_citation_counts["message"] = 2
+    first._message._console_citation_request_generation += 1
+
+    assert second._message._console_citation_counts == {}
+    assert second._message._console_citation_request_generation == 0
+
+
+def test_canvas_runtime_callbacks_keep_view_identity_across_store_reads() -> None:
+    """Canvas callbacks stay stable across reads and rebind with a new view owner."""
+    screen = _unmounted_console()
+    store = screen._ensure_console_chat_store()
+    store.ensure_session()
+    runtime = SimpleNamespace(
+        chat_store=store,
+        canvas_controller=object(),
+        bind_canvas_native_view=MagicMock(),
+        snapshot_console_staged_evidence=lambda: (None, 0, None),
+    )
+    screen._console_runtime = lambda: runtime
+    screen._ensure_console_chat_store()
+    callbacks = runtime.bind_canvas_native_view.call_args.kwargs
+    screen._ensure_console_chat_store()
+    assert runtime.bind_canvas_native_view.call_args.kwargs == callbacks
+    assert all(callback.__self__ is screen._message for callback in callbacks.values())
+    screen._message = SimpleNamespace(
+        _console_canvas_scope=lambda session: ("scope", session),
+        _prefill_console_canvas_repair=lambda *args: ("repair", args),
+        _prepare_console_canvas_submit=lambda target: ("submit", target),
+        _schedule_console_canvas_tool_open=lambda session, info: (session, info),
+        _console_canvas_publication_is_current=lambda publication: publication,
+    )
+    screen._ensure_console_chat_store()
+    callbacks = runtime.bind_canvas_native_view.call_args.kwargs
+
+    assert callbacks["scope_resolver"]("session") == ("scope", "session")
+    assert callbacks["bridge_sink"]("target", "text") == ("repair", ("target", "text"))
+    assert callbacks["bridge_prepare"]("target") == ("submit", "target")
+    assert callbacks["auto_open"]("session", "info") == ("session", "info")
+    assert callbacks["publication_guard"](True) is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_console_canvas_scope",
+        "_prefill_console_canvas_repair",
+        "_prepare_console_canvas_submit",
+        "_console_canvas_authority",
+        "_console_canvas_publication_is_current",
+        "_schedule_console_canvas_tool_open",
+        "_open_console_canvas_block",
+        "_open_console_canvas_selection",
+        "_sync_console_citation_count_discovery",
+        "_read_console_citation_counts",
+        "_apply_console_citation_counts",
+        "_discover_console_citation_counts",
+    ],
+)
+def test_canvas_and_citation_private_helpers_have_one_message_owner(
+    name: str,
+) -> None:
+    """Each private canvas or citation helper must have one message owner.
+
+    Args:
+        name: Private helper name whose owner boundary is pinned.
+    """
+    assert not hasattr(ChatScreen, name)
+    assert callable(getattr(ConsoleMessageController, name))
 
 
 def test_all_eighteen_controllers_are_constructed_with_the_right_classes() -> None:
@@ -451,7 +560,7 @@ def test_realtime_controller_is_wired_late_bound_with_empty_owned_state() -> Non
 
     dictation_stop_calls: list[None] = []
     pipeline_loop_calls: list[bool] = []
-    screen._request_console_dictation_stop = lambda: dictation_stop_calls.append(None)
+    screen._dictation._request_console_dictation_stop = lambda: dictation_stop_calls.append(None)
     screen._hands_free = SimpleNamespace(
         _console_pipeline_hands_free_blocker=lambda: pipeline_blocker,
         _enter_console_hands_free_pipeline_loop=(

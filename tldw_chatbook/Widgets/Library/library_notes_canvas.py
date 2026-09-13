@@ -65,6 +65,9 @@ from tldw_chatbook.Widgets.Library.library_notes_sync_roots_canvas import (
     LibraryNotesSyncRootsCanvas,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from tldw_chatbook.UI.Library_Modules.screen_support_types import (
+    _LibraryNotesRestoreGuard,
+)
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
@@ -1071,6 +1074,31 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         before = self._toolbar_decisions(self._effective_pane_width())
         self._measured_width = width
         if before != self._toolbar_decisions(self._effective_pane_width()):
+            focused = self.app.focused
+            capture_recompose = getattr(
+                self.screen, "_capture_library_notes_recompose_state", None
+            )
+            restore_targeted = getattr(
+                self.screen, "_restore_library_notes_after_targeted_sync", None
+            )
+            if (
+                not self.has_pending_recompose_callback
+                and focused is not None
+                and focused.is_mounted
+                and self in focused.ancestors
+                and callable(capture_recompose)
+                and callable(restore_targeted)
+            ):
+                capture = capture_recompose()
+                if capture is not None:
+                    guard = _LibraryNotesRestoreGuard(
+                        recompose_generation=capture.recompose_generation,
+                        scroll_generation=capture.scroll_generation,
+                        focus_generation=capture.focus_generation,
+                    )
+                    self.queue_after_recompose(
+                        lambda: restore_targeted(capture.focus, guard)
+                    )
             self.refresh(recompose=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -1143,7 +1171,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         load_message: str,
         deferred_guard: Callable[[], bool] | None = None,
         focus_intent_generation: Callable[[], int] | None = None,
-    ) -> None:
+    ) -> bool:
         """Apply a complete screen-owned snapshot within this canvas only.
 
         The method replaces every compose input before updating the visible
@@ -1177,8 +1205,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 scheduled by this exact sync.
             focus_intent_generation: Current screen focus-intent generation,
                 read before and after an awaited recompose.
+
+        Returns:
+            True only when a bulk presentation update preserved editor children;
+            the sync coordinator must route follow-ups through its list canvas.
         """
         previous_mode = self.mode
+        previous_presentation = self.presentation_state
         focused = self.app.focused
         self._tree_pager_focus_generation += 1
         self._tree_focus_intent_generation = focus_intent_generation
@@ -1237,7 +1270,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 child.queue_after_recompose(None)
                 if callback is not None:
                     self.call_after_refresh(callback)
-            return
+            return False
         lasting_canvases = self.query("#library-notes-lasting-add-canvas")
         if (
             previous_mode == mode == "lasting_add"
@@ -1250,7 +1283,24 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             lasting_canvases.first(LibraryNotesAddFromFilesCanvas).sync_state(
                 lasting_sync_snapshot
             )
-            return
+            return False
+        bulk_presentation_changed = (
+            previous_mode == mode == "editor"
+            and previous_presentation is not None
+            and presentation_state is not None
+            and (
+                previous_presentation.bulk_read_only,
+                previous_presentation.bulk_included,
+            )
+            != (presentation_state.bulk_read_only, presentation_state.bulk_included)
+            and (
+                previous_presentation.bulk_read_only
+                or presentation_state.bulk_read_only
+            )
+        )
+        if bulk_presentation_changed and self.query("#library-note-title"):
+            self._apply_post_compose_state()
+            return True
         if previous_mode == mode and self.editor_has_focus():
             # task-32062: a Notes refresh (a save landing, the first note
             # reaching the list, an evidence-driven reload) recomposed the
@@ -1274,8 +1324,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # guard in ``canvas_sync._sync_library_canvas``, without which the
             # Notes focus restore sat here and fired at the NEXT recompose,
             # dragging focus back out of whatever field the reader moved to.
-            return
+            return False
         self.refresh(recompose=True)
+        return False
 
     def editor_has_focus(self) -> bool:
         """Whether a field of THIS canvas's note editor currently has focus.
@@ -1900,6 +1951,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # a third key.
         tiebreak_labels = note_row_tiebreak_labels(projection.rows)
         with Vertical(id="library-notes-list", classes="library-notes-tree"):
+            note_index = 0
             for index, row in enumerate(projection.rows):
                 indent = "  " * row.depth
                 if row.kind == "pager":
@@ -1993,7 +2045,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes += " library-notes-tree-needs-attention"
                 button = library_row_button(
                     label,
-                    id=f"library-notes-tree-note-{index}",
+                    # Preserve the note-row identity contract used by the
+                    # pre-tree list. Folder and pager rows must not shift a
+                    # note's selector: they are navigation structure, not
+                    # note records.
+                    id=f"library-notes-row-{note_index}",
                     classes=classes,
                     compact=True,
                     tooltip=row.breadcrumb,
@@ -2004,6 +2060,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 self._set_tree_row_metadata(button, row)
                 button._library_row_label_rest = label_rest
                 yield button
+                note_index += 1
             yield from self._compose_trash_opener()
 
     def _compose_tree_actions(self, *, operation_running: bool) -> ComposeResult:
@@ -2568,6 +2625,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.styles.min_width = 0 if compact else 40
         if not self.is_mounted:
             return
+        authority = self.query(f"#{self.authority_id}")
+        if authority:
+            label = authority.first(Static)
+            copy = self._authority_copy()
+            if self._static_text(label) != copy:
+                label.update(copy)
         if self.mode == "list" and self.list_state is not None:
             database_purpose = self.query("#library-notes-database-purpose")
             if database_purpose:
@@ -2679,30 +2742,19 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         idempotent. The screen owns the presentation-sync guard around calls
         that may assign ``Input`` or ``TextArea`` values.
         """
-        if self.mode != "editor" or not self.is_mounted:
-            self.presentation_state = state
-            self.compact = state.compact
-            return
         self.presentation_state = state
         self.compact = state.compact
-        # Second half of the early-out above: a MOUNTED pane whose CHILDREN
-        # are between removal and remount has none of the surfaces below, and
-        # `query_one` raised `NoMatches` on the first of them. The backlinks
-        # loader reaches here from a WORKER, whose default
-        # `exit_on_error=True` turns that into a dead process rather than a
-        # skipped paint (task-32467, reproduced twice live on dev).
-        #
-        # Guarded HERE, not at a caller: several callers reach this method
-        # directly, and returning before it would also discard the
-        # `title_placeholder_only` and stage-visibility work the controller
-        # does around this call. `_apply_post_compose_state` guards the same
-        # shape for its own call and documents the sequence that produces it.
-        #
-        # Returning is complete, not lossy: the state is stored above and
-        # `_apply_post_compose_state` re-applies it the moment the recompose
-        # that removed these children mounts the new ones.
+        # A queryable title can precede a sibling subtree's initial mount.
+        # Textual marks each direct root mounted only after it has awaited
+        # its composed descendants; the existing post-compose hook replays us.
         authority_matches = self.query(f"#{self.authority_id}")
-        if not authority_matches or not self.query("#library-note-title"):
+        if (
+            self.mode != "editor"
+            or not self.is_mounted
+            or not authority_matches
+            or not self.query("#library-note-title")
+            or any(not child.is_mounted for child in self.children)
+        ):
             return
         authority = authority_matches.first(Static)
         authority_copy = self._authority_copy()

@@ -95,7 +95,7 @@ def _bare_screen(*, enabled: bool):
         context="test_console_remote_images._bare_screen",
         ensure_console_image_view=lambda: screen._ensure_console_image_view(),
         recent_console_image_messages=(
-            lambda messages: screen._recent_console_image_messages(messages)
+            lambda messages: screen._message._recent_console_image_messages(messages)
         ),
         console_image_default_mode=lambda: screen._console_image_default_mode,
         console_generation_browse=lambda: screen._console_generation_browse(),

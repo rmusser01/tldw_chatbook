@@ -26,13 +26,24 @@ from textual.widgets import Button, Static
 
 from Tests.UI.test_console_dictation import (
     _mounted_console,
-    _ready_host,
+    _ready_host as _build_ready_host,
     _wait_for_mic_label,
 )
 from Tests.UI.test_console_dictation_streaming import _patch_availability
 from tldw_chatbook.Chat import console_voice_input as voice_module
 from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+from Tests.UI.app_factory import _build_test_app
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+
+
+def _ready_host():
+    return _build_ready_host(_build_test_app)
+
 
 
 # --------------------------------------------------------------------------

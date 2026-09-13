@@ -30,9 +30,13 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.widgets import Button
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
-    _build_console_send_test_app,
     _configure_native_ready_console,
     _select_llamacpp_console,
     _wait_for_selector,
@@ -46,7 +50,11 @@ from tldw_chatbook.Canvas.compiler import CanvasCompileError
 from tldw_chatbook.Canvas.gateway import CanvasGatewayScope
 from tldw_chatbook.Canvas.models import CanvasCompatibilityIssue
 from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
+from tldw_chatbook.Chat.console_roleplay_identity import ConsoleTranscriptStyle
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
@@ -57,7 +65,8 @@ async def test_console_message_send_persists_user_and_assistant_rows():
     """Send/receive path: a real send queues a user turn and persists the
     streamed assistant reply as store rows, not just visible text."""
     gateway = CapturingGateway(chunks=("hello ", "there"))
-    app = _build_console_send_test_app()
+    app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -208,7 +217,7 @@ def test_console_message_select_variant_moves_active_leaf():
     )
     assert store.active_leaf(session.id) == second.id
 
-    target = screen._select_console_message_variant(
+    target = screen._message._select_console_message_variant(
         second.id, direction="variant-previous"
     )
 
@@ -251,7 +260,7 @@ async def test_roleplay_character_greeting_actions_use_live_presentation():
     )
     session.user_display_name_override = "Captain Rowan"
 
-    presentation = screen._console_message_presentation(greeting)
+    presentation = screen._message._console_message_presentation(greeting)
     assert presentation.content == "Hello Captain Rowan."
     assert presentation.speaker_label == "Alraune"
 
@@ -342,6 +351,33 @@ async def test_production_message_controller_resolves_canvas_source_only_at_open
     assert "secret" not in repr(result)
 
 
+def test_message_presentation_owner_reads_replaced_dependencies_without_screen_backdoor():
+    screen = ChatScreen(_build_test_app())
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(title="Presentation")
+    session.user_display_name_override = "Session Name"
+    owner = screen._message
+
+    # The wiring must resolve these dependencies at call time, not capture
+    # their old objects or reach through the controller's framework handle.
+    owner._screen = object()
+    screen.app_instance = SimpleNamespace(
+        app_config={"chat_defaults": {"user_display_name": "Live Global"}}
+    )
+    screen._session = SimpleNamespace(_active_native_console_session=lambda: None)
+    screen._console_transcript_style = lambda: ConsoleTranscriptStyle.NEUTRAL
+
+    context = screen._message._console_presentation_context()
+    assert context.user_name == "Live Global"
+    assert context.transcript_style is ConsoleTranscriptStyle.NEUTRAL
+
+    screen._session = SimpleNamespace(_active_native_console_session=lambda: session)
+    screen._console_transcript_style = lambda: ConsoleTranscriptStyle.ROLE_ACCENTS
+    context = screen._message._console_presentation_context()
+    assert context.user_name == "Session Name"
+    assert context.transcript_style is ConsoleTranscriptStyle.ROLE_ACCENTS
+
+
 def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -349,8 +385,13 @@ def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
     runtime._canvas_gateway = SimpleNamespace(
         has_browser_session_for=lambda session_id: session_id == "session-a"
     )
-    screen.app_instance = SimpleNamespace(call_from_thread=lambda callback: callback())
-    screen._open_console_canvas_selection = Mock(
+    call_from_thread = Mock()
+    screen.app_instance = SimpleNamespace(
+        _thread_id=threading.get_ident(), call_from_thread=call_from_thread
+    )
+    scheduled: list[object] = []
+    screen.call_later = lambda callback: scheduled.append(callback) or True
+    screen._message._open_console_canvas_selection = Mock(
         side_effect=lambda **_kwargs: _closed_coroutine()
     )
     workers: list[object] = []
@@ -362,16 +403,116 @@ def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
     screen.run_worker = capture_worker
     info = SimpleNamespace(canvas_id="canvas-a", revision_id="revision-a")
 
-    screen._schedule_console_canvas_tool_open("session-a", info)
-    screen._schedule_console_canvas_tool_open("session-b", info)
+    screen._message._schedule_console_canvas_tool_open("session-a", info)
+    screen._message._schedule_console_canvas_tool_open("session-b", info)
 
-    screen._open_console_canvas_selection.assert_called_once_with(
+    call_from_thread.assert_not_called()
+    assert len(scheduled) == 2
+    for callback in scheduled:
+        callback()
+    screen._message._open_console_canvas_selection.assert_called_once_with(
         session_id="session-b",
         canvas_id="canvas-a",
         revision_id="revision-a",
         follow_latest=True,
     )
     assert len(workers) == 1
+
+
+def test_canvas_auto_open_accepted_worker_handoff_runs_ui_work_on_owner_thread():
+    """An accepted worker handoff defers all Textual work to the app owner."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    owner_thread = threading.get_ident()
+    handoffs: list[object] = []
+    handoff_threads: list[int] = []
+
+    def accept_handoff(callback):
+        handoff_threads.append(threading.get_ident())
+        handoffs.append(callback)
+
+    screen.app_instance = SimpleNamespace(
+        _thread_id=owner_thread, call_from_thread=accept_handoff
+    )
+    screen._message._open_console_canvas_selection = Mock(
+        side_effect=lambda **_kwargs: _closed_coroutine()
+    )
+    worker_threads: list[int] = []
+
+    def capture_worker(coroutine, **_kwargs):
+        worker_threads.append(threading.get_ident())
+        coroutine.close()
+
+    screen.run_worker = capture_worker
+    info = SimpleNamespace(canvas_id="canvas-a", revision_id="revision-a")
+    errors: list[BaseException] = []
+
+    def invoke() -> None:
+        try:
+            screen._message._schedule_console_canvas_tool_open("session-a", info)
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+    assert errors == []
+    assert handoff_threads == [thread.ident]
+    assert worker_threads == []
+    assert len(handoffs) == 1
+    handoffs.pop()()
+    assert worker_threads == [owner_thread]
+
+
+@pytest.mark.parametrize("handoff", ["missing", "rejected"])
+def test_canvas_auto_open_rejected_worker_handoff_drops_ui_work(handoff: str) -> None:
+    """A worker never falls through to Textual work after a failed handoff.
+
+    Args:
+        handoff: Whether the app lacks or rejects its thread-marshalling API.
+    """
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    owner_thread = threading.get_ident()
+    handoff_threads: list[int] = []
+
+    def reject_handoff(_callback):
+        handoff_threads.append(threading.get_ident())
+        raise RuntimeError("app is closing")
+
+    screen.app_instance = SimpleNamespace(_thread_id=owner_thread)
+    if handoff == "rejected":
+        screen.app_instance.call_from_thread = reject_handoff
+    screen._message._open_console_canvas_selection = Mock(
+        side_effect=lambda **_kwargs: _closed_coroutine()
+    )
+    worker_threads: list[int] = []
+
+    def capture_worker(coroutine, **_kwargs):
+        worker_threads.append(threading.get_ident())
+        coroutine.close()
+
+    screen.run_worker = capture_worker
+    info = SimpleNamespace(canvas_id="canvas-a", revision_id="revision-a")
+    errors: list[BaseException] = []
+
+    def invoke() -> None:
+        try:
+            screen._message._schedule_console_canvas_tool_open("session-a", info)
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+    assert errors == []
+    assert handoff_threads == ([thread.ident] if handoff == "rejected" else [])
+    screen._message._open_console_canvas_selection.assert_not_called()
+    assert worker_threads == []
 
 
 def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
@@ -397,17 +538,108 @@ def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
         revisions=(SimpleNamespace(origin=SimpleNamespace(message_id=left.id)),),
     )
 
-    assert screen._console_canvas_publication_is_current(publication) is True
+    assert screen._message._console_canvas_publication_is_current(publication) is True
 
     store.create_sibling(
         left.id,
         role=ConsoleMessageRole.ASSISTANT,
         content="right",
     )
-    assert screen._console_canvas_publication_is_current(publication) is False
+    assert screen._message._console_canvas_publication_is_current(publication) is False
 
     store.create_session(ephemeral=True)
-    assert screen._console_canvas_publication_is_current(publication) is False
+    assert screen._message._console_canvas_publication_is_current(publication) is False
+
+
+def test_canvas_publication_guard_accepts_restored_native_and_persisted_origins() -> None:
+    """A restored branch accepts either identity for the same saved message."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    root = ConsoleChatMessage(
+        id="native-root",
+        persisted_message_id="persisted-root",
+        role=ConsoleMessageRole.USER,
+        content="root",
+    )
+    left = ConsoleChatMessage(
+        id="native-left",
+        persisted_message_id="persisted-left",
+        parent_message_id="persisted-root",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="left",
+    )
+    right = ConsoleChatMessage(
+        id="native-right",
+        persisted_message_id="persisted-right",
+        parent_message_id="persisted-root",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="right",
+    )
+    first = store.restore_persisted_session(
+        title="Saved Canvas branch",
+        workspace_id=None,
+        persisted_conversation_id="persisted-conversation",
+        all_nodes=(root, left, right),
+        active_leaf_persisted_id="persisted-left",
+    )
+
+    def publication(*origin_ids: str, conversation_id: str = "persisted-conversation"):
+        return SimpleNamespace(
+            scope=SimpleNamespace(
+                session_id=first.id,
+                conversation_id=conversation_id,
+            ),
+            revisions=tuple(
+                SimpleNamespace(origin=SimpleNamespace(message_id=origin_id))
+                for origin_id in origin_ids
+            ),
+        )
+
+    native_publication = publication(left.id)
+    persisted_publication = publication("persisted-left")
+    assert left.id != left.persisted_message_id
+    assert (
+        screen._message._console_canvas_publication_is_current(native_publication)
+        is True
+    )
+    assert (
+        screen._message._console_canvas_publication_is_current(persisted_publication)
+        is True
+    )
+    assert (
+        screen._message._console_canvas_publication_is_current(
+            publication(left.id, right.id)
+        )
+        is False
+    )
+    assert (
+        screen._message._console_canvas_publication_is_current(
+            publication(left.id, conversation_id="other-conversation")
+        )
+        is False
+    )
+
+    store.set_active_leaf(first.id, right.id)
+    assert (
+        screen._message._console_canvas_publication_is_current(native_publication)
+        is False
+    )
+    assert (
+        screen._message._console_canvas_publication_is_current(persisted_publication)
+        is False
+    )
+
+    store.set_active_leaf(first.id, left.id)
+    store.create_session(ephemeral=True)
+    assert (
+        screen._message._console_canvas_publication_is_current(native_publication)
+        is False
+    )
+    assert (
+        screen._message._console_canvas_publication_is_current(persisted_publication)
+        is False
+    )
 
 
 def test_canvas_composer_sink_validates_exact_session_and_branch_target():
@@ -436,7 +668,7 @@ def test_canvas_composer_sink_validates_exact_session_and_branch_target():
     composer = Mock()
     screen._console_composer_or_none = Mock(return_value=composer)
 
-    screen._prefill_console_canvas_repair(target, "exact draft")
+    screen._message._prefill_console_canvas_repair(target, "exact draft")
 
     composer.load_draft.assert_called_once_with("exact draft")
     assert store.session_draft(session.id) == "exact draft"
@@ -447,12 +679,12 @@ def test_canvas_composer_sink_validates_exact_session_and_branch_target():
         content="right",
     )
     with pytest.raises(RuntimeError, match="unavailable"):
-        screen._prefill_console_canvas_repair(target, "stale branch draft")
+        screen._message._prefill_console_canvas_repair(target, "stale branch draft")
     assert store.session_draft(session.id) == "exact draft"
 
     store.create_session(ephemeral=True)
     with pytest.raises(RuntimeError, match="unavailable"):
-        screen._prefill_console_canvas_repair(target, "stale session draft")
+        screen._message._prefill_console_canvas_repair(target, "stale session draft")
     assert store.session_draft(session.id) == "exact draft"
 
 
@@ -484,7 +716,7 @@ def test_canvas_submit_preparation_only_replaces_the_unchanged_unsent_draft():
     composer.capture_draft_snapshot.side_effect = [unchanged, unchanged]
     screen._console_composer_or_none = Mock(return_value=composer)
 
-    apply = screen._prepare_console_canvas_submit(target)
+    apply = screen._message._prepare_console_canvas_submit(target)
     apply("exact unsent draft")
 
     composer.load_draft.assert_called_once_with("exact unsent draft")
@@ -493,7 +725,7 @@ def test_canvas_submit_preparation_only_replaces_the_unchanged_unsent_draft():
 
     composer.load_draft.reset_mock()
     composer.capture_draft_snapshot.side_effect = [unchanged, object()]
-    stale_apply = screen._prepare_console_canvas_submit(target)
+    stale_apply = screen._message._prepare_console_canvas_submit(target)
     with pytest.raises(RuntimeError, match="changed"):
         stale_apply("must not replace")
     composer.load_draft.assert_not_called()
@@ -625,7 +857,7 @@ async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh
     store = screen._ensure_console_chat_store()
     session = store.ensure_session(title="Canvas card")
     open_selection = AsyncMock()
-    screen._open_console_canvas_selection = open_selection
+    screen._message._open_console_canvas_selection = open_selection
 
     exact = SimpleNamespace(
         session_id=session.id,
@@ -643,7 +875,7 @@ async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh
     )
 
     open_selection.reset_mock()
-    screen._canvas_last_open_request = (
+    screen._message._canvas_last_open_request = (
         session.id,
         "canvas-a",
         "revision-2",
@@ -672,7 +904,7 @@ async def test_production_canvas_card_handler_rejects_unowned_session_events(
     screen = ChatScreen(app)
     store = screen._ensure_console_chat_store()
     store.create_session(session_id="current-session", title="Current Canvas card")
-    screen._open_console_canvas_selection = AsyncMock()
+    screen._message._open_console_canvas_selection = AsyncMock()
     attributes = {
         "canvas_id": "canvas-a",
         "revision_id": "revision-2",
@@ -686,7 +918,7 @@ async def test_production_canvas_card_handler_rejects_unowned_session_events(
     await screen.handle_console_canvas_card_open(event)
 
     event.stop.assert_called_once_with()
-    screen._open_console_canvas_selection.assert_not_awaited()
+    screen._message._open_console_canvas_selection.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -703,12 +935,12 @@ async def test_served_canvas_selection_binds_child_without_opening_native_browse
     )
     authority = Mock()
     authority.gateway_scope.return_value = scope
-    screen._console_canvas_authority = Mock(return_value=authority)
+    screen._message._console_canvas_authority = Mock(return_value=authority)
     screen._console_runtime = Mock(
         side_effect=AssertionError("served Canvas must not open a native gateway")
     )
 
-    launch = await screen._open_console_canvas_selection(
+    launch = await screen._message._open_console_canvas_selection(
         session_id="session-a",
         canvas_id="canvas-a",
         revision_id="revision-a",
@@ -759,3 +991,27 @@ async def test_fork_requested_dispatches_to_the_named_session_callback_once():
         assert await screen.handle_console_message_action(event) is True
 
     request.assert_called_once_with(message.id)
+
+
+@pytest.mark.asyncio
+async def test_save_as_note_uses_configured_notes_owner():
+    """Save under the identity used by the app's local note views."""
+    app = _build_test_app()
+    app.notes_user_id = "notes-owner-42"
+    app.current_user = "unrelated-chat-user"
+    app.notes_scope_service = SimpleNamespace(
+        save_note=AsyncMock(return_value={"id": "note-1"})
+    )
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.create_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="saved text"
+    )
+
+    await screen._message._save_console_message_as_note(message.id)
+
+    assert (
+        app.notes_scope_service.save_note.await_args.kwargs["user_id"]
+        == "notes-owner-42"
+    )

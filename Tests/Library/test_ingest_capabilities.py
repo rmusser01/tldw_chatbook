@@ -492,6 +492,51 @@ def test_install_hint_audio_processing_uses_audio_extra() -> None:
     assert "pip install" in hint["command"]
 
 
+def test_core_diarization_install_hint_preserves_the_capability() -> None:
+    """Keep the core install command and torch-free diarization capability copy."""
+    hint = _install_hint("diarization_onnx")
+    assert hint == {
+        "hint": "Live speaker labels without torch",
+        "command": "pip install -e .",
+    }
+
+
+@pytest.mark.parametrize(
+    "available, expected",
+    [
+        (set(), False),
+        ({"sherpa_onnx"}, False),
+        ({"numpy"}, False),
+        ({"sherpa_onnx", "numpy"}, True),
+    ],
+)
+def test_core_diarization_readiness_requires_both_packages(
+    monkeypatch: pytest.MonkeyPatch, available: set[str], expected: bool
+) -> None:
+    """Require both diarization packages and preserve short-circuit probing.
+
+    Args:
+        monkeypatch: Replaces module discovery with the controlled package set.
+        available: Module names reported as installed by the discovery stub.
+        expected: Whether the installed package combination supports diarization.
+    """
+    calls = []
+
+    def find_spec(name):
+        calls.append(name)
+        return object() if name in available else None
+
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        find_spec,
+    )
+    assert _is_installed("diarization_onnx") is expected
+    assert calls == (
+        ["sherpa_onnx", "numpy"] if "sherpa_onnx" in available else ["sherpa_onnx"]
+    )
+
+
 def test_install_hint_resolves_known_extra_for_every_group_feature() -> None:
     for caps in _TYPE_GROUPS.values():
         for feature in caps.required_features + caps.optional_features:

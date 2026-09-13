@@ -74,7 +74,11 @@ class FakeGateway:
         return self.resolution
 
     async def stream_chat(
-        self, resolution: FakeResolution, messages: list[dict[str, str]]
+        self,
+        resolution: FakeResolution,
+        messages: list[dict[str, str]],
+        *,
+        route=None,
     ):
         self.stream_calls += 1
         self.messages.append(messages)

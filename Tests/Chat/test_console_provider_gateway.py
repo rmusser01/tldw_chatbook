@@ -1044,8 +1044,13 @@ async def test_llamacpp_fallback_reserves_and_authorizes_a_distinct_call() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "route",
+    [None, ConsoleRequestRoute.AUTO_COMPACTION, ConsoleRequestRoute.MANUAL_SUMMARY],
+)
 async def test_auxiliary_always_uses_explicit_capture_off_admission(
     monkeypatch: pytest.MonkeyPatch,
+    route,
 ) -> None:
     calls = 0
     admissions: list[ConsoleTraceCaptureMode] = []
@@ -1055,7 +1060,14 @@ async def test_auxiliary_always_uses_explicit_capture_off_admission(
         calls += 1
         return {"choices": [{"message": {"content": "ok"}}]}
 
-    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    def forbidden_capture(*_args):
+        pytest.fail("auxiliary admission must not create a trace or shadow")
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=forbidden_capture,
+        trace_shadow_sink=forbidden_capture,
+    )
     original = gateway._enter_provider_adapter
 
     def observe(admission, adapter_call, *args, **kwargs):
@@ -1063,19 +1075,32 @@ async def test_auxiliary_always_uses_explicit_capture_off_admission(
         return original(admission, adapter_call, *args, **kwargs)
 
     monkeypatch.setattr(gateway, "_enter_provider_adapter", observe)
-    assert (await gateway.complete_auxiliary(_auxiliary_request())).text == "ok"
-    assert calls == 1
-
     result = await gateway.complete_auxiliary(
         _auxiliary_request(),
-        route=ConsoleRequestRoute.AUTO_COMPACTION,
+        route=route,
     )
     assert result.text == "ok"
-    assert calls == 2
-    assert admissions == [
-        ConsoleTraceCaptureMode.CAPTURE_OFF,
-        ConsoleTraceCaptureMode.CAPTURE_OFF,
-    ]
+    assert calls == 1
+    assert admissions == [ConsoleTraceCaptureMode.CAPTURE_OFF]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "route",
+    [
+        route
+        for route in ConsoleRequestRoute
+        if route
+        not in {ConsoleRequestRoute.AUTO_COMPACTION, ConsoleRequestRoute.MANUAL_SUMMARY}
+    ],
+)
+async def test_auxiliary_rejects_conversation_routes_before_adapter(route) -> None:
+    def forbidden_adapter(**_kwargs):
+        pytest.fail("conversation route reached auxiliary adapter")
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=forbidden_adapter)
+    with pytest.raises(TraceProvenanceAlignmentError, match="not capture-off"):
+        await gateway.complete_auxiliary(_auxiliary_request(), route=route)
 
 
 def test_runtime_keeps_trace_boundary_factory_hard_off_unless_supplied() -> None:
@@ -9182,7 +9207,7 @@ async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outag
     a provider outage.
     """
 
-    from types import MappingProxyType
+    from types import MappingProxyType, SimpleNamespace
 
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
     from tldw_chatbook.Chat.provider_test_evidence import (
@@ -9190,7 +9215,9 @@ async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outag
         ProviderDraftIdentity,
     )
     from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_settings_controllers,
+    )
 
     frozen_tool_call = MappingProxyType(
         {
@@ -9234,14 +9261,15 @@ async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outag
         async def complete_auxiliary(request, **kwargs):
             return await gateway.complete_auxiliary(request, **kwargs)
 
-    class _Screen:
-        @staticmethod
-        def _build_console_provider_selection_for_settings(_session_id, _settings):
-            return object()
-
-        @staticmethod
-        def _ensure_console_provider_gateway():
-            return _ProviderTestGateway()
+    screen = SimpleNamespace(
+        _provider_selection=SimpleNamespace(
+            _build_console_provider_selection_for_settings=(
+                lambda _session_id, _settings: object()
+            ),
+        ),
+        _ensure_console_provider_gateway=lambda: _ProviderTestGateway(),
+    )
+    build_console_settings_controllers(screen)
 
     request = ConsoleGenerationTestRequest(
         settings=ConsoleSessionSettings(
@@ -9258,7 +9286,9 @@ async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outag
         ),
     )
 
-    result = await ChatScreen._test_console_generation(_Screen(), "session-1", request)
+    result = await screen._settings_navigation._test_console_generation(
+        "session-1", request
+    )
 
     assert (result.generation, result.category) == ("failed", "bad_request")
 

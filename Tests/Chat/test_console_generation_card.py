@@ -78,7 +78,7 @@ def _bare_screen() -> ChatScreen:
         app_instance=NO_APP,
         ensure_console_image_view=lambda: screen._ensure_console_image_view(),
         recent_console_image_messages=(
-            lambda messages: screen._recent_console_image_messages(messages)
+            lambda messages: screen._message._recent_console_image_messages(messages)
         ),
         console_image_default_mode=lambda: screen._console_image_default_mode,
         console_generation_browse=lambda: screen._console_generation_browse(),
@@ -280,7 +280,7 @@ def test_image_specs_exclude_card_messages():
     plain_message = _plain_image_message()
     messages = [generation_message, plain_message]
 
-    recent = screen._recent_console_image_messages(messages)
+    recent = screen._message._recent_console_image_messages(messages)
     assert generation_message not in recent
     assert plain_message in recent
 

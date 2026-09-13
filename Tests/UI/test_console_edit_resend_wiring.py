@@ -190,7 +190,7 @@ async def test_open_edit_modal_notifies_and_returns_on_stale_message_id():
 
         screens_before = len(host.screen_stack)
         # Must not raise despite the id no longer existing in the store.
-        await console._open_console_message_edit_modal(
+        await console._message._open_console_message_edit_modal(
             message_id=stale_id, content="original"
         )
         await pilot.pause()

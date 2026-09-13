@@ -888,10 +888,26 @@ def test_pager_identity_is_stable_across_boundary_state_transitions() -> None:
     assert replace_rows[0].focus_id.endswith("replace")
 
 
-def test_semantic_receipt_contains_descriptors_but_no_page_records() -> None:
+@pytest.mark.parametrize(
+    ("focus_role", "focus_semantic_id", "selected_note_id", "expected_role"),
+    (
+        (
+            "note-placement",
+            "note:ideas:n1:m-preferred",
+            "n1",
+            "note-placement:note:ideas:n1:m-preferred",
+        ),
+        ("folder-placement", "folder:ideas", "", "folder-placement:folder:ideas"),
+        ("filter", "", "n1", "filter"),
+        ("", "", "", "filter"),
+    ),
+)
+def test_semantic_receipt_contains_descriptors_but_no_page_records(
+    focus_role, focus_semantic_id, selected_note_id, expected_role
+) -> None:
     receipt = LibraryNotesTreeReceipt(
         selected_placement_id="note:ideas:n1:m-preferred",
-        selected_note_id="n1",
+        selected_note_id=selected_note_id,
         expanded_folder_ids=("ideas",),
         branch_ranges=(
             LibraryNotesBranchRange(None, "folders", 20, 40),
@@ -899,8 +915,8 @@ def test_semantic_receipt_contains_descriptors_but_no_page_records() -> None:
         ),
         filter_query="",
         filter_range=None,
-        focus_semantic_id="note:ideas:n1:m-preferred",
-        focus_role="note-placement",
+        focus_semantic_id=focus_semantic_id,
+        focus_role=focus_role,
         scroll_offset=(0, 17),
         rail_scroll_offset=(0, 3),
         lifecycle_generation=4,
@@ -909,6 +925,12 @@ def test_semantic_receipt_contains_descriptors_but_no_page_records() -> None:
 
     assert receipt.selected_placement_id.endswith("m-preferred")
     assert receipt.branch_ranges[1].start_offset == 40
+    focus = receipt.focus_identity
+    assert focus.stage == "notes"
+    assert focus.region == "navigator"
+    assert focus.note_id == (selected_note_id or None)
+    assert focus.semantic_role == expected_role
+    assert focus.scroll_offset == (0, 17)
     assert not {
         "folders",
         "notes",

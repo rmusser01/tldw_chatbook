@@ -74,7 +74,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: compatibility methods and keeps fork state behind the message controller;
 #: the final merged tree measures 16,966/563.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16966, 563),
+    # TASK-31750.1: citation eligibility joins the existing message owner.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16811, 505),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
@@ -884,7 +885,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # independent trajectories, pinned to reality. dev's +1026 remains real
     # debt to be worked down on dev's own decomposition schedule; pinning it
     # here keeps the merged tree green without hiding whose lines they are.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33204, 1276),
+    # PR-2427 after wave-8 reconciliation: ordered assembly/private cleanup and
+    # removal of the superseded unreachable placement block retain tighter pins.
+    # TASK-31932 wave 9: seven dead/obsolete helpers removed; keyboard kept.
+    # PR-2427 phase-C rebase retains its prior cleanup and the 16 canvas-owned
+    # handler removals; measured 31692 lines / 1213 methods, no raised ceiling.
+    # Empty-return/focus repairs plus comment-only paydown: 31689 / 1213.
+    # TASK-31932 steps 137/141/143 retire 16 private wrappers; step 142 keeps
+    # its post-await visit guards. Tighten the earned method ceiling only.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 31689, 1200),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

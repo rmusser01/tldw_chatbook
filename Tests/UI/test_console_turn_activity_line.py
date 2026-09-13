@@ -1007,7 +1007,8 @@ def _sync_stub(activity: str, effective: str | None = None):
     screen._ensure_console_image_view = Mock(
         return_value=(None, SimpleNamespace(pending_ids=lambda _ids: ()))
     )
-    screen._recent_console_image_messages = Mock(return_value=())
+    screen._message.sync_selected_fork_eligibility = Mock(return_value=(None, None))
+    screen._message._recent_console_image_messages = Mock(return_value=())
     screen._agent.console_turn_activity = Mock(return_value=activity)
     screen._agent.console_turn_activity_abandon_action.return_value = ""
     screen._library_activity.sync_transcript.return_value = {}

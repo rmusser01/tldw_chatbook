@@ -141,10 +141,11 @@ def _error_payload(tool_result: ToolResult) -> dict:
 # --------------------------------------------------------------------------
 
 
-def test_direct_catalog_lists_all_24_descriptor_tools():
+def test_direct_catalog_lists_all_descriptor_tools() -> None:
+    """List every descriptor in order with stable IDs and untrusted-data copy."""
     provider = LibraryToolProvider(FakeLibraryService())
     catalog = provider.list_catalog()
-    assert len(catalog) == 24
+    assert len(catalog) == len(LIBRARY_TOOL_DESCRIPTORS)
     assert [entry.name for entry in catalog] == list(LIBRARY_TOOL_DESCRIPTORS)
     for entry in catalog:
         assert entry.id == f"library:{entry.name}"

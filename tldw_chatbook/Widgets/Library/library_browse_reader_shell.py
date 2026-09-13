@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from textual.widget import Widget
+from textual.widget import AwaitRemove, Widget
 
 from tldw_chatbook.Library.library_media_reader_state import (
     MediaReaderEffectiveLayout,
@@ -240,10 +240,12 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
     async def swap_work(self, work: Widget) -> None:
         """Replace the work pane in place, keeping the shell mounted.
 
-        Mounted before the outgoing pane is removed so the shell is never
-        childless mid-switch (Textual would otherwise reflow to a two-pane
-        allocation for a frame). The new pane inherits exactly the geometry
-        ``sync_layout`` gives a freshly composed work pane.
+        Ordinary replacements mount before the hidden outgoing pane retires
+        after refresh, so the shell is never childless mid-switch. A rapid
+        return first retires only its hidden, non-current same-ID predecessor
+        so the fresh current-state pane can mount without ``DuplicateIds``.
+        The new pane inherits exactly the geometry ``sync_layout`` gives a
+        freshly composed work pane.
 
         Args:
             work: The destination route's work pane.
@@ -254,6 +256,21 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
         previous = self.work
         if previous is work:
             return
+        if previous is not None and previous.parent is self:
+            previous.display = False
+        if work.id is not None:
+            retired_same_id = next(
+                (
+                    child
+                    for child in self.children
+                    if child is not previous
+                    and child.id == work.id
+                    and not child.display
+                ),
+                None,
+            )
+            if retired_same_id is not None:
+                await retired_same_id.remove()
         work.add_class("library-adaptive-reader-work")
         await self.mount(work, after=self.items_grip)
         self.work = work
@@ -262,7 +279,20 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
         work.styles.min_width = 0
         work.styles.height = "100%"
         if previous is not None and previous.parent is self:
-            await previous.remove()
+            self.call_after_refresh(self._retire_work_after_refresh, previous)
+
+    def _retire_work_after_refresh(self, work: Widget) -> AwaitRemove | None:
+        """Retire the exact hidden pane unless it became current again.
+
+        Args:
+            work: Exact outgoing pane scheduled by ``swap_work``.
+
+        Returns:
+            Textual's removal receipt, or ``None`` when ownership changed.
+        """
+        if work.parent is not self or work is self.work:
+            return None
+        return work.remove()
 
     def on_mount(self) -> None:
         """Hide the rail's legacy collapse control beside the grips.

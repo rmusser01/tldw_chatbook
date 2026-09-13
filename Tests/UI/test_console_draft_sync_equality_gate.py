@@ -332,19 +332,19 @@ async def test_the_draft_sync_derives_the_provider_selection_once():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console, _composer = await _console(host, pilot)
-        screen_type = type(console)
-        original = screen_type._build_console_provider_selection_uncached
+        selection_type = type(console._provider_selection)
+        original = selection_type._build_console_provider_selection_uncached
         calls = []
 
         def counting(self, *args, **kwargs):
             calls.append(args)
             return original(self, *args, **kwargs)
 
-        screen_type._build_console_provider_selection_uncached = counting
+        selection_type._build_console_provider_selection_uncached = counting
         try:
             console._sync_console_workbench_actions_from_draft()
         finally:
-            screen_type._build_console_provider_selection_uncached = original
+            selection_type._build_console_provider_selection_uncached = original
 
         assert len(calls) == 1
 
@@ -358,7 +358,7 @@ async def test_the_derivation_memo_is_torn_down_even_when_a_leg_raises():
 
         with pytest.raises(RuntimeError):
             with console._console_derivation_scope():
-                console._build_console_provider_selection()
+                console._provider_selection._build_console_provider_selection()
                 assert console._console_derivation_memo
                 raise RuntimeError("leg blew up")
 
@@ -371,19 +371,19 @@ async def test_the_derivation_memo_is_off_outside_a_scope():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console, _composer = await _console(host, pilot)
-        screen_type = type(console)
-        original = screen_type._build_console_provider_selection_uncached
+        selection_type = type(console._provider_selection)
+        original = selection_type._build_console_provider_selection_uncached
         calls = []
 
         def counting(self, *args, **kwargs):
             calls.append(args)
             return original(self, *args, **kwargs)
 
-        screen_type._build_console_provider_selection_uncached = counting
+        selection_type._build_console_provider_selection_uncached = counting
         try:
-            console._build_console_provider_selection()
-            console._build_console_provider_selection()
+            console._provider_selection._build_console_provider_selection()
+            console._provider_selection._build_console_provider_selection()
         finally:
-            screen_type._build_console_provider_selection_uncached = original
+            selection_type._build_console_provider_selection_uncached = original
 
         assert len(calls) == 2

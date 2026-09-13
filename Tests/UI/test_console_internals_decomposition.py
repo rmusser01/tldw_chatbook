@@ -10,7 +10,11 @@ from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    ConsolidatedCSSApp,
+    app_css_text,
+)
 from textual.events import Key, Paste
 from textual.widgets import Button, Input, Select, Static
 
@@ -280,12 +284,13 @@ def _assert_single_style_span(
 
 
 def test_console_session_surface_uses_flex_height_not_full_percent_height():
-    for stylesheet in (
-        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
-        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+    for source, css in (
+        ("generated app stylesheets", app_css_text()),
+        (
+            Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+            _repo_text(Path("tldw_chatbook/css/components/_agentic_terminal.tcss")),
+        ),
     ):
-        css = _repo_text(stylesheet)
-
         assert "#console-session-surface,\n#console-chat-tabs" not in css
         assert "#console-session-surface {\n    height: 1fr;" in css
         assert (
@@ -293,7 +298,7 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    padding: 0;\n"
             "    margin: 0;\n"
             "    border: none;"
-        ) in css
+        ) in css, source
         assert (
             "#console-transcript-title,\n"
             ".console-transcript-title {\n"
@@ -1566,9 +1571,14 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
 
         composer.load_draft("prefix ")
         composer.insert_pasted_text(pasted_text)
+        # This paste wraps to two rows and moves the bottom-anchored draft up.
+        # Let layout finish before Pilot samples the mouse coordinates.
+        await pilot.pause()
+        assert visible_draft.content_region.height == 2
         await pilot.click("#console-command-visible-text", offset=(8, 0))
         await pilot.pause(0.1)
         assert "Expand?" in visible_draft.renderable.plain
+        assert composer.has_pending_paste_confirmation()
 
         await pilot.click("#console-command-visible-text", offset=(0, 0))
         await pilot.pause(0.1)
@@ -1577,6 +1587,7 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
         assert "prefix " in visible_plain
         assert "Pasted text |" in visible_plain
         assert "Expand?" not in visible_plain
+        assert not composer.has_pending_paste_confirmation()
         assert composer.draft_text() == f"prefix {pasted_text}"
 
 
@@ -2697,19 +2708,19 @@ async def test_console_transcript_header_sits_at_top_of_center_panel():
         transcript_region = console.query_one("#console-transcript-region")
         transcript_title = console.query_one("#console-transcript-title", Static)
         tab_strip = console.query_one("#console-native-tab-strip")
+        tab_row = tab_strip.parent
         transcript = console.query_one("#console-native-transcript")
 
         assert not list(console.query("#console-start-here"))
         assert transcript_region.styles.border.top[0] in {"", "none"}
-        assert transcript_title.region.y == transcript_region.region.y
+        assert transcript_title.region.y == transcript_region.content_region.y
         assert (
             tab_strip.region.y
             == transcript_title.region.y + transcript_title.region.height
         )
+        assert tab_row is not None
         assert transcript.region.y == (
-            tab_strip.region.y
-            + tab_strip.region.height
-            + tab_strip.styles.margin.bottom
+            tab_row.region.y + tab_row.region.height + tab_row.styles.margin.bottom
         )
 
 
@@ -2735,21 +2746,23 @@ async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
 
         transcript_title = console.query_one("#console-transcript-title", Static)
         tab_strip = console.query_one("#console-native-tab-strip")
+        tab_row = tab_strip.parent
         active_tab = console.query_one(".console-session-tab-active", Button)
         transcript = console.query_one("#console-native-transcript")
 
         assert transcript_title.has_class("console-transcript-title")
-        assert tab_strip.has_class("console-session-tab-strip")
+        assert tab_row is not None
+        assert tab_row.has_class("console-session-tab-strip")
         assert transcript_title.region.height == 1
-        assert tab_strip.region.height == 1
+        assert tab_row.region.height == 1
         assert transcript_title.styles.height.value == 1
-        assert tab_strip.styles.height.value == 1
-        assert tab_strip.region.y == transcript_title.region.y + 1
+        assert tab_row.styles.height.value == 1
+        assert tab_row.region.y == transcript_title.region.y + 1
         assert transcript.region.y == (
-            tab_strip.region.y + 1 + tab_strip.styles.margin.bottom
+            tab_row.region.y + 1 + tab_row.styles.margin.bottom
         )
         assert transcript_title.styles.color != active_tab.styles.color
-        assert active_tab.styles.background != tab_strip.styles.background
+        assert active_tab.styles.background != tab_row.styles.background
         assert active_tab.has_class("console-session-tab-active")
 
 
@@ -2788,6 +2801,7 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         tab_strip = console.query_one("#console-native-tab-strip")
+        tab_row = tab_strip.parent
         transcript = console.query_one("#console-native-transcript")
         empty_rows = list(transcript.query("#console-transcript-empty-state"))
 
@@ -2803,10 +2817,13 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         assert "No messages yet. Send a prompt or attach context." not in _visible_text(
             empty_panel
         )
+        # The tab row, including its overflow hints, now owns the bottom gap.
+        assert tab_row is not None
+        assert tab_row.has_class("console-session-tab-strip")
+        assert tab_row.region.height == 1
+        assert empty_panel.region.y == transcript.content_region.y
         assert empty_panel.region.y == (
-            tab_strip.region.y
-            + tab_strip.region.height
-            + tab_strip.styles.margin.bottom
+            tab_row.region.y + tab_row.region.height + tab_row.styles.margin.bottom
         )
 
 
@@ -3353,6 +3370,7 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
+        await _open_console_inspector(console, pilot)
         staged_context = console.query_one("#console-staged-context-tray")
         max_height = getattr(
             staged_context.styles.max_height,
@@ -3671,7 +3689,7 @@ def test_console_prefers_configured_provider_when_app_reactive_is_stale_default(
     app.chat_api_provider_value = "OpenAI"
     screen = ChatScreen(app)
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.provider == "llama_cpp"
     assert selection.explicit_model == "local-model"
@@ -3705,7 +3723,7 @@ def test_console_provider_selection_normalizes_display_provider_key():
     screen._console_control_provider = "Llama_cpp"
     screen._console_control_model = "local-model"
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.provider == "llama_cpp"
     assert selection.explicit_model == "local-model"
@@ -4842,7 +4860,7 @@ async def test_console_left_rail_section_headers_all_visible_without_scrolling()
     class _BundledConsoleHarness(ConsoleHarness):
         CSS_PATH = [
             str(screen_self),
-            str(css_dir / "tldw_cli_modular.tcss"),
+            *(str(path) for path in APP_STYLESHEETS),
             str(screen_scoped),
         ]
 

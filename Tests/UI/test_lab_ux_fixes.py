@@ -8,16 +8,13 @@ commit 46b4c61b5 and dev's LLM_Management_Window redesign.)
 
 from __future__ import annotations
 
-from pathlib import Path
+from Tests.UI.consolidated_css import app_css_text
 
 from tldw_chatbook.UI.Screens.llm_screen import _SERVER_PROCESS_ATTRS
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 
-CSS_BUNDLE = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
-
-
 def test_lab_mode_chip_has_active_override_in_bundle() -> None:
-    bundle = CSS_BUNDLE.read_text()
+    bundle = app_css_text()
     assert "#lab-mode-strip .lab-mode-chip.is-active" in bundle, (
         "app bundle needs an explicit .lab-mode-chip.is-active override so the "
         "generic .is-active border cannot clip the chip label"

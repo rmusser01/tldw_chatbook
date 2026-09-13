@@ -50,7 +50,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCacheState
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules import context_cost as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleCostChip
@@ -331,7 +331,7 @@ async def test_projected_delta_estimator_skipped_when_warm_without_break_reason(
         original = chat_screen_module._estimate_tokens_locally
         chat_screen_module._estimate_tokens_locally = spy
         try:
-            state = console._build_console_cost_state()
+            state = console._context_cost._build_console_cost_state()
             assert spy.call_count == 0, (
                 "estimator ran on a WARM cache with no break reason -- "
                 "projected_delta_usd is unused without one"
@@ -350,7 +350,7 @@ async def test_projected_delta_estimator_skipped_when_warm_without_break_reason(
             )
             store.update_message_content(user_message.id, "EDITED EARLIER HISTORY")
 
-            alert_state = console._build_console_cost_state()
+            alert_state = console._context_cost._build_console_cost_state()
 
             assert spy.call_count == 1, (
                 "estimator must run once a break reason is present"
@@ -541,7 +541,7 @@ def test_build_console_cost_state_returns_none_without_native_session():
     screen = ChatScreen(app)
     assert screen._console_chat_store is None
 
-    state = screen._build_console_cost_state()
+    state = screen._context_cost._build_console_cost_state()
 
     assert state is None
     assert screen._console_cost_cache_state == ConsoleCacheState.NONE
@@ -561,7 +561,7 @@ async def test_staged_evidence_changes_next_send_but_not_current_spend():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("price this request")
         console._sync_console_settings_summary()
-        before = console._build_console_cost_state()
+        before = console._context_cost._build_console_cost_state()
         assert before is not None
         assert "Current $0.00" in before.label
         assert "On next send ~+$" in before.label
@@ -591,7 +591,7 @@ async def test_staged_evidence_changes_next_send_but_not_current_spend():
         console._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
-        after = console._build_console_cost_state()
+        after = console._context_cost._build_console_cost_state()
 
         assert after is not None
         assert "Current $0.00" in after.label
@@ -620,13 +620,13 @@ async def test_build_console_cost_state_includes_fleet_token_spend():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-cost-chip")
 
-        baseline = console._build_console_cost_state()
+        baseline = console._context_cost._build_console_cost_state()
         assert baseline is not None
         assert "Sub-agents:" not in baseline.tooltip
 
         console._agent._console_agent_fleet_token_total = lambda: 4200
 
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
         assert state is not None
         assert "Sub-agents: 4.2k tok (not priced)" in state.tooltip
 
@@ -730,7 +730,7 @@ async def test_fingerprint_recompute_is_skipped_while_streaming():
         )
         bumped_revision = store.payload_revision(session_id)
 
-        console._build_console_cost_state()
+        console._context_cost._build_console_cost_state()
 
         assert console._console_cost_fp_revisions.get(session_id) == before_memo
         assert console._console_cost_fp_revisions.get(session_id) != bumped_revision
@@ -890,7 +890,7 @@ async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-cost-chip")
 
-        baseline = console._build_console_cost_state()
+        baseline = console._context_cost._build_console_cost_state()
         assert baseline is not None
         assert "Sub-agents:" not in baseline.tooltip
 
@@ -898,7 +898,7 @@ async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
         assert controller is not None
         controller.unattributed_fleet_tokens = lambda session_id: 1300
 
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
         assert state is not None
         assert "Sub-agents: 1.3k tok (not priced)" in state.tooltip
 
@@ -916,7 +916,7 @@ async def test_blank_draft_has_exact_zero_current_and_no_next_send():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
         assert state is not None
         assert "Current $0.00 · On next send —" in state.label
 
@@ -938,7 +938,7 @@ async def test_first_send_draft_changes_next_send_without_changing_current():
         composer.load_draft("hello, this is my first message")
         console._sync_console_settings_summary()
 
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
         assert state is not None
         assert "Current $0.00" in state.label
         assert "On next send ~+$" in state.label
@@ -977,7 +977,7 @@ async def test_followup_draft_does_not_change_completed_current_spend():
         console = host.screen_stack[-1]
         await _send_and_settle(console, pilot, "hello", "the priced answer")
 
-        before = console._build_console_cost_state()
+        before = console._context_cost._build_console_cost_state()
         assert before is not None
 
         # Everything the fold-in would count, queued behind a finished reply:
@@ -988,7 +988,7 @@ async def test_followup_draft_does_not_change_completed_current_spend():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("a queued follow-up message " * 100)
 
-        after = console._build_console_cost_state()
+        after = console._context_cost._build_console_cost_state()
         assert after is not None
 
         def _tokens_line(state):
@@ -1034,7 +1034,7 @@ async def test_console_next_send_token_estimate_counts_context_not_just_draft():
         snapshot = await controller.build_context_snapshot(
             draft="hello there", session_id=session_id
         )
-        estimate = console._console_next_send_token_estimate(snapshot)
+        estimate = console._context_cost._console_next_send_token_estimate(snapshot)
 
         draft_only = estimate_tokens("hello there", "", "")
         assert estimate is not None
@@ -1043,7 +1043,7 @@ async def test_console_next_send_token_estimate_counts_context_not_just_draft():
         degraded = ConsoleContextSnapshot(
             current_messages=[], next_send_payload={"error": "boom"}
         )
-        assert console._console_next_send_token_estimate(degraded) is None
+        assert console._context_cost._console_next_send_token_estimate(degraded) is None
 
 
 # --- Qodo review fixes (task-25836 round 2) ---------------------------------
@@ -1067,7 +1067,7 @@ async def test_historical_text_without_a_draft_is_not_sendable():
             content="already sent",
         )
         console._sync_console_settings_summary()
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
         assert state is not None
         assert "On next send —" in state.label
 
@@ -1091,7 +1091,7 @@ async def test_seeded_leading_assistant_greeting_counts_in_context_not_current()
             content="A long seeded greeting. " * 2_000,
         )
         console._sync_console_settings_summary()
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
 
         assert console._last_console_context_control_state.request_tokens > before
         assert state is not None
@@ -1215,7 +1215,7 @@ async def test_predispatch_echo_stays_in_context_but_not_current():
         console.query_one("#console-send-message", Button).press()
         await asyncio.wait_for(gateway.resolving.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
         console._sync_console_settings_summary()
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
 
         assert (
             console._last_console_context_control_state.request_tokens == before_tokens
@@ -1247,7 +1247,7 @@ async def test_dispatched_echo_keeps_context_full_and_current_frozen():
 
         await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
         console._sync_console_settings_summary()
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
 
         assert (
             console._last_console_context_control_state.request_tokens >= before_tokens
@@ -1323,7 +1323,7 @@ async def test_excluded_historical_media_keeps_next_send_priced(monkeypatch, exc
             "follow up " * 500
         )
         console._sync_console_settings_summary()
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
         assert state is not None
         assert _next_send_dollars(state) > 0
 
@@ -1358,7 +1358,7 @@ async def test_context_cost_refresh_does_not_materialize_attachment_payloads(
         )
 
         console._sync_console_settings_summary()
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
 
         assert console._last_console_context_control_state.request_tokens is not None
         assert state is not None
@@ -1417,10 +1417,10 @@ async def test_next_send_estimate_gates_staged_evidence_on_session():
             },
         )
         active_id = store.active_session_id
-        with_staging = console._console_next_send_token_estimate(
+        with_staging = console._context_cost._console_next_send_token_estimate(
             snapshot, session_id=active_id
         )
-        without_staging = console._console_next_send_token_estimate(
+        without_staging = console._context_cost._console_next_send_token_estimate(
             snapshot, session_id="a-different-session"
         )
 

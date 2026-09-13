@@ -11,6 +11,8 @@ class WorldMapEffect(BaseEffect):
 
     def __init__(self, parent_widget: Any, **kwargs):
         super().__init__(parent_widget, **kwargs)
+        self.width = kwargs.get("width", 80)
+        self.height = kwargs.get("height", 24)
         self.map_data = [
             "       ~~~~~      ",
             "  ..   ~~~~~   .. ",

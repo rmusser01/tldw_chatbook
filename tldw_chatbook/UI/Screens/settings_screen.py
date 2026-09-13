@@ -434,6 +434,9 @@ from ..Navigation.vllm_handoff import (
 if TYPE_CHECKING:
     from ...Tool_Packs.contracts import ToolPackError
     from ...Tool_Packs.service import ToolProfileListing
+    from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+        ToolPackImportOptions,
+    )
     from ...Widgets.Settings_Widgets.personal_context_panel import (
         PersonalContextSettingsPanel,
     )
@@ -4353,12 +4356,12 @@ class SettingsScreen(BaseAppScreen):
         """Inspect and explicitly activate a Tool Pack outside the event loop."""
         from ...Tool_Packs.activation import ToolPackActivationResult
         from ...Tool_Packs.contracts import ToolPackError
-        from ...Tool_Packs.importer import ToolPackImportReview
         from ...Widgets.Settings_Widgets.tool_pack_import_review import (
             ToolPackImportOptions,
             ToolPackImportOptionsModal,
             ToolPackImportReviewModal,
         )
+        from ...Tool_Packs.importer import ToolPackImportReview
 
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
@@ -4388,7 +4391,7 @@ class SettingsScreen(BaseAppScreen):
             if archive_path.name.casefold().endswith(suffix)
             else archive_path.stem
         )
-        options: ToolPackImportOptions | None = ToolPackImportOptions(
+        options: "ToolPackImportOptions | None" = ToolPackImportOptions(
             default_id or "tool-profile"
         )
         try:
@@ -4459,12 +4462,12 @@ class SettingsScreen(BaseAppScreen):
         policy_digest: str | None,
     ) -> None:
         """Capture, review, and safely publish one immutable Tool Pack."""
-        from ...Tool_Packs.contracts import ToolPackError
-        from ...Tool_Packs.export import ToolPackExportReview
         from ...Tool_Packs.publication import (
             CapturedToolPackDestination,
             ToolPackPublicationResult,
         )
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.export import ToolPackExportReview
         from ...Widgets.Settings_Widgets.tool_pack_import_review import (
             ToolPackExportReviewModal,
         )
@@ -24413,15 +24416,15 @@ class SettingsScreen(BaseAppScreen):
         profile_id: str | None,
     ) -> None:
         """Apply staged defaults, reviewing one imported first bind if required."""
+        from ...Tool_Packs.contracts import ToolPackError
         from ...Tool_Packs.binding import (
             ToolProfileBindingReview,
             ToolProfileConfirmationRequired,
         )
-        from ...Tool_Packs.contracts import ToolPackError
-        from ...Tool_Packs.service import ToolProfileListing
         from ...Widgets.Settings_Widgets.tool_pack_import_review import (
             ToolProfileFirstBindReviewModal,
         )
+        from ...Tool_Packs.service import ToolProfileListing
 
         intended = WorkspaceAssistantDefaults(
             assistant_kind="persona",

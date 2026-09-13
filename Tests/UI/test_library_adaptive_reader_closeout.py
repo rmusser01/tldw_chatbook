@@ -46,6 +46,9 @@ from tldw_chatbook.Notes.note_folder_models import (
     NotePlacementRecord,
 )
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.Widgets.Library.library_browse_reader_shell import (
+    LIBRARY_BROWSE_READER_SHELL_ID,
+)
 from tldw_chatbook.Widgets.workbench_focus import _available_targets
 from tldw_chatbook.config import load_settings
 
@@ -95,7 +98,7 @@ DESTINATION_CONTRACT = {
     "notes": (
         "#library-row-browse-notes",
         ".library-notes-route",
-        "#library-notes-tree-note-2",
+        "#library-notes-row-0",
         # Wave-8 task 3: notes' own reader_preferences/reader_layout fields
         # moved to ``screen._notes_state.<field>`` -- the EIGHTH and last
         # destination to take the extra hop, so every entry in this contract
@@ -1360,7 +1363,9 @@ async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
         assert receipt["record"]["pending"] is None
         assert receipt["focus"]["region"] == "work"
         assert receipt["identities"]["shell"] == (
-            DESTINATION_CONTRACT[destination][1].removeprefix("#")
+            LIBRARY_BROWSE_READER_SHELL_ID
+            if destination in {"media", "notes"}
+            else DESTINATION_CONTRACT[destination][1].removeprefix("#")
         )
         assert receipt["worker_fenced"] is True
 

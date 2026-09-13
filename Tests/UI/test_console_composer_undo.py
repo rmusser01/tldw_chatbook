@@ -29,7 +29,14 @@ from dataclasses import replace
 import pytest
 from textual.widgets import Input, Static
 
-from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+from Tests.UI.test_console_dictation import (
+    _mounted_console,
+    _ready_host as _build_ready_host,
+)
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
     _configure_native_ready_console,
@@ -49,6 +56,11 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
     _DraftHistorySnapshot,
     _snapshot_fingerprint,
 )
+
+
+def _ready_host():
+    return _build_ready_host(_build_test_app)
+
 
 # ---------------------------------------------------------------------------
 # Pure composer-level tests: typed-run coalescing, mutation-kind boundaries,
@@ -1016,7 +1028,7 @@ async def test_console_prompt_append_undo_removes_separator_newline_too():
         composer.load_draft("existing draft")
         await pilot.pause()
 
-        assert console._insert_prompt_text_into_composer("resolved body", replace=False)
+        assert console._commands._insert_prompt_text_into_composer("resolved body", replace=False)
         assert composer.draft_text() == "existing draft\nresolved body"
 
         assert composer.undo() is True
@@ -1178,7 +1190,7 @@ async def test_console_refused_send_preserves_undo_history(monkeypatch):
 
         monkeypatch.setattr(controller, "submit_draft", _refused)
 
-        await console._dispatch_console_draft_send("attempted body")
+        await console._submission._dispatch_console_draft_send("attempted body")
 
         # The refusal must NOT have dropped A's banked history.
         assert session_a.id in console._console_undo_histories

@@ -12,11 +12,10 @@ from typing import Any
 import pytest
 from loguru import logger as loguru_logger
 from rich.markup import escape as escape_markup
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.widget import Widget
 from textual.widgets import Button, Input, Select, Static
 
@@ -49,9 +48,7 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 #: LabModeStrip, the .ds-panel/.ds-inspector pane borders, the workbench's
 #: 1fr pane split) resolve exactly as a user would see them, rather than
 #: Textual's bare fallback layout.
-_BUNDLED_CSS_PATH = str(
-    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
-)
+_APP_CSS_PATHS = list(APP_STYLESHEETS)
 
 
 class _FakeOrchestrator:
@@ -123,11 +120,13 @@ class EvalsHarness(ConsolidatedCSSApp):
     EvalsScreen runs through the identical ``BaseAppScreen.compose()`` ->
     ``compose_content()`` chain (MainNavigationBar, the screen-content
     Container, AppFooterStatus) it runs through in production. See the
-    module-level ``_BUNDLED_CSS_PATH`` comment for why the real stylesheet
+    module-level ``_APP_CSS_PATHS`` comment for why the real stylesheet
     is also loaded.
     """
 
-    CSS_PATH = _BUNDLED_CSS_PATH
+    # Production routing loads Evals' split stylesheet on navigation. This
+    # harness pushes the screen directly and must include that same CSS.
+    CSS_PATH = _APP_CSS_PATHS
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()

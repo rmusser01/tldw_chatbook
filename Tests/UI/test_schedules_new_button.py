@@ -54,13 +54,7 @@ class ServiceBackedTestApp(ConsolidatedCSSApp):
 
 
 class LocalOnlyBundledCSSTestApp(LocalOnlyTestApp):
-    """Loads the app-level CSS bundle so `.compact` display rules resolve.
-
-    ``ConsolidatedCSSApp`` only registers the screen/modal sheets by
-    default; the scheduling feature CSS (``_scheduling.tcss``) lives in the
-    app bundle, so a test asserting on its `display: none` rules needs this
-    tier too (same pattern as ``Tests/UI/test_trace_responsive.py``).
-    """
+    """Load canonical app styles, including the Scheduling feature sheet."""
 
     CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 

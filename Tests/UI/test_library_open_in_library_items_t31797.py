@@ -72,7 +72,9 @@ def _make_deep_link_screen() -> SimpleNamespace:
         ),
         # WIRING, not state -- stays flat (task 1's 2 wiring attributes).
         _library_media_browse_controller=SimpleNamespace(
-            mutation_refresh_scope=_REFRESH_SCOPE
+            state=SimpleNamespace(
+                mutation_refresh_scope=_REFRESH_SCOPE,
+            ),
         ),
         # recorded interaction sinks
         _browse_calls=browse_calls,

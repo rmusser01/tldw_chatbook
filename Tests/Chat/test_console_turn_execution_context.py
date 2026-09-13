@@ -2739,24 +2739,42 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
 @pytest.mark.asyncio
 async def test_summarize_and_rag_capture_receive_the_owning_turn_context(tmp_path):
     from Tests.Chat.test_console_rewind_summarize import SummaryGateway
+    from Tests.console_provider_doubles import with_destination
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+    from tldw_chatbook.Chat.console_trace_provenance import ConsoleRequestRoute
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
-    # Current dev summaries commit durable branch memory; use its real
-    # repository and prepared-request fake, not the source's old db-less path.
-    class CapturedSummaryGateway(_PausedGateway, SummaryGateway):
+    class CapturedSummaryGateway(SummaryGateway):
         def __init__(self):
-            _PausedGateway.__init__(self)
-            SummaryGateway.__init__(self)
+            super().__init__()
+            self.selections = []
+
+        async def complete_auxiliary(self, request, *, route=None):
+            assert route is ConsoleRequestRoute.MANUAL_SUMMARY
+            return await super().complete_auxiliary(request)
 
         async def resolve_for_send(self, selection):
-            from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+            self.selections.append(selection)
+            return with_destination(
+                ConsoleProviderResolution(
+                    ready=True,
+                    provider=selection.provider,
+                    model=selection.explicit_model or selection.configured_model,
+                    base_url=selection.base_url,
+                    max_tokens=selection.max_tokens,
+                )
+            )
 
-            resolution = await _PausedGateway.resolve_for_send(self, selection)
-            return ConsoleProviderResolution(**vars(resolution))
-
-    db = CharactersRAGDB(tmp_path / "context-summary.sqlite", "context-summary")
-    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    db = CharactersRAGDB(tmp_path / "owning-turn.sqlite", "owning-turn")
+    workspace_db = WorkspaceDB(tmp_path / "workspaces.sqlite", "owning-turn")
+    registry = LocalWorkspaceRegistryService(workspace_db)
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(db, workspace_registry=registry)
+    )
     session = store.create_session(
         title="Summary",
         settings=_settings("openai", "model-a", "stored-system"),
@@ -2765,13 +2783,13 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context(tmp_pat
     store.append_message(
         session.id,
         role=ConsoleMessageRole.USER,
-        content="first question " + "detail " * 30,
+        content="first question " * 40,
         persist=True,
     )
     store.append_message(
         session.id,
         role=ConsoleMessageRole.ASSISTANT,
-        content="first answer " + "detail " * 30,
+        content="first answer " * 40,
         persist=True,
     )
     boundary = store.append_message(
@@ -2781,8 +2799,10 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context(tmp_pat
         persist=True,
     )
     store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT,
-        content="second answer", persist=True,
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="second answer",
+        persist=True,
     )
     context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
@@ -2796,7 +2816,6 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context(tmp_pat
         tool_configuration={"agent_runtime_enabled": False},
     )
     gateway = CapturedSummaryGateway()
-    gateway.release_resolve.set()
     rag_contexts: list[ConsoleTurnExecutionContext | None] = []
 
     async def capture_rag(
@@ -2813,22 +2832,29 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context(tmp_pat
         rag_capture_provider=capture_rag,
     )
 
-    assert all(row.persisted_message_id for row in store.messages_for_session(session.id))
-    assert len(controller._durable_context_snapshots(session.id)) == 4
-    assert store.active_session_id == session.id
+    try:
+        assert all(row.persisted_message_id for row in store.messages_for_session(session.id))
+        assert len(controller._durable_context_snapshots(session.id)) == 4
+        assert store.active_session_id == session.id
 
-    summarize_result = await controller.summarize_up_to(boundary.id)
-    submit_result = await controller.submit_draft("third", session_id=session.id)
+        summarize_result = await controller.summarize_up_to(boundary.id)
+        submit_result = await controller.submit_draft("third", session_id=session.id)
 
-    assert summarize_result.accepted is True
-    assert submit_result.accepted is True
-    assert gateway.selections == [
-        context.provider_selection,
-        context.provider_selection,
-    ]
-    assert len(rag_contexts) == 1
-    assert rag_contexts[0] is not None
-    assert rag_contexts[0].configuration == context
+        assert summarize_result.accepted is True
+        assert submit_result.accepted is True
+        assert gateway.selections == [
+            context.provider_selection,
+            context.provider_selection,
+        ]
+        assert gateway.captured_auxiliary.resolution.model == "captured-model"
+        assert len(rag_contexts) == 1
+        assert rag_contexts[0] is not None
+        assert rag_contexts[0].configuration == context
+    finally:
+        await controller.shutdown()
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
+        workspace_db.close()
 
 
 @pytest.mark.asyncio
@@ -2990,7 +3016,6 @@ async def test_provider_payload_uses_handoff_identity_then_next_turn_uses_new_id
 
 
 def test_screen_selection_builder_targets_session_without_switching_view():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     store = ConsoleChatStore()
     first = store.create_session(
@@ -3035,20 +3060,16 @@ def test_screen_selection_builder_targets_session_without_switching_view():
         ),
         _normalize_llamacpp_base_url=lambda value: value,
     )
-    # task-15452 split the builder into a memo wrapper plus
-    # `_build_console_provider_selection_uncached`; the wrapper under test
-    # delegates to the latter through `self`, so the double borrows the real
-    # uncached half exactly as the memo-less path binds it in production.
-    fake_screen._build_console_provider_selection_uncached = lambda session_id=None: (
-        ChatScreen._build_console_provider_selection_uncached(fake_screen, session_id)
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_provider_selection_controller,
     )
-    fake_screen._build_console_provider_selection_from_settings = (
-        lambda *args, **kwargs: ChatScreen._build_console_provider_selection_from_settings(
-            fake_screen, *args, **kwargs
-        )
+    fake_screen.app_instance = SimpleNamespace(
+        app_config=fake_screen._provider_readiness_app_config()
     )
+    fake_screen._console_config_snapshot_is_disk_loaded = lambda _config: False
+    build_console_provider_selection_controller(fake_screen)
 
-    selection = ChatScreen._build_console_provider_selection(fake_screen, first.id)
+    selection = fake_screen._provider_selection._build_console_provider_selection(first.id)
 
     assert selection.provider == "openai"
     assert selection.explicit_model == "model-a"
@@ -3073,14 +3094,19 @@ def _identity_selection_screen(store, global_name="Rowan"):
     Mirrors test_screen_selection_builder_targets_session_without_switching_view
     and adds the display-name accessor the identity resolver reads.
     """
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_provider_selection_controller,
+    )
 
     fake_screen = SimpleNamespace(
         _console_derivation_memo=None,
-        _provider_readiness_app_config=lambda: {
-            "api_settings": {"openai": {"model": "configured"}},
-            "console": {},
-        },
+        app_instance=SimpleNamespace(
+            app_config={
+                "api_settings": {"openai": {"model": "configured"}},
+                "console": {},
+            }
+        ),
+        _console_config_snapshot_is_disk_loaded=lambda _config: False,
         _ensure_console_chat_store=lambda: store,
         _session=SimpleNamespace(
             _console_session_settings=lambda session_id: store.session_settings(
@@ -3098,18 +3124,11 @@ def _identity_selection_screen(store, global_name="Rowan"):
             )
         ),
         _normalize_llamacpp_base_url=lambda value: value,
-        _global_chat_display_name=lambda: global_name,
+        _settings_durability=SimpleNamespace(
+            _global_chat_display_name=lambda: global_name,
+        ),
     )
-    fake_screen._build_console_provider_selection_uncached = (
-        lambda session_id=None: ChatScreen._build_console_provider_selection_uncached(
-            fake_screen, session_id
-        )
-    )
-    fake_screen._build_console_provider_selection_from_settings = (
-        lambda *args, **kwargs: ChatScreen._build_console_provider_selection_from_settings(
-            fake_screen, *args, **kwargs
-        )
-    )
+    build_console_provider_selection_controller(fake_screen)
     return fake_screen
 
 
@@ -3126,15 +3145,13 @@ def _persona_session(store, *, settings_prompt="Guide STALE as Archivist."):
 
 
 def test_screen_selection_re_expands_persona_template_with_override_name():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     store = ConsoleChatStore()
     session = _persona_session(store)
     session.user_display_name_override = "Wren"
     fake_screen = _identity_selection_screen(store)
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, session.id
+    selection = fake_screen._provider_selection._build_console_provider_selection(
+        session.id
     )
 
     # Stale settings projection must NOT leak onto the wire: the live
@@ -3143,22 +3160,18 @@ def test_screen_selection_re_expands_persona_template_with_override_name():
 
 
 def test_screen_selection_persona_without_override_uses_global_name():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     store = ConsoleChatStore()
     session = _persona_session(store)
     fake_screen = _identity_selection_screen(store)
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, session.id
+    selection = fake_screen._provider_selection._build_console_provider_selection(
+        session.id
     )
 
     assert selection.system_prompt == "Guide Rowan as Archivist."
 
 
 def test_screen_selection_keeps_settings_prompt_for_template_less_persona():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     store = ConsoleChatStore()
     session = store.create_session(
         title="Chat with Archivist",
@@ -3170,16 +3183,14 @@ def test_screen_selection_keeps_settings_prompt_for_template_less_persona():
     )
     fake_screen = _identity_selection_screen(store)
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, session.id
+    selection = fake_screen._provider_selection._build_console_provider_selection(
+        session.id
     )
 
     assert selection.system_prompt == "Custom persona prompt."
 
 
 def test_screen_selection_keeps_settings_prompt_when_persona_name_unresolved():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     store = ConsoleChatStore()
     session = store.create_session(
         title="Chat",
@@ -3192,16 +3203,14 @@ def test_screen_selection_keeps_settings_prompt_when_persona_name_unresolved():
     )
     fake_screen = _identity_selection_screen(store)
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, session.id
+    selection = fake_screen._provider_selection._build_console_provider_selection(
+        session.id
     )
 
     assert selection.system_prompt == "Guide Rowan."
 
 
 def test_screen_selection_re_expands_character_template_parity():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     store = ConsoleChatStore()
     session = store.create_session(
         title="Chat with Kestrel",
@@ -3215,8 +3224,8 @@ def test_screen_selection_re_expands_character_template_parity():
     session.character_system_template = "You are {{char}}. Help {{user}}."
     fake_screen = _identity_selection_screen(store)
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, session.id
+    selection = fake_screen._provider_selection._build_console_provider_selection(
+        session.id
     )
 
     assert selection.system_prompt == "You are Kestrel. Help Rowan."

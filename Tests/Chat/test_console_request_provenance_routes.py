@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -88,6 +89,7 @@ def test_logical_route_census_is_closed_complete_and_actor_aware() -> None:
     assert {item.route for item in CONSOLE_REQUEST_ROUTE_CENSUS} == set(
         ConsoleRequestRoute
     )
+    assert len(CONSOLE_REQUEST_ROUTE_CENSUS) == len(ConsoleRequestRoute)
     actor_routes = {
         item.route for item in CONSOLE_REQUEST_ROUTE_CENSUS if item.actor_chain_required
     }
@@ -95,18 +97,19 @@ def test_logical_route_census_is_closed_complete_and_actor_aware() -> None:
         ConsoleRequestRoute.AGENT_FIRST,
         ConsoleRequestRoute.TOOL_LOOP,
     }
-    assert (
-        next(
-            item
-            for item in CONSOLE_REQUEST_ROUTE_CENSUS
-            if item.route is ConsoleRequestRoute.AUTO_COMPACTION
-        ).capture
-        is ConsoleRouteCaptureDisposition.CAPTURE_OFF
-    )
+    capture_off_routes = {
+        ConsoleRequestRoute.AUTO_COMPACTION,
+        ConsoleRequestRoute.MANUAL_SUMMARY,
+    }
+    assert {
+        item.route
+        for item in CONSOLE_REQUEST_ROUTE_CENSUS
+        if item.capture is ConsoleRouteCaptureDisposition.CAPTURE_OFF
+    } == capture_off_routes
     assert all(
         item.capture is ConsoleRouteCaptureDisposition.CONVERSATION_TRACE
         for item in CONSOLE_REQUEST_ROUTE_CENSUS
-        if item.route is not ConsoleRequestRoute.AUTO_COMPACTION
+        if item.route not in capture_off_routes
     )
     assert all(
         item.source_marker and item.predicate for item in CONSOLE_REQUEST_ROUTE_CENSUS
@@ -128,7 +131,12 @@ def test_logical_route_census_is_closed_complete_and_actor_aware() -> None:
         assert item.source_function in owning_functions
 
 
-def test_gateway_callsite_census_matches_ast_discovery_bidirectionally() -> None:
+@pytest.fixture(scope="module")
+def discovered_gateway_callsites():
+    return _discover_gateway_callsites()
+
+
+def _assert_gateway_census(discovered, records) -> None:
     documented = {
         (
             item.module,
@@ -137,38 +145,95 @@ def test_gateway_callsite_census_matches_ast_discovery_bidirectionally() -> None
             item.source_line,
             item.route_binding,
         )
-        for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
+        for item in records
     }
-    assert documented == _discover_gateway_callsites()
-    excluded = {
-        item.module
-        for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
-        if item.owner == "excluded"
-    }
+    assert documented == discovered
+    excluded = {item.module for item in records if item.owner == "excluded"}
     assert {
         "tldw_chatbook/Chat/console_side_chat.py",
         "tldw_chatbook/Chat/console_visual_evaluation.py",
         "tldw_chatbook/Prompt_Management/prompt_improvement_service.py",
+        "tldw_chatbook/UI/Console_Modules/settings_navigation.py",
     } <= excluded
     identities = [
-        (item.module, item.function, item.gateway, item.source_line)
-        for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
+        (item.module, item.function, item.gateway, item.source_line) for item in records
     ]
     assert len(identities) == len(set(identities))
+    assert all(item.route_binding is not None for item in records)
     assert all(
-        item.route_binding is not None for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
+        bool(item.routes) == (item.owner is not ConsoleRouteCaptureDisposition.EXCLUDED)
+        for item in records
     )
+    route_owners = {item.route: item.capture for item in CONSOLE_REQUEST_ROUTE_CENSUS}
     assert all(
-        bool(item.routes)
-        == (item.owner == ConsoleRouteCaptureDisposition.CONVERSATION_TRACE.value)
-        for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
-        if ConsoleRequestRoute.AUTO_COMPACTION not in item.routes
+        item.owner is route_owners[route] for item in records for route in item.routes
     )
-    routed = [
-        route for item in CONSOLE_GATEWAY_CALLSITE_CENSUS for route in item.routes
-    ]
+    routed = [route for item in records for route in item.routes]
     assert set(routed) == set(ConsoleRequestRoute)
     assert len(routed) == len(set(routed))
+
+
+def test_gateway_callsite_census_matches_ast_discovery_bidirectionally(
+    discovered_gateway_callsites,
+) -> None:
+    _assert_gateway_census(
+        discovered_gateway_callsites, CONSOLE_GATEWAY_CALLSITE_CENSUS
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_call",
+        "new_call",
+        "missing_route",
+        "duplicate_call",
+        "duplicate_route",
+        "missing_owner",
+    ],
+)
+def test_gateway_census_rejects_missing_routes_and_incomplete_ownership(
+    discovered_gateway_callsites,
+    mutation,
+) -> None:
+    discovered = set(discovered_gateway_callsites)
+    records = list(CONSOLE_GATEWAY_CALLSITE_CENSUS)
+    first = records[0]
+    if mutation == "missing_call":
+        records.pop()
+    elif mutation == "new_call":
+        visitor = _GatewayCallVisitor()
+        visitor.visit(
+            ast.parse(
+                "async def new_call():\n    await gateway.stream_chat(r, m, route=None)\n"
+            )
+        )
+        function, gateway, line, route = visitor.calls[0]
+        discovered.add(("new_module.py", function, gateway, line, route))
+    elif mutation == "missing_route":
+        visitor = _GatewayCallVisitor()
+        visitor.visit(
+            ast.parse("async def run():\n    await gateway.stream_chat(r, m)\n")
+        )
+        route = visitor.calls[0][3]
+        original = (
+            first.module,
+            first.function,
+            first.gateway,
+            first.source_line,
+            first.route_binding,
+        )
+        discovered.remove(original)
+        discovered.add((*original[:4], route))
+        records[0] = replace(first, route_binding=route)
+    elif mutation == "duplicate_call":
+        records.append(first)
+    elif mutation == "duplicate_route":
+        records[1] = replace(records[1], routes=(*records[1].routes, first.routes[0]))
+    elif mutation == "missing_owner":
+        records[0] = replace(first, routes=())
+    with pytest.raises(AssertionError):
+        _assert_gateway_census(discovered, records)
 
 
 def test_route_provenance_carries_predicate_and_required_actor_chain() -> None:

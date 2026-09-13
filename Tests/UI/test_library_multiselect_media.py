@@ -52,17 +52,19 @@ def _bind_media_mutation_seams(fake):
     events = []
     scope = MediaBrowseScope()
     controller = SimpleNamespace(
-        applied_scope=scope,
-        retained_items=(),
-        # task-31271 seam (b): the stale-page guard moved out of
-        # ``check_action`` and into the Space action itself, so every fake
-        # driving that action needs the freshness the screen reads.
-        freshness="fresh",
-        mutation_refresh_scope=scope,
-        begin_mutation=lambda: events.append(("begin",)) or scope,
-        reconcile_committed_mutation=lambda **kwargs: events.append(
-            ("reconcile", kwargs)
+        state=SimpleNamespace(
+            applied_scope=scope,
+            retained_items=(),
+            # task-31271 seam (b): the stale-page guard moved out of
+            # ``check_action`` and into the Space action itself, so every fake
+            # driving that action needs the freshness the screen reads.
+            freshness="fresh",
+            mutation_refresh_scope=scope,
+            reconcile_committed_mutation=lambda **kwargs: events.append(
+                ("reconcile", kwargs)
+            ),
         ),
+        begin_mutation=lambda: events.append(("begin",)) or scope,
         request=lambda requested, **kwargs: events.append(
             ("request", requested, kwargs)
         ),
@@ -236,19 +238,21 @@ def test_select_enter_available_matches_the_button_gate():
     """
     fake = SimpleNamespace(
         _library_media_browse_controller=SimpleNamespace(
-            freshness="fresh",
-            retained_items=({"id": "local:media:1"},),
+            state=SimpleNamespace(
+                freshness="fresh",
+                retained_items=({"id": "local:media:1"},),
+            ),
         )
     )
     assert LibraryScreen._library_media_select_enter_available(fake) is True
 
     # No rows -> not available (matches the disabled Select button).
-    fake._library_media_browse_controller.retained_items = ()
+    fake._library_media_browse_controller.state.retained_items = ()
     assert LibraryScreen._library_media_select_enter_available(fake) is False
 
     # Stale page -> not available even with rows.
-    fake._library_media_browse_controller.retained_items = ({"id": "x"},)
-    fake._library_media_browse_controller.freshness = "stale"
+    fake._library_media_browse_controller.state.retained_items = ({"id": "x"},)
+    fake._library_media_browse_controller.state.freshness = "stale"
     assert LibraryScreen._library_media_select_enter_available(fake) is False
 
 
@@ -1208,7 +1212,9 @@ def test_type_filter_change_exits_select_mode_and_notifies_discard():
     fake._media_state.type_filter = "All"
     fake._media_state.type_choices_visible = False
     fake._library_media_browse_controller = SimpleNamespace(
-        type_options=("All", "video")
+        state=SimpleNamespace(
+            type_options=("All", "video"),
+        ),
     )
     fake._library_media_type_options = (
         LibraryScreen._library_media_type_options.__get__(fake)
@@ -1725,7 +1731,7 @@ async def test_undo_reinserts_and_reselects_when_item_matches_active_scope(tmp_p
     )
     assert db.mark_as_trash(media_id) is True
     fake = _bulk_delete_fake(db=db, records=(), counts={"media": 0}, selected_ids=[])
-    fake._library_media_browse_controller.applied_scope = MediaBrowseScope(
+    fake._library_media_browse_controller.state.applied_scope = MediaBrowseScope(
         media_type="article"
     )
     selections = []
@@ -1758,7 +1764,7 @@ async def test_undo_succeeds_with_restored_outside_current_filter_message(tmp_pa
     )
     assert db.mark_as_trash(media_id) is True
     fake = _bulk_delete_fake(db=db, records=(), counts={"media": 0}, selected_ids=[])
-    fake._library_media_browse_controller.applied_scope = MediaBrowseScope(
+    fake._library_media_browse_controller.state.applied_scope = MediaBrowseScope(
         query="different"
     )
     selections = []
@@ -2484,7 +2490,7 @@ def test_space_action_noops_on_a_stale_page_and_under_a_confirm():
     outcome: nothing toggles.
     """
     for mutate in (
-        lambda f: setattr(f._library_media_browse_controller, "freshness", "stale"),
+        lambda f: setattr(f._library_media_browse_controller.state, "freshness", "stale"),
         lambda f: setattr(f._media_state, "confirming_bulk_delete", True),
         lambda f: setattr(f._media_state, "bulk_delete_in_flight", True),
     ):

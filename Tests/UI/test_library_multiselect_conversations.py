@@ -72,6 +72,7 @@ def _fake(select_mode):
         _opened=[],
         _reader_synced=0,
         _reader_started=[],
+        query=lambda _selector: (),  # Detached fixture has no toolbar widgets.
         _sync_library_conversation_reader=lambda: None,
         _start_library_conversation_reader_selection=lambda conversation_id: None,
     )
@@ -755,14 +756,13 @@ _ACTIVE_EFFECT_WINDOW = 0.2
 #: press behaviour cannot drift back apart one canvas at a time. Keyed by
 #: the row's DOM id prefix (the ``classes=`` argument is a variable at
 #: three of these sites, the id is a literal f-string at all of them).
-_LIBRARY_ROW_ID_PREFIXES = {
-    "library-media-row-",
-    "library-conversation-row-",
-    "library-notes-row-",
-    "library-notes-tree-note-",
-    "library-notes-tree-folder-",
-    "library-prompt-row-",
-    "library-skill-row-",
+_LIBRARY_ROW_SITE_COUNTS = {
+    "library-media-row-": 1,
+    "library-conversation-row-": 1,
+    "library-notes-row-": 2,  # Flat and tree notes retain compatible row IDs.
+    "library-notes-tree-folder-": 1,
+    "library-prompt-row-": 1,
+    "library-skill-row-": 1,
 }
 
 
@@ -787,7 +787,7 @@ def test_every_library_row_button_is_built_by_the_shared_helper():
                     continue
                 rendered = ast.unparse(keyword.value)
                 prefix = next(
-                    (p for p in _LIBRARY_ROW_ID_PREFIXES if p in rendered), None
+                    (p for p in _LIBRARY_ROW_SITE_COUNTS if p in rendered), None
                 )
                 if prefix is None:
                     continue
@@ -798,9 +798,9 @@ def test_every_library_row_button_is_built_by_the_shared_helper():
                     # Containers keyed off the same id stem (the media
                     # rows' own scroll host) are not row buttons.
                     continue
-                found.setdefault(prefix, set()).add(f"{path.name}:{callee}")
+                found.setdefault(prefix, set()).add(f"{path.name}:{node.lineno}:{callee}")
 
-    assert set(found) == _LIBRARY_ROW_ID_PREFIXES, (
+    assert {prefix: len(sites) for prefix, sites in found.items()} == _LIBRARY_ROW_SITE_COUNTS, (
         "row-button census found the wrong set of construction sites "
         f"(a rename or a new canvas?): {sorted(found)}"
     )

@@ -1036,6 +1036,20 @@ WatchlistPickerDialog {
     width: 12;
 }
 
+/* These one-row Selects cannot carry an outline without obscuring their
+ * values. Paint focus on the opaque SelectCurrent instead, using a semantic
+ * lightened action surface whose matching background token keeps the value
+ * readable across dark, light, and high-contrast themes. */
+#items-status-select:focus > SelectCurrent,
+#watchlists-backend-select:focus > SelectCurrent {
+    background: $primary-lighten-1;
+}
+
+#items-status-select:focus > SelectCurrent Static,
+#watchlists-backend-select:focus > SelectCurrent Static {
+    color: $background;
+}
+
 /* TASK-1105 lived here. Clicking any Watchlists table row other than the
  * first left the selection on row 0, so `Preview`, `Check now` and `Delete`
  * all acted on the wrong source. The cause is the app-wide keyboard-focus

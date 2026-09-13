@@ -1,0 +1,1351 @@
+# Dev test review checkpoint — 2026-09-05
+
+This is an **in-progress review**, not a green full-suite or merge-ready claim.
+The user requested a saved draft PR and another rebase to absorb dev churn.
+All work is isolated from the original dirty checkout.
+
+## Checkpoint scope
+
+- Console and Library controller decomposition, ownership/AST ratchets, and
+  first-use import repairs, with targeted behavioral and import-closure evidence.
+- Runtime repairs include Buddy teardown without a screen, retained Notes focus
+  and editor identity during Files handoffs, and three invalid splash effects.
+- Test repairs restore current provider/persistence/authority contracts, real
+  styled controls, attached-widget readiness, isolated resource measurements,
+  and diagnostic privacy fixtures. Security/resource limits were not relaxed.
+
+## Evidence before the new rebase
+
+Independent complete affected-file selections include:
+
+| Selection | Result |
+| --- | --- |
+| Diagnostic inventory and privacy | 327 passed |
+| Buddy and Models adoption | 171 passed |
+| MCP gateway tools and prompts | 143 passed |
+| Audio.cpp handoff | 122 passed |
+| vLLM workflow and Console provider apply | 140 passed |
+| Raw CLI processes | 51 passed, 1 Windows-only skip |
+| Persona publication | 53 passed; parent-descriptor pressure probe also passed |
+| Historical migration, SQLite privacy, workspace roots | 159 passed |
+| Console settings | 416 passed |
+| Console transcript | 165 passed |
+| Console exchanges | 47 passed |
+| Console state and generation actions | 83 passed |
+| Splash, Cast, Watchlists pagination and rebuilds | 269 passed |
+| Scheduler, TTS ownership, Watchlists busy runs | 125 passed |
+| Evals and interoperability | 352 passed, 6 existing unfinished-feature skips |
+
+These selections overlap earlier sweeps and must not be added into a unique-test
+total. Three staged non-UI sweeps reached 16,203, 12,440, and 5,376 passes before
+stopping on distinct failure families. Two staged UI sweeps reached 2,900 and
+2,397 passes. Their original failures were retained as a diagnosis ledger, not
+silently treated as passing after code changes. The remaining unexecuted cases
+and post-rebase integration still need completion.
+
+## Open at the checkpoint
+
+- TASK-31717: final integrated Console/decomposition verification and closeout.
+- TASK-31707: oversized trace boundary inputs and cold reserved-call clock setup;
+  diagnosis recorded, no implementation yet.
+- TASK-31708: agent gateway/gate fixture signatures and regeneration failure
+  reporting; diagnosis recorded, no implementation yet.
+- TASK-31769: Console journey phase synchronization has six targeted passes;
+  its complete-file run was intentionally stopped after 48 passes for rebasing.
+- TASK-31770: Files-to-Notes browse scroll restores 6 instead of logical offset 7.
+  The interrupted Notes workspace run reached 105 passes and this one failure.
+- TASK-31771: thread-start fault injection mutates shared stdlib threading and
+  can cause test-runner teardown warnings; diagnosis only.
+- Unallocated: Notes Save-failed contrast in the light theme, pinned sync-history
+  paging geometry, and load-sensitive Qwen retry/MCP child cleanup failures.
+- Re-run the architecture, diagnostic, screen-size, preimport and UI-ready
+  ratchets after the new rebase; their pre-rebase results do not qualify new dev.
+
+## Environment qualification
+
+Subprocess tests use an isolated installed review environment so `python -I`
+children resolve this checkout, not the original workspace. Writable Notes
+fixtures use the per-user macOS temporary directory with correct UID/GID;
+`/private/tmp` inherited `wheel` and correctly failed metadata guards. The
+workspace tool executor's nested-environment tests were separately qualified
+with the native project environment. Platform, configured-service, and
+unfinished-feature skips are not proof of executed coverage.
+
+No full-suite completion or merge readiness is asserted by this checkpoint.
+
+## Rebase and draft PR
+
+[Draft PR #2427](https://github.com/rmusser01/tldw_chatbook/pull/2427) preserves
+this progress. The review was rebased onto
+`da2fbdbc212d16030bb2802a91944527c5db43e7`; a second fetch confirmed that dev tip
+before publishing. This incorporated 73 upstream commits since the previous
+review base and replayed 109 review commits. The local backup branch
+`codex/dev-test-review-before-rebase-20260905` preserves the prior checkpoint.
+
+Conflicts retained upstream last-good Scheduling display and async reachability
+checks, alongside unmounted-screen guards and first-use imports. Console timer
+tracking/cancellation was retained with the settings-navigation controller.
+The diagnostic inventory was rebuilt from the merged owners, preserving the
+upstream additions and reviewed controller movements. Review-only Backlog ID
+collisions are renumbered; upstream task identities are preserved.
+
+Post-rebase evidence:
+
+- All 195 changed Python files parsed; branch whitespace checks passed.
+- Scheduling, Library reuse, import closures, migration and workspace roots:
+  241 passed, 2 failed. Both failures exposed the same newly added Console
+  suspend caller still targeting a helper moved to the settings-navigation
+  controller. Integration plan: retarget that call to the existing owner and
+  rerun the complete reuse and settings-return selection. ADR required: no;
+  this preserves an existing owner boundary, not a new lifecycle policy.
+- Architecture/preimport selection: 44 passed, 3 failed. Console is 17,541
+  lines against 16,873; Library is 41,651 against 41,324; preimport adds 504
+  modules against 500. The ceilings remain unchanged. Upstream growth needs
+  further decomposition/import work before this draft can be merge-ready.
+- The suspend caller was retargeted to the existing settings-navigation owner.
+  Both complete Console/Library reuse files now pass: 8 tests in 32.25 seconds.
+  Full-screen Ruff and changed-line formatting also pass.
+- The broader Console reuse/settings-return selection produced 32 passes and
+  3 failures. The failures still expect navigation to create a fresh Console or
+  cancel an unmount worker; upstream now reuses/suspends the screen. The final
+  failure's cancellation-suppressing fixture required interrupting teardown.
+  These test journeys need adaptation; their existing handoff assertions have
+  not been relaxed for this checkpoint.
+- Diagnostic inventory verification reports no drift: 584 owners, 1,336
+  TASK-492 calls, 7,615 TASK-494 calls and 11 sink files.
+- Final combined rebase qualification: **247 passed** in 89.46 seconds across
+  complete Scheduling, Console/Library reuse, reuse-helper, import-closure,
+  migration and workspace-root files. This is a targeted selection, not the
+  unfinished full review. The three architecture/preimport failures and three
+  settings-return failures above remain open.
+- Nineteen review-only task-ID collisions were disambiguated without changing
+  upstream tasks; all 3,378 task/archive records now have unique identities.
+
+## Resumed repairs after publishing the draft
+
+The review remains in progress. The following complete-file results supersede
+the corresponding open items above; they are overlapping selections, not a
+unique-test total or full-suite claim.
+
+- Trace settlement: **37 passed**. Tests now independently reach the UTF-8 byte
+  ceiling and sanitizer codepoint ceiling; recovery uses the actual reservation
+  timestamp without changing the grace period or fail-closed behavior.
+- Agent/regeneration/controller: **376 passed** across six complete files.
+  A real agent failure now keeps its notice visible beneath the restored original
+  answer. Routing/profile fixtures match current admission seams, and branching
+  persistence is verified in real SQLite. The run reported descriptor growth;
+  test-owned database teardown is being repaired separately, not ignored.
+- Branching after review-driven database cleanup: **6 passed**. Teardown awaits
+  the controller and closes the exact fixture database's worker connections.
+- Console settings: **416 passed**, with runtime warnings treated as errors.
+  Thread-start fault injection no longer alters global stdlib threading, and the
+  Inspector test includes the upstream Subagents section in its exact ordering.
+- Native Console navigation: **349 passed**. Both cached reuse and explicit
+  disposal/recreation are exercised, including exact handoff claims and real
+  worker cancellation on unmount.
+- Chunking Lab: **346 passed** across complete UI, core, DB, service and import
+  files. First-use imports restore the unchanged preimport limit: **500 modules**
+  and 377,271 source lines. No ceiling or snapshot was loosened.
+
+Remaining work includes Console/Library size decomposition, three Notes
+theme/rendering failures, test-owned descriptor cleanup, and the continued
+non-UI sweep. The Notes scroll mismatch has not reproduced after rebasing;
+its targeted cases pass, while the complete Notes file records 157 passes and
+three distinct theme/rendering failures. The resumed sweep also exposed stale
+summarization diagnostic-boundary hashes after rebasing and a Library media
+selection readiness failure; both remain recorded for investigation. Final
+diagnostic reconciliation must follow the reviewed controller moves.
+
+## Further resumed verification and remaining failure ledger
+
+The fourth non-UI continuation stopped at its failure limit with **8,255 passed,
+32 failed, 123 skipped** in 1,161.67 seconds. This is a partial continuation,
+not a full sweep completion; passing selections overlap and must not be summed.
+The XML evidence is `/private/tmp/tldw-review-nonui-remaining-wave4-20260905.xml`.
+
+Further complete-file verification after focused repairs:
+
+- Agent test-owned database cleanup: **47 passed**. Native descriptor probes
+  confirmed five send-test descriptors and four branching-test descriptors
+  return to zero; no descriptor threshold or garbage-collection guard changed.
+- Guarded attachment/exchange cascades and semantic migration guards:
+  **94 passed**. Tests use the real semantic mutation coordinator and explicitly
+  retain raw-SQL rejection checks.
+- Native grammar and accepted skill-hook fixtures: **64 passed**, preserving
+  exact execution ownership and hook ordering assertions.
+- Historical/current migration checks: **122 passed**. Historical assertions run
+  against their exact schema version, followed by current-schema preservation.
+- Retrieval extraction and dictionary-send fixtures: **184 passed**. The native
+  Console journey file also passed **349 tests**; later hook-binding adjustments
+  are covered by the related 184-test selection.
+- Library constructor assembly: **46 passed** in the final architecture/import
+  selection and **16 passed** in Notes coverage. The broader UI selection recorded
+  **276 passed, 8 failed**; all eight failures were reproduced at the pre-assembly
+  baseline and remain open, not waived. The Library size ceiling was tightened.
+
+Wave-four failures already repaired above include guarded attachment deletion,
+native grammar ownership, accepted skill-hook ordering, and four migration cases.
+The remaining observed families are tracked explicitly:
+
+- Three summarization diagnostic-boundary fixtures: TASK-18801; reconcile only
+  after final reviewed controller movement.
+- Atomic promotion context-policy ownership: TASK-31907; real SQLite probes show
+  false save conflicts for staged and inherited policies.
+- Inert legacy Notes timer residue: TASK-31909; AST guard and lifecycle coverage.
+- Library Skills reserved-name drift: TASK-31911; fifteen missing runtime/command
+  names, with the four-source guard retained.
+- Two MCP stdio cases: wire-tool inventory and legacy-client startup.
+- Three fork-transition census cases: audit the new settings mutation/fence paths
+  before changing the classification inventory.
+- Two sync-log retention deletes, a conversation-delete property, and one outbox
+  deliberate-corruption fixture now encounter semantic mutation authorization.
+- Two durable-turn settlement/retry cases need ownership and recovery diagnosis.
+- Seven briefing-export cases seed multiple unfinished runs for one watchlist,
+  conflicting with the current uniqueness contract.
+- One Library media-selection live-evidence case fails its settled-state wait.
+
+Previously observed Notes rendering/contrast, eight Library UI baseline cases,
+load-sensitive retry/process-cleanup cases, final Console size/closeout evidence,
+and unexecuted remainder selections are still outstanding. This draft is not
+merge-ready and no full-suite green result is asserted.
+
+### Subsequent verified repairs
+
+- TASK-31907: **63 passed** for promotion/settings persistence. Public-flow real
+  SQLite regressions cover staged post-promotion saves, failed-save retry, and
+  inherited fork policies retaining revision ownership. A further 386 behavioral
+  tests passed; the three fork-census failures reproduced against the unchanged
+  HEAD source. The aggregate run's descriptor-growth warning remains unqualified.
+- TASK-31908: **96 passed**. Environment worker forwarding now names its existing
+  group/thread/exclusive arguments explicitly; scheduling choices are unchanged.
+- TASK-31909: **32 passed** for retired Notes sync and live lifecycle coverage.
+  The inert timer field is removed; Library's ceiling tightened to 41,302 lines.
+- TASK-31910: **12 passed**, including enforcing error-state contrast checks for
+  all 72 shipped themes at both wide and narrow sizes. The minimum measured Save
+  failed contrast is 5.070:1; the 4.5:1 requirement and Git error style are unchanged.
+- TASK-31752: **126 passed** in the recovery/checkpoint selection, including all
+  25 round-one tests. Fault doubles now cross the actual dispatch callback. One
+  round-two checkpoint-transition failure reproduced with the unchanged helper;
+  it is being investigated as TASK-31754. The aggregate descriptor warning is
+  retained, not treated as passing resource evidence.
+- TASK-31755: **76 passed**. Export and query fixtures explicitly seed completed
+  briefing history; the single-active-run uniqueness constraint is unchanged.
+- TASK-18801: the complete summarization privacy file is **257 passed**. Statement
+  review proved ten identical logs moved from ChatScreen to retrieval; checked
+  and generated inventories now agree at 584 owners, 1,336 TASK-492 calls, 7,615
+  TASK-494 calls and 11 sinks. Only the two stale normalized boundary hashes were
+  updated. Clean upstream-dev qualification remains pending integration.
+
+The Console private-delegate cleanup, Skills split-reader refresh defect, and
+pre-dispatch failure classification are active work. One newly observed Skills
+trust journey also reproduced in the pre-assembly baseline. Notes compact paint,
+the previously recorded Library baseline cases, MCP/fork-census/guarded-delete
+families, and remaining unexecuted review selections are not yet resolved.
+
+## Additional continuation checkpoint
+
+- TASK-31754: **162 passed** across dispatch/recovery selections. A failed
+  pre-dispatch callback now retains the accepted owner for retry instead of
+  being classified as a completed provider failure. Aggregate descriptor warnings
+  remain separately qualified.
+- TASK-31911 and TASK-31751: **53 passed** in the complete Skills state/trust
+  selection, plus **7** exact browse-controller and **37** Library architecture
+  checks. Items refresh independently of the live Work editor. Reserved-name
+  coverage retains the fixed four-source guard. Library is 41,301 lines.
+- TASK-31913: **67 passed** for MCP stdio and Library tools. Manifest fixtures
+  reflect the 21 current tools; the legacy connection fixture explicitly accepts
+  the current server-request dispatcher contract.
+- Fifth partial non-UI sweep: **2,284 passed, 38 failed, 68 skipped**, stopped at
+  its failure limit. Evidence: `/private/tmp/tldw-review-nonui-remaining-wave5-20260905.xml`.
+  Some Console receiver failures occurred while the migration was in progress;
+  this is neither a final failure count nor a green result. Additional observed
+  families include exchange capture/persistence fixtures, private SQLite ownership
+  inventory, provider API-key forwarding, estimate-cache ownership, Watchlists
+  off-loop evidence, promotion transaction counting, and briefing-script history.
+- TASK-31750: **145 passed** in source-size, private-owner, callback,
+  diagnostic-inventory and cold-import gates. Actual Console size is **16,818
+  physical lines / 505 methods**, with the ratchet tightened to those values.
+  AST review found only the approved 64 forwarding removals, receiver changes,
+  obsolete imports, and the deliberately late-bound submission callback. Existing
+  behavioral assertions are preserved. The question/composer group is **121 passed**.
+- The 84-file affected Console run was interrupted before the next rebase after
+  **1,749 passed and 7 failed** (986 seconds); its unexecuted remainder is still
+  required. Evidence: `/private/tmp/tldw-31750-affected-pass3.xml`. Two failures
+  were remaining owner-fixture migrations. Other observed cases cover collapsed
+  paste confirmation, empty-panel geometry, staged source details, left-rail
+  ownership and a Watchlists handoff click outside the visible region. These are
+  not waived or claimed to be baseline without further reproduction.
+
+A fresh fetch found 152 newer dev commits at `4e904f54db`; integration and
+post-rebase qualification are pending this checkpoint. No resource/security
+guard has been weakened and no complete-suite pass is claimed.
+
+TASK-31753 / TASK-31757: **203 passed** across the complete rewind integration and
+Chat settings files plus the corrected readiness receiver regression. Modernizing
+the rewind gateway exposed a runtime defect: checkpoint-persisted live messages
+have unset cached parent fields. Snapshotting through the store's existing
+`durable_parent_for_message` resolver restores the real ordered durable chain.
+The end-to-end journey now verifies current branch-memory storage, exact summary
+span, separate prepared preamble, transcript preservation, new native IDs on
+restart, and no later-memory leakage after restoring before the selection anchor.
+The parent-fence fault test mutates the authoritative native tree rather than an
+unused cached field. The initial native-versus-persisted-ID hypothesis was corrected
+by the exact snapshot probe; no lineage authorization check was relaxed.
+
+The final complete rewind/summary-fence/parent-persistence selection is **78
+passed** (31.45 seconds). Its preexisting aggregate descriptor-growth warning
+(209) remains open; this is behavioral evidence, not resource-leak closure.
+
+## Second rebase and current handoff
+
+Rebased 144 review commits onto dev `53194eee674865bd8b4aa6daac4b1e7d97160594`,
+including 156 new upstream commits since the preceding review base. The pushed
+pre-rebase checkpoint and local branch
+`codex/dev-test-review-before-second-rebase-20260905` retain the prior history.
+Upstream lazy Environment construction, Stop/dispatch draining, trace ownership,
+Library ingest ownership, and both sets of testing lessons are preserved.
+
+The initial post-rebase selection stopped after **180 passed / 15 failed**.
+Thirteen failures shared missing first-use Notes imports or stale Library class
+lookup assumptions; these are repaired. The assembly-order pin now explicitly
+includes the new upstream ingest constructor, whose AST matches upstream exactly.
+The final complete follow-up selection is **46 passed** (25.94 seconds), covering
+Library assembly/ingest, cold import boundaries, rewind integration, dispatch
+draining and delayed callbacks. Separately, the first rebased run completed all
+**73 summary tests**, **65 delegate guards**, and **25 Environment wiring tests**
+successfully. These selections overlap and are not a unique test total.
+
+Remaining current integration debt includes:
+
+- Console is **16,899 lines / 508 methods** against its unchanged **16,818 / 505**
+  ratchet; the added upstream work needs a further bounded paydown. The ceiling
+  was not raised. Library is **39,818 / 1,295**, and its ceiling was tightened to
+  that combined measurement.
+- Five unresolved UI cases and the unexecuted part of the 84-file Console census,
+  plus the previously recorded non-UI/DB/private-inventory and resource families.
+- Diagnostic hash/inventory qualification must be rerun against the new upstream
+  Meetings classification and twelfth sink; pre-rebase hashes are historical.
+- Two additional Backlog collisions (31714 and 31737) arrived in the last four
+  dev commits and await separate approval to renumber the review tasks.
+
+With explicit user approval, these 18 review-created task IDs were renumbered;
+the upstream tasks and their identities were left unchanged:
+
+| Former review ID | New review ID |
+| --- | --- |
+| 31551 | 31758 |
+| 31552 | 31759 |
+| 31586 | 31760 |
+| 31587 | 31761 |
+| 31588 | 31762 |
+| 31589 | 31763 |
+| 31636 | 31764 |
+| 31637 | 31765 |
+| 31650 | 31766 |
+| 31651 | 31767 |
+| 31701 | 31768 |
+| 31710 | 31769 |
+| 31711 | 31770 |
+| 31712 | 31771 |
+| 31713 | 31772 |
+| 31738 | 31773 |
+| 31739 | 31774 |
+| 31740 | 31775 |
+
+This remains a draft progress checkpoint, not a complete test-suite or merge
+qualification. All current production files edited during conflict resolution
+parse, undefined-name checks pass, and `git diff --check` is clean.
+
+## Continued bounded repairs after the second rebase
+
+- TASK-31755: the remaining briefing-script scope fixture now creates completed
+  history, not competing active runs. Its original isolation assertion and the
+  production uniqueness guard are unchanged. Five complete briefing/feed/DB
+  files passed **101 tests** (4.39 seconds).
+- TASK-31776: cache regressions exercise both real character and bundled-tokenizer
+  tiers, with explicit failure on tokenizer fallback. Growing history requires
+  exactly 204 computations, not a ceiling that accepted zero. A process-local
+  cache-bypass mutation failed all four guards as intended (20,400 computations).
+- TASK-31777: corrected the stale sanitized credential-field expectation, exposing
+  a genuine missing credential-decision annotation. The runtime now carries only
+  a strict boolean into bounded annotation construction; credential fields stay
+  absent from stored boundary and handler projections. False/absent/nonboolean
+  inputs cannot fabricate a resolved annotation.
+- TASK-31753: the owning-turn summary/RAG fixture now uses real conversation and
+  workspace persistence, a completed selected turn, and the existing current
+  auxiliary gateway. Captured provider/model and RAG configuration assertions
+  remain intact, with controller and database cleanup.
+
+The seven complete affected Chat/summary/integration/token/credential files
+passed **205 tests** (58.30 seconds). This selection still reports the previously
+observed aggregate descriptor-growth warning of 209; it is not resource closure.
+Whole changed-file Ruff and changed-function formatting checks pass. The briefing
+file has unrelated pre-existing whole-file formatting drift. Independent scoped
+review found a tokenizer-fallback gap, which was repaired and re-reviewed with no
+remaining findings. All wider failure families above remain open unless explicitly
+superseded here. XML evidence: `/private/tmp/tldw-current-chat-repair-final.xml`
+and `/private/tmp/tldw-31755-script-scope-final.xml`.
+
+Post-rebase diagnostic qualification is now measured: the rebuild matches the
+committed inventory exactly (**589 owners, 1,336 TASK-492 calls, 30 upstream
+TASK-31551 calls, 7,615 TASK-494 calls, 12 sinks**). The two complete inventory
+and summarization-privacy files produced **322 passed / 5 failed** in 463.74
+seconds (`/private/tmp/tldw-rebased-diagnostic-qualification.xml`). Two virtualenv
+exclusion fixture dictionaries omit the new `task_31551_calls: 0` summary field.
+Three TASK-18801 boundary/mutant controls reject the pre-rebase manifest hash:
+actual `caa76e94acdbf3d61961e90bcfe307c21ed5c09bfc061d7c054ba497ff817684`, pinned
+`ac5cd5bf7bc9d5f35d80fd71a78953ea96cd6cc60fced84b2e4f60c332bc04f1`.
+TASK-18801's whole-file acceptance criterion is reopened for this current tree.
+No pins were changed; the upstream owner/sink delta needs governed review before
+reconciliation. These five are recorded remaining failures, not regressions
+silently excluded from the successful repair selections.
+
+## Diagnostic reconciliation and trace-maintenance owner repair
+
+The preceding five diagnostic failures are now repaired: both complete files
+pass **327 tests in 409.28 seconds**. Independent review verified all 584 prior
+owner rows unchanged, exactly five upstream Meetings owners and the snapshot
+storage sink additions. Checked and freshly rebuilt inventories agree. Only the
+two stale boundary hashes and the missing zero summary field changed; all
+negative controls remain intact. The upstream Meetings exception diagnostics
+retain their classification, not a new metadata-only privacy certification.
+See `diagnostic-rebase-reconciliation-2026-09-05.md` and
+`/private/tmp/tldw-rebased-diagnostic-repaired.xml`. TASK-18801 remains In Progress
+solely for its clean-origin/dev integration criterion.
+
+TASK-31778 registers physical trace maintenance under its actual SQLite owner,
+fixing the module-owner guard without widening target kinds or backup authority.
+The five complete private-SQLite, core-owner, inventory and compaction/admission
+files report **383 passed / 2 failed / 2 Windows-only skips in 57.10 seconds**
+(`/private/tmp/tldw-trace-owner-final.xml`). The two failures remain explicit:
+
+- `LegacyCollectionsRecovery._read_transaction` still opens a raw read-only
+  connection outside the registered seam. Its source-mode preservation contract
+  needs review before migrating it; no blanket exception was added.
+- `_QuiescentSQLiteConnection.backup` delegates to `super().backup`, so the
+  direct-call inventory detects it. The wrapper reserves quiescence, not a new
+  destination; any inventory reconciliation must preserve that behavior and
+  reject genuinely new unregistered calls.
+
+Scoped Ruff, changed-range formatting and diff checks pass. The compactor and
+architecture test file retain unrelated existing whole-file formatting drift.
+Independent bounded review is clear after correcting the new inventory table
+row. Dependency/source warnings remain recorded. These are selected behavioral
+results, not full-suite, warning-free, resource-closure or merge qualification.
+All other previously recorded failure families and the two pending task-ID
+renumbering decisions remain open.
+
+## Remaining SQLite census repairs
+
+TASK-31779 and TASK-31780 resolve the two SQLite inventory failures recorded
+above. Recovery now uses a module-owned, source-mode-preserving read-only
+connection without creating or migrating the database. Real tests exposed and
+repair symlink/shared-parent bypasses and a failed-setup connection leak.
+Independent review also caught constructor canonicalization hiding initial
+aliases; leaf and parent alias regressions failed before that correction, and
+the lexical absolute path now reaches the shared no-follow boundary.
+
+The backup census distinguishes the exact existing quiescence wrapper from a
+new backup operation, retaining qualified symbol, receiver and multiplicity
+checks. Five negative controls reject new or altered call sites. Real backup
+tests prove exclusion during callbacks and release after success or failure;
+process-local missing-reservation and missing-release mutations each failed
+both variants. Production backup logic and authority are unchanged.
+
+Final seven complete recovery/private-SQLite/inventory/core-owner/quiescence/
+compaction files: **434 passed / 2 Windows-only skips in 88.89 seconds**,
+with two existing dependency warnings. Evidence:
+`/private/tmp/tldw-sqlite-recovery-backup-reviewed.xml`. Whole changed-file Ruff
+and formatting, diff checks and independent re-review pass. These results
+precede any subsequent dev rebase and do not close broader review failures.
+
+## Third dev rebase qualification
+
+Rebased all 149 review commits onto fetched dev
+`2b4973971e5dcf101c5a6ddcc55aa082ff22f814`. The pushed pre-rebase checkpoint
+`00a86a8a65452494d1e21ee33c1ca7bd4fa7a56c` is retained at
+`codex/dev-test-review-before-third-rebase-20260905`. Documentation conflicts
+retain every review lesson and the new upstream index-plan lesson (relocated
+without rewriting it). The sole code conflict was formatter overlap in the
+regeneration test; its real SQLite persistence assertions and cleanup survive.
+That final file and all files in the SQLite repair selection are byte-identical
+to the saved checkpoint. Range comparison accounts for all 149 review commits;
+other changed patches are documentation/context and overlapping vLLM import
+deferral. No task identities were renumbered in this rebase.
+
+Fresh post-rebase qualification: **440 passed / 2 Windows-only skips in
+104.16 seconds** across eight complete SQLite/recovery/compaction/regeneration
+files (`/private/tmp/tldw-third-rebase-sqlite-regeneration.xml`), plus **1 passed**
+for the vLLM first-use import guard (`/private/tmp/tldw-third-rebase-vllm-import.xml`).
+Two existing dependency warnings remain in each run. Scoped whole-file Ruff,
+formatting, diff checks and ancestry verification pass. Diagnostic manifest and
+pins are unchanged; the earlier 327-test evidence was not rerun on this new base.
+Wider failure families, aggregate resource warnings and the two pending task-ID
+decisions are still open. This remains a draft, not full-suite qualification.
+
+## Watchlists off-loop evidence and atomic project-context promotion
+
+TASK-31915 replaces the obsolete post-insert getter spy with real batch,
+transaction and result-materialization thread observations for creation and
+exact-source reuse. Positive work assertions and actual durable source data are
+checked; a process-local inline-offload mutation failed both variants. The test
+owns its function-scoped loop and drains executor threads before verifying all
+database handles closed. Production Watchlists code is unchanged.
+
+TASK-31916 removes a redundant project-context write after temporary-chat
+promotion. The same state already commits in the atomic bundle; the original
+transaction assertion reproduced `[True, False]` and now remains exactly
+`[True]`, with durable reopen verification added. Ordinary first persistence,
+explicit control changes, scope callbacks and staged context-policy flushing
+are retained, as is complete-bundle rollback coverage.
+
+Five complete off-loop/service/project-context/atomic-promotion files pass
+**143 tests in 28.90 seconds**, with two existing dependency warnings
+(`/private/tmp/tldw-offloop-promotion-final.xml`). Scoped Ruff/format and diff
+checks pass; independent review is clear.
+
+The fork-transition census was separately reproduced: **24 passed / 3 failed**
+(`/private/tmp/tldw-fork-census-baseline.xml`). Three boundary-owning methods
+are missing from its direct-route inventory: endpoint adoption and the endpoint
+and settings replacement rollback methods. Its mutation scan additionally
+reports eight settings/persistence/publication/user-name owners, including
+`commit_console_settings_live` and `rebind_persisted_conversation`, whose guard
+contracts still need audit. The controller now has three transient-send rollback
+calls versus the two expected by its old inventory. No classification, exclusion
+or count was changed; these are not yet established as test-only drift.
+
+## Fourth dev rebase qualification
+
+Rebased all 151 review commits onto dev
+`56376e1fc188938bf350c62d3a9f95e820b93c40`. The pushed pre-rebase checkpoint
+`1225dd839d009927063ee80a37ab1baaafb15bf3` remains at
+`codex/dev-test-review-before-fourth-rebase-20260906`. The sole conflict was in
+the testing lessons: both upstream Pixel Migu cleanup guidance and the existing
+isolated-helper lesson were retained. Range comparison accounts for all commits;
+its three changed patches differ only in lesson context. The three Watchlists/
+promotion code and test files are byte-identical to the saved repair checkpoint.
+No task IDs were changed during this rebase.
+
+Fresh checks: all **143 behavioral tests passed** in the same five complete
+Watchlists/promotion files; checked diagnostic inventory also matched the fresh
+scanner. The combined run was **144 passed / 1 stale-hash failure in 152.68s**
+(`/private/tmp/tldw-fourth-rebase-qualification.xml`). Both complete upstream
+Pixel Migu files passed **34 tests in 20.60s**
+(`/private/tmp/tldw-fourth-rebase-pixel-migu.xml`).
+
+TASK-18801's fourth-rebase reconciliation reviews exactly two upstream warnings,
+preserving all other 587 owner rows, classifications and sink topology. Only two
+fixture pins change; independent review reproduced the old and new hashes and
+found no issue. Full rationale and complete-file verification are tracked in
+`backlog/docs/diagnostic-rebase-reconciliation-2026-09-05.md`.
+
+The two complete diagnostic files now pass **327 tests in 533.19 seconds**
+(`/private/tmp/tldw-fourth-rebase-diagnostic-repaired.xml`), including unchanged
+negative controls. Their 17 existing dependency/source warnings remain recorded.
+Canonical fixture formatting, scoped repair lint/format and diff checks pass.
+TASK-18801 stays In Progress because clean origin/dev has not received the draft.
+
+Existing warnings and broader failure families, including the three fork-census
+failures and two pending task-ID decisions, remain open. No full-suite, resource-
+closure or merge-ready claim is made.
+
+## Combined settings fork publication and route census
+
+TASK-31917 fixes a real partial-publication gap: the nested generation-settings
+guard ended before context-policy publication. Both regression variants first
+admitted a real fork in that gap (`/private/tmp/tldw-settings-fork-red.xml`). One
+outer existing transition now covers the whole publication block. Exact-origin
+and duplicate validation, persistence, and rollback semantics are unchanged.
+The regression checks other-session isolation, success/exception cleanup and
+stale-fence rejection. Six complete affected settings/fork/first-send files pass
+**330 tests in 35.61 seconds**, with two existing dependency warnings
+(`/private/tmp/tldw-settings-fork-final.xml`). Scoped static checks and independent
+review pass. The diagnostic statement scanner confirms all 81 store diagnostics
+unchanged; no diagnostic pin was edited.
+
+TASK-31918 reconciles the three existing guarded endpoint/settings rollback
+owners and the controller's three exact optimistic-echo rollback calls. Its
+count-only assertion now also checks the qualified store receiver, session and
+message owners, and prior title/conversation arguments. Process-local missing,
+extra, wrong-receiver and wrong-owner mutations all fail; the unchanged controller
+passes. The owner-aware scanner and safe-exemption set are unchanged.
+
+Complete census, trace-first-send and provider-apply UI files returned **70 passed /
+1 failed in 114.90 seconds**, with three existing dependency warnings
+(`/private/tmp/tldw-fork-route-reconciliation.xml`). The census itself is now
+**26 passed / 1 failed**, down from 24 passed / 3 failed. Both other complete
+files pass. Scoped static checks and independent review of the exact inventory
+changes are clear; the remaining failure below is not waived.
+
+The remaining mutation classification covers seven routes:
+`persist_console_settings_commit_serialized`,
+`prepare_session_user_display_name_override_for_commit`,
+`publish_first_persisted_conversation`, `rebind_persisted_conversation`,
+`reconcile_durable_turn_settings`, `retry_console_settings_persistence`, and
+`set_session_user_display_name_override_for_commit`. They remain unclassified.
+In particular, detached display-name preparation mutates live state and returns
+an off-thread persistence plan without the lease used by ordinary roleplay
+refresh; its consumer also has stale-result, error and cancellation exits to
+audit before introducing lease ownership. No blanket wrapper or exemption was
+added to hide that lifetime question. Broader review failures and both pending
+task-ID decisions remain open.
+
+## Display-name fork lifetime
+
+TASK-31919 closes the live and detached display-name gap. The original real-
+SQLite regression observed an eligible fork inside materialization (1 failed /
+3 passed, `/private/tmp/tldw-name-lifetime-red.xml`). An ordinary transition now
+protects live changes and plan construction, and the existing roleplay token
+keeps ownership until result acceptance or explicit abandonment.
+
+The coordinator initially leaked that token on stale results, persistence-entry
+errors and actual event-loop cancellation before startup (3 failed / 5 passed,
+`/private/tmp/tldw-name-coordinator-red.xml`). It now owns an explicit display-name
+task whose completion callback abandons the exact plan. The existing serializer
+still drains a cancelled writer; no new drain loop, rollback policy or scope
+exemption was introduced. Two event-controlled tests verify that cancellation
+and sibling failure cannot release a blocked real writer's fork ownership.
+
+All 10 complete lifetime tests pass. After review identified worker-handle
+cleanup, the fixture now quiesces the actual database and asserts zero registered
+connections after all async work drains. The complete lifetime+census selection
+returned **36 passed / 1 known classification failure in 18.49 seconds**, with
+two existing dependency warnings
+(`/private/tmp/tldw-name-lifetime-cleanup-census.xml`). Independent re-review and
+scoped static checks pass. All 81 store and 10 settings-controller diagnostic
+statements are unchanged; no pin was edited.
+
+The six complete lifetime, publication, settings-apply, first-send, fork and
+provider-apply UI files passed **331 tests in 161.27 seconds**, with three existing
+dependency warnings (`/private/tmp/tldw-name-lifetime-final.xml`). This run began
+before the fixture-cleanup-only refinement; the complete lifetime file was rerun
+after that refinement in the 36-pass/1-known-failure selection above. Production
+code and all behavioral assertions were unchanged between those runs.
+
+The census now leaves six routes unclassified: serialized settings persistence,
+settings retry, first-persist publication, conversation rebind, durable-turn
+settings reconciliation, and the committed synchronous display-name setter.
+Broader failures and both pending task-ID decisions remain open; no full-suite
+or merge-readiness claim is made.
+
+## Conversation-binding fork publication
+
+TASK-31920 protects both public conversation-binding publishers with the existing
+session-transition decorator. The corrected regression run first returned
+**4 failed / 4 passed**: both success and injected-error variants admitted a
+fork during publication (`/private/tmp/tldw-binding-publication-red.xml`). The
+probe runs before identity mutation, because missing durable message IDs would
+otherwise conceal the missing guard. It keeps the real lookup and checks actual
+eligibility/fence issuance, independent-session access, and ownership cleanup.
+Invalid input and missing-session errors retain their existing behavior.
+
+Six complete publication, settings-apply, first-send, fork, display-name-lifetime
+and census files returned **329 passed / 1 known census failure in 49.39 seconds**
+with two existing dependency warnings
+(`/private/tmp/tldw-binding-publication-final.xml`). All eight publication tests
+pass. Scoped Ruff, formatting and diff checks pass; independent review found no
+actionable issues. All 81 store diagnostic statements remain unchanged.
+
+The census still has one failing test, now covering four unclassified routes.
+Read-only call-graph tracing and independent review established that the three
+async roots (`persist_console_settings_commit_serialized`,
+`retry_console_settings_persistence`, `reconcile_durable_turn_settings`) reach
+only one fork-field-shaped assignment: pending-work carrier
+`drain.context_policy_overrides` in `_join_console_settings_persistence_drain`.
+This is not live-session policy publication. The fourth route,
+`set_session_user_display_name_override_for_commit`, delegates to its existing
+guarded setter. No exemptions or scanner changes were made in this slice.
+
+Next classification work must remain fail-closed: prove the drain's local
+provenance (including its valid `None` binding) and reject alias/lifecycle
+poisoning, direct live writes and newly mutating callees. The name delegation
+must require the exact store receiver/arguments, no direct mutation, and no
+additional mutating child. Broader failures and both pending task-ID decisions
+remain open; this is not a full-suite or merge-readiness claim.
+
+## Remaining fork-census classifications resolved
+
+TASK-31921 resolves the four remaining routes without runtime changes. The
+scanner recognizes only the plain pending-drain policy assignment after checking
+its exact lifecycle initializer and local drain bindings. The method is not
+exempted, so live writes and new mutating callees still reach the recursive census.
+The synchronous committed-name wrapper now has an explicit delegated entry,
+requiring the exact receiver/arguments, no direct fork writes and no additional
+mutating child; its underlying setter remains independently guarded.
+
+The initial regression run returned **8 failed / 36 passed**
+(`/private/tmp/tldw-census-classification-red.xml`): the detached false positive,
+six incorrectly accepted delegation mutations and the existing classification
+failure. The first correction passed all 44 tests. Independent review then found
+pattern-capture and alternative-alias gaps; four new regressions reproduced them
+before correction (**4 failed / 44 passed**,
+`/private/tmp/tldw-census-review-red.xml`). Annotated, walrus and chained aliases
+and protected pattern/exception bindings now fail closed.
+
+Final complete census, settings-publication, settings-apply, first-send, fork and
+display-name-lifetime files: **351 passed in 48.45 seconds**, with two existing
+dependency warnings (`/private/tmp/tldw-census-classification-final.xml`). The
+census itself is fully green at **48 passed**. Negative delegation tests use the
+same assertion helper as the inventory, avoiding repeated unrelated owner scans.
+Scoped Ruff/format/diff checks and independent re-review pass. Production code,
+diagnostic pins, direct-owner inventory and broad exemption sets are unchanged.
+
+The broader review, including architecture ceilings, other behavioral failure
+families and both pending task-ID decisions, remains open. No full-suite or
+merge-readiness claim is made.
+
+## Terminal exchange and temporary-session repair
+
+TASK-31922 restores two runtime contracts at the common terminal persistence
+owner: successful paired-generation writes flush attached legacy exchange
+captures, and temporary sessions finish without requiring a durable projection.
+Existing durable version checks, trace settlement and best-effort sidecar
+failure behavior remain intact. Two obsolete privacy repository fixtures now
+exercise the current privacy and detail write seams, retaining Safe/pending
+assertions for failures at either stage.
+
+The complete exchange baseline was **11 failed / 13 passed**. Six new real
+SQLite cases cover complete/stopped/failed across durable/temporary sessions.
+After correcting setup to materialize the streaming row through the public
+getter, the genuine pre-fix run was **17 failed / 13 passed**
+(`/private/tmp/tldw-store-exchanges-real-red.xml`). Durable cases failed on missing
+exchange rows; temporary cases failed on the false durable-write requirement.
+The repaired exchange file passes **31 tests**. Assertions verify reopened
+durable content/captures, exactly one message-version increment, no temporary
+rows and zero remaining SQLite handles.
+
+Final eight complete files (exchanges, store, terminal citations, generation
+store, provider continuation, trace settlement, capture-policy repository and
+fork census): **667 passed in 148.81 seconds**, with two existing dependency
+warnings (`/private/tmp/tldw-store-exchanges-final.xml`). Scoped Ruff, formatting,
+diff checks and independent review pass; all 81 store diagnostic calls are
+unchanged. Review noted redundant idempotent flushes in deferred citation
+callers, also possible on the pre-existing fallback; they remain outside this
+bounded repair. No schema, capture authority or diagnostic pin changed.
+
+Broader behavioral failures, architecture ceilings and both pending task-ID
+decisions remain open. This is not full-suite or merge-readiness evidence.
+
+## Guarded outbox corruption fixture
+
+TASK-31810 restores the outbox illegal-nonassistant-state test, whose raw SQL
+setup now correctly hits the semantic mutation guard. The existing private
+authorization is used only for deliberate fixture corruption of one message,
+not for a production write. The test first reads a valid source proof, checks
+that direct mutation fails both before injection and after its scope, then
+reopens the database to verify the illegal persisted state and original proof
+rejection. No production code or semantic guard trigger changes were needed.
+
+Fresh outbox + sync-retention baseline: **3 failed / 51 passed**
+(`/private/tmp/tldw-guarded-sync-baseline.xml`). The outbox failure is repaired;
+the two raw hard-delete retention probes remain unresolved. Complete outbox and
+v57 semantic-mutation-guard files pass **45 tests**, with two existing dependency
+warnings (`/private/tmp/tldw-outbox-guard-final.xml`). Full-file lint, changed-test
+formatting and diff checks pass; unrelated whole-file format drift is retained.
+Independent review found no actionable issues. The conversation-delete property
+and broader failure families are not qualified by this targeted run.
+
+## Retention deletion and historical fixture reconciliation
+
+TASK-31811 resolves the two raw retention-delete failures and conversation-delete
+property recorded above. Current message deletion now exercises the existing
+semantic revision coordinator, with raw rejection and reopened message/log purge
+assertions. Raw conversation deletion verifies atomic preservation of parent,
+child and sync proof under the current guard. The original FK-cascade/body-purge
+test remains against genuine schema 46 and checks that a current-schema upgrade
+does not restore deleted data. Production code and mutation guards are unchanged.
+
+Baseline complete retention + properties: **3 failed / 50 passed**
+(`/private/tmp/tldw-retention-delete-baseline.xml`). The historical test initially
+used a current getter selecting a later column; version-compatible SQL corrected
+that setup. A negative control removing only its message-retention trigger then
+failed on the leaked body as intended
+(`/private/tmp/tldw-retention-cascade-mutation.xml`); the mutation was restored.
+
+The first expanded selection recorded **118 passed / 3 failed**
+(`/private/tmp/tldw-retention-delete-final.xml`), exposing historical v44 seed
+calls to today's semantic-graph-aware soft-delete. The scoped task was expanded
+before editing: version-checked historical SQL now seeds tombstones and edits
+under the real v44 triggers, retaining all original migration purge, rollback
+and FTS assertions. Both repair portions received clear independent review.
+
+Final six complete retention, DB properties, retention-migration, v57 guard,
+message-exchange and semantic-coordinator files: **121 passed in 51.94 seconds**,
+with two existing dependency warnings
+(`/private/tmp/tldw-retention-delete-verified.xml`). Full-file lint, changed-region
+formatting and diff checks pass. Broader behavioral/architecture failures and
+the two pending task-ID decisions remain open; no full-suite or merge-readiness
+claim is made.
+
+## Residual internals-decomposition UI qualification
+
+The three recorded residual cases reproduced in isolation
+(`/private/tmp/tldw-console-residual-ui-baseline.xml`). The paste token was
+rendered as two rows before its one-row mounted geometry caught up; a layout
+pause before the real click resolves the stale mouse origin, with explicit
+two-row and confirmation-state checks plus unchanged payload/reset assertions.
+The ready-state test now measures the actual margin-owning tab row, and the
+staged-detail test opens the real Inspector before checking visible content.
+No production code or CSS changed.
+
+Complete `Tests/UI/test_console_internals_decomposition.py`: **142 passed in
+325.26 seconds**, with three existing dependency warnings
+(`/private/tmp/tldw-console-residual-ui-final.xml`). Independent review found no
+actionable issues; full-file Ruff and changed-region format/diff checks pass.
+TASK-31750's bounded residual-file criterion is qualified; its broader census
+and architecture criterion remains open. The paste mouse-layout incident is
+recorded in the testing-evidence lessons.
+
+## Workbench ordering follow-up and right-rail timing evidence
+
+TASK-31733 was reopened for the workbench mirror missed by the earlier
+session-settings repair. The baseline complete workbench file was **71 passed /
+1 failed** (`/private/tmp/tldw-workbench-contract-baseline.xml`). Its exact
+Environment/Tasks/Subagents/staged-context order now matches production, while
+left-rail exclusion, pinned authority parentage and staged-before-live-work
+assertions remain unchanged. No production or CSS changes were needed.
+
+The complete workbench + right-rail run returned **107 passed / 1 failed in
+199.23 seconds** (`/private/tmp/tldw-workbench-ordering-final.xml`): all **72
+workbench tests** pass, but the right-rail readiness-to-pending geometry test
+failed its post-poll recheck with correct demand/viewport/hint and a newly
+pending outer reconcile. Its extra `pilot.pause()` yields between the successful
+predicate wait and the assertion. The unchanged complete right-rail file then
+passed **36 tests in 95.38 seconds** in isolation
+(`/private/tmp/tldw-right-rail-isolated-baseline.xml`). This does not establish
+the timing failure is fixed. TASK-31733 remains In Progress for qualification.
+
+Independent review of the ordering correction found no actionable issues;
+lint, changed-region formatting and diff checks pass. Three existing dependency
+warnings remain. Next step: deterministic late-invalidation reproduction before
+changing readiness handling, preserving physical geometry and exact owner-pass
+assertions. The other UI failures, resource/architecture work, unexecuted census
+remainder and pending task-ID decisions remain open; the PR stays draft.
+
+## Right-rail timing qualification completed
+
+TASK-31733's open timing failure is now reproduced and repaired without runtime
+changes. Four real late-geometry invalidations (initial/swapped phase in both
+directions) failed the old post-wait paint ordering; the two ordinary variants
+passed (`/private/tmp/tldw-rail-late-geometry-red.xml`). Paint now precedes the
+final bounded predicate wait, so assertions consume qualified state without
+another yield. Exact geometry, widget identity, local/outer ordering, logical
+owner-pass counts and existing timeout bounds remain unchanged.
+
+The final two complete right-rail and workbench files pass **112 tests in 241.61
+seconds**, with three existing dependency warnings
+(`/private/tmp/tldw-rail-late-geometry-final.xml`). Full-file lint,
+changed-region formatting and diff checks pass; independent review found no
+actionable issues. The readiness lesson records this incident and its deterministic
+control. TASK-31733 is qualified; its earlier 416-test session-settings result is
+historical, not rerun here. Other UI, resource/architecture and unexecuted census
+work, plus pending task-ID decisions, remain open. No full-suite or merge-ready
+claim is made.
+
+## Watchlists follow reachability and expanded handoff census
+
+The recorded Follow click reproduced OutOfBounds. Normal scrolling alone did
+not help: the plain destination harness omitted the app-bundle rule making the
+Inspector scrollable (button y=48 in a 40-row terminal, overflow hidden).
+Reusing `_CssTrueDestinationHarness` for this one test plus normal scrolling
+restores the real click and exact eligible run/route/once assertions. No runtime
+or CSS change, forced scroll or direct `press()` substitution was used.
+
+The first complete handoff file returned **58 passed / 8 failed**
+(`/private/tmp/tldw-console-handoff-final.xml`). After the CSS correction, the
+Watchlists target passes individually and in the complete-file rerun:
+**59 passed / 7 failed in 90.67 seconds**, three existing dependency warnings
+(`/private/tmp/tldw-console-handoff-qualified.xml`). This is explicitly not a
+green file. Remaining `Tests/UI/test_console_live_work_handoffs.py` failures:
+
+- Two `_bare_console_screen_for_restore(app)` calls attach a runtime before
+  Textual initialization, reaching a task-panel query without `_nodes`.
+- Sent-notice round-trip and legacy restore fixtures lack `_settings_navigation`.
+- Stage/navigate/stage retains Launch A instead of Launch B; diagnosis pending.
+- Card-swap topology still expects staged tray index 2 instead of the Subagents
+  slot preceding it; preserve the remaining mounted ordering assertions.
+- Media sendability calls removed `chat_screen_module._source_mentions_rag`.
+
+Independent review of the final Watchlists repair found no actionable issues;
+static checks pass. TASK-31750 remains In Progress (AC4 qualified by the 142-test
+internals file above, AC3/AC5 open). Broader census, resource/architecture work
+and pending task-ID decisions remain open. PR stays draft.
+
+## Six handoff owner repairs and confirmed warm-return regression
+
+The seven handoff cases reproduced again
+(`/private/tmp/tldw-handoff-seven-baseline.xml`). Test-only corrections isolate
+bare restore shells from the live app runtime, wire current settings owners,
+retarget the removed RAG helper, and assert the real nested Live Work topology.
+Restored payload, empty-channel behavior, sent notice, legacy tolerance, media
+sendability and both swap directions remain checked; the live runtime's view
+and store are explicitly preserved. The topology now follows
+Environment/Tasks/Subagents/tray and the stable outer root/bounded viewport.
+
+Final complete `Tests/UI/test_console_live_work_handoffs.py`: **65 passed /
+1 failed in 81.59s**, three existing dependency warnings
+(`/private/tmp/tldw-handoff-owner-qualified.xml`). Full-file lint,
+changed-region formatting and diff checks pass. Independent review found no
+actionable issues in the six repairs. No production changes or relaxed guards.
+
+The remaining `test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch`
+failure is a runtime defect introduced by the intended TASK-31520 Console reuse:
+diagnostics show Library really opens, then the same Console returns with A still
+resident and B still pending after navigation completes. Compose is skipped on
+warm visits, and `on_screen_resume` does not consume the live-work channel. The
+existing consume/supersede path already owns claim acknowledgement and surface
+refresh. Proposed bounded fix: reuse those paths on ordinary resume, cover both
+resident and initially empty launches, preserve suspend/ordered-startup behavior,
+and verify claim settlement and rendered evidence through real navigation.
+The brainstorming skill's design approval is required before that production
+change; the test remains failing and unmodified. TASK-31750 and PR stay open;
+broader census/resource/architecture and task-ID work remains outstanding.
+
+## Approved Console warm-resume handoff repair
+
+The user approved the bounded runtime repair above. Reused the existing
+claim/acknowledgement-and-surface-refresh routine on ordinary warm resume,
+after session reconciliation, excluding first mount and ordered saved-chat
+startup. No new timer, queue, ownership boundary or ADR was needed; this
+preserves ADR-033 and TASK-31520's installed-screen reuse.
+
+The real navigation regression now covers resident/empty Console crossed with
+new/no-new handoff. Both new-handoff cases failed before production changes;
+both controls passed. All four passed after the fix, asserting actual Library
+leave, same-instance return, mounted tray title, no hidden consumption,
+sent-notice clearing/preservation and settled claims. The initial five-file run
+was 145 passed / 2 failed: two constructor-bypass ordered-resume fixtures patched
+an uninitialized prompt owner before calling startup. Both now initialize that
+owner with the same async spy, preserving release/order, acquisition-error,
+privacy and cleanup assertions.
+
+Final complete handoff, Console reuse, roleplay resume navigation, active-path
+resume and generic screen reuse files: **147 passed in 243.84s**, six existing
+warning occurrences (`/private/tmp/tldw-warm-handoff-lifecycle-final.xml`).
+All 69 handoff cases pass. Full changed-file lint, changed-region formatting,
+diff checks and independent review pass. The testing-evidence lesson records
+the compose-only consumption trap.
+
+Architecture remains open: **10 passed / 2 failed** in the screen-size and
+realtime boundary files (`/private/tmp/tldw-warm-handoff-architecture.xml`).
+Console is 16900 lines against the unchanged 16818 ceiling (HEAD was 16899);
+the method count is unchanged. The other failure is an unchanged AST template
+expecting the retired screen dictation delegate instead of the existing
+`_dictation` owner. No ceiling or guard was relaxed. TASK-31750 AC5/AC6/AC7 are
+qualified; AC3, the broader census/resource work and task-ID decisions remain
+open. The earlier design-approval hold is resolved. PR remains draft, not
+merge-ready; no full-suite completion is claimed.
+
+## Remaining inventory and resource/process qualification (2026-09-06)
+
+The remaining Console inventory is now reconciled by exact current node identity,
+not by subtracting raw report counts. The 83-path affected manifest contains one
+support module and 82 executable files (3,286 current nodes). The interrupted
+pass-three report matches 1,755 current nodes; later passing reports qualify 183
+of the 1,531 unreached nodes. **1,348 nodes lack later passing evidence** across
+68 complete files containing 1,698 tests. One has only historical failing evidence;
+the other 1,347 have no later record. Obsolete unparameterized names are not silently
+mapped to their newer parameterized cases. All seven original pass-three failures
+have later passing reports. Historical evidence is not claimed as a fresh HEAD run.
+Machine inventory: `/private/tmp/tldw-31750-remaining-inventory.json`;
+manifest-path hash `236f6c20e66f572571d99a047992ab8d06877f4bf6f5b3fcbfb9f7f8da9934fa`.
+The first selection stopped at its 20-failure limit: **1,071 passed / 20 failed
+in 813.51s**, plus a new 475-descriptor growth warning that is not yet attributed
+(`/private/tmp/tldw-console-remaining-inventory-current.xml`). The **607 unreached
+nodes** are being run in 31 complete files (611 cases, including four repeated
+launch-wake cases) without another failure-count cutoff. This is not a new
+repository-wide sweep; the new aggregate warning is separate from the diagnosed
+and repaired resource groups below.
+
+### Reproduced SQLite retention and verified repair: TASK-31923 / TASK-31814
+
+Before repair, complete selections passed behaviorally but retained exact fixture
+SQLite handles after finalizers: rewind/parent **78 passed, +209 descriptors**;
+durable/recovery **108 passed, +378**; boundary **54 passed, +234**. Native Darwin
+`F_GETPATH` per-test attribution identifies database/WAL/SHM handles, not merely
+an aggregate warning. Reports: `tldw-rewind-descriptor-attribution-quiet.xml`,
+`tldw-durable-descriptor-attribution.xml`, and
+`tldw-boundary-descriptor-attribution-current.xml`, all under `/private/tmp`.
+
+The explicitly imported `Tests/console_resource_fixtures.py` retains canonical
+constructors, tracks the importing test's controllers and only its tmp_path
+ChaChaNotes instances, drains controllers before exact-database quiescence, then
+asserts zero registered connections. References are released before the existing
+cleanup fixture; no additional GC, threshold change or global conftest edit.
+The agent-only summary test now owns its real workspace registry and AgentRuns
+database instead of creating a process-global registry. No foreign cache is closed.
+
+The shutdown-only negative control produced two zero-registry teardown errors.
+Review found that an individual teardown error could skip later owners: a new
+five-case regression was **1 passed / 4 failed** before per-owner exception
+collection and **5 passed** afterward. Errors remain visible as an ExceptionGroup;
+all controller attempts precede database cleanup and active handles are not forced
+closed. Final complete combined selection: **245 passed in 139.55s**, three
+existing dependency warnings, **no retained SQLite descriptor lines and no FD
+growth warning** (`/private/tmp/tldw-owned-console-resources-final.xml`).
+
+Final review additionally tested cancellation, which derives from BaseException:
+two cancellation variants failed before collection was extended to preserve these
+errors in BaseExceptionGroup. Both original cancellation identities remain visible,
+ordinary errors still narrow to ExceptionGroup, and later cleanup attempts occur.
+Final seven-control plus complete-file verification: **247 passed in 147.85s**,
+three dependency warnings, no retained SQLite descriptors and no FD-growth warning
+(`/private/tmp/tldw-owned-console-resources-cancellation-final.xml`). Independent
+review findings are addressed; scoped lint/format/diff checks pass.
+
+### Real-transport retry and real-child reaping: TASK-31924 / TASK-31925
+
+Qwen's combined retry test used a 50ms scalar timeout for both connection setup
+and intentionally stalled reads. The reproduced failure spent one of its three
+attempts on ConnectTimeout before the scripted server action, exhausting the
+budget before success. Test-only opt-in now gives connection setup 1 second and
+preserves the original read deadline. Both failed attempts must contain actual
+urllib3 ReadTimeoutError; real POST, retry-policy advancement, budgets and response
+closure assertions remain intact. A widened-read negative control fails the new
+phase check. Ten fresh exact-case runs pass; independent complete-file verification:
+**150 passed in 8.86s**, two dependency warnings
+(`/private/tmp/tldw-qwen-resource-review-final.xml`).
+
+MCP's real-child kill-permission case retained ownership correctly but gave wait
+completion only 10ms. A deterministic 20ms delay delivering the real child.wait
+result reproduced the second disconnect refusal with the old deadline. Immediate
+and delayed variants pass with a bounded **test-only 250ms reap allowance**;
+the hanging-close allowance remains 10ms and production deadlines are unchanged.
+The first denied kill still retains the live child and registry, and the second
+disconnect must verify actual reaping before registry removal. Twenty repeated
+variant runs pass; independent complete-file verification: **145 passed in 3.57s**,
+two dependency warnings (`/private/tmp/tldw-mcp-reap-review-final.xml`).
+
+These results close the specifically reproduced resource/retry races, not the
+remaining inventory or architecture guards. No production code changed in these
+four tasks; existing lifecycle/retry interfaces require no new ADR.
+
+### First current inventory owner-fixture repairs
+
+Six complete files now pass together: **127 passed in 71.00s**, three existing
+dependency warnings (`/private/tmp/tldw-inventory-six-owner-files-final.xml`).
+The inspector fixture restores its real screen import and moves only cost-data
+assembly to the existing owner. Citation doubles implement current activity-action
+and memory-banner setters; refresh/count assertions are unchanged. Permission
+command output has its message owner, and the draft-clear spy is installed after
+the real command controller is built. Memoization spies follow the actual provider
+selection owner, still delegating to the real uncached method with exact one/two
+call assertions.
+
+The composer tests initialize only their current visible-session/prompts owners.
+Their provider double now accepts the production keyword-only route and asserts
+the exact IMPERSONATE route, preserving payload rules. Production-app navigation
+expects the same installed Console instance under TASK-31520 and retains actual
+Settings leave/return, draft/video/store restoration and retention assertions.
+Prompt handoff tests call the current prompt owner while preserving transient
+release and terminal acknowledgement checks. Nine unused fleet-stub imports were
+removed for lint; no production change or behavioral assertion was removed.
+Independent review, full-file lint, changed-region formatting and diff checks pass.
+TASK-31750 remains open for inventory tail and architecture qualification.
+
+The new 475-FD inventory warning is still under attribution. A 12-file Chat split
+passed **479 tests in 71.77s** with no aggregate warning, but the native per-test
+probe still found retained handles in 14 controller and 14 hydration cases.
+TASK-31926 tracks their exact ChaChaNotes, Workspace/AgentRuns and test-app database
+owners. Passing below a warning threshold is not resource closure.
+
+The wider non-UI inventory is explicitly historical: reconstructed saved reports
+leave roughly 11,900 old identities without latest passing evidence. No saved
+continuation argv establishes an exact current remainder, and renamed/parameterized
+cases cannot be assumed equivalent. `/private/tmp/tldw-nonui-remaining-inventory.json`
+records the qualified reconstruction. A fresh full-suite opt-in was requested;
+until answered, execution remains targeted to the affected Console inventory.
+
+### Inventory execution complete; further scoped qualification
+
+The tail completed **577 passed / 34 failed in 982.28s**
+(`/private/tmp/tldw-console-remaining-inventory-tail.xml`). Together with the
+first pass, all **1,698 selected identities** were exercised: 1,645 passed and
+53 distinct failed identities before subsequent repairs (four launch-wake cases
+overlap the reports). This is the formerly unreached Console selection, not all
+3,286 manifest cases or the repository-wide suite.
+
+The four stale architecture expectations now follow exact current ownership:
+the dictation lambda resolves the owner at invocation; four post-Wave-6 retired
+command facades remain in historical raw accounting and current absent/unique-owner
+checks, with exact late-bound argument-forwarding/await guards. Historical removals
+stay **132**, approved private cleanup stays **64**, and public skill event decorators,
+stop-first ordering and argument forwarding remain pinned. Seven callback mutations
+are rejected. Three complete architecture files: **116 passed in 9.43s**, two
+dependency warnings (`/private/tmp/tldw-inventory-architecture-final.xml`). The
+separate screen-size failure is not part of this repair or waived.
+
+The run-state stop fixture had created only in-memory rows in a durable session:
+its local helper now requests real persistence for the user and empty assistant,
+and the test checks committed stopped content as well as original cancellation
+and other-session isolation. Complete file: **19 passed in 6.22s**, two dependency
+warnings (`/private/tmp/tldw-inventory-run-state-final.xml`).
+
+System-prompt click diagnosis found a zero-size target beneath the collapsed Model
+section. Opening that real section before the real click preserves modal assertions.
+The CSS contract now checks the generated app styling union, including the existing
+lazy Console sheet, instead of incorrectly requiring moved rules in the boot bundle.
+Complete file: **26 passed in 45.14s**, three dependency warnings
+(`/private/tmp/tldw-inventory-system-prompt-final.xml`). No CSS/runtime was changed.
+
+### TASK-31926: newly attributed controller/hydration resources
+
+Shared owner cleanup removed ChaChaNotes retention, but an interim **314 passed**
+run still retained auxiliary handles in eight cases. The fixture now yields a
+standard-library ExitStack for exact database-close callbacks, run after controller
+drain and ChaChaNotes quiescence. Hydration's local fixture disposes only its own
+app runtimes before those database callbacks; it never calls broad app.on_unmount
+or closes a foreign registry. The original live behavior assertions are unchanged.
+Nine callback-order negative controls failed before stack closure and pass after,
+including errors and cancellation.
+
+Final root verification of every shared importing file: **563 passed in 185.03s**,
+three dependency warnings, **no retained SQLite descriptor lines or FD-growth
+warning** (`/private/tmp/tldw-all-owned-resource-importers-final.xml`). Independent
+review and scoped static checks pass. TASK-31926 is Done; no new ADR is needed for
+this test-only use of existing lifecycle APIs.
+
+TASK-31817 records the separately reproduced runtime dictation bug: its retry
+confirmation suspends Console and discards the retained audio, leaving controller
+state idle but the actual mounted composer transcribing. The fake retry omitted
+the real session's availability check, masking the lost audio. Proposed repair
+preserves only the owned retry-dialog suspension and restores the canonical mic
+projection; ordinary navigation/unmount still abandon. The brainstorming skill's
+design approval is pending, so no production dictation change has been made.
+
+### Further mounted-UI inventory qualification
+
+The rail hint failure was physical clipping below the real Inspector fold at
+160x45, not missing content. The test now reveals the hint through the existing
+outer scroll owner before demanding full containment and compositor ownership.
+Both viewport sizes, exact 20/21-row caps, local/outer hint rendering and inner
+scroll assertions remain intact. Complete file: **51 passed in 101.93s**, three
+dependency warnings (`/private/tmp/tldw-inventory-rail-final.xml`). Independent
+review found no issues in this change or the 26-test system-prompt repair above.
+No runtime/CSS, geometry, timeout or assertion budget was changed.
+
+### TASK-31818: launch-wake app resource ownership
+
+The launch-wake file's roughly 357-descriptor baseline is resolved by reusing
+the hydration teardown as an explicitly imported, module-local builder fixture.
+It records only its builder products and their exact database callbacks, drains
+every owned runtime before controller/ChaChaNotes cleanup, and touches no foreign
+or process-global owners. Four new isolation/order/error/cancellation controls
+failed before extraction and pass afterward. Launch/hydration/controls pass 77;
+root's full prior importer set plus launch-wake passes **576 in 236.96s**, three
+dependency warnings, zero retained SQLite lines and no FD-growth warning
+(`/private/tmp/tldw-31818-all-importers-final.xml`). Independent root review and
+scoped static checks pass. TASK-31818 is Done; no new ADR or production change.
+
+### Final remaining-inventory checkpoint (2026-09-06)
+
+Of the **53 distinct failures** from the 1,698-case remaining Console selection,
+**48 now have accepted passing replacement or unchanged-identity evidence**.
+This includes six prompt-facade guards replaced by exact approved owner/caller
+AST checks, the retired skill command covered by the exact late-bound callback
+guard, and the renamed ADR-097 soft-delete contract. It does not count the
+rejected forced-scroll Stop candidate as a repair. The original Stop test remains
+unchanged and red. No full-repository sweep or all-Console-green claim is made.
+
+Additional completed verification:
+
+- Five current-owner UI files: **74 passed in 29.55s**, no retained SQLite lines
+  (`/private/tmp/tldw-inventory-five-ui-owner-final.xml`). Provider origin timing,
+  raw CLI interception/payload rules, research error handling, real durable skill
+  submission and transcript repaint counts retain their original assertions.
+- Thinking/regeneration: **25 passed in 18.28s**, no retained SQLite lines
+  (`/private/tmp/tldw-inventory-thinking-regenerate-resource-final.xml`). Transport
+  doubles truthfully declare they bypass deferred dispatch. Soft-delete preserves
+  the local semantic envelope under ADR-097 while active APIs/provider context
+  exclude it and the exact sync tombstone remains content-free; edit/replacement
+  clearing remains checked. Failed regeneration retains the source followed by
+  the exact notified SYSTEM failure row, rather than incorrectly requiring the
+  source itself to be the final leaf.
+- Final newly cleaned inventory cohort: **93 passed / 1 failed in 100.36s**,
+  three dependency warnings, no retained SQLite lines or FD-growth warning
+  (`/private/tmp/tldw-31821-resource-final.xml`, matching `.log`). The sole failure
+  is the preserved Stop regression. TASK-31927 remains In Progress because its
+  full-file passing criterion depends on that separately tracked production fix.
+
+The final current failure ledger is concrete:
+
+| Scope | Confirmed cause / next bounded change | Tracking |
+| --- | --- | --- |
+| Two Parakeet retry tests | Owned confirmation suspends Console, discards retry audio, and leaves stale mic projection; preserve only the owned-dialog lifetime. | TASK-31817 |
+| Stop click | Production action row reserves 37 cells for 47 cells of controls; account for Redirect without forced scrolling. Synthetic Send setup must also establish ordinary composer focus. | TASK-31928 |
+| Character first-run UAT | Cached Console resume omits CHAT from its tracked handoff timers; add the existing claimant under the ordinary-resume guard. | TASK-31929 |
+| Navigation-storm teardown race | Queued ContentsRebuilt reads self.screen after stack teardown; guard the handler before dereference. Isolated navigation can pass, but the exact empty-stack call fails deterministically. | TASK-31930 |
+| Downstream UAT failure, exposed only by scratch resume probe | Synthesized leading system row gets ACTIVE_REQUEST instead of RENDERED_SYSTEM provenance; preserve saved ownership and classify only the leading system slice. Scratch correction makes the whole UAT pass. | TASK-31931 |
+| Separate existing size ratchet | Console is 16,900 lines / 508 methods against 16,818 / 505; fresh guard file is 4 passed / 1 failed. No limits changed. | TASK-31750 |
+
+The brainstorming skill requires approval before the proposed production
+lifecycle/layout/provenance changes. They are recorded as To Do, not implemented.
+The user has also not yet opted into a fresh repository-wide sweep; historical
+non-UI identities remain explicitly unqualified, not assumed passing. Resource
+verification used the Darwin F_GETPATH observer validated against a known open
+file; an invalid readlink-based zero result was rejected and documented in the
+testing-evidence lessons.
+
+Independent final review caught the trusted-raw forbidden spy still attached
+to a retired dispatch route. It now guards the actual prompt queue and explicitly
+checks that no dispatch was recorded. The complete raw-CLI file passes **20 in
+2.68s**, two dependency warnings (`/private/tmp/tldw-raw-cli-guard-review-final.xml`).
+All final changed-file lint/diff checks and changed-region formatting pass;
+unrelated pre-existing formatting drift was not rewritten.
+
+## Approved production repairs (2026-09-06, after user approval)
+
+This section supersedes the approval-pending state above. The five bounded
+repairs were approved, specified in
+`Docs/superpowers/specs/2026-09-06-approved-console-regressions-design.md`,
+implemented with RED/GREEN evidence and independently reviewed. No full-suite
+opt-in, merge, resource-threshold change or screen-size ceiling increase occurred.
+
+- **TASK-31817:** exact owned retry-dialog lifetime, synchronous suspend decision,
+  canonical idle repaint and stale-confirmation rejection. Independent review
+  additionally found that covering the already mounted retry suspends that modal,
+  not Console; a private dialog's undecided-suspend hook now abandons its exact
+  session. Real Confirm/Escape decisions remain distinct. The complete file passes
+  **21 in 57.47s** (`/private/tmp/tldw-31817-reviewed-full.xml`).
+- **TASK-31928:** budget Redirect's 10 cells only while active. The fixed +10
+  experiment regressed idle narrow layouts and was rejected. Reuse deferred draft
+  reflow on run-state changes: before that correction, focusing Stop moved it
+  between mouse-down and mouse-up. Bound the optional filename to remaining space,
+  preserving its full tooltip. Actual Stop stays at `(149,44,6,1)` throughout the
+  click at 160x48, with the original 0.5-second deadline. No forced scrolling or
+  Stop pre-focus. Final click/width **14 pass**; complete attachment/width **35 pass**
+  with no retained SQLite; command **104 pass**; streaming/width **102 pass**.
+  Evidence: `/private/tmp/tldw-31822-{final-green,attachments-width-full,command-full,responsive-green}.{xml,log}`.
+- **TASK-31929:** ordinary cached-screen resume registers CHAT in the existing
+  tracked timer list. Real navigation tests preserve the prior conversation,
+  create the intended character session/greeting, require the exact handoff
+  revision to become **settled**, and stop delivery if hidden again. A no-op
+  acknowledgement cannot satisfy the revised assertion. Suppressing only the new
+  timer makes the final fixture fail (`tldw-31823-final-fixture-red.xml`). Complete
+  handoff/UAT/reuse/ordered-resume files pass **36 in 83.13s**
+  (`tldw-approved-resume-complete.xml`).
+- **TASK-31930:** empty-stack guard precedes current-screen access; real matching
+  and stale-screen controls remain intact. Full buddy/parallel/live-handoff files
+  pass **134 in 146.97s**, no retained SQLite or FD-growth warning
+  (`/private/tmp/tldw-approved-buddy-handoffs-final.xml` and `.log`).
+- **TASK-31931:** only unsaved contiguous leading system artifacts become
+  RENDERED_SYSTEM; saved revision descriptors and later ACTIVE_REQUEST artifacts
+  are unchanged. Real provider dispatch and native SQLite capture readback remain
+  enabled. Complete durable/prepared/provenance files pass **91**; adding the
+  unchanged size guard yields **95 passed / 1 failed in 9.85s**
+  (`/private/tmp/tldw-approved-trace-size-final.xml`). Full character UAT plus new
+  handoff controls pass **8**, including the final exact-source content assertions.
+
+The UAT originally retained owned auxiliary databases. Importing the existing
+exact builder/controller/DB fixtures closes them: **8 passed in 26.45s**, zero
+native retained SQLite lines (`/private/tmp/tldw-31823-resource-retry.xml`). The
+same observer exposed additional adjacent reuse/dictation/command fixture owners;
+their test-only adapters are tracked under TASK-31927. Shared cleanup internals
+and production resource lifecycles are unchanged.
+
+The final seven-file fixture cohort is **253 passed in 374.99s**, five
+dependency/deprecation warnings, **zero retained SQLite lines and no resource
+growth warning** (`/private/tmp/tldw-31821-dictation-reuse-resources.xml` and
+`.log`). Module-local factories route imported dictation helpers through their
+exact owner; real-app reuse adds only exact notification-DB registration.
+Independent ownership review found no issues. Root's integrated owner-fault
+controls plus complete handoff/UAT/attachment/width files pass **56 in 71.95s**,
+three dependency warnings, native attribution clean
+(`/private/tmp/tldw-approved-integration-final.xml`). These completed runs replace
+the earlier adjacent-fixture resource qualifications, not their behavioral gates.
+The exact original TASK-31927 five-file cohort, previously **93 passed / 1 Stop
+failure**, now passes **94 in 105.93s**, three dependency warnings, native
+attribution clean (`/private/tmp/tldw-31821-original-cohort-complete.xml` and
+`.log`). TASK-31927 is Done alongside the five approved production repairs.
+
+Current qualified limitations, not folded into passing counts:
+
+1. **Screen size:** ChatScreen is now **16,901 / 16,818 lines** and **508 / 505
+   methods**. The new timer adds one line to the pre-existing violation; no ceiling
+   was raised and no unrelated decomposition was bundled.
+2. **Two request-provenance census guards:** the baseline table predates owner
+   changes, not just line movement. MANUAL_SUMMARY no longer has its old runtime
+   marker; manual summary now uses the capture-off auxiliary summary path with
+   `route=None`, auto compaction forwards through kwargs, and Settings adds an
+   uncensused auxiliary call. An offset-only refresh would falsely claim route
+   coverage. Existing ADR-052 manual-memory behavior needs a separately reviewed
+   census-contract reconciliation. Tests remain unchanged and failing; see
+   `/private/tmp/tldw-31825-full.xml` and the baseline comparison log.
+3. **Retry Speech at 90x30:** the overflow/narrow/cursor selection is **84 passed /
+   1 failed**, specifically
+   `Tests/UI/test_console_narrow_layout.py::test_console_retry_speech_button_routes_without_resuming`.
+   It also fails when all changed composer methods are restored from HEAD via a
+   scoped negative-control fixture (`tldw-31822-retry-speech-baseline.xml`). This is
+   not a Stop regression; no assertion, viewport or handler was changed to hide it.
+4. Historical non-UI inventory is not newly qualified by these bounded runs.
+   A new full-repository sweep still requires explicit opt-in.
+
+Several background test processes exited 137 without a report. They are discarded
+as incomplete evidence; only completed XML/log runs above count. No foreign
+process was killed. Current app/controller full-file lint counts match HEAD
+exactly (133/27); the other three edited production files have zero lint findings.
+New/edited test lint and changed-region formatting pass. Impeccable's layout scan
+is empty; its dense inline-row guidance kept this to control reachability and
+responsive budgeting, not a redesign.
+
+## Approved remaining qualifications (2026-09-06)
+
+The user approved the three concrete repairs listed above. TASK-31750.1 moves
+only citation signature, repository readiness and modal currentness into the
+existing message controller. DOM, workers, caches and logger patch points remain
+screen-owned. The formatted screen is **16,811 lines / 505 methods**, and the
+line ratchet is lowered from 16,818 to 16,811. Live store/repository replacement
+was characterized before and after extraction. Final citation/size/private-owner
+files pass **127 in 13.57s**, with two dependency warnings and no retained SQLite
+handles (`/private/tmp/tldw-31750-1-formatted-final.{xml,log}`).
+
+TASK-31750.3 corrects Retry Speech's unready fixture: the setup backdrop had
+intercepted its click at 90x30. The target now uses durable provider readiness
+and production CSS, checks actual containment and compositor hit target, and
+requires the real click to succeed. Retry-once/resume-never assertions remain.
+The stronger test failed on the unready baseline. Complete narrow layout plus
+paused retry coverage passes **27 in 39.63s**, with three dependency warnings
+and no retained SQLite handles (`/private/tmp/tldw-31750-3-green-full.{xml,log}`).
+The combined citation/narrow/ownership selection passes **153 in 54.05s**.
+
+TASK-31750.2 makes manual and automatic summary routes explicit through the
+shared capture-off auxiliary service, marks the Settings probe explicitly
+excluded, and reconciles both census tables with actual call ownership. The
+strict exhaustive/explicit-route/unique-owner guards remain; corruption controls
+exercise missing/new calls, missing route keywords and duplicate ownership.
+All ordinary conversation and agent routes remain forbidden at auxiliary entry.
+This follows the existing memory and semantic trace ADRs, not a new capture policy.
+
+The first complete auxiliary run passed functionally but exposed an unchanged
+restart test retaining its reopened SQLite database and WAL/SHM descriptors.
+The exact baseline body reproduced that retention; a finally block now closes
+only the reopened handle. The unchanged native probe then reported no retention.
+Root's final complete provider/compaction/census selection passes **593 in 36.41s**,
+five dependency/syntax warnings, with no retained SQLite handles or descriptor
+growth warning (`/private/tmp/tldw-31750-auxiliary-final.{xml,log}`).
+
+Independent read-only reviews found no issues in either the citation/Retry
+repairs or the auxiliary/census/resource repair. Scoped lint and changed-region
+formatting pass; unrelated pre-existing whole-file formatting drift is not
+rewritten. No new dependency, UI redesign, relaxed resource threshold or raised
+size ceiling was introduced. The complete native Console flow file first passed
+**349 in 470.25s**, but attributed retained app/SQLite handles to 34 older cases.
+The module now imports the existing exact-owner cleanup fixtures. Its seven
+calls through a redundant factory alias use the identical canonical builder so
+the existing module-local owner sees every constructed app. Arguments and test
+assertions are unchanged; no shared fixture implementation was modified.
+All **34 attributed cases pass in 56.38s with no retained SQLite handles**
+(`/private/tmp/tldw-31750-2-native-fd-green.{xml,log}`); all **13** existing
+cleanup-owner failure/isolation controls also pass. Independent review found
+no issues in this fixture wiring. The final complete native rerun passes
+**349 in 431.25s**, four dependency warnings, zero failures/errors/skips and
+**no retained SQLite handles or resource warnings**
+(`/private/tmp/tldw-31750-2-native-final.{xml,log}`). The three approved
+qualifications and their affected-file resource checks are complete; this is
+not a new full-repository sweep.
+
+The publication Backlog guard separately reports duplicate IDs **31714, 31737,
+and 31758**. All six conflicting filenames are already present in `d09868e74b`
+(the commit before this patch); none of these files changed here. The three new
+31750 subtasks are unique. This existing task-history limitation is recorded,
+not repaired by silently renumbering either historical owner.

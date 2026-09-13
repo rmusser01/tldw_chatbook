@@ -149,80 +149,25 @@ class LibraryConversationReaderController:
         selected_conversation_id_accessor: Callable[[], str],
         library_conversation_workspace_block: Callable[[], tuple[str, bool, str]],
     ) -> None:
-        """Build the controller and bind everything its moved bodies need.
-
-        Every one of the 21 method bodies below is a byte-for-byte copy of
-        the pre-extraction ``LibraryScreen`` method: no internal line was
-        edited to retarget a call or an attribute. That is possible because
-        this constructor binds every name those bodies reference that is
-        not this controller's own state, under the SAME name the original
-        method used. See the module docstring for the two binding kinds
-        this follows (mirroring ``ConsoleDictationController.__init__``,
-        the canonical worked example).
+        """Bind live reader state and explicitly named shared dependencies.
+        Framework services are live-read from screen; sibling and state lookups
+        remain late-bound rather than captured during construction.
 
         Args:
-            screen: The Library screen. Used ONLY for the three framework
-                services below (``run_worker``, ``query_one``,
-                ``app_instance``) -- this cluster owns no DOM of its own,
-                so there is no region boundary for it to cross.
-            conversations_state_accessor: Returns the live
-                ``LibraryConversationsState`` (``LibraryScreen._conversations_state``).
-                Backs every generated ``_library_conversation*`` /
-                ``_library_conversations_*`` property below, mirroring the
-                shim generator Task 6 installed on the screen.
-            build_conversations_state: ``LibraryScreen._build_library_conversations_state``
-                -- builds the Conversations canvas display state from local
-                records. A browse-cluster concern (not reader-owned, not
-                part of this move); only ``_conversation_reader_list_summary``
-                calls it, for the collapsed Items-pane pager count.
-            adaptive_reader_allocation_is_current: ``LibraryScreen.
-                _library_adaptive_reader_allocation_is_current`` -- the
-                shared shell fence every subsystem's own
-                ``_sync_library_<x>_reader_layout_from_shell`` checks before
-                patching a resized shell in place.
-            run_library_service_call: ``LibraryScreen._run_library_service_call``
-                -- the shared off-thread service-call wrapper every Library
-                subsystem's detail/list fetch goes through.
-            conversation_records: ``LibraryScreen._conversation_records`` --
-                the retained Conversations list-page records. Shared with
-                the browse cluster (not reader-exclusive); this cluster
-                only reads it to resolve one record by id.
-            conversation_record_id: ``LibraryScreen._conversation_record_id``
-                -- the general record-id resolver shared across the whole
-                Conversations subsystem, not reader-specific.
-            library_loaded_accessor: Reads ``LibraryScreen._library_loaded``
-                -- whether the shared local-source lookup has completed at
-                least once. Shell-wide, not Conversations-owned; read-only
-                here (``_sync_library_conversation_reader``'s loading-status
-                copy).
-            library_lookup_error_accessor: Reads ``LibraryScreen.
-                _library_lookup_error`` -- the shared local-source lookup's
-                last error copy, same shell-wide scope and read-only use as
-                ``library_loaded_accessor`` immediately above.
-            notes_focus_intent_generation_accessor: Reads ``LibraryScreen.
-                _notes_state.focus_intent_generation`` -- the Notes
-                subsystem's find/focus-intent generation counter, reused by
-                Conversations' own deferred-Find-focus fence
-                (``_finish_library_conversation_find_focus``,
-                ``find_in_library_conversation``). Read-only here.
-            selected_row_id_accessor: Reads ``LibraryScreen.
-                _library_selected_row_id`` -- the recipe's own canonical
-                ≥2-subsystems shared field (226 refs at the time of
-                writing). Read-only here: every write site in
-                ``library_screen.py`` falls outside this cluster's 21
-                methods.
-            library_conversation_workspace_block: ``LibraryScreen.
-                _library_conversation_workspace_block`` -- ``(reason,
-                link_resolves_it, detail)`` for the open conversation's
-                workspace refusal, or ``("", False, "")`` when it can be
-                staged (task-32056).
-            selected_conversation_id_accessor: Reads ``LibraryScreen.
-                _selected_conversation_id`` -- a per-source "currently
-                selected" field parallel to ``_media_state.selected_media_id``/
-                ``_notes_state.selected_note_id`` in the save/restore and
-                cross-source-navigation plumbing; despite its name, never
-                exclusively Conversations-reader-owned. Read-only here.
-        """
+            screen: Framework services (run_worker, query_one, app_instance).
+            conversations_state_accessor: Live Conversations state.
+            build_conversations_state: Browse display state for collapsed-list summary.
+            adaptive_reader_allocation_is_current: Shared allocation fence.
+            run_library_service_call: Shared off-thread service wrapper.
+            conversation_records: Retained browse-page records.
+            conversation_record_id: Shared record-ID resolver.
+            library_loaded_accessor: Whether local-source lookup has completed.
+            library_lookup_error_accessor: Latest shared lookup error.
+            notes_focus_intent_generation_accessor: Live deferred-Find focus fence.
+            selected_row_id_accessor: Shared active Library route.
+            library_conversation_workspace_block: Live (reason, link_resolves_it,
+                detail) refusal, or ("", False, "") when staging is permitted.
+            selected_conversation_id_accessor: Shared selected conversation ID."""
         self._screen = screen
         self._conversations_state_accessor = conversations_state_accessor
         self._build_conversations_state_fn = build_conversations_state

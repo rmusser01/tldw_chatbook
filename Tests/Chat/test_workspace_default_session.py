@@ -554,7 +554,7 @@ def test_new_tab_re_resolves_workspace_persona_on_published_defaults():
     assert workspace_default is not None
     assistant_id, label, prompt, memory_mode = workspace_default
     stamped = replace(
-        host._default_console_session_settings(),
+        StartupHost._default_console_session_settings(host),
         system_prompt=prompt,
         character_label=label,
         persona_memory_mode=memory_mode,
@@ -593,7 +593,7 @@ def test_plain_new_tab_ignores_pristine_active_session():
 
 def test_plain_new_tab_does_not_clone_active_settings():
     host = _startup_host()
-    defaults = host._default_console_session_settings()
+    defaults = StartupHost._default_console_session_settings(host)
     explicit = replace(defaults, temperature=0.11)
     host._store.create_session(settings=explicit)
     settings, assistant_kwargs = _startup(host)

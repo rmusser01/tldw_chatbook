@@ -323,14 +323,12 @@ def _console_controller_slots() -> dict[str, type]:
     """
     import ast
     import inspect
-    import textwrap
+    from tldw_chatbook.UI.Console_Modules import wiring
 
-    from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(build_console_controllers)))
-    bound = build_console_controllers.__code__.co_varnames[0]
+    # Settings and submission now have sibling builders in the same module.
+    tree = ast.parse(inspect.getsource(wiring))
     slots = {
-        target.attr: build_console_controllers.__globals__[node.value.func.id]
+        target.attr: vars(wiring)[node.value.func.id]
         for node in ast.walk(tree)
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
         and isinstance(node.value.func, ast.Name)
@@ -339,13 +337,20 @@ def _console_controller_slots() -> dict[str, type]:
         for target in node.targets
         if isinstance(target, ast.Attribute)
         and isinstance(target.value, ast.Name)
-        and target.value.id == bound
+        and target.value.id == "screen"
     }
     assert slots, (
-        "no Console*Controller assignments found in build_console_controllers; "
+        "no Console*Controller assignments found in Console wiring; "
         "the wiring shape changed and this helper now stubs nothing."
     )
     return slots
+
+
+def test_console_probe_includes_sibling_builder_controllers():
+    assert {
+        "_settings_durability", "_settings_navigation", "_provider_selection",
+        "_submission",
+    } <= _console_controller_slots().keys()
 
 
 def _make_sync_probe_screen(monitor):

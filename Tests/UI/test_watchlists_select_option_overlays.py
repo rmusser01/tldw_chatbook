@@ -226,28 +226,52 @@ async def test_items_status_filter_covers_the_reader_set_the_backend_produces():
 
 async def test_picking_a_status_filters_the_items_list():
     """AC#1. The filter is wired, not merely populated."""
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
     host = _watchlists_host()
+    db = host.app.local_watchlists_service._db()
+    source_id = db.add_subscription(
+        name="F", type="rss", source="https://example.invalid/filter.xml"
+    )
+    # Filtering replaces the snapshot from backend authority; assigning only
+    # pane.items seeds a cache which the real reload correctly discards.
+    with db.transaction() as connection:
+        fresh_id, filed_id = (
+            persist_subscription_item(
+                connection,
+                source_id,
+                {
+                    "url": f"https://example.invalid/{name}",
+                    "title": name,
+                    "content_hash": f"filter-{name}",
+                },
+                run_id=None,
+                now="2026-08-04T09:00:00+00:00",
+            )
+            for name in ("Fresh", "Filed")
+        )
+    db.mark_item_status(filed_id, "ingested")
     async with host.run_test(size=UAT_SIZE) as pilot:
         screen = _active_destination_screen(host)
         screen.active_section = "items"
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#items-status-select", timeout=5.0)
 
-        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
-        pane.items = [
-            {"id": "1", "title": "Fresh", "status": "new", "source_name": "F"},
-            {"id": "2", "title": "Filed", "status": "ingested", "source_name": "F"},
-        ]
+        await host.workers.wait_for_complete()
         await pilot.pause()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         assert len(pane.displayed_items()) == 2
 
         select = screen.query_one("#items-status-select", Select)
         select.value = "unread"
         await pilot.pause()
+        await host.workers.wait_for_complete()
         await pilot.pause()
 
-        displayed = screen.query_one("#watchlists-items-pane", ArticleListPane).displayed_items()
-        assert [row["id"] for row in displayed] == ["1"]
+        displayed = screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).displayed_items()
+        assert [row["id"] for row in displayed] == [f"local:watchlist_item:{fresh_id}"]
 
 
 async def test_new_rule_condition_select_paints_the_real_vocabulary():
@@ -458,8 +482,8 @@ def _contrast(first, second) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def _rendered_background(screen, region, row_offset: int = 0):
-    """The background colour the compositor actually painted, one cell in.
+def _rendered_style(screen, region, row_offset: int = 0):
+    """The style the compositor actually painted, one cell in.
 
     One cell in, not at the edge: on a bordered control the edge cell is the
     frame. Reading the compositor's own segments rather than
@@ -472,9 +496,14 @@ def _rendered_background(screen, region, row_offset: int = 0):
     for segment in strip._segments:
         for _character in segment.text:
             if x == region.x + 1:
-                return segment.style.bgcolor
+                return segment.style
             x += 1
     raise AssertionError("no segment covers that cell")
+
+
+def _rendered_background(screen, region, row_offset: int = 0):
+    """The compositor-painted background, one cell inside ``region``."""
+    return _rendered_style(screen, region, row_offset).bgcolor
 
 
 #: The floor a focus cue has to clear to BE a cue. `core/_variables.tcss`
@@ -485,12 +514,25 @@ def _rendered_background(screen, region, row_offset: int = 0):
 #: the token's own value, so this fails on a regression rather than on a
 #: theme tweak.
 MIN_FOCUS_CONTRAST = 2.0
+MIN_VALUE_CONTRAST = 4.5
+FOCUS_THEMES = (
+    "textual-dark",
+    "textual-light",
+    "high_contrast_yellow_black",
+)
 
 
 @pytest.mark.parametrize(
-    "select_id", ["#items-status-select", "#watchlists-backend-select"]
+    ("select_id", "expected_value"),
+    [
+        ("#items-status-select", "All"),
+        ("#watchlists-backend-select", "Local"),
+    ],
 )
-async def test_a_borderless_compact_select_has_a_visible_focus_cue(select_id):
+@pytest.mark.parametrize("theme_name", FOCUS_THEMES)
+async def test_a_borderless_compact_select_has_a_visible_focus_cue(
+    select_id, expected_value, theme_name
+):
     """Round 2, O1. Removing the outline must not leave focus invisible.
 
     The outline that TASK-2300 took off these controls was destroying their
@@ -512,6 +554,9 @@ async def test_a_borderless_compact_select_has_a_visible_focus_cue(select_id):
     """
     host = _watchlists_host()
     async with host.run_test(size=UAT_SIZE) as pilot:
+        host.app.theme = theme_name
+        await pilot.pause()
+        await pilot.pause()
         screen = _active_destination_screen(host)
         screen.active_section = (
             "items" if select_id == "#items-status-select" else "sources"
@@ -521,20 +566,38 @@ async def test_a_borderless_compact_select_has_a_visible_focus_cue(select_id):
         select = screen.query_one(select_id, Select)
         assert not select.disabled, "focus contrast must be measured on a focusable control"
 
-        rest = _rendered_background(screen, select.region)
+        rest_region = select.region
+        rest = _rendered_background(screen, rest_region)
+        assert expected_value in _painted_rows(screen, rest_region)[0], (
+            "precondition: the control paints its current value at rest"
+        )
+
+        await _hover(pilot, screen, select)
+        hovered = _rendered_background(screen, rest_region)
+        await pilot.hover("#watchlists-collections-title")
+        await pilot.pause()
         select.focus()
         await pilot.pause()
         await pilot.pause()
         focused = _rendered_background(screen, select.region)
+        focused_style = _rendered_style(screen, select.region)
 
         ratio = _contrast(rest, focused)
         assert ratio >= MIN_FOCUS_CONTRAST, (
             f"focus must be visible on {select_id}: {rest} -> {focused} is "
             f"{ratio:.2f}:1, below the {MIN_FOCUS_CONTRAST}:1 floor"
         )
-        # And it must still be readable while focused.
-        assert _painted_rows(screen, select.region)[0].strip(), (
-            "the focused control must still paint its value"
+        assert ratio >= _contrast(rest, hovered), (
+            f"focus ({focused}) must not be quieter than hover ({hovered})"
+        )
+        assert select.region == rest_region, "focus must not change Select geometry"
+        assert expected_value in _painted_rows(screen, select.region)[0], (
+            "the focused control must still paint its exact value"
+        )
+        value_ratio = _contrast(focused_style.color, focused_style.bgcolor)
+        assert value_ratio >= MIN_VALUE_CONTRAST, (
+            f"focused value on {select_id} under {theme_name} is only "
+            f"{value_ratio:.2f}:1"
         )
 
 

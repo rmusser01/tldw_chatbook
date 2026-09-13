@@ -55,7 +55,8 @@ state_field``, aimed at ``LibraryNotesController``'s own permanent copy of the
 identical loop -- which carries the identical closure-binding trap and is what
 keeps the 185 moved bodies byte-for-byte. It also filled
 ``_NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED`` with the 26 names whose screen
-delegator had zero references across all SIX census spellings.
+delegator had zero references across all SIX census spellings. TASK-31932
+step 68 retargets one test-only caller to the existing owner (27 total).
 """
 from __future__ import annotations
 
@@ -95,7 +96,8 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: guard -- PR #2553 review.) **105** on the wave-3 editor-keys branch:
 #: task-32268 adds ``delete_origin_scroll``, Info's scroll offset when the
 #: delete prompt opens, restored on cancel (104 + 1 = 105).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 105
+# PR-2427 removes the inert auto_sync_timer in its new state owner (TASK-31909).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 104
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_
@@ -310,9 +312,28 @@ def test_the_four_member_list_entry_focus_family_stays_screen_owned() -> None:
 #: + 4 ``action_*``) are exempt from the census outright; SS4's third member,
 #: ``on_<message>`` NAME dispatch, contributes ZERO for notes and
 #: ``test_no_notes_handler_is_name_dispatched_by_textual`` keeps that proven.
-#: 26 of 185 = 14.05%.
+#: Original 26 plus TASK-31932 steps 68/70/73/76/137/141/143: 45 of 185 = 24.32%.
 _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     (
+        "_read_library_note_editor_fields",
+        "_sync_library_notes_source_controls",
+        "_library_note_editor_state",
+        "_gc_pending_blank_note",
+        "_reconcile_library_notes_list_canvas",
+        "_notify_library_note_delete_warning",
+        "_remove_library_note_source_record",
+        "_append_library_note_source_record",
+        "_focus_library_note_validation_field",
+        "_route_library_note_validation_field",
+        "_record_library_notes_focus_interaction",
+        "_discard_new_library_note_claimed",
+        "_remember_library_notes_authority_focus",
+        "_evacuate_library_notes_authority_focus",
+        "_compact_library_notes_stage",
+        "_restore_library_notes_settled_focus",
+        "_library_notes_work_first_preferences",
+        "_library_notes_role_target",
+        "_library_notes_work_session_reader_width",
         "_apply_library_note_saved_presentation",
         "_apply_library_notes_operation_state",
         "_defer_library_notes_settled_focus_restore",
@@ -598,7 +619,7 @@ _NOTES_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_library_note_import_controller",
     "_library_note_session",
     "_library_notes_sync_controller",
-    # -- screen-resident methods a moved body still calls (named late-binding callables) (68)
+    # -- screen-resident methods a moved body still calls (named late-binding callables) (69)
     "_acknowledge_library_destination_change",
     "_active_library_rail",
     "_advance_library_stage_interaction",
@@ -646,6 +667,7 @@ _NOTES_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_patch_library_note_list_from_session",
     "_project_library_media_stage_classes",
     "_push_library_note_import_picker",
+    "_reconcile_library_notes_tree_mutation",
     "_refresh_library_note_detail",
     "_refresh_local_source_snapshot",
     "_register_footer_shortcuts",
@@ -872,8 +894,8 @@ THREE of these names appear in NO moved body at all and would be missed by
         LibraryNotesController,
     )
 
-    assert len(_NOTES_CONTROLLER_BOUND_NAMES) == 102, (
-        f"expected 102 bound names, got {len(_NOTES_CONTROLLER_BOUND_NAMES)}"
+    assert len(_NOTES_CONTROLLER_BOUND_NAMES) == 103, (
+        f"expected 103 bound names, got {len(_NOTES_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_NOTES_CONTROLLER_BOUND_NAMES)) == len(
         _NOTES_CONTROLLER_BOUND_NAMES

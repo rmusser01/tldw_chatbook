@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 from tldw_chatbook.UI.Lab_Modules.lab_rail_layout import (
     LAB_RAIL_INSPECTOR,
@@ -20,10 +19,6 @@ from tldw_chatbook.UI.Lab_Modules.lab_workbench import (
     LabWorkbench,
 )
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
-
-
 class _WorkbenchHarness(App[None]):
     """Mount the workbench with the production stylesheet.
 
@@ -32,7 +27,7 @@ class _WorkbenchHarness(App[None]):
     without CSS_PATH would pass vacuously.
     """
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
+    CSS_PATH = list(APP_STYLESHEETS)
 
     def __init__(
         self,

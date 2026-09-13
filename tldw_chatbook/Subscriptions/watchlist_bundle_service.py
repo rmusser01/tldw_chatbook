@@ -334,34 +334,6 @@ class WatchlistBundleService:
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
-    def get_watchlist_by_name_ci(self, name: str) -> dict[str, Any] | None:
-        """Find a watchlist by stripped, Unicode-case-insensitive name.
-
-        Args:
-            name: Watchlist name to resolve.
-
-        Returns:
-            The matching watchlist dict, or ``None`` when no match exists.
-        """
-        def normalize(value: Any) -> str:
-            return str(value or "").strip().lower()
-
-        with self._db.transaction() as conn:
-            # SQLite LOWER() is ASCII-only. Register the exact Python
-            # normalization this lookup used before it moved into SQL, so
-            # ADR-043 reuse still treats names such as ÄI/äi as equal.
-            conn.create_function(
-                "watchlist_name_key", 1, normalize, deterministic=True
-            )
-            row = conn.execute(
-                "SELECT id, name, description, tags, is_active, sort_order "
-                "FROM watchlists "
-                "WHERE watchlist_name_key(name) = ? "
-                "ORDER BY id LIMIT 1",
-                (normalize(name),),
-            ).fetchone()
-        return self._row_to_dict(row) if row is not None else None
-
     # --- Membership ---
 
     def add_source(self, watchlist_id: int, subscription_id: int) -> None:

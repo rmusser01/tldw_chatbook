@@ -29,6 +29,7 @@ Two mechanisms in one file:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -55,6 +56,7 @@ from .screen_constants import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
     from tldw_chatbook.Library.library_shell_state import LibraryShellState
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
@@ -227,6 +229,10 @@ async def _adopt_library_browse_canvas(
     screen: "LibraryScreen",
     canvas_host: Vertical,
     route: str,
+    *,
+    after_sync: Callable[[], bool | None] | None = None,
+    notes_focus_identity: "LibraryNotesFocusIdentity | None" = None,
+    deferred_guard: Callable[[], bool] | None = None,
 ) -> bool:
     """Show the destination canvas, keeping the other route's resident.
 
@@ -234,6 +240,14 @@ async def _adopt_library_browse_canvas(
     its own ``sync_state`` (a canvas-scoped rebuild, not a screen one) and a
     canvas absent from the host is mounted for the first time. Everything
     that is neither is removed.
+
+    Args:
+        screen: The mounted Library screen.
+        canvas_host: Shared host for resident browse canvases.
+        route: Destination browse route.
+        after_sync: Focus callback owned by a resident canvas recompose.
+        notes_focus_identity: Notes identity captured before focus detaches.
+        deferred_guard: Whether deferred focus work still owns this route.
 
     Returns:
         True when the destination is showing current state -- a freshly
@@ -269,6 +283,8 @@ async def _adopt_library_browse_canvas(
     if resident is None:
         # A first-time mount shows freshly built state; nothing to repaint,
         # so adoption is unconditionally current.
+        if after_sync is not None:
+            destination.call_after_refresh(after_sync)
         return True
     # The resident canvas has been off-route (and, by the route-ownership
     # guard, deliberately un-synced) since the last visit, so switching
@@ -277,7 +293,10 @@ async def _adopt_library_browse_canvas(
     return _sync_library_canvas(
         screen,
         LIBRARY_BROWSE_ROUTE_SYNC_KIND[route],
+        then=after_sync,
         allow_screen_fallback=False,
+        notes_focus_identity=notes_focus_identity,
+        deferred_guard=deferred_guard,
     )
 
 
@@ -323,6 +342,18 @@ async def swap_library_browse_route(
     focus_identity = (
         screen._capture_library_entry_focus() if same_route else None
     )
+    focus_capture = screen._library_entry_focus_capture
+
+    def restore_focus() -> bool:
+        """Restore the captured target only while this route generation owns it."""
+        if focus_identity is None:
+            return False
+        return screen._restore_library_entry_focus(
+            focus_identity,
+            generation=generation,
+            route_key=route_key,
+        )
+
     if screen.is_running:
         try:
             screen.app.capture_mouse(None)
@@ -348,13 +379,24 @@ async def swap_library_browse_route(
             if route == LIBRARY_BROWSE_ROUTE_MEDIA
             else screen._notes_state.reader_layout
         )
-    adopted = await _adopt_library_browse_canvas(screen, canvas_host, route)
+    adopted = await _adopt_library_browse_canvas(
+        screen,
+        canvas_host,
+        route,
+        after_sync=restore_focus if focus_identity is not None else None,
+        notes_focus_identity=(
+            focus_capture.notes_identity
+            if focus_capture is not None and focus_capture.identity is focus_identity
+            else None
+        ),
+        deferred_guard=(
+            (lambda: screen._library_entry_reconcile_is_current(generation, route_key))
+            if focus_identity is not None
+            else None
+        ),
+    )
     if not adopted:
-        # The resident canvas refused its in-place repaint, and we suppressed
-        # its own whole-screen fallback (allow_screen_fallback=False). Report
-        # the swap as not done so ``_select_library_rail_row_after_source_
-        # admission`` takes its ``recompose()`` recovery, rather than leaving
-        # stale content behind a name-clean "success" (Qodo #7).
+        # Resident sync suppressed its own fallback; the caller must recover.
         return False
     screen._apply_library_notes_stage_visibility()
     screen._apply_library_notes_footer_context()
@@ -364,10 +406,4 @@ async def swap_library_browse_route(
         if route == LIBRARY_BROWSE_ROUTE_MEDIA
         else screen._sync_library_notes_reader_layout_from_shell
     )
-    if focus_identity is not None:
-        screen._restore_library_entry_focus(
-            focus_identity,
-            generation=generation,
-            route_key=route_key,
-        )
     return True

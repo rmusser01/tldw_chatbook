@@ -385,7 +385,10 @@ def test_agent_bridge_is_absent_without_a_durable_run_store(tmp_path):
     strand every such screen without an agent runtime for its whole life.
     """
     screen = ChatScreen(_build_test_app())
-    screen.app_instance.chachanotes_db = SimpleNamespace(db_path=":memory:")
+    screen.app_instance.chachanotes_db = SimpleNamespace(
+        db_path=":memory:",
+        get_message_exchanges=lambda _message_id: [],
+    )
 
     assert screen._ensure_console_agent_bridge() is None
     assert screen._console_agent_bridge is None

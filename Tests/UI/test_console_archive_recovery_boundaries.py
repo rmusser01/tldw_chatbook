@@ -317,7 +317,9 @@ async def test_recovery_error_logs_bind_only_identity_context(monkeypatch, phase
             screen = SimpleNamespace(
                 app_instance=app,
                 app=SimpleNamespace(push_screen=push_screen),
-                _current_console_conversation_id=lambda: "chat-a",
+                _session=SimpleNamespace(
+                    _current_console_conversation_id=lambda: "chat-a"
+                ),
                 _workspace=SimpleNamespace(
                     _invalidate_console_persisted_rows_cache=Mock()
                 ),

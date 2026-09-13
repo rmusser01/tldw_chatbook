@@ -272,6 +272,7 @@ async def test_tier1_toggle_falls_back_to_recompose_on_query_one_failure(monkeyp
         await _enter_conversations_select_mode(screen, pilot)
 
         row = screen.query_one("#library-conversation-row-0", Button)
+        conversation_id = row.conversation_id
 
         original_query_one = type(screen).query_one
 
@@ -287,8 +288,7 @@ async def test_tier1_toggle_falls_back_to_recompose_on_query_one_failure(monkeyp
         await pilot.pause()
 
         assert len(recompose_calls) == 1  # fell back to a full recompose
-        # Rows sort newest-first: chat-2 (06-02) is row 0.
-        assert screen._conversations_state.row_selection.is_selected("chat-2")
+        assert screen._conversations_state.row_selection.is_selected(conversation_id)
 
 
 @pytest.mark.asyncio

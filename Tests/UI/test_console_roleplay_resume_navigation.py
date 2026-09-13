@@ -10,8 +10,11 @@ from types import SimpleNamespace
 import pytest
 from textual.worker import Worker, WorkerState
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 import tldw_chatbook.UI.Console_Modules.session as session_module
-import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -313,9 +316,9 @@ async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors()
             return worker
 
         screen._session.consume_pending_console_first_chat_intent = first_chat
-        screen._consume_pending_chat_handoff = chat_handoff
+        screen._session._consume_pending_chat_handoff = chat_handoff
         screen._consume_pending_console_roleplay_repair = roleplay_repair
-        screen._consume_pending_console_prompt_insert = prompt_insert
+        screen._prompts._consume_pending_console_prompt_insert = prompt_insert
         screen.consume_pending_console_provider_intent = provider_intent
         screen._fleet.consume_pending_console_fleet_completion = fleet_completion
         screen._workspace.open_console_workspace_conversation = opener
@@ -323,7 +326,9 @@ async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors()
         screen._restore_console_workbench_focus = restore_focus
         screen._workspace._reconcile_console_session_with_registry = reconcile
         screen._consume_pending_console_identity_refresh = identity_refresh
-        screen._dispatch_active_console_roleplay_refresh = active_roleplay_refresh
+        screen._settings_durability._dispatch_active_console_roleplay_refresh = (
+            active_roleplay_refresh
+        )
         screen.set_timer = recording_set_timer
         screen.run_worker = recording_run_worker
 
@@ -514,9 +519,9 @@ async def test_mounted_resume_settles_first_chat_once_without_intermediate_prese
         async def intermediate_native_sync() -> None:
             lifecycle_events.append("intermediate-native-sync")
 
-        screen._consume_pending_chat_handoff = chat_handoff
+        screen._session._consume_pending_chat_handoff = chat_handoff
         screen._consume_pending_console_roleplay_repair = lambda: False
-        screen._consume_pending_console_prompt_insert = prompt_insert
+        screen._prompts._consume_pending_console_prompt_insert = prompt_insert
         screen.consume_pending_console_provider_intent = lambda: False
         screen._fleet.consume_pending_console_fleet_completion = lambda: False
         screen._workspace.open_console_workspace_conversation = opener
@@ -527,11 +532,10 @@ async def test_mounted_resume_settles_first_chat_once_without_intermediate_prese
         screen._consume_pending_console_identity_refresh = (
             lambda: lifecycle_events.append("intermediate-identity-refresh") or False
         )
-        screen._dispatch_active_console_roleplay_refresh = (
-            lambda **_kwargs: lifecycle_events.append(
-                "intermediate-roleplay-refresh"
+        screen._settings_durability._dispatch_active_console_roleplay_refresh = (
+            lambda **_kwargs: (
+                lifecycle_events.append("intermediate-roleplay-refresh") or False
             )
-            or False
         )
 
     host = _MountedNavigationConsoleHarness(
@@ -606,12 +610,12 @@ async def test_mounted_resume_releases_transient_first_chat_without_rollback_foc
         async def intermediate_native_sync() -> None:
             lifecycle_events.append("intermediate-native-sync")
 
-        screen._consume_pending_chat_handoff = _async_spy(
+        screen._session._consume_pending_chat_handoff = _async_spy(
             lifecycle_events,
             "chat-handoff",
         )
         screen._consume_pending_console_roleplay_repair = lambda: False
-        screen._consume_pending_console_prompt_insert = _async_spy(
+        screen._prompts._consume_pending_console_prompt_insert = _async_spy(
             lifecycle_events,
             "prompt-insert",
         )
@@ -625,11 +629,10 @@ async def test_mounted_resume_releases_transient_first_chat_without_rollback_foc
         screen._consume_pending_console_identity_refresh = (
             lambda: lifecycle_events.append("intermediate-identity-refresh") or False
         )
-        screen._dispatch_active_console_roleplay_refresh = (
-            lambda **_kwargs: lifecycle_events.append(
-                "intermediate-roleplay-refresh"
+        screen._settings_durability._dispatch_active_console_roleplay_refresh = (
+            lambda **_kwargs: (
+                lifecycle_events.append("intermediate-roleplay-refresh") or False
             )
-            or False
         )
         screen.run_worker = recording_run_worker
 
@@ -704,9 +707,9 @@ async def test_mounted_resume_never_focuses_setup_modal_before_final_opener(
                 in_final_opener = False
             return True
 
-        screen._consume_pending_chat_handoff = chat_handoff
+        screen._session._consume_pending_chat_handoff = chat_handoff
         screen._consume_pending_console_roleplay_repair = lambda: False
-        screen._consume_pending_console_prompt_insert = _async_spy([], "prompt")
+        screen._prompts._consume_pending_console_prompt_insert = _async_spy([], "prompt")
         screen.consume_pending_console_provider_intent = lambda: False
         screen._fleet.consume_pending_console_fleet_completion = lambda: False
         screen._workspace.open_console_workspace_conversation = opener
@@ -770,14 +773,20 @@ async def test_resume_navigation_continues_after_chat_handoff_release() -> None:
         return True
 
     screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
-    screen._handoff_consumption_in_progress = False
-    screen._session = SimpleNamespace(
-        _start_character_console_session=release_handoff,
-        consume_pending_console_first_chat_intent=lambda **_kwargs: False,
+    screen._session = session_module.ConsoleSessionController.__new__(
+        session_module.ConsoleSessionController
     )
-    screen._stage_handoff_as_console_live_work = lambda _payload: None
+    screen._handoff_consumption_in_progress = False
+    screen._session._pending_chat_handoffs_accessor = (
+        lambda: screen.app_instance.pending_handoffs
+    )
+    screen._session._start_character_console_session = release_handoff
+    screen._session.consume_pending_console_first_chat_intent = lambda **_kwargs: False
+    screen._session._stage_handoff_as_console_live_work = lambda _payload: None
     screen._consume_pending_console_roleplay_repair = lambda: False
-    screen._consume_pending_console_prompt_insert = _async_spy(events, "prompt")
+    screen._prompts = SimpleNamespace(
+        _consume_pending_console_prompt_insert=_async_spy(events, "prompt"),
+    )
     screen.consume_pending_console_provider_intent = lambda: False
     screen._fleet = SimpleNamespace(
         consume_pending_console_fleet_completion=lambda: False,
@@ -805,7 +814,7 @@ async def test_resume_navigation_propagates_logged_chat_handoff_acquisition_fail
 
     warnings: list[tuple[str, tuple[object, ...]]] = []
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "logger",
         SimpleNamespace(
             warning=lambda message, *args: warnings.append((message, args)),
@@ -814,12 +823,18 @@ async def test_resume_navigation_propagates_logged_chat_handoff_acquisition_fail
     opener_calls: list[str] = []
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = SimpleNamespace(pending_handoffs=FailingHandoffStore())
-    screen._handoff_consumption_in_progress = False
-    screen._session = SimpleNamespace(
-        consume_pending_console_first_chat_intent=lambda **_kwargs: False,
+    screen._session = session_module.ConsoleSessionController.__new__(
+        session_module.ConsoleSessionController
     )
+    screen._handoff_consumption_in_progress = False
+    screen._session._pending_chat_handoffs_accessor = (
+        lambda: screen.app_instance.pending_handoffs
+    )
+    screen._session.consume_pending_console_first_chat_intent = lambda **_kwargs: False
     screen._consume_pending_console_roleplay_repair = lambda: False
-    screen._consume_pending_console_prompt_insert = _async_spy([], "prompt")
+    screen._prompts = SimpleNamespace(
+        _consume_pending_console_prompt_insert=_async_spy([], "prompt"),
+    )
     screen.consume_pending_console_provider_intent = lambda: False
     screen._fleet = SimpleNamespace(
         consume_pending_console_fleet_completion=lambda: False,
@@ -889,9 +904,9 @@ async def test_mounted_resume_worker_is_cancelled_and_timers_stop_on_unmount() -
             workers.append(worker)
             return worker
 
-        screen._consume_pending_chat_handoff = pending_handoff
+        screen._session._consume_pending_chat_handoff = pending_handoff
         screen._consume_pending_console_roleplay_repair = lambda: False
-        screen._consume_pending_console_prompt_insert = _async_spy(events, "prompt")
+        screen._prompts._consume_pending_console_prompt_insert = _async_spy(events, "prompt")
         screen.consume_pending_console_provider_intent = lambda: False
         screen._fleet.consume_pending_console_fleet_completion = lambda: False
         screen._workspace.open_console_workspace_conversation = opener

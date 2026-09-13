@@ -9,10 +9,14 @@ from types import MethodType, SimpleNamespace
 import pytest
 from textual.widgets import Button, Input, Static
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.library_media_rows import summary_row
 from Tests.UI.test_library_media_side_by_side import (
     WIDE_SIZE,
-    _build_media_test_app,
+    _build_media_test_app as _build_test_app,
     _many_media_items,
     _open_media_list,
 )
@@ -88,7 +92,7 @@ class ControlledDetailMediaService(StaticLibraryMediaScopeService):
 
 
 def _flow_app(count: int = 65):
-    app = _build_media_test_app()
+    app = _build_test_app()
     items = _many_media_items(count)
     _seed_conversations(app, _two_conversations(), media=items)
     service = ControlledDetailMediaService(items)
@@ -113,7 +117,7 @@ async def test_media_global_f6_reaches_content_scroller() -> None:
     (live-verified 2026-09-02). The content scroller is now the first F6
     candidate; Find stays reachable via "/".
     """
-    app = _build_media_test_app()
+    app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items(3))
     host = LibraryGlobalKeyProductionCSSHarness(app)
 
@@ -137,11 +141,21 @@ async def test_media_global_f6_reaches_content_scroller() -> None:
 
 
 async def _wait_for_detail_call(
-    service: ControlledDetailMediaService, backing_id: int
+    service: ControlledDetailMediaService, backing_id: int, *, pilot=None
 ) -> None:
+    entered = service.detail_entered.setdefault(backing_id, threading.Event())
+    if pilot is not None:
+        # A debounced selection may still be awaiting Textual's next pump.
+        await _wait_for_condition(
+            pilot,
+            entered.is_set,
+            timeout=2.0,
+            message=f"Detail call for backing id {backing_id} did not start.",
+        )
+        return
     try:
         started = await asyncio.to_thread(
-            service.detail_entered.setdefault(backing_id, threading.Event()).wait,
+            entered.wait,
             2,
         )
         if not started:
@@ -276,6 +290,7 @@ async def _load_row_0(screen, service, pilot):
         lambda: screen._media_state.reader_session.loaded_id == row_0_id,
         message="Row 0 never settled in the Reader.",
     )
+    await _wait_for_selector(screen, pilot, "#library-media-reader-find")
     return row_0_id
 
 
@@ -348,7 +363,7 @@ async def test_prev_item_binding_disabled_at_the_first_item():
 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
-        row_0_id = await _load_row_0(screen, service, pilot)
+        await _load_row_0(screen, service, pilot)
         # Row 0 is the first (top) item: no previous exists.
         assert screen.check_action("library_media_prev_item", ()) is False
         assert screen.check_action("library_media_next_item", ()) is True
@@ -470,7 +485,7 @@ async def test_more_strip_move_to_trash_is_danger_marked_and_separated(size):
 @pytest.mark.asyncio
 async def test_external_detail_without_original_exposes_no_empty_more_menu():
     """A server-only detail exposes only actions that it can actually perform."""
-    app = _build_media_test_app()
+    app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
 
@@ -529,7 +544,7 @@ async def test_stale_more_disclosure_paints_nothing_on_a_sourceless_detail():
     guard the Reader composes an empty actions row under a "More" button that
     is no longer there.
     """
-    app = _build_media_test_app()
+    app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
 
@@ -803,7 +818,7 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope.page == 2
+                screen._library_media_browse_controller.state.applied_scope.page == 2
                 and bool(screen.query("#library-media-next"))
             ),
             message="Page 2 did not apply and settle its pager.",
@@ -812,7 +827,7 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope.page == 3
+                screen._library_media_browse_controller.state.applied_scope.page == 3
                 and bool(screen.query("#library-media-row-10"))
             ),
             message="Page 3 did not apply and settle its rows.",
@@ -840,13 +855,13 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope.query
+                screen._library_media_browse_controller.state.applied_scope.query
                 == "Media item 03"
             ),
             message="Filter result did not apply.",
         )
         filtered_id = str(
-            screen._library_media_browse_controller.retained_items[0]["id"]
+            screen._library_media_browse_controller.state.retained_items[0]["id"]
         )
         await _wait_for_condition(
             pilot,
@@ -856,11 +871,12 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
             ),
             message="The first authoritative filter result was not selected in Reader.",
         )
+        await _wait_for_selector(screen, pilot, "#library-media-filter-clear")
         screen.query_one("#library-media-filter-clear", Button).press()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope
+                screen._library_media_browse_controller.state.applied_scope
                 == MediaBrowseScope(page=3)
             ),
             message="Unfiltered page 3 was not restored.",
@@ -904,14 +920,14 @@ async def test_zero_result_filter_clears_the_reader_it_was_painting():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope is not None
-                and screen._library_media_browse_controller.applied_scope.query
+                screen._library_media_browse_controller.state.applied_scope is not None
+                and screen._library_media_browse_controller.state.applied_scope.query
                 == "no-media-matches-this-query-xyzzy"
-                and not screen._library_media_browse_controller.loading
+                and not screen._library_media_browse_controller.state.loading
             ),
             message="Zero-result filter did not apply.",
         )
-        assert len(screen._library_media_browse_controller.retained_items) == 0
+        assert len(screen._library_media_browse_controller.state.retained_items) == 0
 
         # The Reader no longer paints the now-absent item.
         assert screen._media_state.reader_session.loaded_id is None
@@ -947,17 +963,17 @@ async def test_zero_result_filter_repaints_the_mounted_reader_placeholder():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope is not None
-                and screen._library_media_browse_controller.applied_scope.query
+                screen._library_media_browse_controller.state.applied_scope is not None
+                and screen._library_media_browse_controller.state.applied_scope.query
                 == "Media item 03"
-                and not screen._library_media_browse_controller.loading
+                and not screen._library_media_browse_controller.state.loading
             ),
             message="Matching filter did not apply.",
         )
         match_id = str(
-            screen._library_media_browse_controller.retained_items[0]["id"]
+            screen._library_media_browse_controller.state.retained_items[0]["id"]
         )
-        for match in screen._library_media_browse_controller.retained_items:
+        for match in screen._library_media_browse_controller.state.retained_items:
             service.release(int(str(match["id"]).rsplit(":", 1)[-1]))
         await _wait_for_condition(
             pilot,
@@ -974,14 +990,14 @@ async def test_zero_result_filter_repaints_the_mounted_reader_placeholder():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope is not None
-                and screen._library_media_browse_controller.applied_scope.query
+                screen._library_media_browse_controller.state.applied_scope is not None
+                and screen._library_media_browse_controller.state.applied_scope.query
                 == "Media item 03zzz"
-                and not screen._library_media_browse_controller.loading
+                and not screen._library_media_browse_controller.state.loading
             ),
             message="Zero-result filter did not apply.",
         )
-        assert len(screen._library_media_browse_controller.retained_items) == 0
+        assert len(screen._library_media_browse_controller.state.retained_items) == 0
         assert screen._media_state.reader_session.loaded_id is None
 
         # The MOUNTED Reader stops painting the filtered-out item and shows
@@ -1333,6 +1349,63 @@ def _escape_fake_query_one(shell, find, *, mounted):
         return find
 
     return query_one
+
+
+@pytest.mark.asyncio
+async def test_highlight_reload_uses_the_viewer_sync_seam():
+    """A highlight-only mutation rebuilds the Reader, not the whole Library."""
+    calls: list[object] = []
+
+    async def fetch_highlights(media_id: str) -> list[dict[str, str]]:
+        calls.append(("fetch", media_id))
+        return [{"quote": "Pinned"}]
+
+    fake = SimpleNamespace(
+        _library_media_highlights=[],
+        _fetch_library_media_highlights=fetch_highlights,
+        is_mounted=True,
+        refresh=lambda **kwargs: calls.append(("refresh", kwargs)),
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+    )
+
+    await LibraryMediaController._reload_library_media_highlights(
+        fake, "local:media:7"
+    )
+
+    assert fake._library_media_highlights == [{"quote": "Pinned"}]
+    assert calls == [("fetch", "local:media:7"), "sync"]
+
+
+@pytest.mark.parametrize("selected_media_id", [None, "local:media:7"])
+def test_analysis_save_failure_exits_through_the_viewer_sync_seam(
+    selected_media_id: str | None,
+):
+    """Both invalid analysis-save exits clear edit mode through one seam."""
+    from textual.css.query import NoMatches
+
+    calls: list[object] = []
+
+    def query_one(selector: str, *_args):
+        if selected_media_id is None:
+            pytest.fail("The missing-selection branch queried the edit form.")
+        raise NoMatches(selector)
+
+    fake = SimpleNamespace(
+        _selected_media_id=selected_media_id,
+        _library_media_editing_analysis=True,
+        query_one=query_one,
+        refresh=lambda **kwargs: calls.append(("refresh", kwargs)),
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+        run_worker=lambda *_args, **_kwargs: pytest.fail(
+            "An invalid analysis save scheduled a worker."
+        ),
+    )
+    event = SimpleNamespace(stop=lambda: calls.append("stop"))
+
+    LibraryMediaController.handle_library_media_analysis_save(fake, event)
+
+    assert fake._library_media_editing_analysis is False
+    assert calls == ["stop", "sync"]
 
 
 def _escape_fake(
@@ -2064,7 +2137,7 @@ def test_capture_matching_fetched_progress_skips_the_write():
 @pytest.mark.asyncio
 async def test_thirty_step_traversal_settles_at_most_one_progress_write():
     """TASK-22210 probe: a held-key traversal must not stack SQLite writers."""
-    app = _build_media_test_app()
+    app = _build_test_app()
     items = _many_media_items(40)
     _seed_conversations(app, _two_conversations(), media=items)
     service = CountingProgressMediaService(items)
@@ -2138,7 +2211,7 @@ async def test_thirty_step_traversal_settles_at_most_one_progress_write():
 @pytest.mark.asyncio
 async def test_unmount_drains_pending_and_ambiguous_inflight_progress_writes():
     """TASK-22210 teardown: the last captured offsets survive screen teardown."""
-    app = _build_media_test_app()
+    app = _build_test_app()
     items = _many_media_items(3)
     _seed_conversations(app, _two_conversations(), media=items)
     service = CountingProgressMediaService(items)
@@ -2877,7 +2950,7 @@ _FIND_COPY_CONTENT = (
 
 def _article_host():
     """Two plain ``article`` items (no Markdown syntax) with 3 match lines."""
-    app = _build_media_test_app()
+    app = _build_test_app()
     items = [
         {
             "id": f"media-{index}",
@@ -3046,7 +3119,7 @@ def _typed_host(media_type: str, content: str):
 
     Two, because ``_open_media_list`` waits for the second rendered row.
     """
-    app = _build_media_test_app()
+    app = _build_test_app()
     items = [
         {
             "id": f"media-{index}",

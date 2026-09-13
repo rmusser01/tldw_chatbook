@@ -40,7 +40,7 @@ def _text(path: Path) -> str:
 
 def _css_block(text: str, selector: str) -> str:
     match = re.search(
-        rf"(?m)^{re.escape(selector)}(?:\s*,[^{{]*)?\s*\{{",
+        rf"(?m)^[ \t]*{re.escape(selector)}(?:\s*,[^{{]*)?\s*\{{",
         text,
     )
     if match is None:
@@ -92,6 +92,9 @@ def test_library_source_actions_use_console_text_control_style() -> None:
     variables = _text(Path("tldw_chatbook/css/core/_variables.tcss"))
     agentic_terminal = _text(
         Path("tldw_chatbook/css/components/_agentic_terminal.tcss")
+    )
+    widget_defaults = _text(
+        Path("tldw_chatbook/css/widget_defaults_scoped.tcss")
     )
     # TASK-25812: the library-owned rules (and the variables preamble that
     # carries the $ds-library-* defs) live in the split library sheet.
@@ -173,15 +176,17 @@ def test_library_source_actions_use_console_text_control_style() -> None:
         bundled_stylesheet,
         ".library-source-active-marker",
     )
-    assert "#library-collection-form Input {" in agentic_terminal
-    assert "border: tall $ds-grid-line;" in _css_block(
-        agentic_terminal,
-        "#library-collection-form Input",
+    collection_form_selector = "LibraryScreen #library-collection-form Input"
+    assert f"{collection_form_selector} {{" in widget_defaults
+    assert "border: tall $surface-lighten-1;" in _css_block(
+        widget_defaults,
+        collection_form_selector,
     )
-    assert "#library-collection-actions Button {" in agentic_terminal
+    collection_actions_selector = "LibraryScreen #library-collection-actions Button"
+    assert f"{collection_actions_selector} {{" in widget_defaults
     assert "background: transparent;" in _css_block(
-        agentic_terminal,
-        "#library-collection-actions Button",
+        widget_defaults,
+        collection_actions_selector,
     )
 
 

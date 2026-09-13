@@ -1,10 +1,14 @@
 """Tests for the app-wide TLS trust policy (Utils/tls_trust.py) + config template."""
 import ssl as _ssl
+import threading
+import time
 import tomllib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import certifi
 import pytest
+import requests
 from loguru import logger
 
 import tldw_chatbook.Utils.tls_trust as tls_trust
@@ -276,6 +280,68 @@ def test_build_requests_session_explicit_verify_wins(_set_ssl_config):
     _set_ssl_config(False)
     session = tls_trust.build_requests_session(verify=True)
     assert session.verify is True  # explicit verify beats the disabled policy
+
+
+@pytest.mark.loopback_network
+def test_build_requests_session_applies_default_and_explicit_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise timeout delegation over HTTP; TLS trust has separate coverage.
+
+    Args:
+        monkeypatch: Replaces timeout configuration without replacing transport.
+    """
+    from tldw_chatbook.Utils import egress
+
+    paths: list[str] = []
+
+    class _SlowHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            paths.append(self.path)
+            time.sleep(0.2)
+            body = b"ok"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), _SlowHandler) as server:
+        server.daemon_threads = False
+        thread = threading.Thread(
+            target=server.serve_forever,
+            name="tls-trust-loopback-server",
+            daemon=True,
+        )
+        try:
+            thread.start()
+            url = f"http://127.0.0.1:{server.server_port}"
+            monkeypatch.setattr(egress, "default_session_timeout", lambda: (1.0, 0.05))
+
+            with tls_trust.build_requests_session() as session:
+                assert isinstance(session, egress.DefaultTimeoutSession)
+                assert session.default_timeout == (1.0, 0.05)
+                with pytest.raises(requests.exceptions.ReadTimeout):
+                    session.get(f"{url}/default")
+
+                response = session.get(f"{url}/explicit", timeout=(1.0, 1.0))
+                assert response.content == b"ok"
+                adapter = session.get_adapter(url)
+                assert len(adapter.poolmanager.pools) == 1
+
+            assert len(adapter.poolmanager.pools) == 0
+        finally:
+            if thread.ident is not None:
+                server.shutdown()
+                thread.join(timeout=2)
+                assert not thread.is_alive()
+
+    assert paths == ["/default", "/explicit"]
 
 
 def test_create_default_session_carries_tls_policy(_set_ssl_config):

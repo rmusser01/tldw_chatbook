@@ -37,6 +37,8 @@ from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.transcript import ConsoleTranscriptRegion
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
 TESTS_DIR = Path(__file__).resolve().parent.parent
 
@@ -124,7 +126,9 @@ def _seams_bound_from_a_controller(tree: ast.AST) -> set[str]:
         if not isinstance(node, ast.Assign):
             continue
         value = node.value
-        if not isinstance(value, ast.Attribute) or not isinstance(value.value, ast.Name):
+        if not isinstance(value, ast.Attribute) or not isinstance(
+            value.value, ast.Name
+        ):
             continue
         if value.value.id not in CONTROLLER_CLASS_NAMES:
             continue
@@ -134,10 +138,35 @@ def _seams_bound_from_a_controller(tree: ast.AST) -> set[str]:
     return bound
 
 
+def _explicit_class_seams(tree: ast.AST, moved: dict[str, str]) -> set[tuple[str, str]]:
+    """Recognize exact class-level calls, never exempt the method name globally."""
+    recognized: set[tuple[str, str]] = set()
+    for node in getattr(tree, "body", ()):
+        if isinstance(node, ast.ClassDef):
+            recognized.update(
+                (node.name, method.name)
+                for method in node.body
+                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+        elif isinstance(node, ast.ImportFrom):
+            for cls in (LibraryScreen, SettingsScreen):
+                if node.module != cls.__module__:
+                    continue
+                for alias in node.names:
+                    if alias.name == cls.__name__:
+                        recognized.update(
+                            (alias.asname or alias.name, name)
+                            for name in moved
+                            if callable(getattr(cls, name, None))
+                        )
+    return recognized
+
+
 def scan_tree(tree: ast.AST, path: str, moved: dict[str, str]) -> list[Violation]:
     """Report every `<name>.<moved seam>(...)` call in one parsed test module."""
     violations: list[Violation] = []
     borrowed = _seams_bound_from_a_controller(tree)
+    class_seams = _explicit_class_seams(tree, moved)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -146,6 +175,8 @@ def scan_tree(tree: ast.AST, path: str, moved: dict[str, str]) -> list[Violation
             continue
         base = func.value.id
         if base in CONTROLLER_CLASS_NAMES or base in CONTROLLER_VARIABLE_NAMES:
+            continue
+        if (base, func.attr) in class_seams:
             continue
         if func.attr in borrowed:
             continue
@@ -200,6 +231,39 @@ def test_rule_fires_on_the_task_14920_shape():
     source = f"async def test_thing():\n    await console.{seam}(message_id)\n"
     found = scan_tree(ast.parse(source), "<synthetic>", moved)
     assert [violation.call for violation in found] == [f"console.{seam}()"]
+
+
+@pytest.mark.parametrize(
+    "screen_class,module",
+    [
+        ("SettingsScreen", "settings_screen"),
+        ("LibraryScreen", "library_screen"),
+    ],
+)
+def test_other_screen_class_does_not_exempt_console_receiver(screen_class, module):
+    seam = "_handle_workspace_create_result"
+    source = (
+        f"from tldw_chatbook.UI.Screens.{module} import {screen_class}\n"
+        f"{screen_class}.{seam}(host, result)\n"
+        f"console.{seam}(result)\n"
+    )
+    found = scan_tree(ast.parse(source), "<synthetic>", moved_console_seams())
+    assert [violation.call for violation in found] == [f"console.{seam}()"]
+
+
+def test_local_double_class_exemption_is_receiver_specific():
+    seam = "_default_console_session_settings"
+    source = (
+        f"class StartupHost:\n    def {seam}(self): pass\n"
+        f"StartupHost.{seam}(host)\n"
+        f"host.{seam}()\n"
+        f"console.{seam}()\n"
+    )
+    found = scan_tree(ast.parse(source), "<synthetic>", moved_console_seams())
+    assert [violation.call for violation in found] == [
+        f"host.{seam}()",
+        f"console.{seam}()",
+    ]
 
 
 @pytest.mark.parametrize(

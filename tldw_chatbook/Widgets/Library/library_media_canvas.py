@@ -535,16 +535,19 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             actions.handle_library_media_open_viewer(event)
 
     @on(Button.Pressed, "#library-media-export")
-    async def handle_library_media_export(self, event: Button.Pressed) -> None:
-        """Route the toolbar's Export to the media controller.
+    def handle_library_media_export(self, event: Button.Pressed) -> None:
+        """Queue Export on the surviving Screen before this canvas is removed.
 
-        The one ``async`` row of the sixteen: the controller's Export handler
-        awaits a modal, so a sync forwarder here would build a coroutine and
-        drop it.
+        Awaiting the route replacement here deadlocks ancestor teardown,
+        which waits for this canvas's message pump to finish.
+
+        Args:
+            event: Export press admitted by the visible-canvas guard.
         """
         actions = self._media_actions_for_press(event)
         if actions is not None:
-            await actions.handle_library_media_export(event)
+            event.stop()
+            actions.call_next(lambda: actions.handle_library_media_export(event))
 
     @on(Button.Pressed, "#library-media-review")
     def handle_library_media_review_these(self, event: Button.Pressed) -> None:

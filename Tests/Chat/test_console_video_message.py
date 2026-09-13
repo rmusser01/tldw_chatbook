@@ -95,7 +95,7 @@ def _reload_video_messages(db, conversation_id):
     )
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = db
-    all_nodes = screen._console_messages_from_conversation_tree(tree)
+    all_nodes = screen._message._console_messages_from_conversation_tree(tree)
     active_leaf_id = db.get_conversation_active_leaf(conversation_id)
 
     fresh_store = ConsoleChatStore(persistence=ChatPersistenceService(db))

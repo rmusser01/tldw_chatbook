@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import ast
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from html import unescape
 import inspect
+from pathlib import Path
+import sqlite3
+import textwrap
 from types import SimpleNamespace
+from typing import Iterator
 
 from loguru import logger as loguru_logger
 import pytest
@@ -59,8 +65,82 @@ from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Library_Modules.screen_support_types import (
+    _LibraryNotesRestoreGuard,
+)
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+
+
+@pytest.fixture
+def folder_navigator_database(tmp_path: Path) -> Iterator[CharactersRAGDB]:
+    """Yield one exact-owner Notes database and retire every thread-local handle."""
+    database: CharactersRAGDB | None = None
+    try:
+        database = CharactersRAGDB(
+            tmp_path / "folder-navigator.db",
+            client_id="folder-navigator",
+        )
+        yield database
+    finally:
+        if database is not None:
+            try:
+                database.close_connection()
+            finally:
+                with database.quiesce_connections(timeout_seconds=2.0):
+                    pass
+                assert database.registered_connection_count() == 0
+
+
+def test_folder_navigator_database_retires_worker_after_body_failure(
+    tmp_path: Path,
+) -> None:
+    """Retire an owned worker handle without masking failure or closing a foreign DB.
+
+    Args:
+        tmp_path: Isolated directory for the owned and foreign databases.
+    """
+    fixture = folder_navigator_database.__wrapped__(tmp_path)
+    owner: CharactersRAGDB | None = None
+    foreign: CharactersRAGDB | None = None
+    worker_connection: sqlite3.Connection | None = None
+    try:
+        owner = next(fixture)
+        foreign = CharactersRAGDB(tmp_path / "foreign.db", client_id="foreign")
+        foreign_connection = foreign.get_connection()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker_connection = executor.submit(owner.get_connection).result(
+                timeout=2.0
+            )
+        owner.close_connection()
+        assert owner.registered_connection_count() > 0
+
+        primary = RuntimeError("forced folder navigator body failure")
+        with pytest.raises(
+            RuntimeError, match="forced folder navigator body failure"
+        ) as caught:
+            try:
+                raise primary
+            finally:
+                fixture.close()
+
+        assert caught.value is primary
+        assert owner.registered_connection_count() == 0
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            worker_connection.execute("SELECT 1")
+        assert foreign_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        try:
+            fixture.close()
+        finally:
+            try:
+                if owner is not None:
+                    with owner.quiesce_connections(timeout_seconds=2.0):
+                        pass
+            finally:
+                if foreign is not None:
+                    with foreign.quiesce_connections(timeout_seconds=2.0):
+                        pass
 
 
 def _page(
@@ -409,9 +489,9 @@ async def test_authoritative_status_replacement_prunes_and_normal_clears() -> No
 
 @pytest.mark.asyncio
 async def test_real_service_pages_drive_inactive_and_out_of_window_screen_status(
-    tmp_path,
+    folder_navigator_database: CharactersRAGDB,
 ) -> None:
-    db = CharactersRAGDB(tmp_path / "screen-status.db", client_id="screen-status")
+    db = folder_navigator_database
     repository = LocalNoteFolderRepository(db)
     folder = repository.create_folder(name="Folder", parent_id=None)
     for index in range(20):
@@ -444,7 +524,6 @@ async def test_real_service_pages_drive_inactive_and_out_of_window_screen_status
     assert managed_note not in {str(item.note["id"]) for item in state.items}
     assert fake._notes_state.tree_protected_folder_ids == {folder.folder_id}
     assert fake._notes_state.tree_inactive_managed_folder_ids == {folder.folder_id}
-    db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -793,10 +872,15 @@ def test_branch_pager_handler_routes_only_semantic_button_metadata():
 
 
 def test_unmount_invalidates_notes_authority_before_first_await():
-    source = inspect.getsource(LibraryScreen.on_unmount)
-    first_await = source.index("await ")
-
-    assert source.index("_invalidate_library_notes_tree_for_unmount") < first_await
+    tree = ast.parse(textwrap.dedent(inspect.getsource(LibraryScreen.on_unmount)))
+    invalidations = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_invalidate_library_notes_tree_for_unmount"
+    ]
+    assert len(invalidations) == 1
+    first_await = min(node.lineno for node in ast.walk(tree) if isinstance(node, ast.Await))
+    assert invalidations[0].lineno < first_await
 
 
 def _screen_fake(service: _FolderService):
@@ -982,6 +1066,145 @@ async def test_external_note_deep_link_without_preferred_placement_uses_locator_
     root = fake._notes_state.tree_branches[NotesBranchKey(None, "placements")]
     assert root.start_offset == 20
     assert root.total == 21
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "superseded_field",
+    (
+        None,
+        "navigation_generation",
+        "tree_topology_epoch",
+        "tree_lifecycle_generation",
+        "focus_intent_generation",
+        "scroll_intent_generation",
+    ),
+)
+async def test_locator_deferred_exact_scroll_keeps_every_captured_owner(
+    superseded_field: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The receipt scroll retry runs only while every captured owner is current.
+
+    Args:
+        superseded_field: Generation to invalidate before the deferred callback.
+        monkeypatch: Pytest patch helper for the mounted-canvas callback seam.
+    """
+
+    class _ReceiptLocatorService(_BranchService):
+        async def locate_note_tree_placement(self, **_kwargs):
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.unfiled("loose"),
+                note_id="loose",
+                membership_id=None,
+                path=(),
+                placement_offset=0,
+            )
+
+    fake = _branch_screen_fake(_ReceiptLocatorService())
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
+    )
+    monkeypatch.setattr(
+        LibraryScreen,
+        "_sync_library_notes_tree_canvas_if_present",
+        lambda _self, **kwargs: fake._sync_library_notes_tree_canvas_if_present(
+            **kwargs
+        ),
+    )
+    fake._notes_state.scroll_intent_generation = 7
+    callbacks = []
+    focus_calls = []
+    scroll_calls = []
+    fake.call_after_refresh = lambda callback, *args: callbacks.append(
+        (callback, args)
+    )
+    fake._restore_library_notes_focus_identity = lambda identity, guard=None: (
+        focus_calls.append((identity, guard)) or True
+    )
+    fake._notes_controller = SimpleNamespace(
+        _restore_library_notes_scroll_offset=lambda identity, guard=None: (
+            scroll_calls.append((identity, guard))
+        )
+    )
+    guard = _LibraryNotesRestoreGuard(scroll_generation=7)
+
+    located = await LibraryScreen._locate_library_notes_tree_target(
+        fake,
+        note_id="loose",
+        focus_scroll_offset=(0, 6),
+        restore_guard=guard,
+    )
+
+    assert located
+    assert len(focus_calls) == 1
+    assert len(callbacks) == 1
+    if superseded_field is not None:
+        setattr(
+            fake._notes_state,
+            superseded_field,
+            getattr(fake._notes_state, superseded_field) + 1,
+        )
+    callback, args = callbacks.pop()
+    callback(*args)
+    assert scroll_calls == ([] if superseded_field is not None else focus_calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("focus_scroll_offset", "restore_succeeds"),
+    ((None, True), ((0, 6), False)),
+)
+async def test_locator_skips_exact_scroll_retry_without_owned_success(
+    focus_scroll_offset: tuple[int, int] | None,
+    restore_succeeds: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ordinary locators and failed focus restores schedule no scroll retry.
+
+    Args:
+        focus_scroll_offset: Optional receipt-owned scroll position.
+        restore_succeeds: Whether the explicit focus target survived the sync.
+        monkeypatch: Pytest patch helper for the mounted-canvas callback seam.
+    """
+
+    class _ReceiptLocatorService(_BranchService):
+        async def locate_note_tree_placement(self, **_kwargs):
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.unfiled("loose"),
+                note_id="loose",
+                membership_id=None,
+                path=(),
+                placement_offset=0,
+            )
+
+    fake = _branch_screen_fake(_ReceiptLocatorService())
+    monkeypatch.setattr(
+        LibraryScreen,
+        "_sync_library_notes_tree_canvas_if_present",
+        lambda _self, **kwargs: fake._sync_library_notes_tree_canvas_if_present(
+            **kwargs
+        ),
+    )
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
+    )
+    callbacks = []
+    fake.call_after_refresh = lambda callback, *args: callbacks.append(
+        (callback, args)
+    )
+    fake._restore_library_notes_focus_identity = (
+        lambda *_args, **_kwargs: restore_succeeds
+    )
+
+    located = await LibraryScreen._locate_library_notes_tree_target(
+        fake,
+        note_id="loose",
+        focus_scroll_offset=focus_scroll_offset,
+    )
+
+    assert located
+    assert callbacks == []
 
 
 @pytest.mark.asyncio
@@ -1327,6 +1550,10 @@ async def test_topology_receipt_reloads_full_contiguous_range_and_clamps_shrink(
     fake._restore_library_notes_focus_identity = lambda identity: (
         restored_focus.append(identity) or True
     )
+    fake.call_after_refresh = lambda callback, *args: callback(*args)
+    fake._notes_controller = SimpleNamespace(
+        _restore_library_notes_scroll_offset=lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
         lambda *_args, then=None, **_kwargs: then() if then is not None else None,
@@ -1436,6 +1663,10 @@ async def test_topology_receipt_reloads_cumulative_filter_range_and_duplicate_sc
     fake._restore_library_notes_focus_identity = lambda identity: (
         restored_focus.append(identity) or True
     )
+    fake.call_after_refresh = lambda callback, *args: callback(*args)
+    fake._notes_controller = SimpleNamespace(
+        _restore_library_notes_scroll_offset=lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
         lambda *_args, then=None, **_kwargs: then() if then is not None else None,
@@ -1526,6 +1757,10 @@ async def test_topology_receipt_clamps_nonzero_branch_range_after_total_shrink(
     fake.query_one = lambda *_args, **_kwargs: SimpleNamespace()
     fake._restore_library_notes_focus_identity = lambda identity: (
         restored_focus.append(identity) or True
+    )
+    fake.call_after_refresh = lambda callback, *args: callback(*args)
+    fake._notes_controller = SimpleNamespace(
+        _restore_library_notes_scroll_offset=lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
@@ -1757,6 +1992,10 @@ def test_clearing_filter_restores_same_epoch_browse_receipt_without_touching_ran
     fake._library_notes_scroll_owner = lambda *_args: None
     fake._focus_library_notes_filter_input = lambda: None
     callbacks = []
+    settled_focus = []
+    fake._queue_library_notes_settled_focus_restore = (
+        lambda focus, guard=None: settled_focus.append((focus, guard))
+    )
 
     def sync(_screen, _kind, *, then=None, **_kwargs):
         callbacks.append(then)
@@ -1781,6 +2020,7 @@ def test_clearing_filter_restores_same_epoch_browse_receipt_without_touching_ran
     assert fake._notes_state.tree_branches[key] is trusted
     assert fake._notes_state.tree_branches[key].total == 41
     assert fake._notes_state.tree_branches[key].freshness == "fresh"
+    assert settled_focus == [(receipt.focus_identity, None)]
 
 
 class _MutationService:
@@ -4271,6 +4511,10 @@ async def test_mounted_topology_changed_back_restores_exact_duplicate_ranges_and
         )
         notes_list = screen._library_notes_scroll_owner("navigator")
         assert notes_list is not None
+        await _wait_until(
+            pilot,
+            lambda: int(notes_list.scroll_y) == receipt.scroll_offset[1],
+        )
         assert int(notes_list.scroll_y) == receipt.scroll_offset[1]
         assert not screen.query("#library-notes-navigation-status")
 
@@ -5140,8 +5384,9 @@ async def test_mounted_expansion_failure_stays_beneath_folder_and_collapse_retai
 @pytest.mark.asyncio
 async def test_mounted_real_repository_statuses_protect_actions_before_page_membership(
     tmp_path,
+    folder_navigator_database: CharactersRAGDB,
 ):
-    db = CharactersRAGDB(tmp_path / "mounted-folder-authority.db", client_id="mounted")
+    db = folder_navigator_database
     repository = LocalNoteFolderRepository(db)
     inactive = repository.create_folder(name="Inactive", parent_id=None)
     nested = repository.create_folder(name="Nested", parent_id=None)

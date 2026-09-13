@@ -2,9 +2,9 @@
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
  * watchlists-owned rules split out of features/_watchlists.tcss
- * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
- * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit features/_watchlists.tcss and re-run build_css.py.
+ * by build_css.py (TASK-25812/TASK-24459). Loaded at the app or owning-screen
+ * stylesheet boundary; route-owned sheets are deferred until first visit.
+ * Edit features/_watchlists.tcss and re-run build_css.py.
  * ======================================== */
 
 $ds-surface-panel: $panel;
@@ -162,6 +162,12 @@ $ds-sidebar-max-width: 80;
 #overview-failed-runs {
     height: 1fr;
     border: round $surface-lighten-1;
+}
+
+/* Empty state actions */
+#wc-empty-actions {
+    height: auto;
+    margin: 1 0;
 }
 
 /* Section detail title */
@@ -1036,6 +1042,20 @@ $ds-sidebar-max-width: 80;
 
 #watchlists-backend-select {
     width: 12;
+}
+
+/* These one-row Selects cannot carry an outline without obscuring their
+ * values. Paint focus on the opaque SelectCurrent instead, using a semantic
+ * lightened action surface whose matching background token keeps the value
+ * readable across dark, light, and high-contrast themes. */
+#items-status-select:focus > SelectCurrent,
+#watchlists-backend-select:focus > SelectCurrent {
+    background: $primary-lighten-1;
+}
+
+#items-status-select:focus > SelectCurrent Static,
+#watchlists-backend-select:focus > SelectCurrent Static {
+    color: $background;
 }
 
 /* TASK-1105 lived here. Clicking any Watchlists table row other than the

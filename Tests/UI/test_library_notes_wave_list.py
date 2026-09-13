@@ -6,12 +6,15 @@ Group `list` of the critique-notes-2026-09 fix wave: tasks 32123, 32124,
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import MethodType, SimpleNamespace
 
 import pytest
 from textual.widgets import Button
+from textual.events import DescendantFocus, Resize
+from textual.geometry import Size
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
@@ -42,8 +45,10 @@ from tldw_chatbook.Library.library_notes_state import (
     LibraryNotesListRow,
     LibraryNotesListState,
 )
+from tldw_chatbook.UI.Library_Modules.screen_support_types import _LibraryNotesRestoreGuard
 from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
 from tldw_chatbook.Library.library_notes_tree_state import (
+    LibraryNotesFilterState,
     LibraryNotesTreeProjection,
     LibraryNotesTreeRow,
     build_paged_library_notes_tree,
@@ -74,6 +79,227 @@ from tldw_chatbook.Widgets.Library.library_notes_canvas import (
 #: The two geometries the critique ran at.
 WIDE = (235, 52)
 COMPACT = (100, 30)
+
+
+def _many_notes() -> list[dict[str, object]]:
+    return [
+        {
+            "id": f"n-{index}",
+            "title": f"Note {index:02d}",
+            "content": "body",
+            "last_modified": f"2026-07-{(index % 28) + 1:02d}T12:00:00+00:00",
+            "version": 1,
+            "keywords": [],
+        }
+        for index in range(32)
+    ]
+
+
+async def _open_real_notes_list(screen, pilot) -> LibraryNotesCanvas:
+    screen.query_one("#library-row-browse-notes", Button).press()
+    await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
+    return screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+
+
+@pytest.mark.asyncio
+async def test_shape_resize_restores_real_tree_focus_and_exact_scroll() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=(170, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        canvas = await _open_real_notes_list(screen, pilot)
+        row = next(
+            candidate
+            for candidate in canvas.query(".library-notes-tree-note-row")
+            if candidate.note_id == "n-15"
+        )
+        row.focus()
+        owner = canvas.query_one("#library-notes-list")
+        await _wait_for_condition(
+            pilot, lambda: owner.max_scroll_y >= 7, message="Notes list did not scroll"
+        )
+        owner.scroll_to(y=7, animate=False, force=True, immediate=True)
+        await pilot.pause()
+        captured = screen._capture_library_notes_focus_identity()
+        assert captured.scroll_offset == (0, 7)
+
+        canvas.pane_width = 0
+        canvas._measured_width = 68
+        canvas.on_resize(Resize(Size(38, 18), Size(38, 18)))
+        await pilot.pause()
+
+        assert screen.focused.note_id == captured.note_id
+        replacement = screen.query_one("#library-notes-list")
+        assert replacement is not owner
+        assert (replacement.scroll_x, replacement.scroll_y) == captured.scroll_offset
+
+
+@pytest.mark.asyncio
+async def test_shape_resize_restore_yields_to_real_route() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=(170, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        canvas = await _open_real_notes_list(screen, pilot)
+        next(iter(canvas.query(".library-notes-tree-note-row"))).focus()
+        canvas.pane_width = 0
+        canvas._measured_width = 68
+        canvas.on_resize(Resize(Size(38, 18), Size(38, 18)))
+
+        await screen._select_library_rail_row("browse-media")
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == "browse-media"
+        assert not screen.focused.has_class("library-notes-row")
+        assert canvas.display is False
+
+
+@pytest.mark.asyncio
+async def test_shape_resize_restore_yields_to_real_outside_focus() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=(170, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        canvas = await _open_real_notes_list(screen, pilot)
+        next(iter(canvas.query(".library-notes-tree-note-row"))).focus()
+        canvas.pane_width = 0
+        canvas._measured_width = 68
+        canvas.on_resize(Resize(Size(38, 18), Size(38, 18)))
+        outside = screen.query(".library-adaptive-reader-pane-grip").first()
+        screen.set_focus(outside)
+        assert screen.focused is outside
+        screen._notes_state.resize_settling = False
+        screen.on_descendant_focus(DescendantFocus(outside))
+        await pilot.pause()
+        assert screen.focused is outside
+
+
+@pytest.mark.asyncio
+async def test_targeted_resize_deferred_scroll_yields_to_real_user_intent(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=(170, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        canvas = await _open_real_notes_list(screen, pilot)
+        row = next(
+            candidate
+            for candidate in canvas.query(".library-notes-tree-note-row")
+            if candidate.note_id == "n-15"
+        )
+        row.focus()
+        owner = canvas.query_one("#library-notes-list")
+        await _wait_for_condition(
+            pilot, lambda: owner.max_scroll_y >= 7, message="Notes list did not scroll"
+        )
+        owner.scroll_to(y=7, animate=False, force=True, immediate=True)
+        await pilot.pause()
+        identity = screen._capture_library_notes_focus_identity()
+        assert identity.scroll_offset == (0, 7)
+        guard = _LibraryNotesRestoreGuard(
+            recompose_generation=screen._notes_state.recompose_generation,
+            scroll_generation=screen._notes_state.scroll_intent_generation,
+            focus_generation=screen._notes_state.focus_intent_generation,
+        )
+        deferred = []
+        grip = screen.query(".library-adaptive-reader-pane-grip").first()
+        screen.set_focus(grip)
+        assert screen.focused is grip
+        with monkeypatch.context() as scoped:
+            scoped.setattr(
+                LibraryScreen,
+                "call_after_refresh",
+                lambda _self, callback, *args: deferred.append((callback, args)),
+            )
+            screen._restore_library_notes_after_targeted_sync(identity, guard)
+
+        assert screen.focused.note_id == identity.note_id
+        assert (owner.scroll_x, owner.scroll_y) == identity.scroll_offset
+        deferred_scroll = [
+            entry
+            for entry in deferred
+            if entry[0].__name__ == "_restore_library_notes_scroll_offset"
+        ]
+        assert len(deferred_scroll) == 1
+
+        await pilot.click("#library-notes-filter")
+        newer = screen.query_one("#library-notes-filter")
+        screen._notes_state.resize_settling = False
+        screen.on_descendant_focus(DescendantFocus(newer))
+        owner.scroll_to(y=4, animate=False, force=True, immediate=True)
+        await pilot.pause()
+        assert screen._notes_state.focus_intent_generation > guard.focus_generation
+        current_owner = screen.query_one("#library-notes-list")
+        newer_offset = (current_owner.scroll_x, current_owner.scroll_y)
+        assert newer_offset == (0, 4)
+        callback, args = deferred_scroll.pop()
+        callback(*args)
+
+        assert screen.focused is newer
+        assert (current_owner.scroll_x, current_owner.scroll_y) == newer_offset
+
+
+@pytest.mark.asyncio
+async def test_resize_without_shape_change_keeps_real_tree_row_instance() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=(170, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        canvas = await _open_real_notes_list(screen, pilot)
+        row = next(
+            candidate
+            for candidate in canvas.query(".library-notes-tree-note-row")
+            if candidate.note_id == "n-10"
+        )
+        canvas.pane_width = 0
+        canvas._measured_width = 68
+        canvas.on_resize(Resize(Size(67, 18), Size(67, 18)))
+        await pilot.pause()
+        replacement = next(
+            candidate
+            for candidate in canvas.query(".library-notes-tree-note-row")
+            if candidate.note_id == "n-10"
+        )
+        assert replacement is row
+
+
+@pytest.mark.parametrize("queue_before_resize", [True, False])
+@pytest.mark.asyncio
+async def test_explicit_callback_owns_shape_resize(queue_before_resize: bool) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=(170, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        canvas = await _open_real_notes_list(screen, pilot)
+        next(
+            candidate
+            for candidate in canvas.query(".library-notes-tree-note-row")
+            if candidate.note_id == "n-10"
+        ).focus()
+        calls = []
+        callback = lambda: calls.append("explicit")
+        canvas.pane_width = 0
+        canvas._measured_width = 68
+        if queue_before_resize:
+            canvas.queue_after_recompose(callback)
+        canvas.on_resize(Resize(Size(38, 18), Size(38, 18)))
+        if not queue_before_resize:
+            canvas.queue_after_recompose(callback)
+        await pilot.pause()
+        assert calls == ["explicit"]
 
 
 def _list_state(
@@ -244,7 +470,9 @@ def _layout_screen_fake(*, width: int, view: str):
         ),
         _library_selected_row_id="browse-notes",
         _library_adaptive_reader_allocation_is_current=lambda _shell: True,
-        _library_notes_work_first_preferences=lambda preferences: preferences,
+        _notes_controller=SimpleNamespace(
+            _library_notes_work_first_preferences=lambda preferences: preferences,
+        ),
         query_one=lambda *_args, **_kwargs: shell,
         # No canvas is mounted in this fake, so the resolved width has
         # nothing to be pushed to.
@@ -1321,6 +1549,136 @@ async def test_reconcile_abandons_a_tree_visit_that_ended_mid_flight() -> None:
     assert service.calls == [], "the ended visit still loaded slices"
     assert fake._notes_state.tree_branches == {}
     assert fake._notes_state.tree_selected_placement_id == ""
+
+
+@pytest.mark.parametrize("superseded_stage", ["last_slice", "filter", "locator"])
+@pytest.mark.asyncio
+async def test_reconcile_abandons_after_each_awaited_tree_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    superseded_stage: str,
+) -> None:
+    """A superseded visit cannot dispatch later stages or overwrite its successor."""
+    service = _RestoreService(None)
+    fake = _branch_screen_fake(service)
+    fake._build_library_notes_tree_projection = MethodType(
+        LibraryScreen._build_library_notes_tree_projection, fake
+    )
+    fake._notes_state.tree_pending_target_placement_id = ""
+    fake._notes_state.filter = "needle"
+    fake._notes_state.tree_filter_state = LibraryNotesFilterState.empty(
+        query="needle",
+        generation=1,
+        topology_epoch=fake._notes_state.tree_topology_epoch,
+    )
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
+    )
+
+    calls: list[str] = []
+    next_pending = "next-visit-pending"
+    next_selected = "next-visit-selected"
+
+    async def supersede(stage: str) -> None:
+        """End the captured visit at a controlled awaited stage."""
+        if stage != superseded_stage:
+            return
+        await asyncio.sleep(0)
+        fake._notes_state.tree_lifecycle_generation += 1
+        fake._notes_state.tree_branches = {}
+        fake._notes_state.tree_pending_target_placement_id = next_pending
+        fake._notes_state.tree_selected_placement_id = next_selected
+
+    async def load_slice(*_args, **_kwargs) -> None:
+        """Record the final affected-slice await."""
+        calls.append("last_slice")
+        await supersede("last_slice")
+
+    async def run_filter(*_args, **_kwargs) -> None:
+        """Record the active-filter refresh await."""
+        calls.append("filter")
+        await supersede("filter")
+
+    async def locate(*_args, **_kwargs) -> bool:
+        """Record the target-locator await and report a successful lookup."""
+        calls.append("locator")
+        await supersede("locator")
+        return True
+
+    monkeypatch.setattr(LibraryScreen, "_load_library_notes_tree_slice", load_slice)
+    monkeypatch.setattr(LibraryScreen, "_run_library_notes_filter", run_filter)
+    monkeypatch.setattr(LibraryScreen, "_locate_library_notes_tree_target", locate)
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "note_create",
+        {"note_id": "n1"},
+        before=None,
+        result={"id": "n1", "title": "n1"},
+    )
+
+    expected_calls = {
+        "last_slice": ["last_slice"],
+        "filter": ["last_slice", "filter"],
+        "locator": ["last_slice", "filter", "locator"],
+    }
+    assert calls == expected_calls[superseded_stage]
+    assert fake._notes_state.tree_pending_target_placement_id == next_pending
+    assert fake._notes_state.tree_selected_placement_id == next_selected
+
+
+@pytest.mark.asyncio
+async def test_reconcile_finishes_all_awaited_tree_stages_for_current_visit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A current visit still reloads, filters, locates, and settles its target."""
+    service = _RestoreService(None)
+    fake = _branch_screen_fake(service)
+    fake._build_library_notes_tree_projection = MethodType(
+        LibraryScreen._build_library_notes_tree_projection, fake
+    )
+    fake._notes_state.tree_pending_target_placement_id = ""
+    fake._notes_state.filter = "needle"
+    fake._notes_state.tree_filter_state = LibraryNotesFilterState.empty(
+        query="needle",
+        generation=1,
+        topology_epoch=fake._notes_state.tree_topology_epoch,
+    )
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
+    )
+
+    calls: list[str] = []
+    desired_target = FolderPlacementId.unfiled("n1")
+
+    async def load_slice(*_args, **_kwargs) -> None:
+        """Record the final affected-slice await."""
+        calls.append("last_slice")
+
+    async def run_filter(*_args, **_kwargs) -> None:
+        """Record the active-filter refresh await."""
+        calls.append("filter")
+
+    async def locate(*_args, **_kwargs) -> bool:
+        """Record and emulate the successful target locator."""
+        calls.append("locator")
+        fake._notes_state.tree_selected_placement_id = desired_target
+        return True
+
+    monkeypatch.setattr(LibraryScreen, "_load_library_notes_tree_slice", load_slice)
+    monkeypatch.setattr(LibraryScreen, "_run_library_notes_filter", run_filter)
+    monkeypatch.setattr(LibraryScreen, "_locate_library_notes_tree_target", locate)
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "note_create",
+        {"note_id": "n1"},
+        before=None,
+        result={"id": "n1", "title": "n1"},
+    )
+
+    assert calls == ["last_slice", "filter", "locator"]
+    assert fake._notes_state.tree_pending_target_placement_id == ""
+    assert fake._notes_state.tree_selected_placement_id == desired_target
 
 
 def _kwargs_fake(*, tree_projection, sort_choices_visible: bool):

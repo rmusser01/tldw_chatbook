@@ -326,7 +326,7 @@ async def test_apply_closes_and_changes_only_later_send_context(
     async with harness.run_test(size=(120, 42)) as pilot:
         console = harness.screen_stack[-1]
         assert isinstance(console, ChatScreen)
-        console._provider_readiness_app_config = lambda: app.app_config
+        console._provider_selection._provider_readiness_app_config = lambda: app.app_config
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         store = console._ensure_console_chat_store()
         session = store.switch_session(store.active_session_id)
@@ -400,7 +400,7 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
     async with harness.run_test(size=(120, 42)) as pilot:
         console = harness.screen_stack[-1]
         assert isinstance(console, ChatScreen)
-        console._provider_readiness_app_config = lambda: app.app_config
+        console._provider_selection._provider_readiness_app_config = lambda: app.app_config
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
@@ -484,8 +484,8 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
             context_policy=temporary_policy,
             submission_id="temporary-apply",
         )
-        live_commit = console._commit_console_settings_submission_live(submission)
-        console._dispatch_console_settings_submission(
+        live_commit = console._settings_durability._commit_console_settings_submission_live(submission)
+        console._settings_durability._dispatch_console_settings_submission(
             ConsoleSettingsCommittedSubmission(submission, live_commit)
         )
         await _drain_settings_tasks(app)
@@ -543,13 +543,16 @@ async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> No
             source_session.id,
             role=ConsoleMessageRole.USER,
             content="Keep this chat's provider.",
+            persist=True,
         )
         failed = store.append_message(
             source_session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="",
+            persist=True,
         )
         store.mark_message_failed(failed.id)
+        assert user.persisted_message_id is not None
 
         app.app_config["chat_defaults"] = {
             "provider": "vllm",
@@ -561,6 +564,7 @@ async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> No
         app.console_new_chat_default_generation += 1
 
         retry = await controller.retry_message(failed.id)
+        assert store.get_message(failed.id).persisted_message_id is not None
         continued = await controller.continue_from_message(failed.id)
         continuation_id = store.active_leaf(source_session.id)
         assert continuation_id is not None
@@ -753,7 +757,7 @@ async def test_stale_compaction_retry_cannot_replace_newer_full_policy(
     async with harness.run_test(size=(120, 42)) as pilot:
         console = harness.screen_stack[-1]
         assert isinstance(console, ChatScreen)
-        console._provider_readiness_app_config = lambda: app.app_config
+        console._provider_selection._provider_readiness_app_config = lambda: app.app_config
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
@@ -1239,7 +1243,7 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
             app.app_config["api_settings"]["vllm"]["api_url"]
             == "http://127.0.0.1:9098"
         )
-        summary = console._build_console_settings_summary_state()
+        summary = console._context_cost._build_console_settings_summary_state()
         assert summary.provider_row == "Provider: vLLM"
         assert summary.model_row == "Model: chatbook-vllm"
         assert "127.0.0.1:8000" in summary.endpoint_row
@@ -1586,7 +1590,7 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
             controller.model,
             controller.base_url,
         ) == controller_before
-        assert summary_widget.state == console._build_console_settings_summary_state()
+        assert summary_widget.state == console._context_cost._build_console_settings_summary_state()
         durable_after = app.chachanotes_db.get_conversation_by_id(conversation_id)
         assert durable_after is not None
         assert durable_after.get("metadata") == metadata_before
@@ -1812,9 +1816,25 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
         summary_before = summary_widget.state
         original_sync = getattr(console, failing_sync)
         calls = 0
+        adoption_started = False
+        original_adopt = session_store.adopt_session_ephemeral_endpoint
+
+        def adopt_then_arm_failure(*args, **kwargs):
+            nonlocal adoption_started
+            receipt = original_adopt(*args, **kwargs)
+            adoption_started = True
+            return receipt
+
+        monkeypatch.setattr(
+            session_store, "adopt_session_ephemeral_endpoint", adopt_then_arm_failure
+        )
 
         def apply_forward_then_fail_rollback():
             nonlocal calls
+            # Capturing the pre-adoption summary also refreshes core state.
+            # Only fail the forward adoption and its compensating refresh.
+            if not adoption_started:
+                return original_sync()
             calls += 1
             if calls == 1:
                 original_sync()
@@ -1828,7 +1848,8 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
 
         assert console.consume_pending_vllm_console_intent() is False
         monkeypatch.setattr(console, failing_sync, original_sync)
-        assert calls == 2
+        # The summary's rollback refresh may also retry core synchronization.
+        assert calls >= 2
         assert session_store.session_settings(session_id) == before
         assert (
             controller.provider,
