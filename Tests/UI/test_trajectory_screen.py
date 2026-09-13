@@ -11,18 +11,28 @@ governance suite pattern (``test_schedules_ux_fixes.py``).
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import VerticalScroll
 from textual.widgets import DataTable, Input, Static
+from textual.widgets.data_table import RowDoesNotExist
 
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.Chat.trajectory import derive_trajectory
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+from tldw_chatbook.Chat.trajectory import (
+    TrajectoryRecord,
+    TrajectorySnapshot,
+    TrajectoryTurn,
+    derive_trajectory,
+)
 from tldw_chatbook.UI.Screens.trajectory_screen import (
     PAGE_SIZE,
     WORKER_THRESHOLD,
     TrajectoryScreen,
+    _number_logical_turns,
 )
 
 # ---------------------------------------------------------------------------
@@ -179,6 +189,66 @@ def many_records_snapshot(record_count: int):
     return derive_trajectory(messages, {}, [], [], [])
 
 
+def repeated_turn_segments_snapshot(
+    first_turn_id: str = "t1",
+) -> TrajectorySnapshot:
+    """One logical turn split around another turn: t1 -> t2 -> t1."""
+
+    snapshot = base_snapshot()
+    first, second = snapshot.turns
+    first_records = tuple(
+        replace(record, turn_id=first_turn_id) for record in first.records
+    )
+    return TrajectorySnapshot(
+        (
+            TrajectoryTurn(first_turn_id, first_records[:1]),
+            second,
+            TrajectoryTurn(first_turn_id, first_records[1:]),
+        )
+    )
+
+
+def repeated_turn_segments_with_live_tail() -> TrajectorySnapshot:
+    """Repeated colon-bearing turn followed by enough events to paginate it."""
+
+    snapshot = repeated_turn_segments_snapshot("thread:t1")
+    tail_records = tuple(
+        TrajectoryRecord(
+            seq=seq,
+            kind="assistant",
+            turn_id="tail",
+            message_id=f"tail-{seq}",
+            content_preview=f"tail event {seq}",
+            usage=None,
+            step_started_at=None,
+            first_token_at=None,
+            completed_at=None,
+            model=None,
+            provider=None,
+            payload=None,
+            variants=(),
+            depth=0,
+            event_id=f"tail:{seq}",
+        )
+        for seq in range(7, PAGE_SIZE + 8)
+    )
+    return TrajectorySnapshot(snapshot.turns + (TrajectoryTurn("tail", tail_records),))
+
+
+def repeated_turn_segments_with_colliding_event_id() -> TrajectorySnapshot:
+    """A record event ID collides with the generated second-segment header."""
+
+    snapshot = repeated_turn_segments_snapshot()
+    first, middle, last = snapshot.turns
+    middle_records = (
+        replace(middle.records[0], event_id="turn-segment:2:t1"),
+        *middle.records[1:],
+    )
+    return TrajectorySnapshot(
+        (first, TrajectoryTurn(middle.turn_id, middle_records), last)
+    )
+
+
 class _Harness(App[None]):
     """Minimal host so the screen can be pushed like the Console would."""
 
@@ -211,9 +281,39 @@ async def _wait_for_rows(pilot, table: DataTable, minimum: int) -> None:
     raise AssertionError(f"ledger never reached {minimum} rows (has {table.row_count})")
 
 
+def _record_key_for_seq(screen: TrajectoryScreen, seq: int) -> str:
+    record = next(
+        record for turn in screen._turns for record in turn.records if record.seq == seq
+    )
+    return screen._record_key(record)
+
+
+def _inspector_content(screen: TrajectoryScreen) -> Static:
+    return screen.query_one("#trajectory-inspector-content", Static)
+
+
 # ---------------------------------------------------------------------------
 # Ledger rendering
 # ---------------------------------------------------------------------------
+
+
+def test_number_logical_turns_uses_first_occurrence() -> None:
+    snapshot = repeated_turn_segments_snapshot()
+
+    assert _number_logical_turns(snapshot.turns) == {"t1": 1, "t2": 2}
+
+
+def test_visible_count_for_turn_header_resolves_segment_and_colon_id() -> None:
+    screen = TrajectoryScreen(repeated_turn_segments_with_live_tail())
+
+    assert screen._visible_count_for_turn_header("turn:thread:t1") == (
+        screen._total_records
+    )
+    assert screen._visible_count_for_turn_header("turn-segment:2:thread:t1") == (
+        screen._total_records - 3
+    )
+    assert screen._visible_count_for_turn_header("turn:missing") is None
+    assert screen._visible_count_for_turn_header("turn-segment:not-a-number:t1") is None
 
 
 @pytest.mark.asyncio
@@ -222,23 +322,123 @@ async def test_mount_renders_one_row_per_record_plus_turn_headers() -> None:
         table = screen.query_one("#trajectory-table", DataTable)
         # 6 records + 2 turn-header rows.
         assert table.row_count == 8
-        # TrajectoryRecord.seq is the row key (1-based ledger position).
+        # Stable event identity is the row key; seq stays display-only.
         for seq in range(1, 7):
-            assert table.get_row_index(str(seq)) is not None
+            assert table.get_row_index(_record_key_for_seq(screen, seq)) is not None
         # Tool rows are present and nested under the assistant step.
-        tool_row = table.get_row(str(3))
-        assert "tool_call" in str(tool_row[1])
+        tool_row = table.get_row(_record_key_for_seq(screen, 3))
+        assert "Tool call" in str(tool_row[1])
 
 
 @pytest.mark.asyncio
-async def test_title_bar_shows_screen_title_and_conversation_id() -> None:
+async def test_mount_renders_repeated_turn_segments_with_unique_headers() -> None:
+    async with _mounted(repeated_turn_segments_snapshot()) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+
+        assert table.row_count == 9
+        header_keys = list(screen._row_turn_ids)
+        assert len(header_keys) == 3
+        assert len(set(header_keys)) == 3
+        assert [screen._row_turn_ids[key] for key in header_keys] == ["t1", "t2", "t1"]
+        assert header_keys[0] == "turn:t1"
+        for seq in range(1, 7):
+            assert table.get_row_index(_record_key_for_seq(screen, seq)) is not None
+
+
+@pytest.mark.asyncio
+async def test_record_event_id_cannot_collide_with_segment_header() -> None:
+    async with _mounted(repeated_turn_segments_with_colliding_event_id()) as (
+        app,
+        pilot,
+        screen,
+    ):
+        table = screen.query_one("#trajectory-table", DataTable)
+        record_key = _record_key_for_seq(screen, 5)
+
+        assert table.row_count == 9
+        assert record_key == "record:turn-segment:2:t1"
+        assert table.get_row_index("turn-segment:2:t1") is not None
+        assert table.get_row_index(record_key) is not None
+
+        table.move_cursor(row=table.get_row_index(record_key))
+        await pilot.press("enter")
+        await pilot.pause()
+        inspector = str(_inspector_content(screen).render())
+        assert "event id turn-segment:2:t1" in inspector
+        assert "event id record:turn-segment:2:t1" not in inspector
+
+
+@pytest.mark.asyncio
+async def test_repeated_turn_segment_actions_use_logical_turn() -> None:
+    async with _mounted(repeated_turn_segments_snapshot()) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        t1_headers = [
+            key for key, turn_id in screen._row_turn_ids.items() if turn_id == "t1"
+        ]
+
+        assert len(t1_headers) == 2
+        for key in t1_headers:
+            row = table.get_row(key)
+            assert "Turn 1" in str(row[2])
+
+        table.move_cursor(row=table.get_row_index(t1_headers[1]))
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "Turn 1 · 4 events · expanded · id t1" in str(
+            _inspector_content(screen).render()
+        )
+
+        await pilot.press("t")
+        await pilot.pause()
+        assert table.row_count == 5
+        for key in t1_headers:
+            assert table.get_row_index(key) is not None
+        for seq in range(1, 5):
+            with pytest.raises(RowDoesNotExist):
+                table.get_row_index(_record_key_for_seq(screen, seq))
+
+
+@pytest.mark.asyncio
+async def test_live_snapshot_preserves_first_repeated_turn_header_cursor() -> None:
+    async with _mounted(base_snapshot()) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        table.move_cursor(row=table.get_row_index("turn:t1"))
+        await pilot.pause()
+
+        screen._apply_live_snapshot(repeated_turn_segments_snapshot())
+        await pilot.pause()
+
+        assert screen._cursor_key() == "turn:t1"
+
+
+@pytest.mark.asyncio
+async def test_live_snapshot_pages_selected_repeated_header_back_into_view() -> None:
+    initial = repeated_turn_segments_snapshot("thread:t1")
+    async with _mounted(initial) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        selected_key = "turn:thread:t1"
+        table.move_cursor(row=table.get_row_index(selected_key))
+        screen._follow = False
+        await pilot.pause()
+
+        screen._apply_live_snapshot(repeated_turn_segments_with_live_tail())
+        await pilot.pause()
+
+        assert screen._cursor_key() == selected_key
+        assert table.get_row_index(selected_key) is not None
+
+
+@pytest.mark.asyncio
+async def test_title_bar_shows_trace_and_screen_title_without_raw_id() -> None:
     async with _mounted(
         base_snapshot(), screen_title="My Conversation", conversation_id="conv-42"
     ) as (app, pilot, screen):
         title = screen.query_one("#trajectory-title", Static)
         text = str(title.render())
+        assert text.startswith("Trace")
         assert "My Conversation" in text
-        assert "conv-42" in text
+        assert "conv-42" not in text
 
 
 @pytest.mark.asyncio
@@ -252,8 +452,8 @@ async def test_t_toggles_collapse_of_focused_turn() -> None:
         assert table.row_count == 8 - 4
         # The turn's record rows are gone; the later turn's rows are intact.
         with pytest.raises(Exception):
-            table.get_row_index("1")
-        assert table.get_row_index("6") is not None
+            table.get_row_index(_record_key_for_seq(screen, 1))
+        assert table.get_row_index(_record_key_for_seq(screen, 6)) is not None
         # t again expands it.
         await pilot.press("t")
         await pilot.pause()
@@ -264,13 +464,13 @@ async def test_t_toggles_collapse_of_focused_turn() -> None:
 async def test_t_on_record_row_collapses_its_turn() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        row = table.get_row_index("6")  # a2, second turn
+        row = table.get_row_index(_record_key_for_seq(screen, 6))  # a2, second turn
         table.move_cursor(row=row)
         await pilot.pause()
         await pilot.press("t")
         await pilot.pause()
         assert table.row_count == 8 - 2  # only turn 2's records hidden
-        assert table.get_row_index("1") is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 1)) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +481,7 @@ async def test_t_on_record_row_collapses_its_turn() -> None:
 @pytest.mark.asyncio
 async def test_inspector_hidden_until_toggled() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
-        inspector = screen.query_one("#trajectory-inspector", Static)
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
         assert inspector.display is False
         await pilot.press("i")
         await pilot.pause()
@@ -295,14 +495,14 @@ async def test_inspector_hidden_until_toggled() -> None:
 async def test_enter_shows_inspector_with_usage_timing_model() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        row = table.get_row_index("2")  # assistant record with usage + timing
+        row = table.get_row_index(_record_key_for_seq(screen, 2))
         table.move_cursor(row=row)
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        inspector = screen.query_one("#trajectory-inspector", Static)
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
         assert inspector.display is True
-        text = str(inspector.render())
+        text = str(_inspector_content(screen).render())
         # Usage breakdown: uncached input / cache read / cache write / output.
         assert "uncached input 10" in text
         assert "cache read 5" in text
@@ -324,13 +524,13 @@ async def test_enter_shows_inspector_with_usage_timing_model() -> None:
 async def test_inspector_shows_full_tool_payload() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        row = table.get_row_index("3")  # tool_call record
+        row = table.get_row_index(_record_key_for_seq(screen, 3))
         table.move_cursor(row=row)
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        inspector = screen.query_one("#trajectory-inspector", Static)
-        text = str(inspector.render())
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
+        text = str(_inspector_content(screen).render())
         assert inspector.display is True
         assert "fs_read" in text
         assert "/tmp/report.txt" in text
@@ -342,13 +542,13 @@ async def test_inspector_shows_full_tool_payload() -> None:
 async def test_inspector_timing_blank_when_null() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        row = table.get_row_index("1")  # user record: no first token/completion
+        row = table.get_row_index(_record_key_for_seq(screen, 1))
         table.move_cursor(row=row)
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        inspector = screen.query_one("#trajectory-inspector", Static)
-        text = str(inspector.render())
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
+        text = str(_inspector_content(screen).render())
         assert inspector.display is True
         # Blanks for the missing timing facts; no fabricated durations.
         assert "—" in text
@@ -359,13 +559,12 @@ async def test_inspector_timing_blank_when_null() -> None:
 async def test_inspector_lists_turn_level_superseded_variants() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        row = table.get_row_index("6")  # a2, turn with a variant set
+        row = table.get_row_index(_record_key_for_seq(screen, 6))
         table.move_cursor(row=row)
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        inspector = screen.query_one("#trajectory-inspector", Static)
-        text = str(inspector.render())
+        text = str(_inspector_content(screen).render())
         # Variant contents attach at TURN level; the label must say so.
         assert "superseded variants (turn-level)" in text
         assert "old zebra draft one" in text
@@ -388,10 +587,10 @@ async def test_slash_focuses_search_and_filters_rows() -> None:
         await pilot.pause()
         # Only turn 2 survives: header + its 2 matching records.
         assert table.row_count == 3
-        assert table.get_row_index("5") is not None
-        assert table.get_row_index("6") is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 5)) is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 6)) is not None
         with pytest.raises(Exception):
-            table.get_row_index("1")
+            table.get_row_index(_record_key_for_seq(screen, 1))
         # Turn header row survives only because a child matched (it leads
         # the filtered ledger).
         assert table.get_row_index("turn:t2") == 0
@@ -423,12 +622,12 @@ async def test_search_matches_tool_args_and_result_payload() -> None:
         # Args text (beyond the preview's "fs_read -> RRR..." content).
         search.value = "report.txt"
         await pilot.pause()
-        assert table.get_row_index("3") is not None
-        assert table.get_row_index("4") is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 3)) is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 4)) is not None
         # Result text far past the 120-char preview cap.
         search.value = "R" * 200
         await pilot.pause()
-        assert table.get_row_index("3") is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 3)) is not None
 
 
 @pytest.mark.asyncio
@@ -552,7 +751,7 @@ def test_bindings_avoid_terminal_conventions() -> None:
 
 def test_bindings_use_single_letter_htop_style() -> None:
     bound = {binding.key for binding in TrajectoryScreen.BINDINGS}
-    assert {"t", "i", "e", "/"} <= bound
+    assert {"t", "i", "e", "/", "x"} <= bound
 
 
 def test_every_binding_has_an_implemented_action() -> None:
@@ -573,14 +772,32 @@ def test_footer_hints_match_bindings_exactly() -> None:
     )
 
 
+def test_live_trace_title_shows_frozen_and_future_capture_detail() -> None:
+    policy = SimpleNamespace(
+        enabled=True,
+        effective=SimpleNamespace(detail=CaptureDetail.FULL),
+        active_run_detail=CaptureDetail.SAFE,
+    )
+    bindings = SimpleNamespace(read=lambda: policy)
+    screen = TrajectoryScreen(base_snapshot(), capture_policy_bindings=bindings)
+
+    title = screen._title_text()
+    assert "Future exchange capture: Full · c Change" in title
+    assert "Active run frozen at Safe" in title
+
+
+def test_imported_trace_capture_policy_is_explicitly_unavailable() -> None:
+    screen = TrajectoryScreen(base_snapshot(), shared_trace=True)
+
+    assert "Capture policy unavailable for imported Trace" in screen._title_text()
+    assert screen.check_action("capture_policy", ()) is False
+
+
 def test_inspector_renders_feedback_payload_not_a_phantom_tool() -> None:
     """task-17169: the payload branch is tool-shaped (`tool {name}` / args /
     result). A user_feedback record has none of those keys, so it would
     render a bogus `tool —` line and hide the action, quote and comment that
     are the entire content of the record."""
-    from tldw_chatbook.Chat.trajectory import TrajectoryRecord
-    from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
-
     record = TrajectoryRecord(
         seq=3,
         kind="user_feedback",
@@ -602,9 +819,62 @@ def test_inspector_renders_feedback_payload_not_a_phantom_tool() -> None:
         depth=1,
     )
 
-    text = TrajectoryScreen._inspector_text_for_record(None, record)  # type: ignore[arg-type]
+    screen = TrajectoryScreen(TrajectorySnapshot((TrajectoryTurn("t1", (record,)),)))
+    text = screen._inspector_text_for_record(record)
 
     assert "tool" not in text
     assert "feedback request-changes" in text
     assert "quote the retry loop" in text
     assert "comment tighten error paths" in text
+
+
+def test_inspector_exposes_causal_privacy_and_source_metadata() -> None:
+    record = TrajectoryRecord(
+        seq=9,
+        kind="subagent_steer",
+        turn_id="turn-9",
+        message_id="message-9",
+        content_preview="Steer the reviewer",
+        usage=None,
+        step_started_at=None,
+        first_token_at=None,
+        completed_at=None,
+        model=None,
+        provider=None,
+        payload=None,
+        variants=(),
+        depth=1,
+        event_id="agent-step:run-9:2",
+        conversation_id="conversation-9",
+        source_seq=2,
+        label="Agent steered",
+        status="accepted",
+        actor_kind="subagent",
+        actor_id="agent-9",
+        run_id="run-9",
+        parent_event_id="spawn-9",
+        source_event_id="source-9",
+        replacement_event_id="replacement-9",
+        observed_at=1_755_165_650.0,
+        field_states={"payload": "redacted"},
+        sensitivity="restricted",
+    )
+
+    screen = TrajectoryScreen(
+        TrajectorySnapshot((TrajectoryTurn("turn-9", (record,)),))
+    )
+    text = screen._inspector_text_for_record(record)
+
+    for expected in (
+        "source sequence 2",
+        "status accepted",
+        "actor subagent agent-9",
+        "run run-9",
+        "parent event spawn-9",
+        "source event source-9",
+        "replacement event replacement-9",
+        "observed",
+        'field states {"payload": "redacted"}',
+        "sensitivity restricted",
+    ):
+        assert expected in text

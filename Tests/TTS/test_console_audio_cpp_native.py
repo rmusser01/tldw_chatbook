@@ -206,6 +206,9 @@ class _CapturingAdapter:
     async def ensure_ready(self) -> None:
         return
 
+    def admitted_outbound_endpoint(self) -> str:
+        return "http://127.0.0.1:8080"
+
     async def get_catalog(self, refresh: bool = False) -> TTSProviderCatalog:
         del refresh
         return TTSProviderCatalog(
@@ -483,8 +486,10 @@ class _DefaultService:
         *,
         text: str,
         voice_override: str | None = None,
+        response_format_override: str | None = None,
         progress_sink: object = None,
     ) -> _Response:
+        del response_format_override  # TASK-32013 seam; unused by this fake
         self.calls.append((text, voice_override, progress_sink))
         return self.response
 
@@ -701,9 +706,10 @@ def _sink_unavailable_by_default(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_console_audio_cpp_snapshot_uses_native_default_without_rewriting_ids() -> (
-    None
-):
+@pytest.mark.parametrize("voice", ["[Voice]", None])
+async def test_console_audio_cpp_snapshot_uses_native_default_without_rewriting_ids(
+    voice: str | None,
+) -> None:
     timeline: list[str] = []
     adapter = _CapturingAdapter(timeline)
     registry = TTSAdapterRegistry(
@@ -721,11 +727,14 @@ async def test_console_audio_cpp_snapshot_uses_native_default_without_rewriting_
         ),
         aliases={},
     )
+    preferences = _external_preferences()
+    preferences["app_tts"]["default_voice_mode"] = (
+        "exact" if voice is not None else "server_default"
+    )
+    preferences["app_tts"]["default_voice"] = voice or ""
     service = TTSService(
         registry,
-        preferences_snapshot=TTSPreferencesSnapshot.from_settings(
-            _external_preferences()
-        ),
+        preferences_snapshot=TTSPreferencesSnapshot.from_settings(preferences),
     )
     legacy_calls = 0
 
@@ -768,10 +777,15 @@ async def test_console_audio_cpp_snapshot_uses_native_default_without_rewriting_
     )
     artifact: Path | None = None
     try:
+        destination = await handler.resolve_console_speech_destination(None, None)
+        assert destination is not None
+        assert destination.sanitized_destination == "http://127.0.0.1:8080"
+        assert destination.charges_may_apply is False
         await handler.handle_tts_request(
             TTSMessageSpeechRequestEvent(
                 store.issue_tts_message_speech_snapshot(message.id),
                 store.validate_tts_message_speech_snapshot,
+                expected_destination_fingerprint=destination.fingerprint,
             )
         )
         await asyncio.wait_for(
@@ -791,7 +805,7 @@ async def test_console_audio_cpp_snapshot_uses_native_default_without_rewriting_
                 provider_id="audio_cpp",
                 model_id="<Opaque:Model>",
                 text="Character response",
-                voice="[Voice]",
+                voice=voice,
                 response_format="wav",
                 speed=1.0,
                 options={},

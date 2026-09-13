@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     ModelTurn,
     ToolCall,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
 )
@@ -62,7 +63,7 @@ def make_deps(turns, *, invoke=None, review=None, cancel=None, clock=None):
         invoke_tool=invoke or (lambda c: ToolResult(ok=True, content="42")),
         spawn=lambda task: ToolResult(ok=True, content="sub done"),
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=cancel or (lambda: False),
         clock=clock or (lambda: 0.0),
         review_tool_calls=review,
@@ -94,7 +95,7 @@ def test_loop_deps_review_tool_calls_defaults_to_none():
         invoke_tool=lambda c: ToolResult(ok=True),
         spawn=lambda t: ToolResult(ok=True),
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=lambda: False,
         clock=lambda: 0.0,
     )
@@ -102,6 +103,7 @@ def test_loop_deps_review_tool_calls_defaults_to_none():
     assert deps.prepare_tool_calls is None
     assert deps.project_instruction_payload_state is None
     assert deps.on_ephemeral_runtime_warning is None
+    assert deps.post_tool_call is None
 
 
 # --- hook receives the full batch before any dispatch ------------------
@@ -135,6 +137,40 @@ def test_hook_receives_full_batch_before_any_invoke():
     assert len(seen_batches) == 1
     assert [c.name for c in seen_batches[0]] == ["calculator", "echo"]
     assert invoked == ["calculator", "echo"]
+
+
+def test_idless_call_gets_unique_review_identity_away_from_tool_name():
+    calls = [
+        ToolCall(name="calculator", args={"v": 1}, call_id="calculator"),
+        ToolCall(name="calculator", args={"v": 2}, call_id=""),
+    ]
+    invoked = []
+
+    def review(batch):
+        assert [call.call_id for call in batch] == [
+            "calculator",
+            "turn-1-call-1",
+        ]
+        return {
+            "calculator": "Blocked: first call denied",
+            "turn-1-call-1": "proceed",
+        }
+
+    turns = [_native_turn(calls), ModelTurn(text="done")]
+    out = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "go"}],
+        [CALC],
+        make_deps(
+            turns,
+            invoke=lambda call: invoked.append(call.args["v"])
+            or ToolResult(ok=True, content="ok"),
+            review=review,
+        ),
+    )
+
+    assert out.status == RUN_DONE
+    assert invoked == [2]
 
 
 def test_hook_not_called_when_turn_has_no_tool_calls():
@@ -439,6 +475,7 @@ def _registry():
 
 def test_agent_service_threads_review_tool_calls_into_loop_deps(db):
     seen_batches = []
+    gated_batches = []
 
     # PR2a Task 5: an `AgentService`-wired hook takes `(batch, run_id)` --
     # the service binds ITS run id in, which is how the review hook knows
@@ -463,7 +500,13 @@ def test_agent_service_threads_review_tool_calls_into_loop_deps(db):
         ]
     )
     service = AgentService(
-        db=db, registry=_registry(), chat_call=chat, review_tool_calls=review
+        db=db,
+        registry=_registry(),
+        chat_call=chat,
+        review_tool_calls=review,
+        before_tool_dispatch=lambda batch, _pure: gated_batches.append(
+            [call.name for call in batch]
+        ),
     )
     _run_id, outcome = service.run_turn(
         conversation_id="c",
@@ -475,6 +518,7 @@ def test_agent_service_threads_review_tool_calls_into_loop_deps(db):
 
     assert outcome.status == RUN_DONE
     assert seen_batches == [["calculator", "get_current_datetime"]]
+    assert gated_batches == [["get_current_datetime"]]
     result_steps = {
         s.tool_name: s.result for s in outcome.steps if s.kind == "tool_result"
     }
@@ -574,3 +618,213 @@ def test_name_keyed_verdicts_still_apply_to_every_matching_call():
 
     assert out.status == RUN_DONE
     assert invoked == [], f"name-keyed deny leaked {invoked} through"
+
+
+# --- post_tool_call dep: run-hooks PostToolUse fire point ----------------
+
+
+def test_post_tool_call_dep_fires_only_on_dispatched_calls():
+    """Refused calls fire nothing; dispatched calls carry name/call_id/args/content.
+
+    The dep fires at the dispatch capture point (immediately after the
+    run-log tool_result record) ONLY for calls whose verdict was "proceed" --
+    a review refusal never reaches dispatch, so it never fires. The payload
+    carries the STILL-UNCAPPED content (the engine-side dep truncates to its
+    own budget; this content exceeds the 16k result budget to prove it).
+    """
+    calls = [
+        ToolCall(name="calculator", args={"v": 1}, call_id="idA"),
+        ToolCall(name="echo", args={"v": 2}, call_id="idB"),
+    ]
+    fired = []
+
+    def review(batch):
+        return {"calculator": "Blocked: not this one"}
+
+    full_result = "full result " * 1500  # 18k chars > the 16k budget cap
+
+    def invoke(call):
+        assert call.name == "echo", "a refused call must never dispatch"
+        return ToolResult(ok=True, content=full_result)
+
+    turns = [_native_turn(calls), ModelTurn(text="done")]
+    deps = make_deps(turns, invoke=invoke, review=review)
+    deps.post_tool_call = lambda *payload: fired.append(payload)
+    out = run_agent_loop(CFG, [{"role": "user", "content": "go"}], [CALC], deps)
+
+    assert out.status == RUN_DONE
+    assert len(fired) == 1, f"exactly one firing (the proceeded call): {fired}"
+    tool_name, call_id, args, content, ok = fired[0]
+    assert tool_name == "echo"
+    assert call_id == "idB"
+    assert args == {"v": 2}
+    assert content == full_result  # uncapped: budget truncation happens later
+    assert ok is True
+
+
+def test_post_tool_call_dep_absent_is_byte_identical():
+    """No dep wired: dispatch behavior unchanged (the no-dep production path)."""
+    calls = [ToolCall(name="echo", args={"v": 2}, call_id="idB")]
+    invoked = []
+
+    def invoke(call):
+        invoked.append(call.name)
+        return ToolResult(ok=True, content="ok")
+
+    turns = [_native_turn(calls), ModelTurn(text="done")]
+    out = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "go"}],
+        [CALC],
+        make_deps(turns, invoke=invoke),
+    )
+    assert out.status == RUN_DONE
+    assert invoked == ["echo"]
+    result_steps = [s.result for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps == ["ok"]
+
+
+def test_agent_service_threads_post_tool_call_into_loop_deps(db):
+    """The service ctor param reaches LoopDeps unchanged (one level up).
+
+    R20: the service-level dep takes a 6th arg -- the FIRING run's id --
+    which `_run_one` binds per run exactly the way it binds the review
+    hook's run id, so the engine's PostToolUse envelope can attribute a
+    fleet child's tool use to the child's own run.
+    """
+    from tldw_chatbook.Agents.agent_service import FirstRequestSchemaPlan
+
+    class PermitCalculator:
+        def check(self, tool, run_id):
+            assert tool.name == "calculator"
+            assert run_id
+            return None
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider(gate=PermitCalculator()))
+    fired = []
+    chat = ScriptedChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [native_call("calculator", {"expression": "2+2"}, "a")],
+            },
+            "done",
+        ]
+    )
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        post_tool_call=lambda *payload: fired.append(payload),
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=SVC_CFG,
+        api_endpoint="openai",
+        should_cancel=lambda: False,
+        # This test owns disclosure as well as permission: an unknown
+        # scripted model otherwise receives discovery-only schemas.
+        first_request_schema_plan=FirstRequestSchemaPlan(
+            active_schemas=(registry.load_schema("builtin:calculator"),),
+            runtime_schemas=(),
+            offer_find_load=False,
+            log_active=False,
+            system_prompt=SVC_CFG.system_prompt,
+        ),
+    )
+
+    assert outcome.status == RUN_DONE
+    assert len(fired) == 1, f"the dispatched call fired once: {fired}"
+    tool_name, call_id, args, content, ok, fired_run_id = fired[0]
+    assert tool_name == "calculator"
+    assert call_id == "a"
+    assert args == {"expression": "2+2"}
+    assert ok is True
+    assert json.loads(content)["result"] == 4
+    assert fired_run_id == run_id  # R20: the firing run's id, not None
+
+
+@pytest.mark.parametrize("preauthorized", [False, True])
+def test_deny_guard_covers_calls_without_permission_review(preauthorized):
+    """Restrictions run even for calls exempt from interactive approvals."""
+    call = ToolCall(name="calculator", args={}, call_id="c1")
+    invoked = []
+    reviewed = []
+    deps = make_deps(
+        [_native_turn([call]), ModelTurn(text="done")],
+        invoke=lambda c: invoked.append(c) or ToolResult(ok=True),
+        review=lambda calls: reviewed.extend(calls) or {},
+    )
+    deps.is_tool_call_preauthorized = lambda c: preauthorized
+    deps.guard_tool_calls = lambda calls: {calls[0].call_id: "hook: denied"}
+    result = run_agent_loop(CFG, [], [CALC], deps)
+    assert result.status == RUN_DONE
+    assert invoked == []
+    assert reviewed == []
+    assert any(s.result == "hook: denied" for s in result.steps if s.kind == STEP_TOOL_RESULT)
+
+
+def test_deny_guard_failure_cannot_allow_tool_dispatch():
+    deps = make_deps([_native_turn([ToolCall("calculator", {}, "c1")]), ModelTurn(text="done")])
+    invoked = []
+    deps.invoke_tool = lambda c: invoked.append(c) or ToolResult(ok=True)
+
+    def failed_guard(calls):
+        raise RuntimeError("guard failed")
+
+    deps.guard_tool_calls = failed_guard
+    run_agent_loop(CFG, [], [CALC], deps)
+    assert invoked == []
+
+
+def test_guard_cannot_override_permission_denial():
+    invoked = []
+    deps = make_deps(
+        [_native_turn([ToolCall("calculator", {}, "c1")]), ModelTurn(text="done")],
+        invoke=lambda c: invoked.append(c) or ToolResult(ok=True),
+        review=lambda calls: {"c1": "permission denied"},
+    )
+    deps.guard_tool_calls = lambda calls: {"c1": "proceed"}
+    result = run_agent_loop(CFG, [], [CALC], deps)
+    assert invoked == []
+    assert any(s.result == "permission denied" for s in result.steps if s.kind == STEP_TOOL_RESULT)
+
+
+def test_service_binds_deny_guard_to_firing_run(db):
+    guarded = []
+    chat = ScriptedChat([
+        {"content": None, "tool_calls": [native_call("calculator", {"expression": "2+2"}, "a")]},
+        "done",
+    ])
+
+    def guard(calls, run_id):
+        guarded.append(run_id)
+        return {calls[0].call_id: "hook: service denial"}
+
+    service = AgentService(db=db, registry=_registry(), chat_call=chat, guard_tool_calls=guard)
+    run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "go"}],
+        config=SVC_CFG, api_endpoint="openai", should_cancel=lambda: False,
+    )
+    assert guarded == [run_id]
+    assert any(s.result == "hook: service denial" for s in outcome.steps if s.kind == STEP_TOOL_RESULT)
+
+
+def test_guard_refusal_survives_permission_review_exception_for_sibling():
+    calls = [ToolCall("calculator", {"v": 1}, "a"), ToolCall("calculator", {"v": 2}, "b")]
+    invoked = []
+
+    def review(survivors):
+        assert [call.call_id for call in survivors] == ["b"]
+        raise RuntimeError("review unavailable")
+
+    deps = make_deps(
+        [_native_turn(calls), ModelTurn(text="done")], review=review,
+        invoke=lambda c: invoked.append(c.call_id) or ToolResult(ok=True),
+    )
+    deps.guard_tool_calls = lambda batch: {"a": "hook: denied"}
+    result = run_agent_loop(CFG, [], [CALC], deps)
+    assert "a" not in invoked
+    assert any(s.result == "hook: denied" for s in result.steps if s.kind == STEP_TOOL_RESULT)

@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+from dataclasses import FrozenInstanceError
+
+import pytest
+
+from tldw_chatbook.Research_Workspace.contracts import (
+    BoundedPageResult,
+    CapabilityUnavailableError,
+    QualifiedWorkspaceRef,
+    ResearchCapability,
+    ResearchSourcePreview,
+    ResearchSourcePage,
+    ResearchSourceSummary,
+    ResearchWorkspaceSummary,
+    SourceSelectionResult,
+    WorkspaceDataSource,
+    require_capability,
+)
+
+
+def test_attached_source_page_has_a_dedicated_exact_owner_selection_contract() -> None:
+    """A generic bounded page cannot truthfully own workspace-wide selection."""
+
+    desired = tuple(str(index) for index in range(1, 102))
+    page = ResearchSourcePage(items=(), limit=100, desired_source_ids=desired)
+
+    assert page.desired_source_ids == desired
+    with pytest.raises(ValueError, match="unique"):
+        ResearchSourcePage(
+            items=(), limit=100, desired_source_ids=("source-1", "source-1")
+        )
+
+
+def test_selection_result_keeps_exact_owner_ids_separate_from_bounded_rows() -> None:
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+    desired = tuple(str(index) for index in range(1, 102))
+
+    result = SourceSelectionResult(ref=ref, desired_source_ids=desired)
+
+    assert result.desired_source_ids == desired
+    assert result.sources == ()
+
+
+def test_selection_result_rejects_duplicate_owner_ids() -> None:
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+
+    with pytest.raises(ValueError, match="unique"):
+        SourceSelectionResult(ref=ref, desired_source_ids=("1", "1"))
+
+
+def test_selection_result_rejects_oversized_owner_identity() -> None:
+    ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER, "workspace-1", "profile-1"
+    )
+
+    with pytest.raises(ValueError, match="too long"):
+        SourceSelectionResult(ref=ref, desired_source_ids=("x" * 1025,))
+
+
+def test_null_preview_catalog_id_is_limited_to_unavailable_server_modes() -> None:
+    server_ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER, "workspace-1", "profile-1"
+    )
+    preview = ResearchSourcePreview(
+        ref=server_ref,
+        source_id="source-1",
+        catalog_item_id=None,
+        preview_mode="missing_media",
+    )
+
+    assert preview.catalog_item_id is None
+    with pytest.raises(ValueError, match="unavailable Server preview"):
+        ResearchSourcePreview(
+            ref=server_ref,
+            source_id="source-1",
+            catalog_item_id=None,
+            preview_mode="available",
+        )
+    with pytest.raises(ValueError, match="unavailable Server preview"):
+        ResearchSourcePreview(
+            ref=QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1"),
+            source_id="membership-1",
+            catalog_item_id=None,
+            preview_mode="missing_media",
+        )
+    with pytest.raises(ValueError, match="positive canonical"):
+        ResearchSourcePreview(
+            ref=server_ref,
+            source_id="source-1",
+            catalog_item_id="0",
+            preview_mode="missing_media",
+        )
+
+
+@pytest.mark.parametrize("workspace_id", ["", "   "])
+def test_qualified_workspace_ref_rejects_blank_workspace_ids(workspace_id: str) -> None:
+    with pytest.raises(ValueError, match="workspace_id"):
+        QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, workspace_id)
+
+
+def test_server_ref_requires_profile_identity() -> None:
+    with pytest.raises(ValueError, match="server_profile_id"):
+        QualifiedWorkspaceRef(WorkspaceDataSource.SERVER, "workspace-1")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("server_profile_id", "Bearer secret-value"),
+        ("principal_id", "sk-secret-value"),
+        ("principal_id", "api_key=secret-value"),
+    ],
+)
+def test_qualified_workspace_ref_rejects_secret_looking_identity_metadata(
+    field: str, value: str
+) -> None:
+    values = {
+        "data_source": WorkspaceDataSource.SERVER,
+        "workspace_id": "workspace-1",
+        "server_profile_id": "profile-1",
+        "principal_id": "principal-1",
+    }
+    values[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        QualifiedWorkspaceRef(**values)
+
+
+def test_local_ref_rejects_server_identity_metadata() -> None:
+    with pytest.raises(ValueError, match="Local workspace refs"):
+        QualifiedWorkspaceRef(
+            WorkspaceDataSource.LOCAL,
+            "workspace-1",
+            server_profile_id="profile-1",
+        )
+
+
+def test_normalized_rows_are_frozen_and_authority_qualified() -> None:
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+    workspace = ResearchWorkspaceSummary(ref=ref, name="Research")
+    source = ResearchSourceSummary(
+        ref=ref,
+        source_id="source-1",
+        catalog_item_id="catalog-1",
+        title="Paper",
+        source_type="pdf",
+    )
+
+    assert workspace.ref == ref
+    assert source.ref == ref
+    with pytest.raises(FrozenInstanceError):
+        workspace.name = "Changed"  # type: ignore[misc]
+
+
+def test_source_summary_requires_distinct_catalog_identity() -> None:
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+
+    with pytest.raises(TypeError, match="catalog_item_id"):
+        ResearchSourceSummary(  # type: ignore[call-arg]
+            ref=ref,
+            source_id="membership-1",
+            title="Paper",
+            source_type="pdf",
+        )
+
+
+def test_bounded_page_rejects_unbounded_limits() -> None:
+    with pytest.raises(ValueError, match="between 1 and 100"):
+        BoundedPageResult(items=(), limit=101)
+
+
+def test_bounded_page_rejects_more_rows_than_its_limit() -> None:
+    with pytest.raises(ValueError, match="more items than limit"):
+        BoundedPageResult(items=("one", "two"), limit=1)
+
+
+def test_unknown_capability_fails_closed_with_typed_exact_capability() -> None:
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        require_capability({}, "workspace.launch")
+
+    assert exc_info.value.capability == ResearchCapability(
+        available=False,
+        reason_code="unknown_capability",
+        user_message="This action is unavailable because its capability is unknown.",
+        owner="research_workspace",
+        recovery_action="Refresh capabilities or choose another action.",
+    )
+
+
+@pytest.mark.parametrize("available", ["false", 0, 1, None])
+def test_research_capability_rejects_non_boolean_availability(available: object) -> None:
+    with pytest.raises(TypeError, match="available must be bool"):
+        ResearchCapability(
+            available=available,  # type: ignore[arg-type]
+            reason_code="malformed",
+            user_message="Malformed capability.",
+            owner="server",
+        )

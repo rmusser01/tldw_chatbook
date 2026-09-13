@@ -27,7 +27,11 @@ from tldw_chatbook.Chat.trajectory_import import (
     load_trajectory_snapshot,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.Chat.test_trajectory_export import LONG_TOOL_RESULT, _seed_conversation
+from Tests.Chat.test_trajectory_export import (
+    LONG_TOOL_RESULT,
+    _seed_conversation,
+    _seed_library_activity,
+)
 
 
 @dataclass(frozen=True)
@@ -132,6 +136,24 @@ def test_import_legacy_conversation_without_sidecar(db, tmp_path) -> None:
     assert kinds == ["user", "assistant", "user", "assistant", "compaction"]
 
 
+def test_imported_library_activity_remains_inert_sidecar_data(db) -> None:
+    conversation_id = _seed_conversation(db)
+    _seed_library_activity(db, conversation_id)
+    document = build_trajectory_export(
+        db, conversation_id, include_payloads=True
+    )
+    assert any(
+        row["event_kind"] == "library_activity"
+        for row in document["trajectory_rows"]
+    )
+
+    snapshot = load_trajectory_snapshot(document)
+    kinds = [record.kind for turn in snapshot.turns for record in turn.records]
+
+    assert "library_activity" not in kinds
+    assert "note-secret-id" not in repr(snapshot)
+
+
 # ---------------------------------------------------------------------------
 # Malformed input -> actionable TrajectoryImportError
 # ---------------------------------------------------------------------------
@@ -171,6 +193,18 @@ def test_missing_section_is_rejected(db) -> None:
     del payload["messages"]
     with pytest.raises(TrajectoryImportError, match="'messages'"):
         load_trajectory_snapshot(payload)
+
+
+def test_import_rejects_reserved_thinking_via_shared_validator(db) -> None:
+    payload = build_trajectory_export(db, _seed_conversation(db))
+    payload["messages"][0]["thinking_blocks_json"] = "IMPORT-THINKING-CANARY"
+
+    with pytest.raises(
+        TrajectoryImportError, match="reserved thinking field"
+    ) as caught:
+        load_trajectory_snapshot(payload)
+
+    assert "IMPORT-THINKING-CANARY" not in str(caught.value)
 
 
 def test_json_array_top_level_is_rejected(tmp_path) -> None:

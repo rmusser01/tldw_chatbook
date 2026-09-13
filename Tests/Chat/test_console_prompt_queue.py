@@ -3,8 +3,9 @@ from __future__ import annotations
 import ast
 import inspect
 import threading
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.cells import cell_len
@@ -23,6 +24,7 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     QueuedPrompt,
     make_prompt_preview,
 )
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 
 
 class _DeterministicValues:
@@ -217,6 +219,83 @@ def test_edit_recomputes_only_one_preview_and_preserves_id_and_order(
     assert Text.from_markup(edited.snapshot.entries[0].preview).plain == (
         "edited [bold]private[/bold] text"
     )
+
+
+def test_edit_and_move_preserve_frozen_custody_inputs() -> None:
+    registry = ConsolePromptQueueRegistry()
+    _begin(registry)
+    configuration = SimpleNamespace(session_id="session-a")
+    request = ConsoleTurnCustodyRequest(
+        turn_id="queued-turn-a",
+        session_id="session-a",
+        draft="original",
+        configuration=configuration,
+        attachment_ids=(),
+    )
+    admitted = registry.admit(
+        "session-a",
+        text="original",
+        expected_revision=registry.snapshot("session-a").revision,
+        custody_request=request,
+    )
+    assert admitted.entry_id is not None
+
+    edited = registry.edit(
+        "session-a",
+        entry_id=admitted.entry_id,
+        text="edited",
+        expected_revision=admitted.snapshot.revision,
+    )
+    moved = registry.move(
+        "session-a",
+        entry_id=admitted.entry_id,
+        new_index=0,
+        expected_revision=edited.snapshot.revision,
+    )
+
+    stored = registry._states["session-a"].waiting[0].custody_request
+    assert moved.status is QueueMutationStatus.UNCHANGED
+    assert stored is not None
+    assert stored.turn_id == "queued-turn-a"
+    assert stored.draft == "edited"
+    assert stored.configuration is configuration
+    assert stored.attachment_ids == ()
+    assert stored.staged_evidence_launch is None
+
+
+@pytest.mark.parametrize(
+    "request_update",
+    [
+        {"session_id": "session-b"},
+        {"draft": "different"},
+        {"configuration": SimpleNamespace()},
+        {"attachment_ids": ("attachment-a",)},
+        {"staged_evidence_launch": object()},
+    ],
+)
+def test_admission_rejects_a_mismatched_or_rider_bearing_custody_request(
+    request_update: dict[str, object],
+) -> None:
+    registry = ConsolePromptQueueRegistry()
+    _begin(registry)
+    request = ConsoleTurnCustodyRequest(
+        turn_id="queued-turn-a",
+        session_id="session-a",
+        draft="exact",
+        configuration=SimpleNamespace(session_id="session-a"),
+    )
+    request = replace(request, **request_update)
+    before = registry.snapshot("session-a")
+
+    result = registry.admit(
+        "session-a",
+        text="exact",
+        expected_revision=before.revision,
+        custody_request=request,
+    )
+
+    assert result.status is QueueMutationStatus.INVALID
+    assert result.snapshot is before
 
 
 def test_full_text_read_materializes_only_selected_waiting_entry_and_redacts_repr(
@@ -862,9 +941,7 @@ def test_entry_identity_tracking_is_bounded_to_active_prompts() -> None:
 
     _begin(registry)
     _admit(registry, "fifth")
-    stopped = registry.shutdown(
-        expected_registry_revision=registry.registry_revision
-    )
+    stopped = registry.shutdown(expected_registry_revision=registry.registry_revision)
     assert stopped.status is QueueMutationStatus.APPLIED
     assert registry._active_entry_ids == set()
 

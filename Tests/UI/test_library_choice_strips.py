@@ -192,7 +192,10 @@ async def test_media_type_strip_opens_full_set_marks_active_and_picks():
         assert isinstance(chooser, OptionList)
         labels = {str(option.prompt) for option in chooser.options}
         # Full option set on screen, ✓ on the active option only.
-        assert labels == {"✓ All types", "audio", "video"}
+        # task-32210: the highlighted option also carries the house `█ `
+        # cursor (the screen opens the chooser on the active option, so
+        # "All types" wears both marks here).
+        assert labels == {"█ ✓ All types", "audio", "video"}
 
         chooser.highlighted = next(
             index
@@ -203,7 +206,7 @@ async def test_media_type_strip_opens_full_set_marks_active_and_picks():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_type_filter == "audio"
+        assert screen._media_state.type_filter == "audio"
         assert not screen.query("#library-media-type-choices")
         opener = screen.query_one("#library-media-type-filter", Button)
         assert str(opener.label) == "type: audio"
@@ -229,7 +232,7 @@ async def test_media_type_strip_escape_closes_without_change():
         await pilot.pause()
 
         assert not screen.query("#library-media-type-choices")
-        assert screen._library_media_type_filter is None
+        assert screen._media_state.type_filter is None
         # The opener regains focus so Escape round-trips for keyboard users.
         await _wait_for_condition(
             pilot,
@@ -276,7 +279,7 @@ async def test_media_type_strip_works_in_both_layouts():
             chooser.action_select()
             await pilot.pause()
             await pilot.pause()
-            assert screen._library_media_type_filter == "video"
+            assert screen._media_state.type_filter == "video"
             assert not screen.query("#library-media-type-choices")
 
 
@@ -311,16 +314,18 @@ async def test_media_type_strip_keyboard_only_path():
         )
         chooser = screen.query_one("#library-media-type-choices", OptionList)
         assert chooser.highlighted == 0
-        assert str(chooser.highlighted_option.prompt) == "✓ All types"
+        # task-32210: `█ ` rides in front of the `✓` active marker and
+        # follows the cursor, so an arrow key is visible in plain text.
+        assert str(chooser.highlighted_option.prompt) == "█ ✓ All types"
 
         await pilot.press("down")
         await pilot.pause()
-        assert str(chooser.highlighted_option.prompt) == "audio"
+        assert str(chooser.highlighted_option.prompt) == "█ audio"
         await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_type_filter == "audio"
+        assert screen._media_state.type_filter == "audio"
         assert not screen.query("#library-media-type-choices")
 
 
@@ -360,7 +365,9 @@ async def test_media_type_chooser_keeps_complete_facets_in_one_bounded_widget():
         assert len(chooser.children) == 0
         assert chooser.region.height <= 10
         assert getattr(chooser.get_option_at_index(0), "choice_value") is None
-        assert str(chooser.get_option_at_index(0).prompt) == "✓ All types"
+        # task-32210: index 0 is the highlighted option, so it wears `█ `;
+        # index 1 is not highlighted and stays bare.
+        assert str(chooser.get_option_at_index(0).prompt) == "█ ✓ All types"
         assert getattr(chooser.get_option_at_index(1), "choice_value") == "All"
         assert str(chooser.get_option_at_index(1).prompt) == "All"
         assert controller.applied_scope == applied_before
@@ -431,7 +438,8 @@ async def test_export_quality_strip_opens_picks_and_second_press_closes():
         screen = await _open_media_export(host, pilot)
 
         opener = screen.query_one("#library-export-quality", Button)
-        assert str(opener.label) == "quality: thumbnail"
+        # task-32353 AC#1: the form opens at full fidelity now, not "thumbnail".
+        assert str(opener.label) == "quality: original"
 
         opener.press()
         await _wait_for_selector(screen, pilot, "#library-export-quality-choices")
@@ -439,37 +447,37 @@ async def test_export_quality_strip_opens_picks_and_second_press_closes():
             str(button.label)
             for button in screen.query(".library-export-quality-choice")
         ]
-        assert labels == ["✓ thumbnail", "compressed", "original"]
+        assert labels == ["thumbnail", "compressed", "✓ original"]
 
         # Second press on the still-visible opener closes without change.
         screen.query_one("#library-export-quality", Button).press()
         await pilot.pause()
         await pilot.pause()
         assert not screen.query("#library-export-quality-choices")
-        assert screen._library_export_form.get("quality", "thumbnail") == "thumbnail"
+        assert screen._export_state.form.get("quality", "original") == "original"
 
         # Reopen and pick directly: value + helper line update, strip closes.
         screen.query_one("#library-export-quality", Button).press()
         await _wait_for_selector(screen, pilot, "#library-export-quality-choices")
-        original = next(
+        thumbnail = next(
             button
             for button in screen.query(".library-export-quality-choice")
-            if str(button.label) == "original"
+            if str(button.label) == "thumbnail"
         )
-        original.press()
+        thumbnail.press()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_export_form["quality"] == "original"
+        assert screen._export_state.form["quality"] == "thumbnail"
         assert not screen.query("#library-export-quality-choices")
         assert (
             str(screen.query_one("#library-export-quality", Button).label)
-            == "quality: original"
+            == "quality: thumbnail"
         )
         helper = str(
             screen.query_one("#library-export-quality-helper", Static).renderable
         )
-        assert "original" in helper.lower() or "full" in helper.lower()
+        assert "preview" in helper.lower()
 
 
 @pytest.mark.asyncio
@@ -526,7 +534,7 @@ async def test_skills_sort_strip_opens_and_applies():
         screen.query_one("#library-row-browse-skills").press()
         await _wait_for_selector(screen, pilot, "#library-skills-sort")
 
-        assert screen._library_skills_sort == "name"
+        assert screen._skills_state.sort == "name"
         opener = screen.query_one("#library-skills-sort", Button)
         assert str(opener.label) == "sort: Name"
 
@@ -542,7 +550,7 @@ async def test_skills_sort_strip_opens_and_applies():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_skills_sort == "status"
+        assert screen._skills_state.sort == "status"
         assert not screen.query("#library-skills-sort-choices")
         assert (
             str(screen.query_one("#library-skills-sort", Button).label)
@@ -569,8 +577,10 @@ def test_prompts_sort_choice_requests_exact_scope():
         applied_scope = PromptBrowseScope(sort_by=sort_by)
         return SimpleNamespace(
             # task-15790: production gained this in-flight guard; stale double.
-            _library_prompts_mutation_in_flight=False,
-            _library_prompts_sort_choices_visible=True,
+            _prompts_state=SimpleNamespace(
+                mutation_in_flight=False,
+                sort_choices_visible=True,
+            ),
             _library_prompt_browse_controller=SimpleNamespace(
                 scope=applied_scope,
                 visible_result=SimpleNamespace(scope=applied_scope),
@@ -589,7 +599,7 @@ def test_prompts_sort_choice_requests_exact_scope():
         button=SimpleNamespace(choice_value="name"),
     )
     LibraryScreen.handle_library_prompts_sort_choice(fake, event)
-    assert fake._library_prompts_sort_choices_visible is False
+    assert fake._prompts_state.sort_choices_visible is False
     assert len(requests) == 1
     scope, focus_identity = requests[0]
     assert (scope.sort_by, scope.sort_order, scope.page) == ("name", "asc", 1)
@@ -603,7 +613,7 @@ def test_prompts_sort_choice_requests_exact_scope():
         button=SimpleNamespace(choice_value="newest"),
     )
     LibraryScreen.handle_library_prompts_sort_choice(fake, event)
-    assert fake._library_prompts_sort_choices_visible is False
+    assert fake._prompts_state.sort_choices_visible is False
     assert requests == []
     assert refreshes == [True]
 

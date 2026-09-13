@@ -87,7 +87,18 @@ def _capture_names(authority, inventory):
     roots = {
         item.path.resolve(strict=True)
         for item in inventory.items
-        if item.path is not None and item.status in {"included", "included_directory"}
+        if item.path is not None
+        and (
+            item.status in {"included", "included_directory"}
+            # These exact unused trees need bounded control-file reads during
+            # maintained discovery. Hold their namespace without enrolling any
+            # scaffold as an included capture source.
+            or item.status == "unused"
+            and item.owner in {"research.paste_staging", "collections.archives"}
+            and item.metadata is not None
+            and item.metadata.kind == "directory"
+            and item.metadata.relative_path == ""
+        )
     }
     names = {UNBOUND_NAMESPACE}
     for root in sorted(roots, key=lambda path: (len(path.parts), str(path))):

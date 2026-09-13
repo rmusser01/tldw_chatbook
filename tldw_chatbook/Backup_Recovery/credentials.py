@@ -314,10 +314,15 @@ def _material(staging):
 
             installed = _installed_owner(CITATION_OWNER)
             with open_recovery_validation(
-                installed.owner_id, Path(staging) / record["file"], writable=False
-            ) as source:
+                installed.owner_id,
+                Path(staging) / record["file"],
+                writable=False,
+                with_restrictions=True,
+            ) as (source, restrictions):
                 if (
-                    _check(source, installed, installed.schema_policy())[0]
+                    _check(source, installed, installed.schema_policy(), restrictions)[
+                        0
+                    ]
                     or not source.execute(
                         "SELECT 1 FROM rag_identity_context WHERE fingerprint_key_id=?",
                         (record.get("username"),),
@@ -663,7 +668,12 @@ def _rewrite_database(staging, path, owner_id, *, export=None):
         open_recovery_validation,
     )
 
-    from .sqlite_validation import _check, _installed_owner, validate_candidate
+    from .sqlite_validation import (
+        _canvas_schema_access,
+        _check,
+        _installed_owner,
+        validate_candidate,
+    )
 
     installed = _installed_owner(owner_id)
     policy = installed.schema_policy()
@@ -675,9 +685,9 @@ def _rewrite_database(staging, path, owner_id, *, export=None):
     destination = staging / (".credential-" + uuid4().hex + ".sqlite")
     try:
         with open_recovery_validation(
-            installed.owner_id, path, writable=False
-        ) as source:
-            issues, version = _check(source, installed, policy)
+            installed.owner_id, path, writable=False, with_restrictions=True
+        ) as (source, restrictions):
+            issues, version = _check(source, installed, policy, restrictions)
             if issues:
                 raise ValueError("unsupported_credential_schema")
             if export is not None:
@@ -728,66 +738,73 @@ def _rewrite_database(staging, path, owner_id, *, export=None):
                 connect_private_sqlite("recovery.credentials", destination)
             ) as output:
                 output.execute("PRAGMA trusted_schema=OFF")
-                output.execute("BEGIN")
-                tables = [
-                    sql
-                    for sql in schema
-                    if sql.upper().startswith(("CREATE TABLE", "CREATE VIRTUAL TABLE"))
-                ]
-                for sql in tables:
-                    if (
-                        output.execute(
-                            "SELECT 1 FROM sqlite_schema WHERE sql=?", (sql,)
-                        ).fetchone()
-                        is None
-                    ):
-                        output.execute(sql)
-                layouts = {
-                    row[1]: (row[2], row[4])
-                    for row in source.execute("PRAGMA table_list")
-                }
-                names = [
-                    row[0]
-                    for row in source.execute(
-                        "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name='sqlite_sequence',name"
-                    )
-                ]
-
-                def quote(name):
-                    return '"' + name.replace('"', '""') + '"'
-
-                for name in names:
-                    kind, without_rowid = layouts[name]
-                    if kind == "virtual":
-                        continue
-                    columns = [
-                        row[1]
-                        for row in source.execute(f"PRAGMA table_xinfo({quote(name)})")
-                        if row[6] == 0
+                with _canvas_schema_access(output, schema):
+                    output.execute("BEGIN")
+                    tables = [
+                        sql
+                        for sql in schema
+                        if sql.upper().startswith(
+                            ("CREATE TABLE", "CREATE VIRTUAL TABLE")
+                        )
                     ]
-                    # Explicit rowid copy preserves external-content FTS and any
-                    # semantic hidden row identities. Do not blindly VACUUM.
-                    copied = columns if without_rowid else ["rowid", *columns]
-                    selectors = ",".join(quote(column) for column in copied)
-                    output.execute(f"DELETE FROM {quote(name)}")  # nosec B608 - exact validated installed catalog
-                    for row in source.execute(f"SELECT {selectors} FROM {quote(name)}"):  # nosec B608 - exact validated installed catalog
-                        values = tuple(
-                            _sanitize_column(value, rules[(name, column)])
-                            if (name, column) in rules
-                            else value
-                            for column, value in zip(copied, row)
+                    for sql in tables:
+                        if (
+                            output.execute(
+                                "SELECT 1 FROM sqlite_schema WHERE sql=?", (sql,)
+                            ).fetchone()
+                            is None
+                        ):
+                            output.execute(sql)
+                    layouts = {
+                        row[1]: (row[2], row[4])
+                        for row in source.execute("PRAGMA table_list")
+                    }
+                    names = [
+                        row[0]
+                        for row in source.execute(
+                            "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name='sqlite_sequence',name"
                         )
-                        output.execute(
-                            f"INSERT INTO {quote(name)} ({selectors}) VALUES ({','.join('?' for _ in values)})",  # nosec B608 - validated identifiers, bound row values
-                            values,
-                        )
-                for sql in schema:
-                    if sql not in tables:
-                        output.execute(sql)
-                output.execute(
-                    f"PRAGMA user_version={source.execute('PRAGMA user_version').fetchone()[0]}"
-                )
-                output.commit()
+                    ]
+
+                    def quote(name):
+                        return '"' + name.replace('"', '""') + '"'
+
+                    for name in names:
+                        kind, without_rowid = layouts[name]
+                        if kind == "virtual":
+                            continue
+                        columns = [
+                            row[1]
+                            for row in source.execute(
+                                f"PRAGMA table_xinfo({quote(name)})"
+                            )
+                            if row[6] == 0
+                        ]
+                        # Explicit rowid copy preserves external-content FTS and any
+                        # semantic hidden row identities. Do not blindly VACUUM.
+                        copied = columns if without_rowid else ["rowid", *columns]
+                        selectors = ",".join(quote(column) for column in copied)
+                        output.execute(f"DELETE FROM {quote(name)}")  # nosec B608 - exact validated installed catalog
+                        for row in source.execute(
+                            f"SELECT {selectors} FROM {quote(name)}"  # nosec B608 - exact validated installed catalog
+                        ):
+                            values = tuple(
+                                _sanitize_column(value, rules[(name, column)])
+                                if (name, column) in rules
+                                else value
+                                for column, value in zip(copied, row)
+                            )
+                            output.execute(
+                                f"INSERT INTO {quote(name)} ({selectors}) VALUES ({','.join('?' for _ in values)})",  # nosec B608 - validated identifiers, bound row values
+                                values,
+                            )
+                    for sql in schema:
+                        if sql not in tables:
+                            output.execute(sql)
+                    output.execute(
+                        f"PRAGMA user_version={source.execute('PRAGMA user_version').fetchone()[0]}"
+                    )
+                    output.commit()
         if validate_candidate(installed, destination, Event(), migrate=False):
             raise ValueError("credential_reconstruction_failed")
         _staged_path(staging, path)

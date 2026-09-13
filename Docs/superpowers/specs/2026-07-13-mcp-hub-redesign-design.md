@@ -108,7 +108,7 @@ Validation lint: warn when a secret-looking value appears in `args` (visible in 
 
 **Inspector (tool selected)**: description, parameter summary, server + transport, risk, last used / last error, "blocked by server" annotation when tldw_server's own policy denies a tool (a local Allow must not pretend it works). Actions: **Test Tool**, state setter, jump to Permissions.
 
-**Test Tool**: structured parameter form generated from the tool's JSON schema (string/number/bool/enum; raw-JSON fallback editor only for unrenderable schemas). Result in the inspector: status, duration, redacted output. Test runs are user-initiated management actions: testing an Off tool is allowed with explicit confirmation (once the permission store exists, Phase 4+), and every test is recorded in the execution log.
+**Test Tool**: structured parameter form generated from the tool's JSON schema (string/number/bool/enum; raw-JSON fallback editor only for unrenderable schemas). Result in the inspector: status, duration, redacted output. Test runs are user-initiated management actions. Configured Off and unresolved permission block; Ask is an explicit one-click **Approve & run once** action bound to the rendered tool definition and authority, then revalidated immediately before dispatch. Execution logging is best-effort and service-owned. This TASK-3605 clarification supersedes the earlier proposal to override Off after a second confirmation.
 
 **Empty state = diagnosis**: inspect readiness and show exactly one primary action — "No servers configured → Add server" / "web-search needs auth → Open credentials" / "Discovery not run → Refresh tools".
 

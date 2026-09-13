@@ -1,6 +1,6 @@
 ---
 id: TASK-15461
-title: Watchlists: one scoped rebuild per section or tree interaction
+title: 'Watchlists: one scoped rebuild per section or tree interaction'
 status: Done
 assignee:
   - '@claude'

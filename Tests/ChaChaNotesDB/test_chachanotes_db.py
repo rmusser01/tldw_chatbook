@@ -22,7 +22,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     InputError,
     ConflictError,
 )
-from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    chachanotes_db_at_version,
+    open_current_chachanotes_from_legacy,
+)
 
 
 #
@@ -272,7 +275,9 @@ class TestDBInitialization:
             ).fetchone()
             assert version_before["version"] == 17
 
-        migrated = CharactersRAGDB(db_path, client_id)
+        migrated = open_current_chachanotes_from_legacy(
+            db_path, client_id=client_id
+        )
         migrated_conn = migrated.get_connection()
 
         version_row = migrated_conn.execute(
@@ -297,21 +302,28 @@ class TestDBInitialization:
         conv_id = migrated.add_conversation(
             {"character_id": char_id, "title": "Migration check"}
         )
-        before_log_count = migrated_conn.execute(
-            "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
-            (conv_id,),
-        ).fetchone()["n"]
+        # task-19564 replaced the row-count proxy this used to assert. The
+        # v45 retention triggers drop superseded `sync_log` versions, so the
+        # total no longer grows by one -- but "the trigger fired, with the new
+        # column in its payload" is what the test is actually for, and the
+        # frontier row states that directly instead of by arithmetic.
         current = migrated.get_conversation_by_id(conv_id)
         migrated.update_conversation(
             conv_id,
             {"system_prompt": "Migrated prompt."},
             expected_version=current["version"],
         )
-        after_log_count = migrated_conn.execute(
-            "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
+        latest_entry = migrated_conn.execute(
+            "SELECT operation, version, payload FROM sync_log "
+            "WHERE entity = 'conversations' AND entity_id = ? "
+            "ORDER BY change_id DESC LIMIT 1",
             (conv_id,),
-        ).fetchone()["n"]
-        assert after_log_count == before_log_count + 1
+        ).fetchone()
+        assert latest_entry["operation"] == "update"
+        assert latest_entry["version"] == current["version"] + 1
+        assert (
+            json.loads(latest_entry["payload"])["system_prompt"] == "Migrated prompt."
+        )
         assert (
             migrated.get_conversation_by_id(conv_id)["system_prompt"]
             == "Migrated prompt."
@@ -733,6 +745,50 @@ class TestConversationsAndMessages:
         assert len(results) == 1
         assert results[0]["id"] == msg1_data["id"]
 
+    def test_search_messages_by_content_unscoped_excludes_deleted_conversations(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        """task-19567 A: the shape that is one caller away from a leak.
+
+        Soft-deleting a conversation leaves its messages at `deleted = 0`, and
+        this method filtered only `m.deleted = 0` without joining
+        `conversations` -- while its sibling `search_conversations_by_content`
+        filtered both. It was not exploitable at the time only because the one
+        live caller always passed a `conversation_id` obtained from that
+        already-filtered sibling. Called UNSCOPED, as any new caller would,
+        it returned the deleted conversation's messages.
+        """
+        needle = "UniqueDeletedConversationBodyOmega"
+        kept_conv = db_instance.add_conversation(
+            {"character_id": char_id, "title": "KeptConv"}
+        )
+        dropped_conv = db_instance.add_conversation(
+            {"character_id": char_id, "title": "DroppedConv"}
+        )
+        kept_message = db_instance.add_message(
+            {"conversation_id": kept_conv, "sender": "user", "content": needle}
+        )
+        db_instance.add_message(
+            {"conversation_id": dropped_conv, "sender": "user", "content": needle}
+        )
+        assert len(db_instance.search_messages_by_content(needle)) == 2
+
+        db_instance.soft_delete_conversation(dropped_conv, expected_version=1)
+
+        unscoped = db_instance.search_messages_by_content(needle)
+        assert [row["id"] for row in unscoped] == [kept_message]
+        # ... and it now agrees with the sibling it used to diverge from.
+        assert [
+            row["id"] for row in db_instance.search_conversations_by_content(needle)
+        ] == [kept_conv]
+        # Scoping to the deleted conversation must not reopen the hole.
+        assert (
+            db_instance.search_messages_by_content(
+                needle, conversation_id=dropped_conv
+            )
+            == []
+        )
+
     def test_update_message_usage_local_leaves_version_and_last_modified_untouched(
         self, db_instance: CharactersRAGDB, char_id
     ):
@@ -812,11 +868,10 @@ class TestGetAllConversationIds:
     """``get_all_conversation_ids`` -- the truncation-proof id source for
     Library chatbook export (see ``Library/library_export_scope.py``).
 
-    Mirrors the WHERE clause ``search_conversations_page`` builds for the
+    Built from the SAME filter ``search_conversations_page`` builds for the
     Library's conversations snapshot fetch (``ChatConversationService.
     list_conversations`` with ``scope_type='all'``, spanning global- and
-    workspace-scoped rows): ``client_id = ? AND deleted = 0``, but with no
-    page cap.
+    workspace-scoped rows and every client id), but with no page cap.
     """
 
     def test_returns_all_non_deleted_conversation_ids(
@@ -852,17 +907,26 @@ class TestGetAllConversationIds:
 
         assert set(ids) == {global_id, workspace_id}
 
-    def test_excludes_conversations_from_a_different_client_id(
+    def test_includes_conversations_from_a_different_client_id(
         self, db_instance: CharactersRAGDB
     ):
+        """task-32058: this used to assert the opposite, and that is the bug.
+
+        TASK-721 removed the ``client_id`` filter from the browse-everything
+        scope (rows written by server sync, a seed, or another install are
+        real conversations the Library lists), but ``get_all_conversation_ids``
+        kept its own hand-copied clause. The critique-8 live review then saw
+        the rail count "Conversations (6)" against an Export ▸ Everything
+        summary of "0 conversations". Both now resolve the same population.
+        """
         own_id = db_instance.add_conversation({"title": "Own conv"})
-        db_instance.add_conversation(
+        other_id = db_instance.add_conversation(
             {"title": "Other client conv", "client_id": "some-other-client"}
         )
 
         ids = db_instance.get_all_conversation_ids()
 
-        assert ids == [own_id]
+        assert set(ids) == {own_id, other_id}
 
     def test_returns_every_row_beyond_a_50_row_page_cap(
         self, db_instance: CharactersRAGDB
@@ -882,6 +946,30 @@ class TestGetAllConversationIds:
 
 
 class TestNotesAndKeywords:
+    def test_keyword_and_link_cursor_follow_caller_transaction(
+        self, db_instance: CharactersRAGDB
+    ):
+        note_id = db_instance.add_note("Cursor note", "content")
+        with pytest.raises(RuntimeError, match="rollback"):
+            with db_instance.transaction() as cursor:
+                keyword_id = db_instance.add_keyword("Cursor keyword", cursor=cursor)
+                db_instance.link_note_to_keyword(note_id, keyword_id, cursor=cursor)
+                raise RuntimeError("rollback")
+
+        assert db_instance.get_keyword_by_text("Cursor keyword") is None
+        assert db_instance.get_keywords_for_note(note_id) == []
+
+        with db_instance.transaction() as cursor:
+            keyword_id = db_instance.add_keyword("Cursor keyword", cursor=cursor)
+            assert db_instance.link_note_to_keyword(
+                note_id, keyword_id, cursor=cursor
+            )
+
+        assert db_instance.get_keyword_by_id(keyword_id)["keyword"] == "Cursor keyword"
+        assert [row["id"] for row in db_instance.get_keywords_for_note(note_id)] == [
+            keyword_id
+        ]
+
     def test_add_and_update_note(self, db_instance: CharactersRAGDB):
         note_id = db_instance.add_note("Original Title", "Original Content")
         assert isinstance(note_id, str)
@@ -972,6 +1060,28 @@ class TestKeywordCollections:
         names = {c["name"] for c in db_instance.list_keyword_collections()}
         assert "Coll To Delete" not in names
 
+    def test_collection_cursor_follows_caller_transaction_and_default_still_commits(
+        self, db_instance: CharactersRAGDB
+    ):
+        keyword_id = db_instance.add_keyword("Collection keyword")
+        with pytest.raises(RuntimeError, match="rollback"):
+            with db_instance.transaction() as cursor:
+                collection_id = db_instance.add_keyword_collection(
+                    "Rolled back collection", cursor=cursor
+                )
+                db_instance.link_collection_to_keyword(
+                    collection_id, keyword_id, cursor=cursor
+                )
+                raise RuntimeError("rollback")
+
+        assert db_instance.get_keyword_collection_by_name("Rolled back collection") is None
+
+        collection_id = db_instance.add_keyword_collection("Committed collection")
+        assert db_instance.link_collection_to_keyword(collection_id, keyword_id)
+        assert [row["id"] for row in db_instance.get_keywords_for_collection(collection_id)] == [
+            keyword_id
+        ]
+
 
 class TestGetAllNoteIds:
     """``get_all_note_ids`` -- the truncation-proof id source for Library
@@ -1011,6 +1121,85 @@ class TestGetAllNoteIds:
 
     def test_empty_db_returns_empty_list(self, db_instance: CharactersRAGDB):
         assert db_instance.get_all_note_ids() == []
+
+
+class TestListDeletedNotes:
+    """``list_deleted_notes`` -- the Library Notes Trash view's only read seam.
+
+    task-32144: the delete receipt was the sole safety net, so a dismissed
+    receipt made a soft-deleted note unreachable from the UI. Bounded page
+    plus the exact total in one transaction, newest deletion first.
+    """
+
+    def _soft_delete(self, db_instance: CharactersRAGDB, title: str) -> str:
+        note_id = db_instance.add_note(title, "body")
+        record = db_instance.get_note_by_id(note_id)
+        db_instance.soft_delete_note(note_id, expected_version=record["version"])
+        return note_id
+
+    def test_returns_only_deleted_notes_newest_first(
+        self, db_instance: CharactersRAGDB
+    ):
+        db_instance.add_note("Still here", "body")
+        first = self._soft_delete(db_instance, "Deleted first")
+        second = self._soft_delete(db_instance, "Deleted second")
+
+        page = db_instance.list_deleted_notes()
+
+        assert page["total"] == 2
+        assert [item["id"] for item in page["items"]] == [second, first]
+        assert page["items"][0]["title"] == "Deleted second"
+        # The tombstone's own version is what ``restore_note`` needs back.
+        assert page["items"][0]["version"] == 2
+
+    def test_page_is_bounded_while_the_total_stays_exact(
+        self, db_instance: CharactersRAGDB
+    ):
+        for index in range(3):
+            self._soft_delete(db_instance, f"Deleted {index}")
+
+        page = db_instance.list_deleted_notes(limit=2)
+
+        assert len(page["items"]) == 2
+        assert page["total"] == 3
+
+    def test_notes_deleted_in_the_same_millisecond_page_deterministically(
+        self, db_instance: CharactersRAGDB
+    ):
+        """A timestamp tie is broken by rowid, not by a random UUID.
+
+        `last_modified` has millisecond precision, so two deletions can share
+        one. Without a stable secondary key, LIMIT/OFFSET paging over the tie
+        can repeat or skip a row.
+        """
+        # Ids chosen so id-order and creation-order disagree: sorting the tie
+        # by the note id would put the older tombstone first.
+        first = db_instance.add_note("Deleted first", "body", "aaaa-older")
+        second = db_instance.add_note("Deleted second", "body", "zzzz-newer")
+        for note_id in (first, second):
+            record = db_instance.get_note_by_id(note_id)
+            db_instance.soft_delete_note(note_id, expected_version=record["version"])
+        with db_instance.transaction() as conn:
+            conn.execute(
+                "UPDATE notes SET last_modified = '2026-09-09T12:00:00.000Z'"
+                " WHERE deleted = 1"
+            )
+
+        page = db_instance.list_deleted_notes()
+
+        # rowid DESC: the later-created tombstone leads, deterministically.
+        assert [item["id"] for item in page["items"]] == [second, first]
+        assert db_instance.list_deleted_notes(limit=1)["items"][0]["id"] == second
+        assert (
+            db_instance.list_deleted_notes(limit=1, offset=1)["items"][0]["id"] == first
+        )
+
+    def test_no_deleted_notes_returns_an_empty_page(
+        self, db_instance: CharactersRAGDB
+    ):
+        db_instance.add_note("Still here", "body")
+
+        assert db_instance.list_deleted_notes() == {"items": [], "total": 0}
 
 
 class TestSyncLog:

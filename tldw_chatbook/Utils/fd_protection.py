@@ -8,6 +8,7 @@ to it (the ``closefd=False`` fix and the ``created_out``/``created_err``
 tracking fix, both task-641 round 3) had to land 3 times. It now lives here
 once; all four call sites import it from this module instead.
 """
+
 from __future__ import annotations
 
 import os
@@ -59,7 +60,7 @@ _fd_protection_lock = threading.Lock()
 
 
 @contextmanager
-def protect_file_descriptors():
+def protect_file_descriptors(*, timeout: float = -1):
     """Context manager to protect file descriptors during subprocess operations.
 
     This fixes the "bad value(s) in fds_to_keep" error on macOS when the
@@ -105,7 +106,12 @@ def protect_file_descriptors():
     (see ``_fd_protection_lock`` above) so two threads can never interleave
     their save/reassign/restore sequences against the shared global state.
     """
-    with _fd_protection_lock:
+    # Existing model-loading callers retain an unlimited wait. Interactive
+    # session startup can opt into a bounded wait without changing global state
+    # if another loader currently owns the guard.
+    if not _fd_protection_lock.acquire(timeout=timeout):
+        raise TimeoutError("fd_protection_busy")
+    try:
         # Save original file descriptors
         original_stdout = sys.stdout
         original_stderr = sys.stderr
@@ -199,3 +205,5 @@ def protect_file_descriptors():
 
             # Restore subprocess.Popen
             subprocess.Popen = original_popen
+    finally:
+        _fd_protection_lock.release()

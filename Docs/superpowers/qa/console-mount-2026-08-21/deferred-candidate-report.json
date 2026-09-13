@@ -1,0 +1,1666 @@
+{
+  "environment": {
+    "iterations_per_variant": 30,
+    "phase": "production",
+    "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+    "viewport": [
+      170,
+      48
+    ]
+  },
+  "samples": [
+    {
+      "enter_to_worker_ms": 22.232249844819307,
+      "first_interactive_ms": 856.3483748584986,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1250.1076250337064,
+      "full_ready_ms": 1250.0881659798324,
+      "iteration": 1,
+      "key_to_echo_ms": 137.19424977898598,
+      "outgoing_detached_ms": 1119.6881658397615,
+      "screen_unmount_handler_ms": 0.0017499551177024841,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.967792253941298,
+      "first_interactive_ms": 761.1697907559574,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1269.8271661065519,
+      "full_ready_ms": 1269.8022909462452,
+      "iteration": 1,
+      "key_to_echo_ms": 139.3012497574091,
+      "outgoing_detached_ms": 853.2672910951078,
+      "screen_unmount_handler_ms": 0.0017080456018447876,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 27.4766250513494,
+      "first_interactive_ms": 611.302999779582,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1307.2756249457598,
+      "full_ready_ms": 1307.247458025813,
+      "iteration": 2,
+      "key_to_echo_ms": 137.45687529444695,
+      "outgoing_detached_ms": 709.1610827483237,
+      "screen_unmount_handler_ms": 0.0018747523427009583,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.19320770725608,
+      "first_interactive_ms": 983.8427910581231,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1377.1819160319865,
+      "full_ready_ms": 1377.1634581498802,
+      "iteration": 2,
+      "key_to_echo_ms": 137.63483287766576,
+      "outgoing_detached_ms": 1245.4882911406457,
+      "screen_unmount_handler_ms": 0.0015827827155590057,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.07008297368884,
+      "first_interactive_ms": 983.7524169124663,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1384.3237501569092,
+      "full_ready_ms": 1384.3071670271456,
+      "iteration": 3,
+      "key_to_echo_ms": 116.31825007498264,
+      "outgoing_detached_ms": 1250.4091672599316,
+      "screen_unmount_handler_ms": 0.0015003606677055359,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.69412514194846,
+      "first_interactive_ms": 855.3141658194363,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1360.0085829384625,
+      "full_ready_ms": 1359.9834577180445,
+      "iteration": 3,
+      "key_to_echo_ms": 115.1748332194984,
+      "outgoing_detached_ms": 946.5063330717385,
+      "screen_unmount_handler_ms": 0.0015832483768463135,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.57049998641014,
+      "first_interactive_ms": 834.9124160595238,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1336.5967911668122,
+      "full_ready_ms": 1336.569166276604,
+      "iteration": 4,
+      "key_to_echo_ms": 133.9213326573372,
+      "outgoing_detached_ms": 925.6101660430431,
+      "screen_unmount_handler_ms": 0.0019157305359840393,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.683249924331903,
+      "first_interactive_ms": 760.1227909326553,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1196.60508306697,
+      "full_ready_ms": 1196.5786251239479,
+      "iteration": 4,
+      "key_to_echo_ms": 135.18204167485237,
+      "outgoing_detached_ms": 1022.0675831660628,
+      "screen_unmount_handler_ms": 0.00162515789270401,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.349875256419182,
+      "first_interactive_ms": 769.5252918638289,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1224.871709011495,
+      "full_ready_ms": 1224.8449167236686,
+      "iteration": 5,
+      "key_to_echo_ms": 142.73954182863235,
+      "outgoing_detached_ms": 1047.9131247848272,
+      "screen_unmount_handler_ms": 0.0021248124539852142,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.25262515619397,
+      "first_interactive_ms": 617.256292141974,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1133.7496251799166,
+      "full_ready_ms": 1133.7241251021624,
+      "iteration": 5,
+      "key_to_echo_ms": 136.4566250704229,
+      "outgoing_detached_ms": 709.9299998953938,
+      "screen_unmount_handler_ms": 0.0014998950064182281,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 25.41700005531311,
+      "first_interactive_ms": 643.0871672928333,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1207.7904171310365,
+      "full_ready_ms": 1207.7618753537536,
+      "iteration": 6,
+      "key_to_echo_ms": 122.96083336696029,
+      "outgoing_detached_ms": 742.5270420499146,
+      "screen_unmount_handler_ms": 0.0022086314857006073,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.450082771480083,
+      "first_interactive_ms": 762.6995421014726,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1157.3760830797255,
+      "full_ready_ms": 1157.3604582808912,
+      "iteration": 6,
+      "key_to_echo_ms": 429.1864577680826,
+      "outgoing_detached_ms": 1023.65304203704,
+      "screen_unmount_handler_ms": 0.001708976924419403,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.8193749897182,
+      "first_interactive_ms": 756.6306246444583,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1182.117040734738,
+      "full_ready_ms": 1182.0918750017881,
+      "iteration": 7,
+      "key_to_echo_ms": 439.08945797011256,
+      "outgoing_detached_ms": 1021.7864578589797,
+      "screen_unmount_handler_ms": 0.0034580007195472717,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.170999854803085,
+      "first_interactive_ms": 608.7455828674138,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1118.687457870692,
+      "full_ready_ms": 1118.6557081528008,
+      "iteration": 7,
+      "key_to_echo_ms": 142.54529122263193,
+      "outgoing_detached_ms": 701.2695418670774,
+      "screen_unmount_handler_ms": 0.001959037035703659,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.123459096997976,
+      "first_interactive_ms": 604.5060828328133,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1107.5896248221397,
+      "full_ready_ms": 1107.5541670434177,
+      "iteration": 8,
+      "key_to_echo_ms": 133.7652918882668,
+      "outgoing_detached_ms": 697.5029576569796,
+      "screen_unmount_handler_ms": 0.0021248124539852142,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.226542070508003,
+      "first_interactive_ms": 764.4086251966655,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1201.9234583713114,
+      "full_ready_ms": 1201.8999583087862,
+      "iteration": 8,
+      "key_to_echo_ms": 133.92254104837775,
+      "outgoing_detached_ms": 1032.7059160917997,
+      "screen_unmount_handler_ms": 0.0019581057131290436,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.338833961635828,
+      "first_interactive_ms": 756.5185418352485,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1193.1484169326723,
+      "full_ready_ms": 1193.1104171089828,
+      "iteration": 9,
+      "key_to_echo_ms": 118.07699967175722,
+      "outgoing_detached_ms": 1018.8131248578429,
+      "screen_unmount_handler_ms": 0.0014998950064182281,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.693665999919176,
+      "first_interactive_ms": 1007.7272076159716,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1506.6525829024613,
+      "full_ready_ms": 1506.6277077421546,
+      "iteration": 9,
+      "key_to_echo_ms": 135.83837542682886,
+      "outgoing_detached_ms": 1102.0326656289399,
+      "screen_unmount_handler_ms": 0.002457760274410248,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.8854996599257,
+      "first_interactive_ms": 998.4456659294665,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1537.6072912476957,
+      "full_ready_ms": 1537.5812500715256,
+      "iteration": 10,
+      "key_to_echo_ms": 141.1087908782065,
+      "outgoing_detached_ms": 1094.1955409944057,
+      "screen_unmount_handler_ms": 0.0018747523427009583,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.618125028908253,
+      "first_interactive_ms": 1160.8075420372188,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1596.072334330529,
+      "full_ready_ms": 1596.0428342223167,
+      "iteration": 10,
+      "key_to_echo_ms": 143.85375007987022,
+      "outgoing_detached_ms": 1422.7780420333147,
+      "screen_unmount_handler_ms": 0.002207700163125992,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.65949996560812,
+      "first_interactive_ms": 1161.739083006978,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1598.4872500412166,
+      "full_ready_ms": 1598.4614160843194,
+      "iteration": 11,
+      "key_to_echo_ms": 133.00604186952114,
+      "outgoing_detached_ms": 1425.6673329509795,
+      "screen_unmount_handler_ms": 0.0017918646335601807,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.43987501040101,
+      "first_interactive_ms": 630.9772497043014,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1145.723749883473,
+      "full_ready_ms": 1145.6987499259412,
+      "iteration": 11,
+      "key_to_echo_ms": 136.77754206582904,
+      "outgoing_detached_ms": 724.9138746410608,
+      "screen_unmount_handler_ms": 0.0020419247448444366,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.35691698640585,
+      "first_interactive_ms": 627.2096671164036,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1150.785292033106,
+      "full_ready_ms": 1150.753041729331,
+      "iteration": 12,
+      "key_to_echo_ms": 144.6049171499908,
+      "outgoing_detached_ms": 721.3321249000728,
+      "screen_unmount_handler_ms": 0.0017080456018447876,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.40279207378626,
+      "first_interactive_ms": 757.4622500687838,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1208.5337922908366,
+      "full_ready_ms": 1208.5092500783503,
+      "iteration": 12,
+      "key_to_echo_ms": 113.00395801663399,
+      "outgoing_detached_ms": 1031.8788341246545,
+      "screen_unmount_handler_ms": 0.001834239810705185,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.27620903775096,
+      "first_interactive_ms": 754.3022497557104,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1159.3365827575326,
+      "full_ready_ms": 1159.320707898587,
+      "iteration": 13,
+      "key_to_echo_ms": 141.79966691881418,
+      "outgoing_detached_ms": 1025.0272080302238,
+      "screen_unmount_handler_ms": 0.002040993422269821,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.064582746475935,
+      "first_interactive_ms": 1000.3592502325773,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1515.931542031467,
+      "full_ready_ms": 1515.9048330970109,
+      "iteration": 13,
+      "key_to_echo_ms": 115.12637510895729,
+      "outgoing_detached_ms": 1097.6095828227699,
+      "screen_unmount_handler_ms": 0.0017909333109855652,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.327792037278414,
+      "first_interactive_ms": 616.4883328601718,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1516.2140419706702,
+      "full_ready_ms": 1516.1858326755464,
+      "iteration": 14,
+      "key_to_echo_ms": 118.93445765599608,
+      "outgoing_detached_ms": 1094.6165826171637,
+      "screen_unmount_handler_ms": 0.0017080456018447876,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.675583742558956,
+      "first_interactive_ms": 762.7770421095192,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1686.9795001111925,
+      "full_ready_ms": 1686.9422080926597,
+      "iteration": 14,
+      "key_to_echo_ms": 137.7336666919291,
+      "outgoing_detached_ms": 1028.906292282045,
+      "screen_unmount_handler_ms": 0.002624932676553726,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.466834004968405,
+      "first_interactive_ms": 788.7722500599921,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1222.1745420247316,
+      "full_ready_ms": 1222.1526252105832,
+      "iteration": 15,
+      "key_to_echo_ms": 140.40129072964191,
+      "outgoing_detached_ms": 1080.5511251091957,
+      "screen_unmount_handler_ms": 0.00162515789270401,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 22.360458970069885,
+      "first_interactive_ms": 634.9616660736501,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1154.057000298053,
+      "full_ready_ms": 1154.0261660702527,
+      "iteration": 15,
+      "key_to_echo_ms": 142.47416611760855,
+      "outgoing_detached_ms": 726.7846250906587,
+      "screen_unmount_handler_ms": 0.0016246922314167023,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.82558411732316,
+      "first_interactive_ms": 1120.551791973412,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1620.8655000664294,
+      "full_ready_ms": 1620.8396251313388,
+      "iteration": 16,
+      "key_to_echo_ms": 133.96049989387393,
+      "outgoing_detached_ms": 1213.5597923770547,
+      "screen_unmount_handler_ms": 0.0015003606677055359,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.87629120796919,
+      "first_interactive_ms": 1195.850582793355,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1633.0811246298254,
+      "full_ready_ms": 1633.0479579046369,
+      "iteration": 16,
+      "key_to_echo_ms": 141.805374994874,
+      "outgoing_detached_ms": 1458.433915860951,
+      "screen_unmount_handler_ms": 0.0015408731997013092,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.259040873497725,
+      "first_interactive_ms": 773.3370838686824,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1620.5187500454485,
+      "full_ready_ms": 1620.4935000278056,
+      "iteration": 17,
+      "key_to_echo_ms": 117.86562483757734,
+      "outgoing_detached_ms": 1042.9176250472665,
+      "screen_unmount_handler_ms": 0.0017080456018447876,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.436708815395832,
+      "first_interactive_ms": 597.1787921153009,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1089.4213328137994,
+      "full_ready_ms": 1089.3959170207381,
+      "iteration": 17,
+      "key_to_echo_ms": 114.36679167672992,
+      "outgoing_detached_ms": 685.5754577554762,
+      "screen_unmount_handler_ms": 0.0013746321201324463,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 22.597250062972307,
+      "first_interactive_ms": 612.5361253507435,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1097.9716670699418,
+      "full_ready_ms": 1097.9462093673646,
+      "iteration": 18,
+      "key_to_echo_ms": 133.87712510302663,
+      "outgoing_detached_ms": 702.7685842476785,
+      "screen_unmount_handler_ms": 0.0017499551177024841,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.13016601651907,
+      "first_interactive_ms": 1265.9669169224799,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1703.8463749922812,
+      "full_ready_ms": 1703.8192083127797,
+      "iteration": 18,
+      "key_to_echo_ms": 115.43108290061355,
+      "outgoing_detached_ms": 1528.0211251229048,
+      "screen_unmount_handler_ms": 0.0015418045222759247,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 22.00366696342826,
+      "first_interactive_ms": 1276.7030000686646,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1733.0411253497005,
+      "full_ready_ms": 1733.0143339931965,
+      "iteration": 19,
+      "key_to_echo_ms": 141.89687464386225,
+      "outgoing_detached_ms": 1550.887584220618,
+      "screen_unmount_handler_ms": 0.00200001522898674,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.83129219338298,
+      "first_interactive_ms": 649.0283333696425,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1151.705208234489,
+      "full_ready_ms": 1151.6768750734627,
+      "iteration": 19,
+      "key_to_echo_ms": 138.89245875179768,
+      "outgoing_detached_ms": 742.4458754248917,
+      "screen_unmount_handler_ms": 0.0016670674085617065,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 22.641832940280437,
+      "first_interactive_ms": 624.423542059958,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1156.58887475729,
+      "full_ready_ms": 1156.5567920915782,
+      "iteration": 20,
+      "key_to_echo_ms": 117.23841587081552,
+      "outgoing_detached_ms": 722.1747501753271,
+      "screen_unmount_handler_ms": 0.00200001522898674,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.67187475040555,
+      "first_interactive_ms": 775.4042497836053,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1186.173084191978,
+      "full_ready_ms": 1186.1551250331104,
+      "iteration": 20,
+      "key_to_echo_ms": 134.9422917701304,
+      "outgoing_detached_ms": 1048.858833964914,
+      "screen_unmount_handler_ms": 0.001708976924419403,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.457665901631117,
+      "first_interactive_ms": 1150.2232500351965,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1590.5635003000498,
+      "full_ready_ms": 1590.5369580723345,
+      "iteration": 21,
+      "key_to_echo_ms": 142.45637506246567,
+      "outgoing_detached_ms": 1415.245792362839,
+      "screen_unmount_handler_ms": 0.0017504207789897919,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 19.737415947020054,
+      "first_interactive_ms": 595.5646247602999,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1536.4398751407862,
+      "full_ready_ms": 1536.4274997264147,
+      "iteration": 21,
+      "key_to_echo_ms": 131.50387490168214,
+      "outgoing_detached_ms": 687.8199158236384,
+      "screen_unmount_handler_ms": 0.0017499551177024841,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.286249928176403,
+      "first_interactive_ms": 611.1217089928687,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1114.0852496027946,
+      "full_ready_ms": 1114.073374774307,
+      "iteration": 22,
+      "key_to_echo_ms": 133.63654213026166,
+      "outgoing_detached_ms": 700.933416839689,
+      "screen_unmount_handler_ms": 0.0014170072972774506,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.781416911631823,
+      "first_interactive_ms": 758.1458748318255,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1161.8764167651534,
+      "full_ready_ms": 1161.8579998612404,
+      "iteration": 22,
+      "key_to_echo_ms": 140.86954109370708,
+      "outgoing_detached_ms": 1026.794749777764,
+      "screen_unmount_handler_ms": 0.0021248124539852142,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 22.09533378481865,
+      "first_interactive_ms": 784.9482921883464,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1188.6853342875838,
+      "full_ready_ms": 1188.6675423011184,
+      "iteration": 23,
+      "key_to_echo_ms": 143.00658414140344,
+      "outgoing_detached_ms": 1053.1199174001813,
+      "screen_unmount_handler_ms": 0.001875218003988266,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.84195800125599,
+      "first_interactive_ms": 1157.1810832247138,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1663.9677081257105,
+      "full_ready_ms": 1663.9407500624657,
+      "iteration": 23,
+      "key_to_echo_ms": 112.54641693085432,
+      "outgoing_detached_ms": 1250.6605423986912,
+      "screen_unmount_handler_ms": 0.001875218003988266,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.747791975736618,
+      "first_interactive_ms": 607.1285828948021,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1584.5245411619544,
+      "full_ready_ms": 1584.4964580610394,
+      "iteration": 24,
+      "key_to_echo_ms": 142.14637503027916,
+      "outgoing_detached_ms": 696.5782078914344,
+      "screen_unmount_handler_ms": 0.0019166618585586548,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.57545818388462,
+      "first_interactive_ms": 763.7424590066075,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1154.6790841966867,
+      "full_ready_ms": 1154.6605420298874,
+      "iteration": 24,
+      "key_to_echo_ms": 140.49975015223026,
+      "outgoing_detached_ms": 1023.8997917622328,
+      "screen_unmount_handler_ms": 0.0015827827155590057,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.519874688237906,
+      "first_interactive_ms": 774.3007922545075,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1211.1613750457764,
+      "full_ready_ms": 1211.1353753134608,
+      "iteration": 25,
+      "key_to_echo_ms": 144.04233312234282,
+      "outgoing_detached_ms": 1041.0392922349274,
+      "screen_unmount_handler_ms": 0.0017499551177024841,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.549375098198652,
+      "first_interactive_ms": 1155.4563329555094,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1689.8465831764042,
+      "full_ready_ms": 1689.8199170827866,
+      "iteration": 25,
+      "key_to_echo_ms": 135.81250002607703,
+      "outgoing_detached_ms": 1249.3751249276102,
+      "screen_unmount_handler_ms": 0.0016670674085617065,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.092541817575693,
+      "first_interactive_ms": 1075.8703332394361,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1575.8549580350518,
+      "full_ready_ms": 1575.8284172043204,
+      "iteration": 26,
+      "key_to_echo_ms": 135.06441609933972,
+      "outgoing_detached_ms": 1169.5351251401007,
+      "screen_unmount_handler_ms": 0.00162515789270401,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.682166796177626,
+      "first_interactive_ms": 723.7379169091582,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1678.2952500507236,
+      "full_ready_ms": 1678.2700419425964,
+      "iteration": 26,
+      "key_to_echo_ms": 114.70283288508654,
+      "outgoing_detached_ms": 988.6895841918886,
+      "screen_unmount_handler_ms": 0.001584179699420929,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.814375020563602,
+      "first_interactive_ms": 735.9486659988761,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1158.6928330361843,
+      "full_ready_ms": 1158.6675411090255,
+      "iteration": 27,
+      "key_to_echo_ms": 113.67866676300764,
+      "outgoing_detached_ms": 992.7358748391271,
+      "screen_unmount_handler_ms": 0.0013336539268493652,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 23.584625218063593,
+      "first_interactive_ms": 612.6567497849464,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1091.6870418004692,
+      "full_ready_ms": 1091.6761672124267,
+      "iteration": 27,
+      "key_to_echo_ms": 134.05516697093844,
+      "outgoing_detached_ms": 702.803208027035,
+      "screen_unmount_handler_ms": 0.0014579854905605316,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.90679155662656,
+      "first_interactive_ms": 1033.9922499842942,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1520.4848749563098,
+      "full_ready_ms": 1520.4727500677109,
+      "iteration": 28,
+      "key_to_echo_ms": 130.60204219073057,
+      "outgoing_detached_ms": 1120.9472082555294,
+      "screen_unmount_handler_ms": 0.0015832483768463135,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 22.614500019699335,
+      "first_interactive_ms": 1295.2896249480546,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1714.161374606192,
+      "full_ready_ms": 1714.141083881259,
+      "iteration": 28,
+      "key_to_echo_ms": 142.16533303260803,
+      "outgoing_detached_ms": 1578.6158749833703,
+      "screen_unmount_handler_ms": 0.0015832483768463135,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 21.306458860635757,
+      "first_interactive_ms": 1288.3247919380665,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1740.3999166563153,
+      "full_ready_ms": 1740.3716668486595,
+      "iteration": 29,
+      "key_to_echo_ms": 142.2137077897787,
+      "outgoing_detached_ms": 1563.3948338218033,
+      "screen_unmount_handler_ms": 0.0015418045222759247,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 22.09095936268568,
+      "first_interactive_ms": 655.2933328785002,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1208.452290855348,
+      "full_ready_ms": 1208.4264159202576,
+      "iteration": 29,
+      "key_to_echo_ms": 135.3497919626534,
+      "outgoing_detached_ms": 753.3851251937449,
+      "screen_unmount_handler_ms": 0.0016670674085617065,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 20.696249790489674,
+      "first_interactive_ms": 610.8432500623167,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 2,
+        "inspector_rail": 75,
+        "screen": 293,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1107.5300420634449,
+      "full_ready_ms": 1107.5106249190867,
+      "iteration": 30,
+      "key_to_echo_ms": 134.79466596618295,
+      "outgoing_detached_ms": 700.5117922089994,
+      "screen_unmount_handler_ms": 0.0017504207789897919,
+      "variant": "deferred",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    },
+    {
+      "enter_to_worker_ms": 26.4832922257483,
+      "first_interactive_ms": 1316.27875007689,
+      "first_interactive_widget_counts": {
+        "composer": 20,
+        "context_rail": 110,
+        "inspector_rail": 75,
+        "screen": 401,
+        "transcript": 56
+      },
+      "focus_restore_ms": 1736.4548747427762,
+      "full_ready_ms": 1736.4360829815269,
+      "iteration": 30,
+      "key_to_echo_ms": 160.71258299052715,
+      "outgoing_detached_ms": 1589.3849576823413,
+      "screen_unmount_handler_ms": 0.0018328428268432617,
+      "variant": "eager",
+      "widget_counts": {
+        "composer": 20,
+        "context_rail": 111,
+        "inspector_rail": 75,
+        "screen": 405,
+        "transcript": 59
+      }
+    }
+  ],
+  "summary": {
+    "deferred": {
+      "enter_to_worker_ms": {
+        "median": 21.212,
+        "p95": 25.417
+      },
+      "first_interactive_improvement_percent": 18.311,
+      "first_interactive_ms": {
+        "median": 632.969,
+        "p95": 1155.456
+      },
+      "first_interactive_widget_counts": {
+        "composer": {
+          "median": 20.0,
+          "p95": 20.0
+        },
+        "context_rail": {
+          "median": 2.0,
+          "p95": 2.0
+        },
+        "inspector_rail": {
+          "median": 75.0,
+          "p95": 75.0
+        },
+        "screen": {
+          "median": 293.0,
+          "p95": 293.0
+        },
+        "transcript": {
+          "median": 56.0,
+          "p95": 56.0
+        }
+      },
+      "focus_restore_ms": {
+        "median": 1239.14,
+        "p95": 1663.968
+      },
+      "full_ready_ms": {
+        "median": 1239.114,
+        "p95": 1663.941
+      },
+      "iterations": 30,
+      "key_to_echo_ms": {
+        "median": 134.425,
+        "p95": 142.545
+      },
+      "outgoing_detached_ms": {
+        "median": 734.615,
+        "p95": 1249.375
+      },
+      "screen_unmount_handler_ms": {
+        "median": 0.002,
+        "p95": 0.002
+      },
+      "widget_counts": {
+        "composer": {
+          "median": 20.0,
+          "p95": 20.0
+        },
+        "context_rail": {
+          "median": 111.0,
+          "p95": 111.0
+        },
+        "inspector_rail": {
+          "median": 75.0,
+          "p95": 75.0
+        },
+        "screen": {
+          "median": 405.0,
+          "p95": 405.0
+        },
+        "transcript": {
+          "median": 59.0,
+          "p95": 59.0
+        }
+      }
+    },
+    "eager": {
+      "enter_to_worker_ms": {
+        "median": 21.291,
+        "p95": 22.615
+      },
+      "first_interactive_ms": {
+        "median": 774.853,
+        "p95": 1295.29
+      },
+      "first_interactive_widget_counts": {
+        "composer": {
+          "median": 20.0,
+          "p95": 20.0
+        },
+        "context_rail": {
+          "median": 110.0,
+          "p95": 110.0
+        },
+        "inspector_rail": {
+          "median": 75.0,
+          "p95": 75.0
+        },
+        "screen": {
+          "median": 401.0,
+          "p95": 401.0
+        },
+        "transcript": {
+          "median": 56.0,
+          "p95": 56.0
+        }
+      },
+      "focus_restore_ms": {
+        "median": 1237.49,
+        "p95": 1736.455
+      },
+      "full_ready_ms": {
+        "median": 1237.467,
+        "p95": 1736.436
+      },
+      "iterations": 30,
+      "key_to_echo_ms": {
+        "median": 140.451,
+        "p95": 429.186
+      },
+      "outgoing_detached_ms": {
+        "median": 1048.386,
+        "p95": 1578.616
+      },
+      "screen_unmount_handler_ms": {
+        "median": 0.002,
+        "p95": 0.003
+      },
+      "widget_counts": {
+        "composer": {
+          "median": 20.0,
+          "p95": 20.0
+        },
+        "context_rail": {
+          "median": 111.0,
+          "p95": 111.0
+        },
+        "inspector_rail": {
+          "median": 75.0,
+          "p95": 75.0
+        },
+        "screen": {
+          "median": 405.0,
+          "p95": 405.0
+        },
+        "transcript": {
+          "median": 59.0,
+          "p95": 59.0
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,280 @@
+{
+  "kokoro-cuda-03": {
+    "observed_utc": "2026-09-12T16:46:41.311219+00:00",
+    "runtime_status": "runtime_passed_content_pending",
+    "runtime_exit": 0,
+    "cleanup_joined": true,
+    "final_resources": {
+      "generation_owner": 0,
+      "stream_owner": 0,
+      "file_owner": 0,
+      "active_tasks": 0,
+      "retained_io": 0,
+      "retained_cleanup": 0,
+      "admitted_operations": 0,
+      "responses": 0,
+      "leases": 0,
+      "backend_tasks": 0,
+      "native_calls": 0,
+      "player_processes": 0
+    },
+    "pids": [
+      1003504
+    ],
+    "live_pids": [],
+    "compute_processes_after": "",
+    "sink_inputs_after": [],
+    "routing_streams": {
+      "2995": {
+        "sink": 55,
+        "application": "ffplay",
+        "pid": "1003651",
+        "first_observed": 128470.966774311,
+        "observations": 35,
+        "last_observed": 128479.617882529
+      },
+      "3042": {
+        "sink": 55,
+        "application": "ALSA plug-in [python3.12]",
+        "pid": "1003504",
+        "first_observed": 128480.126225888,
+        "observations": 35,
+        "last_observed": 128488.781977077
+      },
+      "3089": {
+        "sink": 55,
+        "application": "ALSA plug-in [python3.12]",
+        "pid": "1003504",
+        "first_observed": 128489.290175886,
+        "observations": 35,
+        "last_observed": 128497.943516122
+      },
+      "3136": {
+        "sink": 55,
+        "application": "ALSA plug-in [python3.12]",
+        "pid": "1003504",
+        "first_observed": 128498.45213157,
+        "observations": 35,
+        "last_observed": 128507.105136156
+      },
+      "3183": {
+        "sink": 55,
+        "application": "ALSA plug-in [python3.12]",
+        "pid": "1003504",
+        "first_observed": 128507.614070325,
+        "observations": 35,
+        "last_observed": 128516.268590911
+      },
+      "3229": {
+        "sink": 55,
+        "application": "ALSA plug-in [python3.12]",
+        "pid": "1003504",
+        "first_observed": 128516.523399711,
+        "observations": 35,
+        "last_observed": 128525.176253221
+      }
+    },
+    "all_observed_streams_routed_to_headset": true,
+    "content": {
+      "content-medium.json": {
+        "status": "content_passed",
+        "passed": 6,
+        "total": 6
+      }
+    }
+  },
+  "kokoro-onnx-03": {
+    "observed_utc": "2026-09-12T16:46:41.336657+00:00",
+    "runtime_status": "runtime_passed_content_pending",
+    "runtime_exit": 0,
+    "cleanup_joined": true,
+    "final_resources": {
+      "generation_owner": 0,
+      "stream_owner": 0,
+      "file_owner": 0,
+      "active_tasks": 0,
+      "retained_io": 0,
+      "retained_cleanup": 0,
+      "admitted_operations": 0,
+      "responses": 0,
+      "leases": 0,
+      "backend_tasks": 0,
+      "native_calls": 0,
+      "player_processes": 0
+    },
+    "pids": [
+      1004620
+    ],
+    "live_pids": [],
+    "compute_processes_after": "",
+    "sink_inputs_after": [],
+    "routing_streams": {
+      "3307": {
+        "sink": 55,
+        "application": "ffplay",
+        "pid": "1004781",
+        "first_observed": 128550.055068317,
+        "observations": 33,
+        "last_observed": 128558.199118013
+      },
+      "3352": {
+        "sink": 55,
+        "application": "ffplay",
+        "pid": "1004991",
+        "first_observed": 128560.018573127,
+        "observations": 34,
+        "last_observed": 128568.418017093
+      },
+      "3407": {
+        "sink": 55,
+        "application": "ffplay",
+        "pid": "1005224",
+        "first_observed": 128572.621744594,
+        "observations": 34,
+        "last_observed": 128581.021140077
+      },
+      "3453": {
+        "sink": 55,
+        "application": "ffplay",
+        "pid": "1005428",
+        "first_observed": 128582.84708022,
+        "observations": 33,
+        "last_observed": 128590.990196265
+      },
+      "3498": {
+        "sink": 55,
+        "application": "ffplay",
+        "pid": "1005627",
+        "first_observed": 128592.81918772,
+        "observations": 34,
+        "last_observed": 128601.218107802
+      },
+      "3543": {
+        "sink": 55,
+        "application": "ffplay",
+        "pid": "1005826",
+        "first_observed": 128602.788294405,
+        "observations": 33,
+        "last_observed": 128610.929463633
+      }
+    },
+    "all_observed_streams_routed_to_headset": true,
+    "content": {
+      "content-medium.json": {
+        "status": "content_passed",
+        "passed": 6,
+        "total": 6
+      }
+    }
+  },
+  "chatterbox-cuda-05": {
+    "observed_utc": "2026-09-12T16:46:41.359513+00:00",
+    "runtime_status": "runtime_passed_content_pending",
+    "runtime_exit": 0,
+    "cleanup_joined": true,
+    "final_resources": {
+      "child_delivery_pending": 0,
+      "child_gpu_release_pending": 0,
+      "generation_owner": 0,
+      "stream_owner": 0,
+      "file_owner": 0,
+      "active_tasks": 0,
+      "retained_io": 0,
+      "retained_cleanup": 0,
+      "admitted_operations": 0,
+      "responses": 0,
+      "leases": 0,
+      "backend_tasks": 0,
+      "native_calls": 0,
+      "player_processes": 0,
+      "provider_processes": 0,
+      "provider_gpu_pids": 0
+    },
+    "pids": [
+      1006280,
+      1006478,
+      1006985
+    ],
+    "live_pids": [],
+    "compute_processes_after": "",
+    "sink_inputs_after": [],
+    "routing_streams": {
+      "3727": {
+        "sink": 55,
+        "application": "ffplay",
+        "pid": "1006757",
+        "first_observed": 128663.9329387,
+        "observations": 26,
+        "last_observed": 128670.295969412
+      },
+      "3771": {
+        "sink": 55,
+        "application": "ALSA plug-in [python3.12]",
+        "pid": "1006280",
+        "first_observed": 128672.328186896,
+        "observations": 25,
+        "last_observed": 128678.436097883
+      },
+      "3869": {
+        "sink": 55,
+        "application": "ALSA plug-in [python3.12]",
+        "pid": "1006280",
+        "first_observed": 128694.485323897,
+        "observations": 28,
+        "last_observed": 128701.356441808
+      },
+      "3916": {
+        "sink": 55,
+        "application": "ALSA plug-in [python3.12]",
+        "pid": "1006280",
+        "first_observed": 128703.642048805,
+        "observations": 27,
+        "last_observed": 128710.258581869
+      },
+      "3962": {
+        "sink": 55,
+        "application": "ALSA plug-in [python3.12]",
+        "pid": "1006280",
+        "first_observed": 128712.545506286,
+        "observations": 27,
+        "last_observed": 128719.163573633
+      },
+      "4007": {
+        "sink": 55,
+        "application": "ALSA plug-in [python3.12]",
+        "pid": "1006280",
+        "first_observed": 128721.193392363,
+        "observations": 24,
+        "last_observed": 128727.048468746
+      },
+      "4056": {
+        "sink": 55,
+        "application": "ffplay",
+        "pid": "1007662",
+        "first_observed": 128732.131353182,
+        "observations": 34,
+        "last_observed": 128740.531648773
+      }
+    },
+    "all_observed_streams_routed_to_headset": true,
+    "content": {
+      "content-medium.json": {
+        "status": "content_review_required",
+        "passed": 6,
+        "total": 7
+      },
+      "content-small.json": {
+        "status": "content_passed",
+        "passed": 7,
+        "total": 7
+      }
+    }
+  },
+  "host_after": {
+    "config_sha256": "a2adc30fd269e9e7a521f672801ee954332d009abf52800757857d4df8575e18",
+    "default_sink": "alsa_output.pci-0000_15_00.6.iec958-stereo",
+    "human_listening": "pending"
+  },
+  "installed_after_match": true,
+  "verified_python_file_count": 2350
+}

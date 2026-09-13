@@ -30,14 +30,20 @@ from textual.app import App
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Library.library_export_scope import ExportScope
+from tldw_chatbook.Library.library_export_scope import ExportPreview, ExportScope
 from tldw_chatbook.Library.library_export_state import (
     EXPORT_BUTTON_COUNTING_TOOLTIP,
+    EXPORT_RETRY_BUTTON_COPY,
     EXPORT_BUTTON_NO_DESTINATION_TOOLTIP,
     EXPORT_BUTTON_READY_TOOLTIP,
     build_library_export_form_state,
+    format_empty_export_error,
+    format_last_export_line,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_EXPORT
+from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+    LibraryExportController,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_export_canvas import LibraryExportCanvas
 
@@ -205,29 +211,52 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
         fake = SimpleNamespace(
             is_mounted=True,
             _library_selected_row_id=LIBRARY_ROW_INGEST_EXPORT,
-            _library_export_scope=scope,
-            _library_export_counts=None,
-            _library_export_counts_request_id=1,
             _library_snapshot_state_generation=0,
-            _library_export_form={
-                "name": "x",
-                "description": "",
-                "quality": "thumbnail",
-                "destination": "",
-                "destination_exists": False,
-            },
-            _library_export_running=False,
-            # task-15790: production gained this flag (library_screen
-            # __init__); the double predates it -- the stale-double class.
-            _library_export_quality_choices_visible=False,
-            _library_export_status="",
-            _library_export_error="",
-            _library_export_last_path="",
-            _library_export_last_at=None,
+            # Task 4 cleanup: the screen's `_library_export_<field>` shim
+            # is gone -- `_apply_library_export_counts`'s body now reads
+            # `self._export_state.<field>`, so this fake's export fields
+            # nest under one `_export_state` SimpleNamespace instead of a
+            # flat `_library_export_*` kwarg list (recipe §11's "unbound
+            # fake-self" retarget precedent).
+            _export_state=SimpleNamespace(
+                scope=scope,
+                # task-32353: the counts worker's sibling preview read.
+                preview=ExportPreview(),
+                counts=None,
+                counts_request_id=1,
+                form={
+                    "name": "x",
+                    "description": "",
+                    "quality": "thumbnail",
+                    "destination": "",
+                    "destination_exists": False,
+                },
+                running=False,
+                # task-15790: production gained this flag (library_screen
+                # __init__); the double predates it -- the stale-double class.
+                quality_choices_visible=False,
+                status="",
+                error="",
+                last_path="",
+                last_at=None,
+                last_items=None,
+                last_bytes=None,
+            ),
             query_one=pilot.app.query_one,
+            query=pilot.app.query,
         )
         fake._library_entry_route_key = lambda: (LIBRARY_ROW_INGEST_EXPORT,)
         fake._library_entry_reconcile_is_current = lambda *_args: True
+        # task-32055: the canvas state now renders the structural wait's own
+        # line while an export runs, and the completion path clears the wait.
+        fake._library_structural_waits = {}
+        fake._library_export_status_line = (
+            lambda: LibraryScreen._library_export_status_line(fake)
+        )
+        fake._library_structural_wait_for = (
+            lambda owner: LibraryScreen._library_structural_wait_for(fake, owner)
+        )
+        fake._end_library_structural_wait = lambda owner: None
         fake._build_library_export_state = (
             lambda: LibraryScreen._build_library_export_state(fake)
         )
@@ -248,7 +277,7 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
     """task-2858 AC#3 (LIB-12): the run-completion in-place patcher must
     render the freshly-set receipt AND re-enable the button with its
     ready tooltip, mirroring how ``_apply_library_export_success`` sets
-    ``_library_export_last_path``/``_last_at`` just before this runs.
+    ``_export_state.last_path``/``.last_at`` just before this runs.
     """
     scope = ExportScope(kind="everything")
     initial_state = build_library_export_form_state(
@@ -270,25 +299,46 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
         fake = SimpleNamespace(
             is_mounted=True,
             _library_selected_row_id=LIBRARY_ROW_INGEST_EXPORT,
-            _library_export_scope=scope,
-            _library_export_counts={"media": 1, "conversations": 0, "notes": 0},
-            _library_export_form={
-                "name": "x",
-                "description": "",
-                "quality": "thumbnail",
-                "destination": "/tmp/out.zip",
-                "destination_exists": False,
-            },
-            _library_export_running=False,
-            # task-15790: production gained this flag (library_screen
-            # __init__); the double predates it -- the stale-double class.
-            _library_export_quality_choices_visible=False,
-            _library_export_status="",
-            _library_export_error="",
-            _library_export_last_path="/tmp/out.zip",
-            _library_export_last_at=1000.0,
+            # Task 4 cleanup: see the sibling fake above -- the export
+            # fields nest under `_export_state` now that the screen's flat
+            # `_library_export_<field>` shim is gone.
+            _export_state=SimpleNamespace(
+                scope=scope,
+                # task-32353: the counts worker's sibling preview read.
+                preview=ExportPreview(),
+                counts={"media": 1, "conversations": 0, "notes": 0},
+                form={
+                    "name": "x",
+                    "description": "",
+                    "quality": "thumbnail",
+                    "destination": "/tmp/out.zip",
+                    "destination_exists": False,
+                },
+                running=False,
+                # task-15790: production gained this flag (library_screen
+                # __init__); the double predates it -- the stale-double class.
+                quality_choices_visible=False,
+                status="",
+                error="",
+                last_path="/tmp/out.zip",
+                last_at=1000.0,
+                # task-32232 AC#4: the receipt's facts come from the
+                # WRITTEN archive (manifest content_items + size on disk),
+                # recorded by the completion handler before this patch runs.
+                last_items=2,
+                last_bytes=3072,
+            ),
             query_one=pilot.app.query_one,
+            query=pilot.app.query,
         )
+        fake._library_structural_waits = {}
+        fake._library_export_status_line = (
+            lambda: LibraryScreen._library_export_status_line(fake)
+        )
+        fake._library_structural_wait_for = (
+            lambda owner: LibraryScreen._library_structural_wait_for(fake, owner)
+        )
+        fake._end_library_structural_wait = lambda owner: None
         fake._build_library_export_state = (
             lambda: LibraryScreen._build_library_export_state(fake)
         )
@@ -297,7 +347,9 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
 
         last_line = pilot.app.query_one("#library-export-last-line", Static)
         assert last_line.display is True
-        assert "Last export: /tmp/out.zip" in str(last_line.render())
+        assert "✓ exported · 2 items · 3 KB · /tmp/out.zip" in str(
+            last_line.render()
+        )
         button = pilot.app.query_one("#library-export-submit", Button)
         assert button.disabled is False
         assert button.tooltip == EXPORT_BUTTON_READY_TOOLTIP
@@ -315,17 +367,17 @@ def test_reset_library_export_transient_state_preserves_the_receipt():
 
     app = _build_test_app()
     screen = LibraryScreen(app)
-    screen._library_export_last_path = "/tmp/prior.zip"
-    screen._library_export_last_at = 12345.0
-    screen._library_export_form["name"] = "edited but about to be reset"
+    screen._export_state.last_path = "/tmp/prior.zip"
+    screen._export_state.last_at = 12345.0
+    screen._export_state.form["name"] = "edited but about to be reset"
 
     screen._reset_library_export_transient_state()
 
-    assert screen._library_export_last_path == "/tmp/prior.zip"
-    assert screen._library_export_last_at == 12345.0
+    assert screen._export_state.last_path == "/tmp/prior.zip"
+    assert screen._export_state.last_at == 12345.0
     # Proof the reset genuinely ran (form fields DID reset) -- otherwise
     # the receipt fields surviving would be trivially true.
-    assert screen._library_export_form["name"] != "edited but about to be reset"
+    assert screen._export_state.form["name"] != "edited but about to be reset"
 
 
 def test_build_library_export_state_includes_receipt_after_reset():
@@ -335,8 +387,8 @@ def test_build_library_export_state_includes_receipt_after_reset():
 
     app = _build_test_app()
     screen = LibraryScreen(app)
-    screen._library_export_last_path = "/tmp/prior.zip"
-    screen._library_export_last_at = 12345.0
+    screen._export_state.last_path = "/tmp/prior.zip"
+    screen._export_state.last_at = 12345.0
     screen._reset_library_export_transient_state()
 
     state = screen._build_library_export_state()
@@ -367,16 +419,16 @@ def test_save_state_and_restore_state_round_trip_the_receipt():
 
     app = _build_test_app()
     screen = LibraryScreen(app)
-    screen._library_export_last_path = "/tmp/prior.zip"
-    screen._library_export_last_at = 12345.0
+    screen._export_state.last_path = "/tmp/prior.zip"
+    screen._export_state.last_at = 12345.0
 
     saved = screen.save_state()
 
     restored = LibraryScreen(app)
     restored.restore_state(saved)
 
-    assert restored._library_export_last_path == "/tmp/prior.zip"
-    assert restored._library_export_last_at == 12345.0
+    assert restored._export_state.last_path == "/tmp/prior.zip"
+    assert restored._export_state.last_at == 12345.0
 
 
 def test_restore_state_degrades_gracefully_with_no_prior_receipt():
@@ -390,5 +442,143 @@ def test_restore_state_degrades_gracefully_with_no_prior_receipt():
     restored = LibraryScreen(app)
     restored.restore_state(saved)
 
-    assert restored._library_export_last_path == ""
-    assert restored._library_export_last_at is None
+    assert restored._export_state.last_path == ""
+    assert restored._export_state.last_at is None
+
+
+# --- Failed run: the same button says it is the Retry (task-32232 AC#3) ------
+
+
+@pytest.mark.asyncio
+async def test_submit_button_offers_retry_after_a_failed_run():
+    """task-32232 AC#3: a failure line on the canvas means the run can be
+    re-attempted -- the Export button relabels itself as the Retry rather
+    than leaving the user to re-press "Export bundle (.zip)" on faith."""
+    state = _state(error_line=format_empty_export_error(2))
+    assert state.export_enabled is True  # the retry is genuinely available
+
+    app = _Host(state)
+    async with app.run_test() as pilot:
+        button = pilot.app.query_one("#library-export-submit", Button)
+        assert str(button.label) == EXPORT_RETRY_BUTTON_COPY
+        assert button.disabled is False
+        error_line = pilot.app.query_one("#library-export-error-line", Static)
+        assert error_line.display is True
+        assert "✗ export produced no content · 2 items were selected" in str(
+            error_line.render()
+        )
+
+
+def test_restore_state_rejects_impossible_receipt_counts():
+    """PR #2568 review: a foreign/corrupted saved-state dict must not
+    restore impossible artifact facts (a negative item count or byte size),
+    which would render an impossible receipt AND be persisted again by the
+    next ``save_state``. Invalid values degrade to the path-only receipt."""
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    restored = LibraryScreen(app)
+    restored.restore_state(
+        {
+            "library_export_last_path": "/tmp/prior.zip",
+            "library_export_last_at": 12345.0,
+            "library_export_last_items": -3,
+            "library_export_last_bytes": -1024,
+        }
+    )
+
+    assert restored._export_state.last_path == "/tmp/prior.zip"
+    assert restored._export_state.last_items is None
+    assert restored._export_state.last_bytes is None
+    # Nothing impossible is re-persisted, and the receipt falls back to the
+    # path-only line rather than claiming "-3 items".
+    saved = restored.save_state()
+    assert saved["library_export_last_items"] is None
+    assert saved["library_export_last_bytes"] is None
+    assert format_last_export_line(
+        restored._export_state.last_path,
+        restored._export_state.last_at,
+        now=12345.0,
+        item_count=restored._export_state.last_items,
+        size_bytes=restored._export_state.last_bytes,
+    ) == "Last export: /tmp/prior.zip · just now"
+
+
+def test_receipt_copy_is_singular_for_one_item():
+    """A one-item export reads "1 item", and a one-item failed selection
+    reads "1 item was selected" -- the receipts never say "1 items"."""
+    assert (
+        format_last_export_line("/tmp/one.zip", 0.0, now=0.0, item_count=1, size_bytes=2048)
+        == "✓ exported · 1 item · 2 KB · /tmp/one.zip"
+    )
+    assert (
+        format_empty_export_error(1)
+        == "✗ export produced no content · 1 item was selected"
+    )
+    assert (
+        format_empty_export_error(2)
+        == "✗ export produced no content · 2 items were selected"
+    )
+
+
+# --- task-32251 AC#3: a refused destination reports at the control ----------
+
+
+@pytest.mark.asyncio
+async def test_a_refused_destination_reports_on_the_destination_line():
+    """Not a toast three rows up and already gone: the row under the button."""
+    reason = "Can't save there: The folder /nope does not exist."
+    state = _state(destination="", destination_error=reason)
+
+    app = _Host(state)
+    async with app.run_test() as pilot:
+        line = pilot.app.query_one("#library-export-destination-line", Static)
+        assert str(line.renderable) == reason
+        button = pilot.app.query_one("#library-export-destination", Button)
+        assert line.region.y - (button.region.y + button.region.height) <= 1
+
+
+def test_choosing_an_unwritable_destination_refuses_it_with_a_reason(tmp_path):
+    """The controller half: nothing is accepted, and the reason is kept.
+
+    Live shape (task-32251): the pre-filled path field produced
+    ``.../Library export 2026-09-10.zip/private/tmp/.../notes-bundle.zip``
+    and the form showed it as the chosen destination.
+    """
+    form: dict[str, object] = {}
+    refreshed: list[bool] = []
+    fake = SimpleNamespace(
+        _library_export_form=form,
+        refresh=lambda **kwargs: refreshed.append(True),
+    )
+    fake._refuse_library_export_destination = (
+        lambda reason: LibraryExportController._refuse_library_export_destination(
+            fake, reason
+        )
+    )
+
+    LibraryExportController._apply_library_export_destination(
+        fake,
+        tmp_path / "Library export.zip" / "private" / "notes-bundle",
+    )
+
+    assert form["destination"] == ""
+    assert form["destination_exists"] is False
+    assert str(form["destination_error"]).startswith("Can't save there:")
+    assert "does not exist" in str(form["destination_error"])
+    assert refreshed
+
+
+def test_choosing_a_writable_destination_clears_any_previous_reason(tmp_path):
+    form: dict[str, object] = {"destination_error": "Can't save there: stale."}
+    fake = SimpleNamespace(
+        _library_export_form=form,
+        refresh=lambda **kwargs: None,
+    )
+
+    LibraryExportController._apply_library_export_destination(
+        fake, tmp_path / "bundle"
+    )
+
+    assert form["destination"] == str(tmp_path / "bundle.zip")
+    assert form["destination_error"] == ""

@@ -410,6 +410,24 @@ class _CapturingAdapter(FakeAdapter):
         return await super().synthesize(request, progress_sink)
 
 
+class _MismatchingFormatAdapter(_CapturingAdapter):
+    def __init__(self, *, declared_format: str, returned_format: str) -> None:
+        super().__init__(
+            "openai",
+            models=(_model("tts-model", formats=(declared_format,)),),
+        )
+        self.returned_format = returned_format
+
+    async def synthesize(
+        self,
+        request: TTSRequest,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
+        response = await super().synthesize(request, progress_sink)
+        response.audio_format = self.returned_format
+        return response
+
+
 class _CloneCapturingAdapter(_CapturingAdapter):
     def __init__(self) -> None:
         super().__init__("audio_cpp", models=(_model("clone-model"),))
@@ -552,17 +570,136 @@ def _canonical_clone_reference() -> CanonicalTTSCloneReference:
     )
 
 
-def _model(model_id: str) -> TTSModelInfo:
+def _model(
+    model_id: str,
+    *,
+    formats: tuple[str, ...] = ("wav",),
+) -> TTSModelInfo:
     return TTSModelInfo(
         model_id=model_id,
         display_name=model_id,
         family="tts",
         upstream_mode="offline",
-        formats=("wav",),
+        formats=formats,
         voices=(),
         supports_speed=False,
         omit_voice_uses_server_default=True,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("declared_formats", "expected_format"),
+    (
+        (("wav", "pcm"), "pcm"),
+        (("wav",), "wav"),
+    ),
+)
+async def test_hands_free_synthesis_prefers_pcm_then_declared_wav(
+    declared_formats: tuple[str, ...],
+    expected_format: str,
+) -> None:
+    adapter = _CapturingAdapter(
+        "openai",
+        models=(_model("tts-model", formats=declared_formats),),
+    )
+    service, _registry = _native_service(
+        adapter,
+        _snapshot(
+            provider_id="openai",
+            model_id="tts-model",
+            voice_mode="exact",
+            voice_id="default",
+            response_format="mp3",
+        ),
+    )
+    response: TTSAudioResponse | None = None
+    try:
+        response = await service.synthesize_hands_free(text="Hands-free phrase")
+
+        assert response.audio_format == expected_format
+        assert [request.response_format for request in adapter.requests] == [
+            expected_format
+        ]
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_hands_free_override_fails_recoverably_without_pcm_or_wav() -> None:
+    from tldw_chatbook.TTS.request_admission import (
+        TTSHandsFreeAudioUnavailableError,
+    )
+
+    adapter = _CapturingAdapter(
+        "openai",
+        models=(_model("tts-model", formats=("mp3",)),),
+    )
+    service, _registry = _native_service(
+        adapter,
+        _snapshot(
+            provider_id="openai",
+            model_id="tts-model",
+            voice_mode="exact",
+            voice_id="default",
+            response_format="mp3",
+        ),
+    )
+    try:
+        with pytest.raises(TTSHandsFreeAudioUnavailableError) as captured:
+            await service._request_admission.synthesize_effective(
+                text="Text generation remains available",
+                response_format_override="prefer_pcm",
+            )
+
+        assert captured.value.recoverable is True
+        assert adapter.requests == []
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("declared_format", "returned_format"),
+    (("pcm", "wav"), ("wav", "pcm")),
+)
+async def test_hands_free_rejects_and_closes_a_mismatched_response_format(
+    declared_format: str,
+    returned_format: str,
+) -> None:
+    from tldw_chatbook.TTS.request_admission import (
+        TTSHandsFreeAudioUnavailableError,
+    )
+
+    adapter = _MismatchingFormatAdapter(
+        declared_format=declared_format,
+        returned_format=returned_format,
+    )
+    service, _registry = _native_service(
+        adapter,
+        _snapshot(
+            provider_id="openai",
+            model_id="tts-model",
+            voice_mode="exact",
+            voice_id="default",
+            response_format="mp3",
+        ),
+    )
+    try:
+        with pytest.raises(TTSHandsFreeAudioUnavailableError):
+            await service.synthesize_hands_free(text="Hands-free phrase")
+
+        assert [request.response_format for request in adapter.requests] == [
+            declared_format
+        ]
+        assert adapter.response_close_calls == 1
+    finally:
+        await service.close()
+        await service.wait_closed()
 
 
 def _snapshot(
@@ -1372,7 +1509,10 @@ async def test_clone_dependency_collaborator_failure_is_bounded() -> None:
             )
             current = error.__traceback__
             while current is not None:
-                if current.tb_frame.f_globals.get("__name__") == generation_module.__name__:
+                if (
+                    current.tb_frame.f_globals.get("__name__")
+                    == generation_module.__name__
+                ):
                     product_traceback_locals.extend(
                         repr(value) for value in current.tb_frame.f_locals.values()
                     )

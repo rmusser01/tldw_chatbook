@@ -29,6 +29,7 @@ from __future__ import annotations
 from tldw_chatbook.Utils.fts5_match_forms import (
     build_prefix_match_expression,
     fts5_query_tokens,
+    quote_fts5_token,
 )
 
 # Terms shorter than this are never expanded (articles, initials, "as", ...).
@@ -40,8 +41,13 @@ _ES_PLURAL_ENDINGS = ("s", "x", "z", "ch", "sh")
 
 
 def _quote_fts_term(term: str) -> str:
-    """Return `term` as a literal FTS5 string (embedded quotes doubled)."""
-    return '"' + term.replace('"', '""') + '"'
+    """Return `term` as a literal FTS5 string (embedded quotes doubled).
+
+    A thin alias over `Utils.fts5_match_forms.quote_fts5_token`, the ONE
+    implementation of this escape (TASK-19558). Kept as a module-local name
+    because this module's docstrings and tests refer to it by that name.
+    """
+    return quote_fts5_token(term)
 
 
 def expand_keyword_term(term: str) -> tuple[str, ...]:

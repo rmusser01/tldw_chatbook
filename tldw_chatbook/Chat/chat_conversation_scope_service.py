@@ -196,6 +196,71 @@ class ChatConversationScopeService:
             return await asyncio.to_thread(list_conversations_fn, **kwargs)
         return await self._maybe_await(list_conversations_fn(**kwargs))
 
+    async def _local_archive_call(
+        self, method: str, action: str, mode: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != "local":
+            raise ValueError(
+                "Conversation archive and transcript review are local-only."
+            )
+        self._enforce_policy(self._action_id(action, normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        function = getattr(service, method)
+        if not inspect.iscoroutinefunction(function) and not self._is_memory_backed(
+            service
+        ):
+            return await asyncio.to_thread(function, *args, **kwargs)
+        return await self._maybe_await(function(*args, **kwargs))
+
+    async def set_conversations_archived(
+        self,
+        conversation_ids: list[str],
+        *,
+        archived: bool,
+        expected_versions: Mapping[str, int],
+        mode: str = "local",
+    ) -> dict[str, Any]:
+        """Change local lifecycle off-loop; return only actual changed versions."""
+        return await self._local_archive_call(
+            "set_conversations_archived",
+            "update",
+            mode,
+            conversation_ids,
+            archived=archived,
+            expected_versions=expected_versions,
+        )
+
+    async def get_conversation_archive_states(
+        self,
+        conversation_ids: list[str],
+        *,
+        mode: str = "local",
+    ) -> dict[str, bool]:
+        """Read local archive states in bounded batches off the UI loop."""
+        return await self._local_archive_call(
+            "get_conversation_archive_states",
+            "detail",
+            mode,
+            conversation_ids,
+        )
+
+    async def get_library_conversation_messages(
+        self,
+        conversation_id: str,
+        *,
+        mode: str = "local",
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        """Read bounded original transcript text, including archived chats."""
+        return await self._local_archive_call(
+            "get_library_conversation_messages",
+            "detail",
+            mode,
+            conversation_id,
+            **kwargs,
+        )
+
     async def get_library_user_content_evidence(
         self, *, mode: str = "local"
     ) -> LibraryContentEvidence:
@@ -206,6 +271,7 @@ class ChatConversationScopeService:
             scope_type="all" if normalized_mode == "local" else "global",
             limit=1,
             offset=0,
+            **({"archive_scope": "all"} if normalized_mode == "local" else {}),
         )
         if not isinstance(payload, Mapping):
             return LibraryContentEvidence.UNKNOWN
@@ -322,11 +388,28 @@ class ChatConversationScopeService:
                 service_kwargs["root_offset"] = service_kwargs.pop("offset")
             if "max_depth" in service_kwargs and "depth_cap" not in service_kwargs:
                 service_kwargs["depth_cap"] = service_kwargs.pop("max_depth")
-        return await self._maybe_await(
-            self._service_for_mode(normalized_mode).get_conversation_tree(
-                conversation_id, **service_kwargs
-            )
-        )
+        service = self._service_for_mode(normalized_mode)
+        reader = service.get_conversation_tree
+        if (
+            normalized_mode == "local"
+            and not inspect.iscoroutinefunction(reader)
+            and not self._is_memory_backed(service)
+        ):
+
+            def read_local_tree():
+                try:
+                    return reader(conversation_id, **service_kwargs)
+                finally:
+                    close = getattr(
+                        getattr(service, "db", None), "close_connection", None
+                    )
+                    if callable(close):
+                        close()
+
+            result = await asyncio.to_thread(read_local_tree)
+            self._enforce_policy(self._action_id("detail", normalized_mode))
+            return await self._maybe_await(result)
+        return await self._maybe_await(reader(conversation_id, **service_kwargs))
 
     async def get_messages_with_context(
         self,

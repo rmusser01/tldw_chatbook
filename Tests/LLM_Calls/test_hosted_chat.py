@@ -41,6 +41,8 @@ from tldw_chatbook.Utils.sensitive_llm_logging import sensitive_llm_request
 
 
 class _FinishPolicy:
+    reasoning_disposition = "ignored"
+
     def validate_finish(
         self,
         *,
@@ -214,7 +216,7 @@ def _track_transport_sessions(
         sessions.append(session)
         return session
 
-    monkeypatch.setattr(hosted_chat.requests, "Session", create_session)
+    monkeypatch.setattr(hosted_chat, "create_default_session", create_session)
     return sessions
 
 

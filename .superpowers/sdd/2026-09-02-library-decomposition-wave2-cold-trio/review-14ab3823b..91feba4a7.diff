@@ -1,0 +1,96 @@
+# Review package: 14ab3823b..91feba4a7
+
+## Commits
+91feba4a7 docs(library): correct the task-6 sweep-triage record (fix round 1)
+
+## Files changed
+ backlog/docs/library-decomposition-recipe.md | 42 +++++++++++++++++++++++++++-
+ 1 file changed, 41 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/backlog/docs/library-decomposition-recipe.md b/backlog/docs/library-decomposition-recipe.md
+index 8b63601e6..ff09143ba 100644
+--- a/backlog/docs/library-decomposition-recipe.md
++++ b/backlog/docs/library-decomposition-recipe.md
+@@ -413,21 +413,42 @@ rediscover the same red from scratch.
+   names (vs the export/collections-state series' own 2-and-9-ish norms).
+   11 of the 12 branch-unique names passed cleanly on a single-process
+   combined re-run; the 1 that reproduced,
+   `Tests/UI/test_library_media_reader_traversal_t22207.py::
+   test_one_megabyte_markdown_document_is_not_reparsed_per_keystroke`,
+   passed in TRUE isolation and reproduced identically on the PRISTINE
+   baseline under the SAME combined-invocation conditions (a shared-state/
+   ordering sensitivity to which OTHER tests ran earlier in the process,
+   not to which code version is loaded) -- confirmed pre-existing, not a
+   regression, and not Collections-related (Media reader cluster; this
+-  task's diff touches zero Media-reader code). **Future tasks should
++  task's diff touches zero Media-reader code).
++  **Correction (fix round 1, post-review): one of the 11 that passed
++  cleanly, `Tests/UI/test_library_adaptive_reader_closeout.py::
++  test_closeout_single_app_route_cycle`, is NOT unrelated to Collections
++  -- its own `DESTINATION_CONTRACT` includes a `"collections"` entry and
++  the test cycles every destination, which for "collections" traverses
++  the shared reader-shell dispatcher calling two of this task's own moved
++  methods (`_sync_library_collections_reader_layout_from_shell`,
++  `_mirror_library_collections_reader_preference`).** It was re-verified
++  with the strongest available method for a single test: temporarily
++  `git checkout bca923b4c -- tldw_chatbook` inside the task's own
++  worktree (confirmed via `git diff --stat` that only `library_screen.py`
++  changed, i.e. a clean pre-controller-move state), the test run in true
++  isolation there, then `git checkout HEAD -- tldw_chatbook` restored
++  (confirmed `git status` clean after) -- **passes identically at HEAD
++  and at base**, closing the question directly rather than by the flawed
++  "the test's name doesn't mention Collections" inference the task's own
++  first-draft report used. Any future subsystem's sweep-triage should
++  check a failing/flaky test's OWN fixture/contract content (not just its
++  name or file) before asserting it is unrelated to the subsystem being
++  moved -- a destination-cycling test like this one will touch every
++  subsystem's own dispatchers by design. **Future tasks should
+   prefer running the branch and baseline full sweeps SEQUENTIALLY, not
+   concurrently, when machine time allows** -- the concurrent shortcut
+   used here to save wall-clock time cost real investigation effort this
+   task's own report accounts for in full.
+ 
+ ## 8. Subsystem order (spec, "Order of work")
+ 
+ Sequenced cold-to-hot so the conversations exemplar never fights rebases,
+ and hot subsystems migrate in short, fast series once the recipe above is
+ rehearsed. Churn = commits touching `library_screen.py` in the trailing 30
+@@ -1044,18 +1065,37 @@ task extracted each of the 64 method's exact source segments with an
+ hand-retyped), assembled the new controller module from that extracted
+ text plus a hand-written header/footer, then re-verified with a SECOND
+ script that re-parsed both the pre-move screen file and the finished
+ controller module and asserted byte-for-byte identity per method. For a
+ move this size (64 methods, ~1300 lines), this generalizes past the
+ "read every body once" discipline earlier tasks used: **write the
+ extraction and the verification as scripts, not as a sequence of manual
+ Read/Edit operations**, for any future subsystem whose cluster exceeds
+ ~40-50 methods.
+ 
++**Correction (fix round 1, post-review) -- a dynamic-dispatch census gap,
++new sub-shape**: this task's own module docstring and report originally
++claimed a clean dynamic-dispatch sweep (no `getattr`/`setattr` call using
++an f-string or dict-literal argument touches a Collections name, beyond
++the one pre-existing reader-preferences hit §12 already documents). That
++census script only matched a dict-literal/f-string passed DIRECTLY as the
++call's own argument. It missed a two-step shape that DOES exist inside
++this task's own moved cluster: `retain_library_collection_quick_capture_
++input` builds a small DOM-id-keyed dict, `.get()`s a NAME into a local
++variable, then calls `setattr(self, attribute, event.value)` with that
++variable on a later line. **Safe by construction** (the three dispatched
++names are among the 26 fields with a full `property(get, set)` shim, not
++read-only), but the census's own claim of completeness was wrong until
++corrected in review. **Any future subsystem's dynamic-dispatch census
++should also grep for a `dict.get(...)` result assigned to a variable that
++later flows into `setattr`/`getattr` within the same function** -- not
++just a literal argument passed directly to the call -- to avoid
++re-missing this shape.
++
+ **Sweep evidence — concurrent branch/baseline xdist runs amplify
+ flakiness measurably; see §7's updated documented-failures entry for the
+ full numbers and per-test disposition.** Zero real regressions confirmed,
+ but the concurrent-run shortcut (both full sweeps launched at once to
+ save wall-clock time) cost real investigation effort re-running 12
+ branch-unique names individually/combined and, for the one that
+ reproduced, against the pristine baseline too. **Future tasks should run
+ the two full sweeps sequentially when time allows.**

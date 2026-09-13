@@ -1,0 +1,12 @@
+{
+  "error": "Conversation deleted.",
+  "loaded_id": null,
+  "loaded_version": null,
+  "locator_called_for_b": true,
+  "message_epoch": null,
+  "selected_id": "chat-b",
+  "selected_version": 7,
+  "status": "Conversation deleted. Selected Beta review (chat-b).",
+  "svg": "conversations-b-deleted.svg",
+  "unavailable": true
+}

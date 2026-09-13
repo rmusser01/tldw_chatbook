@@ -34,16 +34,16 @@ because it is a live application database this task missed:
   cookie_scraping/cookie_cloner.py``'s three browser-cookie readers
   (owners ``cookies.chrome``/``cookies.edge``/``cookies.firefox`` -- these
   read a THIRD-PARTY browser's own database, never this app's), and
-  ``UI/Tools_Settings_Window.py``'s schema/integrity checks (owners
-  ``settings.schema``/``settings.integrity``).
+  ``UI/Tools_Settings_Window.py``'s retained bulk integrity worker (owner
+  ``settings.integrity``).
 - **Backup/restore/migration/candidate infrastructure**: connections that
   operate on a disposable ``tempfile.mkstemp()`` staging copy (written
   once, then published or discarded, never the live store) or reopen the
   live store transiently in read-only-in-practice validation mode as part
   of a rare migration/restore flow, never as the store's ongoing live
-  connection. This is ``UI/Tools_Settings_Window.py``'s vacuum/backup/
-  restore workers (owners ``settings.vacuum``/``settings.*_backup``/
-  ``settings.restore``, whose ``-wal``/``-shm`` sidecar handling was
+  connection. This is ``UI/Tools_Settings_Window.py``'s retained bulk
+  vacuum/backup workers (owners ``settings.vacuum``/
+  ``settings.bulk_backup``, whose ``-wal``/``-shm`` sidecar handling was
   separately audited under this task's AC#3 -- see the task's
   Implementation Notes) and ``TTS/profile_repository.py``'s backup/
   migration/candidate/snapshot connections (owners
@@ -414,6 +414,7 @@ _HELD_CONNECTION_DBS: list[tuple[str, Callable]] = [
     ("library_collections", lambda path: LibraryCollectionsDB(path / "collections.db")),
     ("rag_indexing", lambda path: RAGIndexingDB(path / "rag_indexing.db")),
     ("client_notifications", lambda path: ClientNotificationsDB(path / "notify.db")),
+    ("event_state", lambda path: EventStateRepository(path / "event_state.db")),
     ("workspace", lambda path: WorkspaceDB(path / "workspace.db")),
     ("agent_runs", lambda path: AgentRunsDB(path / "agent_runs.db")),
 ]

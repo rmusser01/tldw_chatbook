@@ -1,6 +1,6 @@
 ---
 id: TASK-284
-title: Library RAG panel: stop rebuilding results/history per keystroke
+title: 'Library RAG panel: stop rebuilding results/history per keystroke'
 status: Done
 assignee: []
 created_date: '2026-07-16 14:30'

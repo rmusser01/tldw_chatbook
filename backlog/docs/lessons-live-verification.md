@@ -1,7 +1,177 @@
 # Lessons: verifying against the real thing
 
+## A process's No route to host can be an app privacy denial
+
+**TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized
+llama.cpp endpoint failed immediately, including outside the execution sandbox.
+The initial report incorrectly called the server unreachable from the Mac.
+The user could load its UI in Firefox. A route lookup found the target on en0;
+macOS nehelper logs explicitly said
+`Local network denied by preference for ChatGPT (com.openai.codex)`.
+
+Attribute connection evidence to the process that produced it. Check the
+route and app-specific network permission diagnostics before asking the user to
+repair a working server. Sandbox escalation does not grant macOS Local Network
+permission. Obtain approval to change that privacy setting; do not route around
+the denial through another app.
+
+The same sample initially constructed provider resolution manually, skipping
+native-tool capability discovery, and attempted an edit before confirming the
+temporary Canvas settlement. Normal `resolve_for_send` and an assertion of
+committed, reachable source resolved those harness defects. Keep that headless
+bridge evidence separate from the full Console UI and durable persistence.
+
+## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
+
+**2026-09-09.** The llama.cpp server answered uncaptured messages while captured
+tool runs failed: visible planning text before a valid tool fence disagreed with
+the trace classifier. Saved COMPLETE provider calls still belonged to a FAILED,
+empty assistant response, so a successful uncaptured follow-up did not establish
+that the next captured send could recover. Reproduce through the real Console
+controller, inspect both call and assistant closure, and test a cold captured
+successor after the uncaptured turn.
+
+The same investigation received HTTP 202 from DuckDuckGo containing a challenge
+form. The backend reported no matches, and other backend error strings became
+successful ToolResults. Check the actual backend response and structured outcome
+through the provider/runtime boundary. Vary retry arguments in the regression:
+an identical-call loop test alone misses repeated execution failures.
+
+## Check the target platform's exact interpreter build before pinning CI
+
+**TASK-32160 Task14, 2026-09-08.** A fresh macOS ARM64 evidence job pinned the
+local Python3.12.11 version to keep qualification comparable. The job passed
+checkout, then setup-python failed before any lock control or product test:
+GitHub's manifest contained 3.12.11 only for Linux, not Darwin. The same manifest
+listed 3.12.10 for Darwin ARM64/x64. Fifteen local workflow-contract tests and a
+scoped review validated the intended pin, not external build availability.
+[Run34292597991](https://github.com/rmusser01/tldw_chatbook/actions/runs/34292597991)
+had zero artifacts because setup failed before runtime metadata was written.
+
+**What to do.** Before dispatch, check the official installer manifest for the
+exact version/platform/architecture tuple. A local install or a release version
+does not establish hosted-installer availability. Preserve setup logs when
+runtime evidence cannot be created; do not relabel unrun cases as test failures
+or passes. A different patch pin qualifies that build, not the original one.
+
+## A mount-started worker may run before is_mounted becomes true
+
+**TASK-31645 post-merge UAT, 2026-09-05.** Normal real-terminal Library entry
+stayed on Loading local recovery through reopening and restart, despite the
+earlier mounted-test passes. Temporary tracing observed the Lab load worker
+enter and exit with `is_mounted=False`, its message widget present and no
+coordinator. Textual sets the mounted flag after Mount dispatch; an inherited
+handler can yield while a worker started by the subclass already runs. The
+worker's teardown guard silently rejected this valid initialization attempt.
+A yielding inherited Mount-handler regression failed with readiness timeout;
+deferring lazy dispatch with `call_after_refresh` made it pass while retaining
+teardown protection. Real A/B, local save and force-kill recovery then worked.
+
+**What to do.** Schedule mount-sensitive background initialization after the
+mount boundary, and keep its teardown guard. Test a yielding Mount handler,
+not just an immediately completing fixture. Verify real route entry; passing
+tests that await an already-mounted screen cannot alone qualify that ordering.
+
+## Send synthetic Paste through the app, not directly to TextArea
+
+**TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an
+unforwarded `events.Paste` directly to TextArea. Textual inserted it, bubbled
+the event to `App.on_event`, then forwarded it back to the focused TextArea,
+inserting it again. Depending on scheduling, Run captured the first insertion
+and Pin correctly refused the later doubled sample as stale. The captured hash
+`3cc894cc23cca5b36707b14e37ee4c59905b1dc276a3892619b9364ea796a3a0`
+matched the intended sample; current hash
+`895e98e9a2050a04891df2b276b4884983d0054182ea74c988a639e5ea7de382`
+matched that exact sample concatenated with itself. Posting Paste to the app,
+which performs the normal driver forwarding, removed the extra insertion.
+
+**What to do.** Inject driver events at the app boundary and assert exact text
+before executing. A synthetically doubled paste is a fixture defect, not grounds
+to weaken a production stale-result guard. Wait for the Lab-owned render workers
+and assert the editor is enabled/focused first: the load-complete event can precede
+the initial render. A later failed-write transfer fixture injected text into that
+disabled editor and exported an empty sample until the readiness/exact-copy
+preconditions were made explicit.
+
 Traps found by running the app and talking to a real server, which the test suite
 structurally could not surface. Every entry states the incident that produced it.
+
+## Modal return can race an admitted operation (TASK-31552, 2026-09-05)
+
+The llama.cpp snapshot live UAT saved successfully but rejected confirmed Restore
+three times with `launch_unavailable`. Returning from the confirmation scheduled
+a screen-reentry readiness refresh; its temporary `ready=False` collided with the
+already-admitted Restore's staging. The same real runtime/image round-trip passed
+when only that callback was suppressed. Retaining the last completed observation
+while a new probe is pending fixes that distinction; actual failed probes must
+still invalidate readiness. Test these interleavings with barriers, including
+failure assertions **after** operation settlement, not merely after releasing it.
+
+The subsequent UAT retention loop also sent Enter twice within Textual Button's
+0.2-second `-active` feedback interval. The second key was ignored, and a harness
+waiting only for completion misreported a ten-minute operation timeout. Wait for
+the control to accept keyboard input and separately bound operation admission;
+do not infer that a server request exists just because the harness sent a key.
+
+---
+
+## Opaque-origin module-worker policy must be proven in the target browser
+
+**TASK-31226, 2026-09-03.** The Canvas renderer's first implementation used the
+obvious `new Worker(new URL("worker.js", import.meta.url), {type: "module"})`
+inside an iframe sandboxed without `allow-same-origin`. Unit reasoning said the
+worker was a packaged same-site asset, but real Chromium rejected the constructor
+because the iframe's effective origin was opaque. Wrapping that URL in a blob
+module failed for the same reason. A fixed `data:` module bootstrap could import
+the packaged CORS-enabled worker, but the next real run showed that QuickJS's
+embedded WASM also required the narrower CSP token `wasm-unsafe-eval`. Neither
+failure was visible to source checks or Python unit tests.
+
+**What to do.** Qualify worker construction and WASM compilation from the exact
+production iframe sandbox and response CSP in every mandatory browser. Record
+all startup requests before acknowledging generated execution. When a trusted
+bootstrap is unavoidable, keep its bytes and imported URL entirely renderer-owned,
+scope CSP to the minimum scheme, and prove generated input cannot influence it.
+Do not infer opaque-origin behavior from same-origin pages or substitute
+`unsafe-eval` for `wasm-unsafe-eval`.
+
+---
+
+## Shell width equality does not prove pane containment
+
+**TASK-18919, 2026-09-01.** The Collections reader's production-shaped 120×35 and
+100×30 walkthroughs proved that every shell child width added up exactly to the
+shell width, yet visible controls still escaped their panes. The Items toolbar
+put Quick Capture, Filters, and Sort on one row; the Work toolbar did the same
+with four primary actions. Both parents were geometrically correct while their
+own descendants overflowed.
+
+**What to do.** At every compact breakpoint, check every visible descendant's
+left and right edge against its owning pane, not only the top-level shell sum.
+Split action groups into additional rows when the controls are semantically
+distinct; do not shrink labels until the full control hierarchy has been
+measured.
+
+---
+
+## A manually pinned tmux window can make a correct TUI look as if its right rail vanished
+
+**TASK-20937.6, 2026-08-24.** A Console QA session was created at 235x52 and
+then forced to `window-size manual` before an iTerm2 operator attached. The
+server-side `tmux capture-pane` showed the complete `<-Inspect` handle at the
+right application edge. Both operator screenshots omitted it, and were initially
+misclassified as partial acceptance evidence. The screenshots also truncated the
+header's Hands-free control and tmux's own right-side date/status text, proving
+that the whole tmux canvas—not only the Inspector—extended past the client
+viewport. The fixed manual canvas was wider than the actual iTerm2 client, so the
+client clipped its rightmost columns.
+
+**What to do.** For operator captures, use tmux `window-size latest` (or the
+normal client-following policy), then record the resulting client/window/pane
+cells after attachment. A detached `capture-pane` proves the server buffer, not
+that the terminal client can see all of it. Reject any screenshot whose terminal
+status line or app header is cut at the same edge as the feature under test; do
+not diagnose product geometry until the client and tmux window sizes agree.
 
 ---
 
@@ -64,6 +234,31 @@ tmux -L verify kill-server                  # done
 Use `TLDW_CONFIG_PATH=<scratch>/config.toml` so the run cannot touch real state (see
 the profile-isolation entry below). Ctrl+digit hotkeys cannot be sent through tmux --
 verify those bindings by reading `BINDINGS` in the code instead.
+
+---
+
+## A route-activated geometry test does not prove the untouched startup state
+
+**TASK-22857, 2026-08-26.** The production-styled Library width matrix passed at
+235, 170, 120, 100, 80, and 60 columns, but its ordinary-route setup selected
+Prompts before measuring geometry. Detached tmux UAT entered a fresh Library
+landing without selecting a row and found that the legacy graduated landing
+clause still forced rail-only mode at 100 and 80 columns. The selected-route
+matrix had changed the exact state that triggered the defect. The same live run
+also found that the visible emergency return could not be reached by keyboard
+and that Settings reported ASCII glyphs Disabled while the runtime rendered the
+saved ASCII form; mounted tests had verified the underlying actions and config
+values without exercising those complete user journeys.
+
+**What to do.** For responsive shells, verify at least three distinct lifecycle
+entries: untouched startup/landing, route activation, and resize restoration.
+Do not let a helper select a route before the startup assertion. For a visible
+keyboard affordance, drive focus to it through the advertised production keys
+and activate it; calling its action directly proves behavior, not reachability.
+When Settings owns a runtime preference, restart a scratch-profile process and
+compare the visible Settings value with the behavior rendered by that same
+process. Keep the pre-fix capture as failed evidence instead of replacing it
+with the post-fix pass.
 
 ---
 
@@ -140,6 +335,23 @@ distinct decoy default and effective profile under an isolated lifecycle. A
 fingerprint difference proves mutation, not actor identity. Track sensitive
 unexplained mutation as an investigation or provisional defect, but do not label a
 confirmed cross-profile writer or actor until causality is demonstrated.
+
+---
+
+## A configured data root is not necessarily the database's final parent (TASK-22453, 2026-08-27)
+
+**What happened.** Roleplay pagination UAT set `[paths].data_dir` to a disposable
+root and seeded `tldw_chatbook_ChaChaNotes.db` directly beneath it. The app opened
+`<data_dir>/default_user/tldw_chatbook_ChaChaNotes.db` instead, populated its normal
+starter characters, and honestly reported no saved conversations for the selected
+card. Both databases were scratch-only, so the isolation boundary held, but the
+fixture targeted a plausible path rather than the production-resolved path and
+produced a false product failure.
+
+**What to do.** Before seeding a live scratch database, launch once or call the
+same profile-aware path resolver production uses, then verify the exact open file
+with `lsof` (or an equivalent read-only probe). A configured root proves the
+storage boundary; it does not prove the final filename or profile namespace.
 
 ---
 
@@ -222,6 +434,48 @@ the way, read the app's own file sink under the profile's data directory
 concluding a launch hung, check that a *process* is alive AND that something
 was written where the render should be going — an empty pane plus a live PID
 is more often a redirect than a hang.
+
+---
+
+## A green process test does not prove multiprocessing starts under Textual (TASK-18926, 2026-08-27)
+
+**What happened.** The raw CLI executor's focused process suite passed, including
+real spawned shells and process-tree cleanup. The first mounted Console run still
+failed every command before launch. Textual had replaced `sys.stderr` with a
+capture whose `fileno()` returns `-1`; the first spawn-context `Event()` started
+CPython's process-global resource tracker, which blindly passed that sentinel to
+`fork_exec` and raised `ValueError: bad value(s) in fds_to_keep`. The controller
+correctly rendered its generic local `spawn_failed` marker, so only capturing the
+underlying executor exception revealed the cause. Library ingest had already met
+the same CPython/Textual interaction, but the separately built raw executor had
+not inherited that launch guard.
+
+**What to do.** Any feature that first constructs spawn-context primitives from a
+mounted Textual worker must construct them under an fd-backed stderr (and serialize
+the brief redirect because `sys.stderr` is process-global). Keep a fresh-process
+regression with `fileno() == -1`; an ordinary executor test may reuse an already
+running resource tracker and cannot prove first-launch behavior. Finish with a
+mounted command that reaches the actual subprocess, not only a synthetic executor.
+
+## A spawned worker replays package initializers in a fresh import order (TASK-22510, 2026-08-28)
+
+**What happened.** The model raw-shell suites passed because their pytest process
+had already imported Chatbook's Chat package. The first real command from a mounted
+Console still failed inside the spawned worker before shell launch. In the fresh
+interpreter, `raw_cli_executor` imported the general `input_validation` module;
+that module eagerly imported `Chat.console_chat_models`, which executed the eager
+`Chat/__init__.py` and `Library/__init__.py` chains. Library then imported
+`sanitize_string` from the still-partially initialized validation module and raised
+a circular-import `ImportError`. Preloading Chat made the same executor import pass,
+which is why ordinary in-process coverage hid the defect.
+
+**What to do.** Treat every spawn target's transitive imports as a fresh-interpreter
+contract. Keep a subprocess regression that imports the target with the repository
+root explicitly first on `sys.path`, and verify one mounted first launch as well as
+the in-process suite. General boundary modules should not eagerly import feature
+packages with nontrivial `__init__.py` files; defer the feature-specific dependency
+behind the narrow function that needs it while preserving any established patch
+seam.
 
 ## Credentials in a live run
 
@@ -1052,6 +1306,29 @@ provenance probe was not in the run as unproven. The same shape applies
 to any machine with several checkouts sharing one venv — which, on this
 repo, is every machine.
 
+**Recurrence — TASK-32160, 2026-09-08.** The shared environment's
+`tldw_profile_core` editable `.pth` and `direct_url.json` still pointed at the
+removed `task-26042-workspace-files-read-only` checkout. The main Canvas
+qualification selection and five actual-child nodes failed collection; a
+26-file continuation passed 1,483 cases but included 22 subprocess performance
+failures from the missing package. Pointing the parent at the current local
+package source passed 26 interop tests and 22 performance checks, but nine
+subprocess guards rebuilt `PYTHONPATH` and remained blocked. Parent import
+success therefore did not qualify the children. The stale target was diagnosed
+by reading installation metadata and checking that exact path, without importing
+the app or modifying the shared environment. Preserve these setup failures and
+label source-path diagnostics; do not silently rewrite nested gates or install
+into a shared environment as part of read-only qualification.
+
+After explicit user approval, this incident was repaired by building the same
+local package version as a non-editable wheel from an archived commit and
+installing with `--no-index --no-deps`. The wheel and old metadata were retained;
+261 distribution names/versions stayed unchanged, and an unrelated-cwd isolated
+import resolved from the venv. The five exact Canvas nodes then passed without
+an override. The previously blocked startup guard exposed a real 979/972 budget
+failure (973/972 on the pre-correction archive): repairing setup enables the
+measurement, not an assumption that the measured behavior will pass.
+
 ## A DB append is invisible to a live Console *and* to the next mount — the STORE is what the transcript and the payload are built from (task-15860, Task 0 probe P1)
 
 **What happened.** Two of the three designs for headless wake rested on
@@ -1209,3 +1486,1317 @@ driving it (`Button.press()` and `focus()` are synchronous schedulers;
 settle then re-check side-effect-free predicates. App startup readiness does not
 prove a destination screen has loaded. A correct harness can then reveal a real
 focus race instead of manufacturing one.
+
+---
+
+## Four Console-inspector traps from one programme (task-18300, 2026-08-18 → 2026-08-20)
+
+**A migration `.sql` file must be registered in FOUR packaging registries or
+an installed build cannot open the DB.** `aae305cbf` found that the v40→v41
+`message_exchanges` migration was missing from `pyproject.toml`
+`[tool.setuptools.package-data]`, `MANIFEST.in`, both sdist/wheel lists in
+`Packaging/check_manifest.py`, and `RUNTIME_MIGRATION_PATHS` in
+`Tests/Packaging/test_installed_distribution.py` — and, digging further,
+`46945ebbe`'s earlier v39→v40 `transcript_annotations` migration had the
+identical gap already sitting on `dev`, undiscovered, meaning any packaged
+wheel/sdist already could not open a pre-v39 database before this task even
+started (`422534a5f` proved it: reverting one registry line turned a green
+release-checker probe red through the real migration chain). The release
+checker validates against this same enumerated list, so a registry that is
+itself incomplete cannot catch its own gap — only a `uv build` against the
+real artifact plus a direct tar/zip listing does. **What to do:** after
+adding any migration `.sql` file, grep for every existing migration's
+filename across the repo (`pyproject.toml`, `MANIFEST.in`,
+`check_manifest.py`, `test_installed_distribution.py`) and confirm the new
+file appears in the same four places — then build a real sdist+wheel and
+list their contents, don't trust the checker alone to catch its own
+enumeration gap.
+
+**A Textual `Collapsible(title=...)` is markup-parsed even when sibling
+`Static`s pass `markup=False`.** `1850ea3dc`: a bracketed model id such as
+`[test]` was silently eaten from a Collapsible title, and one containing
+`[/]` raised `MarkupError` *inside* `compose()`, taking the whole modal down
+— reproduced directly against the installed Textual both before and after
+the fix. `Static(..., markup=False)` protects only that one widget class;
+`Collapsible`'s title has no equivalent constructor flag and needs
+`Content.from_text(title_text, markup=False)` built explicitly. **What to
+do:** when any user- or model-supplied string (an id, a filename, a free-text
+label) becomes a `Collapsible` title, assume it can contain `[` and build the
+title via `Content.from_text(..., markup=False)` — grep for other
+`Collapsible(title=` construction sites using an f-string or raw variable
+directly and check each one.
+
+**Naming a Textual reactive `loading` shadows `Widget`'s own built-in
+loading-overlay reactive — and the collision surfaces as a `NoMatches`, not
+an obvious name clash.** While porting `ConsoleConversationInspector`'s
+Next-Send-tab loading flag, a bare `loading = reactive(False)` collided with
+`Widget`/`ModalScreen`'s own `loading` (whole-widget loading-overlay
+semantics): Textual's internal `loading` reads (e.g.
+`Screen.update_pointer_shape`) walk the ancestor chain and invoke the new
+reactive's `init=True` watcher before the pane's own DOM subtree exists to
+query, producing a real `NoMatches`. The fix (still in the shipped code as a
+comment at the reactive's declaration) was simply renaming it to
+`next_send_loading`. **What to do:** never name a widget-local reactive
+`loading` (or any other name that shadows a `Widget`/`Screen` base
+attribute — `disabled`, `visible`, `styles` are the same trap); grep
+`class Widget` / `class Screen` reactive declarations in the installed
+Textual before picking a name for anything state-flag-shaped, and prefer a
+prefixed name (`next_send_loading`, not `loading`) by default.
+
+**Stale comments asserting `diagnose=True` overstated a security finding's
+severity — verify sink config by grepping `logger.add(`, not by reading
+comments.** `cee88d074`'s task-9 review had two prior rounds disagreeing
+about whether the app's file log sink ran `diagnose=True` (which would dump
+frame-locals — i.e. secrets — into the log on any traceback). Three `app.py`
+comments asserted it did. Empirically, every live `logger.add()` call in the
+codebase is `diagnose=False`; the comments were stale and had led a reviewer
+to treat them as ground truth, overstating the finding's blast radius.
+**What to do:** when a security or logging-config claim rests on what a sink
+"does," grep every `logger.add(` call site directly and read the actual
+keyword arguments — treat a comment describing sink behavior as an
+unverified claim, not a source of truth, especially in a codebase old enough
+for the comment to have drifted out of sync with a later refactor.
+
+---
+
+## A model's response can reveal in the transcript UI as one late batch, not incrementally — "stop while nothing is visible yet" is not proof the click missed (task-18300, 2026-08-20)
+
+**What happened.** Live-verifying Console's Stop-mid-stream capture (a real
+OpenAI `gpt-4o-mini` session, `~$0.03` total spend across the whole
+programme), the most reliable way to *see* partial content before stopping
+was expected to be watching the transcript pane fill in gradually. It did
+not, for several prompt shapes tried in sequence: a 1200-word essay, a
+2000-word essay, and "count 1 to 300" all showed a bare `Assistant
+Generating…` label for anywhere from 3 to 20+ seconds with zero visible
+characters, then — for the one case left to run to completion instead of
+being stopped — painted nearly the entire response in one step once it
+finished (reached "241, 242, … 267" out of a 300-target count, cut off by
+`max_tokens`, appearing all at once around the 13s mark with nothing visible
+before it). By contrast, short repeated-word prompts ("write 'apple' 100
+times") revealed content within ~1s and then completed within another
+1-2s — too fast to reliably win a tmux-round-trip race to click Stop in the
+middle. Two *genuinely* early Stop clicks (landing within ~1-4.5s of send,
+before the essay-style prompts had revealed anything) produced real
+`call 0 [stopped]` entries in the Exchange tab with `Response (~0 tokens
+est.)` — a legitimate empty-partial-content capture, not a harness failure,
+confirmed by checking the *capture*, not just the transcript pane. Several
+further attempts to reproduce a **non-empty** stopped capture all instead
+raced past natural completion (`call 0 [complete]`) because the fast
+word-repeat prompts finish before a tmux-driven click lands, while the
+slow-reveal essay prompts show nothing to click "during."
+
+**What to do.** Do not infer "the click missed" or "nothing streamed yet"
+from an unchanging transcript pane — Console's transcript rendering can
+legitimately hold back all visible content until a late point (observed:
+right around natural completion) regardless of whether the underlying
+provider stream has been delivering deltas the whole time. To confirm
+whether a Stop-click genuinely raced ahead of the first token (true empty
+capture) versus arrived after the response had already finished (a
+`complete` call wearing a truncated look), check the *Exchange tab's own
+call status and Response section* for that specific turn, never the
+transcript pane's rendered text or a "Stopped" label's mere presence. When a
+manual UI repro like this consumes several real provider round-trips without
+converging (this one used ~10), that is itself the signal to stop chasing a
+single visual confirmation and report exactly what was and was not observed,
+per the honesty rule already in this file's header — a slow repro can
+consume the very verification budget it was meant to spend on other
+scenarios.
+
+---
+
+## A streaming generator must not yield from `finally` when Stop closes it (TASK-18300, 2026-08-26)
+
+**What happened.** A direct real-OpenAI lifecycle replay finally produced the
+non-empty stopped capture that the earlier tmux session could not time. The
+capture itself was correct, but Python emitted `RuntimeError: generator ignored
+GeneratorExit` after Stop. A focused regression reproduced the same failure
+without the network: `chat_with_openai()` was suspended at a content yield,
+`generator.close()` injected `GeneratorExit`, and the generator's `finally`
+block tried to yield its synthetic SSE `[DONE]` sentinel before closing the
+response/session. Yielding while handling `GeneratorExit` converted normal
+cancellation into a runtime error and postponed cleanup.
+
+**What to do.** Reserve `finally` for cleanup that cannot suspend. If a stream
+needs a terminal sentinel on normal or handled-error exhaustion, emit it after
+the `try`/`except`/`finally` block. Then an early `close()` still runs cleanup
+and skips the sentinel naturally. Pin both halves: a unit regression that
+closes after the first chunk and asserts transport cleanup, plus a real-provider
+Stop replay that confirms the warning is gone and the partial capture remains
+durable.
+
+## A broad screen needle can certify the wrong subview (TASK-19012, 2026-08-21)
+
+**What happened.** The isolated Notes journey sent the Library's advertised
+`n` shortcut and waited for `Library notes`. The check passed at wide and
+60-column sizes, and the helper reported that it had captured the Database
+Notes route. Reading the frames top-to-bottom showed the shortcut had opened
+**New note**: the heading, authority strip, and template list all contained the
+broad `Library notes` needle, but the Add-from-files entry the run meant to
+verify was not present. The process was healthy, the route was real, and the
+assertion was still false evidence.
+
+**What to do.** After every synthetic navigation input, assert a marker unique
+to the intended subview and inspect the capture itself. Here the verifier now
+captures New note honestly, sends Escape, and requires `Add from files` before
+recording the Notes-list frames. A parent-surface title proves only that the
+parent mounted; it cannot certify which retained child view is active.
+
+---
+
+## A live app launch can rewrite a tracked generated artifact (TASK-21161, 2026-08-23)
+
+**What happened.** The isolated Console/DeepSeek UAT changed only the generated
+timestamp in tracked `tldw_chatbook/css/tldw_cli_modular.tcss`. No source CSS
+had changed; app startup had rebuilt the consolidated file. Left in the
+working tree, that runtime side effect would have looked like an intentional
+implementation change and polluted the review diff.
+
+**What to do.** Capture `git status --short` before a live app launch and again
+after clean exit. For tracked generated artifacts, compare the body as well as
+the header before deciding whether a delta belongs to the task. Restore a
+timestamp-only runtime rebuild to the pre-UAT content; regenerate and commit it
+only when its source modules actually changed.
+
+## A recovery modal can complete while the owning run stays non-terminal (TASK-20941, 2026-08-22)
+
+**What happened.** Persona Buddy full-app UAT sent a real Console prompt through
+a disposable loopback provider. Console first opened the project-instructions
+folder recovery modal because the scratch profile had no eligible workspace
+binding. Choosing **Disable** dismissed the modal and updated the session, but
+the controller returned a raw rejected result without replacing its earlier
+`VALIDATING` run state. The transcript, Console header, composer, and Buddy then
+remained stuck at `Running` / `thinking`; no provider request was made. Unit
+coverage had verified the setup decision and session mutation separately, so it
+never observed the owning run after the modal completed.
+
+**What to do.** For every modal or async recovery branch that rejects an active
+run, assert both the domain mutation and the owner-facing terminal state, then
+retry through the same controller. A dismissed modal or a returned failure value
+is not sufficient evidence: the run-state ledger, composer admission, dependent
+UI state, and retry path must all be terminal/current together.
+
+---
+
+## Restart the partial-review state, not only each isolated choice (TASK-97, 2026-08-23)
+
+**What happened.** Real-authority integration tests proved Keep file, Keep
+note, Keep both, Skip, receipts, restart history, and Undo one choice at a time.
+The isolated live run then applied three choices and skipped the fourth. After
+restart, the fresh plan correctly contained three `NO_CHANGE` rows plus the
+remaining conflict, but Apply rejected the reviewed no-change IDs as an invalid
+review. The single-choice cases never produced that mixed plan shape.
+
+**What to do.** For a reviewed batch that permits partial completion, restart
+after a genuinely mixed partial Apply and resolve the remainder through the
+same public boundary. Per-choice restart tests prove each operation is durable;
+they do not prove the next review accepts terminal no-op rows alongside work
+that still mutates.
+
+---
+
+**A green seam is not a green flow; a bound can exist at two layers.**
+TASK-23089 / PR #2158, 2026-08-27. First-run setup was verified against a real
+OpenAI key for the first time and failed three ways in a row. Each fix was
+verified *at the seam it changed* and each time the flow was still broken:
+
+1. `settings_endpoint_probe` never sent `Accept-Encoding: identity`, so a valid
+   key read as "connection error". Fixed; probe returned `reachable`, 100 models.
+2. Discovery's `DISCOVERED_MODEL_MAX_COUNT` was 100 while api.openai.com returns
+   128, so discovery failed closed. Raised to 512; discovery returned 128 models.
+3. That success then hit the wizard's *own* still-100 bound in
+   `_model_ids_from_discovery_result`, which raised, and the caller folds any
+   raise into a failed discovery -- so a successful 128-model discovery rendered
+   as "Couldn't reach the server (request failed)". Fix #2 had moved the failure
+   up a layer, and only the live walk revealed it.
+
+Two traps generalize. **Mocked peers never compress, throttle, or return
+production-sized payloads** -- every test here used `MockTransport` with a
+handful of uncompressed models, and a 401 returns before the body read, so no
+existing test could see any of this. **When you relax a bound, grep for every
+layer that re-checks the same quantity**; here `MODEL_IDS_MAX_COUNT` was
+imported by four call sites with two different meanings (a probe's truncation
+sample vs. a fail-closed catalog limit), and aliasing them is what put the
+fail-closed bound below reality.
+
+**What to do.** For provider-facing work, verify against a real credential and
+walk the actual UI to the end state a user reaches -- not just the function you
+changed. Two intermediate diagnoses in this task ("the key never reaches the
+request", "the stale keyless failure is reused") were both wrong and both came
+from repros built by hand; the malformed one passed staged settings as a flat
+dict where the caller wraps them under `api_settings`. When a headless repro
+disagrees with the running app, suspect the repro, and instrument the app --
+a file-append probe reads out where `logger` does not, because the persistent
+sink only records structured `diagnostics.*` events.
+
+---
+
+## A compact pane can pass one frame and still collapse mid-flow (TASK-18915, 2026-08-29)
+
+**What happened.** The 80-column Skills reader correctly started with Items
+collapsed and exposed its five-cell expansion grip. Expanding Items made the
+pager visible, and the first paging assertions passed, but a later ordinary
+layout sync discarded the inherited Items priority and collapsed the pane
+again before filtering. Point-in-time geometry tests and wider terminal runs
+all passed; only the multi-step 80x24 walkthrough observed the state transition.
+
+**What to do.** Compact reader verification must exercise an explicit pane
+toggle followed by at least one normal refresh-producing action, then recheck
+the pane, focus target, and controls. Testing only the frame immediately after
+the toggle proves that expansion is possible, not that the user's pane choice
+survives the next resize or data refresh.
+
+---
+
+## A `1fr` child with `min_width: 0` starves silently; a static `min_width` "fix" clips the trailing controls instead (TASK-24415, 2026-08-29)
+
+**What happened.** A user reported the Console `/` command trigger as "funky
+in a bad way". The popup logic was fine — the live tmux run traced it to the
+composer row: `#console-send-disabled-reason` toggled to `width: auto`
+(capped 52) while the `1fr` visible draft carried an explicit
+`min_width: 0`, so at ≤90 columns the advisory strip consumed the row and the
+draft laid out at ZERO columns — no text, no caret, no placeholder, with the
+suggestion popup filtering invisible input above. A constants comment
+(TASK-2154.14) had promised "the draft keeps its 32-cell floor" in arithmetic
+only; nothing in layout derived from it. The whole suite missed it because no
+test asserted a draft REGION width while an advisory strip was visible.
+
+The naive fix is wrong in a non-obvious way: giving the draft a static
+`min_width: 32` makes Textual clamp the fr child and OVERFLOW the row — the
+children painted last (Send/Dictate) get clipped off-screen, trading an
+invisible draft for unreachable buttons. The working pattern is the one the
+composer already used for its actions row: compute the advisory element's
+cap in Python from the live row width (`row − fixed furniture − draft
+floor`), hide it below a legibility budget, and re-derive on resize.
+
+**What to do.** For any Textual row mixing `1fr` content with advisory
+strips: assert the fr child's `region.width` at your narrowest supported
+width with every advisory visible, and budget the advisory elements
+dynamically in Python rather than trusting `max_width` to yield — an `auto`
+element never shrinks below its content width, and `min_width` on the fr
+child overflows rather than protects. Same-class suspects here:
+`#console-voice-status` (dictation chip, up to 53 cells) during dictation.
+
+---
+
+## Provider seams differ per consumer — probe resolution before headless runs (TASK-21513, 2026-08-29)
+
+**Incident.** The Daily-Reports live run needed three scratch-config rewrites before the demo saw the provider. First config used `[llm_api_settings] default = ...` per config.py's reader (line ~6946 reads `settings["llm_api_settings"]["default_api"]`): the brief still went to `openai` and failed "OpenAI API Key is required" — silent fallback, no error pointing at the key name. Second rewrite used `[API] default_api` + `anthropic_api_key` (the legacy bridge, `_LEGACY_PROVIDER_API_KEY_BRIDGE`), which the endpoint resolver honored — but the stored Anthropic key was dead at the provider, and the pivot to DeepSeek then failed "returned an empty response" because `chat_with_deepseek` reads its model from `[api_settings.deepseek]`, not `[API] deepseek_model`: the config-default `deepseek-v4-flash` spent all 2000 `BRIEFING_MAX_TOKENS` on `reasoning_content` (finish=length, content empty). Each trap was invisible from the TUI (a generic failed row) and only diagnosable by replaying `generate_briefing` with a spy on the chat seam.
+
+**What to do.** Before a headless provider-dependent run, resolve the seam in one python -c (`config.default_api_endpoint`, key non-empty, and the handler's own `[api_settings.<provider>]` model). Never trust one section name because a different consumer reads a different one. When a row says "empty response" from a reasoning-capable model, suspect `finish_reason=length` with reasoning consuming the budget before assuming an extraction bug.
+
+## The TUI renders on stderr — redirecting it blinds tmux capture (TASK-21513, 2026-08-29)
+
+**Incident.** The first tmux launch used `2>stderr.log` to keep diagnostics; the pane went visually blank while `capture-pane` returned empty lines, yet the app was alive and painting — into the log. The render stream is stderr, so redirecting it for "clean logs" removes the very surface the verification is supposed to observe.
+
+**What to do.** In tmux live runs, leave both stdout and stderr attached to the pane (the pane IS the capture artifact); take diagnostics from the app's own file log under the profile's data dir. Also note `tmux send-keys -H` can emit SGR mouse sequences (`ESC [ < 0 ; col ; row M/m`) to click Textual buttons that Tab/Enter cannot reliably reach, but the row/col must be recomputed from a fresh capture after every repaint.
+
+## Three scratch-profile traps that masquerade as app bugs (Home recents UAT, 2026-08-30)
+
+**What happened.** Live-UATing the Home recents PR against a copy of the real
+profile failed four consecutive times with the same symptom — Home empty, no
+errors — each for a DIFFERENT environmental reason that read like a product bug:
+
+1. **`[database]` absolute `*_db_path` pins override `[paths] data_dir`.** The
+   copied real config pins `chachanotes_db_path` etc. to absolute home paths;
+   a scratch `data_dir` does not relocate them. The app silently opened
+   nonexistent pinned paths (services wired as `None`, never re-wired) while
+   unrelated DBs (workspaces) resolved through the scratch — so Console's
+   workspace rail restored while every conversation/notes seam returned empty.
+   Redirect EVERY `*_db_path` (and `USER_DB_BASE_DIR`) in the scratch config.
+2. **`verify_trusted_directory` rejects `/tmp` scratch data dirs**
+   (`unsafe_parent: shared_sticky_directory_not_allowed`). A disposable HOME
+   nested under /tmp fails the same guard. Scratch profiles must live under
+   the real `$HOME` (a private subdir is fine).
+3. **`rsync`ing a live WAL-mode SQLite file produces a torn snapshot.** The
+   copied DB later failed its v51→v52 migration with "database disk image is
+   malformed" — while the app swallowed the error and booted with no
+   ChaChaNotes at all. Copy live DBs with the online-backup API
+   (`sqlite3.connect(src).backup(dst_con)`), and run `PRAGMA integrity_check`
+   on the RESULT before blaming the migration: here the source DB itself
+   carried a corrupt index (`idx_sync_log_entity` — wrong entry count), which
+   `REINDEX` on the copy repaired before the migration could complete.
+
+**What to do.** For a scratch-profile run against real data: build it under
+`$HOME`, redirect every `[database]` pin, copy DBs via the backup API, and
+integrity-check the copies. When a scratch boot shows "everything restored
+except one subsystem", suspect per-service path resolution before the code.
+
+## A green header test hid a feature that never worked end to end (TASK-26022 AC#7, 2026-09-02)
+
+**What happened.** The Claude-subscription credential borrow shipped with six
+green ACs and 16 passing tests — including one asserting the subscription path
+sends `authorization: Bearer …` and no `x-api-key`. AC#7 ("verified against a
+real account") was the only one left. Running a single real send against the
+owner's Max account exposed that the feature was **non-functional end to end**
+for two reasons no header-shape test could catch:
+
+1. **The credential wasn't where the code read it.** On macOS Claude Code stores
+   its OAuth credential in the login Keychain (`security find-generic-password
+   -s "Claude Code-credentials"`), NOT in `~/.claude/.credentials.json`. The
+   file-only reader returned `None`, so the subscription path never even
+   engaged on the primary dev platform.
+2. **The token is gated to the Claude Code identity.** With the credential
+   supplied by hand, the send still failed: the OAuth token is rejected — as a
+   *misleading* `429 rate_limit_error`, not an auth error — unless the request's
+   `system` leads with "You are Claude Code, Anthropic's official CLI for
+   Claude." Deterministic: that identity → 200; no system or any other system →
+   429 (a Claude-Code request immediately after succeeded, ruling out real rate
+   limiting). The shipped code set headers but never sent the identity.
+
+**What to do.** For any feature that borrows a real, externally-minted
+credential, the header-shape unit test is necessary but proves almost nothing —
+credentials carry constraints (where they're stored per-OS, what identity/scopes
+the token is bound to, what the server demands beyond auth) that only a live
+send reveals. Do the one real call before closing the task, and read the failure
+body literally: a `rate_limit_error` here was really "this token is Claude-Code
+only." Corollary: a misleading upstream error code (429 for an identity
+rejection) will send you chasing the wrong fix unless you test the discriminating
+cases (identity present vs absent vs other) rather than trusting the label.
+
+---
+
+## `TLDW_CONFIG_PATH` does not isolate the OS keyring, and the app writes your config token into it on first use (schedules-handoff PR-6 task 6, 2026-09-02)
+
+**What happened.** The PR-6 live gate launched a scratch profile
+(`TLDW_CONFIG_PATH`, `users_name = "verify_pr6"`) against a local tldw_server and
+could not authenticate: every scheduling call returned 401 and the Automations tab
+said only *"Could not load server automations — see the log."* The scratch config
+carried the real `SINGLE_USER_API_KEY`. A direct `httpx` probe with that key
+returned 200. A header-dumping listener proved the app was putting the **correct**
+`X-API-KEY` on the wire when pointed at a different port. It still 401'd on the
+original one. Roughly 25 minutes went into this before the cause was read out of
+`RuntimeServerContextProvider._resolve_auth_token`: credentials resolve from
+`KeyringServerCredentialStore` — the **machine-global** OS keyring, service
+`tldw_chatbook.server_credentials`, keyed by `server_id` — *before* the
+`[tldw_api]` config fallback, and `_import_legacy_token` writes the config token
+into that keyring the first time it is used. The scratch profile's very first boot
+had happened with a placeholder token (see the sibling trap below), which was
+imported under `server_id = "http://127.0.0.1:8000"` and from then on outranked
+every corrected config value. Moving the server to an unused port (`:8010`, a
+`server_id` with no keyring entry) made the identical client and identical config
+authenticate on the first request.
+
+**Fixed (task-31416, task-31417).** Both root causes are closed now, not worked
+around. `RuntimeServerContextProvider` takes a `credential_profile_id` and every
+credential read/write goes through `ServerCredentialScope` keyed on
+`(server_profile_id, normalized_origin, purpose)` instead of the bare `server_id`.
+`app.py` wires `default_server_credential_profile_id()`: the default
+(un-retargeted) config path keeps `server_profile_id == server_id` — byte-for-byte
+the old unscoped behavior, so an existing single-profile install needs no
+re-entry — but a `TLDW_CONFIG_PATH`-retargeted profile gets `server_profile_id =
+str(get_cli_config_path())`, its own namespace distinct from every other
+profile's, even at the same base URL. A scratch profile's first-boot import can
+no longer seed an entry that outranks another profile's corrected config.
+Separately, `_legacy_config_token` now screens `auth_token` through
+`config.py`'s `resolve_tldw_api_auth_token` (reusing `resolve_provider_api_key` +
+`TLDW_API_PLACEHOLDER_AUTH_TOKEN`) before letting it beat `api_key`/
+`bearer_token`, so the boot-rewrite placeholder falls through to a real
+`api_key` instead of winning. Both the credential-store import and the
+placeholder-screened fallback now log which source was chosen
+(`Imported [tldw_api] config credential...`; `auth_token is the boot-rewrite
+placeholder; using api_key instead...`), so "the wire carries the right key but
+the server says 401" is diagnosable from the log, not just from reading the
+resolver. **If you still hit this on a live run**, you are on code that predates
+the fix; the port-picking workaround (`:8010`, a fresh `server_id`) and writing
+`auth_token` instead of `api_key` still apply there, but treat them as pre-fix
+workarounds, not the current guidance — verify `credential_profile_id` is wired
+in `app.py`'s `_wire_server_context_provider` first.
+
+---
+
+## A captured server fixture that drifted from the real response hides a whole class of routing defect (schedules-handoff PR-6 task 6, 2026-09-02)
+
+**What happened.** The Schedules workbench decides whether an automation is
+server-executed with `is_server_scoped_owner(row["owner_id"])`, which requires a
+`server:` prefix. `Tests/Scheduling/fixtures/server_responses/automation_definition_list.json`
+supplies `"owner_id": "server:42"` for every item, and every test passed. The live
+server sends `"owner_id": "1"` — a bare user id. `_load_server_automations` stamps
+an owner only when the field is **absent** (`if not item.get("owner_id")`), which a
+present-but-wrong-shaped value defeats, so against a real server *every* server
+automation is classified local. Live consequences, all in one pane: rows render
+`[This device] …` while the pane's own notice says "2 automations on the server";
+`r` (run now) refuses with the **local** health message instead of dispatching
+server-side; `m` (move to this device) refuses with "This automation no longer
+exists." Leg (b) of the live plan could not be started at all. The same session
+found the sibling of this bug — a synced result carries the server's
+`definition_id` while the mark-solved eligibility check looks it up among **local**
+ids, so `o` always refuses on exactly the rows it exists for.
+
+**What to do.** A fixture is a *recording*, not a contract: re-capture it from a
+running server whenever the code that reads it changes shape, and diff the field
+values, not just the field names. When a guard has the form "fill this in if the
+server omitted it", ask what happens when the server sends something present but
+different — that is the case a fixture written by hand never covers. And whenever
+an id crosses the client/server boundary, check which id space every lookup keyed
+on it lives in.
+
+---
+
+## An attribute assignment a test can read back is not a render (schedules-handoff PR-6 task 6, 2026-09-02)
+
+**What happened.** The Results tab's unread badge is written as
+`pane.label = f"Results ({unread})"` on a `TabPane`, mirroring the Conflicts tab.
+`Tests/UI/test_schedules_results_tab.py:408` asserts `str(pane.label) == "Results (2)"`
+and passes. Live, with two unread results in the database, the tab bar reads plain
+`Results`. Textual 8.2.8's `TabPane` has no `label` attribute or reactive at all —
+it stores `self._title`, and the tab text is rendered by a separate `Tab` widget —
+so the assignment creates an inert Python attribute on the widget and nothing
+repaints. The user-guide had already been written promising the badge. The bug was
+pre-existing in the Conflicts badge and was copied verbatim into the new code
+because "the Conflicts tab does it this way" was taken as proof it works.
+
+**What to do.** For any widget property you assign to drive a visual, confirm the
+framework actually declares it (`'x' in Widget._reactives`, or read the class) —
+Python will happily accept an assignment to a name the widget has never heard of.
+A test that asserts on the same attribute it set proves the assignment ran, nothing
+more; the assertion has to read the rendered surface (or at minimum the widget the
+framework really renders from). And "the neighbouring feature does it this way" is
+a precedent for the *shape* of the code, never evidence that the shape works.
+
+---
+
+## A detached tmux session renders the app but never feeds it input — and that reads exactly like a hung app (schedules-handoff PR-6 task 6 round 2, 2026-09-02)
+
+**What happened.** Round 1 of the PR-6 live gate ended with a defect filed as "the UI froze after
+saving a reminder": the screen stopped repainting, no injected key or click had any effect, the process
+sat at 0% CPU while its background DB threads kept logging. It was recorded as uncharacterised because
+`py-spy dump` needs root on this machine. Round 2 reproduced it **at boot**, before any interaction,
+which made it diagnosable:
+
+1. **The app was never hung.** This app registers `SIGUSR2` for an on-demand all-threads dump
+   (`Logging_Config.py`, `faulthandler.register(..., all_threads=True)`) — non-destructive and needing
+   no privileges, unlike `SIGABRT` or `py-spy`. The dump showed the main thread idle in
+   `asyncio.base_events._run_once` → `selectors.select`, Textual's input thread parked in `select`
+   inside `linux_driver.run_input_thread`, and the `WriterThread` idle in `queue.get`. A healthy,
+   *idle* loop — not the output-queue deadlock that `Utils/fd_protection.py` documents.
+2. **The harness was the cause.** `tmux -L x new-session -d` with no client attached rendered the app
+   fine but delivered it nothing: `Ctrl+Q` was ignored, and writing SGR bytes straight to the pane's
+   `/dev/ttys018` was ignored too. A stock 15-line Textual app in the *same* tmux server, venv and
+   terminal answered an injected key immediately (`GOT KEY: z`), proving tmux, Textual and the OS were
+   fine. Starting a client — `tmux -L outer new-session -d 'tmux -L verify6b attach'` — made the very
+   next keypress land, and everything worked for the rest of the session. (Round 1 was also detached
+   and did work for ~25 minutes, so the delivery is flaky rather than absolutely broken, which is worse:
+   it fails partway through a session and looks like a regression in whatever you just did.)
+
+**What to do.** Attach a client before driving the TUI: run `tmux -L <inner> attach` inside a second
+tmux server. Before concluding "the app froze", send `SIGUSR2` and read
+`<profile>/faulthandler.log` — an idle `run_forever` frame means the app is waiting for input it never
+got, not deadlocked. And keep one trivial Textual app around as a harness control; it separates "our app
+is broken" from "the harness is not delivering" in under a minute.
+
+---
+
+## A placeholder that reads like a value turns a working button into a phantom defect (schedules-handoff PR-6 task 6 round 2, 2026-09-02)
+
+**What happened.** The reminder create form's Save button appeared inert across two rounds and roughly
+a dozen attempts — recomputed SGR coordinates, a preceding mouse-move event, `Enter` on the focused
+button, both "Runs on" values, all fields filled. It was nearly filed as a defect. It was working the
+whole time: the form was rejecting the submission with `Run At is required for one-time tasks`, because
+the `Run at` field *displays* `2026-08-28 09:00` as its **placeholder** — a string identical to the help
+text underneath it — so it looks populated while `.value` is empty. Typing a real value made the same
+click save instantly. The error line sits directly above the button row and was never in the
+`capture-pane | cut -c110-235` windows being used, so two rounds of captures showed a blank modal.
+
+**What to do.** When a control "does nothing", capture the WHOLE pane before concluding anything — an
+inline validation message is the single most likely explanation and it is usually rendered next to the
+control you are blaming. Read the handler (`_save`, `on_button_pressed`) and check what it validates
+before theorising about click delivery. And treat a placeholder that is indistinguishable from a real
+value as a finding in its own right: in a terminal there is no greyed-out affordance to tell them apart.
+
+---
+
+## The right escape function depends on the surface, not the app — and one widget can undo another's fix (schedules-handoff PR-6 task 6 round 2, 2026-09-02)
+
+**What happened.** A fix round replaced `rich.markup.escape` with an escape-every-`[` helper because the
+detail pane renders through `Content.from_markup`, which consumes ANY `[...]` token — that fix verified
+live. The same round explicitly scoped out the results **table**, whose cells go through
+`rich.text.Text.from_markup` (lowercase-initial tags only), on the grounds that the bracketed content it
+had seen (`[PR-6]`) survives there. Round 2 then found the Automations table silently eating the owner
+prefix it had just fixed the routing for: `automation_name_cell` emits
+`[http://127.0.0.1:8020] <name>`, and `http` starts with a lowercase letter, so `Text.from_markup`
+swallows the whole prefix. Local rows keep `[This device]` (capital T) and server rows show nothing —
+one pane where the count line says "1 automation on the server" and every row claims to be local. The
+pre-fix fixture value `server:42` would have been swallowed identically, so no fixture shape could have
+caught it either.
+
+**What to do.** Enumerate every widget a string reaches and the parser each one uses before deciding a
+string is safe; "this particular example survives" is not the same as "this surface is escaped". Be
+especially suspicious of generated prefixes — URLs, ids, scope labels — because whether they trip a
+markup parser depends on their first character, which is data, not code.
+
+## tmux SGR click columns must be counted in CELLS — BSD `awk index()`/`cut -c` count BYTES (review-set picker, task-28243, 2026-09-02)
+
+**What happened.** Live-verifying the review-set picker, clicks computed from
+`capture-pane` output via `awk '{ print index($0, "Dismiss") }'` (and slices
+via `cut -c`) reliably "missed": the modal closed but the DB showed the set
+never dismissed, three rounds in a row, while the same button worked via
+keyboard and `pilot.click`. That read as an app-side hit-region bug and burned
+a debugging round with region probes and app-log archaeology. The real cause:
+macOS/BSD `awk index()` and `cut -c` count **bytes**, and every multi-byte
+glyph earlier in the captured line (`▊` `✓` `—` `·` = 2–3 bytes each) inflated
+the computed column, so the SGR click (which addresses screen **cells**)
+landed ~6 cells right of the target — on the neighbouring 1fr button, whose
+"open" action closed the modal and made the state look untouched. A DB-oracle
+column bisect (`col=154` no, `col=150` fired) pinned it.
+
+**What to do.** Compute click columns with a character-aware tool — e.g. pipe
+the captured line through python `line.find(needle)` (see
+`scratchpad/click.sh` pattern: find by char index, then emit the SGR press +
+release from that) — and treat "the click closes the dialog but the action
+didn't happen" as a coordinates smell, not an app bug, whenever the row
+contains any non-ASCII glyph. Verify a suspected hit-region bug with the
+widget's own oracle (DB row, `pilot.click`) before touching app code.
+
+## Region assertions are blind to paint-over — the `*:focus` outline family (media type chooser, task-31221, 2026-09-03)
+
+**What happened.** The Library media type chooser rendered live as an empty
+bordered band with its options invisible, while every harness test on it
+passed. Two hypotheses died on evidence (the OptionList height math; a
+compact-variant focus border) before compositor painted-text probes showed
+the truth: the app-global `*:focus { outline: solid }` fallback
+(core/_reset.tcss) PAINTS OVER a widget's outermost rows without costing
+geometry, and the screen focuses the option-count-height chooser on open —
+with a two-option catalogue the outline's top and bottom rows covered every
+option. Every geometry assertion (`region`, `scrollable_content_region`)
+measured *correct* the whole time, because outlines do not participate in
+layout. This was the THIRD widget bitten by that reset (TASK-1160 DataTable,
+TASK-2300 SelectOverlay — whose block literally predicts "a bare box with
+nothing in it" for two-option compacts).
+
+**What to do.** When a widget looks empty or clipped live but its regions
+measure fine, suspect paint-over (outline, overlay, ANSI layer) before
+layout, and assert on **compositor painted text**
+(`screen._compositor.render_strips()` cropped to the region — see
+`_painted_text_in_region` in test_library_media_reader_shell.py) rather
+than on geometry. Check the TASK-1160/TASK-2300 blocks in
+components/_lists.tcss first: any focusable widget whose outermost rows
+carry content needs the same `outline: none` + content-safe-cue opt-out.
+Two auxiliary traps from the same hunt: widget-tier CSS (BUNDLED_CSS /
+DEFAULT_CSS) loses to app-tier rules regardless of specificity, so an
+opt-out fighting an app-tier reset must live at app tier; and a sentinel
+edit used to test code provenance MUST be verified to have landed
+(`assert old in s` before replace) — an unverified no-op replace produced a
+false "app runs foreign code" scare mid-hunt.
+
+---
+
+## `Tab` walks the ENTIRE nav bar before reaching screen content, and "clicks don't reach Buttons/Selects" can itself be a symptom of a rendering bug, not a platform limit (TASK-31551 task 13, 2026-09-04)
+
+**Incident.** Driving the Meetings screen for live verification, `tmux send-keys
+... Tab` was sent repeatedly to reach the Start button, per the standard
+"Tab through the rail, verify focus by capture, press Enter" recipe. 17
+consecutive Tab presses never left the nav bar: diffing full-pane ANSI captures
+before/after each press showed only the underlined nav-bar destination moving
+(Home → ... → wrapping back around), never any change inside the screen's own
+content. `MainNavigationBar` is composed BEFORE `Container(id="screen-content")`
+in `BaseAppScreen.compose()` (see that file), so Tab's DOM-order focus chain
+visits every one of the ~14 nav-bar destinations before it ever reaches a
+screen's own Select/Button/Input — on a screen with this many nav items, that is
+a lot of wasted Tab presses and diff-reading before concluding anything about
+the screen itself. `F6` ("next pane") does NOT help either: on a screen that
+never registers a workbench pane focus target (Meetings did not), it only shows
+"No workbench pane focus target is available." and changes nothing.
+
+Separately, this same session initially trusted a controller note claiming "SGR
+mouse clicks do NOT reach Textual Buttons or Selects" on this screen. That note
+had been written against the screen while it was suffering the CSS-collapse bug
+in the entry above ("the shared UI harness never loads the app stylesheet")
+— every visible control was squeezed into zero rows, so of course a click at
+any coordinate hit nothing. Once the CSS bug was fixed and the rail actually
+painted, an SGR click at the real character coordinates of both a `Select` (`\
+x1b[<0;COL;ROWM\x1b[<0;COL;ROWm` via `tmux load-buffer`/`paste-buffer`) and a
+`Button` worked immediately and reliably for the rest of the session (Start,
+Stop, Recover, Open in Library, a queued Library-import row) — no Tab
+navigation was needed at all once the geometry was real.
+
+**What to do.** To reach a specific screen's own control from a cold launch,
+prefer a direct SGR mouse click at freshly-recomputed coordinates (recompute
+the row/column from the CURRENT capture, per the existing "re-locate every
+control in the same capture you click from" entry) over counting Tab presses
+through the nav bar — it is faster and does not depend on knowing the nav bar's
+current item count. If a click appears not to land, before concluding the
+platform/widget cannot be clicked, first suspect that the target genuinely has
+no paintable area (check with a plain `tmux capture-pane -p` for an empty
+bordered box, per the CSS-collapse entry above) rather than trusting a prior
+session's negative claim about clickability — a screen that cannot render its
+own controls will fail every click for a reason that has nothing to do with
+mouse-event routing.
+## A live report names a SYMPTOM — re-derive the mechanism from code before you fix it (schedules-handoff PR-6 rounds 1-2, 2026-09-02)
+
+**What happened.** A live run is expensive, so its findings arrive with authority: you
+watched the thing fail. That authority attaches to the *symptom*, and PR-6's two fix
+rounds each shipped a wrong mechanism inferred from a correct symptom.
+
+**Mis-diagnosis 1 — results sorted wrong (D4).** The live observation was exact: the
+server emits `2026-09-02T23:25:45.681750Z` while local rows write `+00:00`, and
+`list_automation_results` ordered on the raw string, so `Z` (0x5A) vs `.` (0x2E) inverted
+neighbouring rows. The obvious reading — "the string comparison is the bug, sort by a real
+instant instead" — produced `ORDER BY datetime(created_at)`. That is worse than it looks:
+SQLite's `datetime()` **truncates to whole seconds**, and whole seconds is *precisely* the
+resolution at which a `Z` and a `+00:00` stamp of the same instant can disagree. The fix
+threw away the only information that distinguished the rows, leaving them tied and ordered
+arbitrarily by the UUID tiebreak — and a sync pull mirroring a page of results all stamped
+in the same second is the normal case, not a corner one. The real fix needed sub-second
+precision (`strftime('%Y-%m-%dT%H:%M:%f', …)`, and the docstring records that even `%f` is
+only milliseconds against microsecond local writes). Reading the comparison semantics of
+the function being reached for would have caught it before the round shipped.
+
+**Mis-diagnosis 2 — bracketed content eaten.** Covered in detail in *"The right escape
+function depends on the surface, not the app"* above. Same shape: a correct symptom
+(brackets disappearing), a mechanism generalised from one surface (`Content.from_markup`)
+to a second one it did not describe (`rich.text.Text.from_markup`, lowercase-tag regex),
+and a scope-out justified by "the example I have survives there" rather than by reading
+the second parser. Round 2 found the same bug in the pane the round-1 fix had explicitly
+excluded.
+
+**Why live findings are especially prone to this.** The symptom is vivid and the run was
+costly, so there is real pressure to fix on the spot with the terminal still open. Both
+mis-diagnoses were plausible readings of the evidence actually in hand — the evidence just
+did not reach as far as the mechanism did.
+
+**What to do.**
+
+- Write the symptom and the mechanism as **separate claims**. The live run establishes the
+  symptom; only code establishes the mechanism. A fix round justified by "we saw it fail"
+  has skipped a step.
+- Before reaching for a stdlib/SQL/framework function as the fix, **read what it actually
+  does to your data** — precision, truncation, escaping, ordering. A function that
+  *sounds* like the right abstraction is where these mis-diagnoses land.
+- When a fix is deliberately **scoped out** of a second surface, state the mechanism-level
+  reason ("this parser does not consume that token"), never the example-level one ("the
+  string I tried survives"). An example-level scope-out is exactly how round 1 shipped a
+  fix that round 2 had to make again.
+- Re-derive before re-driving. The cheapest step in a fix round is grepping the call sites
+  of the function you are about to change; the most expensive is a second live gate.
+
+## The theme palette matches "Theme: Switch to Textual Light", not the theme id (TASK-31429, 2026-09-04)
+
+**What happened.** Driving a live theme switch through the command palette
+for the Console-rail colour check: typing `textual-light` (the id every
+config file and test uses) returned zero hits, and the one hit for the
+generic query, "Theme: Change Theme", only posts a notification telling
+you to search — activating it looked like the palette had silently
+dismissed itself (the TASK-397 fast-Down+Enter trap was the first, wrong,
+suspect). `ThemeCommandProvider.search` (app.py) builds each hit as
+`"Theme: Switch to " + name.replace("_"," ").replace("-"," ").title()` and
+fuzzy-matches the QUERY against that Title-Cased string, so the hyphen in
+the id is what killed the match.
+
+**What to do.** Query the palette with the rendered command text — `Switch
+to Textual Light`, `Switch to Apricot` — narrow to one hit, then Down,
+Enter. Two smaller traps from the same session: SGR clicks on the rail's
+section-header toggles registered only on the NEXT input event (the header
+looked untoggled in the capture taken right after the click, then opened
+when the following key arrived), so capture again before concluding a
+click was dead; and Ctrl+Shift+Right (expand every rail section) did
+nothing when sent through tmux — open sections one at a time instead.
+
+## A host out of POSIX semaphores fails every multiprocessing pool with "No space left on device" — and the disk is fine (media wave 4 PR D, 2026-09-04)
+
+**The incident.** The Task 3 implementer's live import run (two text files through the
+Library Import canvas) died with `OSError(28, 'No space left on device')` from
+`multiprocessing.Pool`. The data volume was 84% used with 300 GB free. Reproduced outside
+the app with nothing but `python -c "import multiprocessing as mp; mp.Lock()"` — same
+error. Root cause: macOS's named-semaphore limit was exhausted by 38-40 `pytest`
+processes that four other Claude sessions were running in parallel on the same machine;
+it stayed exhausted for the rest of the evening. Every live import for PR #2400 was
+blocked; the gate, the id set and the per-row receipts were verified in real-screen
+app-tests with a stubbed resolver and generator instead, and the PR body says so.
+
+**What to do.**
+- When a live step dies with ENOSPC on a disk that is not full, run the one-line
+  `mp.Lock()` probe before touching the app; count `pytest` processes with
+  `ps -axo command | grep -c '[p]ytest'`.
+- Do not kill other sessions' runs to free the semaphores. Either wait for them to finish
+  or reboot; until then, substitute app-tests and state the gap in the PR — never report a
+  live verification you could not run.
+
+## Playback cleanup does not prove the Buddy received playback state
+
+**PR #2404 / TASK-31585, 2026-09-05.** After rebasing onto dev, trusted
+readback lifecycle tests passed and real Kokoro drained 128,000 PCM bytes, but
+Migu stayed idle throughout. Manual Speak correctly tracked its own presentation
+while only the realtime loop published Buddy voice leases. Connecting the
+existing trusted playback callbacks to a unique request-owned lease produced
+idle → speaking → idle in the real replay; stale-session terminal tests also
+proved that cleanup preserves another voice owner.
+
+**What to do.** Observe the actual Buddy controller and rendered availability
+alongside audio completion. A successful sink and cleared speaking-message ID
+prove audio ownership, not delivery to a separate visual state consumer. Re-run
+from the current PR tree: older live evidence can exercise a superseded host.
+
+## Two live assessments on one profile reproduce a wedge the app warned you about (media critique #5, 2026-09-04)
+
+**The incident.** Critique #5 ran its two assessment agents in parallel, each launching the real app under its own tmux socket against the same real profile and media DB. The app's startup guard — "Another copy of tldw is already using this profile" — fired in both and both continued. Both then hit the same P0 within minutes: a bulk delete painted `✓ deleted` while the DB row stayed untouched, and the bulk-mutation interlock left Undo, Retry, every row and `s` inert until the process was killed. That is task-31220's storage wedge, which a 24-round single-instance repro had never triggered. Concurrent writers made the failed-write path reachable; the product's dishonest presentation of it is what the critique scored.
+
+**What to do.** Never run two live-app assessments concurrently on one profile: serialize their live phases, or give the second a scratch profile (`TLDW_CONFIG_PATH`, and note the keyring caveat above). When the app's own guard fires, treat it as a real signal and stop. And when a wedge is only reachable under contention, say so in the finding — the trigger is the environment, the presentation is the product's — and file the mechanism, not just the symptom.
+
+## A manually mounted test screen must claim initial-screen ownership (TASK-31645)
+
+**Incident, 2026-09-04.** Chunking Lab's combined verification passed 470 tests but
+failed its narrow workflow after `pilot.click` found ChatScreen instead of the Lab.
+Both local fixtures constructed the real app and tests directly pushed their own
+Lab screen. The factory's settings patch ended before Textual `compose`, so the
+real seven-second splash remained enabled. When it closed, the still-unclaimed
+initial-screen callback pushed Chat over the Lab. The isolated workflow passed
+before seven seconds; that pass did not disprove the slower combined failure.
+
+An isolated diagnostic with a 0.5-second enabled splash observed the actual
+Lab-to-Chat push. Keeping that setup but claiming `_initial_screen_pushed`
+preserved the Lab. Permanent regressions then called the real startup callback
+directly: both local fixtures failed before the ownership flag and passed after it.
+No production startup, shared factory, timer, or splash-setting change was needed.
+
+**What to do.** A fixture that deliberately supplies its own initial screen must
+also establish the matching startup-ownership state. Keep this scoped to that
+fixture; tests of automatic startup must instead await the real startup boundary.
+Exercise the late callback deterministically, rather than assuming a fast pass or
+increasing sleeps proves that deferred startup cannot take over the screen.
+---
+
+## A scratch profile de-authenticates every keychain/XDG-backed CLI the feature shells out to (TASK-31450, 2026-09-04)
+
+**Incident.** Live-verifying the Console Inspect rail's Environment panel, whose
+PR and CI rows come from `gh pr view`. `gh auth status` in the ordinary shell
+reported a logged-in account, an open PR existed for the bound branch, and the
+same `gh pr view … --json …` command returned a full payload with a 13-check
+rollup in 0.7 s. Inside the app — launched with the mandatory scratch profile
+(`HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `TLDW_CONFIG_PATH` all redirected)
+— the PR and check rows never appeared. That is *exactly* what the feature's
+"no gh" degradation is supposed to look like, so the first reading was "the rows
+are correctly absent" and the second was "the gh gatherer is broken". Both were
+wrong. `gh` reads its own config from **`$XDG_CONFIG_HOME/gh`** and resolves its
+token through the macOS keychain in a context that follows the **real `HOME`**;
+the scratch profile redirects both, so `gh` exits 4 (`gh auth login`) and
+`gather_pr_env` reports `ERROR`. Setting `GH_CONFIG_DIR` back to the real
+directory was not enough — with `HOME` still redirected the keychain lookup
+returned an invalid token (`HTTP 401`). The two requirements are mutually
+exclusive: profile isolation and a working `gh` cannot both hold in one run.
+
+**What to do.** Before concluding anything about a feature that shells out to an
+external CLI, ask which of *its* configuration and credential paths your
+isolation just moved — `XDG_CONFIG_HOME` and `HOME` are not private to the app
+under test. Run the CLI itself once inside the isolated environment
+(`env HOME=<scratch> XDG_CONFIG_HOME=<scratch> gh auth status`) and record the
+result as a stated precondition of the run; a green "degraded" capture proves
+the degradation path only if you have shown the tool really is unavailable.
+Where isolation and the credential are irreconcilable, verify the success path
+**out of the app** against real data — gatherer plus pure projection, with the
+real profile's byte fingerprint checked before and after — and say in the report
+that the in-app render of that path was never observed. Do not relax the profile
+isolation to make the screenshot nicer.
+
+---
+
+## Killing the app mid-initialisation can permanently disable a feature, silently (TASK-31450, 2026-09-04)
+
+**Incident.** The same session's Environment panel sat on its muted
+"No git workspace" row for over 60 seconds against a workspace that was
+demonstrably a git repo, surviving the 10 s poll and a restart. It had rendered
+real counts minutes earlier. The panel reads the *change-review-admitted* roots,
+and root readiness is rebuilt in memory on every boot by
+`ChangeReviewConsentService`, which snapshots a shadow repo under
+`<data_dir>/change_review/<hash>/`. An earlier `kill-server` had interrupted that
+first snapshot on a 743 MB worktree, leaving a shadow repo with 129 MB of loose
+objects and no `HEAD`, refs, or index. Every later boot re-failed against it,
+recorded `FAILED` readiness, and **logged nothing** — so the honest empty state
+and a hard failure looked identical. `rm -rf` on that one shadow directory
+restored the panel on the next launch.
+
+**What to do.** When a feature's data depends on a background initialisation
+that persists to disk, do not interrupt the first run of it — and when a
+"correct empty state" persists past the point where data should have arrived,
+check the initialisation artifact on disk (here: does the shadow repo have a
+`HEAD`?) before filing a defect against the surface that is merely reporting it.
+An empty state that cannot distinguish "nothing to show" from "the thing that
+would show it is broken" is itself worth recording as a product concern.
+
+## Capture native-run revision and exit identity together (PR #2418, 2026-09-05)
+
+**Incident.** Migu move/resize/restart receipts captured geometry and PIDs but omitted
+the Git revision and dirty state. The separate exit file reported a null app exception
+without a PID, timestamp, or return code. Qodo review exposed that these artifacts
+could not establish the claimed exact tested revision or the preceding process's
+graceful exit; the published claims were narrowed rather than backfilled.
+
+**What to do.** At launch, capture the resolved source revision and dirty state with
+a run ID/PID. Bind the final exception and process-exit result to that same identity.
+Keep source-checkout paths distinct from runtime/evidence directories. When historical
+receipts omit these fields, preserve the originals and state the evidence limits.
+
+## A security-relevant regex needs the reviewer to RUN probes, not read the pins (media wave 5 PR G, 2026-09-05)
+
+**The incident.** Qodo flagged that OS/SQLite exception text could carry filesystem or
+database paths into the Library landing callout. The fix added `_redact_paths` with pins
+for a POSIX path, a home-relative path, a Windows drive path and two negatives; every pin
+passed and the implementer reported the finding closed. The scoped re-review was told to
+execute six probes of its own choosing rather than read the tests:
+`~/Library/Application Support/media.db is missing` came back as
+`<path> Support/media.db is missing` — the regex stopped at the first space, so any macOS
+`Application Support` or Windows `Program Files` path leaked its tail. A second fix round
+consumed spaced segments; the controller then ran eight probes (four positive, four
+negative) against the committed function before pushing.
+
+**What to do.** For any change whose correctness is "input X never reaches the screen",
+the review gate is executed probes with inputs the implementer did not choose — paths with
+spaces, quoted paths, Windows drives, `file:` URIs — and the negatives that must survive
+(`and`/`or`, dates, product words like `Library`). Pins written by the same hand that wrote
+the regex only prove the cases that hand imagined.
+
+## `call_after_refresh` can focus a widget that the same recompose is about to detach — and an orphan with focus swallows every key (media wave 5 PR H, 2026-09-06)
+
+**The incident.** Task 3 of the wide-layout PR turned the Reader's `More` menu into a
+one-row `ItemGrid` and set an explicit focus target on the `More` button after the toggle.
+The first cut used `screen.call_after_refresh(button.focus)`: the callback ran against the
+OLD `More` button, which the recompose then detached, leaving focus on an orphan. Nothing
+painted a focus ring, and every key — Escape included — was delivered to the orphan and
+dropped. Textual raises no error for this. Routing the target through the viewer's own
+`queue_after_recompose` (which fires after the new children mount) fixed it; the test that
+caught it waits for the mounted widget before asserting focus. Four sibling sites still
+carry the original pattern (task-31950).
+
+**What to do.** When a handler sets focus across a recompose of the widget that owns the
+target, schedule it through that widget's post-recompose hook, never through a
+screen-level `call_after_refresh`. Any focus pin must assert `screen.focused` is a MOUNTED
+widget (`focused.is_attached` / present in the DOM), otherwise an orphan with focus passes
+the assertion while the app is effectively dead to the keyboard.
+
+## A shipped scratch config can still point at the REAL user database (media riders PR M, 2026-09-07)
+
+**Incident.** PR M's batch-2 live pass launched the app on a scratch profile (`TLDW_CONFIG_PATH`) whose `media_db_path` was deliberately broken to provoke the load-failure callout. The scratch config had been copied from the shipped template, and its `chachanotes_db_path` still pointed at `~/.local/share/tldw_cli/default_user/…` — the real database, which three other sessions' app instances also held open. The first launch hung on `Upgrading database (schema v65 -> v68)` against that file. The real DB was not written (mtime unchanged), but only because the upgrade blocked on the other holders.
+
+**Rule.** Before launching on a scratch profile, grep the config for every `*_db_path` and confirm each one resolves under the scratch directory: `grep -n "_db_path" <scratch>/config.toml`. A profile that breaks ONE path on purpose is exactly the profile most likely to have the others still pointing home. A stray launch on a branch with a newer schema migrates the real DB, and older branches cannot open it afterwards (see the `TLDW_CONFIG_PATH` scratch-profile note above).
+
+## Redirecting the app's stderr swallows the whole TUI (media riders PR M, 2026-09-07)
+
+**Incident.** Driving the app under tmux with `python -m tldw_chatbook.app 2>log` to catch tracebacks left a blank pane with a live process: Textual renders to stderr here, so the redirect took the UI with it. The pass cost a full relaunch.
+
+**Rule.** Never redirect stderr when driving the TUI; read loguru's file sink (or `[logging]` in the scratch config) for tracebacks instead. A fresh scratch profile's first-run wizard also does not reliably take Escape (PR O, same day) — set `[first_run] setup_completed = true` in the scratch config before the first launch.
+
+## Pass the existing browser path explicitly in private archives (TASK-32160, 2026-09-08)
+
+**Incident.** SQLite closeout Task16 verified an installed Chromium binary but
+the first Canvas benchmark sample in /private/tmp still failed before browser
+launch. Tests/conftest.py correctly replaced the home directory for privacy;
+canvas_live_harness.py's fallback also walked the archive's ancestors, which
+no longer included the developer's home. An executable existing on disk was
+not evidence that the isolated invocation could resolve it. The fail-stop
+series ended with one failed sample and no valid timing.
+
+**What to do.** For archive-based Canvas runs, pass the harness's existing
+TLDW_CANVAS_CHROMIUM_EXECUTABLE override explicitly in both compared arms and
+record the binary hash. Keep test-state isolation; do not restore the real home
+or install another browser to work around a missing invocation parameter.
+
+## Observe each native segment when validating speech cancellation
+
+**TASK-32148 / TASK-32150 / TASK-32162, 2026-09-09.** Kokoro cancellation had
+passing outer-worker ownership tests. A real CPU run observing unchanged
+`KModel.forward` calls showed that Stop joined the active segment but the retained
+pipeline started another segment before returning. Separately, the actual
+kokoro-onnx 0.6.1 producer cancelled its executor future while its native thread
+continued running. Async task completion alone established neither native
+completion nor cooperative stopping between segments.
+
+Record entry and exit around the actual delegated model calls, issue Stop while
+one is active, and assert that ownership lasts through its exit and no later
+segment begins. Then send and play a successor through the same service. Keep
+native joining and between-segment cancellation as separate assertions.
+
+The new mounted Lab harness also initially omitted `STTS_Window`'s
+`_seed_axis_defaults`, producing a false voice-default failure. Reproduce the
+owner's normal initialization before diagnosing a child pane; manually setting
+selectors cannot establish that saved defaults work.
+
+## Complete audio and empty model-owner counts do not prove sink shutdown
+
+**TASK-32151 / TASK-32165, 2026-09-09.** Two real Higgs CPU runs generated
+complete speech with exact full-content transcripts. The Console device callback
+rendered the expected PCM, the sink reported a terminal state, and tracked model
+owners reached zero. Nevertheless, `SinkDrained` never arrived and the process
+stalled at exit. Native samples showed the sink notify thread and CoreAudio IO
+thread in the inverse locks described by [PortAudio #1174](https://github.com/PortAudio/portaudio/issues/1174).
+Changing sounddevice from 0.5.5 to 0.5.6 did not fix it; the newer environment
+loaded the same bundled PortAudio binary as the passing Kokoro environment.
+
+Require terminal sink-event delivery, actual stream/notify completion and a
+clean worker exit in addition to generated audio and model-owner counters.
+Resolve the loaded native library path and hash when comparing environments;
+the Python package version alone does not identify the native implementation.
+
+## Wheel identity includes deleted files, and dependency checks can open profiles
+
+**PR #2545, TTS qualification, 2026-09-09.** After rebasing onto the Library
+reader split, setuptools reused an ignored `build/lib` copy of the deleted
+`library_media_reader_shell.py`. The wheel built and installed successfully,
+but complete source/wheel file-set comparison rejected the extra module. A
+controller launched despite that failed prerequisite; its successful playback
+was retained as excluded evidence. Archiving the owned build directory and
+rebuilding produced an exact 2,275-file source/wheel/install match, followed by
+a fresh serial playback run with an explicit identity gate.
+
+In the same review, routing standalone ASR discovery through `optional_deps`
+imported application configuration outside pytest. A private temporary profile
+must be selected before that lookup, then removed and the environment restored.
+The final five real ASR runs used a profile-access audit with a denied-open
+positive control, and the real user configuration hash remained unchanged.
+
+Check complete file sets as well as hashes, and make failed prerequisite checks
+stop dependent controllers. Qualify standalone dependency discovery outside the
+test suite's profile fixtures; a missing-dependency guard can itself initialize
+configuration before model loading begins. Receipts are retained in
+`Docs/QA/tts-macos-burndown-2026-09-09/review/`.
+
+**PR #2648, 2026-09-12 follow-up.** A stronger final check rejected nine
+installed profile-core files that were missing from the source census: their
+sources live under `packages/tldw_profile_core/src/`, not alongside the app.
+The wheel was correct; the observer's package-root assumption was not. Retaining
+the failed prerequisite, mapping both declared source roots and comparing complete
+sets produced a 2,350-file match in both environments before the final playback
+run. Read packaging source-root mappings before claiming whole-install identity;
+a matching subset of application hashes does not cover separately rooted packages.
+
+## Discard recovery must survive a completed uncaptured turn
+
+PR #2561 review (2026-09-09) reproduced a missing combination after the
+failed-empty recovery repair: interrupt a captured tool run, explicitly Discard,
+complete a Capture Off send, then turn capture back on. All four project-on/off
+and warm/cold cases blocked because the closed-history proof lost the original
+discarded owner's RESPONSE_STARTED allowance. Direct Discard recovery and failed
+empty recovery each passed separately. Re-reading the durable original Discard
+marker at final binding repaired the mixed sequence without changing prior trace
+records. Mutation controls changing only that marker to failed still reject.
+Test transitions between recovery modes, not just each mode in isolation.
+
+## A mounted avatar can be hidden behind a same-screen setup overlay
+
+**TASK-32023, 2026-09-07.** Internal frame-pixel assertions passed, but the first
+three Console screenshots were identical: the setup overlay covered the rail.
+Textual's `is_on_screen` reported that the underlying avatar had a layout region;
+it did not prove that its pixels were the topmost visible content. Entering a
+conversation through the real store removed setup guidance, and the captured SVGs
+then contained red/blue/red avatar pixels for Dynamic frame one, frame two, and
+Static respectively. Playback now checks the topmost widget at its center and a
+mounted overlay test proves hidden time is excluded.
+
+**What to do.** Pair mounted-state assertions with actual screen pixels. Check
+same-screen overlays as well as screen-stack visibility when gating animation.
+
+## A scratch `HOME` turns the OS keychain from slow into an infinite block
+
+**TASK-32344 (filed as TASK-32275), 2026-09-10.** The critique reported "first
+agent send after a restart stalls ~70 s" and named the built-in MCP server spawn
+as the suspect.
+Timing marks between "console agent reply start" and "Routing to endpoint"
+cleared MCP outright — catalog composition was 15 ms — and pointed at the lazy
+Personal Context bootstrap. Under the scratch `HOME` recipe the same send was
+still waiting after **six minutes**, and `sample <pid> 2` (no root needed,
+unlike `py-spy dump`) put 1686 of 1686 samples in `SecItemAdd` →
+`makeLoginAuthUI` → `AuthorizationCopyRights`: the macOS Keychain
+authorization UI, waiting for a dialog nobody would ever answer, because the
+redirected `HOME` has no login keychain. On a real profile the same call is
+merely slow (3.7 s measured cold, 70 s–3.5 min reported).
+
+**What to do.** Two things. First, when the log narrows a stall to a range but
+not to a call, take a native stack sample before adding more log lines —
+`sample <pid> 2 -f out.txt` works on your own processes without root and named
+the frame in one shot. Second, treat an unbounded wait under a scratch `HOME`
+as the *worst case* of a real defect, not as an artifact to dismiss: it
+reproduced on demand what two observers had only seen intermittently, and it
+is the case a timeout has to survive. (Companion to the TASK-31450 entry
+above: a scratch profile does not merely de-authenticate keychain-backed
+tooling, it can make it hang.)
+
+## A fixture vault in the scratchpad or the profile dir cannot be lasting-synced
+
+**Library ▸ Notes critiques, 2026-09-09 and 2026-09-10.** Two consecutive live
+reviews put their 71-file Obsidian vault fixture where every other fixture in
+this repo goes: inside the isolated scratch profile's config directory, under
+`/private/tmp/claude-501/...`. Both times "Keep a folder synced" failed at
+`Check changes` for every assessor on every folder, and both times it was
+written up as a product P0 — the second run graded heuristic 9 (Error
+Recovery) at 1/40 largely on it.
+
+Bisecting the second one found the harness in the loop twice. A vault inside
+the profile's own config directory trips
+`notes_sync_coordinator.private_path_overlap` by design. And everything under
+`/private/tmp` on macOS carries group `wheel`, while
+`notes_sync_filesystem.py:191-192` admits a file only when
+`owner_group == os.getegid()` — so all 60 fixture files returned
+`unsupported_metadata` and the root failed `root_discovery_incomplete`. The
+same vault copied to `$HOME/vault-fixture` was admitted in **0.19 s**.
+
+The product defects were real and are filed (task-32243: the named refusal is
+destroyed by a secondary crash, the failed root leaks for the session, the
+controller substitutes a blaming string and logs nothing; task-32244: the
+primary-group check itself). But their *incidence* was pure harness: the
+critique could not distinguish "this feature is broken for everyone" from
+"this feature refuses my fixture", and reported the stronger claim for two
+runs.
+
+Put fixture trees for any feature that inspects filesystem ownership,
+permissions or path containment under `$HOME`, outside the config directory the
+profile itself uses — and when a whole journey fails at step one for every
+assessor, check whether the harness is inside the feature's own exclusion rules
+before grading it.
+
+## Reasoning fields on the wire do not prove a template retained them
+
+**TASK-32273 / PR #2575, 2026-09-10.** Local replay payload assertions passed,
+but rendering the exact Gemma 4 template showed two limits: `preserve_thinking`
+retained older tool-call thinking while omitting older final-answer thinking,
+and legacy fenced tool results looked like new user turns and discarded active
+thinking. A live native calculator exchange on port 9099 retained its exact
+thinking in `/apply-template` and returned 221. Keep wire-field, rendered-prompt,
+and transcript-retention assertions separate; only claim the layer verified.
+
+## Observe populated rails across cache expiry, not just initial layout
+
+**TASK-32311, 2026-09-10.** Portrait resize tests settled, but the user saw the
+actual served Console rail repeatedly move. Tracing the populated local profile
+showed the Conversations body alternating between 53 and 13 rows every two
+seconds: TTL expiry returned an empty list while its background query ran.
+Retaining the same-key cached rows during refresh stopped the motion. Actual
+browser screenshots taken 23 seconds apart then had identical left-rail pixels.
+Use a populated profile and observe across refresh intervals; a single screenshot
+or an empty harness cannot establish that a layout stays still.
+## A shell cwd reset between commands split my patch across two checkouts — the wrong tree's green run looked like progress (TASK-24620, 2026-08-30)
+
+**What happened.** Mid-verification, one command ended with a `cd` into a
+throwaway `/tmp` worktree; the shell reset cwd back to the MAIN checkout.
+Every later `python3` patch and `pytest` invocation with relative paths then
+ran against the main checkout (a pre-feature branch), not the feature
+worktree: a test-file update landed in the wrong tree, and two pytest runs
+"passed"/"failed" against code that had none of the changes under test. It
+was caught only because an assertion referenced an attribute the wrong tree
+could not have (`AttributeError: _voice_chip_last_width`) — a greppable
+smell, since the feature code demonstrably defined it.
+
+**What to do.** In multi-worktree sessions, anchor EVERY patch script and
+pytest invocation with an explicit absolute `cd <worktree> && ...` in the
+same command — never rely on cwd persisting. When a test failure names a
+symbol your feature defines, grep BOTH trees for the symbol before
+believing either result: a zero count in the tree you thought you were
+testing means you are testing the wrong tree, not that the code is missing.
+After any suspicious run, `pwd` plus `git -C <tree> status` is one second
+of insurance against a split-brain patch.
+
+## zsh does not word-split `$var`, so my computed SGR click typed itself into the note (TASK-32186, 2026-09-11)
+
+**What happened.** I located a row with `L=$(capture-pane -p | awk '…{print NR" "i}')`
+and then `set -- $L` to get row and column. In bash that splits into `$1`/`$2`;
+**zsh does not word-split unquoted parameters**, so `$1` became `"24 62"` and
+`$2` was empty. The click escape came out as `\e[<0;;24 62M` — not a mouse
+report at all. The first such "click" silently did nothing (I read that as a
+wedge and started debugging the app). The second, sent while the body TextArea
+had focus, was typed into the note: `^[<0;;12 189M…` landed at the top of the
+open note's body and autosaved.
+
+**What to do.** In zsh use `${L%% *}` / `${L##* }`, or `read row col <<< "$L"`,
+or pass the two numbers as separate command substitutions — never `set -- $var`.
+Echo the assembled escape once before sending it: a real SGR click is
+`\e[<0;<col>;<row>M`, and any space or empty field in it means the split failed.
+A click that "does nothing" is more often a malformed escape than a broken app,
+and if a text field has focus the malformed escape becomes input — check the
+note body before blaming the feature.
+
+## A performance claim gets re-measured at the commit it was made on, before you go hunting (TASK-32260, 2026-09-11)
+
+**What happened.** The critique reported Library opening in 12.6 s on a
+27-item profile against 2.7 s on an empty one — a 12x gap, cause untraced.
+Rebuilding the profile with the same seed script and driving the same open
+at 235x52 gave 0.68 s to the painted shell and 1.01 s fully settled. Rather
+than argue about the machine, I added a detached worktree at the critique's
+OWN base commit (`git worktree add --detach ... e6cb464239`), re-seeded a
+profile with THAT tree's code, and measured the same open: 1.24 s. Two
+numbers, one branch apart, and the reported gap in neither — which
+distinguishes "already fixed by something in the 509 intervening commits"
+from "never reproducible", and those call for completely different work.
+The likeliest real cause was the measuring session: the same crit-base tree
+booted in 9.1 s cold against 4.1 s warm, and that review ran several app
+instances at once.
+
+**What to do.** Before optimising anything from a reported number, measure
+it (a) on your branch and (b) at the commit the report names, with the same
+fixture. A detached worktree plus a re-seed is ten minutes. Then ship the
+pin the report should have had: a budget test on a fixture that HAS content,
+with an assertion that the content really reached the screen — an
+open-latency test on an empty profile is how a 12x claim stands for a week.
+
+## A peer's ad-hoc script in the shared scratch dir shadowed a real package (wave-3, 2026-09-11)
+
+**What happened.** Several wave agents shared one scratch directory. A peer
+had written `click.py` and `find.py` there as tmux helpers. Running my own
+probe from that cwd made `import click` load the peer's script, which read
+`sys.argv[1]` and exited — so the app probe died with a bare `NOT FOUND` on
+stderr and exit 1, no traceback, and it only misbehaved when PYTHONPATH
+pointed at my worktree, which sent me looking for a sitecustomize that did
+not exist.
+
+**The same hazard bit the test baseline, harder.** The wave also shared a
+detached `devbase` worktree at the merge-base, and a peer had left it DIRTY
+(a modified `test_library_notes_wave_list.py` plus an untracked new test
+file). My branch-vs-base FAILED-set diff for that one file was therefore
+comparing against a peer's edits, and it read as "base has a failure my
+branch does not" — i.e. as though my change had fixed something. It had
+not; the failing test only existed in the peer's copy. `git status` in the
+"base" worktree took two seconds and dissolved it.
+
+**What to do.** Run scratch scripts from a directory only you write to
+(`<scratch>/<group>-scripts/`), never from the shared wave root. Create
+your OWN detached base worktree for test comparisons and remove it when
+done — never reuse a shared one, and `git status` it before trusting a
+single number out of it. When a Python process dies with output that
+belongs to no code you can find, list `*.py` in the cwd before anything
+else: `sys.path[0]` is the cwd, and a one-word filename there outranks
+site-packages.
+
+## A blank modal in a tmux capture was two modals, not a broken picker (task-32250 wave, 2026-09-11)
+
+**What happened.** Driving Library ▸ Notes ▸ Add from files ▸ Import once, the
+`FileOpen` picker rendered as an empty box: a border fragment down the right of
+the work pane and nothing inside it. Three sessions reproduced it, and an
+isolated `run_test` harness — with and without the app stylesheet — laid the
+dialog out perfectly, which made it look like an app-level regression. It was
+not. The drive script was clicking a Textual `Button` twice (focus, then
+activate) and THEN pressing Enter, so the same action fired twice and pushed
+two modals; what the capture showed was one dialog painted over another. With
+one click and one Enter, plus a settle pause, the picker rendered normally,
+breadcrumbs and all — about forty minutes after it was written off as broken.
+
+**What to do.** In this app a click on a Button focuses it and a second click
+or Enter activates it, so "click twice" and "click then Enter" are two
+presses, not one. Before concluding a widget is broken, check the screen for a
+SECOND instance of what you just opened, and confirm the same fragment
+survives a single, unambiguous activation. An isolated harness that renders
+the widget fine is evidence about the driver, not about the widget.
+
+## Helper scripts in a shared wave scratchpad get overwritten by peers (task-32250 wave, 2026-09-11)
+
+**What happened.** I wrote a tmux driver at `scratchpad/wave3/drive.py` and
+used it for a dozen captures. A later call failed with `NameError: name 'cap'
+is not defined` — a peer implementer working the same wave had written their
+own `drive.py` at the same path, and my imports were silently resolving to
+theirs. The failure looked like a Python import bug, not a file swap.
+
+**What to do.** The wave directory is shared by every implementer in the wave.
+Put helper scripts in a per-task subdirectory (`scratchpad/wave3/tools-<group>/`)
+and import them by that absolute path. A `NameError` for a symbol you know you
+defined means you are reading a different file, the same way an
+`AttributeError` for a symbol your feature defines means the wrong tree.
+
+## A provider can satisfy the response envelope and still ignore the task (2026-09-11)
+
+**What happened.** Live-verifying a new default "Improve My Prompt" optimizer
+template (four-section Situation/Task/Objective/Knowledge structure), the
+end-to-end flow looked green: real DeepSeek call, valid `prompt_rewrite` JSON,
+draft replaced, modal closed, Undo armed. But the rewritten prompt was a lazy
+near-copy ("write a short poem about tea" -> "Write a short poem about tea.").
+The suite was green; the strict-JSON envelope parse was green; the improvement
+was useless. `console_auxiliary_attempts` was empty, so the DB could not
+confirm the call — only replaying the EXACT app-built payload via curl
+reproduced it. Both deepseek-chat and deepseek-reasoner returned the near-copy.
+The same model given the template as a plain user message produced the full
+four sections, so the packaging (system role + untrusted-JSON payload +
+envelope instruction LAST) was the cause: the terminal "JSON object only"
+instruction is what the model recency-anchors on. Appending a final
+task-re-anchor line ("Now apply the full transformation defined above... never
+a minor edit, summary, or near-copy") restored full compliance on both models.
+
+**What to do.** For structured-output optimizer prompts, verify content
+quality, not just envelope validity: a schema-conformant response can still
+be a no-op. Put the output-contract instruction BEFORE the final task
+directive, and end the system prompt with a recency anchor that names the
+required output shape and forbids near-copies. When the DB has no attempt
+row, replay the exact request payload against the provider before believing
+any UI state.
+
+## A plain-text tmux capture cannot tell a focused control from an unfocused one — two reports were "focus is missing" when it was only invisible (task-32246, task-32252, 2026-09-11)
+
+**What happened.** Two wave-3 tasks were filed from `capture-pane -p` evidence
+that focus had gone somewhere it had not.
+
+- task-32246 reported "no focused control anywhere in the visible pane" after
+  Tab out of the note body, reproduced twice. Focus was on
+  `#library-notes-source-database` the whole time. `capture-pane -e` on that
+  one row decoded `1;4` bold+underline on `48;2;16;49;75` — identical to what
+  the button already wears for its own `-selected` class. Invisible, not
+  absent.
+- task-32252 reported `/` typing itself into the Notes filter "from a state
+  where no control on the canvas is focused", three clean repros. Rebuilt live
+  and in the harness from a genuinely unfocused canvas (`set_focus(None)`),
+  the behaviour is correct. A Textual `Input` renders its placeholder whenever
+  its value is empty, focused or not, and a plain-text capture shows no focus
+  border colour — so an already-focused empty filter is pixel-identical to an
+  unfocused one, and `/` typing literally into it (the task-32131 ruling, kept
+  deliberately so `Work/Q3` stays typeable) reads as a leak.
+
+**What to do.** Before filing or fixing "nothing is focused" / "focus went
+nowhere", get the focus identity from something other than the glyphs:
+`capture-pane -e` and decode the SGR on the candidate row, or reproduce in a
+harness and read `screen.focused`. And when a control's focus treatment is a
+colour swap that its own selected/active state also uses, that is itself the
+bug worth filing — a reader cannot see focus there either.
+
+## "The key is being swallowed" — check the framework binds it at all before hunting the swallower (task-32247, 2026-09-11)
+
+**What happened.** The task recorded, as an inferred cause, "Textual's
+`TextArea` binds `ctrl+end` to `cursor_document_end`, so something upstream is
+swallowing it", and pointed at this repo's several layers of priority
+bindings, `on_key` handlers and screen-level grabs. Textual 8.2.8 binds no
+such key and defines no `action_cursor_document_end`: its only end binding is
+`"end,ctrl+e" -> cursor_line_end`. Nothing was swallowing anything. Two
+one-minute checks settled it — `grep -n "ctrl+end" textual/widgets/_text_area.py`
+(no hits) and a harness probe asserting
+`"ctrl+end" in body._bindings.key_to_bindings` (False).
+
+**What to do.** An inert key has two very different causes — consumed
+upstream, or never bound — and the cheap check distinguishes them before any
+tracing: grep the third-party widget's `BINDINGS` and `action_*` for the key
+and the action, and assert the key's presence in the live widget's
+`_bindings.key_to_bindings`. Only if it IS bound is the swallower hunt worth
+starting. Note also that every encoding a terminal might send for one key
+usually normalises to a single Textual name (`\x1b[1;5F`, `\x1b[1;5H` →
+`ctrl+end`/`ctrl+home` in `_ansi_sequences.py`), so "it failed in three
+encodings" is one failure, not three.
+
+## A new menu label can ship pre-truncated — only the running app says so (task-32146, 2026-09-11)
+
+**What happened.** A new Console message action shipped with the label
+"Save answer as note" (19 chars). Every test was green: the action-row
+contracts assert `action_id`/label STRINGS, never rendered width. The first
+live walk showed the More menu — a fixed 24-cell overlay — rendering it as
+"Save answer as": Textual had cut it at about fifteen characters with no
+ellipsis, so the live label named no destination at all. The two TASK-31759
+note labels beside it ("Summarize up to here as note", "Save transcript up to
+here as note") were already taking the same cut, undetected, since they
+shipped.
+
+**What to do.** A label is not verified until a capture shows it rendered.
+Any new entry in a fixed-width surface (this More menu, the composer menu, a
+rail row) gets one `tmux capture-pane` before the guide is written — and if
+the incumbents in that surface are also truncated, say so in the guide rather
+than assuming the copy on screen is the copy in the source. Choosing a label
+that fits is a one-line fix; widening a shared menu for one row is not.
+
+## Appending a `[table]` to a scratch config the app has already expanded silently lands you in the REAL profile (task-32271 docs sweep, 2026-09-12)
+
+**What happened.** The scratch profile's `config.toml` was written by
+`mkprofile.sh` as ~30 lines. By the time the Console leg needed a provider,
+the app had rewritten it to ~1,400 lines with every default table present —
+including `[api_settings.openai]`. Appending a second `[api_settings.openai]`
+block made the file invalid TOML ("Cannot declare ('api_settings', 'openai')
+twice"). The app did not stop: it renamed the file to `config.toml.corrupt-…`,
+ran on built-in defaults, and opened `~/.local/share/tldw_cli/default_user`
+— the user's real databases — where dev's ChaChaNotes schema migration
+(v72 → v73) ran at once. A toast said so, but only after boot, and only in the
+corner of a 235x52 pane the driver was not reading.
+
+**What to do.** Never append tables to a scratch config; edit the existing
+table in place (parse with `tomllib` after every edit), or pass the credential
+as the env var the table already names (`api_key_env_var`) on the tmux launch
+line. Before any launch that follows a config edit, `tomllib.loads` the file;
+after the launch, grep the pane for "Config file failed to load" before doing
+anything else. `TLDW_CONFIG_PATH` protects the profile only while its file
+parses.

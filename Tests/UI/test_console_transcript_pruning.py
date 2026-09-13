@@ -13,10 +13,13 @@ import pytest
 from textual.app import App, ComposeResult
 
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.thinking_blocks import DisplayableThinkingBlock, ThinkingEnvelope
 from tldw_chatbook.Widgets.Console.console_transcript import (
     DEFAULT_PRUNE_HIGH_WATERMARK,
     DEFAULT_PRUNE_LOW_WATERMARK,
@@ -62,6 +65,105 @@ def _messages(n: int) -> list[ConsoleChatMessage]:
         _msg(i, ConsoleMessageRole.USER if i % 2 == 0 else ConsoleMessageRole.ASSISTANT)
         for i in range(n)
     ]
+
+
+def _assistant_activity_turn(*, streaming: bool = False) -> list[ConsoleChatMessage]:
+    return [
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer\n" * 4,
+            id="turn-owner",
+            status="streaming" if streaming else "completed",
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="safe preamble\n" * 4,
+            id="turn-thinking",
+            activity_presentation=ConsoleActivityPresentation(
+                "thinking", "Thinking", "done"
+            ),
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="tool preview\n" * 4,
+            id="turn-tool",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "fs_list", "success"
+            ),
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_assistant_turn_pruning_commits_all_owned_activity_ids_atomically():
+    """A composite top-level row is either wholly pruned or wholly retained."""
+    app = PruneHarness(low=1, high=0)
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        history = [*_assistant_activity_turn(), *_messages(8)]
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        app.app_config["chat_defaults"]["prune_high_watermark"] = 5
+        await transcript.refresh_messages()
+        assert await _wait_for(
+            pilot,
+            lambda: "turn-owner" in transcript._pruned_message_ids,
+        ), "the oldest Assistant unit was never pruned"
+
+        owned = {"turn-owner", "turn-thinking", "turn-tool"}
+        assert owned.issubset(transcript._pruned_message_ids)
+        assert len(transcript.query("#console-assistant-turn-turn-owner")) == 0
+        assert len(transcript.query("#console-activity-header-turn-thinking")) == 0
+        assert len(transcript.query("#console-activity-header-turn-tool")) == 0
+        assert [message.id for message in transcript._messages[:3]] == [
+            "turn-owner",
+            "turn-thinking",
+            "turn-tool",
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "protection", ["nested-selection", "thinking-selection", "streaming-owner"]
+)
+async def test_assistant_turn_pruning_protects_the_whole_activity_unit(protection: str):
+    """Nested selection or streaming ownership blocks every fragment."""
+    app = PruneHarness(low=1, high=0)
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        turn = _assistant_activity_turn(streaming=protection == "streaming-owner")
+        if protection == "thinking-selection":
+            turn[0].thinking = ThinkingEnvelope(
+                (
+                    DisplayableThinkingBlock(
+                        block_id="prune-thinking",
+                        round_ordinal=0,
+                        provider="local_llamacpp",
+                        model="model.gguf",
+                        protocol="openai_chat",
+                        source_format="start_anchored_think",
+                        status="complete",
+                        text="thinking protected with its owner",
+                    ),
+                )
+            )
+        transcript.set_messages([*turn, *_messages(8)])
+        if protection == "nested-selection":
+            transcript.selected_message_id = "turn-tool"
+        elif protection == "thinking-selection":
+            transcript.selected_message_id = project_thinking_activities(
+                assistant=turn[0]
+            )[0].activity_id
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        prune_ids, _height = transcript._compute_prunable_prefix(
+            transcript.virtual_size.height, 1
+        )
+
+        assert {"turn-owner", "turn-thinking", "turn-tool"}.isdisjoint(prune_ids)
 
 
 def _mounted_message_ids(transcript: ConsoleTranscript) -> list[str]:
@@ -113,11 +215,11 @@ async def test_pruning_drops_oldest_rows_over_high_watermark():
     app = PruneHarness(low=25, high=0)
     async with app.run_test() as pilot:
         transcript = app.query_one(ConsoleTranscript)
-        transcript.set_messages(_messages(14))
+        transcript.set_messages(_messages(24))
         await transcript.refresh_messages()
         await pilot.pause()
 
-        assert len(_mounted_message_ids(transcript)) == 14, (
+        assert len(_mounted_message_ids(transcript)) == 24, (
             "seed must mount every row before pruning runs"
         )
         assert transcript.virtual_size.height > 40, "seed must cross the high mark"
@@ -126,25 +228,25 @@ async def test_pruning_drops_oldest_rows_over_high_watermark():
         await transcript.refresh_messages()
 
         assert await _wait_for(
-            pilot, lambda: len(_mounted_message_ids(transcript)) < 14
+            pilot, lambda: len(_mounted_message_ids(transcript)) < 24
         ), "pruning never fired"
 
         mounted = _mounted_message_ids(transcript)
         assert "m0" not in mounted
         assert mounted, "pruning must keep the newest rows"
-        assert mounted[-1] == "m13"
-        assert len(mounted) == 14 - len(transcript._pruned_message_ids)
+        assert mounted[-1] == "m23"
+        assert len(mounted) == 24 - len(transcript._pruned_message_ids)
         # TASK-15453: explicit order, not just first/last presence -- the
         # surviving rows must render in the same relative order as the
         # (unpruned) message store.
         expected_order = [
-            f"m{i}" for i in range(14) if f"m{i}" not in transcript._pruned_message_ids
+            f"m{i}" for i in range(24) if f"m{i}" not in transcript._pruned_message_ids
         ]
         assert mounted == expected_order
         # Pruned down to (at most) the high watermark, erring on keeping rows.
         assert transcript.virtual_size.height <= 40
         # The store snapshot the widget was handed is untouched.
-        assert len(transcript._messages) == 14
+        assert len(transcript._messages) == 24
 
 
 @pytest.mark.asyncio
@@ -152,7 +254,7 @@ async def test_pruning_is_view_only_store_keeps_full_history():
     """messages_for_session still returns everything after pruning (AC4)."""
     store = ConsoleChatStore()
     session = store.create_session()
-    for message in _messages(14):
+    for message in _messages(24):
         store.append_message(
             session.id,
             role=message.role,
@@ -170,11 +272,11 @@ async def test_pruning_is_view_only_store_keeps_full_history():
         ), "pruning never fired"
 
         remaining = store.messages_for_session(session.id)
-        assert len(remaining) == 14
+        assert len(remaining) == 24
         # Exports render the full history, pruned rows included.
         plain = transcript.to_plain_text(width=40)
         assert "line 0.0" in plain
-        assert "line 13.3" in plain
+        assert "line 23.3" in plain
 
 
 @pytest.mark.asyncio
@@ -212,7 +314,7 @@ async def test_pruning_preserves_scroll_position_when_scrolled_up():
         # Grow the transcript past the high mark again (assistant growth, like
         # streaming, must not yank the reader either).
         history = list(transcript._messages) + [
-            _msg(100 + i, ConsoleMessageRole.ASSISTANT) for i in range(5)
+            _msg(100 + i, ConsoleMessageRole.ASSISTANT) for i in range(12)
         ]
         transcript.set_messages(history)
         await transcript.refresh_messages()
@@ -237,7 +339,7 @@ async def test_pruning_reanchors_when_following_tail():
     app = PruneHarness(low=25, high=40)
     async with app.run_test() as pilot:
         transcript = app.query_one(ConsoleTranscript)
-        transcript.set_messages(_messages(14))
+        transcript.set_messages(_messages(24))
         await transcript.refresh_messages()
 
         assert await _wait_for(
@@ -292,7 +394,7 @@ async def test_refresh_and_recompose_do_not_resurrect_pruned_rows():
     app = PruneHarness(low=25, high=40)
     async with app.run_test() as pilot:
         transcript = app.query_one(ConsoleTranscript)
-        history = _messages(14)
+        history = _messages(24)
         transcript.set_messages(history)
         await transcript.refresh_messages()
 

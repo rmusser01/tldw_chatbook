@@ -4,6 +4,7 @@ Persistence-free by construction: only ConsoleProviderGateway.stream_chat is
 used (its contract bypasses Console history and persistence). The message
 list never leaves the calling modal.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -121,7 +122,10 @@ class ConsoleSideChatService:
 
         messages = [
             {"role": "system", "content": SIDE_CHAT_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt + "\n\nSelected text:\n" + selection_quote},
+            {
+                "role": "user",
+                "content": prompt + "\n\nSelected text:\n" + selection_quote,
+            },
         ]
 
         provider = selection.provider
@@ -144,7 +148,9 @@ class ConsoleSideChatService:
                     or "Choose a ready provider and model, then reopen the side chat.",
                 )
                 return
-            async for item in self.gateway.stream_chat(resolution, messages):
+            async for item in self.gateway.stream_chat(
+                resolution, messages, route=None
+            ):
                 if not isinstance(item, str):
                     continue  # non-str items (tool calls) are not side-chat text
                 parts.append(item)

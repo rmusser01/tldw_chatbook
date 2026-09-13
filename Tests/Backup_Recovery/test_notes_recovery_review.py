@@ -5,74 +5,72 @@ import pytest
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 _SETUP = r"""
-import asyncio,os,sys
+import asyncio, os, sys
 from pathlib import Path
 from threading import Event
-from Tests.network_guard import install,blocked_attempts
+from Tests.network_guard import install, blocked_attempts
 install()
 from Tests.Backup_Recovery.test_restore_plan import sealed
-from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated,select_profile
+from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated, select_profile
 from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 from tldw_chatbook.Backup_Recovery.profile_catalog import ProfileCatalog
 from tldw_chatbook.Backup_Recovery import bootstrap
 from tldw_chatbook.Backup_Recovery.activation import ActivationStore
-base=Path.home();source=base/'source';source.mkdir(mode=0o700)
+base = Path.home()
+source = base / 'source'
+source.mkdir(mode=448)
+
 def config_manifest(doc):
- doc['owners'][0]['owner_id']='config'
- doc['files'][0].update(owner_id='config',logical_id='profile:profile:config',relative_path='config.toml')
- doc['dependency_groups'][0]['members']=['profile:profile:config']
-archive=sealed(source,mutate=config_manifest,data=b'[general]\nusers_name="original"\n')
-dest=base/'dest';dest.mkdir(mode=0o700)
-plan=plan_restore(archive,mode='isolated',destinations={'root':dest/'config','profile:profile:paths.data_dir':dest/'data'},target=None,profile_names={'profile':'recovered'})
-control=base/'control';profile=restore_isolated(archive,plan,control,Event())
-select_profile(profile,control)
-config,data=ProfileCatalog(control).resolve(profile)
+    doc['owners'][0]['owner_id'] = 'config'
+    doc['files'][0].update(owner_id='config', logical_id='profile:profile:config', relative_path='config.toml')
+    doc['dependency_groups'][0]['members'] = ['profile:profile:config']
+archive = sealed(source, mutate=config_manifest, data=b'[general]\nusers_name="original"\n')
+dest = base / 'dest'
+dest.mkdir(mode=448)
+plan = plan_restore(archive, mode='isolated', destinations={'root': dest / 'config', 'profile:profile:paths.data_dir': dest / 'data'}, target=None, profile_names={'profile': 'recovered'})
+control = base / 'control'
+profile = restore_isolated(archive, plan, control, Event())
+select_profile(profile, control)
+config, data = ProfileCatalog(control).resolve(profile)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Notes.Notes_Library import NotesInteropService
-from tldw_chatbook.Notes.sync_service import NotesSyncService
-from tldw_chatbook.Notes.sync_engine import SyncDirection
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Notes.file_notes_service import FileNotesService
 from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
-folder=data/'external';folder.mkdir()
-(folder/'one.md').write_text('# Local file\nactual content\n')
-db=CharactersRAGDB(data/'notes.db',installation_client_id())
-notes=NotesInteropService(data,installation_client_id(),global_db_to_use=db)
-sync=NotesSyncService(notes,db)
-replica=FileNotesReplica(data/'replica.db');files=FileNotesService(folder,replica)
-_,profiles,_=bootstrap._control_records(bootstrap.default_bootstrap_root())
-witness=next(p['activation'] for p in profiles if p['selector']==str(config))
-store=ActivationStore(Path(witness['store_root']))
+folder = data / 'external'
+folder.mkdir()
+(folder / 'one.md').write_text('# Local file\nactual content\n')
+db = CharactersRAGDB(data / 'notes.db', installation_client_id())
+replica = FileNotesReplica(data / 'replica.db')
+files = FileNotesService(folder, replica)
+_, profiles, _ = bootstrap._control_records(bootstrap.default_bootstrap_root())
+witness = next((p['activation'] for p in profiles if p['selector'] == str(config)))
+store = ActivationStore(Path(witness['store_root']))
+
 def assert_unrelated_owners_inactive():
- for other in ('config','db.chachanotes.primary','skills','runtime.sync_state','db.scheduled_tasks'):
-  assert other in witness['owners'],other
-  assert not store.allowed(witness['generation'],other),other
+    for other in ('config', 'db.chachanotes.primary', 'skills', 'runtime.sync_state', 'db.scheduled_tasks'):
+        assert other in witness['owners'], other
+        assert not store.allowed(witness['generation'], other), other
 assert_unrelated_owners_inactive()
 """
 
 _MANUAL = (
     _SETUP
     + r"""
-owner='notes.sync_bindings' if sys.argv[1]=='sync' else 'notes.file_notes'
-store.approve(witness['generation'],owner)
-before=(folder/'one.md').read_bytes()
-if sys.argv[1]=='sync':
- try:asyncio.run(sync.sync_folder(folder,'test',SyncDirection.DISK_TO_DB))
- except PermissionError:pass
- else:raise AssertionError('global owner flag reused historical root authority')
- assert not sync.get_sync_history()
-else:
- result=files.reconcile()
- assert result.replica_warning and not replica.list_active_files(files.root_key),'global flag refreshed replica without fresh pairing'
-assert (folder/'one.md').read_bytes()==before
+owner = 'notes.file_notes'
+store.approve(witness['generation'], owner)
+before = (folder / 'one.md').read_bytes()
+result = files.reconcile()
+assert result.replica_warning and (not replica.list_active_files(files.root_key)), 'global flag refreshed replica without fresh pairing'
+assert (folder / 'one.md').read_bytes() == before
 assert not blocked_attempts()
-db.close_connection();replica.close()
+db.close_connection()
+replica.close()
 print('retired and reopened')
 """
 )
 
 
-@pytest.mark.parametrize("route", ["sync", "file_notes"])
+@pytest.mark.parametrize("route", ["file_notes"])
 def test_owner_flag_alone_cannot_authorize_restored_pairing(tmp_path, route):
     _run(tmp_path, route, "manual", script=_MANUAL)
 
@@ -80,98 +78,67 @@ def test_owner_flag_alone_cannot_authorize_restored_pairing(tmp_path, route):
 _REVIEW = (
     _SETUP
     + r"""
-route,action=sys.argv[1:]
-owner='notes.sync_bindings' if route=='sync' else 'notes.file_notes'
+route, action = sys.argv[1:]
+owner = 'notes.file_notes'
+
 def preview():
- return sync.preview_recovery(folder,'test') if route=='sync' else files.preview_recovery()
+    return files.preview_recovery()
+
 def approve(review):
- return sync.approve_recovery(review,'test') if route=='sync' else files.approve_recovery(review)
+    return files.approve_recovery(review)
+
 def database_state():
- return (db.get_connection().total_changes,tuple(sync.get_sync_history()),tuple(replica.list_active_files(files.root_key)))
-before=database_state();disk=(folder/'one.md').read_bytes()
-review=preview()
-assert review.entries==(('one.md','disk_only'),),review
+    return (db.get_connection().total_changes, tuple(tuple(row) for row in db.get_connection().execute('SELECT * FROM sync_sessions')), tuple(replica.list_active_files(files.root_key)))
+before = database_state()
+disk = (folder / 'one.md').read_bytes()
+review = preview()
+assert review.entries == (('one.md', 'disk_only'),), review
 assert not review.issues
-assert database_state()==before and (folder/'one.md').read_bytes()==disk
-assert not store.allowed(witness['generation'],owner)
-if action=='changed':
- (folder/'one.md').write_text('changed after preview')
- try:approve(review)
- except ValueError as error:assert error.args==('notes_pairing_review_changed',),error
- else:raise AssertionError('stale review approved')
- assert not store.allowed(witness['generation'],owner)
-elif action=='incomplete':
- if route=='sync':(folder/'alias.md').symlink_to(folder/'one.md')
- else:
-  unreadable=folder/'unreadable.md';unreadable.write_text('owned inaccessible bytes');unreadable.chmod(0)
- changed=preview()
- assert changed.issues
- try:approve(changed)
- except ValueError:pass
- else:raise AssertionError('incomplete dry-run approved')
- assert not store.allowed(witness['generation'],owner)
+assert database_state() == before and (folder / 'one.md').read_bytes() == disk
+assert not store.allowed(witness['generation'], owner)
+if action == 'changed':
+    (folder / 'one.md').write_text('changed after preview')
+    try:
+        approve(review)
+    except ValueError as error:
+        assert error.args == ('notes_pairing_review_changed',), error
+    else:
+        raise AssertionError('stale review approved')
+    assert not store.allowed(witness['generation'], owner)
+elif action == 'incomplete':
+    unreadable = folder / 'unreadable.md'
+    unreadable.write_text('owned inaccessible bytes')
+    unreadable.chmod(0)
+    changed = preview()
+    assert changed.issues
+    try:
+        approve(changed)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('incomplete dry-run approved')
+    assert not store.allowed(witness['generation'], owner)
 else:
- approve(review)
- assert store.allowed(witness['generation'],owner)
- other_notes='notes.file_notes' if route=='sync' else 'notes.sync_bindings'
- assert not store.allowed(witness['generation'],other_notes)
- if route=='sync':
-  session,progress=asyncio.run(sync.sync_folder(folder,'test',SyncDirection.DISK_TO_DB))
-  assert progress.created_notes and ':' in session
-  assert notes.get_note_by_id('test',progress.created_notes[0])['content']==disk.decode()
-  with db.transaction() as connection:
-   conflict=connection.execute("INSERT INTO sync_conflicts(session_id,file_path,conflict_type) VALUES(?,?,?)",(session,str(folder/'one.md'),'both_changed')).lastrowid
-  assert sync.resolve_conflict(conflict,'skip','test')
-  assert db.get_connection().execute('SELECT resolution FROM sync_conflicts WHERE id=?',(conflict,)).fetchone()[0]=='skip'
- else:
-  assert files.reconcile().created==('one.md',)
-  assert replica.get_bytes(files.root_key,'one.md')==disk
- assert (folder/'one.md').read_bytes()==disk
+    approve(review)
+    assert store.allowed(witness['generation'], owner)
+    other_notes = 'notes.sync_bindings'
+    assert not store.allowed(witness['generation'], other_notes)
+    assert files.reconcile().created == ('one.md',)
+    assert replica.get_bytes(files.root_key, 'one.md') == disk
+    assert (folder / 'one.md').read_bytes() == disk
 assert_unrelated_owners_inactive()
 assert not blocked_attempts()
-db.close_connection();replica.close()
+db.close_connection()
+replica.close()
 print('retired and reopened')
 """
 )
 
 
-@pytest.mark.parametrize("route", ["sync", "file_notes"])
+@pytest.mark.parametrize("route", ["file_notes"])
 @pytest.mark.parametrize("action", ["approve", "changed", "incomplete"])
 def test_complete_owner_dry_run_and_explicit_current_approval(tmp_path, route, action):
     _run(tmp_path, route, action, script=_REVIEW)
-
-
-_HISTORY = (
-    _SETUP
-    + r"""
-from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
-repo=LocalNoteFolderRepository(db)
-note=db.add_note('Historical membership','kept content')
-placement=repo.create_folder(name='Historical',parent_id=None)
-repo.reconcile_managed(owner_id='captured-device-claim',desired=((placement.folder_id,note),))
-with db.transaction() as connection:
- connection.execute("INSERT INTO sync_sessions(session_id,sync_root_folder,sync_direction,conflict_resolution,status,client_id) VALUES(?,?,?,?,?,?)",('captured-session',str(folder),'disk_to_db','ask','running','old-device'))
- conflict=connection.execute("INSERT INTO sync_conflicts(session_id,file_path,conflict_type) VALUES(?,?,?)",('captured-session',str(folder/'one.md'),'both_changed')).lastrowid
-before=tuple(tuple(row) for row in db.get_connection().execute('SELECT * FROM note_folder_memberships'))
-review=sync.preview_recovery(folder,'test')
-assert review.historical_owners==('captured-device-claim',)
-assert before==tuple(tuple(row) for row in db.get_connection().execute('SELECT * FROM note_folder_memberships'))
-sync.approve_recovery(review,'test')
-assert not sync.resolve_conflict(conflict,'use_disk','test'),'captured running session became live'
-assert db.get_connection().execute('SELECT resolution FROM sync_conflicts WHERE id=?',(conflict,)).fetchone()[0] is None
-row=db.get_connection().execute('SELECT owner_id,ownership,owner_active,deleted FROM note_folder_memberships').fetchone()
-assert tuple(row)==('captured-device-claim','managed',0,0),tuple(row)
-assert repo.list_restore_reviews()[0].owner_id=='captured-device-claim'
-assert db.get_note_by_id(note)['content']=='kept content'
-assert not blocked_attempts()
-db.close_connection();replica.close()
-print('retired and reopened')
-"""
-)
-
-
-def test_fresh_pairing_does_not_resume_historical_conflicts_or_memberships(tmp_path):
-    _run(tmp_path, "sync", "history", script=_HISTORY)
 
 
 _IMPORT = r"""
@@ -203,39 +170,33 @@ def test_existing_admitted_generation_reader_import_is_inert(tmp_path):
 
 
 _REOPEN = r"""
-import asyncio,sys
+import asyncio, sys
 from pathlib import Path
-from Tests.network_guard import install,blocked_attempts
+from Tests.network_guard import install, blocked_attempts
 install()
-from tldw_chatbook.Backup_Recovery.isolated_restore import select_profile,installation_client_id
+from tldw_chatbook.Backup_Recovery.isolated_restore import select_profile, installation_client_id
 from tldw_chatbook.Backup_Recovery.profile_catalog import ProfileCatalog
-profile,control,route=sys.argv[1:]
-control=Path(control);select_profile(profile,control)
-_,data=ProfileCatalog(control).resolve(profile)
+profile, control, route = sys.argv[1:]
+control = Path(control)
+select_profile(profile, control)
+_, data = ProfileCatalog(control).resolve(profile)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Notes.Notes_Library import NotesInteropService
-from tldw_chatbook.Notes.sync_service import NotesSyncService
-from tldw_chatbook.Notes.sync_engine import SyncDirection
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Notes.file_notes_service import FileNotesService
-folder=data/'external'
-db=CharactersRAGDB(data/'notes.db',installation_client_id())
-notes=NotesInteropService(data,installation_client_id(),global_db_to_use=db)
-sync=NotesSyncService(notes,db)
-replica=FileNotesReplica(data/'replica.db');files=FileNotesService(folder,replica)
-(folder/'fresh.md').write_text('Created after a fresh launch')
-if route=='sync':
- session,progress=asyncio.run(sync.sync_folder(folder,'test',SyncDirection.DISK_TO_DB))
- assert ':' in session and progress.created_notes
-else:
- assert files.reconcile().created==('fresh.md',)
+folder = data / 'external'
+db = CharactersRAGDB(data / 'notes.db', installation_client_id())
+replica = FileNotesReplica(data / 'replica.db')
+files = FileNotesService(folder, replica)
+(folder / 'fresh.md').write_text('Created after a fresh launch')
+assert files.reconcile().created == ('fresh.md',)
 assert not blocked_attempts()
-db.close_connection();replica.close()
+db.close_connection()
+replica.close()
 print('fresh process consumed local owner claim')
 """
 
 
-@pytest.mark.parametrize("route", ["sync", "file_notes"])
+@pytest.mark.parametrize("route", ["file_notes"])
 def test_owner_claim_reopens_in_fresh_process(tmp_path, route):
     script = _REVIEW.replace(
         "print('retired and reopened')",
@@ -295,54 +256,6 @@ def test_cached_installation_id_requires_current_committed_identity(tmp_path):
     _run(tmp_path, "file_notes", "identity", script=_IDENTITY)
 
 
-_DUPLICATE = (
-    _SETUP
-    + r"""
-for title in ('first','second'):
- note=db.add_note(title,'database content')
- with db.transaction() as connection:
-  connection.execute('UPDATE notes SET sync_root_folder=?,relative_file_path_on_disk=?,is_externally_synced=1,last_synced_disk_file_hash=? WHERE id=?',(str(folder),'one.md','0'*64,note))
-review=sync.preview_recovery(folder,'test')
-assert 'duplicate_sync_path' in review.issues,review
-try:sync.approve_recovery(review,'test')
-except ValueError:pass
-else:raise AssertionError('ambiguous DB claims approved')
-assert not store.allowed(witness['generation'],'notes.sync_bindings')
-db.close_connection();replica.close()
-print('retired and reopened')
-"""
-)
-
-
-def test_duplicate_database_path_cannot_be_a_complete_dry_run(tmp_path):
-    _run(tmp_path, "sync", "duplicate", script=_DUPLICATE)
-
-
-_MATRIX = (
-    _SETUP
-    + r"""
-(folder/'two.md').write_text('both changed to same bytes')
-for name,content in (('two.md','both changed to same bytes'),('missing.md','stored note')):
- note=db.add_note(name,content)
- with db.transaction() as connection:
-  connection.execute('UPDATE notes SET sync_root_folder=?,relative_file_path_on_disk=?,is_externally_synced=1,last_synced_disk_file_hash=? WHERE id=?',(str(folder),name,'0'*64,note))
-review=sync.preview_recovery(folder,'test')
-assert review.entries==( ('missing.md','deleted_on_disk'),('one.md','disk_only'),('two.md','both_changed') ),review
-sync.approve_recovery(review,'test')
-_,progress=asyncio.run(sync.sync_folder(folder,'test'))
-assert sorted(conflict.conflict_type for conflict in progress.conflicts)==['both_changed','deleted_on_disk']
-assert not (folder/'missing.md').exists()
-assert (folder/'two.md').read_text()=='both changed to same bytes'
-db.close_connection();replica.close()
-print('retired and reopened')
-"""
-)
-
-
-def test_dry_run_reports_actual_bidirectional_conflicts(tmp_path):
-    _run(tmp_path, "sync", "matrix", script=_MATRIX)
-
-
 _IMPORTED_SEED = r"""
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 repository=LocalNoteFolderRepository(notes)
@@ -354,7 +267,7 @@ with notes.transaction() as connection:
 """
 
 _IMPORTED_READ = r"""
-import asyncio,json,sys
+import asyncio,sys
 from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
 install()
@@ -366,36 +279,50 @@ profile,control=sys.argv[1:];control=Path(control)
 select_profile(profile,control);selector,data=ProfileCatalog(control).resolve(profile)
 from tldw_chatbook import config
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Notes.Notes_Library import NotesInteropService
-from tldw_chatbook.Notes.sync_service import NotesSyncService
-from tldw_chatbook.Notes.sync_engine import SyncDirection
-from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+from tldw_chatbook.Notes.notes_sync_legacy import snapshot_legacy_notes_sync,plan_legacy_notes_sync_migration,persist_legacy_notes_sync_migration
 notes=CharactersRAGDB(config.get_chachanotes_db_path(),installation_client_id())
-service=NotesSyncService(NotesInteropService(data,installation_client_id(),global_db_to_use=notes),notes)
-assert service.get_sync_history()[0]['session_id']=='old-running-session'
-conflict=service.get_conflicts_for_session('old-running-session')[0]['id']
-folder=data/'new-local-notes';folder.mkdir();(folder/'new.md').write_text('Fresh local explicit sync')
+def history():
+ connection=notes.get_connection()
+ return tuple(tuple(tuple(row) for row in connection.execute('SELECT * FROM '+table)) for table in ('notes','sync_sessions','sync_conflicts','note_folder_memberships'))
+before=history()
+assert notes.get_connection().execute('SELECT session_id FROM sync_sessions').fetchone()[0]=='old-running-session'
+folder=data/'new-local-notes';folder.mkdir();(folder/'new.md').write_text('Fresh local content remains untouched')
+disk=(folder/'new.md').read_bytes()
 _,profiles,_=bootstrap._control_records(bootstrap.default_bootstrap_root())
 witness=next(p['activation'] for p in profiles if p['selector']==str(selector))
-store=ActivationStore(Path(witness['store_root']))
-for owner in ('config','db.chachanotes.primary'):assert not store.allowed(witness['generation'],owner)
-review=service.preview_recovery(folder,'test')
-assert review.historical_owners==('captured-machine',),review
-assert not service.resolve_conflict(conflict,'use_disk','test')
-service.approve_recovery(review,'test')
-assert not service.resolve_conflict(conflict,'use_disk','test')
-assert LocalNoteFolderRepository(notes).list_restore_reviews()[0].owner_id=='captured-machine'
-session,progress=asyncio.run(service.sync_folder(folder,'test',SyncDirection.DISK_TO_DB))
-assert ':' in session and progress.created_notes
-row=notes.get_connection().execute('SELECT status,client_id FROM sync_sessions WHERE session_id=?',('old-running-session',)).fetchone()
-assert tuple(row)==('running','captured-machine')
-for owner in ('config','db.chachanotes.primary'):assert not store.allowed(witness['generation'],owner)
-notes.close();assert not blocked_attempts()
-print('actual archived Notes history remains inert after owner review')
+activation=ActivationStore(Path(witness['store_root']))
+device_path=config.get_user_data_dir()/'tldw_chatbook_notes_sync_state.db'
+assert not device_path.exists(),'restoration copied device-local authority'
+device=NotesDeviceStateStore(device_path)
+def migrate():
+ try:
+  snapshot=snapshot_legacy_notes_sync(notes.get_connection(),{},note_scope_id='recovered-notes')
+  return persist_legacy_notes_sync_migration(device,plan_legacy_notes_sync_migration(snapshot))
+ finally:notes.close_connection()
+def denied(*args,**kwargs):raise AssertionError('historical metadata started live device sync')
+runtime=NotesSyncRuntimeOwner(store=device,migrate_legacy=migrate,coordinator=denied,adapter=object(),watcher_factory=denied,cutover_admitted=False,profile_process_is_sole=True)
+async def check():
+ try:
+  await runtime.start()
+  state=runtime.snapshot()
+  assert state.status=='awaiting_cutover',state
+  assert not state.roots,state
+  assert device.get_setting('cutover_marker') is None
+  assert not device.list_incomplete_operations()
+ finally:await runtime.shutdown()
+asyncio.run(check())
+assert history()==before,'starting the current runtime changed restored historical content'
+assert (folder/'new.md').read_bytes()==disk
+for owner in ('config','db.chachanotes.primary','notes.sync_bindings','notes.file_notes'):
+ assert not activation.allowed(witness['generation'],owner),owner
+notes.close();device.close();assert not blocked_attempts()
+print('actual archived Notes history remains inert without device authority')
 """
 
 
-def test_actual_archived_notes_history_is_preserved_through_owner_review(tmp_path):
+def test_actual_archived_notes_history_stays_inert_without_device_authority(tmp_path):
     import json
     import os
     import subprocess
@@ -435,7 +362,7 @@ def test_actual_archived_notes_history_is_preserved_through_owner_review(tmp_pat
     )
     assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
     assert (
-        "actual archived Notes history remains inert after owner review"
+        "actual archived Notes history remains inert without device authority"
         in result.stdout
     )
 
@@ -503,29 +430,6 @@ print('retired and reopened')
 
 def test_file_notes_review_uses_owned_raw_members_and_git_exclusions(tmp_path):
     _run(tmp_path, "file_notes", "raw", script=_RAW_FILES)
-
-
-_SPLIT = (
-    _SETUP
-    + r"""
-other=CharactersRAGDB(data/'different-content.db',installation_client_id())
-notes.unified_db_template=other
-review=sync.preview_recovery(folder,'test')
-assert 'notes_pairing_database_mismatch' in review.issues,review
-try:sync.approve_recovery(review,'test')
-except ValueError:pass
-else:raise AssertionError('uncompared distinct content database approved')
-assert not store.allowed(witness['generation'],'notes.sync_bindings')
-other.close();db.close_connection();replica.close()
-print('retired and reopened')
-"""
-)
-
-
-def test_separate_content_database_does_not_receive_incomplete_pairing_approval(
-    tmp_path,
-):
-    _run(tmp_path, "sync", "split", script=_SPLIT)
 
 
 _LATER_GENERATION = r"""
@@ -598,30 +502,8 @@ def test_actual_later_rollback_cannot_reuse_prior_owner_claim(
     _run(tmp_path, str(helper_resource_root), "later", script=_LATER_GENERATION)
 
 
-_REJECTED_CLAIM = (
-    _SETUP
-    + r"""
-import json
-from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
-sync.approve_recovery(sync.preview_recovery(folder,'test'),'test')
-repo=LocalNoteFolderRepository(db)
-note=db.add_note('Historical membership','unchanged')
-placement=repo.create_folder(name='Historical',parent_id=None)
-repo.reconcile_managed(owner_id='captured-device',desired=((placement.folder_id,note),))
-claim=next(store._generation(witness['generation']).glob('notes-pairing-*.json'))
-record=json.loads(claim.read_bytes());record['generation']='foreign-generation';claim.write_text(json.dumps(record))
-review=sync.preview_recovery(folder,'test')
-before=tuple(tuple(row) for row in db.get_connection().execute('SELECT * FROM note_folder_memberships'))
-try:sync.approve_recovery(review,'test')
-except ValueError:pass
-else:raise AssertionError('foreign local claim accepted')
-after=tuple(tuple(row) for row in db.get_connection().execute('SELECT * FROM note_folder_memberships'))
-assert before==after,'rejected local claim mutated historical membership'
-db.close_connection();replica.close();assert not blocked_attempts()
-print('retired and reopened')
-"""
-)
+def test_retired_sync_pairing_cannot_issue_new_device_authority(tmp_path):
+    from tldw_chatbook.Notes.recovery_review import review_pairing
 
-
-def test_rejected_local_claim_does_not_change_managed_memberships(tmp_path):
-    _run(tmp_path, "sync", "rejected_claim", script=_REJECTED_CLAIM)
+    with pytest.raises(ValueError, match="notes_pairing_owner_unsupported"):
+        review_pairing("notes.sync_bindings", object(), tmp_path, "test")

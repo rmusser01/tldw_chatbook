@@ -173,24 +173,6 @@ def require_pairing(owner: str, paths: tuple[Path | None, ...]) -> str | None:
         raise PermissionError("notes_pairing_review_required") from None
 
 
-def sync_paths(engine, root: Path, user_id: str) -> tuple[Path | None, ...]:
-    """Read the same content database selectors used by the actual sync engine."""
-    if not isinstance(user_id, str) or not user_id.strip():
-        raise ValueError("notes_pairing_user_required")
-    with engine.notes_service._db_lock:
-        targets = (
-            engine.notes_service.unified_db_template,
-            engine.notes_service._db_instances.get(user_id.strip()),
-        )
-        paths = tuple(
-            None if target.db_path_str == ":memory:" else Path(target.db_path_str)
-            for target in targets
-            if target is not None
-        )
-    session = None if str(engine.db.db_path) == ":memory:" else Path(engine.db.db_path)
-    return tuple(dict.fromkeys((Path(root), session, *paths)))
-
-
 def file_paths(service) -> tuple[Path, Path | None]:
     return (
         service.root,
@@ -244,86 +226,19 @@ def _observe_files(service):
     return disk, facts, issues
 
 
-def _observe(owner, target, root, user_id):
-    from .sync_paths import PinnedSyncRoot
-
-    if owner == "notes.file_notes":
-        disk, facts, scan_issues = _observe_files(target)
-        errors = ()
-    else:
-        with PinnedSyncRoot(root) as pinned:
-            files, errors = pinned.scan((".md", ".txt"))
-            pinned._verify_root_path_identity()
-        disk = {
-            str(name): hashlib.sha256(row.content.encode()).hexdigest()
-            for name, row in files.items()
-        }
-        facts = [
-            (str(name), row.content, row.mtime) for name, row in sorted(files.items())
-        ]
-        scan_issues = set()
-    owners = ()
-    entries = None
-    if owner == "notes.sync_bindings":
-        from .sync_engine import SyncProgress
-
-        progress = SyncProgress()
-        rows = target._get_synced_notes_for_root(
-            root, user_id, progress=progress, strict=True
-        )
-        stored = {str(name): row["content_hash"] for name, row in rows.items()}
-        entries = []
-        by_name = {str(name): row for name, row in rows.items()}
-        for name in sorted(set(disk) | set(stored)):
-            if name not in disk:
-                state = "deleted_on_disk"
-            elif name not in stored:
-                state = "disk_only"
-            else:
-                baseline = by_name[name]["last_synced_disk_file_hash"]
-                disk_changed = disk[name] != baseline
-                db_changed = stored[name] != baseline
-                state = (
-                    "both_changed"
-                    if disk_changed and db_changed
-                    else "disk_changed"
-                    if disk_changed
-                    else "database_changed"
-                    if db_changed
-                    else "unchanged"
-                )
-            entries.append((name, state))
-        entries = tuple(entries)
-        facts.append(
-            rows and tuple((str(name), row) for name, row in sorted(rows.items()))
-        )
-        memberships = target._recovery_memberships()
-        owners = tuple(sorted({row[1] for row in memberships}))
-        facts.append(memberships)
-        issues = tuple(
-            sorted(
-                {error.reason for error in errors}
-                | {reason for _, reason in progress.skipped_items}
-            )
-        )
-    else:
-        stored = {
-            row.relative_path: row.content_hash
-            for row in target._replica.list_active_files(target.root_key)
-        }
-        facts.append(tuple(sorted(stored.items())))
-        issue_set = scan_issues
-        if target._pending_replica_moves:
-            issue_set.add("notes_pairing_pending_history")
-        if target._session_owner.current_binding() != target._session_binding:
-            issue_set.add("notes_pairing_session_changed")
-        issues = tuple(sorted(issue_set))
-    return (
-        (_comparison(disk, stored) if entries is None else entries),
-        owners,
-        issues,
-        _digest(facts),
-    )
+def _observe(target):
+    """Compare the current File Notes root with its recovered replica."""
+    disk, facts, scan_issues = _observe_files(target)
+    stored = {
+        row.relative_path: row.content_hash
+        for row in target._replica.list_active_files(target.root_key)
+    }
+    facts.append(tuple(sorted(stored.items())))
+    if target._pending_replica_moves:
+        scan_issues.add("notes_pairing_pending_history")
+    if target._session_owner.current_binding() != target._session_binding:
+        scan_issues.add("notes_pairing_session_changed")
+    return _comparison(disk, stored), (), tuple(sorted(scan_issues)), _digest(facts)
 
 
 def review_pairing(
@@ -335,17 +250,13 @@ def review_pairing(
     expected: NotesRecoveryReview | None = None,
 ) -> NotesRecoveryReview:
     """Perform/recheck a complete owner comparison before a durable local claim."""
-    paths = (
-        sync_paths(target, root, user_id)
-        if owner == "notes.sync_bindings"
-        else file_paths(target)
-    )
+    if owner != "notes.file_notes":
+        raise ValueError("notes_pairing_owner_unsupported")
+    paths = file_paths(target)
     with _scope(owner, paths) as (witnesses, binding, installation):
         if not witnesses:
             raise ValueError("notes_recovery_not_required")
-        entries, owners, issues, content = _observe(owner, target, Path(root), user_id)
-        if owner == "notes.sync_bindings" and len(set(paths[1:])) != 1:
-            issues = tuple(sorted({*issues, "notes_pairing_database_mismatch"}))
+        entries, owners, issues, content = _observe(target)
         review = NotesRecoveryReview(
             owner,
             _digest((binding, content, owners, issues)),
@@ -386,13 +297,6 @@ def review_pairing(
                         raise ValueError("notes_pairing_review_changed")
                     nonce = record.nonce
                 existing.append((store, witness, record))
-        # Retained managed placements are never silently transferred to a fresh ID.
-        if owner == "notes.sync_bindings":
-            from .note_folder_repository import LocalNoteFolderRepository
-
-            LocalNoteFolderRepository(target.db).mark_unknown_owners_inactive(
-                active_owner_ids=()
-            )
         nonce = nonce or uuid4().hex
         for store, witness, record in existing:
             claim = record or _Claim(

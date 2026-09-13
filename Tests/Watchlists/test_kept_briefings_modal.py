@@ -29,7 +29,6 @@ from unittest.mock import Mock
 
 import pytest
 from rich.console import Console
-from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Select, Static
 
@@ -44,7 +43,6 @@ from tldw_chatbook.Subscriptions.briefing_cast import (
     dump_roster,
     validate_roster,
 )
-from tldw_chatbook.Subscriptions.briefing_service import GenerationInFlightError
 from tldw_chatbook.UI.Watchlists_Modules import kept_briefings_modal as kbm_module
 from tldw_chatbook.UI.Watchlists_Modules.kept_briefings_modal import KeptBriefingsModal
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog

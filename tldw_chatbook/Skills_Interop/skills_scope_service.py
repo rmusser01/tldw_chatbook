@@ -6,6 +6,7 @@ import asyncio
 import inspect
 from collections.abc import Sequence
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
@@ -473,6 +474,7 @@ class SkillsScopeService:
         args: Sequence[str],
         *,
         mode: SkillsBackend | str | None = None,
+        output_root: Path | None = None,
     ) -> ScriptRunResult:
         """Run a LOCAL trusted skill's bundled script (runtime run_skill_script seam).
 
@@ -483,6 +485,8 @@ class SkillsScopeService:
                 list/tuple of str (see the local service's
                 ``run_skill_script`` for why a bare str is rejected).
             mode: Backend selector; only local is accepted.
+            output_root: Optional explicit retained-output root forwarded to
+                the local backend.
 
         Returns:
             The local service's ScriptRunResult.
@@ -502,7 +506,12 @@ class SkillsScopeService:
         service = self._require_service(SkillsBackend.LOCAL)
         self._enforce_policy("skills.run_script.launch.local")
         return await self._maybe_await(
-            service.run_skill_script(skill_name, script_path, args)
+            service.run_skill_script(
+                skill_name,
+                script_path,
+                args,
+                output_root=output_root,
+            )
         )
 
     async def seed_builtin_skills(

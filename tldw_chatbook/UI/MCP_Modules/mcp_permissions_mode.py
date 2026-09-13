@@ -24,7 +24,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.message import Message
-from textual.widgets import Button, DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Select, Static
 
 from tldw_chatbook.MCP.permission_store import (
     DEFAULT_GLOBAL,
@@ -53,7 +53,9 @@ _TOOL_ROW_INDENT = "  "
 # through `update_matrix()`.
 _LEGEND_TEXT = (
     "• override · ⚠ definition changed · ⚑ high-risk floor · "
-    "Space cycles Inherit → Allow → Ask → Off"
+    "≡ exact-input allows · "
+    "(session) approved until Chatbook exits · "
+    "Space cycles Inherit → Ask → Allow → Off"
 )
 
 # T8: exact copy pinned by the server-source governance section below --
@@ -63,6 +65,64 @@ _SERVER_PROFILES_POINTER = (
     "Server-side profiles are managed in the tldw_server webui. The matrix "
     "above is chatbook's client-side gate and still applies."
 )
+
+# Wave C (F8): shown under the profile selector whenever a non-default
+# tool-policy profile is selected -- the matrix reads as the whole story
+# otherwise, but Console applies the profile (and persona policy may floor
+# tools on top of it).
+_PROFILE_HINT_TEXT = (
+    "Console agents run with this profile; persona policy may still floor "
+    "some tools to Ask."
+)
+
+# Wave C (F3): cap on how many undiscovered server names the discovery
+# hint names inline before collapsing to "+N more" -- the hint is one dim
+# line under the legend, not a second table.
+_UNDISCOVERED_NAME_CAP = 3
+
+
+def _undiscovered_servers_hint(snapshots: list) -> str | None:
+    """One-line hint naming KNOWN servers with no discovered tools.
+
+    Wave C (F3): a saved-but-unconnected server contributes zero rows to
+    the matrix (registration/discovery precedes permission -- an
+    undiscovered tool has nothing to permit yet), so "where is docs?" had
+    no answer at the point of confusion. Local-source snapshots only (the
+    built-in row is never "connected", and server-source records embed
+    their own tool lists); `tool_count` None or 0 counts as undiscovered.
+    Returns None when every known server has tools (nothing to explain).
+    """
+    from tldw_chatbook.MCP.readiness import ReadinessSnapshot
+
+    disconnected: list[str] = []
+    connected: list[str] = []
+    for snap in snapshots:
+        if not (isinstance(snap, ReadinessSnapshot) and snap.source == "local"):
+            continue
+        if snap.tool_count:
+            continue
+        # Qodo #2620 #5: zero tools on a CONNECTED local profile means a
+        # failed/empty discovery -- readiness maps that to Refresh, not
+        # Connect -- so the two cases name different verbs.
+        (connected if snap.is_connected else disconnected).append(snap.label)
+    if not disconnected and not connected:
+        return None
+    parts = []
+    for names, verb in (
+        (disconnected, "Connect"),
+        (connected, "Refresh the discovery for"),
+    ):
+        if not names:
+            continue
+        shown = names[:_UNDISCOVERED_NAME_CAP]
+        text = ", ".join(shown)
+        if len(names) > len(shown):
+            text += f", +{len(names) - len(shown)} more"
+        parts.append(f"{verb} {text}")
+    return (
+        f"No tools yet — {'; '.join(parts)} in Servers mode to configure "
+        "their permissions."
+    )
 
 
 # Task 1 (MCP Hub Phase 6): concrete Rich styles for `state_text()` -- the
@@ -255,6 +315,25 @@ class PermRow:
     cycle_current: str | None
 
 
+@dataclass(frozen=True)
+class PermissionProfileContext:
+    """Immutable authority captured by one permissions render."""
+
+    profile_id: str
+    selector_generation: int
+    policy_digest: str
+    revision: int | None
+
+
+@dataclass(frozen=True)
+class ToolPolicyProfileOption:
+    """One local Tool-policy selector entry."""
+
+    profile_id: str
+    origin: str
+    available: bool = True
+
+
 # `PermRow.state_label` never carries the raw resolved state (`allow`/
 # `ask`/`deny`) itself -- only the already-formatted UI word
 # (`EffectiveToolState.ui_label`, "Allow"/"Ask"/"Off" -- or "Unknown" for
@@ -379,6 +458,14 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         min-height: 0;
         color: $text-muted;
     }
+    /* Wave C (F8): the non-default-profile hint is the same quiet, dimmed
+    one-liner tier as the kill-switch hint below. */
+    #mcp-perm-profile-hint {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+        padding: 0 1;
+    }
     /* task-2242: the kill-switch scope hint is the same quiet, dimmed
     one-liner tier as the legend below the matrix. */
     #mcp-perm-kill-switch-hint {
@@ -421,12 +508,21 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
             server_key: str,
             tool_name: str | None,
             new_state: str | None,
+            profile_context: PermissionProfileContext | None = None,
         ) -> None:
             super().__init__()
             self.row_kind = row_kind
             self.server_key = server_key
             self.tool_name = tool_name
             self.new_state = new_state
+            self.profile_context = profile_context
+
+    class ToolPolicyProfileSelected(Message, namespace="mcp_permissions_mode"):
+        """Requests selection of one local Tool policy profile."""
+
+        def __init__(self, profile_id: str) -> None:
+            super().__init__()
+            self.profile_id = profile_id
 
     class KillSwitchToggled(Message, namespace="mcp_permissions_mode"):
         """Posted once per press of `#mcp-perm-kill-switch` (a Library-style
@@ -454,12 +550,17 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         """
 
         def __init__(
-            self, row_kind: str, server_key: str, tool_name: str | None
+            self,
+            row_kind: str,
+            server_key: str,
+            tool_name: str | None,
+            profile_context: PermissionProfileContext | None = None,
         ) -> None:
             super().__init__()
             self.row_kind = row_kind
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -497,8 +598,24 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         # -- `update_matrix()` is the single writer; a press posts
         # `KillSwitchToggled(not self._kill_switch)`.
         self._kill_switch: bool = False
+        self._profile_context: PermissionProfileContext | None = None
+        self._profile_select_sync = False
 
     def compose(self) -> ComposeResult:
+        yield Static(
+            "Tool policy profile", id="mcp-perm-tool-profile-label", markup=False
+        )
+        yield Select(
+            [("default · local", "default")],
+            value="default",
+            id="mcp-perm-tool-profile",
+            allow_blank=False,
+        )
+        # Wave C (F8): populated by `set_profile_hint()` -- hidden while
+        # empty (the default profile needs no Console-context caveat).
+        hint = Static("", id="mcp-perm-profile-hint", markup=False)
+        hint.display = False
+        yield hint
         yield Button(
             "Review restored MCP roots",
             id="mcp-perm-recovery-review",
@@ -520,12 +637,18 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
                 "the chat bridge. Does not affect Hub tool tests."
             ),
         )
-        # task-2242: the kill switch's blast radius is stated persistently,
-        # not just in the tooltip -- it gates BUILT-IN tools too (see
-        # `_kill_switch_label()`), which "tool calls in chat" alone does
-        # not tell the user.
+        # task-2242/task-32285: the kill switch's blast radius is stated
+        # persistently, not just in the tooltip -- it gates BUILT-IN tools
+        # too (see `_kill_switch_label()`), which "tool calls in chat"
+        # alone does not tell the user. The old copy named only
+        # calculator/date-time; the switch's real reach is every chat
+        # tool call, including the file/note built-ins
+        # (`_GATEABLE_BUILTINS`, `Agents/tool_catalog.py`) and local
+        # workspace tools (`LocalToolProvider`'s own kill-switch check
+        # reads the same `service.get_kill_switch()` this button drives).
         yield Static(
-            "Also disables built-in tools (calculator, date/time).",
+            "Also blocks the app's own built-in tools (calculator, "
+            "date/time, file and note tools).",
             id="mcp-perm-kill-switch-hint",
             markup=False,
         )
@@ -563,6 +686,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         preview: str,
         echo: str | None = None,
         gate_breadcrumb: str | None = None,
+        discovery_hint: str | None = None,
+        profile_context: PermissionProfileContext | None = None,
     ) -> None:
         """Rebuild the matrix from a fresh `PermRow` list.
 
@@ -611,6 +736,27 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         never this sentence, and a previously rendered echo simply
         survives any later re-filter untouched (no re-render of this
         Static happens at all until the NEXT `update_matrix()` call).
+
+        Args:
+            rows: The full `PermRow` list, rendered in the exact order
+                given (grouping/sorting is the workbench's job).
+            kill_switch: The current kill-switch state, relabeled onto the
+                toggle Button (the single writer is the workbench).
+            preview: The plain-language policy sentence for the strip
+                below the matrix; always summarizes the FULL unfiltered
+                matrix, never the filter-narrowed subset.
+            echo: Transient mutation-confirmation copy prefixed onto
+                `preview` for this one render; `None` (every full-resync
+                pass) renders `preview` unprefixed -- that is how a
+                previous echo clears.
+            gate_breadcrumb: An extra legend line for off registration
+                gates; `None` shows no extra line.
+            discovery_hint: An extra legend line naming known servers
+                with no discovered tools; same render/clear contract as
+                `gate_breadcrumb` (the lines stack, legend first).
+            profile_context: The immutable authority this render was
+                captured under; round-tripped on every mutation message
+                so a stale render cannot write into another profile.
         """
         deduped: list[PermRow] = []
         seen_keys: set[str] = set()
@@ -621,6 +767,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
             seen_keys.add(key)
             deduped.append(row)
         rows = deduped
+
+        self._profile_context = profile_context
 
         self._all_rows = rows
         self._rows_by_key = {_row_key(row): row for row in rows}
@@ -640,8 +788,57 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._apply_filter()
 
         self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
-        legend_text = f"{_LEGEND_TEXT}\n{gate_breadcrumb}" if gate_breadcrumb else _LEGEND_TEXT
+        legend_text = _LEGEND_TEXT
+        for extra_line in (gate_breadcrumb, discovery_hint):
+            if extra_line:
+                legend_text = f"{legend_text}\n{extra_line}"
         self.query_one("#mcp-perm-legend", Static).update(legend_text)
+
+    def set_profile_hint(self, text: str | None) -> None:
+        """Wave C (F8): render (or clear) the non-default-profile hint line
+        under the profile selector.
+
+        Args:
+            text: The hint sentence. `None` or an empty string HIDES the
+                Static entirely (the default profile renders no caveat);
+                any non-empty string updates and displays it.
+        """
+        hint = self.query_one("#mcp-perm-profile-hint", Static)
+        if text:
+            hint.update(text)
+            hint.display = True
+        else:
+            hint.display = False
+
+    def update_tool_policy_profiles(
+        self,
+        profiles: list[ToolPolicyProfileOption],
+        *,
+        selected_id: str,
+    ) -> None:
+        """Render local policy profiles without interpreting untrusted labels."""
+        selector = self.query_one("#mcp-perm-tool-profile", Select)
+        options = [
+            (
+                Text(
+                    f"{item.profile_id} · {item.origin}"
+                    + (" · unavailable" if not item.available else "")
+                ),
+                item.profile_id,
+            )
+            for item in profiles
+        ]
+        if not options:
+            options = [(Text("Tool policy profiles unavailable"), "__unavailable__")]
+            selected_id = "__unavailable__"
+        self._profile_select_sync = True
+        try:
+            with selector.prevent(Select.Changed):
+                selector.set_options(options)
+                selector.value = selected_id
+            selector.disabled = not profiles
+        finally:
+            self._profile_select_sync = False
 
     def _apply_filter(self) -> None:
         """Re-render the matrix table from `self._all_rows` under the
@@ -837,6 +1034,14 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._filter_text = event.value
         self._apply_filter()
 
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "mcp-perm-tool-profile" or self._profile_select_sync:
+            return
+        event.stop()
+        if event.value is Select.BLANK:
+            return
+        self.post_message(self.ToolPolicyProfileSelected(str(event.value)))
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """T7: resolve the selected row back to the `PermRow` it renders
         (via the row-key map `update_matrix()` last built) and post
@@ -849,7 +1054,11 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         row = self._rows_by_key.get(str(event.row_key.value))
         if row is None:
             return
-        self.post_message(self.RowSelected(row.kind, row.server_key, row.tool_name))
+        self.post_message(
+            self.RowSelected(
+                row.kind, row.server_key, row.tool_name, self._profile_context
+            )
+        )
 
     def select_tool_row(self, server_key: str, tool_name: str) -> bool:
         """Move the matrix cursor to the given tool's row for an external
@@ -931,5 +1140,6 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
                 server_key=row.server_key,
                 tool_name=row.tool_name,
                 new_state=new_state,
+                profile_context=self._profile_context,
             )
         )

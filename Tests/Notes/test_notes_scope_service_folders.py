@@ -1,17 +1,33 @@
 from __future__ import annotations
 
+import json
+import inspect
 import threading
+from collections.abc import Iterable
 
 import pytest
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.notes_organization_repository import NotesOrganizationRepository
 from tldw_chatbook.Notes.note_folder_models import (
+    FolderPlacementId,
     FolderCapabilityError,
     FolderMutationResult,
     NoteFolder,
+    NoteFolderChildPage,
     NoteFolderMembership,
     NoteFolderPage,
+    NotePlacementPage,
+    NoteTreeLocation,
+    NoteTreeMutationContext,
+    NoteTreePathStep,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
+from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
+    NotesOrganizationSyncService,
+)
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 FOLDER_OPERATIONS = [
@@ -30,6 +46,10 @@ class RecordingFolderRepository:
         self.calls: list[tuple[object, ...]] = []
         self.events = events
         self.thread_ids: list[int] = []
+        self.folder_child_page = _empty_folder_child_page()
+        self.placement_page = _empty_placement_page()
+        self.folder_location = _folder_location()
+        self.mutation_context = _mutation_context()
 
     def _record(self, call: tuple[object, ...]) -> None:
         self.thread_ids.append(threading.get_ident())
@@ -42,6 +62,97 @@ class RecordingFolderRepository:
     ) -> NoteFolderPage:
         self._record(("list_children", parent_id, limit, offset))
         return _empty_page()
+
+    def page_child_folders(
+        self, *, parent_id: str | None, limit: int, offset: int
+    ) -> NoteFolderChildPage:
+        self._record(
+            (
+                "page_child_folders",
+                {"parent_id": parent_id, "limit": limit, "offset": offset},
+            )
+        )
+        return self.folder_child_page
+
+    def page_note_placements(
+        self, *, parent_id: str | None, limit: int, offset: int, order: str = "title"
+    ) -> NotePlacementPage:
+        self._record(
+            (
+                "page_note_placements",
+                {
+                    "parent_id": parent_id,
+                    "limit": limit,
+                    "offset": offset,
+                    "order": order,
+                },
+            )
+        )
+        return self.placement_page
+
+    def locate_note_tree_folder(
+        self, *, folder_id: str, page_size: int
+    ) -> NoteTreeLocation | None:
+        self._record(
+            (
+                "locate_note_tree_folder",
+                {"folder_id": folder_id, "page_size": page_size},
+            )
+        )
+        return self.folder_location
+
+    def locate_note_tree_placement(
+        self,
+        *,
+        note_id: str,
+        page_size: int,
+        preferred_folder_id: str | None = None,
+        preferred_membership_id: str | None = None,
+        order: str = "title",
+    ) -> NoteTreeLocation | None:
+        self._record(
+            (
+                "locate_note_tree_placement",
+                {
+                    "note_id": note_id,
+                    "page_size": page_size,
+                    "preferred_folder_id": preferred_folder_id,
+                    "preferred_membership_id": preferred_membership_id,
+                    "order": order,
+                },
+            )
+        )
+        return self.folder_location
+
+    def load_note_tree_mutation_context(
+        self,
+        *,
+        folder_ids: Iterable[str] = (),
+        note_ids: Iterable[str] = (),
+        include_folder_subtrees: bool = False,
+    ) -> NoteTreeMutationContext:
+        self._record(
+            (
+                "load_note_tree_mutation_context",
+                {
+                    "folder_ids": folder_ids,
+                    "note_ids": note_ids,
+                    "include_folder_subtrees": include_folder_subtrees,
+                },
+            )
+        )
+        return self.mutation_context
+
+    def search_note_tree_placements(
+        self, *, query: str, limit: int, offset: int
+    ) -> NotePlacementPage:
+        self._record(
+            (
+                "search_note_tree_placements",
+                {"query": query, "limit": limit, "offset": offset},
+            )
+        )
+        return self.placement_page
 
     def load_tree_batch(
         self,
@@ -108,9 +219,7 @@ class RecordingFolderRepository:
         self._record(("restore_folder", folder_id, expected_version))
         return _mutation()
 
-    def attach_manual(
-        self, *, folder_id: str, note_id: str
-    ) -> NoteFolderMembership:
+    def attach_manual(self, *, folder_id: str, note_id: str) -> NoteFolderMembership:
         self._record(("attach_manual", folder_id, note_id))
         return NoteFolderMembership(
             membership_id="membership-1",
@@ -138,6 +247,15 @@ class RecordingFolderRepository:
 
     def list_restore_reviews(self) -> tuple[object, ...]:
         self._record(("list_restore_reviews",))
+        return ()
+
+    def reconcile_managed(
+        self,
+        *,
+        owner_id: str,
+        desired: tuple[tuple[str, str], ...],
+    ) -> tuple[NoteFolderMembership, ...]:
+        self._record(("reconcile_managed", owner_id, desired))
         return ()
 
 
@@ -212,6 +330,79 @@ def _empty_page() -> NoteFolderPage:
         next_offset=None,
         next_folder_offset=None,
     )
+
+
+def _empty_folder_child_page() -> NoteFolderChildPage:
+    return NoteFolderChildPage(
+        folders=(),
+        total_folders=0,
+        start_offset=0,
+        previous_offset=None,
+        next_offset=None,
+    )
+
+
+def _empty_placement_page() -> NotePlacementPage:
+    return NotePlacementPage(
+        placements=(),
+        total_placements=0,
+        start_offset=0,
+        previous_offset=None,
+        next_offset=None,
+    )
+
+
+def _folder_location() -> NoteTreeLocation:
+    return NoteTreeLocation(
+        placement_id=FolderPlacementId.folder("folder-1"),
+        note_id=None,
+        membership_id=None,
+        path=(
+            NoteTreePathStep(
+                folder_id="folder-1",
+                parent_id=None,
+                containing_offset=0,
+            ),
+        ),
+        placement_offset=None,
+    )
+
+
+def _mutation_context() -> NoteTreeMutationContext:
+    return NoteTreeMutationContext(
+        folder_ids=("folder-1",),
+        parent_ids=(None,),
+        ancestor_ids=(),
+        placement_parent_ids=("folder-1",),
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_managed_membership_reconciliation_uses_scope_service_boundary() -> (
+    None
+):
+    events: list[tuple[object, ...]] = []
+    repository = RecordingFolderRepository(events)
+    policy = RecordingPolicy(events)
+    service = NotesScopeService(
+        NoCallBackend(),
+        NoCallBackend(),
+        policy_enforcer=policy,
+        folder_repository=repository,
+    )
+
+    result = await service.reconcile_note_folder_owner_memberships(
+        scope=ScopeType.LOCAL_NOTE,
+        owner_id="root-1",
+        desired=(("folder-1", "note-1"),),
+        user_id="user-1",
+    )
+
+    assert result == ()
+    assert events == [
+        ("policy", "notes.update.local"),
+        ("repository", "reconcile_managed", "root-1", (("folder-1", "note-1"),)),
+    ]
 
 
 LOCAL_FOLDER_CASES = [
@@ -302,7 +493,177 @@ LOCAL_FOLDER_CASES = [
         "notes.list.local",
         ("list_restore_reviews",),
     ),
+    pytest.param(
+        "page_note_folder_children",
+        {"parent_id": None, "limit": 25, "offset": 5},
+        "notes.list.local",
+        (
+            "page_child_folders",
+            {"parent_id": None, "limit": 25, "offset": 5},
+        ),
+        id="branch_page_folder",
+    ),
+    pytest.param(
+        "page_note_placements",
+        {"parent_id": "folder-1", "limit": 10, "offset": 20},
+        "notes.list.local",
+        (
+            "page_note_placements",
+            # task-32172: the placement order is a repository parameter now
+            # and the service defaults it to the pre-existing title order.
+            {"parent_id": "folder-1", "limit": 10, "offset": 20, "order": "title"},
+        ),
+        id="branch_page_placements",
+    ),
+    pytest.param(
+        "locate_note_tree_folder",
+        {"folder_id": "folder-1", "page_size": 25},
+        "notes.list.local",
+        (
+            "locate_note_tree_folder",
+            {"folder_id": "folder-1", "page_size": 25},
+        ),
+        id="tree_locator_folder",
+    ),
+    pytest.param(
+        "locate_note_tree_placement",
+        {
+            "note_id": "note-1",
+            "page_size": 50,
+            "preferred_folder_id": "folder-1",
+            "preferred_membership_id": "membership-1",
+        },
+        "notes.list.local",
+        (
+            "locate_note_tree_placement",
+            {
+                "note_id": "note-1",
+                "page_size": 50,
+                "preferred_folder_id": "folder-1",
+                "preferred_membership_id": "membership-1",
+                "order": "title",
+            },
+        ),
+        id="tree_locator_placement_preferences",
+    ),
+    pytest.param(
+        "locate_note_tree_placement",
+        {"note_id": "note-1", "page_size": 50},
+        "notes.list.local",
+        (
+            "locate_note_tree_placement",
+            {
+                "note_id": "note-1",
+                "page_size": 50,
+                "preferred_folder_id": None,
+                "preferred_membership_id": None,
+                "order": "title",
+            },
+        ),
+        id="tree_locator_placement_default_preferences",
+    ),
+    pytest.param(
+        "load_note_tree_mutation_context",
+        {
+            "folder_ids": ("folder-1", "folder-2"),
+            "note_ids": ("note-1",),
+            "include_folder_subtrees": True,
+        },
+        "notes.list.local",
+        (
+            "load_note_tree_mutation_context",
+            {
+                "folder_ids": ("folder-1", "folder-2"),
+                "note_ids": ("note-1",),
+                "include_folder_subtrees": True,
+            },
+        ),
+        id="affected_parent_context",
+    ),
+    pytest.param(
+        "load_note_tree_mutation_context",
+        {},
+        "notes.list.local",
+        (
+            "load_note_tree_mutation_context",
+            {
+                "folder_ids": (),
+                "note_ids": (),
+                "include_folder_subtrees": False,
+            },
+        ),
+        id="affected_parent_context_defaults",
+    ),
+    pytest.param(
+        "search_note_tree_placements",
+        {"query": "project alpha", "limit": 30, "offset": 60},
+        "notes.list.local",
+        (
+            "search_note_tree_placements",
+            {"query": "project alpha", "limit": 30, "offset": 60},
+        ),
+        id="placement_filter_search",
+    ),
 ]
+
+
+NEW_TREE_SERVICE_METHODS = {
+    "page_note_folder_children": "page_child_folders",
+    "page_note_placements": "page_note_placements",
+    "locate_note_tree_folder": "locate_note_tree_folder",
+    "locate_note_tree_placement": "locate_note_tree_placement",
+    "load_note_tree_mutation_context": "load_note_tree_mutation_context",
+    "search_note_tree_placements": "search_note_tree_placements",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "_expected_action", "expected_call"),
+    [
+        case
+        for case in LOCAL_FOLDER_CASES
+        if getattr(case, "values", case)[0] in NEW_TREE_SERVICE_METHODS
+    ],
+)
+async def test_branch_page_tree_locator_affected_parent_and_placement_filter_results_pass_through(
+    method_name: str,
+    kwargs: dict[str, object],
+    _expected_action: str,
+    expected_call: tuple[object, ...],
+) -> None:
+    repository = RecordingFolderRepository()
+    service = NotesScopeService(
+        local_notes_service=object(),
+        server_service=object(),
+        folder_repository=repository,
+    )
+
+    result = await getattr(service, method_name)(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="local-user",
+        **kwargs,
+    )
+
+    repository_method = NEW_TREE_SERVICE_METHODS[method_name]
+    expected_result = {
+        "page_child_folders": repository.folder_child_page,
+        "page_note_placements": repository.placement_page,
+        "locate_note_tree_folder": repository.folder_location,
+        "locate_note_tree_placement": repository.folder_location,
+        "load_note_tree_mutation_context": repository.mutation_context,
+        "search_note_tree_placements": repository.placement_page,
+    }[repository_method]
+    assert result is expected_result
+    assert repository.calls == [expected_call]
+
+
+def test_affected_parent_context_service_defaults_are_immutable() -> None:
+    signature = inspect.signature(NotesScopeService.load_note_tree_mutation_context)
+
+    assert signature.parameters["folder_ids"].default == ()
+    assert signature.parameters["note_ids"].default == ()
+    assert signature.parameters["include_folder_subtrees"].default is False
 
 
 @pytest.mark.asyncio
@@ -515,6 +876,12 @@ async def test_local_folder_methods_fail_closed_when_repository_is_missing(
         if item.operation
         == {
             "list_note_folder_children": "list",
+            "page_note_folder_children": "list",
+            "page_note_placements": "list",
+            "locate_note_tree_folder": "list",
+            "locate_note_tree_placement": "list",
+            "load_note_tree_mutation_context": "list",
+            "search_note_tree_placements": "list",
             "load_note_folder_tree_batch": "list",
             "load_note_folder_search": "list",
             "create_note_folder": "create",
@@ -567,6 +934,12 @@ async def test_unsupported_folder_scopes_fail_closed_without_backend_calls(
     )
     operation = {
         "list_note_folder_children": "list",
+        "page_note_folder_children": "list",
+        "page_note_placements": "list",
+        "locate_note_tree_folder": "list",
+        "locate_note_tree_placement": "list",
+        "load_note_tree_mutation_context": "list",
+        "search_note_tree_placements": "list",
         "load_note_folder_tree_batch": "list",
         "load_note_folder_search": "list",
         "create_note_folder": "create",
@@ -683,3 +1056,182 @@ async def test_local_folder_mutations_do_not_enter_sync_v2_note_outbox() -> None
 
     assert producer.upserts == []
     assert producer.deletes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "local_state", ["initializing", "pulling", "adoption_review", "failed"]
+)
+async def test_synchronized_folder_create_rejects_until_group_ready(
+    tmp_path, local_state: str
+) -> None:
+    notes = CharactersRAGDB(tmp_path / f"{local_state}.sqlite", client_id="folders")
+    state = SyncStateRepository(tmp_path / f"{local_state}-sync.sqlite")
+    state.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-a",
+        dataset_id="dataset-a",
+    )
+    with notes.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO notes_organization_sync_checkpoints(
+                server_profile_id, dataset_id, local_state, server_state,
+                inventory_phase, updated_at
+            ) VALUES ('server-a', 'dataset-a', ?, 'ready', 'complete',
+                      '2026-08-29T00:00:00+00:00')
+            """,
+            (local_state,),
+        )
+    repository = LocalNoteFolderRepository(notes)
+    organization = NotesOrganizationSyncService(
+        notes_repository=NotesOrganizationRepository(notes, server_profile_id="server-a"),
+        state_repository=state,
+    )
+    service = NotesScopeService(
+        local_notes_service=object(),
+        server_service=object(),
+        folder_repository=repository,
+        organization_sync_service=organization,
+    )
+
+    with pytest.raises(ValueError, match="organization group is not ready"):
+        await service.create_note_folder(
+            scope=ScopeType.LOCAL_NOTE,
+            name="Blocked",
+            parent_id=None,
+            user_id="local-user",
+            sync_v2_profile={"server_profile_id": "server-a"},
+        )
+
+    assert repository.list_children(parent_id=None, limit=10, offset=0).folders == ()
+    assert notes.get_connection().execute(
+        "SELECT COUNT(*) FROM notes_organization_sync_intents"
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_ready_folder_create_commits_mutation_and_one_explicit_intent(
+    tmp_path,
+) -> None:
+    notes = CharactersRAGDB(tmp_path / "ready.sqlite", client_id="folders")
+    state = SyncStateRepository(tmp_path / "ready-sync.sqlite")
+    state.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-a",
+        dataset_id="dataset-a",
+    )
+    with notes.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO notes_organization_sync_checkpoints(
+                server_profile_id, dataset_id, local_state, server_state,
+                inventory_phase, updated_at
+            ) VALUES ('server-a', 'dataset-a', 'ready', 'ready', 'complete',
+                      '2026-08-29T00:00:00+00:00')
+            """
+        )
+    repository = LocalNoteFolderRepository(notes)
+    service = NotesScopeService(
+        local_notes_service=object(),
+        server_service=object(),
+        folder_repository=repository,
+        organization_sync_service=NotesOrganizationSyncService(
+            notes_repository=NotesOrganizationRepository(
+                notes, server_profile_id="server-a"
+            ),
+            state_repository=state,
+        ),
+    )
+
+    folder = await service.create_note_folder(
+        scope=ScopeType.LOCAL_NOTE,
+        name="Portable",
+        parent_id=None,
+        user_id="local-user",
+        sync_v2_profile={"server_profile_id": "server-a"},
+    )
+
+    row = notes.get_connection().execute(
+        "SELECT domain, object_id, operation, payload_json, source_version "
+        "FROM notes_organization_sync_intents"
+    ).fetchone()
+    sync_id = notes.get_connection().execute(
+        "SELECT sync_id FROM note_folders WHERE id = ?", (folder.folder_id,)
+    ).fetchone()[0]
+    assert tuple(row) == (
+        "notes.folder",
+        sync_id,
+        "upsert",
+        '{"name":"Portable","parent_sync_id":null}',
+        1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_ready_scope_managed_membership_routes_through_organization_owner(
+    tmp_path,
+) -> None:
+    notes = CharactersRAGDB(tmp_path / "membership.sqlite", client_id="folders")
+    state = SyncStateRepository(tmp_path / "membership-sync.sqlite")
+    state.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-a",
+        dataset_id="dataset-a",
+    )
+    with notes.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO notes_organization_sync_checkpoints(
+                server_profile_id, dataset_id, local_state, server_state,
+                inventory_phase, updated_at
+            ) VALUES ('server-a', 'dataset-a', 'ready', 'ready', 'complete',
+                      '2026-08-29T00:00:00+00:00')
+            """
+        )
+    repository = LocalNoteFolderRepository(notes)
+    service = NotesScopeService(
+        local_notes_service=object(),
+        server_service=object(),
+        folder_repository=repository,
+        organization_sync_service=NotesOrganizationSyncService(
+            notes_repository=NotesOrganizationRepository(
+                notes, server_profile_id="server-a"
+            ),
+            state_repository=state,
+        ),
+    )
+    sync_profile = {"server_profile_id": "server-a"}
+    folder = await service.create_note_folder(
+        scope=ScopeType.LOCAL_NOTE,
+        name="Managed",
+        parent_id=None,
+        user_id="local-user",
+        sync_v2_profile=sync_profile,
+    )
+    note_id = notes.add_note("Note", "Body")
+
+    memberships = await service.reconcile_note_folder_owner_memberships(
+        scope=ScopeType.LOCAL_NOTE,
+        owner_id="source-a",
+        desired=((folder.folder_id, note_id),),
+        user_id="local-user",
+        sync_v2_profile=sync_profile,
+    )
+
+    assert len(memberships) == 1
+    row = notes.get_connection().execute(
+        "SELECT operation, payload_json FROM notes_organization_sync_intents "
+        "WHERE domain = 'notes.folder_link'"
+    ).fetchone()
+    assert row["operation"] == "upsert"
+    assert json.loads(row["payload_json"])["note_id"] == note_id

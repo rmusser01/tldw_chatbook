@@ -43,6 +43,7 @@ from tldw_chatbook.Widgets.Console.console_staged_context import (
 from tldw_chatbook.Widgets.Console.console_staged_evidence_strip import (
     ConsoleStagedEvidenceStrip,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 
 STRIP_ID = "#console-staged-evidence-strip"
 UNSTAGE_ID = "#console-unstage-evidence"
@@ -54,37 +55,49 @@ def _reference(
     title: str | None = None,
     status: str = "available",
     source_owner: str = "local",
+    source_type: str = "media",
+    snippet: str | None = None,
+    score: float | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> EvidenceReference:
     return EvidenceReference(
         evidence_id=f"S{index}",
         source_id=f"media-{index}",
-        source_type="media",
+        source_type=source_type,
         title=title if title is not None else f"Source {index}",
-        snippet=f"Body {index}",
+        snippet=snippet if snippet is not None else f"Body {index}",
         authority_label="local",
         status=status,
         source_owner=source_owner,
+        score=score,
+        metadata={} if metadata is None else metadata,
     )
 
 
-def _mixed_launch() -> ConsoleLiveWorkLaunch:
-    """Four staged references, of which only two can ever reach the prompt."""
+def _launch_from_references(
+    *references: EvidenceReference,
+) -> ConsoleLiveWorkLaunch:
     bundle = EvidenceBundle(
-        bundle_id="bundle-mixed",
+        bundle_id="bundle-custom",
         query="question",
         source="Library Search/RAG",
-        references=(
-            _reference(1),
-            _reference(2, status="blocked"),
-            _reference(3),
-            _reference(4, source_owner="server"),
-        ),
+        references=references,
     )
     return ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
         title="Library Search/RAG retrieval",
         payload={"query": "question", "evidence_bundle": bundle.to_payload()},
         status="staged",
+    )
+
+
+def _mixed_launch() -> ConsoleLiveWorkLaunch:
+    """Four staged references, of which only two can ever reach the prompt."""
+    return _launch_from_references(
+        _reference(1),
+        _reference(2, status="blocked"),
+        _reference(3),
+        _reference(4, source_owner="server"),
     )
 
 
@@ -193,19 +206,47 @@ def test_prompted_source_count_applies_the_captures_own_filter() -> None:
     assert console_prompted_source_count(None) == 0
 
 
-def test_prompted_evidence_text_applies_the_same_filter_as_the_count() -> None:
-    """task-6: the text the context/cost estimates count must match exactly
-    what `console_prompted_source_count` counts -- same filter, same
-    references. `capture_console_staged_evidence_for_chat` re-validates
-    identity/authority but never re-fetches content, so each reference's
-    (already truncated) `snippet` is exactly what reaches the prompt."""
+def test_prompted_evidence_uses_canonical_headers_and_separators() -> None:
     launch = _mixed_launch()
-    text = console_prompted_evidence_text(launch)
-    assert "Body 1" in text
-    assert "Body 3" in text
-    assert "Body 2" not in text  # blocked
-    assert "Body 4" not in text  # server-owned
+
+    assert console_prompted_evidence_text(launch) == (
+        "[S1] MEDIA — Source 1\nBody 1\n---\n"
+        "[S2] MEDIA — Source 3\nBody 3"
+    )
+    assert console_prompted_source_count(launch) == 2
     assert console_prompted_evidence_text(None) == ""
+
+
+def test_prompted_evidence_applies_the_send_cap() -> None:
+    launch = _launch(65)
+
+    text = console_prompted_evidence_text(launch)
+
+    assert console_prompted_source_count(launch) == 64
+    assert "[S64] MEDIA — Source 64\nBody 64" in text
+    assert "Source 65" not in text
+    assert text.count("\n---\n") == 63
+
+
+def test_prompted_evidence_keeps_empty_local_content_as_header_only() -> None:
+    launch = _launch_from_references(_reference(1, snippet=""))
+
+    assert console_prompted_evidence_text(launch) == "[S1] MEDIA — Source 1\n"
+    assert console_prompted_source_count(launch) == 1
+
+
+def test_prompted_evidence_excludes_noncanonical_local_references() -> None:
+    launch = _launch_from_references(
+        _reference(1),
+        _reference(2, source_type="unsupported"),
+        _reference(3),
+    )
+
+    assert console_prompted_evidence_text(launch) == (
+        "[S1] MEDIA — Source 1\nBody 1\n---\n"
+        "[S2] MEDIA — Source 3\nBody 3"
+    )
+    assert console_prompted_source_count(launch) == 2
 
 
 def test_prompted_evidence_text_is_empty_for_a_bundleless_launch() -> None:
@@ -387,6 +428,7 @@ async def test_strip_has_no_blank_filler_rows_for_small_staged_counts() -> None:
 @pytest.mark.asyncio
 async def test_console_run_staging_fans_out_to_strip_and_truthful_chip() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
@@ -411,6 +453,7 @@ async def test_console_run_staging_fans_out_to_strip_and_truthful_chip() -> None
 @pytest.mark.asyncio
 async def test_console_unstage_clears_context_strip_chip_and_tray() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
@@ -443,6 +486,7 @@ async def test_console_unstage_click_heals_a_stale_strip_when_context_already_no
     behind) and assert the click still heals the strip instead of dead-ending.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
@@ -470,6 +514,8 @@ async def test_console_library_u_key_handoff_populates_the_strip() -> None:
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     app.pending_handoffs.stage(
         HandoffChannel.CONSOLE_LIVE_WORK,
         _launch(2).to_pending_payload(),
@@ -495,6 +541,7 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
     monkeypatch,
 ) -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = _launch(2)
     capture = AsyncMock(
         return_value=LocalRagContextResult(
@@ -523,12 +570,12 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
         sources_chip = screen.query_one("#console-sources-label", Static)
         assert "Sources: 0" in str(sources_chip.renderable)
 
-        # A SECOND send captures nothing: the evidence no longer rides along.
+        # A SECOND send skips staged capture entirely: the evidence no longer
+        # rides along, and the empty fast path does no retrieval work.
         await _submit(screen, "follow up")
         await pilot.pause()
-        assert capture.await_count == 2
+        assert capture.await_count == 1
         assert capture.await_args_list[0].args[1] is launch
-        assert capture.await_args_list[1].args[1] is None
         # The transient is one-send only.
         assert "Evidence sent with this message" not in _strip_text(screen)
 
@@ -539,6 +586,7 @@ async def test_console_sent_notice_counts_only_what_reached_the_model(
 ) -> None:
     """4 staged, 2 promptable -- the notice must claim 2, not 4."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = _mixed_launch()
     capture = AsyncMock(
         return_value=LocalRagContextResult(
@@ -573,6 +621,8 @@ async def test_console_sent_notice_prefers_the_exact_prompted_entry_count(
     from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     launch = _mixed_launch()
     context = "[S1] MEDIA — Source 1\nBody 1"
     capture = AsyncMock(
@@ -615,6 +665,7 @@ async def test_console_surface_refresh_failure_never_costs_the_send_its_evidence
     release would send the message WITHOUT the evidence it just consumed.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = _launch(2)
     context = "[S1] MEDIA — Source 1\nBody 1"
     capture = AsyncMock(
@@ -656,6 +707,8 @@ async def test_console_use_in_console_handoff_reaches_the_strip() -> None:
     from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
@@ -689,6 +742,7 @@ async def test_console_rail_badge_and_chip_report_the_same_staged_count() -> Non
     """The rail badge and settings estimate read the workspace context; the
     chip reads the bundle. Both must land on the same number."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
@@ -737,6 +791,7 @@ async def test_context_estimate_counts_staged_evidence_before_send() -> None:
     been staged. Staging a large source must move `used_tokens` off its
     pre-staging baseline."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
@@ -782,6 +837,7 @@ async def test_console_capture_without_prompt_context_keeps_staging(
 ) -> None:
     """No prompt context reached the provider -- discarding would lose evidence."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = _launch(2)
     capture = AsyncMock(return_value=LocalRagContextResult(None, None))
     monkeypatch.setattr(
@@ -804,6 +860,7 @@ async def test_console_capture_without_prompt_context_keeps_staging(
 @pytest.mark.asyncio
 async def test_console_blocked_send_keeps_staged_evidence(monkeypatch) -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = _launch(2)
     capture = AsyncMock(
         return_value=LocalRagContextResult(context="ctx", citation_builder=None)
@@ -855,6 +912,7 @@ async def test_console_send_blocked_reason_sendable_for_library_staged_one_ref()
     sendable -- the same shape `library_screen.py`'s own "Use in Console"
     produces for a single selected result."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     app.app_config = {
         "chat_defaults": {
             "provider": "OpenAI",
@@ -883,6 +941,7 @@ async def test_console_send_blocked_reason_blocks_for_library_staged_zero_availa
     evidence must still block with the EXISTING copy -- unchanged by
     attaching real bundles to Library launches."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     bundle = EvidenceBundle(
         bundle_id="bundle-blocked",
         query="question",

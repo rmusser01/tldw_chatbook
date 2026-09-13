@@ -65,6 +65,9 @@ except ImportError:
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.base_backends import LocalTTSBackend
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+from tldw_chatbook.TTS.adapter_types import TTSOperationError
+from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
 from tldw_chatbook.TTS.audio_service import get_audio_service
 from tldw_chatbook.TTS.text_processing import (
     TextChunker,
@@ -126,7 +129,9 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
         # Shutdown and task tracking
         self._active_tasks = set()
         self._shutdown_event = asyncio.Event()
+        self._close_task: asyncio.Task[None] | None = None
         self._generation_lock = asyncio.Lock()
+        self._initialization_lock = asyncio.Lock()
 
         # Model configuration
         self.model_path = self.config.get(
@@ -235,7 +240,16 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
         logger.info("═" * 80)
 
     async def load_model(self):
-        """Load the Higgs Audio model"""
+        """Serialize initialization, including completion of a canceled loader."""
+        async with self._initialization_lock:
+            if self.model_loaded:
+                return
+            if self._shutdown_event.is_set():
+                raise asyncio.CancelledError
+            await self._load_model()
+
+    async def _load_model(self):
+        """Load the Higgs Audio model while retaining its worker thread."""
         try:
             # Import Higgs modules
             if self._boson_multimodal is None:
@@ -315,8 +329,11 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                     "HiggsAudioServeEngine does not support audio_tokenizer_name_or_path parameter, skipping"
                 )
 
-            # Only add dtype if the engine supports it
-            if "dtype" in init_params:
+            # Current V2 uses torch_dtype; retain the older dtype signature.
+            if "torch_dtype" in init_params:
+                engine_kwargs["torch_dtype"] = torch_dtype
+                logger.debug("HiggsAudioServeEngine supports torch_dtype parameter")
+            elif "dtype" in init_params:
                 engine_kwargs["dtype"] = torch_dtype
                 logger.debug("HiggsAudioServeEngine supports dtype parameter")
             else:
@@ -363,20 +380,9 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 load_task = asyncio.create_task(asyncio.to_thread(load_model_thread))
                 self._active_tasks.add(load_task)
 
-                # Wait for either completion or shutdown
-                done, pending = await asyncio.wait(
-                    [load_task, asyncio.create_task(self._shutdown_event.wait())],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
+                await join_retained_task(load_task)
                 if self._shutdown_event.is_set():
-                    logger.info("Shutdown during model load, cancelling...")
-                    load_task.cancel()
-                    try:
-                        await load_task
-                    except asyncio.CancelledError:
-                        pass
-                    return
+                    raise asyncio.CancelledError
 
                 self.serve_engine = await load_task
 
@@ -429,6 +435,8 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
 
         # Acquire generation lock to track active generation
         async with self._generation_lock:
+            if self._shutdown_event.is_set():
+                raise asyncio.CancelledError
             try:
                 # Parse voice configuration
                 voice_config = await self._prepare_voice_config(request.voice)
@@ -468,6 +476,8 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                     generation_time = time.time() - start_time
                     self._update_performance_metrics(len(text.split()), generation_time)
 
+            except TTSOperationError:
+                raise
             except Exception as e:
                 logger.error("═" * 60)
                 logger.error("❌ GENERATION FAILED")
@@ -476,7 +486,46 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 logger.opt(exception=True).error(
                     f"HiggsAudioTTSBackend: Error during generation: {e}"
                 )
-                yield f"ERROR: Higgs Audio generation failed - {str(e)}".encode("utf-8")
+                raise ValueError("Higgs Audio generation failed.") from None
+
+    async def _run_generation(self, chat_ml_sample: Any, **kwargs) -> Any:
+        """Keep thread-backed inference owned through caller cancellation."""
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                self._invoke_serve_engine_generate, chat_ml_sample, **kwargs
+            )
+        )
+        self._active_tasks.add(task)
+        try:
+            # Canceling an asyncio wrapper cannot stop its native worker thread.
+            # Hold the generation lock until that worker actually finishes.
+            await join_retained_task(task)
+            if self._shutdown_event.is_set():
+                raise asyncio.CancelledError
+            return task.result()
+        finally:
+            self._active_tasks.discard(task)
+
+    @staticmethod
+    def _validated_audio(audio_data: Any) -> Any:
+        """Reject missing, empty or invalid model audio before encoding."""
+        if audio_data is None:
+            raise ValueError("Higgs Audio returned no audio.")
+        if isinstance(audio_data, torch.Tensor):
+            audio_data = audio_data.detach().cpu().numpy()
+        audio_data = np.asarray(audio_data)
+        # Bound both the retained source and the proposed float32 conversion.
+        float32_bytes = audio_data.size * np.dtype(np.float32).itemsize
+        check_buffered_audio_size(max(audio_data.nbytes, float32_bytes))
+        if (
+            audio_data.ndim not in (1, 2)
+            or not audio_data.size
+            or not np.isfinite(audio_data).all()
+        ):
+            raise ValueError("Higgs Audio returned invalid audio.")
+        if audio_data.ndim == 2:
+            audio_data = audio_data.mean(axis=0)
+        return audio_data.astype(np.float32)
 
     async def _generate_single_speaker_stream(
         self,
@@ -521,44 +570,17 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             logger.info("🎵 Generating audio with Higgs Audio model...")
             gen_start = time.time()
 
-            # Create generation task with cancellation support
-            gen_task = asyncio.create_task(
-                asyncio.to_thread(
-                    self._invoke_serve_engine_generate,
-                    chat_ml_sample,
-                    max_new_tokens=self.config.get("HIGGS_MAX_NEW_TOKENS", 4096),
-                    temperature=self.config.get("HIGGS_TEMPERATURE", 0.7),
-                    top_p=self.config.get("HIGGS_TOP_P", 0.95),
-                    top_k=self.config.get("HIGGS_TOP_K", 50),
-                    stop_strings=["<|end_of_text|>", "<|eot_id|>"],
-                    force_audio_gen=True,  # Force audio generation
-                    ras_win_len=7,
-                    ras_win_max_num_repeat=2,
-                )
+            output = await self._run_generation(
+                chat_ml_sample,
+                max_new_tokens=self.config.get("HIGGS_MAX_NEW_TOKENS", 4096),
+                temperature=self.config.get("HIGGS_TEMPERATURE", 0.7),
+                top_p=self.config.get("HIGGS_TOP_P", 0.95),
+                top_k=self.config.get("HIGGS_TOP_K", 50),
+                stop_strings=["<|end_of_text|>", "<|eot_id|>"],
+                force_audio_gen=True,
+                ras_win_len=7,
+                ras_win_max_num_repeat=2,
             )
-
-            self._active_tasks.add(gen_task)
-
-            try:
-                # Wait for either generation or shutdown
-                done, pending = await asyncio.wait(
-                    [gen_task, asyncio.create_task(self._shutdown_event.wait())],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                if self._shutdown_event.is_set():
-                    logger.info("Shutdown during generation, cancelling...")
-                    gen_task.cancel()
-                    try:
-                        await gen_task
-                    except asyncio.CancelledError:
-                        pass
-                    return
-
-                output = await gen_task
-
-            finally:
-                self._active_tasks.discard(gen_task)
 
             gen_elapsed = time.time() - gen_start
             logger.info(f"✓ Audio generated in {gen_elapsed:.1f}s")
@@ -567,15 +589,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             if hasattr(output, "audio") and output.audio is not None:
                 audio_data = output.audio
 
-                # Convert to numpy array if needed
-                if isinstance(audio_data, torch.Tensor):
-                    audio_data = audio_data.cpu().numpy()
-
-                # Ensure audio is in the right format (mono, float32)
-                if len(audio_data.shape) > 1:
-                    audio_data = audio_data.mean(axis=0)  # Convert to mono
-
-                audio_data = audio_data.astype(np.float32)
+                audio_data = self._validated_audio(audio_data)
 
                 # Normalize audio to prevent clipping
                 max_val = np.abs(audio_data).max()
@@ -650,7 +664,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 )
             else:
                 logger.error("⚠️  No audio generated from model - output.audio is None")
-                yield b""
+                raise ValueError("Higgs Audio returned no audio.")
 
         except Exception as e:
             logger.opt(exception=True).error(
@@ -684,6 +698,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
 
             # Generate audio for each section
             all_audio = []
+            retained_bytes = 0
             sample_rate = 24000
 
             for i, (speaker, section_text) in enumerate(sections):
@@ -708,39 +723,20 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                     logger.info("Shutdown requested during multi-speaker generation")
                     return
 
-                # Create generation task for this section
-                section_task = asyncio.create_task(
-                    asyncio.to_thread(
-                        self._invoke_serve_engine_generate,
-                        chat_ml_sample,
-                        max_new_tokens=self.config.get("HIGGS_MAX_NEW_TOKENS", 4096),
-                        temperature=self.config.get("HIGGS_TEMPERATURE", 0.7),
-                        top_p=self.config.get("HIGGS_TOP_P", 0.95),
-                        top_k=self.config.get("HIGGS_TOP_K", 50),
-                        stop_strings=["<|end_of_text|>", "<|eot_id|>"],
-                        force_audio_gen=True,
-                    )
+                output = await self._run_generation(
+                    chat_ml_sample,
+                    max_new_tokens=self.config.get("HIGGS_MAX_NEW_TOKENS", 4096),
+                    temperature=self.config.get("HIGGS_TEMPERATURE", 0.7),
+                    top_p=self.config.get("HIGGS_TOP_P", 0.95),
+                    top_k=self.config.get("HIGGS_TOP_K", 50),
+                    stop_strings=["<|end_of_text|>", "<|eot_id|>"],
+                    force_audio_gen=True,
                 )
 
-                self._active_tasks.add(section_task)
-
-                try:
-                    output = await section_task
-                finally:
-                    self._active_tasks.discard(section_task)
-
-                if hasattr(output, "audio") and output.audio is not None:
-                    audio_data = output.audio
-
-                    # Convert to numpy
-                    if isinstance(audio_data, torch.Tensor):
-                        audio_data = audio_data.cpu().numpy()
-
-                    # Ensure mono
-                    if len(audio_data.shape) > 1:
-                        audio_data = audio_data.mean(axis=0)
-
-                    all_audio.append(audio_data)
+                audio_data = self._validated_audio(getattr(output, "audio", None))
+                retained_bytes += audio_data.nbytes
+                check_buffered_audio_size(retained_bytes)
+                all_audio.append(audio_data)
 
                 # Report progress
                 progress = (i + 1) / len(sections) * 0.9
@@ -1486,36 +1482,21 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             "model": self.model_path,
         }
 
-    async def close(self):
-        """Clean up resources with proper task cancellation"""
+    async def close(self) -> None:
+        """Retain cleanup through cancellation until native workers have stopped."""
+        self._shutdown_event.set()
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_resources())
+        await join_retained_task(self._close_task)
+
+    async def _close_resources(self) -> None:
+        """Release the model only after all owned native work finishes."""
         logger.info("HiggsAudioTTSBackend: Starting cleanup...")
 
-        # Signal shutdown to stop new operations
-        self._shutdown_event.set()
-
-        # Cancel all active tasks with timeout
+        # The host bounds the foreground wait and retains this cleanup on timeout.
+        # A canceled to_thread wrapper cannot stop native work using the model.
         if self._active_tasks:
-            logger.info(f"Cancelling {len(self._active_tasks)} active tasks...")
-
-            # Create list to avoid set modification during iteration
-            tasks_to_cancel = list(self._active_tasks)
-
-            # Cancel all tasks
-            for task in tasks_to_cancel:
-                if not task.done():
-                    task.cancel()
-
-            # Wait for cancellation with timeout
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*tasks_to_cancel, return_exceptions=True),
-                    timeout=5.0,
-                )
-                logger.info("All tasks cancelled successfully")
-            except asyncio.TimeoutError:
-                logger.warning("Some tasks did not cancel within timeout")
-                # Force clear the tasks
-                self._active_tasks.clear()
+            await asyncio.wait(tuple(self._active_tasks))
 
         # Wait a bit for any ongoing generation to notice shutdown
         await asyncio.sleep(0.1)

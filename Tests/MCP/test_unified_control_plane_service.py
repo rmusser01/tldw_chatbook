@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import pytest
 
+import tldw_chatbook.MCP.local_server_tools as local_server_tools_module
+import tldw_chatbook.MCP.unified_control_plane_service as control_plane_module
+from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
 from tldw_chatbook.MCP.unified_control_models import (
@@ -11,6 +14,92 @@ from tldw_chatbook.MCP.unified_control_models import (
     ServerAccessContext,
     UnifiedMCPContext,
 )
+
+
+def _projection_tool(name: str, marker: str) -> HubTool:
+    return HubTool(
+        server_key="local:__local__",
+        server_label="Local workspace, web, and Watchlists",
+        source="local",
+        name=name,
+        description=f"{name}-{marker}",
+        input_schema={"type": "object", "properties": {marker: {"type": "string"}}},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+
+
+def test_local_hub_tools_requires_exact_definition_identity_and_closes_handles(
+    monkeypatch, tmp_path
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    exact = _projection_tool("exact", "same")
+    changed = _projection_tool("changed", "inspection")
+    console_only = _projection_tool("console_only", "inspection")
+    handles = []
+
+    class Provider:
+        def __init__(self, tools):
+            self._tools = tools
+
+        def hub_tools(self):
+            return list(self._tools)
+
+    class Handle:
+        def __init__(self, tools):
+            self.provider = Provider(tools)
+            self.close_calls = 0
+            handles.append(self)
+
+        def close(self):
+            self.close_calls += 1
+
+    monkeypatch.setattr(
+        local_server_tools_module,
+        "build_hub_local_inspection_provider",
+        lambda *_args, **_kwargs: Handle([exact, changed, console_only]),
+    )
+    monkeypatch.setattr(
+        local_server_tools_module,
+        "build_hub_local_provider",
+        lambda *_args, **_kwargs: Handle(
+            [exact, _projection_tool("changed", "executable")]
+        ),
+    )
+    monkeypatch.setattr(
+        local_server_tools_module,
+        "resolve_server_workspace_root",
+        lambda: tmp_path,
+    )
+    requested_settings = []
+
+    def setting(section, key, default=None):
+        requested_settings.append((section, key))
+        if (section, key) == ("console", "local_tools_enabled"):
+            return True
+        if (section, key) == ("mcp", "expose_local_tools"):
+            raise AssertionError("external publication gate is irrelevant")
+        return default
+
+    monkeypatch.setattr(control_plane_module, "get_cli_setting", setting)
+    service = UnifiedMCPControlPlaneService(
+        target_store=None,
+        context_store=None,
+        local_service=None,
+        server_service=None,
+    )
+
+    projected = {tool.name: tool for tool in service.local_hub_tools()}
+
+    assert projected["exact"].executable is True
+    assert projected["changed"].executable is False
+    assert projected["console_only"].executable is False
+    assert requested_settings == [("console", "local_tools_enabled")]
+    assert [handle.close_calls for handle in handles] == [1, 1]
 
 
 # Fix Round H (PR-T3 review), Item 2c -- POLICY on pinning hand-mirrored
@@ -1655,3 +1744,83 @@ async def test_control_plane_service_exposes_remaining_governance_and_external_a
     assert assignment_status["status"] == "configured"
     assert "external_server.secret.set" in external_actions
     assert external_secret["secret_ref_id"] == "secret-1"
+
+
+# -- task-32291 (Qodo #2597 #9 / #2600 #16): session approvals are shared ----
+
+
+def test_session_approval_listing_survives_concurrent_grants_and_revokes():
+    """`list_session_approvals()` built its snapshot with `tuple(a_set)`,
+    which is NOT atomic: an agent worker thread granting or revoking
+    mid-copy raised `RuntimeError`, which `MCPWorkbench._session_approvals_
+    for_row()` swallows into an EMPTY listing -- every " (session)" marker
+    and Revoke row vanished for that render.
+
+    Hammers add/discard from a second thread while listing, and pins BOTH
+    halves: no exception escapes, and one entry that is never touched by
+    the writer stays visible in every single listing.
+    """
+    import threading
+
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._session_approvals = set()
+    service._session_approvals_lock = threading.Lock()
+
+    # The stable entry: granted once, never revoked, so it must be in every
+    # snapshot the reader takes.
+    service.approve_for_session("srv", "stable")
+
+    stop = threading.Event()
+    writer_error: list[BaseException] = []
+
+    def _churn() -> None:
+        try:
+            index = 0
+            while not stop.is_set():
+                name = f"churn-{index % 64}"
+                service.approve_for_session("srv", name)
+                service.revoke_session_approval("srv", name)
+                index += 1
+        except BaseException as exc:  # noqa: BLE001 -- reported to the test
+            writer_error.append(exc)
+
+    writer = threading.Thread(target=_churn, daemon=True)
+    writer.start()
+    try:
+        for _ in range(2000):
+            listing = service.list_session_approvals()
+            assert ("srv", "stable") in listing
+    finally:
+        stop.set()
+        writer.join(timeout=5)
+
+    assert not writer_error, writer_error
+    assert writer.is_alive() is False
+
+
+def test_clearing_one_profiles_session_approvals_keeps_the_same_set_object():
+    """The per-profile clear REBOUND `_session_approvals` to a new set, so a
+    reader holding the old one (and the lock guarding a set nobody writes
+    any more) would see a stale world. It mutates in place now."""
+    import threading
+
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._session_approvals = set()
+    service._session_approvals_lock = threading.Lock()
+    service.approve_for_session("srv", "a", profile_id="keep")
+    service.approve_for_session("srv", "b", profile_id="drop")
+    identity = service._session_approvals
+
+    service.clear_session_approvals(profile_id="drop")
+
+    assert service._session_approvals is identity
+    assert service.list_session_approvals(profile_id="keep") == [("srv", "a")]
+    assert service.list_session_approvals(profile_id="drop") == []

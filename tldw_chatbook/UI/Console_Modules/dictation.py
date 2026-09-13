@@ -97,6 +97,7 @@ import asyncio
 import logging
 import threading
 import time
+import uuid
 from typing import Any, Literal, TYPE_CHECKING
 
 from loguru import logger
@@ -850,6 +851,8 @@ class ConsoleDictationController:
         self._undo_histories_accessor = undo_histories_accessor
         self._visible_draft_session_id_accessor = visible_draft_session_id_accessor
         self._dictation_service_factory = dictation_service_factory
+        self._buddy_listening: tuple[Any, str] | None = None
+        self._retry_dialog: ConfirmationDialog | None = None
 
         # Dictation's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_dictation_session: Any | None = None
@@ -1044,6 +1047,16 @@ class ConsoleDictationController:
         `__init__`'s docstring."""
         return self._visible_draft_session_id_accessor()
 
+    async def suspend(self) -> None:
+        """Keep retained audio for our retry prompt; otherwise abandon capture."""
+        if (
+            self._retry_dialog is not None
+            and self._screen.app.screen is self._retry_dialog
+        ):
+            # The microphone is already closed before this prompt opens.
+            return
+        await self.teardown()
+
     async def teardown(self) -> None:
         """Release dictation's own resources during screen unmount.
 
@@ -1057,11 +1070,13 @@ class ConsoleDictationController:
         """
         self._cancel_console_dictation_timer()
         self._cancel_console_dictation_elapsed_timer()
+        self._retry_dialog = None
         dictation_session = self._console_dictation_session
         self._console_dictation_session = None
         self._console_dictation_origin_session_id = None
         self._console_dictation_partial = ""
         self._console_dictation_state = "idle"
+        self._release_buddy_listening()
         if dictation_session is not None:
             await self._maintenance_native_call(dictation_session.discard)
 
@@ -1071,10 +1086,24 @@ class ConsoleDictationController:
     ) -> None:
         """Set the one-shot dictation state and refresh its visible control."""
         self._console_dictation_state = state
+        if state != "recording":
+            self._release_buddy_listening()
         composer = self._console_composer_or_none()
         if composer is not None:
             composer.sync_dictation_state(state)
 
+
+    def _release_buddy_listening(self) -> None:
+        """Release this capture's exact voice lease, even after context changes."""
+        lease, self._buddy_listening = self._buddy_listening, None
+        if lease is None:
+            return
+        from ...Persona_Buddy.console_adapter import BuddyLifecycleEvent
+
+        sink, owner = lease
+        sink.publish(
+            BuddyLifecycleEvent(source="voice", owner=owner, state="idle", terminal=True)
+        )
 
     def _sync_console_dictation_availability(self) -> None:
         """Refresh the mic button's tooltip from a fresh availability probe.
@@ -1151,6 +1180,17 @@ class ConsoleDictationController:
         """Return dictation to idle and show its actionable failure."""
         self._cancel_console_dictation_timer()
         self._cancel_console_dictation_elapsed_timer()
+        # TASK-32495: a dictation failure inside the hands-free loop
+        # (capture start refused -- missing extras, no device -- or a
+        # mid-capture failure) strands the loop otherwise: the FSM has no
+        # capture-failed input and `listening` has no watchdog, so the
+        # Switch kept claiming a live mode over a dead microphone. Exit
+        # through the loop's own reasoned path, exactly the precedent
+        # `_handle_console_dictation_limit` set for bounded endings -- the
+        # failure toast below still fires from this method.
+        hands_free_session = self._console_hands_free
+        if hands_free_session is not None:
+            hands_free_session.controller.on_exit_request()
         self._console_dictation_origin_session_id = None
         self._console_dictation_session = None
         self._console_dictation_partial = ""
@@ -1344,7 +1384,12 @@ class ConsoleDictationController:
                     # `_request_console_dictation_stop()` here would only
                     # do the first half, leaving the FSM believing it is
                     # still running.
-                    self._console_hands_free.controller.on_exit_request()
+                    controller = self._console_hands_free.controller
+                    stop = getattr(controller, "on_stop_request", None)
+                    if callable(stop):
+                        stop()
+                    else:
+                        controller.on_exit_request()
                 else:
                     self._request_console_dictation_stop()
             elif event.name == "discard":
@@ -1680,6 +1725,18 @@ class ConsoleDictationController:
             await self._maintenance_native_call(session.discard)
             return
         self._set_console_dictation_state("recording")
+        # Only successful capture startup earns listening. Keep a request-owned
+        # lease like trusted playback: realtime may own voice on the same Chat.
+        from ...Persona_Buddy.console_adapter import BuddyLifecycleEvent
+
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        sink = getattr(runtime, "persona_buddy_sink", None)
+        if sink is not None:
+            owner = f"dictation:{uuid.uuid4().hex}"
+            if sink.publish(
+                BuddyLifecycleEvent(source="voice", owner=owner, state="listening")
+            ):
+                self._buddy_listening = (sink, owner)
         self._console_dictation_timer = self.set_timer(
             DICTATION_MAX_SECONDS,
             self._handle_console_dictation_limit,
@@ -1822,19 +1879,16 @@ class ConsoleDictationController:
                 if self._console_dictation_session is session:
                     self._notify_console_dictation_error(exc)
                 return
+            dialog = ConfirmationDialog(
+                title="Parakeet transcription failed",
+                message="Parakeet failed. Retry this audio with faster-whisper?",
+                confirm_label="Retry",
+                cancel_label="Keep draft",
+            )
+            self._retry_dialog = dialog
             try:
                 confirmed = await self.run_worker(
-                    self.app_instance.push_screen_wait(
-                        ConfirmationDialog(
-                            title="Parakeet transcription failed",
-                            message=(
-                                "Parakeet failed. Retry this audio with "
-                                "faster-whisper?"
-                            ),
-                            confirm_label="Retry",
-                            cancel_label="Keep draft",
-                        )
-                    ),
+                    self.app_instance.push_screen_wait(dialog),
                     exclusive=False,
                     exit_on_error=False,
                 ).wait()
@@ -1846,6 +1900,11 @@ class ConsoleDictationController:
                     "Console dictation retry prompt did not complete"
                 )
                 self._finish_failed_console_dictation(session)
+                return
+            finally:
+                if self._retry_dialog is dialog:
+                    self._retry_dialog = None
+            if not self.is_mounted or self._console_dictation_session is not session:
                 return
             if not confirmed:
                 self._finish_failed_console_dictation(session)
@@ -2072,6 +2131,15 @@ class ConsoleDictationController:
             return
         if self._console_dictation_state != "idle":
             return
+        owner = getattr(self.app_instance, "meeting_session_owner", None)
+        if owner is not None and getattr(owner, "is_active", False):
+            # Meetings hold the mic in-process, so the executor's "local STT
+            # busy" signal never fires for them (meeting spec §3.4).
+            self.app_instance.notify(
+                "Meeting in progress: stop it in Meetings before using Console dictation.",
+                severity="warning",
+            )
+            return
         # Re-probe on every activation attempt (TASK-15): refreshes the mic
         # tooltip so an extra installed or a microphone plugged in mid-run is
         # reflected without a remount. Cosmetic only -- see
@@ -2132,7 +2200,12 @@ class ConsoleDictationController:
             # state, exactly like Esc/spoken "stop" -- superseding the
             # ordinary one-shot toggle below for as long as the loop is
             # running.
-            self._console_hands_free.controller.on_exit_request()
+            controller = self._console_hands_free.controller
+            microphone_disabled = getattr(controller, "on_microphone_disabled", None)
+            if callable(microphone_disabled):
+                microphone_disabled()
+            else:
+                controller.on_exit_request()
             return
         if self._console_realtime is not None:
             # V4 task 5 (final review C1): the SAME rule for the

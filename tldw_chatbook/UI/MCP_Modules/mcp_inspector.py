@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+import math
+import re
+from collections.abc import Mapping, Sequence
 from functools import partial
 from typing import Any
 
@@ -32,14 +34,19 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
     library_rag_all_matches_weak,
 )
+from tldw_chatbook.Library.library_rag_score_kinds import library_rag_result_score_kind
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.hub_test_execution import ToolTestAdmissionPreview
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.local_runtime_delegate import (
     PERMISSION_STATE_UNRESOLVED_CLAUSE,
     RawToolCallRefusedError,
     capitalize_first,
 )
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    HIGH_RISK_TAGS,
+    EffectiveToolState,
+)
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -50,18 +57,178 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.MCP.unified_control_plane_service import MCPHubGateDeniedError
-from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import tool_state_kind
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
+    PermissionProfileContext,
+    tool_state_kind,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_schema
+
+_TOOL_TEST_TEXT_LIMIT = 480
+_TOOL_TEST_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)"
+    r"(\s*[:=]\s*)(\[redacted\]|'[^']*'|\"[^\"]*\"|[^\s,;}\]]+)"
+)
+_TOOL_TEST_BEARER = re.compile(r"(?i)\bbearer\s+(?:\[redacted\]|[^\s,;}\]]+)")
+_TOOL_TEST_KEY_VALUE = re.compile(r"\bsk-[A-Za-z0-9_-]{6,}\b")
+_TOOL_TEST_PATH_START = re.compile(
+    r"(?<![A-Za-z0-9])(?:"
+    r"[A-Za-z]:[\\/]"
+    r"|\\\\(?:[?.][\\/]|[^\\/\s'\"<>]+[\\/][^\\/\s'\"<>]+)"
+    r"|/)"
+)
+_TOOL_TEST_PATH_TRAILING_PUNCTUATION = ".,;:!?)]}"
+
+
+def _http_url_end(text: str, path_start: int) -> int | None:
+    """Return the end of an HTTP URL whose first slash looked path-like."""
+    prefix = text[:path_start].lower()
+    if not (prefix.endswith("http:") or prefix.endswith("https:")):
+        return None
+    match = re.match(r"[^\s'\"<>]+", text[path_start:])
+    return path_start + len(match.group(0)) if match is not None else path_start
+
+
+def _unquoted_tool_test_path_end(candidate: str) -> int:
+    """Consume an ambiguous unquoted path until a structural boundary.
+
+    Words after a spaced path cannot reliably be classified as prose or path
+    components. Privacy wins that ambiguity: keep redacting until punctuation,
+    a structured ``: `` separator, or an HTTP URL. A filename extension is not
+    a boundary because it can name a directory. Callers already bound candidates
+    at quotes, newlines, and field delimiters.
+    """
+    diagnostic = re.search(r":(?=\s)", candidate[2:])
+    if diagnostic is not None:
+        return 2 + diagnostic.start()
+    tokens = list(re.finditer(r"\S+", candidate))
+    if not tokens:
+        return 0
+    end = tokens[0].end()
+    for token in tokens[1:]:
+        token_text = token.group(0)
+        unwrapped = token_text.lstrip("([{")
+        content = unwrapped.rstrip(_TOOL_TEST_PATH_TRAILING_PUNCTUATION)
+        trailing_punctuation = len(content) < len(unwrapped)
+        normalized = content.lower()
+        if normalized.startswith(("http://", "https://")):
+            break
+        if not content:
+            break
+        end = token.end() - (len(unwrapped) - len(content))
+        if trailing_punctuation:
+            break
+    return end
+
+
+def _redact_tool_test_paths(text: str) -> str:
+    """Redact absolute filesystem paths without treating URLs or regexes as paths."""
+    parts: list[str] = []
+    cursor = 0
+    while match := _TOOL_TEST_PATH_START.search(text, cursor):
+        start = match.start()
+        url_end = _http_url_end(text, start)
+        if url_end is not None:
+            parts.append(text[cursor:url_end])
+            cursor = url_end
+            continue
+        replacement_start = start
+        if text[max(cursor, start - 5) : start].lower() == "file:":
+            replacement_start = start - 5
+        parts.append(text[cursor:replacement_start])
+        quote = text[start - 1] if start and text[start - 1] in {'"', "'"} else None
+        if quote is not None:
+            closing_quote = text.find(quote, match.end())
+            end = closing_quote if closing_quote >= 0 else len(text)
+        else:
+            hard_end = len(text)
+            for marker in "\r\n\t<>\"';":
+                marker_at = text.find(marker, match.end())
+                if marker_at >= 0:
+                    hard_end = min(hard_end, marker_at)
+            candidate = text[start:hard_end]
+            end = start + _unquoted_tool_test_path_end(candidate)
+            while end > start and text[end - 1] in _TOOL_TEST_PATH_TRAILING_PUNCTUATION:
+                end -= 1
+        parts.append("[path]")
+        cursor = max(end, match.end())
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def _safe_tool_test_text(value: object, *, limit: int = _TOOL_TEST_TEXT_LIMIT) -> str:
+    """Return bounded, secret- and path-free text for Test Tool surfaces."""
+    try:
+        text = str(value)
+    except Exception:
+        text = "The service returned an unreadable error."
+    text = _TOOL_TEST_SECRET_ASSIGNMENT.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}[redacted]", text
+    )
+    text = _TOOL_TEST_BEARER.sub("Bearer [redacted]", text)
+    text = _TOOL_TEST_KEY_VALUE.sub("[redacted]", text)
+    text = _redact_tool_test_paths(text)
+    text = text.strip()
+    if len(text) > limit:
+        text = f"{text[: limit - 1].rstrip()}…"
+    return text
+
+
+def _safe_exception_argument(value: object) -> object:
+    """Sanitize nested exception data before its repr escapes path separators."""
+    if isinstance(value, Mapping):
+        return {
+            _safe_tool_test_text(key): _safe_exception_argument(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return tuple(_safe_exception_argument(item) for item in value)
+    if isinstance(value, list):
+        return [_safe_exception_argument(item) for item in value]
+    if isinstance(value, str):
+        return _safe_tool_test_text(value)
+    return value
+
+
+def _safe_exception_text(exc: BaseException) -> str:
+    """Return bounded exception text without exposing mapping-shaped arguments."""
+    args = getattr(exc, "args", ())
+    if not any(isinstance(arg, Mapping) for arg in args):
+        return _safe_tool_test_text(exc)
+    try:
+        safe_args = tuple(
+            _safe_exception_argument(redact_mapping(arg))
+            if isinstance(arg, Mapping)
+            else arg
+            for arg in args
+        )
+        rendered = str(safe_args[0]) if len(safe_args) == 1 else str(safe_args)
+        return _safe_tool_test_text(rendered)
+    except Exception:
+        return "<error redacted>"
+
+
+def _safe_diagnostic_message(prefix: str, exc: BaseException) -> str:
+    """Build one bounded, redacted MCP diagnostic from an exception."""
+    return _safe_tool_test_text(f"{prefix}: {_safe_exception_text(exc)}")
+
 
 # Actions that have first-class UI in every source. Everything else renders
 # disabled and points at the Advanced runner below (capability preserved).
-_BASE_WIRED_ACTIONS = {HubAction.VIEW_DETAILS, HubAction.OPEN_TOOL_CATALOG, HubAction.OPEN_AUDIT}
+_BASE_WIRED_ACTIONS = {
+    HubAction.VIEW_DETAILS,
+    HubAction.OPEN_TOOL_CATALOG,
+    HubAction.OPEN_AUDIT,
+}
 
 # Local-profile lifecycle actions (Task 5): wired only for local-source
 # snapshots, where MCPWorkbench._start_lifecycle() can actually run them
 # against the typed T2 control-plane methods. Server-source servers are
 # mutated on the server side (Advanced), not from this pane.
-_LIFECYCLE_ACTIONS = {HubAction.CONNECT, HubAction.VALIDATE, HubAction.REFRESH_DISCOVERY}
+_LIFECYCLE_ACTIONS = {
+    HubAction.CONNECT,
+    HubAction.VALIDATE,
+    HubAction.REFRESH_DISCOVERY,
+}
 
 # Task 6: editing a local profile's config (command/args/env) is now wired
 # for local-source snapshots -- MCPWorkbench opens the MCPProfileForm
@@ -129,20 +296,11 @@ _OPEN_CREDENTIALS_LOCAL_TOOLTIP = "Edit the profile's env placeholders via Edit 
 # consolation prize.
 _UNAVAILABLE_ACTION_TOOLTIP = "Not available from this panel."
 
-# Task 5: the Test Tool Run button's tooltip in its normal (unarmed) state,
-# and once `require_confirm()` has armed it into a one-shot "Confirm run"
-# control -- `MCPWorkbench` resolves deny/ask/allow via `gate_tool_test()`
-# and arms this pane for "ask", but the button copy/mechanics live here.
 _TEST_RUN_TOOLTIP = "Send these arguments to the tool and show the result."
-_TEST_RUN_CONFIRM_TOOLTIP = "Ask is set for this tool — press again to run once."
-# UX batch item 6: always shown while the Run button is armed (mounted
-# above Run/Close, `#mcp-inspector-test-armed-hint`) -- distinct from the
-# SPECIFIC `notice` `require_confirm()` also accepts (config_changed /
-# unverifiable, `#mcp-inspector-test-arm-notice`, mounted below the
-# buttons, unchanged position/contract): this one explains the Ask
-# mechanic itself, present on every arm regardless of whether a specific
-# reason is also shown.
-_TEST_RUN_ARMED_HINT = "This tool is set to Ask — press again to run; anything else cancels."
+_TEST_PREPARING_TEXT = "Preparing a current permission preview…"
+_TEST_ASK_TEXT = "Approves this one invocation only. The approval does not persist."
+_TEST_OFF_TEXT = "Blocked by Permissions. Change this tool from Off to run it."
+_TEST_UNAVAILABLE_TEXT = "Unavailable. Try again, or review this tool in Permissions."
 
 # Task 7: permission-explanation copy (spec-verbatim, binding) -- rendered
 # into `#mcp-inspector-permission` by `_render_permission_container()`,
@@ -155,31 +313,25 @@ _ORIGIN_SENTENCES: dict[str, str] = {
     "global_default": "Inherited from the global default.",
     "builtin_default": "Built-in tools default to allow.",
 }
-# Minor 6: fallback for an origin this dict doesn't recognize (e.g.
-# "gate_error", `_resolve_test_gate()`'s synthetic fail-closed origin) --
-# `.get(effective.origin, "")` used to render a blank line here instead of
-# ANY explanation, which reads as a broken UI rather than "we don't know
-# why, but don't trust it".
-#
-# Fix Round I, Item 4: this was a THIRD independently-maintained literal
-# stating the same "permission state could not be resolved" claim
-# `unified_control_plane_service._ADVANCED_EXECUTE_GATE_ERROR_MESSAGE` and
-# `mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT` already derive from
-# `local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_CLAUSE` -- and, unlike
-# `_decision_note()`'s own former `gate_error` branch (proven dead and
-# removed the round before this one), this one is genuinely live: reachable
-# via `show_tool()`'s `effective` keyword whenever `MCPWorkbench.
-# _effective_for_display()`'s single-tool `gate_tool_test()` fallback
-# raises (`on_mcp_tools_mode_tool_selected()`, no `cascade` at that call
-# site, so `_render_permission_container()` falls through to THIS sentence
-# rather than `_cascade_rungs()`). Derived the same way as the other two --
-# `capitalize_first()`, not `.capitalize()`, for the reason given on that
-# function's own docstring -- so mutating the shared clause reddens a test
-# for this surface too, not just the other two.
+# Honest fallback when the service cannot explain a permission origin.
 _UNKNOWN_ORIGIN_SENTENCE = f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
 _CONFIG_CHANGED_NOTICE = "Definition changed since you allowed it."
-_RISK_FLOORED_NOTICE = "High-risk tool — asks even though the inherited default is Allow."
+_RISK_FLOORED_NOTICE = (
+    "High-risk tool — asks even though the inherited default is Allow."
+)
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
+# task-32281: cap on one exact-input allow rule row's displayed argument
+# summary -- long enough to be legible, short enough that a row with a big
+# argument payload doesn't dominate the permission block.
+_ARG_RULE_SUMMARY_LIMIT = 60
+_ARG_RULE_REMOVE_TOOLTIP = "Remove this exact-input allow rule."
+# task-32291: "Approve for session" grants are held in memory for the life
+# of the app; until this group existed nothing listed them and the only way
+# out was restarting Chatbook.
+_SESSION_APPROVALS_HEADING = "Session approvals"
+_SESSION_APPROVAL_REVOKE_TOOLTIP = (
+    "Revoke this session approval — the next call asks again."
+)
 
 # Task 3 (MCP Hub Phase 6): cascade provenance -- `show_permission()`'s
 # `cascade` tuple, when given, replaces the single `_ORIGIN_SENTENCES`
@@ -195,9 +347,7 @@ _GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's ro
 # a single press with no permission gate and no execution-log record.
 # `UnifiedMCPControlPlaneService.execute_advanced_tool()` now enforces the
 # gate's hard "Off" verdict and records the run; this pane supplies the
-# per-run consent that gate's "ask" verdict requires (the same Ask mechanic
-# the Test Tool runner's `require_confirm()` arm implements, minus its
-# dedicated button -- here the Run Action button itself is the arm), keyed to
+# per-run consent that gate's "ask" verdict requires, keyed to
 # the exact payload it was shown for so an edited payload re-confirms.
 _ADVANCED_EXECUTE_ACTION = "tool.execute"
 # Fix Round C, Item 4: "Editing anything cancels" undersold what actually
@@ -226,42 +376,6 @@ _ADVANCED_EXECUTE_ACTION = "tool.execute"
 # closing the two remaining gaps between what this sentence claims and
 # what the code does.
 #
-# Fix Round I, Item 1 (review of Fix Round G): the paragraph this replaces
-# claimed the two arms' sentence was "genuinely true of each arm on its
-# own terms" because `_test_run_armed` "deliberately does NOT disarm on an
-# argument-form edit" -- and defended that as safe because
-# `_handle_test_run()` "always re-collects CURRENT form values rather than
-# confirming a snapshot." That defence was backwards: re-collecting
-# CURRENT values is exactly why the old behavior was UNSAFE, not why it
-# was fine -- the whole point of a same-payload confirm is that the run
-# executes against what the user was SHOWN, and an edit after arming meant
-# the confirming press ran arguments no confirm was ever rendered for.
-# Verified live: an "ask" tool armed against `{"id": 1}`, the argument
-# form then edited to `{"id": 999, "danger": true}`, ran on the very next
-# press with no second confirm for the edited payload. `MCPSchemaForm`'s
-# controls (`Input`, `Select`, `Checkbox`, and the raw-JSON `TextArea`
-# fallback -- the only source of any of those four widget types anywhere
-# in this pane) are now wired to `disarm_test_run()` the same way
-# `#mcp-adv-payload` disarms the Advanced arm (`on_select_changed()`'s
-# schema-field branch, `on_input_changed()`, `on_checkbox_changed()`, and
-# the `#mcp-schema-raw` `TextArea.Changed` handler, all near
-# `_handle_test_run()` below). Both arms now disarm on every meaningful
-# interaction with THEIR OWN widget, for real -- not merely by assertion.
-#
-# The two arms still differ in one respect, left as-is on purpose: the
-# Advanced arm keys on `(action, payload)` (`_run_advanced_action()`
-# below) so a payload that happens to round-trip back to what was armed
-# (e.g. switching sections and back) does not force a redundant re-arm;
-# `_test_run_armed` stays a bare boolean, so ANY edit disarms it, even one
-# that reproduces the original text byte-for-byte. Widening the boolean
-# into a keyed arm would need `_handle_test_run()` to snapshot the
-# argument dict at ARM time and compare it at CONFIRM time (today it
-# always collects fresh, by design, so a confirming run reflects whatever
-# the form currently shows) -- a real behavior change, not a truthfulness
-# fix, and out of this item's scope. Disarm-on-edit alone already closes
-# the actual defect (an edited payload can never run under a stale
-# confirm); the byte-identical round-trip case it leaves un-optimized
-# costs the user one extra press, never an unconfirmed execution.
 _ADVANCED_EXECUTE_CONFIRM = (
     "Runs {tool} now — press Run Action again to confirm; anything else cancels."
 )
@@ -306,7 +420,42 @@ def _stale_result_toast_text(tool_name: str) -> str:
     not WHY the render was dropped), so it never asserts a specific cause
     it can't verify.
     """
-    return f"{tool_name} finished running, but its result isn't shown here."
+    return _safe_tool_test_text(
+        f"{tool_name} finished running, but its result isn't shown here."
+    )
+
+
+def _arg_rule_summary(args_json: str, *, limit: int = _ARG_RULE_SUMMARY_LIMIT) -> str:
+    """One exact-input allow rule's row text, capped at `limit` chars
+    (task-32281 AC#1).
+
+    Review round 1 (Important): redacted before display -- the approval
+    card that created this rule already ran `redact_mapping()` before
+    ever showing the arguments (`chat_approval_card.py`'s redaction pass;
+    `MCP/redaction.py` states the whole-subsystem invariant that secret-
+    shaped values never reach a display or log boundary unredacted), so
+    the stored row must too, or a secret argument that was hidden on the
+    approval card comes back unredacted here. `args_json` is the rule's
+    canonical argument rendering (`permission_store._canonical_args_
+    json()`'s output); re-parsed, redacted, and re-dumped rather than
+    string-matched, so nested secret-keyed values are caught too. Falls
+    back to the raw (still capped) string only when `args_json` doesn't
+    parse back to a mapping -- `rule_id`/removal never read this text,
+    only the raw canonical string, so a fallback here never affects
+    Remove.
+    """
+    try:
+        parsed = json.loads(args_json)
+        text = (
+            json.dumps(redact_mapping(parsed), sort_keys=True)
+            if isinstance(parsed, Mapping)
+            else args_json
+        )
+    except Exception:
+        text = args_json
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
 
 
 def _cascade_rungs(
@@ -363,8 +512,12 @@ def _cascade_rungs(
         winner = "server"
     else:
         winner = "global"
-    downgraded = effective is not None and (effective.config_changed or effective.risk_floored)
-    downgrade_marker = "⚠" if (effective is not None and effective.config_changed) else "⚑"
+    downgraded = effective is not None and (
+        effective.config_changed or effective.risk_floored
+    )
+    downgrade_marker = (
+        "⚠" if (effective is not None and effective.config_changed) else "⚑"
+    )
     rungs = (
         ("tool", "Tool override", tool_state, "tool_override"),
         ("server", "Server default", server_state, "server_default"),
@@ -390,8 +543,10 @@ def _cascade_rungs(
         classes = "ds-field-row"
         if is_winner:
             assert state is not None, "the winning rung always has a concrete state"
-            kind = "warning" if downgraded else tool_state_kind(
-                EffectiveToolState(state=state, origin=origin)
+            kind = (
+                "warning"
+                if downgraded
+                else tool_state_kind(EffectiveToolState(state=state, origin=origin))
             )
             classes += f" mcp-status-{kind}"
         else:
@@ -400,7 +555,8 @@ def _cascade_rungs(
             Static(
                 f"{prefix}{label}: {value_text}",
                 id=f"mcp-inspector-permission-cascade-{key}",
-                classes=classes, markup=False,
+                classes=classes,
+                markup=False,
             )
         )
     return widgets
@@ -500,29 +656,38 @@ def _is_tool_error_shape(result: object) -> bool:
 
 
 class _ScoredRow:
-    """Minimal `.score`-bearing shim, nothing more.
+    """Minimal score-provenance shim for the shared weak-match predicate.
 
     `library_rag_all_matches_weak()` is typed for `LibraryRagResultRow`
-    but at runtime only ever reads `.score` off each row -- duck typing,
-    not a hard dependency on the Library dataclass. This lets MCP tool
-    result rows (plain `Mapping`s) feed the same, one, canonical
-    all-weak check the Library evidence list uses, without copying its
-    logic (PR-T3 task 2 / Global Constraints: "reuse the vocabulary,
-    don't reinvent it").
+    but at runtime reads score provenance through duck typing rather than a
+    hard dependency on the Library dataclass. This lets MCP tool result rows
+    (plain `Mapping`s) feed the same, canonical all-weak check the Library
+    evidence list uses without copying its logic.
     """
 
-    __slots__ = ("score",)
+    __slots__ = ("score", "score_kind", "vector_score")
 
-    def __init__(self, score: object) -> None:
+    def __init__(
+        self, score: object, score_kind: str, vector_score: float | None
+    ) -> None:
         # Defensive coercion: anything that isn't a real number (or is a
         # bool -- `isinstance(True, int)` is True in Python) is treated
         # as unscored rather than risking a `<` comparison against a
         # non-numeric value inside `library_rag_all_matches_weak()`.
-        self.score = (
-            score
-            if isinstance(score, (int, float)) and not isinstance(score, bool)
-            else None
-        )
+        try:
+            self.score = (
+                score
+                if (
+                    isinstance(score, (int, float))
+                    and not isinstance(score, bool)
+                    and math.isfinite(float(score))
+                )
+                else None
+            )
+        except OverflowError:
+            self.score = None
+        self.score_kind = score_kind
+        self.vector_score = vector_score
 
 
 def _extract_scored_rows(rows: list) -> list[_ScoredRow] | None:
@@ -542,7 +707,7 @@ def _extract_scored_rows(rows: list) -> list[_ScoredRow] | None:
     Returns:
         `None` when `rows` isn't uniformly scored-shaped (including the
         empty-list case, handled separately by the caller); otherwise
-        the `.score` shim list.
+        score-provenance shim list.
     """
     if not rows:
         return None
@@ -550,7 +715,10 @@ def _extract_scored_rows(rows: list) -> list[_ScoredRow] | None:
     for row in rows:
         if not isinstance(row, Mapping) or "score" not in row:
             return None
-        scored_rows.append(_ScoredRow(row.get("score")))
+        score_kind, vector_score = library_rag_result_score_kind(
+            row.get("metadata"), row
+        )
+        scored_rows.append(_ScoredRow(row.get("score"), score_kind, vector_score))
     return scored_rows
 
 
@@ -605,13 +773,22 @@ def audit_entry_detail_payload(entry: Mapping[str, Any]) -> dict[str, Any]:
         A metadata-only payload safe for the execution-detail display.
     """
 
+    # R24: the Audit TABLE humanises the decision token; this detail showed
+    # the raw one, so one row read two different ways. The raw token stays
+    # (it is the record), with the table's own label beside it. Local
+    # import: `mcp_audit_mode` imports from this module -- same reason
+    # `remediation_actions` is imported locally below.
+    from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import _DECISION_LABELS
+
     server_key = str(entry.get("server_key") or "")
     tool_name = str(entry.get("tool_name") or "")
+    decision = str(entry.get("decision") or "")
     return {
         "ts": entry.get("ts"),
         "tool": f"{server_key}::{tool_name}",
         "initiator": entry.get("initiator"),
         "decision": entry.get("decision"),
+        "decision_label": _DECISION_LABELS.get(decision, decision),
         "ok": entry.get("ok"),
         "status": entry.get("status"),
         "duration": format_duration_ms(int(entry.get("duration_ms") or 0)),
@@ -704,7 +881,16 @@ def _render_section_payload(section: str, payload: Any) -> str:
     or `OverflowError` (an out-of-range float) -- which should not happen
     for a service-returned dict but must never crash the Advanced pane
     either way.
+
+    Wave A (F13): a Mapping payload carrying a truthy "error" key is a
+    FAILED section load (the `_AdvancedSectionShim` in mcp_workbench.py
+    normalizes exceptions to exactly this shape) -- rendered as ONE plain
+    status line instead of the JSON dump, which is the noise the UX review
+    flagged on the server-source no-target state. An empty/absent "error"
+    is a legitimate payload and still renders as JSON.
     """
+    if isinstance(payload, Mapping) and payload.get("error"):
+        return f"Could not load this section: {str(payload['error']).strip()}"
     try:
         return json.dumps(payload, indent=2, sort_keys=True, default=str)
     except Exception:
@@ -938,20 +1124,46 @@ class MCPInspector(Vertical):
             self.server_key = server_key
 
     class ToolTestRequested(Message, namespace="mcp_inspector"):
-        """Posted when the user presses Run in the Test Tool panel with a
-        validly-collected argument dict (`MCPSchemaForm.collect_arguments()`
-        raised nothing). `MCPWorkbench` owns the actual `test_hub_tool()`
-        call and reports the outcome back via `show_tool_result()`.
+        """One click bound to the immutable preview currently rendered."""
 
-        Carries `server_key`/`tool_name` as separate fields (not a packed
-        `"server_key::tool_name"` id) -- task-233: nothing downstream of
-        this message parses a `"::"`-joined string anymore."""
-
-        def __init__(self, server_key: str, tool_name: str, arguments: dict[str, Any]) -> None:
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            arguments: dict[str, Any],
+            *,
+            preview_nonce: str,
+            intent: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
             self.arguments = arguments
+            self.preview_nonce = preview_nonce
+            self.intent = intent
+            self.profile_context = profile_context
+
+    class ToolTestPreviewRequested(Message, namespace="mcp_inspector"):
+        """Ask the Workbench to prepare one current service preview."""
+
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+            self.profile_context = profile_context
+
+    class ToolTestPreviewRevocationRequested(Message, namespace="mcp_inspector"):
+        """Best-effort revocation request for a preview leaving the panel."""
+
+        def __init__(self, preview_nonce: str) -> None:
+            super().__init__()
+            self.preview_nonce = preview_nonce
 
     class ReallowRequested(Message, namespace="mcp_inspector"):
         """Posted when the user presses Re-allow on a `config_changed`-
@@ -963,10 +1175,71 @@ class MCPInspector(Vertical):
         the rug-pull downgrade -- then resyncs the Permissions matrix (its
         ⚠ marker clears)."""
 
-        def __init__(self, server_key: str, tool_name: str) -> None:
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
+
+    class RemoveArgRuleRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user presses Remove on one exact-input allow
+        rule row (task-32281; `#mcp-inspector-arg-rule-remove-{index}`,
+        one per rule -- see `_render_permission_container()`'s own
+        `arg_rules` rendering). `rule_id` is the rule's canonical
+        ``args_json`` -- `list_tool_arg_rules()`'s own `rule_id` field, the
+        SAME string `remove_tool_arg_rule()` matches against. `MCPWorkbench`
+        deletes it, resyncs the matrix (its ``≡`` marker clears once no
+        rule remains), and re-renders this same permission block with the
+        fresh (now-shorter) rule list.
+
+        Qodo #2597 #1: `owner_profile_id` is the profile the rule is
+        actually STORED in -- `list_tool_arg_rules()`'s own `profile_id`
+        field. For an INHERITED rule that is an ancestor of the profile
+        under review, and deleting it against the reviewed profile would
+        silently no-op while the rule kept quieting calls. `None` (no
+        owner reported) falls back to the reviewed profile."""
+
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            rule_id: str,
+            profile_context: PermissionProfileContext | None = None,
+            owner_profile_id: str | None = None,
+        ) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+            self.rule_id = rule_id
+            self.profile_context = profile_context
+            self.owner_profile_id = owner_profile_id
+
+    class RevokeSessionApprovalRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user presses Revoke on one session-approval row
+        (task-32291; `#mcp-inspector-session-approval-revoke-{index}`, one
+        per live grant -- see `_render_permission_container()`'s own
+        `session_approvals` rendering). The `(server_key, tool_name)` pair
+        is the ROW's own, which need not be the tool this permission block
+        is explaining: the group lists every grant in the profile, since
+        before it nothing listed them anywhere. `MCPWorkbench` revokes it,
+        resyncs the matrix (that tool's ` (session)` suffix clears) and
+        re-renders this same permission block with the fresh list."""
+
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+            self.profile_context = profile_context
 
     class AuditOpenToolRequested(Message, namespace="mcp_inspector"):
         """Posted when the user presses "Open tool" (`#mcp-audit-open-tool`)
@@ -976,10 +1249,16 @@ class MCPInspector(Vertical):
         catalog is a warning toast, never a crash; a resolved tool switches
         to Tools mode and selects its row."""
 
-        def __init__(self, server_key: str, tool_name: str) -> None:
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
 
     class AuditAdjustPermissionRequested(Message, namespace="mcp_inspector"):
         """Posted when the user presses "Adjust permission"
@@ -988,10 +1267,16 @@ class MCPInspector(Vertical):
         but switches to Permissions mode and moves the matrix cursor to the
         tool's row instead."""
 
-        def __init__(self, server_key: str, tool_name: str) -> None:
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
 
     class ChangeInPermissionsRequested(Message, namespace="mcp_inspector"):
         """Posted by either "Change in Permissions" button (Task 3, MCP Hub
@@ -1000,18 +1285,24 @@ class MCPInspector(Vertical):
         `show_goto_button` path -- rendered only for `show_tool()`'s
         combined call, never the standalone Permissions-mode
         `show_permission()`) and the Test Tool panel's blocked/ask button
-        (`#mcp-inspector-goto-permission-test`, shown by `require_confirm()`
-        for "ask" and `show_tool_result(blocked=True, ...)` for "deny").
+        (`#mcp-inspector-goto-permission-test`, shown by previews and blocked
+        outcomes).
 
         Both route through `MCPWorkbench._goto_permission_row()` -- the SAME
         shared helper the audit drill's `AuditAdjustPermissionRequested`
         already uses: one implementation, three callers, no duplicated
         mode-switch-plus-matrix-row-selection logic."""
 
-        def __init__(self, server_key: str, tool_name: str) -> None:
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
 
     def __init__(self, **kwargs: Any) -> None:
         classes = kwargs.pop("classes", "")
@@ -1063,6 +1354,7 @@ class MCPInspector(Vertical):
         # know which tool a Run press is testing without re-querying the
         # workbench.
         self._current_tool: HubTool | None = None
+        self._current_tool_profile_context: PermissionProfileContext | None = None
         # Task 7: the `HubTool` `#mcp-inspector-permission` currently
         # describes, or `None` when hidden -- set by
         # `_render_permission_container()`, the single writer for that
@@ -1070,6 +1362,28 @@ class MCPInspector(Vertical):
         # know which tool's `(server_key, tool_name)` to post in
         # `ReallowRequested` without re-querying the workbench.
         self._current_permission_tool: HubTool | None = None
+        self._current_permission_profile_context: PermissionProfileContext | None = None
+        # task-32281: the exact-input allow rules `#mcp-inspector-permission`
+        # is currently listing (index-aligned with the mounted `mcp-
+        # inspector-arg-rule-remove-{index}` buttons) -- read by that
+        # button's press handler (below) to resolve the pressed row's
+        # `rule_id` for `RemoveArgRuleRequested` without re-fetching.
+        self._current_permission_arg_rules: list[Mapping[str, Any]] = []
+        # task-32291: index-aligned with the session-approval rows this
+        # block last rendered, so a Revoke press resolves its own entry
+        # without re-fetching.
+        self._current_permission_session_approvals: list[tuple[str, str]] = []
+        # task-32291: the rest of the block's own inputs, cached so
+        # `refresh_permission_session_approvals()` can re-render EXACTLY
+        # what is on screen with a fresh listing -- the caller would
+        # otherwise have to re-derive an `EffectiveToolState`/cascade it
+        # cannot always reproduce (a built-in row's state comes from the
+        # workbench's own built-in resolution, not the MCP catalog).
+        self._current_permission_effective: EffectiveToolState | None = None
+        self._current_permission_cascade: tuple[str | None, str | None, str] | None = (
+            None
+        )
+        self._current_permission_goto = False
         # T7 (MCP Hub Phase 5): the raw execution-log entry dict
         # `#mcp-inspector-audit` currently describes, or `None` when
         # hidden -- set by `show_audit_entry()`, the single writer. Read by
@@ -1077,6 +1391,7 @@ class MCPInspector(Vertical):
         # to know which `(server_key, tool_name)` to post without
         # re-querying the workbench.
         self._current_audit_entry: dict[str, Any] | None = None
+        self._current_audit_profile_context: PermissionProfileContext | None = None
         # T8 (MCP Hub Phase 5): the raw finding dict `#mcp-inspector-
         # finding` currently describes, or `None` when hidden -- set by
         # `show_finding()`, the single writer. No action buttons read this
@@ -1092,14 +1407,9 @@ class MCPInspector(Vertical):
         # (nothing derivable from the finding, nothing selected in the
         # rail).
         self._current_finding_server_key: str | None = None
-        # Task 5: True once `require_confirm()` has armed the Test Tool Run
-        # button into a one-shot "Confirm run" control (the tool's gate
-        # resolved to "ask" -- `MCPWorkbench` decides that, this pane only
-        # renders it). Mirrors `MCPServersMode._delete_armed`: reset to
-        # False by every "other interaction" per the arm-then-confirm
-        # contract -- a new/cleared tool selection (`show_tool()`) and the
-        # test panel's own Close button (`_close_test_tool_panel()`).
-        self._test_run_armed: bool = False
+        # The only execution authority this renderer retains is the immutable,
+        # metadata-only preview the service issued for the visible panel.
+        self._test_preview: ToolTestAdmissionPreview | None = None
 
     def _advanced_object_label(self) -> str:
         """Compute the "Showing: <object>" text for `#mcp-adv-object`.
@@ -1116,9 +1426,15 @@ class MCPInspector(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
-        yield Static(_EMPTY_STATE_COPY, id="mcp-inspector-state",
-                     classes="ds-status-badge", markup=False)
-        yield Static("", id="mcp-inspector-message", classes="ds-field-row", markup=False)
+        yield Static(
+            _EMPTY_STATE_COPY,
+            id="mcp-inspector-state",
+            classes="ds-status-badge",
+            markup=False,
+        )
+        yield Static(
+            "", id="mcp-inspector-message", classes="ds-field-row", markup=False
+        )
         yield Vertical(id="mcp-inspector-actions")
         # T6: tool-detail container, populated by show_tool() -- hidden
         # (display: none, see BUNDLED_CSS) until a Tools-mode row is
@@ -1155,7 +1471,9 @@ class MCPInspector(Vertical):
         # `get_cli_setting` reads the real user config in a bare test App;
         # tests monkeypatch this module's `get_cli_setting` name for
         # determinism (see test_mcp_inspector.py).
-        self._advanced_visible = bool(get_cli_setting("mcp.hub_state", "advanced_visible", False))
+        self._advanced_visible = bool(
+            get_cli_setting("mcp.hub_state", "advanced_visible", False)
+        )
         yield Button(
             "Hide advanced" if self._advanced_visible else "Advanced…",
             id="mcp-inspector-advanced-reveal",
@@ -1201,22 +1519,35 @@ class MCPInspector(Vertical):
             Static(self._advanced_object_label(), id="mcp-adv-object", markup=False),
             VerticalScroll(
                 Label("Section", classes="form-label"),
-                Select(self._sections, id="mcp-adv-section-select", allow_blank=False,
-                       value=self._sections[0][1]),
+                Select(
+                    self._sections,
+                    id="mcp-adv-section-select",
+                    allow_blank=False,
+                    value=self._sections[0][1],
+                ),
                 Static("", id="mcp-adv-content", classes="ds-field-row", markup=False),
                 Label("Action", classes="form-label"),
-                Select([("No actions available", Select.BLANK)], id="mcp-adv-action-select",
-                       value=Select.BLANK),
+                Select(
+                    [("No actions available", Select.BLANK)],
+                    id="mcp-adv-action-select",
+                    value=Select.BLANK,
+                ),
                 # Task 4: guidance shown only while the section above has zero
                 # runnable action descriptors (see `_refresh_advanced_actions`),
                 # so a user landing on e.g. Overview isn't left staring at a
                 # disabled "No actions available" select with no next step.
-                Static("", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False),
+                Static(
+                    "", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False
+                ),
                 Label("Payload (JSON)", classes="form-label"),
                 TextArea("{}", id="mcp-adv-payload"),
-                Button("Run Action", id="mcp-adv-run", classes="console-action-primary",
-                       compact=True,
-                       tooltip="Run the selected legacy control-plane action with this JSON payload."),
+                Button(
+                    "Run Action",
+                    id="mcp-adv-run",
+                    classes="console-action-primary",
+                    compact=True,
+                    tooltip="Run the selected legacy control-plane action with this JSON payload.",
+                ),
                 Static("", id="mcp-adv-result", classes="ds-field-row", markup=False),
                 id="mcp-adv-scroll",
             ),
@@ -1286,7 +1617,12 @@ class MCPInspector(Vertical):
                 save_setting_to_cli_config, "mcp.hub_state", "advanced_visible", True
             )
         except Exception as exc:
-            logger.warning(f"MCP advanced-visible preference save failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "MCP advanced-visible preference save failed", exc
+                ),
+            )
         await self._persist_advanced_open(True)
         await self.mount(self._build_advanced_collapsible(force_open=True))
         toggle = self.query_one("#mcp-inspector-advanced-reveal", Button)
@@ -1294,8 +1630,10 @@ class MCPInspector(Vertical):
         toggle.tooltip = "Hide the legacy control-plane action runner."
         toggle.disabled = False
         self.set_service_context(
-            self._service, self._sections,
-            source=self._advanced_source, target_label=self._advanced_target_label,
+            self._service,
+            self._sections,
+            source=self._advanced_source,
+            target_label=self._advanced_target_label,
         )
 
     async def _hide_advanced(self) -> None:
@@ -1341,7 +1679,12 @@ class MCPInspector(Vertical):
                 save_setting_to_cli_config, "mcp.hub_state", "advanced_visible", False
             )
         except Exception as exc:
-            logger.warning(f"MCP advanced-visible preference save failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "MCP advanced-visible preference save failed", exc
+                ),
+            )
         try:
             collapsible = self.query_one("#mcp-adv-collapsible", Collapsible)
         except NoMatches:
@@ -1425,7 +1768,12 @@ class MCPInspector(Vertical):
                 save_setting_to_cli_config, "mcp.hub_state", "advanced_open", open_state
             )
         except Exception as exc:
-            logger.warning(f"MCP advanced-open preference save failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "MCP advanced-open preference save failed", exc
+                ),
+            )
 
     # -- readiness block -----------------------------------------------------
 
@@ -1530,14 +1878,22 @@ class MCPInspector(Vertical):
                 )
                 if action not in wired:
                     button.disabled = True
-                    if action in (_LIFECYCLE_ACTIONS | _CONFIG_ACTIONS) and snapshot.source != "local":
+                    if (
+                        action in (_LIFECYCLE_ACTIONS | _CONFIG_ACTIONS)
+                        and snapshot.source != "local"
+                    ):
                         button.tooltip = _SERVER_MANAGED_TOOLTIP
-                    elif action is HubAction.OPEN_CREDENTIALS and snapshot.source == "local":
+                    elif (
+                        action is HubAction.OPEN_CREDENTIALS
+                        and snapshot.source == "local"
+                    ):
                         button.tooltip = _OPEN_CREDENTIALS_LOCAL_TOOLTIP
                     else:
                         button.tooltip = _UNAVAILABLE_ACTION_TOOLTIP
                 else:
-                    button.tooltip = _WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action])
+                    button.tooltip = _WIRED_ACTION_TOOLTIPS.get(
+                        action, _ACTION_LABELS[action]
+                    )
                 buttons.append(button)
             if buttons:
                 await actions.mount_all(buttons)
@@ -1574,12 +1930,18 @@ class MCPInspector(Vertical):
         shows detail, and `update_readiness()` stays content-only (it can
         never force the badge back over displayed detail in any mode).
         """
-        self.query_one("#mcp-inspector-state", Static).display = (
-            not self._any_detail_displayed()
-        )
+        self.query_one(
+            "#mcp-inspector-state", Static
+        ).display = not self._any_detail_displayed()
 
     async def show_tool(
-        self, tool: HubTool | None, *, effective: EffectiveToolState | None = None
+        self,
+        tool: HubTool | None,
+        *,
+        effective: EffectiveToolState | None = None,
+        profile_context: PermissionProfileContext | None = None,
+        arg_rules: Sequence[Mapping[str, Any]] = (),
+        session_approvals: Sequence[tuple[str, str]] = (),
     ) -> None:
         """Rebuild `#mcp-inspector-tool` for the given tool, or hide it.
 
@@ -1604,14 +1966,15 @@ class MCPInspector(Vertical):
         """
         async with self._refresh_lock:
             self._current_tool = tool
-            # Task 5: a tool-selection change (a different tool, or clearing
-            # the selection entirely -- e.g. a mode switch, see
-            # MCPWorkbench._clear_tool_view()) is an "other interaction" per
-            # the arm-then-confirm contract, so it disarms a pending Test
-            # Tool confirm. The panel `remove_children()` below discards the
-            # armed Run button regardless; this just keeps the flag from
-            # lying about a button that no longer exists.
-            self._test_run_armed = False
+            self._current_tool_profile_context = (
+                profile_context if tool is not None else None
+            )
+            self._current_permission_profile_context = (
+                profile_context if tool is not None else None
+            )
+            old_nonce = self.clear_test_preview()
+            if old_nonce:
+                self.post_message(self.ToolTestPreviewRevocationRequested(old_nonce))
             container = self.query_one("#mcp-inspector-tool", Vertical)
             await container.remove_children()
             # RAG-50 / task-2270: the empty-state badge's DISPLAY is owned
@@ -1634,43 +1997,69 @@ class MCPInspector(Vertical):
             widgets: list[Any] = [
                 Static(
                     f"{tool.name} — {tool.server_label}",
-                    id="mcp-inspector-tool-name", classes="ds-field-row", markup=False,
+                    id="mcp-inspector-tool-name",
+                    classes="ds-field-row",
+                    markup=False,
                 ),
                 Static(
-                    tool.description, id="mcp-inspector-tool-description",
-                    classes="ds-field-row", markup=False,
+                    tool.description,
+                    id="mcp-inspector-tool-description",
+                    classes="ds-field-row",
+                    markup=False,
                 ),
                 Static(
                     f"Tags: {', '.join(tool.tags) if tool.tags else '—'}",
-                    id="mcp-inspector-tool-tags", classes="ds-field-row", markup=False,
+                    id="mcp-inspector-tool-tags",
+                    classes="ds-field-row",
+                    markup=False,
                 ),
                 Static(
-                    "Parameters: form" if parse_schema(tool.input_schema) is not None
+                    "Parameters: form"
+                    if parse_schema(tool.input_schema) is not None
                     else "Parameters: raw JSON",
-                    id="mcp-inspector-tool-schema", classes="ds-field-row", markup=False,
+                    id="mcp-inspector-tool-schema",
+                    classes="ds-field-row",
+                    markup=False,
                 ),
             ]
             if tool.stale:
                 widgets.append(
                     Static(
                         "Stale — not currently connected.",
-                        id="mcp-inspector-tool-stale", classes="ds-field-row", markup=False,
+                        id="mcp-inspector-tool-stale",
+                        classes="ds-field-row",
+                        markup=False,
                     )
                 )
             if tool.executable:
                 widgets.append(
                     Button(
-                        "Test Tool", id="mcp-inspector-test-tool",
-                        classes="console-action-primary", compact=True,
+                        "Test Tool",
+                        id="mcp-inspector-test-tool",
+                        classes="console-action-primary",
+                        compact=True,
                         tooltip="Run this tool with test arguments.",
                     )
                 )
             else:
+                phase_note = "Server-source tools are display-only."
+                # Keep this UI-only identity check lightweight. Importing
+                # the raw-shell provider here pulls its executor and input-
+                # validation graph into the generic inspector, creating a
+                # Chat/Library import cycle during test and app startup.
+                if tool.tool_id == "local:__local__::shell_exec":
+                    phase_note = (
+                        "Policy only — raw shell commands run from Console "
+                        "under its separate approval flow."
+                    )
+                elif tool.source != "server":
+                    phase_note = "Tool testing is unavailable from this policy view."
                 widgets.append(
                     Static(
-                        "Server-source tools are display-only.",
+                        phase_note,
                         id="mcp-inspector-tool-phase-note",
-                        classes="ds-field-row", markup=False,
+                        classes="ds-field-row",
+                        markup=False,
                     )
                 )
             await container.mount_all(widgets)
@@ -1681,7 +2070,13 @@ class MCPInspector(Vertical):
             # would be a no-op affordance). Never passes `cascade` -- that
             # wiring is `show_permission()`-only per the brief, so this path
             # keeps rendering the plain origin sentence.
-            await self._render_permission_container(tool, effective, show_goto_button=True)
+            await self._render_permission_container(
+                tool,
+                effective,
+                show_goto_button=True,
+                arg_rules=arg_rules,
+                session_approvals=session_approvals,
+            )
 
     async def _render_permission_container(
         self,
@@ -1690,6 +2085,8 @@ class MCPInspector(Vertical):
         *,
         cascade: tuple[str | None, str | None, str] | None = None,
         show_goto_button: bool = False,
+        arg_rules: Sequence[Mapping[str, Any]] = (),
+        session_approvals: Sequence[tuple[str, str]] = (),
     ) -> None:
         """Rebuild `#mcp-inspector-permission` for one tool's resolved
         permission state, or hide it.
@@ -1712,18 +2109,41 @@ class MCPInspector(Vertical):
         "Change in Permissions" jump button (`#mcp-inspector-goto-
         permission`) -- `show_tool()`'s own call site only; see its
         docstring.
+
+        `arg_rules` (task-32281): this tool's stored exact-input allow
+        rules (`MCPWorkbench._arg_rules_for_row()`'s fetch, threaded
+        through by every real caller) -- rendered as one row per rule with
+        a Remove button, below the state explanation. Empty (the default)
+        renders no rule rows at all, same as a tool with none stored.
+
+        `session_approvals` (task-32291): every live "Approve for session"
+        grant in this profile (`MCPWorkbench._session_approvals_for_row()`),
+        rendered as a labelled group with one Revoke button per entry.
+        Deliberately NOT filtered to `tool` -- the grants are in-memory and
+        were, until this group, invisible everywhere, so any open permission
+        block is a place to find and drop them.
         """
         container = self.query_one("#mcp-inspector-permission", Vertical)
         await container.remove_children()
         if tool is None or effective is None:
             container.display = False
             self._current_permission_tool = None
+            self._current_permission_arg_rules = []
+            self._current_permission_session_approvals = []
+            self._current_permission_effective = None
+            self._current_permission_cascade = None
+            self._current_permission_goto = False
             # task-2270: restore the badge -- unless another detail view
             # (tool/audit/finding) still shows content.
             self._sync_state_badge_display()
             return
         container.display = True
         self._current_permission_tool = tool
+        self._current_permission_arg_rules = list(arg_rules)
+        self._current_permission_session_approvals = list(session_approvals)
+        self._current_permission_effective = effective
+        self._current_permission_cascade = cascade
+        self._current_permission_goto = show_goto_button
         # task-2270: a Permissions-matrix row selection hides the badge
         # exactly like Tools mode does; synced before the mounts below so
         # no paint frame shows badge + populated detail together.
@@ -1738,7 +2158,9 @@ class MCPInspector(Vertical):
             # describes.
             Static(
                 f"{tool.name} — {tool.server_label}",
-                id="mcp-inspector-permission-tool", classes="ds-field-row", markup=False,
+                id="mcp-inspector-permission-tool",
+                classes="ds-field-row",
+                markup=False,
             ),
             # Task 1 (MCP Hub Phase 6): a non-cell Static -- prefer the
             # existing `.mcp-status-*` CSS classes (`css/tldw_cli_modular.
@@ -1776,20 +2198,26 @@ class MCPInspector(Vertical):
             widgets.append(
                 Static(
                     _ORIGIN_SENTENCES.get(effective.origin, _UNKNOWN_ORIGIN_SENTENCE),
-                    id="mcp-inspector-permission-origin", classes="ds-field-row", markup=False,
+                    id="mcp-inspector-permission-origin",
+                    classes="ds-field-row",
+                    markup=False,
                 )
             )
         if effective.config_changed:
             widgets.append(
                 Static(
                     _CONFIG_CHANGED_NOTICE,
-                    id="mcp-inspector-permission-notice", classes="ds-field-row", markup=False,
+                    id="mcp-inspector-permission-notice",
+                    classes="ds-field-row",
+                    markup=False,
                 )
             )
             widgets.append(
                 Button(
-                    "Re-allow", id="mcp-inspector-reallow",
-                    classes="console-action-primary", compact=True,
+                    "Re-allow",
+                    id="mcp-inspector-reallow",
+                    classes="console-action-primary",
+                    compact=True,
                     tooltip=_REALLOW_TOOLTIP,
                 )
             )
@@ -1797,14 +2225,100 @@ class MCPInspector(Vertical):
             widgets.append(
                 Static(
                     _RISK_FLOORED_NOTICE,
-                    id="mcp-inspector-permission-notice", classes="ds-field-row", markup=False,
+                    id="mcp-inspector-permission-notice",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+        # task-32281 AC#1: one row per stored exact-input allow rule --
+        # a Static summary plus its own Remove button, index-aligned with
+        # `self._current_permission_arg_rules` so the press handler below
+        # can resolve `rule_id` without re-fetching.
+        # R22: `permission_store.arg_rule_allows` refuses outright for a
+        # tool whose tags intersect `HIGH_RISK_TAGS`, so a rule stored
+        # against one is inert -- say so on the row instead of listing it
+        # as if it were quieting calls. The Remove button stays: an inert
+        # rule is exactly the kind a user wants to clear out.
+        rule_prefix = (
+            "Exact-input allow (not in effect: risk floor)"
+            if set(tool.tags) & HIGH_RISK_TAGS
+            else "Exact-input allow"
+        )
+        # Qodo #2597 #1: an INHERITED rule (stored on an ancestor profile,
+        # listed here because it quiets calls made under the reviewed one)
+        # names its owner, so Remove's real blast radius -- every profile
+        # inheriting it, not just this one -- is visible before pressing.
+        reviewed_profile = getattr(
+            self._current_permission_profile_context, "profile_id", None
+        )
+        for index, rule in enumerate(self._current_permission_arg_rules):
+            args_json = str(rule.get("args_json", ""))
+            owner = rule.get("profile_id")
+            inherited_suffix = (
+                f" · from {owner}"
+                if isinstance(owner, str)
+                and owner
+                and isinstance(reviewed_profile, str)
+                and reviewed_profile
+                and owner != reviewed_profile
+                else ""
+            )
+            widgets.append(
+                Static(
+                    f"{rule_prefix} · {_arg_rule_summary(args_json)}"
+                    f"{inherited_suffix}",
+                    id=f"mcp-inspector-arg-rule-{index}",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+            widgets.append(
+                Button(
+                    "Remove",
+                    id=f"mcp-inspector-arg-rule-remove-{index}",
+                    classes="console-action-secondary",
+                    compact=True,
+                    tooltip=_ARG_RULE_REMOVE_TOOLTIP,
+                )
+            )
+        # task-32291 AC#1: the live session grants, listed with a per-row
+        # Revoke -- same index-aligned shape as the arg-rule rows above.
+        if self._current_permission_session_approvals:
+            widgets.append(
+                Static(
+                    _SESSION_APPROVALS_HEADING,
+                    id="mcp-inspector-session-approvals",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+        for index, (server_key, tool_name) in enumerate(
+            self._current_permission_session_approvals
+        ):
+            widgets.append(
+                Static(
+                    f"{server_key} · {tool_name}",
+                    id=f"mcp-inspector-session-approval-{index}",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+            widgets.append(
+                Button(
+                    "Revoke",
+                    id=f"mcp-inspector-session-approval-revoke-{index}",
+                    classes="console-action-secondary",
+                    compact=True,
+                    tooltip=_SESSION_APPROVAL_REVOKE_TOOLTIP,
                 )
             )
         if show_goto_button:
             widgets.append(
                 Button(
-                    "Change in Permissions", id="mcp-inspector-goto-permission",
-                    classes="console-action-secondary", compact=True,
+                    "Change in Permissions",
+                    id="mcp-inspector-goto-permission",
+                    classes="console-action-secondary",
+                    compact=True,
                     tooltip=_GOTO_PERMISSION_TOOLTIP,
                 )
             )
@@ -1816,6 +2330,9 @@ class MCPInspector(Vertical):
         effective: EffectiveToolState,
         *,
         cascade: tuple[str | None, str | None, str] | None = None,
+        profile_context: PermissionProfileContext | None = None,
+        arg_rules: Sequence[Mapping[str, Any]] = (),
+        session_approvals: Sequence[tuple[str, str]] = (),
     ) -> None:
         """Render `#mcp-inspector-permission` standalone -- Permissions-mode's
         matrix tool-row selection entry point
@@ -1837,9 +2354,58 @@ class MCPInspector(Vertical):
         default) falls back to the pre-Task-3 single origin sentence.
         """
         async with self._refresh_lock:
-            await self._render_permission_container(tool, effective, cascade=cascade)
+            self._current_permission_profile_context = profile_context
+            await self._render_permission_container(
+                tool,
+                effective,
+                cascade=cascade,
+                arg_rules=arg_rules,
+                session_approvals=session_approvals,
+            )
 
-    async def show_audit_entry(self, entry: dict[str, Any] | None) -> None:
+    async def refresh_permission_session_approvals(
+        self, session_approvals: Sequence[tuple[str, str]]
+    ) -> None:
+        """Re-render the OPEN permission block with a fresh session-approval
+        listing (task-32291) -- `MCPWorkbench`'s revoke handler.
+
+        Everything else about the block (tool, resolved state, cascade,
+        arg rules, the goto button) is re-rendered from what it was last
+        built with, so this works for every entry point -- a Tools-mode
+        selection, a Permissions matrix row, and a built-in row (whose
+        `EffectiveToolState` the workbench resolves in a way this widget
+        cannot reproduce). Revoking never writes the permission store, so
+        none of those inputs can have gone stale underneath it.
+
+        A block that is not currently showing anything stays hidden --
+        `_render_permission_container(None, None)` is its own no-op.
+
+        Args:
+            session_approvals: Every live session grant in the profile this
+                block is explaining, as ``(server_key, tool_name)`` pairs --
+                `MCPWorkbench._session_approvals_for_row()`'s fetch, itself
+                `UnifiedMCPControlPlaneService.list_session_approvals()`
+                scoped to one profile and sorted. The pairs are the GRANTS'
+                own identities, not this block's tool: the listing spans
+                the whole profile, and the order is what the mounted Revoke
+                buttons are index-aligned with. Empty clears the group.
+        """
+        async with self._refresh_lock:
+            await self._render_permission_container(
+                self._current_permission_tool,
+                self._current_permission_effective,
+                cascade=self._current_permission_cascade,
+                show_goto_button=self._current_permission_goto,
+                arg_rules=list(self._current_permission_arg_rules),
+                session_approvals=session_approvals,
+            )
+
+    async def show_audit_entry(
+        self,
+        entry: dict[str, Any] | None,
+        *,
+        profile_context: PermissionProfileContext | None = None,
+    ) -> None:
         """Render `#mcp-inspector-audit` for one execution-log entry, or hide it.
 
         Audit mode's own row-selection entry point
@@ -1862,12 +2428,14 @@ class MCPInspector(Vertical):
             if entry is None:
                 container.display = False
                 self._current_audit_entry = None
+                self._current_audit_profile_context = None
                 # task-2270: restore the badge unless another detail view
                 # still shows content (e.g. a finding alongside this entry).
                 self._sync_state_badge_display()
                 return
             container.display = True
             self._current_audit_entry = entry
+            self._current_audit_profile_context = profile_context
             self._sync_state_badge_display()  # task-2270: hide over detail
             server_key = str(entry.get("server_key") or "")
             tool_name = str(entry.get("tool_name") or "")
@@ -1875,21 +2443,29 @@ class MCPInspector(Vertical):
             detail_text = json.dumps(detail_payload, indent=2, default=str)
             widgets: list[Any] = [
                 Static(
-                    f"{tool_name} — {server_key}" if (tool_name or server_key) else "Execution detail",
-                    id="mcp-inspector-audit-name", classes="ds-field-row", markup=False,
+                    f"{tool_name} — {server_key}"
+                    if (tool_name or server_key)
+                    else "Execution detail",
+                    id="mcp-inspector-audit-name",
+                    classes="ds-field-row",
+                    markup=False,
                 ),
                 VerticalScroll(
                     Static(detail_text, id="mcp-inspector-audit-detail", markup=False),
                     id="mcp-inspector-audit-scroll",
                 ),
                 Button(
-                    "Open tool", id="mcp-audit-open-tool",
-                    classes="console-action-secondary", compact=True,
+                    "Open tool",
+                    id="mcp-audit-open-tool",
+                    classes="console-action-secondary",
+                    compact=True,
                     tooltip="Switch to Tools mode and select this tool.",
                 ),
                 Button(
-                    "Adjust permission", id="mcp-audit-adjust-permission",
-                    classes="console-action-secondary", compact=True,
+                    "Adjust permission",
+                    id="mcp-audit-adjust-permission",
+                    classes="console-action-secondary",
+                    compact=True,
                     tooltip="Switch to Permissions mode and select this tool's row.",
                 ),
             ]
@@ -1962,15 +2538,21 @@ class MCPInspector(Vertical):
             widgets: list[Any] = [
                 Static(
                     f"Finding — {severity}",
-                    id="mcp-inspector-finding-name", classes="ds-field-row", markup=False,
+                    id="mcp-inspector-finding-name",
+                    classes="ds-field-row",
+                    markup=False,
                 ),
                 Static(
                     f"Type: {finding_type}",
-                    id="mcp-inspector-finding-type", classes="ds-field-row", markup=False,
+                    id="mcp-inspector-finding-type",
+                    classes="ds-field-row",
+                    markup=False,
                 ),
                 Static(
                     message,
-                    id="mcp-inspector-finding-message", classes="ds-field-row", markup=False,
+                    id="mcp-inspector-finding-message",
+                    classes="ds-field-row",
+                    markup=False,
                 ),
             ]
             remediation = _finding_remediation(finding)
@@ -1979,7 +2561,8 @@ class MCPInspector(Vertical):
                     Static(
                         f"Suggested remediation: {remediation}",
                         id="mcp-inspector-finding-remediation",
-                        classes="ds-field-row", markup=False,
+                        classes="ds-field-row",
+                        markup=False,
                     )
                 )
             if server_key is None:
@@ -1987,7 +2570,8 @@ class MCPInspector(Vertical):
                     Static(
                         "No server context — select a server first.",
                         id="mcp-inspector-finding-no-context",
-                        classes="ds-field-row", markup=False,
+                        classes="ds-field-row",
+                        markup=False,
                     )
                 )
             else:
@@ -1998,7 +2582,9 @@ class MCPInspector(Vertical):
                             id=f"mcp-finding-action-{action.value}",
                             classes="console-action-secondary",
                             compact=True,
-                            tooltip=_WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action]),
+                            tooltip=_WIRED_ACTION_TOOLTIPS.get(
+                                action, _ACTION_LABELS[action]
+                            ),
                         )
                     )
             await container.mount_all(widgets)
@@ -2022,27 +2608,31 @@ class MCPInspector(Vertical):
             pass
         panel = Vertical(
             MCPSchemaForm(schema=tool.input_schema, id="mcp-inspector-test-form"),
-            # UX batch item 6: blank until `require_confirm()` fills it in
-            # (every arm, unconditionally) -- mounted ABOVE Run/Close so the
-            # armed-explainer reads before the button whose behavior it's
-            # explaining, unlike the specific `#mcp-inspector-test-arm-
-            # notice` below, which keeps its pre-existing position.
-            Static("", id="mcp-inspector-test-armed-hint", classes="ds-field-row", markup=False),
-            Button(
-                "Run", id="mcp-inspector-test-run",
-                classes="console-action-primary", compact=True,
-                tooltip=_TEST_RUN_TOOLTIP,
+            Static(
+                _TEST_PREPARING_TEXT,
+                id="mcp-inspector-test-preview",
+                classes="ds-field-row",
+                markup=False,
             ),
             Button(
-                "Close", id="mcp-inspector-test-close",
-                classes="console-action-secondary", compact=True,
+                "Preparing…",
+                id="mcp-inspector-test-run",
+                classes="console-action-primary",
+                compact=True,
+                tooltip=_TEST_RUN_TOOLTIP,
+                disabled=True,
+            ),
+            self._build_test_retry_button(),
+            Button(
+                "Close",
+                id="mcp-inspector-test-close",
+                classes="console-action-secondary",
+                compact=True,
                 tooltip="Close this test form without running the tool.",
             ),
-            # Task 5: blank until `require_confirm()` fills it in for a
-            # config_changed/unverifiable downgrade -- see that method's
-            # docstring.
-            Static("", id="mcp-inspector-test-arm-notice", classes="ds-field-row", markup=False),
-            Static("", id="mcp-inspector-test-result", classes="ds-field-row", markup=False),
+            Static(
+                "", id="mcp-inspector-test-result", classes="ds-field-row", markup=False
+            ),
             # RAG-49 (PR-5 task 4): the quiet interpretation line (empty/
             # error/unusual-shape explanations) -- a sibling of the summary
             # Static above, not appended into it. Always mounted, hidden
@@ -2055,20 +2645,24 @@ class MCPInspector(Vertical):
             # program's PR-2 lesson), hidden (`display = False`) until
             # `show_tool_result()` has a raw body to show.
             self._build_test_result_raw_collapsible(),
-            # Task 3 (MCP Hub Phase 6): the Test Tool panel's own "Change in
-            # Permissions" jump button -- mounted once, hidden (`display =
-            # False`) until `require_confirm()` (ask) or `show_tool_result
-            # (blocked=True, ...)` (deny) reveals it; `disarm_test_run()` and
-            # a non-blocked `show_tool_result()` hide it again. A distinct id
+            # The Test Tool panel's own "Change in Permissions" jump button
+            # is mounted once and toggled from previews/results. A distinct id
             # from the Tools-mode permission block's own button
             # (`#mcp-inspector-goto-permission`) -- both can be mounted at
             # once (this same tool selected, its permission block shown
-            # below the detail, AND this panel open+armed), and `query_one`
+            # below the detail, AND this panel open), and `query_one`
             # requires a unique id across the whole subtree.
             self._build_test_goto_permission_button(),
             id="mcp-inspector-test-panel",
         )
         await container.mount(panel)
+        self.post_message(
+            self.ToolTestPreviewRequested(
+                tool.server_key,
+                tool.name,
+                self._current_tool_profile_context,
+            )
+        )
         # F-056: opening the panel moves keyboard focus into it -- the
         # schema form's first control when there is one (a raw-JSON
         # TextArea, an enum Select, a Checkbox, or a scalar Input), the
@@ -2103,9 +2697,26 @@ class MCPInspector(Vertical):
     @staticmethod
     def _build_test_goto_permission_button() -> Button:
         button = Button(
-            "Change in Permissions", id="mcp-inspector-goto-permission-test",
-            classes="console-action-secondary", compact=True,
+            "Change in Permissions",
+            id="mcp-inspector-goto-permission-test",
+            classes="console-action-secondary",
+            compact=True,
             tooltip=_GOTO_PERMISSION_TOOLTIP,
+        )
+        button.display = False
+        return button
+
+    @staticmethod
+    def _build_test_retry_button() -> Button:
+        """Build the stable, normally-hidden transient preview retry action."""
+        button = Button(
+            "Retry preview",
+            id="mcp-inspector-test-retry",
+            classes="console-action-secondary",
+            compact=True,
+            tooltip=(
+                "Request a fresh permission preview without changing these arguments."
+            ),
         )
         button.display = False
         return button
@@ -2117,8 +2728,10 @@ class MCPInspector(Vertical):
         `show_tool_result()` has something to say (an empty-result or
         tool-error-shape explanation)."""
         widget = Static(
-            "", id="mcp-inspector-test-result-note",
-            classes="mcp-inspector-result-note", markup=False,
+            "",
+            id="mcp-inspector-test-result-note",
+            classes="mcp-inspector-result-note",
+            markup=False,
         )
         widget.display = False
         return widget
@@ -2135,7 +2748,9 @@ class MCPInspector(Vertical):
         collapsible = Collapsible(
             VerticalScroll(
                 Static(
-                    "", id="mcp-inspector-test-result-raw-body", markup=False,
+                    "",
+                    id="mcp-inspector-test-result-raw-body",
+                    markup=False,
                 ),
                 id="mcp-inspector-test-result-raw-scroll",
             ),
@@ -2189,27 +2804,21 @@ class MCPInspector(Vertical):
         return "opened"
 
     async def _close_test_tool_panel(self) -> None:
-        # Task 5: Close is an "other interaction" per the arm-then-confirm
-        # contract -- disarm before tearing the panel down (the panel itself
-        # discards the armed Run button regardless, this just keeps the
-        # flag from lying about a button that's about to be gone).
-        self._test_run_armed = False
+        nonce = self.clear_test_preview()
+        if nonce:
+            self.post_message(self.ToolTestPreviewRevocationRequested(nonce))
         try:
             panel = self.query_one("#mcp-inspector-test-panel", Vertical)
         except NoMatches:
             pass
         else:
-            await panel.remove()
+            # Child teardown clears styles before removal reflows the compositor.
+            with self.app.batch_update():
+                await panel.remove()
         try:
             self.query_one("#mcp-inspector-test-tool", Button).disabled = False
         except NoMatches:
             pass
-
-    @property
-    def test_run_armed(self) -> bool:
-        """Whether the Test Tool Run button is currently armed into its
-        one-shot "Confirm run" state (see `require_confirm()`)."""
-        return self._test_run_armed
 
     @property
     def current_permission_tool(self) -> HubTool | None:
@@ -2223,131 +2832,97 @@ class MCPInspector(Vertical):
         re-entered by a fresh selection or the re-allow handler)."""
         return self._current_permission_tool
 
-    def require_confirm(self, notice: str | None) -> None:
-        """Arm the Test Tool Run button into a one-shot "Confirm run" control.
-
-        Called by `MCPWorkbench` when `gate_tool_test()` resolves a tool to
-        "ask": the press that triggered this did NOT run the tool -- the
-        SAME Run button (relabeled/re-tooltipped in place, not replaced)
-        becomes the confirm control instead. `notice`, when given (Task 5:
-        a `config_changed` downgrade, or UX batch item 15's unverifiable-
-        by-key variant), is rendered as an extra, SPECIFIC line explaining
-        why a confirm is required this time (`#mcp-inspector-test-arm-
-        notice`); `None` clears it. UX batch item 6: independent of
-        `notice`, `#mcp-inspector-test-armed-hint` always gets the generic
-        armed-explainer text on every arm -- the two can render together
-        (specific reason below, generic mechanic above it, see
-        `_mount_test_tool_panel()`'s widget order).
-
-        No-op (beyond the label/variant/tooltip writes) if the panel isn't
-        actually mounted -- tolerant of a race where the panel closed
-        between the Run press and this call.
-        """
-        self._test_run_armed = True
-        try:
-            run_button = self.query_one("#mcp-inspector-test-run", Button)
-        except NoMatches:
-            pass
-        else:
-            run_button.label = "Confirm run"
-            run_button.variant = "primary"
-            run_button.tooltip = _TEST_RUN_CONFIRM_TOOLTIP
-            run_button.disabled = False
-        try:
-            hint_widget = self.query_one("#mcp-inspector-test-armed-hint", Static)
-        except NoMatches:
-            pass
-        else:
-            hint_widget.update(_TEST_RUN_ARMED_HINT)
-        try:
-            notice_widget = self.query_one("#mcp-inspector-test-arm-notice", Static)
-        except NoMatches:
-            pass
-        else:
-            notice_widget.update(notice or "")
-        # Task 3 (MCP Hub Phase 6): every arm is an "ask" gate resolution
-        # (this method's own docstring) -- reveal the jump button so the
-        # user can go fix the permission instead of confirming blind.
-        try:
-            goto_button = self.query_one("#mcp-inspector-goto-permission-test", Button)
-        except NoMatches:
-            pass
-        else:
-            goto_button.display = True
-
-    def disarm_test_run(self) -> None:
-        """Revert the Run button to its normal, unarmed state (no-op if
-        already unarmed).
-
-        The arm-then-confirm contract is "any other interaction disarms" --
-        `show_tool()` and `_close_test_tool_panel()` cover tool switch/mode
-        switch/Close (mirrors `MCPServersMode.disarm_delete()`); `MCPWorkbench`
-        also calls this directly when it consumes a confirming press (the
-        run is about to dispatch, so the button should read "Run" again by
-        the time it re-enables).
-        """
-        if not self._test_run_armed:
+    def show_test_preview(self, preview: ToolTestAdmissionPreview) -> None:
+        """Render an immutable service preview only for the visible exact tool."""
+        tool = self._current_tool
+        if (
+            tool is None
+            or preview.server_key != tool.server_key
+            or preview.tool_name != tool.name
+            or not self.query("#mcp-inspector-test-panel")
+        ):
             return
-        self._test_run_armed = False
+        self._test_preview = preview
         try:
-            run_button = self.query_one("#mcp-inspector-test-run", Button)
-        except NoMatches:
-            pass
-        else:
-            run_button.label = "Run"
-            run_button.variant = "default"
-            run_button.tooltip = _TEST_RUN_TOOLTIP
-        try:
-            hint_widget = self.query_one("#mcp-inspector-test-armed-hint", Static)
-        except NoMatches:
-            pass
-        else:
-            hint_widget.update("")
-        try:
-            notice_widget = self.query_one("#mcp-inspector-test-arm-notice", Static)
-        except NoMatches:
-            pass
-        else:
-            notice_widget.update("")
-        # Task 3: "any other interaction disarms" (this method's own
-        # docstring) applies to the jump button's own visibility too -- a
-        # confirming press, a tool switch, or Close all hide it again,
-        # mirroring the hint/notice clears just above.
-        try:
-            goto_button = self.query_one("#mcp-inspector-goto-permission-test", Button)
-        except NoMatches:
-            pass
-        else:
-            goto_button.display = False
-
-    def reenable_test_run(self, server_key: str, tool_name: str) -> None:
-        """Re-enable the Run button for one tool whose Run press produced
-        no run of its own.
-
-        Task 3 (PR-T3): `MCPWorkbench`'s in-flight-duplicate guard
-        (`on_mcp_inspector_tool_test_requested()`) swallows a SECOND
-        `ToolTestRequested` for a tool that already has a run outstanding
-        with just a toast -- but `_handle_test_run()` already disabled the
-        Run button as a side effect of THAT press. Since this press's own
-        dispatch never reached the worker, that disable must be undone for
-        the panel it belongs to; the earlier, still-in-flight run is
-        unaffected and re-enables the button again itself, harmlessly, on
-        its own completion via `show_tool_result()`.
-
-        I1-style tolerance, mirroring `show_tool_result()`'s own stale-drop
-        guard: a no-op if the panel has since moved on to a different tool
-        (or nothing), or if the Run button isn't mounted at all (panel
-        closed) -- never re-enables a DIFFERENT tool's Run button on this
-        one's behalf.
-        """
-        current = self._current_tool
-        if current is None or current.server_key != server_key or current.name != tool_name:
-            return
-        try:
-            run_button = self.query_one("#mcp-inspector-test-run", Button)
+            button = self.query_one("#mcp-inspector-test-run", Button)
+            status = self.query_one("#mcp-inspector-test-preview", Static)
+            goto = self.query_one("#mcp-inspector-goto-permission-test", Button)
+            retry = self.query_one("#mcp-inspector-test-retry", Button)
         except NoMatches:
             return
-        run_button.disabled = False
+        retry.display = False
+        retry.disabled = True
+        gate = preview.rendered_gate
+        if gate == "allow":
+            button.label = "Run"
+            button.tooltip = _TEST_RUN_TOOLTIP
+            button.disabled = False
+            status.update("Ready. Runs once with the current arguments.")
+            goto.display = False
+        elif gate == "ask":
+            button.label = "Approve & run once"
+            button.tooltip = (
+                "Approve this one invocation; the permission does not persist."
+            )
+            button.disabled = False
+            status.update(_TEST_ASK_TEXT)
+            goto.display = True
+        elif gate in {"deny", "off"}:
+            button.label = "Blocked"
+            button.disabled = True
+            status.update(_TEST_OFF_TEXT)
+            goto.display = True
+        else:
+            button.label = "Unavailable"
+            button.disabled = True
+            status.update(_TEST_UNAVAILABLE_TEXT)
+            goto.display = True
+            retry.display = True
+            retry.disabled = False
+
+    def clear_test_preview(self) -> str | None:
+        """Drop the rendered preview and return its nonce for revocation."""
+        preview = self._test_preview
+        self._test_preview = None
+        return preview.nonce if preview is not None else None
+
+    def show_test_preparing(self) -> None:
+        """Fail closed while a service preview is being prepared."""
+        self.clear_test_preview()
+        self._set_test_unavailable("Preparing…", _TEST_PREPARING_TEXT, retry=False)
+
+    def show_test_unavailable(self, reason: str | None = None) -> None:
+        """Fail closed with bounded recovery copy when previewing fails."""
+        message = _TEST_UNAVAILABLE_TEXT
+        if reason:
+            safe_reason = _safe_tool_test_text(reason, limit=240)
+            message = f"Unavailable. {safe_reason} Try again."
+        self._set_test_unavailable("Unavailable", message, retry=True)
+
+    def show_test_active(self, active: bool) -> None:
+        """Render service-owned active state without becoming its authority."""
+        if not active:
+            return
+        self._set_test_unavailable(
+            "Running…",
+            "A test for this tool is already active. Wait for it to finish.",
+            retry=False,
+        )
+
+    def _set_test_unavailable(
+        self, label: str, message: str, *, retry: bool = False
+    ) -> None:
+        try:
+            button = self.query_one("#mcp-inspector-test-run", Button)
+            status = self.query_one("#mcp-inspector-test-preview", Static)
+            retry_button = self.query_one("#mcp-inspector-test-retry", Button)
+        except NoMatches:
+            return
+        button.label = label
+        button.disabled = True
+        status.update(message)
+        retry_button.display = retry
+        retry_button.disabled = not retry
 
     def _handle_test_run(self) -> None:
         """Handle a Run press: collect arguments and dispatch a test run.
@@ -2384,9 +2959,15 @@ class MCPInspector(Vertical):
             run_button = self.query_one("#mcp-inspector-test-run", Button)
         except NoMatches:
             self.app.notify(
-                _toast(f"{tool.name}: the test panel isn't ready — reopen it and try again."),
+                _toast(
+                    f"{tool.name}: the test panel isn't ready — reopen it and try again."
+                ),
                 severity="warning",
             )
+            return
+        preview = self._test_preview
+        if preview is None:
+            self.show_test_unavailable("No current permission preview is available.")
             return
         try:
             arguments = form.collect_arguments()
@@ -2396,57 +2977,50 @@ class MCPInspector(Vertical):
             # write here leads with "OK"/"Failed"/"Blocked · not run"; a
             # bare exception message read as if the whole panel were
             # broken rather than "fix your input and press Run again".
-            result_widget.update(f"Failed\n{exc}")
+            result_widget.update(f"Failed\n{_safe_tool_test_text(exc)}")
             return
         run_button.disabled = True
-        self.post_message(self.ToolTestRequested(tool.server_key, tool.name, arguments))
-
-    # -- Fix Round I, Item 1: disarm the Test Tool confirm on any argument
-    # edit, mirroring `#mcp-adv-payload`'s own disarm-on-edit for the
-    # Advanced arm (`_on_advanced_payload_changed()` below). `MCPSchemaForm`
-    # (mounted once, as `#mcp-inspector-test-form`, by `_mount_test_tool_
-    # panel()`) is the ONLY source of `Input`/`Checkbox`/(non-`#mcp-adv-
-    # payload`) `TextArea` widgets anywhere in this pane -- verified by
-    # grep, not assumed -- so these three handlers need no extra ID/
-    # ancestor check to know an event came from the argument form.
-    # `disarm_test_run()` is already a no-op when nothing is armed, so a
-    # form's own initial mount (default values passed via each control's
-    # constructor, never a later `.value =`/`.text =` assignment) is safe
-    # even on the off chance a widget posts a spurious Changed at mount.
+        intent = "approve_once" if preview.rendered_gate == "ask" else "run"
+        self.post_message(
+            self.ToolTestRequested(
+                tool.server_key,
+                tool.name,
+                arguments,
+                preview_nonce=preview.nonce,
+                intent=intent,
+                profile_context=self._current_tool_profile_context,
+            )
+        )
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """A string/number/integer/array field's `Input` changed -- disarm
-        (see the module comment above `_ADVANCED_EXECUTE_ACTION` for the
-        full "why disarm-on-edit" reasoning, shared by both arms)."""
+        """Keep form edits local; the service canonicalizes current arguments."""
         event.stop()
-        self.disarm_test_run()
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        """A boolean field's `Checkbox` changed -- disarm, same reasoning
-        as `on_input_changed()` just above."""
+        """Keep form edits local; the preview binds identity, not form state."""
         event.stop()
-        self.disarm_test_run()
 
     @on(TextArea.Changed, "#mcp-schema-raw")
     def _on_test_form_raw_payload_changed(self, event: TextArea.Changed) -> None:
-        """The raw-JSON fallback `MCPSchemaForm` mounts when
-        `parse_schema()` can't render the tool's schema faithfully --
-        disarm, same reasoning as `on_input_changed()` above. A distinct id
-        (`#mcp-schema-raw`) and its own `@on` selector from `#mcp-adv-
-        payload`'s handler just below, so the two can never cross-fire."""
+        """Keep raw form edits local until the one-click request is posted."""
         event.stop()
-        self.disarm_test_run()
 
     def show_tool_result(
-        self, *, server_key: str, tool_name: str, ok: bool,
+        self,
+        *,
+        server_key: str,
+        tool_name: str,
+        ok: bool,
         text: str | None = None,
         duration_ms: float | None = None,
         result: object = None,
         source: str | None = None,
         raw: str | None = None,
         blocked: bool = False,
+        admission_changed: bool = False,
         decision_note: str | None = None,
         show_permission_jump: bool = True,
+        profile_context: PermissionProfileContext | None = None,
     ) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
 
@@ -2507,9 +3081,7 @@ class MCPInspector(Vertical):
         with no structured summary, interpretation, or raw Collapsible
         content -- "Failure/blocked paths keep their existing rendering".
 
-        RAG-51 (PR-5 task 5): `decision_note` (built by `MCPWorkbench`'s
-        `_decision_note()`, e.g. "Ran because you approved this run (the
-        tool is set to Ask).") names the permission decision the run
+        `decision_note` names the service-owned permission decision the run
         dispatched under. It shares the `#mcp-inspector-test-result-note`
         Static with the structured shape's own quiet `interpretation` line
         above -- when both are present (a structured OK run with something
@@ -2521,7 +3093,15 @@ class MCPInspector(Vertical):
         nothing.
         """
         current = self._current_tool
-        if current is None or current.server_key != server_key or current.name != tool_name:
+        if (
+            current is None
+            or current.server_key != server_key
+            or current.name != tool_name
+            or (
+                profile_context is not None
+                and profile_context != self._current_tool_profile_context
+            )
+        ):
             logger.debug(
                 f"MCPInspector: dropping stale tool result for "
                 f"server_key={server_key!r} tool_name={tool_name!r} "
@@ -2545,11 +3125,17 @@ class MCPInspector(Vertical):
             return
 
         interpretation: str | None = None
-        if blocked:
-            result_widget.update(f"{_ADVANCED_BLOCKED_HEADING}\n{text or ''}")
+        if admission_changed:
+            result_widget.update(
+                f"Changed · not run\n{_safe_tool_test_text(text or '')}"
+            )
+        elif blocked:
+            result_widget.update(
+                f"{_ADVANCED_BLOCKED_HEADING}\n{_safe_tool_test_text(text or '')}"
+            )
         elif not ok:
             status_line = f"Failed{_duration_segment(duration_ms)}"
-            result_widget.update(f"{status_line}\n{text or ''}")
+            result_widget.update(f"{status_line}\n{_safe_tool_test_text(text or '')}")
         elif text is not None:
             # Legacy call shape: a pre-formatted body string, rendered
             # inline exactly as `show_tool_result()` always has -- no
@@ -2558,7 +3144,10 @@ class MCPInspector(Vertical):
             result_widget.update(f"{status_line}\n{text}")
         else:
             status_line, interpretation = _summarize_tool_result(
-                ok=True, duration_ms=duration_ms, source=source, result=result,
+                ok=True,
+                duration_ms=duration_ms,
+                source=source,
+                result=result,
             )
             result_widget.update(status_line)
 
@@ -2580,7 +3169,9 @@ class MCPInspector(Vertical):
             note_widget.display = bool(note_text)
 
         try:
-            raw_collapsible = self.query_one("#mcp-inspector-test-result-raw", Collapsible)
+            raw_collapsible = self.query_one(
+                "#mcp-inspector-test-result-raw", Collapsible
+            )
             raw_body_widget = raw_collapsible.query_one(
                 "#mcp-inspector-test-result-raw-body", Static
             )
@@ -2595,15 +3186,15 @@ class MCPInspector(Vertical):
                 raw_collapsible.display = False
 
         try:
-            self.query_one("#mcp-inspector-test-run", Button).disabled = False
+            self.query_one(
+                "#mcp-inspector-test-run", Button
+            ).disabled = admission_changed
         except NoMatches:
             pass
         # Task 3 (MCP Hub Phase 6): `blocked=True` is the deny-gate's
         # synthetic result (this method's own docstring) -- reveal the jump
         # button there; any other outcome (a real, non-blocked run) hides it,
-        # covering the ask-then-confirmed-run case too (the Run press that
-        # consumed the arm already disarmed it via `disarm_test_run()`, but
-        # this keeps the button's state correct even if that ever changes).
+        # covering prepared Ask executions too.
         # Task 3 (PR-T3): `show_permission_jump=False` further suppresses it
         # for a `blocked=True` result that has nothing to do with the Hub
         # Permissions matrix (see this method's own docstring).
@@ -2700,8 +3291,11 @@ class MCPInspector(Vertical):
         # where this schedule and the freshly-mounted section Select's own
         # mount-echo Changed (whose handler schedules the same group) land
         # back to back; a callable the worker never invoked leaks nothing.
-        self.run_worker(partial(self._load_advanced_section, self._sections[0][1]),
-                        group="mcp-adv-section", exclusive=True)
+        self.run_worker(
+            partial(self._load_advanced_section, self._sections[0][1]),
+            group="mcp-adv-section",
+            exclusive=True,
+        )
 
     def _refresh_advanced_actions(self) -> None:
         action_select = self.query_one("#mcp-adv-action-select", Select)
@@ -2748,7 +3342,9 @@ class MCPInspector(Vertical):
                 return
             options = [(str(d["label"]), str(d["name"])) for d in descriptors]
             option_values = [value for _, value in options]
-            selected = previous_value if previous_value in option_values else options[0][1]
+            selected = (
+                previous_value if previous_value in option_values else options[0][1]
+            )
             action_select.set_options(options)
             action_select.value = selected
             action_select.disabled = False
@@ -2776,8 +3372,10 @@ class MCPInspector(Vertical):
             decision = gate(action_id=action_id, runtime_state_override=override())
         except Exception as exc:
             logger.warning(
-                f"MCPInspector: policy gate raised for action_id={action_id!r}; "
-                f"failing closed: {exc}"
+                "{}",
+                _safe_diagnostic_message(
+                    "MCPInspector policy gate raised; failing closed", exc
+                ),
             )
             return False
         return bool(getattr(decision, "allowed", True))
@@ -2834,8 +3432,11 @@ class MCPInspector(Vertical):
             event.stop()
             # Callable, not coroutine -- same rationale as
             # `set_service_context()`'s own schedule for this group.
-            self.run_worker(partial(self._load_advanced_section, str(event.value)),
-                            group="mcp-adv-section", exclusive=True)
+            self.run_worker(
+                partial(self._load_advanced_section, str(event.value)),
+                group="mcp-adv-section",
+                exclusive=True,
+            )
         elif select_id == "mcp-adv-action-select":
             event.stop()
             # Fix Round E, Item 2: switching the action is a FOURTH trigger
@@ -2898,15 +3499,9 @@ class MCPInspector(Vertical):
                 with payload.prevent(TextArea.Changed):
                     payload.text = self._action_templates.get(str(event.value), "{}")
         elif select_id.startswith("mcp-schema-field-"):
-            # Fix Round I, Item 1: an enum-kind field in the Test Tool
-            # argument form (`MCPSchemaForm`'s only other `Select` source
-            # in this pane, id template "mcp-schema-field-{index}") disarms
-            # a pending confirm on edit -- same fix, and same reasoning
-            # (module comment above `_ADVANCED_EXECUTE_ACTION`), as
-            # `on_input_changed()`/`on_checkbox_changed()`/
-            # `_on_test_form_raw_payload_changed()` near `_handle_test_run()`.
+            # The preview binds tool identity and gate; current arguments are
+            # collected and canonicalized by the service on activation.
             event.stop()
-            self.disarm_test_run()
 
     @on(TextArea.Changed, "#mcp-adv-payload")
     def _on_advanced_payload_changed(self, event: TextArea.Changed) -> None:
@@ -2994,11 +3589,15 @@ class MCPInspector(Vertical):
             event.button.disabled = True
             # A CALLABLE, not a pre-created coroutine -- same rationale as
             # `set_service_context()`'s own schedule for `mcp-adv-section`.
-            self.run_worker(partial(self._toggle_advanced), group="mcp-adv-reveal", exclusive=True)
+            self.run_worker(
+                partial(self._toggle_advanced), group="mcp-adv-reveal", exclusive=True
+            )
             return
         if button_id == "mcp-adv-run":
             event.stop()
-            self.run_worker(self._run_advanced_action(), group="mcp-adv-run", exclusive=True)
+            self.run_worker(
+                self._run_advanced_action(), group="mcp-adv-run", exclusive=True
+            )
             return
         if button_id == "mcp-inspector-cancel":
             event.stop()
@@ -3021,24 +3620,100 @@ class MCPInspector(Vertical):
             # line of defense for the window before this takes effect.
             event.button.disabled = True
             self.run_worker(
-                self._mount_test_tool_panel(), group="mcp-inspector-test-panel", exclusive=True
+                self._mount_test_tool_panel(),
+                group="mcp-inspector-test-panel",
+                exclusive=True,
             )
             return
         if button_id == "mcp-inspector-test-run":
             event.stop()
             self._handle_test_run()
             return
+        if button_id == "mcp-inspector-test-retry":
+            event.stop()
+            tool = self._current_tool
+            if tool is None:
+                return
+            nonce = self.clear_test_preview()
+            if nonce:
+                self.post_message(self.ToolTestPreviewRevocationRequested(nonce))
+            self.show_test_preparing()
+            self.post_message(
+                self.ToolTestPreviewRequested(
+                    tool.server_key,
+                    tool.name,
+                    self._current_tool_profile_context,
+                )
+            )
+            return
         if button_id == "mcp-inspector-test-close":
             event.stop()
             self.run_worker(
-                self._close_test_tool_panel(), group="mcp-inspector-test-panel", exclusive=True
+                self._close_test_tool_panel(),
+                group="mcp-inspector-test-panel",
+                exclusive=True,
             )
             return
         if button_id == "mcp-inspector-reallow":
             event.stop()
             tool = self._current_permission_tool
             if tool is not None:
-                self.post_message(self.ReallowRequested(tool.server_key, tool.name))
+                self.post_message(
+                    self.ReallowRequested(
+                        tool.server_key,
+                        tool.name,
+                        self._current_permission_profile_context,
+                    )
+                )
+            return
+        if button_id.startswith("mcp-inspector-arg-rule-remove-"):
+            # task-32281: one Remove button per exact-input allow rule row,
+            # index-aligned with `_current_permission_arg_rules` (the SAME
+            # list `_render_permission_container()` just rendered from).
+            event.stop()
+            tool = self._current_permission_tool
+            if tool is None:
+                return
+            try:
+                index = int(button_id.rsplit("-", 1)[-1])
+                rule = self._current_permission_arg_rules[index]
+            except (ValueError, IndexError):
+                return
+            rule_id = rule.get("rule_id")
+            if not isinstance(rule_id, str) or not rule_id:
+                return
+            owner = rule.get("profile_id")
+            self.post_message(
+                self.RemoveArgRuleRequested(
+                    tool.server_key,
+                    tool.name,
+                    rule_id,
+                    self._current_permission_profile_context,
+                    # Qodo #2597 #1: delete where the rule actually LIVES.
+                    owner if isinstance(owner, str) and owner else None,
+                )
+            )
+            return
+        if button_id.startswith("mcp-inspector-session-approval-revoke-"):
+            # task-32291: one Revoke per live session grant, index-aligned
+            # with `_current_permission_session_approvals`. The entry's own
+            # (server_key, tool_name) travels -- NOT the block's tool, which
+            # is usually a different one.
+            event.stop()
+            try:
+                index = int(button_id.rsplit("-", 1)[-1])
+                server_key, tool_name = self._current_permission_session_approvals[
+                    index
+                ]
+            except (ValueError, IndexError):
+                return
+            self.post_message(
+                self.RevokeSessionApprovalRequested(
+                    server_key,
+                    tool_name,
+                    self._current_permission_profile_context,
+                )
+            )
             return
         if button_id == "mcp-inspector-goto-permission":
             # Task 3: the Tools-mode permission block's own jump button --
@@ -3049,7 +3724,13 @@ class MCPInspector(Vertical):
             event.stop()
             tool = self._current_permission_tool
             if tool is not None:
-                self.post_message(self.ChangeInPermissionsRequested(tool.server_key, tool.name))
+                self.post_message(
+                    self.ChangeInPermissionsRequested(
+                        tool.server_key,
+                        tool.name,
+                        self._current_permission_profile_context,
+                    )
+                )
             return
         if button_id == "mcp-inspector-goto-permission-test":
             # Task 3: the Test Tool panel's own jump button -- always
@@ -3058,7 +3739,13 @@ class MCPInspector(Vertical):
             event.stop()
             tool = self._current_tool
             if tool is not None:
-                self.post_message(self.ChangeInPermissionsRequested(tool.server_key, tool.name))
+                self.post_message(
+                    self.ChangeInPermissionsRequested(
+                        tool.server_key,
+                        tool.name,
+                        self._current_tool_profile_context,
+                    )
+                )
             return
         if button_id == "mcp-audit-open-tool":
             event.stop()
@@ -3066,7 +3753,9 @@ class MCPInspector(Vertical):
             if entry is not None:
                 self.post_message(
                     self.AuditOpenToolRequested(
-                        str(entry.get("server_key") or ""), str(entry.get("tool_name") or "")
+                        str(entry.get("server_key") or ""),
+                        str(entry.get("tool_name") or ""),
+                        self._current_audit_profile_context,
                     )
                 )
             return
@@ -3076,7 +3765,9 @@ class MCPInspector(Vertical):
             if entry is not None:
                 self.post_message(
                     self.AuditAdjustPermissionRequested(
-                        str(entry.get("server_key") or ""), str(entry.get("tool_name") or "")
+                        str(entry.get("server_key") or ""),
+                        str(entry.get("tool_name") or ""),
+                        self._current_audit_profile_context,
                     )
                 )
             return
@@ -3165,7 +3856,10 @@ class MCPInspector(Vertical):
             # `default=str` for the same reason the result dump below uses
             # it: this is arbitrary user JSON, and an un-dumpable payload
             # must re-arm, not raise out of the Run button's worker.
-            confirm_key = (action_name, json.dumps(payload, sort_keys=True, default=str))
+            confirm_key = (
+                action_name,
+                json.dumps(payload, sort_keys=True, default=str),
+            )
             if self._advanced_confirm_key != confirm_key:
                 self._advanced_confirm_key = confirm_key
                 tool_label = (

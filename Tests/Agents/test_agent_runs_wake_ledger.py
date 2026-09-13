@@ -101,6 +101,25 @@ def test_error_and_cancelled_survivors_are_owed_but_superseded_is_not(db):
     assert owed == {errored: "error", cancelled: "cancelled"}
 
 
+def test_parented_local_command_can_never_enter_model_wake_results(db):
+    parent_id, child_id = _spawned_turn(db)
+    local_id = db.create_run(
+        conversation_id="conv-wake",
+        agent_kind="local_command",
+        task="Local command",
+        parent_run_id=parent_id,
+    )
+    db.set_status(parent_id, "done")
+    db.set_status(child_id, "done", result="sub-agent answer")
+    db.set_status(local_id, "done", result="LOCAL_COMMAND_SECRET")
+
+    owed = db.undelivered_wake_runs("conv-wake")
+
+    assert [run["id"] for run in owed] == [child_id]
+    assert local_id not in {run["id"] for run in owed}
+    assert "LOCAL_COMMAND_SECRET" not in repr(owed)
+
+
 def test_owed_runs_come_back_in_settle_order(db):
     parent_id, first = _spawned_turn(db)
     second = db.create_run(

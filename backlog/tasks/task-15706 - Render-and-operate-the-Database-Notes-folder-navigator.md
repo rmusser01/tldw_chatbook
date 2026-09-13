@@ -15,7 +15,7 @@ references:
   - Docs/superpowers/specs/2026-08-12-notes-folder-import-sync-design.md
   - backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md
   - >-
-    backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md
+    backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md
 priority: high
 ---
 
@@ -40,7 +40,7 @@ Expose the local folder foundation in Library Database Notes as a lazy hierarchi
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR paths: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`, `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+ADR paths: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`, `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
 Reason: this task implements the folder UI, placement identity, ownership, and service boundaries already accepted by those ADRs; it does not introduce a new architectural choice.
 
 1. Add a Textual-independent folder-tree projection that consumes bounded `NoteFolderPage` batches, preserves placement-aware identities, produces breadcrumbs and Unfiled rows, distinguishes managed/inactive-managed placements without relying on color, and reconciles expansion/selection/focus by stable identity.
@@ -49,7 +49,7 @@ Reason: this task implements the folder UI, placement identity, ownership, and s
 4. Add screen-owned async loading and mutation orchestration through `NotesScopeService`, including stale-result guards, bounded batch reads, file-backed off-loop behavior, thread-safe in-memory test handling, and actionable capability/error states.
 5. Wire create, rename, move, remove, restore, move-note, and add-placement actions. Protect managed/inactive-managed placements from manual detachment or destructive folder actions, and refresh without losing surviving expansion, placement focus, note selection, or editor identity.
 6. Add widget, screen, host-routing, accessibility, compact 60x20 rendered-frame, performance, and regression tests for Database Notes and File Notes. Correct the pre-existing multiselect fixture only if the touched handler requires it.
-7. Run focused and broader Library/Notes suites, static checks, a real file-backed smoke path, and live TUI restart verification. Review the rendered 60x20 frame without color, document evidence and trade-offs, link ADR-059/060 in Implementation Notes, check every criterion, and only then set TASK-15706 to Done.
+7. Run focused and broader Library/Notes suites, static checks, a real file-backed smoke path, and live TUI restart verification. Review the rendered 60x20 frame without color, document evidence and trade-offs, link ADR-059/073 in Implementation Notes, check every criterion, and only then set TASK-15706 to Done.
 
 ### Review Follow-up Plan
 
@@ -65,7 +65,7 @@ Reason: this task implements the folder UI, placement identity, ownership, and s
 Implemented the local Database Notes folder navigator defined by
 [`ADR-059`](../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md)
 and
-[`ADR-060`](../../backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md).
+[`ADR-073`](../../backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md).
 No new ADR was required because the task preserves those decisions and the
 existing normalized `NotesScopeService` boundary.
 
@@ -153,7 +153,7 @@ Notes list when the folder capability is unavailable.
 - [x] #1 Every acceptance criterion is checked with automated or recorded evidence.
 - [x] #2 Focused tests, broader Library/Notes regressions, static analysis, and live TUI verification pass.
 - [x] #3 Implementation Notes summarize the approach, files, trade-offs, and evidence.
-- [x] #4 ADR-059 and ADR-060 are linked from the implementation plan and notes.
+- [x] #4 ADR-059 and ADR-073 are linked from the implementation plan and notes.
 - [x] #5 A rendered-frame self-review confirms hierarchy and status remain legible at 60×20 without color.
 - [x] #6 The task is set to Done only after all requirements above are complete.
 <!-- DOD:END -->

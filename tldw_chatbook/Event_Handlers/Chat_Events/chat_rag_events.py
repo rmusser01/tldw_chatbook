@@ -46,7 +46,9 @@ from ...RAG_Search.local_citation_capture import (
     LocalEvidenceContext,
     LocalResultNormalizationError,
     NormalizedLocalResult,
+    format_console_evidence_context,
     format_local_evidence_context,
+    normalize_console_evidence_references,
     normalize_local_result,
 )
 from ...RAG_Search.pipeline_builder_simple import BUILTIN_PIPELINES, execute_pipeline
@@ -107,17 +109,69 @@ class _ScopeExistenceReadError(RuntimeError):
 _CURRENT_ACTIVE_SESSION = object()
 
 
-# Check if RAG dependencies are available
-try:
-    from ...RAG_Search.simplified import (
-        create_rag_service,  # noqa: F401
-        create_config_for_collection,  # noqa: F401
-    )
+# Are the RAG dependencies available? Resolved on FIRST ASK, not at import
+# (TASK-21731).
+#
+# This module is imported during the initial Chat screen mount (via
+# `UI/Console_Modules/retrieval.py`), on the event loop, before the app is
+# interactive. The probe below executes `RAG_Search.simplified` -- and with
+# it `chunking_service` -> the ~15k-LOC `Chunking` engine and
+# `Internal_Prompts` -- measured at 50 ms on a fast M-series box, paid by
+# every user on every launch including one who never runs a retrieval.
+#
+# Semantics preserved exactly: the same two names are imported, the same
+# `ImportError` is caught, the same warning is logged (once), and the same
+# boolean is cached for the process. What moves is WHEN: the first caller
+# that actually asks (`get_or_initialize_rag_service`) pays it, and a
+# missing optional dependency surfaces there -- as the same `None` return
+# and the same warning line -- instead of at import.
+_RAG_SERVICES_AVAILABLE: Optional[bool] = None
 
-    RAG_SERVICES_AVAILABLE = True
-except ImportError:
-    logger.warning("RAG services not available")
-    RAG_SERVICES_AVAILABLE = False
+
+def _rag_services_available() -> bool:
+    """Whether the simplified RAG service package can be imported.
+
+    Returns:
+        ``True`` when ``RAG_Search.simplified`` resolves its constructors,
+        ``False`` when it raises ``ImportError`` (missing RAG extras). The
+        answer is computed once and cached for the process.
+    """
+    global _RAG_SERVICES_AVAILABLE
+    if _RAG_SERVICES_AVAILABLE is None:
+        try:
+            from ...RAG_Search.simplified import (
+                create_rag_service,  # noqa: F401
+                create_config_for_collection,  # noqa: F401
+            )
+
+            _RAG_SERVICES_AVAILABLE = True
+        except ImportError:
+            logger.warning("RAG services not available")
+            _RAG_SERVICES_AVAILABLE = False
+    return _RAG_SERVICES_AVAILABLE
+
+
+def __getattr__(name: str) -> Any:
+    """Keep ``chat_rag_events.RAG_SERVICES_AVAILABLE`` readable (PEP 562).
+
+    The flag used to be a module constant. External readers still get the
+    same boolean; resolving it here means the import cost is paid by whoever
+    asks rather than by every importer of this module. Note that the
+    module's own functions must call ``_rag_services_available()`` -- a bare
+    global lookup does not consult this hook.
+
+    Args:
+        name: Attribute being resolved.
+
+    Returns:
+        The resolved attribute value.
+
+    Raises:
+        AttributeError: For any other name, as usual.
+    """
+    if name == "RAG_SERVICES_AVAILABLE":
+        return _rag_services_available()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 async def perform_plain_rag_search(
@@ -417,7 +471,7 @@ async def get_or_initialize_rag_service(app: "TldwCli") -> Optional[Any]:
     callers that need the WHY on failure should call
     ``resolve_semantic_rag_service`` directly.
     """
-    if not RAG_SERVICES_AVAILABLE:
+    if not _rag_services_available():
         return None
 
     # Profile preference from config (first construction only; the shared
@@ -1643,40 +1697,9 @@ async def capture_console_staged_evidence_for_chat(
         )
         return LocalRagContextResult(None, None)
 
-    normalized: list[NormalizedLocalResult] = []
-    rejected_count = 0
-    for reference in bundle.available_references():
-        if reference.source_owner.strip().lower() != "local":
-            rejected_count += 1
-            continue
-        metadata: Dict[str, Any] = {
-            "source_type": reference.source_type,
-            "source_id": reference.source_id,
-        }
-        chunk_id = reference.metadata.get("chunk_id")
-        if isinstance(chunk_id, str) and chunk_id:
-            metadata["chunk_id"] = chunk_id
-        result_id = (
-            chunk_id if isinstance(chunk_id, str) and chunk_id else reference.source_id
-        )
-        try:
-            normalized.append(
-                normalize_local_result(
-                    {
-                        "source": reference.source_type,
-                        "id": result_id,
-                        "title": reference.title,
-                        "content": reference.snippet,
-                        "score": (
-                            reference.score if reference.score is not None else 0.0
-                        ),
-                        "metadata": metadata,
-                    },
-                    candidate_rank=len(normalized) + 1,
-                )
-            )
-        except LocalResultNormalizationError:
-            rejected_count += 1
+    references = bundle.available_references()
+    normalized = normalize_console_evidence_references(references)
+    rejected_count = len(references) - len(normalized)
     if rejected_count:
         logger.info(
             "Console RAG evidence excluded; "
@@ -1688,7 +1711,7 @@ async def capture_console_staged_evidence_for_chat(
     request_session = _capture_request_scope_session(app)
     authorization = await _authorize_local_results_for_prompt(
         app,
-        tuple(normalized),
+        normalized,
         request_session=request_session,
     )
     if not authorization.completed:
@@ -1696,13 +1719,7 @@ async def capture_console_staged_evidence_for_chat(
             "Console RAG evidence unavailable; reason=prompt_authority_failure"
         )
         return LocalRagContextResult(None, None)
-    formatted = format_local_evidence_context(
-        authorization.candidates,
-        max_length=sum(
-            len(candidate.title) + len(candidate.content) + 32
-            for candidate in authorization.candidates
-        ),
-    )
+    formatted = format_console_evidence_context(authorization.candidates)
     context = formatted.context if formatted.context.strip() else None
     if context is None:
         return LocalRagContextResult(None, None)

@@ -9,6 +9,7 @@ rather than being hidden by a permissive fake.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 import time
 from types import SimpleNamespace
@@ -27,8 +28,9 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     UNRESOLVED_REFUSAL,
 )
 from tldw_chatbook.Agents.run_context import use_run_id
+from tldw_chatbook.MCP.execution_log import POLICY_DENIED_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
 
 
 def _catalog_record(
@@ -85,6 +87,8 @@ class FakeMCPService:
         self.local_service = SimpleNamespace(get_inventory=lambda: self.inventory)
         self.session_approvals: set[tuple[str, str]] = set()
         self.set_tool_state_calls: list[tuple] = []
+        self.add_arg_rule_calls: list = []
+        self.arg_rule_matches: list = []
         self.approve_for_session_calls: list[tuple] = []
         self.record_tool_decision_calls: list[tuple] = []
         self.execute_calls: list[tuple] = []
@@ -119,6 +123,15 @@ class FakeMCPService:
 
     def is_session_approved(self, server_key: str, tool_name: str) -> bool:
         return (server_key, tool_name) in self.session_approvals
+
+    # TASK-26012: exact-args allow rules
+    def arg_rule_allows_call(self, tool, args, *, profile_id="default") -> bool:
+        return dict(args) in getattr(self, "arg_rule_matches", [])
+
+    def add_tool_arg_rule(
+        self, server_key, tool_name, *, args, tool=None, profile_id="default"
+    ) -> None:
+        self.add_arg_rule_calls.append((server_key, tool_name, dict(args), tool))
 
     def set_tool_state(
         self, server_key: str, tool_name: str, ui_state, *, tool=None
@@ -242,6 +255,52 @@ def test_compose_catalog_filters_deny_state():
     names = {e.name for e in provider.list_catalog()}
     assert any("keep" in n for n in names)
     assert not any("drop" in n for n in names)
+
+
+def test_compose_catalog_rejects_same_id_with_changed_definition():
+    original_schema = {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+    }
+    changed_schema = {
+        "type": "object",
+        "properties": {"path": {"type": "string"}, "write": {"type": "boolean"}},
+    }
+    tool_id = "local:srv::run"
+    maximum = {
+        tool_id: definition_hash("original", original_schema),
+    }
+    service = FakeMCPService(
+        catalog_records=[
+            _catalog_record("srv", [_tool_dict("run", "changed", changed_schema)])
+        ],
+        default_state=EffectiveToolState(state="allow", origin="tool_override"),
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=asyncio.new_event_loop(),
+        maximum_tool_ids=frozenset(maximum),
+        maximum_definition_hashes=maximum,
+    )
+
+    _compose(provider)
+
+    assert provider.list_catalog() == []
+
+    service.catalog_records = [
+        _catalog_record("srv", [_tool_dict("run", "original", original_schema)])
+    ]
+    exact_provider = MCPToolProvider(
+        service=service,
+        main_loop=asyncio.new_event_loop(),
+        maximum_tool_ids=frozenset(maximum),
+        maximum_definition_hashes=maximum,
+    )
+    _compose(exact_provider)
+
+    assert [entry.name for entry in exact_provider.list_catalog()] == [
+        "mcp__srv__run"
+    ]
 
 
 def test_compose_catalog_includes_builtin_inventory():
@@ -461,6 +520,67 @@ def test_pending_gate_for_plain_ask_reason():
     assert pending.reason == "ask"
 
 
+def test_pending_gate_for_builtin_writer_carries_the_mutation_effect():
+    """Qodo #1 (task-32278): a mutating BUILT-IN reaching this provider path
+    rendered no blast radius at all.
+
+    `hub_tool_catalog.builtin_tools_from_inventory` hard-codes `tags=()` --
+    a load-bearing invariant for `permission_store.
+    BY_KEY_HASH_FREE_SERVER_KEYS`, not an oversight -- and the local MCP
+    manifest carries no risk metadata, so `approval_effects_for_tool` saw
+    nothing to derive from and `create_note`/`library_save_note` rows shipped
+    without the "Effects: may modify local data" line their write deserves.
+    Reads must stay unaffected.
+    """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_effects,
+    )
+
+    service = FakeMCPService(
+        inventory={
+            "tools": [
+                _tool_dict("library_save_note"),
+                _tool_dict("create_note"),
+                _tool_dict("library_list_notes"),
+            ]
+        }
+    )
+    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    _compose(provider)
+    pending = {
+        entry.name.rsplit("__", 1)[-1]: provider.pending_gate_for(entry.id, {})
+        for entry in provider.list_catalog()
+    }
+
+    assert pending["library_save_note"].effects == ("mutates_local",)
+    assert pending["create_note"].effects == ("mutates_local",)
+    assert pending["library_list_notes"].effects == ()
+    # The card's own rendering, not just the tuple: this is the sentence the
+    # user reads before deciding.
+    assert format_approval_effects(
+        {"effects": pending["create_note"].effects}
+    ) == "Effects: may modify local data"
+    assert format_approval_effects({"effects": pending["library_list_notes"].effects}) == ""
+
+
+def test_builtin_writer_effect_never_changes_the_permission_layer():
+    """The effect recovery above is card copy ONLY.
+
+    Carrying real risk tags on a built-in `HubTool` instead would newly floor
+    it to `ask` on one resolver while `resolve_effective_state_by_key()`'s
+    `BY_KEY_HASH_FREE_SERVER_KEYS` exemption kept returning an un-floored
+    `allow` -- the divergence `Tests/MCP/test_hub_tool_catalog.py`'s tripwire
+    exists to catch. Pin that the shipped fix leaves `tags` empty.
+    """
+    service = FakeMCPService(inventory={"tools": [_tool_dict("library_save_note")]})
+    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    _compose(provider)
+
+    tool, _state = provider._entry_by_llm_name[provider.list_catalog()[0].name]
+    assert tool.server_key == "builtin:tldw_chatbook"
+    assert tool.tags == ()
+
+
 def test_pending_gate_for_unknown_name_returns_none():
     provider = MCPToolProvider(
         service=FakeMCPService(), main_loop=asyncio.new_event_loop()
@@ -657,8 +777,12 @@ def test_invoke_deny_refuses_and_records_decision(running_loop):
 
     assert result.ok is False
     assert result.error == DENY_REFUSAL
+    assert result.outcome == "blocked"
+    # task-32280: the permissions are Off -- nobody was asked and nobody said
+    # no, so this must NOT land in Audit's "Denied by you" bucket alongside a
+    # card Deny the user actually pressed.
     assert service.record_tool_decision_calls == [
-        ("local:srv", "run", "denied", "agent", None)
+        ("local:srv", "run", POLICY_DENIED_DECISION, "agent", None)
     ]
     assert service.execute_calls == []
 
@@ -683,8 +807,11 @@ def test_invoke_ask_without_callback_fails_closed(running_loop):
     assert result.ok is False
     assert result.error == DENY_REFUSAL
     assert service.execute_calls == []
+    # task-32280: this refusal tells the model "blocked by MCP permissions
+    # (set to Off)", so the audit row has to say the same thing -- the
+    # transcript and the log must not disagree about who refused.
     assert service.record_tool_decision_calls == [
-        ("local:srv", "run", "denied", "agent", None)
+        ("local:srv", "run", POLICY_DENIED_DECISION, "agent", None)
     ]
 
 
@@ -746,15 +873,15 @@ def test_invoke_ask_callback_approve_session_persists_and_short_circuits_next_ca
 
     # A later call with no stamp and NO callback still executes: the
     # service's own is_session_approved() short-circuits the "ask" gate.
-    # Finding I1: this fresh-path execution records decision="approved"
-    # (a live session approval), NOT "allowed" (a persistent server
-    # default) -- the two are different entries in the decision
-    # vocabulary and must not collapse together.
+    # The first call records the human approval. Later executions covered
+    # by that cached grant stay distinct so they cannot look like repeated
+    # permission prompts to the recommendation analyzer.
     provider._approval_callback = None
     result2 = provider.invoke(tool_id, {})
     assert result2.ok is True
     assert len(service.execute_calls) == 2
-    assert service.execute_calls[1][4] == "approved"
+    assert service.execute_calls[0][4] == "approved"
+    assert service.execute_calls[1][4] == "approved-session"
 
 
 def test_invoke_ask_callback_always_allow_sets_tool_state_with_live_hub_tool(
@@ -885,6 +1012,287 @@ def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running
     assert len(service.record_tool_decision_calls) == 3
 
 
+# ---------------------------------------------------------------------------
+# task-32280: a card Deny resolved by the review hook never reaches invoke()
+# ---------------------------------------------------------------------------
+
+
+def test_record_user_denial_writes_one_denied_row(running_loop):
+    """The seam the review hook uses when the runtime skips dispatch."""
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    provider.record_user_denial(tool_id)
+
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied", "agent", None)
+    ]
+    assert service.execute_calls == []
+
+    # A name this provider does not own (a built-in, a skill tool) is not
+    # its denial to record.
+    provider.record_user_denial("read_file")
+    assert len(service.record_tool_decision_calls) == 1
+
+
+def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(running_loop):
+    """task-32280 regression, live-observed on dev 3315241674.
+
+    Three approvals of one MCP tool wrote three execution-log rows; the
+    fast-button Deny on the same tool wrote NONE, so Audit could not answer
+    "what did I refuse?". Cause: `run_agent_loop` turns any non-"proceed"
+    verdict from the review hook straight into the call's result and skips
+    dispatch, so `MCPToolProvider.invoke` -- the only thing that was
+    recording denials -- never ran for a denied call.
+
+    Drives the REAL provider through the REAL production hook so a fake
+    cannot paper over the gap.
+    """
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    class _NoBuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+    class _NoBuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    hook = build_tool_review_hook(
+        _NoBuiltinGate(),
+        _NoBuiltinProvider(),
+        provider,
+        lambda pending: {row.call_id: "deny" for row in pending},
+        workspace_id=None,
+    )
+    verdicts = hook([ToolCall(name=tool_id, args={"x": 1}, call_id="c-1")], RUN)
+
+    assert verdicts.get("c-1", "proceed") != "proceed", (
+        f"precondition: the denied call must not be dispatched: {verdicts}"
+    )
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied", "agent", None)
+    ], (
+        "the user's Deny left no row in the execution log: "
+        f"{service.record_tool_decision_calls}"
+    )
+    assert service.execute_calls == []
+
+
+def test_stop_mid_approval_records_only_the_unresolved_row(running_loop):
+    """R23 regression: a Stop while the card is up is not a user denial.
+
+    `request_mcp_approvals` fails the unanswered round closed to "deny" AND
+    writes the honest `denied-unresolved` audit row itself. The review hook,
+    seeing only "deny", then wrote a SECOND row that Audit renders as
+    "Denied by you" -- a decision the user never got to make. Drives the
+    REAL controller through the REAL hook (a direct `request_mcp_approvals`
+    call cannot see the duplicate, since the duplicate is the hook's).
+    """
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ConsoleChatController,
+        build_tool_review_hook,
+    )
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    class _NoBuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+    class _NoBuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
+        unified_mcp_service=service,
+    )
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def _stop_soon() -> None:
+        time.sleep(0.05)
+        # begin_shutdown() runs its owner-thread queue teardown inline when
+        # no owner loop is bound (none is, in this synchronous test), which
+        # trips the queue's cross-thread guard -- it still denies the
+        # unresolved approval first (in begin_shutdown's `finally`), so the
+        # assertions below hold; only the thread-local exception is noise.
+        with contextlib.suppress(Exception):
+            controller.begin_shutdown()
+
+    stopper = threading.Thread(target=_stop_soon)
+    stopper.start()
+    hook = build_tool_review_hook(
+        _NoBuiltinGate(),
+        _NoBuiltinProvider(),
+        provider,
+        controller.request_mcp_approvals,
+        workspace_id=None,
+    )
+    verdicts = hook([ToolCall(name=tool_id, args={"x": 1}, call_id="c-1")], RUN)
+    stopper.join()
+
+    assert verdicts.get("c-1", "proceed") != "proceed", (
+        f"the stopped call was cleared for dispatch: {verdicts}"
+    )
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied-unresolved", "agent", "run stopped while approval pending")
+    ], (
+        "a Stop mid-approval recorded a user denial it never received: "
+        f"{service.record_tool_decision_calls}"
+    )
+    assert service.execute_calls == []
+
+
+def test_hook_level_approval_and_deny_of_one_tool_record_one_row_each(running_loop):
+    """Two calls of one tool, one approved and one denied: the approval is
+    recorded by `invoke()`/`execute_hub_tool` and the denial by the hook --
+    one row each, never two for the same call."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    class _NoBuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+    class _NoBuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    hook = build_tool_review_hook(
+        _NoBuiltinGate(),
+        _NoBuiltinProvider(),
+        provider,
+        lambda pending: {
+            row.call_id: ("deny" if row.call_id == "c-no" else "approve_once")
+            for row in pending
+        },
+        workspace_id=None,
+    )
+    verdicts = hook(
+        [
+            ToolCall(name=tool_id, args={"x": 1}, call_id="c-ok"),
+            ToolCall(name=tool_id, args={"x": 2}, call_id="c-no"),
+        ],
+        RUN,
+    )
+
+    assert verdicts.get("c-no", "proceed") != "proceed"
+    # Exactly the denied call is recorded here; the approved one is
+    # dispatched and recorded service-side by `execute_hub_tool`.
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied", "agent", None)
+    ]
+    result = provider.invoke(tool_id, {"x": 1})
+    assert result.ok is True
+    assert len(service.record_tool_decision_calls) == 1
+    assert service.execute_calls[0][4] == "approved"
+
+
+def test_high_risk_rows_do_not_offer_the_inert_exact_input_option(running_loop):
+    """R22: `permission_store.arg_rule_allows` returns False outright for a
+    tool whose tags intersect `HIGH_RISK_TAGS`, so "always allow this exact
+    input" could never quiet one of its calls -- the card was advertising a
+    decision that does nothing. `always_allow` STAYS offered: it persists a
+    `tool_override` allow, the one origin `resolve_effective_state`'s risk
+    floor spares.
+    """
+    from dataclasses import replace
+
+    service = FakeMCPService(
+        catalog_records=[
+            _catalog_record("srv", [_tool_dict("wipe"), _tool_dict("peek")])
+        ]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    risky_name = next(
+        e.name for e in provider.list_catalog() if e.name.endswith("wipe")
+    )
+    safe_name = next(
+        e.name for e in provider.list_catalog() if e.name.endswith("peek")
+    )
+    tool, state = provider._entry_by_llm_name[risky_name]
+    provider._entry_by_llm_name[risky_name] = (
+        replace(tool, tags=("mutates",)),
+        state,
+    )
+
+    risky = provider.pending_gate_for(risky_name, {"x": 1}, "c-1")
+    safe = provider.pending_gate_for(safe_name, {"x": 1}, "c-2")
+
+    assert risky is not None and safe is not None
+    assert "allow_matching" not in risky.options, (
+        f"a high-risk row still offers an inert exact-input rule: {risky.options}"
+    )
+    assert risky.options == (
+        "approve_once",
+        "approve_session",
+        "always_allow",
+        "deny",
+    )
+    # Untagged tools are untouched -- "" means "offer the full set".
+    assert safe.options == ()
+
+
+def test_allow_matching_on_a_high_risk_tool_approves_once_without_persisting(
+    running_loop,
+):
+    """R22(b): defense in depth for a verdict that reaches the provider
+    anyway (a stale card, a caller that ignores `options`). Storing the
+    rule would leave permanently dead state in `mcp_permissions.json`."""
+    from dataclasses import replace
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("wipe")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+    tool, state = provider._entry_by_llm_name[tool_id]
+    provider._entry_by_llm_name[tool_id] = (replace(tool, tags=("mutates",)), state)
+    provider.apply_batch_decisions(RUN, {tool_id: "allow_matching"})
+
+    result = provider.invoke(tool_id, {"x": 1})
+
+    assert result.ok is True, "the approved call did not run"
+    assert service.add_arg_rule_calls == [], (
+        f"a rule `arg_rule_allows` can never honour was persisted: "
+        f"{service.add_arg_rule_calls}"
+    )
+
+
 def test_invoke_stamped_timeout_uses_exact_model_facing_copy(running_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
@@ -945,6 +1353,28 @@ def test_invoke_stamped_approve_once_applies_to_every_same_name_call_this_turn(
     # Both calls left an "approved" audit record via execute_hub_tool's
     # own decision arg -- no denied/re-gated record for the second call.
     assert [c[4] for c in service.execute_calls] == ["approved", "approved"]
+
+
+def test_invoke_stamped_approve_session_counts_one_prompt_for_same_name_calls(
+    running_loop,
+):
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+    provider.apply_batch_decisions(RUN, {tool_id: "approve_session"})
+
+    result1 = provider.invoke(tool_id, {"query": "first"})
+    result2 = provider.invoke(tool_id, {"query": "second"})
+
+    assert result1.ok is True
+    assert result2.ok is True
+    assert [call[4] for call in service.execute_calls] == [
+        "approved",
+        "approved-session",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1384,7 +1814,11 @@ def test_invoke_refuses_when_kill_switch_flips_between_compose_and_invoke(runnin
     assert result.ok is False
     assert result.error == KILL_SWITCH_REFUSAL
     assert service.execute_calls == []
-    assert service.record_tool_decision_calls[-1][2] == "denied"
+    # task-32280 fix round: the SWITCH refused. Recording the bare "denied"
+    # here put a row Audit renders as "Denied by you" in the log for a call
+    # no person was ever asked about -- and pointed the reader at this
+    # tool's permissions instead of at the switch that actually blocked it.
+    assert service.record_tool_decision_calls[-1][2] == "denied-killswitch"
 
 
 def test_invoke_refuses_when_kill_switch_flips_even_with_a_stamped_verdict(
@@ -1440,7 +1874,7 @@ def test_invoke_kill_switch_check_survives_getter_exception(running_loop):
 # builtin_raw_name_exclusions (task-1337, plan Task 8)
 # ---------------------------------------------------------------------------
 #
-# The Console shadows 23 built-in raw names (the 18 `library_*` descriptor
+# The Console shadows 29 built-in raw names (the 24 `library_*` descriptor
 # tools served by its own LibraryToolProvider, plus the five legacy RAG/chat
 # readers whose Console coverage is the bounded RAG/direct tools). The
 # Console-composed provider must drop those names ONLY when they come from
@@ -1480,15 +1914,21 @@ def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
     assert "mcp__tldw_chatbook__library_list_media" in names
     assert "mcp__tldw_chatbook__search_rag" in names
     assert "mcp__tldw_chatbook__chat_with_llm" in names
-    assert len(names) == 24  # 23 shadowed + the unrelated built-in
+    assert names == {
+        f"mcp__tldw_chatbook__{tool['name']}"
+        for tool in service.inventory["tools"]
+    }
 
 
 def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
-    """With the Console exclusion set: exactly the 23 built-in raw names
+    """With the Console exclusion set: exactly the 29 built-in raw names
     disappear; the unrelated built-in and same-named local-profile tools
     remain, and the inventory mapping is left untouched."""
     exclusions = _console_exclusion_set()
-    assert len(exclusions) == 23  # 18 descriptors + 5 legacy, no overlap
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+
+    assert set(LIBRARY_TOOL_DESCRIPTORS).isdisjoint(_LEGACY_SHADOWED_NAMES)
+    assert exclusions == frozenset((*LIBRARY_TOOL_DESCRIPTORS, *_LEGACY_SHADOWED_NAMES))
     service = FakeMCPService(
         inventory=_mixed_library_inventory(),
         catalog_records=[
@@ -1573,3 +2013,68 @@ def test_compose_catalog_exclusion_set_stored_immutably():
     names = {entry.name for entry in provider.list_catalog()}
     assert "mcp__tldw_chatbook__library_list_media" not in names
     assert "mcp__tldw_chatbook__chat_with_llm" in names
+
+
+# ---------------------------------------------------------------------------
+# TASK-26012: per-argument allow rules
+# ---------------------------------------------------------------------------
+
+
+def test_matching_arg_rule_quiets_the_ask_without_a_card(running_loop):
+    """AC#2: a call matching the stored rule executes; a different call for
+    the SAME tool still prompts."""
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    service.arg_rule_matches = [{"q": "quiet"}]
+    prompts: list = []
+
+    def approval_callback(pending: list[MCPPendingCall]) -> dict[str, str]:
+        prompts.append(pending)
+        return {p.llm_name: "approve_once" for p in pending}
+
+    provider = MCPToolProvider(
+        service=service, main_loop=running_loop, approval_callback=approval_callback
+    )
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    quiet = provider.invoke(tool_id, {"q": "quiet"})
+    loud = provider.invoke(tool_id, {"q": "different"})
+
+    assert quiet.ok is True and loud.ok is True
+    assert prompts and len(prompts) == 1, "only the non-matching call prompts"
+    assert prompts[0][0].arguments == {"q": "different"}
+    assert service.execute_calls[0][4] == "allowed"
+    # the pending gate agrees: no card row for the matching call
+    assert provider.pending_gate_for(tool_id, {"q": "quiet"}) is None
+    assert provider.pending_gate_for(tool_id, {"q": "different"}) is not None
+
+
+def test_allow_matching_verdict_persists_the_exact_args_rule(running_loop):
+    """AC#1/#3: the saved rule is exactly the displayed call's arguments."""
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        approval_callback=lambda pending: {
+            p.llm_name: "allow_matching" for p in pending
+        },
+    )
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    result = provider.invoke(tool_id, {"q": "site status"})
+
+    assert result.ok is True
+    assert len(service.add_arg_rule_calls) == 1
+    server_key, tool_name, args, tool = service.add_arg_rule_calls[0]
+    assert (server_key, tool_name) == ("local:srv", "run")
+    assert args == {"q": "site status"}
+    assert isinstance(tool, HubTool)
+    assert service.set_tool_state_calls == [], (
+        "an arg rule must not widen into a whole-tool allow"
+    )
+    assert service.execute_calls[0][4] == "approved"

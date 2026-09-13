@@ -1,7 +1,7 @@
 import json
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
-    DIRECT_DISCLOSE_THRESHOLD,
+    AgentDefinition,
     LOAD_TOOLS_NAME,
     RUN_DONE,
     RunBudget,
@@ -11,9 +11,11 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.agent_service import AgentService, FirstRequestSchemaPlan
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
+    FIND_TOOLS_SCHEMA,
+    LOAD_TOOLS_SCHEMA,
     SkillToolProvider,
     ToolCatalogRegistry,
 )
@@ -93,6 +95,122 @@ def test_skill_tool_routes_through_spawn(tmp_path):
     assert db.count_subagent_runs("c1") == 1  # skill ran as a budget-counted sub-agent
 
 
+def test_named_child_recomputes_lesson_guidance_after_tool_narrowing(
+    tmp_path, inline_spawns
+):
+    db = AgentRunsDB(tmp_path / "narrowed-guidance.db", client_id="guidance")
+    db.create_agent_definition(
+        AgentDefinition(
+            name="lesson-reader",
+            description="Reads lessons without changing Notes.",
+            instructions="Return evidence to the foreground primary.",
+            tool_allowlist=("library_search_notes", "library_get_note"),
+        )
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(
+        _NCatalogProvider(
+            (
+                "library_search_notes",
+                "library_get_note",
+                "library_save_note",
+            )
+        )
+    )
+    script = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": _fence(
+                            SPAWN_TOOL_NAME,
+                            {"task": "inspect lessons", "agent": "lesson-reader"},
+                        )
+                    }
+                }
+            ]
+        },
+        {"choices": [{"message": {"content": "draft returned"}}]},
+        {"choices": [{"message": {"content": "done"}}]},
+    ]
+    calls: list[dict] = []
+
+    def chat(**kwargs):
+        calls.append(kwargs)
+        return script.pop(0)
+
+    service = AgentService(db, registry, chat_call=chat)
+    _run_id, outcome = service.run_turn(
+        conversation_id="lesson-guidance",
+        messages=[{"role": "user", "content": "help"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="primary",
+            allowed_tools=(
+                "library_search_notes",
+                "library_get_note",
+                "library_save_note",
+                SPAWN_TOOL_NAME,
+            ),
+            budget=RunBudget(max_subagents=1),
+        ),
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    parent_system = calls[0]["messages_payload"][0]["content"]
+    child_system = calls[1]["messages_payload"][0]["content"]
+    assert "exact preview" in parent_system
+    assert "library_save_note" in parent_system
+    assert "Agent Lessons protocol" in child_system
+    assert "library_get_note" in child_system
+    assert "library_save_note" not in child_system
+    db.close()
+
+
+def test_skill_spawn_capture_failure_uses_the_parent_diagnostic(tmp_path, monkeypatch):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    original_insert = db.insert_steps_at_indices
+
+    def fail_spawn_capture(run_id, indexed_steps):
+        if any(
+            step["kind"] == "tool_call" and step.get("tool_name") == "code-review"
+            for _index, step in indexed_steps
+        ):
+            raise RuntimeError("persistent skill spawn capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_spawn_capture)
+    reg = _registry_with_code_review_skill()
+    script = [
+        {"choices": [{"message": {"content": _fence("code-review", {"args": "x"})}}]},
+        {"choices": [{"message": {"content": "child answer"}}]},
+        {"choices": [{"message": {"content": "done"}}]},
+    ]
+    service = AgentService(
+        db, reg, chat_call=lambda **_kwargs: script.pop(0), skill_runner=_FakeSkillRunner()
+    )
+    parent_id, outcome = service.run_turn(
+        conversation_id="skill-spawn-capture",
+        messages=[{"role": "user", "content": "review"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", "code-review", SPAWN_TOOL_NAME),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    rows = db.list_runs("skill-spawn-capture", include_superseded=True)
+    parent = next(row for row in rows if row["id"] == parent_id)
+    child = next(row for row in rows if row["agent_kind"] == "subagent")
+    diagnostic = next(step for step in parent["steps"] if step["kind"] == "capture_failed")
+    diagnostic_id = f"agent-step:{parent_id}:{diagnostic['index']}"
+    assert child["spawn_event_id"] == diagnostic_id
+
+
 def test_skill_tool_respects_subagent_budget(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
@@ -127,12 +245,7 @@ def test_skill_tool_respects_subagent_budget(tmp_path):
 
 
 class _NCatalogProvider:
-    """Catalog of N generic tools, to force the find/load disclosure path.
-
-    A catalog bigger than DIRECT_DISCLOSE_THRESHOLD defers all disclosure
-    to find_tools/load_tools instead of direct-disclosing everything up
-    front (see tool_catalog.initial_disclosure).
-    """
+    """Catalog of N generic tools for explicit discovery-path tests."""
 
     def __init__(self, names):
         self._names = list(names)
@@ -168,15 +281,23 @@ class _NamedSkillRunner:
         return spawn(f"RENDERED[{args}]")
 
 
-def _names_exceeding_disclose_threshold():
-    # Create enough entries to exceed DIRECT_DISCLOSE_THRESHOLD -- forces the find/load path.
-    assert DIRECT_DISCLOSE_THRESHOLD >= 16
-    return ["code-review"] + [f"filler{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD)]
+def _discovery_names():
+    return ["code-review"] + [f"filler{i}" for i in range(24)]
+
+
+def _discovery_plan() -> FirstRequestSchemaPlan:
+    return FirstRequestSchemaPlan(
+        active_schemas=(),
+        runtime_schemas=(FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA),
+        offer_find_load=True,
+        log_active=False,
+        system_prompt="s",
+    )
 
 
 def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    names = _names_exceeding_disclose_threshold()
+    names = _discovery_names()
     registry = ToolCatalogRegistry()
     registry.register_provider(_NCatalogProvider(names))
     config = AgentConfig(
@@ -204,6 +325,7 @@ def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
         messages=[{"role": "user", "content": "q"}],
         config=config,
         api_endpoint="llama_cpp",
+        first_request_schema_plan=_discovery_plan(),
     )
     assert outcome.status == RUN_DONE
     run = db.get_run(run_id)
@@ -215,7 +337,7 @@ def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
 
 def test_skill_tool_executes_after_find_load_discloses_it(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    names = _names_exceeding_disclose_threshold()
+    names = _discovery_names()
     registry = ToolCatalogRegistry()
     registry.register_provider(_NCatalogProvider(names))
     config = AgentConfig(
@@ -253,6 +375,7 @@ def test_skill_tool_executes_after_find_load_discloses_it(tmp_path):
         messages=[{"role": "user", "content": "review"}],
         config=config,
         api_endpoint="llama_cpp",
+        first_request_schema_plan=_discovery_plan(),
     )
     assert outcome.status == RUN_DONE
     assert runner.ran_with == "the diff"
@@ -449,10 +572,17 @@ def test_native_spawn_child_cannot_call_a_skill_tool(tmp_path):
     child_runs = [r for r in runs if r["agent_kind"] == "subagent"]
     assert len(child_runs) == 1
     tool_results = [
-        s["result"] for s in child_runs[0]["steps"] if s["kind"] == "tool_result"
+        step for step in child_runs[0]["steps"] if step["kind"] == "tool_result"
     ]
-    assert any("Tool not permitted: code-review" in r for r in tool_results)
-    assert not any("sub-agent budget exhausted" in r for r in tool_results)
+    permission_refusal = next(
+        step
+        for step in tool_results
+        if "Tool not permitted: code-review" in step["result"]
+    )
+    assert permission_refusal["tool_outcome"] == "blocked"
+    assert not any(
+        "sub-agent budget exhausted" in step["result"] for step in tool_results
+    )
 
 
 # --- PR2a Task 6.5: a SKILL call keeps its contract under a live fleet ---

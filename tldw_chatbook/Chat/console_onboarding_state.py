@@ -26,13 +26,26 @@ CONSOLE_SETUP_STEP_GLYPHS = {"done": "✓", "active": "●", "pending": "○"}
 # ("server address") with the jargon glossed after it; "send-capable" becomes
 # an ordinary sentence. CONSOLE_SETUP_CARD_SUBTITLE explains "provider" itself.
 _STEP_ONE_LABELS = {
-    "Missing key": "Connect a provider (API key or local server)",
-    "Invalid URL": "Save the provider's server address (endpoint)",
-    "Endpoint not saved": "Save the provider's server address (endpoint)",
-    "Unknown": "Choose a supported provider",
-    "Pending": "Choose a provider that works in the Console",
+    "credential_missing": "Connect a provider (API key or local server)",
+    "credential_rejected": "Reconnect the provider credential",
+    "endpoint_invalid": "Save the provider's server address (endpoint)",
+    "endpoint_not_saved": "Save the provider's server address (endpoint)",
+    "endpoint_unreachable": "Reconnect the provider server",
+    "provider_missing": "Choose a supported provider",
+    "provider_unsupported": "Choose a provider that works in the Console",
+    "provider_configuration_invalid": "Finish provider setup",
+    "readiness_unknown": "Finish provider setup",
 }
 CONSOLE_SETUP_STEP_THREE_DETAIL = "Composer unlocks after setup"
+# task-32140: the numbered steps above are all provider setup -- a
+# local-first user who came for notes was told the only available action
+# needed an API key. This secondary action needs no provider and routes
+# straight to Library's New note view (same destination as the
+# command-palette "new_note" quick action).
+CONSOLE_SETUP_NOTES_ACTION_LABEL = "Write a note in Library"
+CONSOLE_SETUP_NOTES_ACTION_TOOLTIP = (
+    "Opens Library's New note view. No provider needed."
+)
 _TRUE_STRINGS = {"true", "yes", "1", "on"}
 
 
@@ -195,7 +208,10 @@ def build_console_setup_card_state(
     if has_messages or first_send_completed:
         return ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
 
-    provider_done = bool(readiness.native_send_supported)
+    provider_done = readiness.operability == "ready_to_send" or readiness.blocker in {
+        "model_missing",
+        "active_run",
+    }
     if provider_done and has_model:
         if guidance_dismissed:
             return ConsoleSetupCardState(
@@ -211,7 +227,7 @@ def build_console_setup_card_state(
         label=(
             "Provider ready"
             if provider_done
-            else _STEP_ONE_LABELS.get(readiness.label, "Finish provider setup")
+            else _STEP_ONE_LABELS.get(readiness.blocker, "Finish provider setup")
         ),
         detail=f"{provider_name} ready" if provider_done else "",
     )

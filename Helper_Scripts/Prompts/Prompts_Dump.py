@@ -24,7 +24,7 @@ sys.path.insert(0, str(project_root))
 
 try:
     from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-    from tldw_chatbook.config import BASE_DATA_DIR_CLI
+    from tldw_chatbook.config import get_user_data_dir
 except ImportError as e:
     print(f"Error importing required modules: {e}")
     print(f"Please ensure you're running this script from the tldw_chatbook project directory")
@@ -93,7 +93,7 @@ def get_user_db_path(username: str) -> Path:
     Returns:
         Path to the prompts database file
     """
-    user_dir = BASE_DATA_DIR_CLI / username
+    user_dir = get_user_data_dir().parent / username
     # Try the new database name first
     prompts_db = user_dir / "prompts.db"
     if prompts_db.exists():

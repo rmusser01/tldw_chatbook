@@ -1,10 +1,52 @@
 # Cross-platform backup verification — 2026-09-12
 
-TASK-32496; PR2642 targets dev. The cross-platform backup correction is implemented
-and verified. Actual installed backup creation, restore/open, replacement and
-retained-copy rollback have passed on macOS/APFS, Linux/ext4 and Windows/local NTFS.
-This record supersedes the platform limitation in the earlier Python encryption
-verification.
+TASK-32496; PR2642 targets dev. The published cross-platform correction has the
+platform evidence recorded below. Integration with dev `a3142cb35` is in progress;
+those earlier receipts do not qualify the merged implementation. The requester
+has supplied the PR's human-written Change summary. Resolving the conflicts does
+not authorize merging the PR into dev.
+
+The merged working tree passes actual macOS two-profile capture/resume (53.57s)
+and installed-wheel two-profile restore/native readback (116.21s). Core owner
+qualification passes 62 tests. The wheel and sdist include the newly vendored
+shared profile package; installed-file hash checks remain active. Current schema
+qualification uses physical catalogs captured from the actual dev constructors,
+including Collections version history and the Subscriptions/core hybrid. Canvas
+validation preserves the existing restricted reader and validates stored payloads
+with the shipped pure validator. The corresponding 60-case validation group passes.
+The installed F9 replacement flow now passes in 113.17s, including an unacknowledged
+credential refusal, unchanged-source abort, explicit safety selection from the
+current review, and successful replacement. Existing legacy persona assets are
+validated as preserved dependencies of the encrypted rollback copy; 31 focused
+safety and later-rollback checks pass, including incomplete, changed and foreign
+tree refusal. The combined installed replacement/later-rollback workflow passes
+in 239.77s, including the stale-preview refusal, unchecked omission review,
+untouched abort and acknowledged rollback with restoration validated. Public
+capture and preview tests pass 15 cases; manifest inventory passes 13.
+
+Current-device Notes synchronization state remains explicitly excluded, matching
+dev. Empty startup scaffolding is recognized for Research paste staging, actor-pack
+imports and Collections offline archives. The exact empty Research index and
+current Collections lifecycle lock are also recognized; pending work or actual
+payload in those new areas remains unsupported. Scheduler heartbeat and crash
+forensics files remain runtime exclusions. Native Linux and Windows verification
+of the final merged revision is pending. Preview now reuses its verified private
+SQLite image across owner reads after ordinary live commits, while checking the
+source's native identity and taking a new snapshot on the next preview. The
+initial-copy race refusal and maintained scope recheck remain intact. The exact
+unused scaffold roots receive held namespaces for read-only validation, and an
+explicit nested discovery uses those namespaces without payload-source authority.
+All 62 discovery/admission checks pass. Eight startup worker caches now retire on
+their creating threads; existing caller connections remain owned by the caller.
+Startup/Home lifetime and shutdown ordering checks pass 62 cases, with no new
+Bandit findings.
+
+Actual installed F9 backup, inspection, isolated restore and fresh reopening pass
+in all three modes: plaintext 73.29s, encrypted 75.27s, and encrypted with explicit
+credential review 91.37s. No temporary inventory tracing is present in these runs.
+The test maps the existing legacy persona-assets tree to its actual profile-relative
+destination. Newer Console changes from dev and final Linux/Windows verification
+remain before the merged PR is declared complete.
 
 Final [Windows run 34734023282](https://github.com/rmusser01/tldw_chatbook/actions/runs/34734023282)
 at `a5a5365656cfabc9ccf247d16a3b97c91bb5794f` passes **117/117 support tests**
@@ -16,8 +58,8 @@ replacement and later rollback with explicit credential review. Final Linux
 inventory/reference checks pass 19/19; the corresponding local macOS checks pass.
 
 Earlier failed runs and pre-existing broader test/static-analysis findings remain
-documented below. The PR still conflicts with dev and requires a requester-written
-change summary before merge; completion of this correction is not a merge approval.
+documented below. These historical results preceded the current dev integration;
+completion of the correction is not a merge approval.
 
 Revision `e733d34d0043bd4dee54914ae2cede3a4a8e11af` passes actual macOS
 combined replacement/later rollback in171.53 seconds. The supplied Linux host

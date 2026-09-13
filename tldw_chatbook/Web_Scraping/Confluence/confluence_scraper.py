@@ -74,7 +74,8 @@ class ConfluenceScraper(Scraper):
         """
         try:
             # Fetch page content via API
-            response = self.auth.make_request(
+            response = await asyncio.to_thread(
+                self.auth.make_request,
                 "GET",
                 f"/rest/api/content/{page_id}",
                 params={
@@ -114,7 +115,10 @@ class ConfluenceScraper(Scraper):
             Dictionary containing scraped page data
         """
         # Extract page ID from URL
-        page_id = self._extract_page_id_from_url(url)
+        # task-585: this helper falls back to fetching the page (see its
+        # own body) -- a blocking HTTP call, so it cannot run inline on
+        # the event loop.
+        page_id = await asyncio.to_thread(self._extract_page_id_from_url, url)
         if not page_id:
             return {
                 "extraction_successful": False,
@@ -142,7 +146,8 @@ class ConfluenceScraper(Scraper):
         while len(pages) < limit:
             try:
                 # Fetch pages in space
-                response = self.auth.make_request(
+                response = await asyncio.to_thread(
+                self.auth.make_request,
                     "GET",
                     "/rest/api/content",
                     params={
@@ -205,7 +210,8 @@ class ConfluenceScraper(Scraper):
 
         while len(pages) < limit:
             try:
-                response = self.auth.make_request(
+                response = await asyncio.to_thread(
+                self.auth.make_request,
                     "GET",
                     "/rest/api/content/search",
                     params={
@@ -366,7 +372,8 @@ class ConfluenceScraper(Scraper):
 
         # Fetch attachments
         try:
-            response = self.auth.make_request(
+            response = await asyncio.to_thread(
+                self.auth.make_request,
                 "GET",
                 f"/rest/api/content/{page_id}/child/attachment",
                 params={"expand": "version,container"},

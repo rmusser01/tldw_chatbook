@@ -13,15 +13,19 @@ Tests the EvalRunner class functionality including:
 - Progress tracking and reporting
 """
 
-import pytest
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
+from tldw_chatbook.Evals import dataset_loader as standalone_dataset_loader
+from tldw_chatbook.Evals import eval_runner as eval_runner_module
+from tldw_chatbook.Evals.eval_errors import DatasetLoadingError
 from tldw_chatbook.Evals.eval_runner import EvalRunner, QuestionAnswerRunner
 
 # Import the evaluation classes
 from tldw_chatbook.Evals.eval_runner import EvalSampleResult, EvalProgress, EvalSample
-from tldw_chatbook.Evals.task_loader import TaskConfig
+from tldw_chatbook.Evals.task_loader import TaskConfig, TaskLoader
 # LLMInterface removed - using existing chat infrastructure
 
 
@@ -59,6 +63,111 @@ def create_test_runner(mock_llm_interface=None, **kwargs):
     if mock_llm_interface:
         runner.llm_interface = mock_llm_interface
     return runner
+
+
+@pytest.mark.parametrize(
+    "loader_module", [standalone_dataset_loader, eval_runner_module]
+)
+def test_remote_dataset_without_optional_dependency_is_typed(
+    monkeypatch, loader_module
+):
+    """Recognized remote IDs report the unavailable optional dependency."""
+    monkeypatch.setattr(loader_module, "HF_DATASETS_AVAILABLE", False)
+    task_config = TaskConfig(
+        name="remote_dataset",
+        description="Remote dataset",
+        task_type="question_answer",
+        dataset_name="owner/dataset",
+        metric="exact_match",
+    )
+
+    with pytest.raises(DatasetLoadingError) as exc_info:
+        loader_module.DatasetLoader.load_dataset_samples(task_config)
+
+    context = exc_info.value.context
+    assert context.message == "HuggingFace dataset support is unavailable"
+    assert context.suggestion == "Install it with: pip install datasets"
+    assert "Unexpected error" not in str(exc_info.value)
+    assert "Cannot determine dataset type" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "loader_module", [standalone_dataset_loader, eval_runner_module]
+)
+def test_local_dataset_routing_is_unchanged(tmp_path, monkeypatch, loader_module):
+    """Existing local paths still route through the local loader."""
+    dataset_path = tmp_path / "local.json"
+    dataset_path.write_text("[]")
+    calls = []
+
+    def load_local_dataset(path, max_samples=None):
+        calls.append((path, max_samples))
+        return []
+
+    monkeypatch.setattr(
+        loader_module.DatasetLoader, "_load_local_dataset", load_local_dataset
+    )
+    task_config = TaskConfig(
+        name="local_dataset",
+        description="Local dataset",
+        task_type="question_answer",
+        dataset_name=str(dataset_path),
+        metric="exact_match",
+    )
+
+    assert (
+        loader_module.DatasetLoader.load_dataset_samples(task_config, max_samples=7)
+        == []
+    )
+    assert calls == [(str(dataset_path), 7)]
+
+
+@pytest.mark.parametrize(
+    "loader_module", [standalone_dataset_loader, eval_runner_module]
+)
+def test_missing_explicit_local_dataset_path_is_typed(
+    tmp_path, monkeypatch, loader_module
+):
+    """An explicit dataset_path must not be reclassified as a remote ID."""
+    dataset_path = tmp_path / "missing" / "dataset.json"
+    task_config = TaskLoader().load_task(
+        {
+            "task": "missing_local_dataset",
+            "output_type": "generate_until",
+            "dataset_path": str(dataset_path),
+        },
+        "eleuther",
+    )
+    monkeypatch.setattr(loader_module, "HF_DATASETS_AVAILABLE", False)
+
+    with pytest.raises(DatasetLoadingError) as exc_info:
+        loader_module.DatasetLoader.load_dataset_samples(task_config)
+
+    assert exc_info.value.context.message == f"Dataset file not found: {dataset_path}"
+    assert "HuggingFace" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "loader_module", [standalone_dataset_loader, eval_runner_module]
+)
+def test_invalid_dataset_source_behavior_is_unchanged(monkeypatch, loader_module):
+    """Invalid non-path, non-remote sources keep the existing typed outcome."""
+    monkeypatch.setattr(loader_module, "HF_DATASETS_AVAILABLE", False)
+    task_config = TaskConfig(
+        name="invalid_dataset",
+        description="Invalid dataset",
+        task_type="question_answer",
+        dataset_name="invalid-dataset-source-name",
+        metric="exact_match",
+    )
+
+    with pytest.raises(DatasetLoadingError) as exc_info:
+        loader_module.DatasetLoader.load_dataset_samples(task_config)
+
+    assert (
+        exc_info.value.context.message
+        == "Cannot determine dataset type for: invalid-dataset-source-name"
+    )
 
 
 class TestEvalSampleResult:

@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 from loguru import logger
 
 from tldw_chatbook.Utils.private_paths import lexical_path
+from tldw_chatbook.Utils.tls_trust import httpx_verify
 from tldw_chatbook.config import (
     DEFAULT_CONFIG_PATH,
     application_owned_config_directory,
@@ -224,11 +225,13 @@ def build_runtime_api_client(
         )
 
     if resolved_auth_method in {"bearer", "custom_token"}:
-        client = TLDWAPIClient(base_url=resolved_endpoint)
+        client = TLDWAPIClient(base_url=resolved_endpoint, ssl_verify=httpx_verify())
         client.bearer_token = resolved_auth_token
         return client
 
-    return TLDWAPIClient(base_url=resolved_endpoint, token=resolved_auth_token)
+    return TLDWAPIClient(
+        base_url=resolved_endpoint, token=resolved_auth_token, ssl_verify=httpx_verify()
+    )
 
 
 def build_runtime_api_client_from_config(

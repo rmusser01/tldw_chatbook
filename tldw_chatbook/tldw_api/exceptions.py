@@ -5,6 +5,13 @@
 #
 # Functions:
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .sync_schemas import SyncPersonalContextBootstrapAttention
+
 
 class TLDWAPIError(Exception):
     """Base exception for tldw_api errors."""
@@ -33,6 +40,14 @@ class APIResponseError(TLDWAPIError):
         super().__init__(f"API Error {status_code}: {message}")
         self.status_code = status_code
         self.response_data = response_data or {}
+
+
+class PersonalContextBootstrapAttentionError(TLDWAPIError):
+    """Raise one strictly validated, content-free bootstrap attention result."""
+
+    def __init__(self, attention: "SyncPersonalContextBootstrapAttention") -> None:
+        super().__init__("personal_context_bootstrap_attention_required")
+        self.attention = attention
 
 
 class AuthenticationError(TLDWAPIError):

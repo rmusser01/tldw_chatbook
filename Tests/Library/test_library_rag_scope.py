@@ -119,9 +119,16 @@ class _SpyConversationsDB:
     def __init__(self, rows=None):
         self.rows = rows if rows is not None else []
         self.call_count = 0
+        self.match_queries: list[str | None] = []
 
-    def search_conversations_by_content(self, query, limit):
+    def search_conversations_by_content(self, query, limit, fts_match_query=None):
+        # TASK-19558: the seam now hands its pre-built (plural/singular- or
+        # prefix-widened) MATCH expression in through `fts_match_query`
+        # rather than through the plain-text parameter, which the DB method
+        # quotes as a literal phrase. Recorded rather than ignored so a
+        # future regression to passing it positionally is visible here.
         self.call_count += 1
+        self.match_queries.append(fts_match_query)
         return self.rows
 
 
@@ -439,6 +446,8 @@ async def test_unscoped_keyword_search_includes_conversations_no_diagnostics():
     result = await service.search("q", ("conversations",), "search", top_k=5)
 
     assert conv_db.call_count == 1
+    # The widened MATCH expression reaches the DB through `fts_match_query`.
+    assert conv_db.match_queries == ['"q"']
     assert result["diagnostics"] == {}
 
 
@@ -583,21 +592,40 @@ async def test_unscoped_call_without_scope_kwarg_is_byte_identical_to_explicit_n
 
 
 def test_library_screen_call_sites_never_pass_scope_kwarg():
-    """D2 guard: grep-assert (AST-based) that the Library screen's own
-    Search canvas never passes `scope=` when building a
-    `LibraryRagSearchRequest` -- it must stay unscoped by omission, the
-    dataclass default doing all the work."""
-    source_path = (
-        Path(tldw_chatbook.__file__).parent / "UI" / "Screens" / "library_screen.py"
-    )
-    tree = ast.parse(source_path.read_text())
-    request_calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "LibraryRagSearchRequest"
+    """D2 guard: grep-assert (AST-based) that the Library Search canvas's
+    `LibraryRagSearchRequest(...)` construction never passes `scope=` -- it
+    must stay unscoped by omission, the dataclass default doing all the
+    work.
+
+    Censused over BOTH `library_screen.py` and
+    `library_rag_search_controller.py`, not `library_screen.py` alone: the
+    invariant this guards ("no call site anywhere passes scope=") is about
+    the construction site, not about which file currently holds it. Wave-3
+    task 3 (search+RAG controller PR) moved the sole call site from
+    `library_screen.py` to `library_rag_search_controller.py`
+    (`_start_library_rag_query`); a single-file census would have gone
+    silently green with zero call sites checked the moment the last one
+    moved, rather than failing loudly as it did here. Censusing both files
+    means a future move back onto the screen, or a second call site added
+    on either file, stays covered without another retarget.
+    """
+    source_paths = [
+        Path(tldw_chatbook.__file__).parent / "UI" / "Screens" / "library_screen.py",
+        Path(tldw_chatbook.__file__).parent
+        / "UI"
+        / "Library_Modules"
+        / "library_rag_search_controller.py",
     ]
+    request_calls = []
+    for source_path in source_paths:
+        tree = ast.parse(source_path.read_text())
+        request_calls.extend(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "LibraryRagSearchRequest"
+        )
     assert request_calls, "expected at least one LibraryRagSearchRequest(...) call site"
     for call in request_calls:
         keyword_names = {kw.arg for kw in call.keywords}
@@ -808,3 +836,67 @@ async def test_console_scope_resolution_unscoped_when_no_active_session():
 
     assert outcome is None
     assert scoped_request is request
+
+
+def test_search_kind_canvas_sync_never_targets_the_screen_directly():
+    """TASK-31261: every `_sync_library_canvas(..., "search", ...)` call site
+    forwards the CONTROLLER as the screen argument, never LibraryScreen.
+
+    The dispatcher's search-kind branch writes the flat
+    `_library_rag_answer_render_key` attribute directly on its receiver;
+    LibraryScreen has no `_rag_search_state`, so a screen-targeted call
+    would silently grow a dead instance attribute instead of raising. The
+    invariant was verified once by hand (an AST-verified code comment); this
+    census makes it standing, following the two-file pattern of
+    `test_library_screen_call_sites_never_pass_scope_kwarg` above but
+    sweeping the screen AND every Library controller module, so the census
+    cannot go silently green if the call sites move again.
+    """
+    package_root = Path(tldw_chatbook.__file__).parent
+    candidate_files = [
+        package_root / "UI" / "Screens" / "library_screen.py",
+        *sorted((package_root / "UI" / "Library_Modules").glob("*.py")),
+    ]
+
+    def _search_kind_calls(tree):
+        found = []
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_sync_library_canvas"
+            ):
+                continue
+            args = list(node.args)
+            kind_is_search = False
+            if len(args) >= 2 and isinstance(args[1], ast.Constant):
+                kind_is_search = args[1].value == "search"
+            kind_is_search = kind_is_search or any(
+                kw.arg == "kind"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value == "search"
+                for kw in node.keywords
+            )
+            if kind_is_search:
+                found.append(node.lineno)
+        return found
+
+    total_sites = 0
+    for source_path in candidate_files:
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        sites = _search_kind_calls(tree)
+        total_sites += len(sites)
+        if source_path.name == "library_rag_search_controller.py":
+            continue
+        assert not sites, (
+            f"{source_path.name} calls _sync_library_canvas with kind "
+            f'"search" directly (line(s) {sites}): search-kind syncs must '
+            "go through LibraryRagSearchController, which owns "
+            "_rag_search_state -- a screen receiver would silently grow a "
+            "dead attribute instead of raising."
+        )
+
+    assert total_sites >= 1, (
+        "no search-kind _sync_library_canvas call site found in any "
+        "censused file; the invariant cannot be verified by an empty census"
+    )

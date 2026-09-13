@@ -2582,9 +2582,7 @@ def test_faster_whisper_cache_probe_resolves_without_network(monkeypatch):
 
     assert callable(probe)
     assert probe("base") is True
-    assert dependency_requests == [
-        ("faster_whisper", "transcription_faster_whisper")
-    ]
+    assert dependency_requests == [("faster_whisper", "transcription_faster_whisper")]
     assert calls == [("base", {"local_files_only": True})]
 
 
@@ -3031,3 +3029,15 @@ def test_the_observed_console_dot_com_mishear_fires_stop(monkeypatch):
     _stub_settings(monkeypatch, {})
     result = cvi.classify_segment("Console.com")
     assert isinstance(result, cvi.VoiceCommand) and result.name == "stop"
+
+
+@pytest.mark.parametrize(
+    "raw", ["nan", "inf", "-inf", float("nan"), float("inf"), float("-inf")]
+)
+def test_handsfree_send_delay_rejects_non_finite_values(monkeypatch, raw):
+    """PR #2638 Qodo #5: IEEE non-finite values sail through a plain
+    `value <= 0` check (NaN compares False to everything) and would arm a
+    countdown that never expires (inf) or collapses (NaN). They must fall
+    back to the default like any other invalid value."""
+    _stub_settings(monkeypatch, {"dictation.handsfree_send_delay_seconds": raw})
+    assert cvi.handsfree_send_delay_seconds() == cvi.DEFAULT_HANDSFREE_SEND_DELAY_SECONDS

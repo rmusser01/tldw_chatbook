@@ -16,15 +16,17 @@ you touch them; some are read-only and point you elsewhere.
 
 ## Getting there
 
-- **Press F9 from anywhere** — it works even while a text field has focus.
-  Settings is the last of thirteen destinations: the first ten get
-  **Ctrl+1 … Ctrl+0**, and the remaining three get function keys — the nav
-  bar labels say so ("F7 Lab", "F8 Logs", "F9 Settings").
-- **Click "F9 Settings" in the nav bar.** On a narrow window a "More ▾"
+- **Press F4 from anywhere** — it works even while a text field has focus.
+  Settings is the thirteenth of fifteen destinations: the first ten get
+  **Ctrl+1 … Ctrl+0**, and the remaining five continue onto the function-key
+  row from its left end — **F2**, **F3**, **F4**, **F5**, then **F7** (F6 is
+  reserved for pane cycling) — the nav bar labels say so ("F2 Lab", "F3
+  Logs", "F4 Settings", "F5 Research", "F7 Meetings").
+- **Click "F4 Settings" in the nav bar.** On a narrow window a "More ▾"
   button appears at the right edge and opens a menu listing every
-  destination — pick "F9 Settings" there; when everything fits, no button
+  destination — pick "F4 Settings" there; when everything fits, no button
   shows. Once Settings opens, the strip scrolls so the highlighted
-  "F9 Settings" tab stays visible (task-4024).
+  "F4 Settings" tab stays visible (task-4024).
 - **Ctrl+P** → "Tab Navigation: Switch to Settings", or "Settings &
   Preferences: Open Settings Tab". Typing **stats** also surfaces the Settings
   entry, because "stats" is one of this screen's legacy route names — but the
@@ -43,17 +45,24 @@ you touch them; some are read-only and point you elsewhere.
 | **Mode strip** | "Mode: \<category\>" — on Overview only, it adds "\| Runtime controls stay in MCP and ACP". |
 | **Category rail** (left, untitled) | A filter box ("Filter categories (/)"), a status line, then group headings — **Core**, **Interface**, **Data & Privacy**, **Troubleshooting**, **Expert** — with one row per category. The sixth heading is a button, "Domain Defaults ▸ (10)": that group is **collapsed by default** — click it (▸ becomes ▾) to show its ten rows; it opens itself while you are on one of them or while the filter has text. A row is marked **>** when it is the one you are on, **(view)** when the page is read-only, and **\*** when it holds unsaved changes. |
 | **Detail pane** (middle, untitled) | The category's page, with the **State banner** pinned above it; everything below the banner scrolls. |
-| **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the six draft categories — Overview shows **Open Theme editor** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows. "▼ more — scroll the inspector" appears when there is more below. |
+| **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the seven draft categories — Overview shows **Open Theme editor** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows. "▼ more — scroll the inspector" appears when there is more below. |
 | **Footer** | This category's live shortcut hints (see [Keyboard & commands](#keyboard--commands)). |
 
 Moving around: **click** a rail row, or **Tab** from the nav bar to drop focus
 into the rail at **Overview**, then **j**/**k** or **↑**/**↓** to move and
 **Enter** to open; Tab again walks into the detail pane's fields. **/** focuses
 the filter from anywhere; its status line reads "No filter | / focus category
-search", "Filter: \<text\> | N matches | Enter opens \<Category\>" (singular
-"1 match" for a lone hit, and the target gains "› \<Field\>" when your text
-named a field), or "Filter: \<text\> | 0 matches | Esc clears". **Enter** jumps
-to the top match and clears the filter; **Esc** just clears it. Some pages also
+search", "Filter: \<text\> | N matches | Enter opens \<Category\> (\<Group\>)"
+(singular "1 match" for a lone hit; when your text named a **setting**, the
+target becomes "\<Category\> › \<Field\> (\<Group\>)" — e.g. "reduce motion"
+promises "Appearance › Reduce motion (Interface)" — and with more than one
+match a "| Next: \<second match with its scope\>" segment disambiguates, so
+"theme" shows both the Theme category and Appearance's Theme setting), or
+"Filter: \<text\> | 0 matches | Esc clears". **Enter** jumps to the top match
+and clears the filter — landing focus **on the matched setting** when your text
+named one (typing a category's own name just opens the category); **Esc** just
+clears it. The filter knows every rendered setting's visible label, on every
+category. Some pages also
 carry jump buttons: **Open Providers & Models** and **Open Advanced Config** on
 Privacy & Security, five guided-path chips on Advanced Config, and **Open Theme
 editor** on Overview and Appearance.
@@ -71,16 +80,16 @@ Scope Inspector's buttons lose their "— no changes" suffix.
 
 | Badge | What it means | Categories |
 |---|---|---|
-| **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Speech & TTS, Appearance, Console Behavior, Storage, [RAG](settings/rag.md) |
+| **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Web Search, Speech & TTS, Appearance, Console Behavior, Storage, Privacy & Security, [RAG](settings/rag.md) |
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
-| **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces |
+| **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces, [My Profile](settings/personal-context-profile.md) |
 | **Managed in editor** | The editor's own **Apply** / **Save** / **Reset** persist things. | Theme |
 | **Per-item Save/Reset** | Each item saves and resets on its own, inside its editor. | Internal Prompts |
 | **Validate, then Save** | Save stays blocked until the current text validates. | Advanced Config |
-| **Read-only here** | Nothing on the page changes anything; it names the destination that owns it. | Overview, Privacy & Security, Diagnostics, and the eight view-only Domain Defaults pages |
+| **Read-only here** | Nothing on the page changes anything; it names the destination that owns it. | Overview, Diagnostics, and the eight view-only Domain Defaults pages |
 
-On the six **Draft — save with s** categories the banner switches to "State:
+On the seven **Draft — save with s** categories the banner switches to "State:
 Unsaved changes | Save (s) or Revert (r) — switching categories keeps this
 draft." **That promise is literal:** no dialog warns you when you leave a
 category or the screen with unsaved edits, because the draft is kept — the
@@ -91,7 +100,50 @@ the draft; see that section and Quirks.) A draft that fails
 validation shows "State: Needs correction | \<the problem\>" and Save stays
 blocked; with nothing pending, the buttons read **Save (s) — no changes** and
 **Revert (r) — no changes**. Saving is always local: nothing leaves your machine
-unless you run Manual sync from Overview yourself.
+unless you explicitly run a network action, such as Manual sync from Overview
+or **Test saved settings** in Web Search.
+
+### Web Search: first setup and additional backends
+
+Open **F4 → Web Search** under **Core**, or filter categories by a provider
+name such as Brave, Serper, or SearXNG.
+
+1. Choose **Default search backend**. Basic and deep search use this saved
+   preference; a per-search override remains temporary. Selecting a default
+   also opens that backend's fields.
+2. Enter the required API key, IDs, or SearX instance URL. Saved secrets stay
+   hidden: an empty replacement field keeps the saved key. **Clear local…**
+   stages removal. The source line identifies environment variables, which
+   take precedence over local values and are not removed by Clear.
+3. **Save (s)** writes all staged Web Search changes together. At compact
+   terminal sizes, scroll to **Save all search settings**. While typing in an
+   input, Tab out before using the single-letter shortcut. **Revert (r)** asks
+   before discarding the category's draft. Provider and category switching keep
+   drafts, including masked replacements. Leaving and reopening Settings also
+   preserves **Configure backend** and an in-progress save. Reopen Web Search
+   to see its saved or failed result; a failed write keeps the draft. If the
+   result says **Saved to disk**, restart the app before searching: the file was
+   written, but runtime refresh failed.
+4. Read the local setup status, then choose **Test saved settings**. The test
+   sends **tldw chatbook** to the configured backend and may use API quota. It
+   does not generate an AI answer. Save or revert all Web Search edits before
+   testing. A successful test applies only to that saved setup; edits or
+   navigation invalidate the displayed result. Request retries can extend the
+   test duration. If you leave while a test is running, it finishes in the
+   background and its result is discarded. A second test remains unavailable
+   until the earlier request finishes.
+
+For experienced users, **Configure backend** prepares any of the ten
+integrations without changing the default. Incomplete setups can be saved;
+the page continues to identify missing requirements. No automatic provider
+fallback occurs. A successful save does not prove authentication or quota.
+
+DuckDuckGo needs the `websearch` optional dependencies and no API key.
+SearX/SearXNG needs an instance that permits JSON searches; local and LAN
+endpoints are supported. Bing is retained for legacy configuration but its
+retired API cannot pass setup. Google Custom Search is restricted to existing
+customers, and the current Kagi integration uses its deprecated v0 API. The
+page links to each backend's setup guide and displays these restrictions.
 
 ### The category map
 
@@ -99,6 +151,7 @@ unless you run Manual sync from Overview yourself.
 |---|---|---|---|
 | Core | **Overview** (view) | Readiness, storage, privacy, Console behavior, diagnostics. | Read-only here |
 | Core | **Providers & Models** | Default provider, model, and readiness shared with Console. | Draft — save with s |
+| Core | **Web Search** | Shared basic/deep search default, backend credentials, local setup checks, and explicit saved-settings test. | Draft — save with s |
 | Core | **Speech & TTS** | Application-wide TTS provider, model, voice, format, speed, and per-provider setup. | Draft — save with s (leave prompts) |
 | Interface | **Appearance** | Theme, density, and visual defaults shared with the app shell. | Draft — save with s |
 | Interface | **Theme** | Full theme editor, custom colors, presets, and live preview. | Managed in editor |
@@ -106,7 +159,8 @@ unless you run Manual sync from Overview yourself.
 | Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
 | Data & Privacy | **Workspaces** | Create, rename, archive, and bind folders for agent file tools. | Applies immediately |
-| Data & Privacy | **Privacy & Security** (view) | Secrets, encryption, redaction, and local privacy boundaries. | Read-only here |
+| Data & Privacy | **My Profile** → [own page](settings/personal-context-profile.md) | Personal and workspace context, interviews, agent proposals, authority, export, and removal. | Applies immediately |
+| Data & Privacy | **Privacy & Security** | Secrets, encryption, redaction, local privacy boundaries, and the raw CLI host-access gate. | Draft — save with s |
 | Troubleshooting | **Diagnostics** (view) | Config validation, logs, and troubleshooting signals. | Read-only here |
 | Troubleshooting | **About** (view) | Version, license, and project links. | Read-only here |
 | Troubleshooting | **Agents** | Named sub-agent definitions the Console supervisor can spawn. | Applies immediately |
@@ -252,40 +306,88 @@ duplicates, enter a nonblank model and an absolute HTTP(S) base without
 credentials in the URL, then correct timeout/retry/streaming types in
 **Advanced Config**. Test the draft again before saving.
 
+#### Custom endpoints
+
+A **custom endpoint** is a named endpoint entry you can template off any
+provider — a localhost llama.cpp, a GPU box on the LAN, a rented
+OpenAI-compatible server — saved in `config.toml` under
+`[custom_endpoints.<slug>]`. Each entry runs as one of three families and
+behaves exactly like that built-in provider pointed at another origin:
+
+| Family | Behavior |
+|---|---|
+| **llama.cpp** | The direct llama.cpp path, with llama-style base-URL normalization. |
+| **OpenAI-compatible** | The generic OpenAI-compatible path the built-in `custom` slot uses. |
+| **Ollama** | The Ollama path, including its model-discovery fallback. |
+
+Entries show in the Console provider list under their display name (their
+provider id is `custom-ep:<slug>`), each with its own cached model list.
+Sampling and generation settings are never copied from a template — they
+stay governed by the per-provider defaults chain. Credentials follow the
+usual precedence — `api_key_env` (a variable name; the safer form) wins over
+a stored `api_key` — and endpoint displays never show the key.
+
+**Creating one.** In the Console settings modal, the **New endpoint…**
+button sits with **Base URL** (it appears for providers that take a base
+URL, and whenever named endpoints exist). It opens "New endpoint from
+template": pick a template — the "OpenAI-compatible (blank)" starter, any
+provider, or an existing named entry (as a duplicate) — adjust the prefilled
+**Family**, **Base URL**, and **Models**, give it a **Display name** (the
+slug is derived from the name), and press **Create**. The entry is written
+to `config.toml` immediately, the modal switches to the new provider, and
+model discovery runs against the new URL; **Cancel** leaves config
+untouched. Because entries are durable config, selecting one never trips
+the "Endpoint not saved" block, and conversations using them survive
+restart.
+
+This page's **Custom endpoints** section manages them. Each row reads
+*name · family · safe URL · model count*, with three actions:
+
+| Action | What it does |
+|---|---|
+| **Rename** | Changes the display name only — the slug (the id conversations reference) never changes. |
+| **Edit** | Rewrites **Base URL**, **Env var**, and **Models**. Existing conversations re-resolve the URL on their next send. |
+| **Delete** | Blocked while any conversation still uses the entry: the status line names them and reveals **Detach references**, which keeps each conversation's current endpoint as conversation-only and then deletes the entry. Switching those conversations' provider first also unblocks it. |
+
+The two built-in Custom OpenAI-compatible slots (`custom`, `custom_2`) are
+listed below the entries once they have a configured endpoint, each with a
+one-way **Convert to named endpoint** action: it creates a registry entry
+from the slot's URL and models and leaves the slot untouched. Converting
+carries an env-var reference but **not** the slot's stored API key — set an
+env-var reference via **Edit ▸ Env var** (and export that variable), or the
+converted endpoint will fail authentication.
+
 ### Core — Speech & TTS
 
 Application-wide speech and text-to-speech defaults — which TTS provider
 speaks by default, with what model, voice, output format, and speed — plus
-per-provider setup. The pane opens with its scope in a banner: "You are
-editing application-wide Speech & TTS defaults. The Speech Studio can keep
-separate Studio preferences without changing these values.", and an **Open
-Speech Lab** button, because this pane deliberately does *not* talk to any
-server: "Settings reuses accepted in-memory observations only. Open Speech
-Lab to test the server or refresh models and voices." Right below that
-button, a note points at the two surfaces this pane does not manage: "Voice
-profiles are managed in Lab > Speech > Voice Profiles — open Speech Lab,
-above, to get there. Per-character voices are assigned in the Roleplay
-character editor's Voice & Speech section, not here." Ordinary **Save**
-"validates and persists locally. Use Speech Lab for connection tests,
-discovery, generation, and playback."
+per-provider setup. The pane opens with a two-line scope banner — "Editing
+application-wide Speech & TTS defaults — Speech Studio preferences stay
+separate." and "Voice profiles: Speech Lab (open it from the actions below).
+Per-character voices: the Roleplay character editor." — because this pane
+deliberately does *not* talk to any server: "Settings reuses accepted
+in-memory observations only. Open Speech Lab to test the server or refresh
+models and voices." Ordinary **Save** "validates and persists locally. Use
+Speech Lab for connection tests, discovery, generation, and playback."
 
 | Card | What's in it |
 |---|---|
-| **Global defaults** | A status line ("Global default selection: … — effective source …"), the default voice-profile row, **Default TTS Provider** (audio.cpp, OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, AllTalk), model policy (**Exact** with an "Exact model ID" box / **First available**), voice policy (**Exact** / **Server default**), **Output format** (MP3 / Opus / AAC / FLAC / WAV), and **Speed** ("0.25 - 4.0"). Capability limits are stated inline — "audio.cpp requires WAV output and speed 1.0." — and validated before Save. |
-| **Provider setup** | A **Configure Provider** picker for editing any provider's setup without switching the default ("Configure Provider does not change the Default TTS Provider."). Credentials get Set / Replace / Clear dialogs: the editor "starts empty", stores "a local config secret; an environment variable is safer and more portable", and Clear "removes only the local-config value. It cannot change a process environment variable." |
+| **Global defaults** | A status line ("Default voice setup: …"), the default voice-profile row, **Default TTS provider** (audio.cpp, OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, AllTalk), model policy (**Exact** / **First available**), **Model value** — a dropdown of the provider's known models plus **Custom…** for an exact ID (a saved unknown ID stays selectable as "(custom)"), voice policy (**Exact** / **Server default**), **Voice value** — a dropdown of the provider's known labeled voices plus **Custom…**, with a **Browse in Speech Lab** button beside it to preview voices first, **Output format** (MP3 / Opus / AAC / FLAC / WAV), and **Speed (0.25-4.0)**. Capability limits are stated inline — "audio.cpp requires WAV output and speed 1.0." — and validated before Save. |
+| **Provider setup** | A **Configure provider** picker for editing any provider's setup without switching the default ("Configure provider does not change the Default TTS provider."), plus a "Current status: …" readiness line. Local providers (Kokoro, Chatterbox, Higgs) open with their install/readiness fact inline — "Local Kokoro: not installed — install the extra 'tldw_chatbook[local_tts]' and restart Chatbook first." — and the Kokoro form names its model files ("kokoro-v0_19.onnx (~300 MB) plus voices.json") with a pointer to the download utility. Credentials get Set / Replace / Clear dialogs: the editor "starts empty", stores "a local config secret; an environment variable is safer and more portable", and Clear "removes only the local-config value. It cannot change a process environment variable." Chatterbox and Higgs group their fields into collapsible sections (Compute and generation / Voice and processing / Streaming, and Model and voice / Compute / Generation). |
 | **Configuration inspector** | Read-out of the selected setup and where each value comes from ("Selected provider setup source: …"). |
-| **Realtime engine** | "Optional low-latency voice engine for the Console's hands-free loop (Ctrl+Shift+H)." — a switch plus its engine fields; off means the record → transcribe → reply → speak pipeline is used as before. |
+| **Realtime engine** | "Optional low-latency voice engine for the Console's hands-free loop (Ctrl+Shift+H)." — a switch plus its engine fields; off means the record → transcribe → reply → speak pipeline is used as before. Also the pipeline loop's tuning knobs: **Send delay (seconds)** (blank keeps the 1.5s default) and **Acoustic barge-in (headphones)** (voice-interrupt a spoken reply; no echo cancellation, headphones expected) — see [Voice & hands-free](console/voice-and-hands-free.md). |
 
-Buttons: **Save**, **Revert**, **Restore Non-secret Defaults** ("Non-secret
-defaults restored in the draft; choose Save to persist them." — credentials
-are left alone), **Open Speech Lab**.
+Buttons: **Save**, **Revert**, **Restore Non-secret Defaults** (draft-only;
+its tooltip and the result line name exactly what resets — global defaults
+and the selected provider, with saved credentials and environment-owned
+values untouched), **Open Speech Lab**.
 
 **This is the one draft category that will not let you walk away silently.**
 Leaving Speech & TTS with unsaved edits raises "Unsaved global Speech & TTS
 settings — Save these application-wide changes before continuing, or discard
 them?" with **Cancel** / **Discard and continue** / **Save and continue** —
-the draft is resolved, not kept (see Quirks: the State banner still claims
-otherwise, task-2708).
+the draft is resolved, not kept, and the State banner says so: "leaving
+Speech & TTS resolves this draft: save or discard first" (task-2708).
 
 ### Interface — Appearance
 
@@ -293,28 +395,51 @@ otherwise, task-2708).
 editing and deeper visual preview." **Global visual defaults** holds **Theme**,
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
 and scrolling** holds **Animations** and **Smooth scrolling**, each a button
-whose label is its state (Enabled / Disabled); **Preview and boundary**
+whose label is its state (Enabled / Disabled). **Shared Library rail**
+remembers whether the rail and destination Items panes are open. **Automatic
+width** follows the 3:13 Library-to-canvas proportion plus five cells, bounded to 29–39 cells
+when space allows.
+**Custom width** enables explicit preferences (Library 24–48, Items 32–72);
+ordinary layouts may temporarily shrink the rail to preserve 40 content cells,
+and adaptive readers may collapse or prioritize panes. **Reset layout** restores
+both panes open, automatic width, a 36-cell dormant Library preference, and
+50-cell Items preferences. Below 64 columns, ordinary routes show either the
+rail or canvas and provide **‹ Library** (or **< Library** with ASCII glyphs)
+to return. Responsive compression, collapse, resizing, and mode changes are
+temporary and never saved.
+**Preview and boundary**
 summarises what a save will touch. **Preview** applies runtime-safe values for
 this session only and persists nothing ("Appearance preview applied for this
 session only.") — it is the only way to see *this pane's* theme selection
 without restarting.
-Four of the six fields are less useful than they look (see
-[Quirks](#quirks--troubleshooting)); **Theme** and **Density** are the two that
-matter.
+Some launch-only fields are less immediate than they look (see
+[Quirks](#quirks--troubleshooting)); Library layout changes refresh mounted
+Library readers after a successful save.
 
 ### Interface — Theme
 
-A full editor with its own save model: **Theme Library** (a **Name** box, live
-only after **New** or **Clone**; a **Dark theme** switch; a browsable **Themes**
-tree), **Color Palette** (ten hex boxes, Primary through Error), **Color
-Presets** (click a swatch row to fill the last box you touched), and a
-decorative **Live Preview**. **New** and **Clone** start a theme and unlock the
-name box; **Generate from Primary** derives the palette from the primary color;
-**Apply** applies it **for this session only** and writes nothing; **Save**
-stores it as a theme you can pick later (built-ins can't be overwritten);
-**Reset** reloads it as last saved; **Delete** and **Export** remove it or write
-it to your Downloads folder. **This editor never sets the launch default** —
-press **Save** here, then pick the theme in **Appearance** → **Theme**.
+A full editor with its own save model. **Theme Library**: a **Name** box (live
+for anything but the two Textual built-ins), a **Dark theme** On/Off toggle,
+the **New / Clone / Delete / Export** row, and a **Themes** tree that lists
+**Your themes** first and open, then **Built-in**, then the **Shipped themes**
+catalog collapsed. Selecting a theme in the tree only loads it for editing; it
+never changes the running app. **Actions** come next: **Apply** applies the
+palette **for this session only** and writes nothing; **Save** stores it as a
+TOML file in your profile's `themes/` folder and registers it at once, so it
+appears in **Appearance** → **Theme** and in the palette's "Theme: Switch
+to…" list without a restart (built-ins can't be overwritten, and saving over
+another saved theme asks first); **Reset** reloads it as last saved; **Generate
+from Primary** derives a palette from the primary colour; **Set as launch
+default** writes the saved theme's name to `general.default_theme` so it
+loads at startup. **Color Palette** is ten hex boxes, Primary through Error,
+each with a swatch showing the colour and its hex; an invalid value marks the
+box and the swatch reads "invalid". **Color Presets** fill the colour chosen in
+the **Presets fill** box (Primary by default), by click or by focusing a swatch
+and pressing Enter or Space. The **Live Preview** is a Console-shaped stub that
+repaints as you type. **New** starts a theme from the palette currently loaded;
+**Clone** does the same and appends `_copy` to the name. **Delete** removes a
+saved theme after confirmation; **Export** writes it to your Downloads folder
+and asks before replacing an earlier export.
 
 ### Interface — Splash Screen
 
@@ -326,12 +451,22 @@ replays it, **Set as default** points the startup card at it. Everything here
 takes effect **at the next launch**; the gallery preview is the only in-session
 feedback.
 
+**Skip on keypress** does what it says as of TASK-21591: with it on (the
+default), any key pressed while the splash is up dismisses it and boot
+continues immediately. That key is consumed by the splash and does nothing
+else — pressing `F4` mid-splash skips to the app's normal startup screen
+rather than jumping to Settings, and `ctrl+q` mid-splash dismisses the splash,
+so quitting takes a second press. Turn the setting off and the splash always
+runs its full **Duration (s)**, with keys routed exactly as before. Before the
+fix the setting was inert: the splash was never focused, so it never saw a key.
+
 ### Interface — Console Behavior
 
 Drafted, with one exception.
 
 | Group | What's in it |
 |---|---|
+| **Model thinking presentation** | **Show model thinking** is on by default and applies immediately. Off hides displayable and **Thinking · unavailable** rows only; capture, persistence, replay policy, and token accounting continue unchanged. This is a device-local presentation preference, not a request for hidden chain-of-thought. |
 | **Rail presentation** | **Stack collapsed rail labels** is off by default, so the collapsed handles read **Context ▸** and **Inspector** horizontally. Turn it on to use narrower three-column handles with the letters stacked upright. Save the category, then return to Console to see the new style; no restart is required. |
 | **Status row placement** | An **Above composer**/**Below composer** toggle, above by default: where the Console status-chip row (Provider, Model, Tools, …) sits relative to the composer input. Writes immediately — no save, no draft — and takes effect when you return to Console. |
 | **Composer paste handling** | An Enabled/Disabled toggle plus **Threshold (chars)** (1–100000): "Collapse large pasted chunks only when they exceed the threshold." Normal typing stays literal and the message actually sent is unchanged. |
@@ -345,6 +480,14 @@ Two honest limits: fallbacks reach **new or default sessions**, not a
 conversation already open; and "Workbench (advanced)" under **Scope** is
 silently downgraded — "Workbench scope is not available in this build; using
 Transcript scope."
+
+The current conversation's **Thinking history replay** control lives in its
+Console settings, because Auto/Include/Exclude is durable conversation state,
+not a device presentation setting. **Save as default for new conversations**
+copies that optional value to `console.thinking_history_policy_default` for
+future conversations only. An effective **Required** state is derived from
+mandatory provider continuation, is read-only, and never replaces the saved
+optional default.
 
 **Save (s)** and **Revert (r)** apply to every unsaved Console Behavior edit
 together, including Rail presentation. A failed save keeps the draft and leaves
@@ -386,6 +529,12 @@ annotated "— contains N project skill(s)" in the list, and creation is
 followed by a chained import prompt for it — see
 [Project skills](library/skills.md#project-skills-skills).
 
+Folders are optional. Every Console Chat already has an independent private
+temporary scratch space; a named Workspace with no folders remains fully usable
+in scratch-only mode. Bind a folder only to let local file tools reach that
+external directory. `[console] workspace_root` is retained for compatibility
+outside this Console authority path and never grants a Console Chat access.
+
 | Control | What it does |
 |---|---|
 | **Rename** | Renames the selected workspace (the box above it is pre-filled). |
@@ -395,9 +544,9 @@ followed by a chained import prompt for it — see
 | **Add folder** / **Remove** | Bind a folder for agent file tools (new bindings are read-only), or unbind it. |
 | **Allow write** / **Read-only** | Flips a bound folder's access; the button is labelled with the state you would move to. |
 
-The built-in **Default** workspace has no controls at all: "The built-in Default
-workspace keeps its identity and stays tool-less; create a workspace to bind
-folders."
+The built-in **Default** workspace has no controls at all: "Chats in the
+built-in Default workspace use private scratch. Create a named Workspace only
+to bind external folders."
 
 ### Data & Privacy — Privacy & Security
 
@@ -405,10 +554,50 @@ A read-out of your privacy posture: whether config encryption is on, whether
 redaction is active, how many sensitive fields and provider secrets exist
 (counted, never shown), how many referenced environment variables are actually
 set, and your skill-trust status. **Check Privacy** recomputes it; **Open
-Providers & Models** and **Open Advanced Config** are jump buttons. **Nothing on
-this page changes anything** — encryption cannot be switched here, and the page
-says so: "Credential mutation" → "not available yet - password-gated flow
-required". Change secrets in Providers & Models or Advanced Config.
+Providers & Models** and **Open Advanced Config** are jump buttons. Encryption
+and credentials remain read-only here; change secrets in Providers & Models or
+Advanced Config.
+
+The exception is the unmistakable **DANGER!!! RAW CLI HOST ACCESS** section.
+**Allow raw CLI host access** drafts the persistent
+`[console] raw_cli_permitted` unlock. Enabling it opens a warning that says the
+command has the OS user's full filesystem, process, and network authority, may
+read credential files despite the scrubbed environment, may leave detached
+descendants after cleanup, and persists bounded command/output locally. Confirm
+and **Save** before **Arm host access** becomes available. Arm asks again and
+applies only to this launch; it is never written to config, and restart always
+returns to Unlocked/not armed. **Disarm host access** is immediate. Saving the
+unlock Off also disarms and starts bounded cleanup of any active raw command.
+
+Unlocking and arming also makes the model-facing `shell_exec` tool eligible,
+but only while local tools are enabled and the global model-tool kill switch is
+Off. This is not a silent model grant: MCP ▸ Tools exposes raw shell as **Ask or
+Off only**, and even a hand-edited Allow value is treated as Ask. Each model
+command must show its full command and host-authority warning for **Run once**,
+**All shell · session** (one grant covering every later raw command in this
+live Console session), or **Deny**, unless
+that live Console session already has the temporary session grant. Disarm,
+locking raw CLI, shutdown, or restart clears every such grant. By contrast, a
+physically typed `! ` command is a direct user action: once armed, it executes
+without a model approval card and is not controlled by the model-tool kill
+switch. See [Raw CLI: direct user commands and model `shell_exec`](console/agent-runs-and-tools.md#raw-cli-direct-user-commands-and-model-shell_exec)
+for the complete boundary.
+
+The same saved unlock also enables a separate **Arm Terminal** control. Its arm
+is independent: arming Terminal does not arm raw `!` commands or model
+`shell_exec`, and arming raw CLI does not arm Terminal. Both arms live only for
+this Chatbook launch. Terminal starts a normal interactive account shell, so
+startup profiles may restore secrets and commands despite the scrubbed initial
+environment; shell history and other side effects can be written anywhere the
+OS user can access. The selected Workspace or home directory is only the
+starting directory, never confinement. Disarming Terminal immediately blocks
+new input and begins bounded cleanup of every retained Terminal session.
+
+Terminal is user-only: it never registers a model tool and its input, output,
+screen, names, or paths are not added to conversation history, run logs,
+exports, or reconnect state. There is no `terminal_armed` config field. Current
+builds support POSIX PTYs on macOS/Linux and fail closed on Windows; a qualified
+Windows boundary requires a new or superseding ADR.
 
 ### Troubleshooting — Diagnostics
 
@@ -452,6 +641,14 @@ update, depending on whether a definition is selected in the list), **Delete**
 it). A status line under the buttons reports the outcome, including any
 validation error verbatim.
 
+**Bulk reader** fills the form with an unsaved read-only review preset; it does
+not create or overwrite a definition until you press **Save**. Its model starts
+blank. Choose a cheaper model only when the parent's provider endpoint accepts
+that model with the same sampling/thinking settings. The preset's requested
+file list is model guidance inside the active workspace, not an extra path
+permission boundary. See the [bulk-reader comparison pilot](../Examples/agents/bulk-reader/README.md)
+for its synthetic corpus, opt-in evaluator, limits, and manual review steps.
+
 **This is not a draft category.** Unlike the six "Draft — save with s"
 categories, Agents writes straight to the database on every Save or Delete —
 there is no **s**/**r** cycle and nothing to revert. Definitions are read once
@@ -477,17 +674,35 @@ preview, and the shipped default, with **Save**, **Reset to default**, and
 
 ### Expert — Advanced Config
 
-Raw configuration editing, gated: "Raw TOML bypasses guided validation and
-should be used only for expert edits." Five chips at the top — **Providers &
-Models**, **Console Behavior**, **Storage**, **Privacy & Security**,
-**Diagnostics** — jump to the guided page instead, and a status line tracks
-state: "Last validated: not validated" / "current text" / "stale after edits".
+Advanced Config keeps a raw TOML draft while you switch categories or leave
+Settings. Invalid and empty drafts are retained too. The **\*** marker and
+**Unsaved raw TOML** banner show that the draft has not been saved. Drafts live
+only in this running app session; closing the app does not save them.
 
-| Button | What it does |
+Expand **Raw editing guide** for shortcuts to Providers & Models, Console
+Behavior, Storage, Privacy & Security, and Diagnostics. Prefer their guided
+validation when those categories support the setting you need.
+
+| Control | What it does |
 |---|---|
-| **Validate Raw TOML** | Checks the editor text. |
-| **Load Backup** | Loads the backup copy into the editor **without saving it** — a preview you still have to validate. |
-| **Save Raw TOML** | Blocked until the text you are looking at is the exact text that last validated. Writes atomically, keeping a `.bak` backup of the previous file, then reloads. |
+| **Validate Raw TOML** | Checks syntax and the top-level TOML table. It does not test backend credentials or connectivity. |
+| **Save Raw TOML** | Enabled only after the current text validates and the loaded file still matches. Writes atomically, keeps a `.bak` of an existing file, then refreshes runtime configuration. Newer edits made during a save remain unsaved. |
+| **Load Backup** | Loads the backup into the editor without saving it. If you have unsaved work, asks before replacing it. Validate the loaded draft before saving. |
+| **Revert Raw TOML** | Reloads the current file. Asks before discarding unsaved work. The **r** shortcut works outside text entry; **Esc** keeps the draft in the confirmation dialog. |
+
+The validation line reads **Not validated**, **Current text validated**, or
+**Text changed; validate again**. Editing after validation disables Save.
+Background operations retain the draft and finish if you navigate elsewhere.
+Recovery buttons stay unavailable until the current operation finishes.
+
+If guided Settings, another process, or a different config profile changes the
+file while you have a draft, saving is blocked. Copy any edits you want to keep,
+choose **Revert Raw TOML** to load the current file, reapply those edits, then
+validate and save. A failed disk write retains your draft. If the file was saved
+but a later refresh fails, the status says **Saved to disk** and asks you to
+restart. Any newer edits remain unsaved; copy them before restarting. If the
+saved file could not be read back, Save stays blocked until **Revert Raw TOML**
+reloads it; copy any newer edits before reverting too.
 
 ### Domain Defaults — Image Gen
 
@@ -536,9 +751,9 @@ a note on what would have to exist before Settings could own a default.
 3. **Change the theme and make it stick.** Open **Appearance**, choose a
    **Theme**, press **Preview** for a look (this session only), then **s** to
    save the draft — the theme is applied at the next launch. If you built the
-   theme yourself in the **Theme** editor, press **Save** there first, then come
-   back to **Appearance** and select it; the editor never sets the launch
-   default.
+   theme yourself in the **Theme** editor, press **Save** there and then **Set
+   as launch default**; saved themes also appear in **Appearance** → **Theme**
+   as "<Name> (saved)".
 4. **Move a database to a new location.** Open **Storage**, edit that database's
    path box, and press **Check Storage** — you want "ready", not "missing,
    create before restart" (Settings will not create the folder for you). Press
@@ -546,14 +761,14 @@ a note on what would have to exist before Settings could own a default.
    saved paths." Move the file yourself, then restart: until you do, the app
    keeps using the old one, which is what **Active files (resolved this
    session)** is showing you.
-5. **Create a workspace and give an agent a folder.** Open **Workspaces** and
+5. **Create a workspace and optionally give an agent a folder.** Open **Workspaces** and
    press **Create workspace…**. In the dialog, keep the prefilled name (or
-   type your own), enter a folder path and press **Add folder** — it is
-   validated and bound read-only — then leave "Switch to this workspace"
-   checked and press **Create**; the new workspace is created, bound, and
-   activated in one step. Click the new workspace's row to open its card,
-   then press **Allow write** on the folder's row if the agent needs to
-   write. Every step applies immediately; nothing to save.
+   type your own). Press **Create** immediately for a scratch-only Workspace,
+   or enter a folder path and press **Add folder** first — it is validated and
+   bound read-only. Leave "Switch to this workspace" checked to activate the
+   new Workspace in the same step. If you added a folder and the agent needs
+   to write there, open the Workspace card and press **Allow write** on that
+   folder's row. Every step applies immediately; nothing to save.
 6. **Repair a configuration you broke.** Open **Diagnostics** and press
    **Validate Config** — the error names the problem, with secrets redacted. Fix
    it in the guided pages if you can. If not, open **Advanced Config**, press
@@ -575,8 +790,8 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 
 | Key | Action |
 |---|---|
-| s | Save this category — only on the six **Draft — save with s** categories |
-| r | Revert this category — same six. On Theme, Splash Screen, Internal Prompts, and Workspaces it answers "Use the editor's own buttons for this category" |
+| s | Save this category — only on the seven **Draft — save with s** categories |
+| r | Revert this category — same seven. On Theme, Splash Screen, Internal Prompts, and Workspaces it answers "Use the editor's own buttons for this category" |
 | t | Run this category's check. The footer names the real verb: **test provider**, **validate config**, **check storage**, **check privacy**, **preview appearance**, **check index**. Only Providers & Models, Diagnostics, Storage, Privacy & Security, Appearance, and RAG have one |
 | / | Focus the category filter from anywhere on the screen. Pressing it again while the filter has focus re-selects the text rather than typing a slash |
 | Esc | Release a focused field; or, when the filter has text, clear the filter |
@@ -587,7 +802,12 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 
 **F6 does nothing on this screen.** Settings has no pane-cycle target, so it
 only shows a notice — use **Tab**, the rail keys, or the mouse. **F1** opens
-this screen's shortcut list, with the RAG-only keys shown only while on RAG.
+the active category's help: a "How this category works" section (its save
+contract, scope, runtime owner, whether writes are allowed, boundary, and
+recovery — the same contract the State banner and Scope Inspector carry)
+followed by the category's working shortcut keys, with the RAG-only keys shown
+only while on RAG. Every category has a non-empty help body; one without
+category-specific keys says so.
 
 Command palette (**Ctrl+P**) entries that land here: "Settings & Preferences:
 Open Settings Tab" opens the screen; "Settings & Preferences: Show Database
@@ -610,7 +830,10 @@ not open an editor.
   refresh), `[app_tts]` (Speech & TTS defaults, per-provider setup, and the
   default voice profile), `[general]` + `[appearance]` + `[web_server]`
   (Appearance), `[splash_screen]`, `[console]` and `[chat.images]` (Console
-  Behavior), `[database]` (Storage), `[image_generation]`,
+  Behavior, including `show_model_thinking` and the new-conversation
+  `thinking_history_policy_default`; `[console] raw_cli_permitted` is the
+  Privacy & Security raw CLI unlock), `[database]` (Storage),
+  `[image_generation]`,
   `[internal_prompts]`, `[encryption]`, and `[rag.service]` (which RAG profile
   is active). Workspaces are the exception — they live in their own database,
   not in `config.toml`.
@@ -619,7 +842,7 @@ not open an editor.
 
 - **"s" typed a letter instead of saving.** A text box had focus. Press **Esc**,
   then **s**. The footer tells you this is happening: its hints read "Esc, s".
-- **"s" did nothing at all.** That category is not one of the six draft
+- **"s" did nothing at all.** That category is not one of the seven draft
   categories — read the State banner badge and use the control it names.
 - **Four Appearance fields are less than they appear.** **Animations** and
   **Smooth scrolling** are saved but **nothing in the app reads them yet**.
@@ -630,15 +853,15 @@ not open an editor.
   applied once, at launch; **Preview** shows it this session. Two other routes
   do apply a theme immediately: the Theme editor's **Apply** (this session
   only), and the command palette's "Theme: Switch to \<name\>", which applies
-  it *and* rewrites the launch default. A theme you
-  **Save** in the Theme editor is only stored — set it as the launch default in
-  **Appearance**.
+  it *and* rewrites the launch default. A theme you **Save** in the Theme
+  editor is stored and registered but not applied — press **Set as launch
+  default** there, or pick it in **Appearance**.
 - **A splash change had no effect.** All splash settings are startup-only.
   Separately, **Animation speed (x)** is saved to a place this page does not
   read back, so it looks unchanged when you return (backlog task-2706).
-- **Privacy & Security has no control that does anything.** It is a read-out;
-  encryption cannot be turned on or off here, and credential changes are
-  explicitly "not available yet - password-gated flow required".
+- **Privacy & Security cannot edit encryption or credentials.** Those rows are
+  still read-only. Its raw CLI unlock is the deliberate exception: it uses the
+  category's Save/Revert draft, while Arm/Disarm changes process memory only.
 - **"Open Config File" didn't open anything.** By design — that palette command
   only prints the file's location.
 - **A Console setting didn't take.** Global fallbacks reach *new or default*
@@ -646,19 +869,15 @@ not open an editor.
   provider+model setting outranks them. Rail presentation is different: after a
   successful Save, return to a freshly opened Console screen to see it; no app
   restart is required.
-- **Save Raw TOML is greyed out.** You edited the text after validating it.
-  Press **Validate Raw TOML** again — until you do, the status line says "Last
-  validated: stale after edits".
+- **Save Raw TOML is greyed out.** Validate the current text. If the file changed
+  elsewhere, keep a copy of your draft, then **Revert Raw TOML** to reload before
+  reapplying and validating the edits. Read failures also require a successful reload.
 - **A category still shows "\*" after you left it.** Deliberate: drafts survive
   switching categories and leaving the screen, and no dialog warns you, so the
-  **\*** is the reminder. Go back and press **s** or **r**. (Speech & TTS is
+  **\*** is the reminder. Go back and press **s** or **r**. Advanced Config
+  uses its own **Validate Raw TOML**, **Save Raw TOML**, and **Revert Raw TOML** controls. (Speech & TTS is
   the exception — it never leaves a **\*** behind, because leaving it forces
   the save/discard choice.)
-- **Speech & TTS's State banner promises what the category won't do.** While
-  its draft is dirty the shared banner reads "…switching categories keeps this
-  draft." — but leaving Speech & TTS raises "Unsaved global Speech & TTS
-  settings" and the draft is saved or discarded, never kept (backlog
-  task-2708).
 - **The Scope Inspector looks truncated.** Scroll it — "▼ more — scroll the
   inspector" at the bottom means there is more below.
 
@@ -673,9 +892,15 @@ created, selected, edited, and disabled a real definition in a scratch
 profile, fixing a rendering defect on the Name/Description/Model
 override/Tools fields found along the way; the rest of this page's content
 unchanged from the prior stamp).*
+*Interface — Theme rewritten against fix/theme-editor-ux @ 9997d086b4 —
+2026-09-04 (tasks 31250-31259, 31279 and 31280: driven live in a scratch profile — a theme
+saved in the editor now registers at once, appears in Appearance → Theme and
+the palette, and loads at the next launch via **Set as launch default**;
+swatches, the Dark toggle and the preset target are painted; Actions sit above
+the palette; the rest of this page's content unchanged from the prior stamp).*
 *Verified against dev @ 642567627 — 2026-08-10 (task-4024: driven live at
 80 and 120 cols — opening Settings from the nav bar's "More ▾" overflow
-menu now leaves the strip scrolled so "F9 Settings" is visible and
+menu now leaves the strip scrolled so "F4 Settings" is visible and
 highlighted, and it stays that way; the rest of this page's content
 unchanged from the prior stamp).*
 *Console Behavior — Status row placement added against TASK-17652 —
@@ -708,3 +933,39 @@ list, verified by mounted-settings tests driving `kimi-k2.6` and `glm-5.3`;
 preserved thinking is documented for the versioned Kimi family per wire
 probes, with `kimi-latest` excluded; the rest of this page's content
 unchanged from the prior stamp).*
+*Advanced Config — Load Backup's row updated against TASK-19559 and
+TASK-19872 — 2026-08-29 (backup loads are latest-request-wins while preserving
+the original protection for typing after the newest press. Deterministic,
+bounded worker-start and callback-return handshakes verified both overlapping
+completion orders, a newest-success-then-stale-old-error sequence, ordinary
+serial repetition, and genuine typing; removing the ordering guard or typing
+guard made its respective cases fail. The rest of this page's content is
+unchanged from the prior stamp).*
+*Interface — Splash Screen's row updated against TASK-21591 — 2026-08-25
+(**Skip on keypress** shipped default-true and could not fire: `SplashScreen`
+is a `Container`, Textual routes a key to the focused widget and bubbles it
+upward, and nothing focused the splash. It now takes focus when the skip is
+enabled, and consumes the dismissing key so a navigation key pressed during
+startup cannot also act on the app being booted. Verified in a real terminal,
+not only under Pilot: against a 25 s splash, Space 23 ms after the first
+painted frame dismissed it and boot completed; `F4` at the same moment
+dismissed it and left the app on Home, not Settings; and with the setting off
+the same key left the splash up for its full 20 s. The rest of this page's
+content unchanged from the prior stamp.)*
+
+*Verified against feat/settings-ux-critique-burndown @ c38314a26 — 2026-08-28
+(TASK-23104/23108/23109/23110: the State banner renders exactly once per
+category with exactly one "State:" segment (domain pages and Overview used to
+show it doubled and self-colliding); unexpected model-discovery and RAG
+backfill failures now surface plain-language status/toast copy with a next
+step instead of raw exception text; F1 help gained the per-category contract
+body described above; and "/" search gained setting-level coverage with the
+scoped "Enter opens … (Group)" / "Next: …" echo line. Driven live headless:
+"reduce motion" surfaced "Appearance › Reduce motion (Interface)" and Enter
+landed focus on the control; "theme" echoed both scoped matches. The rest of
+this page's content unchanged from the prior stamp.)*
+
+*Verified against `fix/approval-wave-b-card` @ e7409210cc — 2026-09-10
+(task-32290): the model `shell_exec` card's session choice is labelled
+**All shell · session** (`_RAW_SHELL_DECISION_OPTIONS`), not the longer
+sentence this page quoted.*

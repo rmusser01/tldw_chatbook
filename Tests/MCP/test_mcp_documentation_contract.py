@@ -7,6 +7,10 @@ import re
 
 import pytest
 
+from tldw_chatbook.Library.library_tool_contract import (
+    LIBRARY_TOOL_DESCRIPTORS,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCUMENTS = (
@@ -38,6 +42,13 @@ LOCAL_TOOL_PROVIDER = REPO_ROOT / "tldw_chatbook" / "Agents" / "local_tool_provi
 MCP_SERVER = REPO_ROOT / "tldw_chatbook" / "MCP" / "server.py"
 MCP_WORKBENCH = REPO_ROOT / "tldw_chatbook" / "UI" / "MCP_Modules" / "mcp_workbench.py"
 WATCHLISTS_TOOL_DOCUMENTS = (CONSOLE_AGENT_TOOLS_DOCUMENT, USER_GUIDE_DOCUMENT)
+WATCHLISTS_REMEDIATION_DESIGN = (
+    REPO_ROOT
+    / "Docs"
+    / "superpowers"
+    / "specs"
+    / "2026-08-26-console-driven-watchlists-workflow-uat-remediation-design.md"
+)
 LOCAL_TOOL_COPY_SURFACES = (
     CONFIG_TEMPLATE,
     BUILTIN_TOOL_GATE,
@@ -75,26 +86,18 @@ PROMPTS = (
     "search_and_synthesize",
     "character_writing",
 )
-PRIVATE_LIBRARY_TOOLS = (
-    "library_list_media",
-    "library_get_media",
-    "library_search_media",
-    "library_list_notes",
-    "library_get_note",
-    "library_search_notes",
-    "library_list_prompts",
-    "library_get_prompt",
-    "library_search_prompts",
-    "library_list_skills",
-    "library_get_skill",
-    "library_search_skills",
-    "library_list_conversations",
-    "library_get_conversation",
-    "library_search_conversations",
-    "library_list_collections",
-    "library_get_collection",
-    "library_search_collections",
-)
+#: Derived, never transcribed. ``LIBRARY_TOOL_DESCRIPTORS`` is the contract the
+#: local MCP manifest is itself built from -- ``MCP/server.py``'s
+#: ``_describe_local_library_tools`` iterates it unfiltered, and its docstring
+#: says outright that it is "never hand-maintained here". A second hand-kept
+#: copy in this test is what let the surface and the documents drift apart in
+#: four directions at once (TASK-21501): the code carried 24 tools while
+#: `Docs/Design/MCP.md` said 18, `Docs/User_Guide/mcp.md` said 23, and this
+#: tuple said 18. Deriving removes the drift class rather than resetting it.
+#:
+#: A tuple rather than a view: ``_mutate_inventory`` indexes element 0 to pick
+#: the token it perturbs.
+PRIVATE_LIBRARY_TOOLS = tuple(LIBRARY_TOOL_DESCRIPTORS)
 INVENTORY_CONTRACT = {
     "Built-in tools": BUILTIN_TOOLS,
     "Resource templates": RESOURCE_TEMPLATES,
@@ -250,6 +253,50 @@ def test_documents_explain_retired_ingest_media_replacement(
     assert "Library Import" in normalized, path
 
 
+def test_mcp_documents_explain_profile_driven_rag_search_compatibility() -> None:
+    for path in (DESIGN_DOCUMENT, USER_GUIDE_DOCUMENT):
+        normalized = " ".join(path.read_text(encoding="utf-8").split())
+        assert "`false` forces media keyword search" in normalized, path
+        assert "`true` or omission follows the active RAG profile" in normalized, path
+        assert "`plain`, `semantic`, or `hybrid` search mode" in normalized, path
+
+
+def test_user_guide_explains_weak_match_similarity_provenance() -> None:
+    normalized = " ".join(USER_GUIDE_DOCUMENT.read_text(encoding="utf-8").split())
+    assert "every similarity-bearing row" in normalized
+    assert "every scored row" not in normalized
+    for contract in (
+        "ordinary semantic rows use their score",
+        "hybrid rows use the preserved vector leg when present",
+        "FTS-only hybrid, reranker, and unscored keyword rows do not trigger a cosine-similarity claim",
+    ):
+        assert contract in normalized
+
+
+def test_console_guide_documents_the_virtual_cli_security_boundary() -> None:
+    normalized = " ".join(
+        CONSOLE_AGENT_TOOLS_DOCUMENT.read_text(encoding="utf-8").split()
+    )
+    assert "one model tool named `virtual_cli`" in normalized
+    assert "does not accept a command-line string" in normalized
+    assert "discoverability is not authorization" in normalized
+    assert "Every command has its own Allow, Ask, or Off setting" in normalized
+    assert "allowing `fs_read` does not allow virtual `cat`" in normalized
+    for command in (
+        "ls",
+        "cat",
+        "grep",
+        "find",
+        "stat",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+    ):
+        assert f"`{command}`" in normalized
+
+
 def test_local_library_tools_documentation_uses_current_standalone_inventory() -> None:
     text = LOCAL_LIBRARY_TOOLS_DOCUMENT.read_text(encoding="utf-8")
     normalized = " ".join(text.split())
@@ -293,6 +340,40 @@ def test_watchlists_tools_document_every_public_parameter_and_bound() -> None:
             "cursor",
         ], path
         assert _tool_parameter_names(text, "watchlists_get_item") == ["item_id"], path
+        assert _tool_parameter_names(text, "watchlists_list_sources") == [
+            "name",
+            "type",
+            "state",
+            "collection",
+            "limit",
+            "cursor",
+        ], path
+        assert _tool_parameter_names(text, "watchlists_list_collections") == [
+            "name",
+            "limit",
+            "cursor",
+        ], path
+        assert _tool_parameter_names(text, "watchlists_list_briefings") == [
+            "collection",
+            "statuses",
+            "since",
+            "limit",
+            "cursor",
+        ], path
+        assert _tool_parameter_names(text, "watchlists_get_briefing") == [
+            "briefing_id",
+            "selected_cursor",
+            "cited_cursor",
+        ], path
+        assert _tool_parameter_names(text, "watchlists_get_operations_status") == [
+            "source",
+            "collection",
+            "limit",
+            "cursor",
+        ], path
+        assert _tool_parameter_names(text, "watchlists_get_operation_status") == [
+            "operation_id"
+        ], path
         for contract in (
             "512 characters and 32 whitespace-delimited terms",
             "collection names are limited to 256 characters",
@@ -331,12 +412,22 @@ def test_watchlists_tools_document_search_evidence_and_cursor_semantics() -> Non
             "`last_checked` and `last_successful_check` remain separate",
             "For “all,” follow `next_cursor` until `has_more` is `false`",
             "Continuation excludes later inserts but is not snapshot isolation",
+            "casefolded_name_prefix_asc_name_prefix_asc_id_asc",
+            "first 96 Unicode characters",
             "server Watchlists search is not yet supported",
             "`status` is `unsupported`",
             "`retryable` is `false`",
             "`message` is exactly `server Watchlists search is not supported; switch Watchlists to Local before retrying`",
         ):
             assert contract in normalized, (path, contract)
+
+
+def test_watchlists_design_pins_bounded_name_cursor_ordering() -> None:
+    normalized = " ".join(
+        WATCHLISTS_REMEDIATION_DESIGN.read_text(encoding="utf-8").split()
+    )
+    assert "casefolded_name_prefix_asc_name_prefix_asc_id_asc" in normalized
+    assert "first 96 Unicode characters" in normalized
 
 
 def test_watchlists_tools_document_privacy_and_external_mcp_permission() -> None:
@@ -350,18 +441,69 @@ def test_watchlists_tools_document_privacy_and_external_mcp_permission() -> None
             "`[mcp] expose_local_tools`",
             "per-tool permission must be Allow",
             "Ask is refused",
-            "send the approved evidence to its client or model",
+            "send approved metadata and receipts to its client or model",
+            "article and briefing content remains Console-only",
         ):
             assert contract in normalized, (path, contract)
 
 
+def test_watchlists_operations_limit_is_documented_as_one_combined_page() -> None:
+    for path in WATCHLISTS_TOOL_DOCUMENTS:
+        normalized = " ".join(path.read_text(encoding="utf-8").split())
+        start = normalized.index("#### `watchlists_get_operations_status`")
+        end = normalized.index("#### `watchlists_get_operation_status`", start)
+        section = normalized[start:end]
+        assert "combined operation page" in section, path
+        assert "per receipt kind" not in section, path
+
+
+def test_watchlists_documents_pin_external_receipts_and_console_content() -> None:
+    for path in WATCHLISTS_TOOL_DOCUMENTS:
+        normalized = " ".join(path.read_text(encoding="utf-8").split())
+        for name in (
+            "watchlists_list_sources",
+            "watchlists_list_collections",
+            "watchlists_list_briefings",
+            "watchlists_get_operations_status",
+            "watchlists_get_operation_status",
+        ):
+            assert name in normalized, (path, name)
+        for name in (
+            "watchlists_search_items",
+            "watchlists_get_item",
+            "watchlists_get_briefing",
+        ):
+            assert name in normalized, (path, name)
+        assert "never article snippets, article bodies, briefing Markdown" in normalized or (
+            "Console-only" in normalized and "never registers or resolves" in normalized
+        ), path
+
+
 def test_expanded_local_tool_group_copy_names_watchlists_everywhere() -> None:
+    """The master-switch label names all three tool groups on every surface.
+
+    Whitespace-normalized, like every other prose assertion in this module, and
+    for two reasons rather than one. The obvious one is that these are wrapped
+    Markdown paragraphs: the label spans a line break in
+    `Docs/User_Guide/console/agent-runs-and-tools.md` ("Local workspace,\nweb,
+    and Watchlists tools"), so a raw substring check reported the copy missing
+    when it was present and correct.
+
+    The reason that actually matters is the *stale* half. Checking raw text for
+    the retired label means a retired label that happens to wrap escapes the
+    check -- the guard would pass on exactly the content it exists to catch.
+    Reflowing a paragraph must not be able to switch this guard off.
+
+    Raises:
+        AssertionError: If a surface still carries the retired two-group label,
+            or does not carry the three-group one.
+    """
     stale = "Local workspace + web tools"
     expected = "workspace, web, and Watchlists"
     for path in LOCAL_TOOL_COPY_SURFACES:
-        text = path.read_text(encoding="utf-8")
-        assert stale not in text, path
-        assert expected in text, path
+        normalized = " ".join(path.read_text(encoding="utf-8").split())
+        assert stale not in normalized, path
+        assert expected in normalized, path
 
 
 def test_builtin_gate_rejects_two_category_master_switch_copy() -> None:
@@ -436,7 +578,8 @@ def test_user_guide_warning_names_private_watchlists_egress_and_trust_boundary()
     warning = _admonition_block(
         USER_GUIDE_DOCUMENT.read_text(encoding="utf-8"), "WARNING"
     )
-    assert "private Watchlists feed and article evidence" in warning
+    assert "private Watchlists source, collection, briefing-receipt, and operation metadata" in warning
+    assert "does not expose Watchlists article snippets or bodies, or briefing Markdown/provenance" in warning
     assert "external MCP client may send" in warning
     assert "off-device to a cloud model" in warning
     assert "trust both the client and the model provider" in warning

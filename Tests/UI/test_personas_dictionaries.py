@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -1062,6 +1061,9 @@ class TestDictionarySelection:
             await pilot.pause()
             detail = screen.query_one(PersonasDictionaryDetailWidget)
             assert detail.display is True
+            assert not list(screen.query("#ccp-character-editor-view"))
+            assert not list(screen.query("#ccp-persona-editor-view"))
+            assert not list(screen.query("#personas-lore-detail"))
             assert (
                 screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"
             )

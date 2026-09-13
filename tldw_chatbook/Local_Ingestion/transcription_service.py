@@ -45,6 +45,7 @@ from ..STT.dispatch_coordinator import (
     LocalSTTDispatchCoordinator,
 )
 from ..STT.parakeet_sources import ParakeetSourceKey, ParakeetSourceService
+from ..STT.executor_worker import ResidentBufferRuntime
 from ..Utils.path_validation import validate_path_simple
 from .parakeet_v2_artifact import active_managed_parakeet_v2_dir
 from .parakeet_v2_installer import (
@@ -4110,11 +4111,24 @@ class TranscriptionService:
         *,
         local_stt_dispatcher: LocalSTTDispatchCoordinator | None = None,
         parakeet_source_service: ParakeetSourceService | None = None,
+        local_buffer_owner: ResidentBufferRuntime | None = None,
     ) -> None:
-        """Initialize the facade over retained and shared local execution."""
+        """Initialize retained/shared execution or an explicit isolated buffer owner.
+
+        The facade closes an injected buffer owner. Shared dispatchers and injected
+        source services remain borrowed. Ordinary callers create no buffer owner.
+        """
+
+        if local_stt_dispatcher is not None and local_buffer_owner is not None:
+            raise ValueError("local STT execution owners are mutually exclusive")
+        if local_buffer_owner is not None and not isinstance(
+            local_buffer_owner, ResidentBufferRuntime
+        ):
+            raise TypeError("local_buffer_owner must be a ResidentBufferRuntime")
 
         self._bridge = LegacyTranscriptionBridge(_LegacyTranscriptionBackend)
         self._local_stt_dispatcher = local_stt_dispatcher
+        self._local_buffer_owner = local_buffer_owner
         self._owns_parakeet_source_service = parakeet_source_service is None
         self._parakeet_source_service = (
             parakeet_source_service
@@ -4145,6 +4159,10 @@ class TranscriptionService:
     def cleanup(self) -> None:
         """Clean up resources held by the retained backend."""
 
+        # Failed native cleanup leaves this entire isolated facade in custody
+        # until its model process exits; secondary cleanup must not mask it.
+        if self._local_buffer_owner is not None:
+            self._local_buffer_owner.close()
         try:
             self._bridge.cleanup_legacy()
         finally:
@@ -4219,7 +4237,8 @@ class TranscriptionService:
 
         effective_provider = provider or self.config["default_provider"]
         if effective_provider == "parakeet-onnx":
-            if self._local_stt_dispatcher is None:
+            buffer_owner = self._local_buffer_owner or self._local_stt_dispatcher
+            if buffer_owner is None:
                 raise TranscriptionError(
                     "Parakeet ONNX buffer transcription requires the shared local executor."
                 )
@@ -4248,7 +4267,7 @@ class TranscriptionService:
                 ParakeetSourceKey.from_values(model_id, precision),
                 override=kwargs.pop("model_dir", None),
             )
-            return self._local_stt_dispatcher.transcribe_buffer(
+            return buffer_owner.transcribe_buffer(
                 source=source,
                 dispatch=dispatch,
                 language=language or "en",

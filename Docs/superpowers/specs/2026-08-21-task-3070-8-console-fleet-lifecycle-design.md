@@ -1,0 +1,381 @@
+# TASK-3070.8 Console Fleet and Wake Lifecycle Controller Design
+
+## Summary
+
+Extract the approved 16-method fleet/wake family from `ChatScreen` into a new
+DOM-free `ConsoleFleetLifecycleController` in
+`tldw_chatbook/UI/Console_Modules/fleet.py`. The controller becomes the single
+owner of completion handoff, durable unseen-marker derivation, mount-time wake
+claiming, wake retry/delivery state, teardown accounting, and the survivor timer.
+`ChatScreen` retains only lifecycle sequencing and mounted presentation; all
+production callers address `screen._fleet` directly.
+
+The extraction is behavior-preserving. It does not add a new user feature, storage
+format, setting, dependency, or public command.
+
+## Context and Constraints
+
+TASK-3070.8 implements the already-approved fleet/wake boundary in
+`Docs/superpowers/specs/2026-08-13-console-decomposition-wave6-design.md` and
+`DESIGN.md` section 7. The initial reviewed planning oracle is
+`0a8e2882588fdad5a99aca6e2215735c43927528` (`origin/dev` earlier on 2026-08-21):
+20,349 physical lines / 652 direct methods, with this exact 16-method family spanning
+421 definition lines and projecting to 19,928 / 636. That immutable evidence remains
+recorded separately from the rebased implementation ratchet.
+
+Task 0 rebased the documentation commits onto current `origin/dev` at
+`d4f3f97763ddf3fa46eeb35ae9473827e72695bc`. The same 16 methods are AST-identical
+to the initial oracle and still span 421 physical lines. The rebased
+implementation-base screen is 20,428 physical lines and 653 direct methods, so this
+child must leave it at no more than 20,007 lines and 637 direct methods; there is no
+replacement-screen-line budget. The historical Wave 6 manifest remains a third,
+separate oracle at 401 physical definition lines. The existing Wave 6 architecture manifest already names
+`fleet.py`, `ConsoleFleetLifecycleController`, and screen owner slot `_fleet`.
+
+The approved final-rebase source is frozen separately at
+`02cd80b33004305765b5cd91b3d264aa3664596e`: 20,486 physical lines / 656 direct
+methods. Its fleet family remains the same 16 methods / 421 definition lines and has
+the same AST digest as the immutable Task 0 family. Upstream added exactly three
+unrelated direct screen methods: `_console_inspector_active`,
+`_request_console_context_allocation_reconcile`, and
+`_request_console_live_work_reconcile`. They belong to bounded-rail reconciliation,
+not fleet lifecycle, so the final-rebase earned ceilings are 20,065 lines and 640
+direct methods. This amendment does not rewrite the immutable Task 0 ceilings; it
+adds the fixed delivery-base oracle needed to distinguish unrelated upstream growth
+from a fleet regression. A later `origin/dev` advance is a separate delivery rebase
+and review, never authority to silently rewrite either fixed oracle.
+
+Focused baseline evidence is green: 17 tests passed across the Wave 6 compatibility
+gate, survivor-tick behavior, restart staging, and wake wiring in 39.63 seconds. Four
+existing dependency/runtime warnings were emitted; no test failed.
+
+The controller must:
+
+- hold no `ChatScreen`, widget tree, sibling controller, or DOM query capability;
+- receive keyword-only, narrowly named, late-bound dependencies;
+- preserve synchronous mount claiming before the first view-clear/tab sync;
+- preserve pending-handoff claim/release/acknowledge behavior and activation order;
+- preserve user-wins-ties and displayed-screen semantics;
+- preserve durable-mark-before-view-clear ordering;
+- preserve teardown snapshot/leave/stage ordering;
+- preserve survivor-timer arming, idempotence, cadence, and final settle paint;
+- leave notification rendering and Textual lifecycle entry points on the screen.
+
+## Architecture
+
+### New controller
+
+`ConsoleFleetLifecycleController` is constructed in
+`tldw_chatbook/UI/Console_Modules/wiring.py` and stored at `screen._fleet`.
+Its constructor is keyword-only. Dependencies are callables, not a screen or sibling
+controller object. Its complete constructor contract is:
+
+- `pending_handoffs_accessor() -> PendingHandoffStore`;
+- `ensure_chat_store() -> ConsoleChatStore`;
+- `ensure_chat_controller() -> ConsoleChatController`;
+- `activate_workspace_for_session(session_id) -> None`;
+- `switch_chat_session(session_id) -> ConsoleChatSession`;
+- `schedule_native_console_sync() -> Worker[None]`;
+- `ensure_agent_bridge() -> ConsoleAgentBridge | None`;
+- `wire_wake_coordinator() -> bool`, `seed_wake_from_marks() -> bool`, and
+  `retry_wake_soon() -> None`;
+- `wake_has_pending(conversation_id) -> bool` and
+  `wake_delivering_conversation_id() -> str | None`;
+- `displayed_composer_draft_accessor() -> str | None` and
+  `screen_displayed_accessor() -> bool`;
+- `screen_mounted_accessor() -> bool`;
+- `active_session_id_accessor() -> str | None` and
+  `chat_sessions_accessor() -> tuple[ConsoleChatSession, ...]`;
+- `defer_on_message_pump(callback) -> bool` and
+  `start_transcript_sync_timer() -> None`;
+- `transcript_sync_timer_active() -> bool`;
+- `sync_native_console_ui() -> Awaitable[None]`;
+- `create_interval(seconds, callback) -> Timer`,
+  `record_timer_created(name) -> None`, and
+  `record_timer_stopped(name) -> None`;
+- `chat_controller_available() -> bool`,
+  `fleet_has_unsettled_children() -> bool`, and
+  `run_marker_for_session(session_id) -> ConsoleRunMarker`;
+- `fleet_teardown_split() -> tuple[int, int]`,
+  `leave_runtime() -> Awaitable[bool]`, and
+  `stage_teardown_notices(killed, surviving) -> tuple[None, None]`;
+- `fleet_unseen_revision_accessor() -> int`,
+  `read_fleet_unseen_ids() -> frozenset[str]`, and
+  `clear_fleet_unseen(conversation_id) -> bool`.
+
+The fleet controller therefore never receives the chat controller or wake coordinator
+as an object. Wiring converts their individual operations into the named callables
+above, keeping sibling ownership out of the controller.
+
+Two module-level helpers in `wiring.py` own the only screen/app resolution needed by
+these callbacks:
+
+- `_displayed_console_composer_draft(screen) -> str | None` resolves
+  `screen.app.screen` defensively, uses a different displayed Console's
+  `_console_composer_or_none` when present, otherwise uses the supplied screen's
+  composer, and returns its current draft text. Failure to reach `screen.app` or failure
+  in a foreign screen's composer resolver falls back to the supplied screen's composer.
+  Failure in that own-composer resolver or in the selected composer's `draft_text()`
+  propagates so the wake coordinator preserves its existing user-wins-on-uncertainty
+  deferral;
+- `_console_screen_is_displayed(screen) -> bool` returns whether the supplied screen
+  is displayed, with the existing unmounted-fixture fallback of `True`.
+
+They are stateless wiring adapters, not `ChatScreen` methods. No replacement screen
+helper is introduced for either moved method.
+
+Every callback is evaluated when the controller operation runs. Wiring must not
+capture a controller, store, composer, active session, or configuration value eagerly.
+The controller receives only the composer's plain draft value; it never locates a
+widget or sibling through `query`, `query_one`, `screen`, `_workspace`, `_session`,
+`_agent`, or another controller field.
+
+### Exact moved inventory
+
+These definitions move from `ChatScreen` and do not remain as delegates or aliases:
+
+1. `consume_pending_console_fleet_completion`
+2. `_claim_console_fleet_wake_marks`
+3. `_console_wake_user_priority`
+4. `_console_wake_probe_composer`
+5. `_console_screen_displayed`
+6. `_console_wake_conversation_in_view`
+7. `_poke_console_wake_retry`
+8. `_on_console_wake_delivery_started`
+9. `_console_wake_turn_active`
+10. `_record_console_fleet_teardown`
+11. `_console_fleet_unseen_ids`
+12. `_console_run_marker_with_unseen`
+13. `_console_fleet_survivors_live`
+14. `_maybe_start_console_fleet_survivor_tick`
+15. `_stop_console_fleet_survivor_tick`
+16. `_console_fleet_survivor_tick`
+
+Controller-private helpers may be introduced only where they consolidate an existing
+policy that is currently embedded in a staying screen method. In particular, one
+plain-value helper will prepare session run markers: it reads the unseen cache, defers
+view-clear while the wake coordinator still owes delivery, clears only when this view
+is displayed, and returns `dict[str, ConsoleRunMarker] | None`. It returns `None` when
+no chat controller is available, preserving `ConsoleSessionSurface`'s existing
+`streaming_session_id` fallback; an empty dictionary is not equivalent and is forbidden
+for that branch. This removes unseen/view-clear policy from
+`_sync_console_native_session_tabs` without moving that DOM-rendering method.
+
+### State ownership
+
+The controller owns and initializes:
+
+- `_console_fleet_survivor_timer = None`;
+- `_console_fleet_unseen_cache = None`.
+
+These are post-Wave-6-baseline private implementation details, not members of the
+recorded 31-name assignable compatibility inventory. No new screen descriptor or
+shadow state is added. Focused tests and production callers move to `_fleet`.
+The durable mark itself remains in the existing app-level marks service; the
+controller owns its cached projection and policy, not its persistence implementation.
+
+### Staying screen responsibilities
+
+`ChatScreen` keeps:
+
+- `on_mount`, `on_resume`, and `on_unmount` ordering;
+- `_notify_console_fleet_teardown_if_any`, because it renders app notifications;
+- `_sync_console_native_session_tabs`, because it queries and paints the session UI;
+- transcript-timer creation/stop policy outside the survivor-only interval;
+- the screen/app values consumed by the stateless wiring resolvers for displayed
+  Console composer draft and displayed status;
+- Textual worker/timer primitives exposed to the controller through wiring.
+
+The staying methods invoke `_fleet` directly. They do not retain any of the 16 old
+method names. The existing Workspace controller properties
+`_console_fleet_unseen_ids` and `_console_run_marker_with_unseen` remain use-site
+adapters, but wiring points them directly at `_fleet`; Workspace does not own or cache
+fleet state.
+
+## Control Flow and Ordering
+
+### Mount and completion handoff
+
+1. `on_mount` first consumes the pending first-chat intent exactly as today. That step
+   may create or switch session state and remains before every fleet operation.
+2. It then shows any prior teardown notice.
+3. It synchronously calls `_fleet._claim_console_fleet_wake_marks()` before any timer,
+   worker, activation sync, or view-clear can run.
+4. Existing 0.15-second and 0.3-second mount hedges schedule
+   `_fleet.consume_pending_console_fleet_completion` and
+   `_fleet._maybe_start_console_fleet_survivor_tick` respectively.
+5. A completion claim searches the still-open sessions with the current precedence:
+   an exact non-empty `target.session_id` match wins immediately and breaks the scan;
+   otherwise every session whose id or persisted conversation id matches
+   `target.conversation_id` replaces the candidate, so the last conversation match is
+   retained.
+6. A missing match is acknowledged and dropped. An already-active match is also
+   acknowledged without ensuring a chat controller, changing workspace, switching a
+   session, or scheduling a worker, and returns `True` after acknowledgement. Only a
+   different active session performs the frozen order: ensure the chat controller,
+   activate its workspace, switch the chat session through that current controller,
+   then schedule the exclusive console-sync worker. If controller construction fails,
+   the claim is released before workspace activation and none of the later effects run.
+7. Exceptions release the exact claim for retry; every successful or missing-session
+   path acknowledges exactly once.
+
+The identical 0.15-second completion retry used by resume/activation paths is rewired
+to `_fleet`, so the first available signal still performs the handoff.
+
+### Wake coordination
+
+The chat controller's existing view-hook slots are bound directly to `_fleet` for
+user priority, conversation visibility, and delivery-start repaint. Composer changes
+and workspace session-open paths poke `_fleet` directly.
+
+The displayed-composer resolver remains late-bound and preserves the hidden/resident
+screen rule: a different displayed Console contributes its composer; otherwise the
+current screen's composer is used. Any non-empty draft wins ties. A delivery is in
+view only when this screen is displayed and its target session is active. Delivery
+start first checks the separate mounted-state callback: unmounted screens no-op,
+whereas hidden-but-mounted screens still hop through the Textual message pump and arm
+the transcript timer.
+
+### Durable unseen markers
+
+The controller caches IDs against `FLEET_UNSEEN_REVISION_ATTR`. Session-tab sync passes
+plain sessions and active-session identity into the controller's marker-preparation
+operation; named callbacks provide controller-derived facts. The controller:
+
+1. reads the cached unseen IDs;
+2. identifies the active conversation;
+3. checks whether `fleet_wake.has_pending` still owes it;
+4. leaves the mark intact when delivery is owed or the screen is hidden;
+5. otherwise clears through the existing marks service and refreshes the cache;
+6. derives each run marker, with live/terminal run state outranking `SUBAGENT_UNSEEN`.
+
+Mount-time wake claiming deliberately calls the uncached `read_fleet_unseen_ids()`
+dependency directly. It must not reuse `_console_fleet_unseen_ids()` or its revision
+cache: mount claiming is the durable restart-staging read that must observe the marks
+service before any view-clear or cached projection is consulted.
+
+The screen only supplies the returned marker mapping to the DOM surface. Workspace
+browser rows call the same `_fleet` cache and marker methods, so tab and browser
+surfaces share one policy and cache.
+
+### Survivor tick
+
+The transcript poll's current self-stop edge calls
+`_fleet._maybe_start_console_fleet_survivor_tick()`. The controller creates at most one
+one-second interval through the screen-supplied timer factory and records timer
+creation/stopping through the existing bookkeeping callbacks.
+
+A beat is skipped while the faster transcript timer is active. With no controller or
+no unsettled child, it stops itself first; the settled-child edge then performs exactly
+one final native-console repaint. An idle Console never receives this interval.
+
+### Teardown
+
+`on_unmount` retains its subsystem order: video drain, transcript timer stop, fleet
+timer stop, cost timer stop, then the remaining subsystem cleanup. When a chat
+controller exists it awaits `_fleet._record_console_fleet_teardown()`.
+That method reads the split through its named callback before `leave_console_runtime`, stages
+notices only when the visit actually ended, and leaves overlapping successor-screen
+visits silent. Notification copy remains in the next screen's presentation method.
+
+## Error Handling
+
+- Mount wake claiming remains fail-contained and emits only exception type metadata.
+- Completion handoff errors release the exact claim and return `False`.
+- Missing/partial controller doubles continue to yield safe no-ops at wake seams.
+- Composer and screen-resolution failures preserve the current conservative fallback.
+- Survivor liveness probe failures log metadata and return `False`, preventing a
+  runaway timer.
+- Teardown staging happens only after a successful, truthy runtime leave.
+
+Moving diagnostics between owner files must not change message text, metadata fields,
+exception-capture disposition, or sink topology. Three reviewed metadata-only labels
+move from `chat_screen.py` to `fleet.py`: `Console fleet completion handoff will retry`,
+`console fleet wake mount-claim failed`, and `fleet survivor check failed`.
+`Tests/Architecture/test_persistent_diagnostic_inventory.py` must transfer those exact
+three label/field entries to a new `tldw_chatbook/UI/Console_Modules/fleet.py` registry
+entry while leaving `Pending sidebar-state write failed` under `chat_screen.py`. The
+generated `Docs/security/production-diagnostic-inventory.json` owner counts/digests are
+updated only after proving a content-identical transfer plus any independently
+reconciled latest-dev changes.
+
+## Testing and Verification
+
+Implementation follows focused TDD; no local full-suite run is authorized.
+
+The completion contract was amended after final specification review. Every
+task-owned, new, or modified functionality test must be green, and the focused
+integration evidence must show zero task-caused regressions. A selected pre-existing
+failure may be accepted only when the exact node fails on the reviewed frozen base by
+the same mechanism, the candidate does not change that mechanism's source path or
+behavior, and the deviation is named in final evidence. Any task-caused failure blocks
+`Done`. An expected `--run-slow` skip may be accepted only when that node is explicitly
+excluded from the user-authorized default affected matrix and documented as skipped;
+it is neither a pass nor executed coverage. This amendment does not authorize a local
+full-suite run or changing raw failure/skip counts.
+
+1. Add no-mount controller tests for defaults, completion claim outcomes (including
+   exact-session precedence, last conversation match, already-active `True` no-op,
+   and controller-construction failure before workspace activation), mount wake claim,
+   user-priority/display semantics, retry/delivery hooks, unseen cache/marker
+   precedence and the missing-controller `None` result, teardown gating, and survivor
+   timer lifecycle. Pin unmounted delivery-start as a no-op, hidden-but-mounted
+   delivery-start as an arm, and a raising selected-composer draft read as a propagated
+   exception that the coordinator converts into deferral.
+2. Extend the Wave 6 architecture test to require all 16 methods solely on
+   `ConsoleFleetLifecycleController`, zero DOM calls across every controller method,
+   no sibling-controller/screen reach-through, exact named keyword-only wiring, no new
+   fleet replacement definition on `ChatScreen`, the immutable Task 0 projections of
+   20,007 screen lines / 637 direct methods, and frozen final-rebase ceilings of 20,065
+   screen lines / 640 direct methods.
+3. Add mutation-sensitive checks for claim release/acknowledge, durable-mark deferral,
+   late-bound composer/controller access, teardown leave gating, and final settle paint.
+4. Update only focused callers/fixtures that still invoke the moved screen methods.
+5. Retain the production-shaped mounted oracles: hidden-screen composer priority must
+   enter text with `pilot.press` in `test_console_fleet_wake_hidden_screen.py`, and wake
+   delivery freshness must enter through a plain `threading.Thread` drain callback in
+   `test_console_fleet_wake_ui_freshness.py`. Direct controller calls cannot replace
+   either entry path.
+6. Run the directly affected fleet/wake/teardown/hidden-screen/UI-freshness tests,
+   targeted Ruff lint/format, changed-module compile, `git diff --check`, and the
+   persistent-diagnostic inventory gates. The diagnostic gate must prove both the
+   hand-reviewed three-label registry transfer and generated owner redistribution.
+
+The implementation is complete only when the screen contains none of the 16 moved
+definitions, no production caller targets those names on `ChatScreen`, Workspace is
+wired directly to `_fleet`, the frozen final-rebase 20,065-line/640-method ceilings
+pass without changing the immutable Task 0 evidence, every task-owned/new/modified
+functionality test is green, and focused integration evidence shows no task-caused
+regression under the amended rule above.
+
+The four recorded selected deviations remain red and must stay named exactly:
+`Tests/UI/test_probe_headless_wake_p2_p3_p4.py::test_probe_p2_post_unmount_fanout`,
+`Tests/UI/test_console_runtime_ownership.py::test_app_fences_console_then_drains_buddy_before_profile_teardown`,
+`Tests/UI/test_console_sync_outlives_screen.py::test_a_real_navigation_arriving_mid_tick_is_absorbed`,
+and
+`Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only`.
+Each failed identically by mechanism on frozen `02cd80b3`, and the candidate does not
+change the implicated project-instruction, application/Notes teardown, changed-files
+worker, or stale Library-label behavior. The one expected default-matrix skip is
+`Tests/UI/test_probe_headless_wake_p2_p3_p4.py::test_probe_p4_headless_approval_cost`;
+it requires `--run-slow`, is explicitly outside the user-authorized default affected
+matrix, and is not claimed as passed or executed coverage.
+
+## Scope Exclusions
+
+- No change to fleet coordinator, wake coordinator, run-state, or marks schemas.
+- No change to notification copy, timer cadence, DOM IDs, CSS, commands, or settings.
+- No compatibility method shims, generic event bus, controller registry, or base class.
+- No refactor of transcript timer ownership beyond its existing handoff to the survivor
+  interval.
+- No cleanup of unrelated fleet tests or diagnostics.
+
+## ADR Decision
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This task directly implements the fleet/wake ownership boundary already
+approved by the Wave 6 design and `DESIGN.md` section 7. It changes neither durable
+storage nor the runtime/service contract and introduces no new architectural choice.

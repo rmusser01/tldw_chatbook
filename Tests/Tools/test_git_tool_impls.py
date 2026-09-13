@@ -8,6 +8,7 @@ module is skipped when git is unavailable (re-plan §2.5).
 
 from __future__ import annotations
 
+import io
 import shutil
 import subprocess
 from pathlib import Path
@@ -73,9 +74,11 @@ def test_run_git_rejects_global_option_smuggling() -> None:
     # --version must be used alone
     with pytest.raises(LocalToolError):
         run_git(["git", "--version", "status"])
-    # -C requires a following path argument
+    # Cwd is a dedicated runner parameter; -C is never accepted in argv.
     with pytest.raises(LocalToolError):
         run_git(["git", "-C"])
+    with pytest.raises(LocalToolError, match="not allowlisted"):
+        run_git(["git", "-C", "/tmp", "status"])
 
 
 def test_run_git_timeout() -> None:
@@ -111,6 +114,92 @@ def test_run_git_env_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:
     assert env["GIT_PAGER"] == "cat"
     assert "HOME" not in env
     assert "PATH" in env
+
+
+def test_worker_git_uses_absolute_executable_relative_cwd_without_new_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Worker Git stays in the outer helper's retained process tree."""
+    seen: dict[str, object] = {}
+
+    class RecordingProcess:
+        pid = 1234
+        returncode = 0
+        stdout = io.BytesIO(b"git version test\n")
+        stderr = io.BytesIO()
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    def recording_popen(argv: list[str], **kwargs: object) -> RecordingProcess:
+        seen["argv"] = argv
+        seen.update(kwargs)
+        return RecordingProcess()
+
+    monkeypatch.setattr(git_tool_impls.subprocess, "Popen", recording_popen)
+    monkeypatch.setattr(git_tool_impls.shutil, "which", lambda _name: "/usr/bin/git")
+
+    result = run_git(
+        ["git", "--version"],
+        cwd=Path("repo"),
+        executable=Path("/usr/bin/git"),
+        own_process_group=False,
+    )
+
+    assert result.argv == ["git", "--version"]
+    assert seen["argv"] == ["/usr/bin/git", "--version"]
+    assert "-C" not in seen["argv"]
+    assert seen["cwd"] == Path("repo")
+    assert seen["start_new_session"] is False
+
+
+def test_worker_git_timeout_kills_only_direct_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The outer helper remains the sole descendant-cleanup owner."""
+    events: list[str] = []
+
+    class RecordingProcess:
+        pid = 1234
+        returncode: int | None = None
+        stdout = io.BytesIO()
+        stderr = io.BytesIO()
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            self.returncode = -9
+            return self.returncode
+
+        def kill(self) -> None:
+            events.append("direct-kill")
+            self.returncode = -9
+
+    monkeypatch.setattr(
+        git_tool_impls.subprocess,
+        "Popen",
+        lambda _argv, **_kwargs: RecordingProcess(),
+    )
+    monkeypatch.setattr(git_tool_impls.shutil, "which", lambda _name: "/usr/bin/git")
+    monkeypatch.setattr(
+        git_tool_impls.os,
+        "killpg",
+        lambda *_args: events.append("process-group-kill"),
+    )
+
+    with pytest.raises(LocalToolError, match="timed out"):
+        run_git(
+            ["git", "status"],
+            cwd=Path("repo"),
+            executable=Path("/usr/bin/git"),
+            own_process_group=False,
+            timeout=0.0,
+        )
+
+    assert events == ["direct-kill"]
 
 
 def test_prepare_repository_finds_root(tmp_git_repo: Path) -> None:
@@ -193,6 +282,39 @@ def test_git_branches(tmp_git_repo: Path) -> None:
     # The current branch carries the marker.
     assert "* feature-x" in out
     assert f"* {main}" not in out
+
+
+def test_read_only_git_operations_use_cwd_without_dash_c(
+    tmp_git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every compatibility operation launches Git from its repository cwd."""
+    _commit_file(tmp_git_repo, "multi.txt", "line1\n", "add multi")
+    captured: list[tuple[list[str], dict[str, object]]] = []
+    real_run_git = git_tool_impls.run_git
+
+    def spy(argv: list[str], **kwargs: object) -> GitCommandResult:
+        captured.append((list(argv), dict(kwargs)))
+        return real_run_git(argv, **kwargs)
+
+    monkeypatch.setattr(git_tool_impls, "run_git", spy)
+
+    git_status(tmp_git_repo)
+    git_diff(tmp_git_repo)
+    git_log(tmp_git_repo)
+    git_blame(tmp_git_repo, "multi.txt")
+    git_branches(tmp_git_repo)
+
+    operation_calls = [
+        (argv, kwargs)
+        for argv, kwargs in captured
+        if any(command in argv for command in ("status", "diff", "log", "blame", "branch"))
+    ]
+    assert len(operation_calls) == 5
+    for argv, kwargs in operation_calls:
+        assert argv[0] == "git"
+        assert "-C" not in argv
+        assert Path(kwargs["cwd"]).is_absolute()
+        assert kwargs["own_process_group"] is True
 
 
 # --- git_log ------------------------------------------------------------

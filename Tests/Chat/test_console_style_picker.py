@@ -64,7 +64,11 @@ def test_search_style_templates_empty_query_returns_all_thirteen():
 
 def test_search_style_templates_filters_by_id_prefix():
     results = search_style_templates("style_")
-    assert {t.id for t in results} == {"style_anime", "style_watercolor", "style_cyberpunk"}
+    assert {t.id for t in results} == {
+        "style_anime",
+        "style_watercolor",
+        "style_cyberpunk",
+    }
 
 
 def test_search_style_templates_filters_by_name_substring():
@@ -189,7 +193,12 @@ def test_format_style_preview_includes_base_and_negative_prompt():
 
 def test_format_style_preview_omits_negative_line_when_blank():
     template = GenerationTemplate(
-        id="t", name="T", category="C", description="", base_prompt="x", negative_prompt=""
+        id="t",
+        name="T",
+        category="C",
+        description="",
+        base_prompt="x",
+        negative_prompt="",
     )
     preview = format_style_preview(template)
     assert "Negative:" not in preview
@@ -198,10 +207,17 @@ def test_format_style_preview_omits_negative_line_when_blank():
 def test_format_style_preview_truncates_long_snippets():
     long_prompt = "word " * 60  # far past the 90-char snippet cap
     template = GenerationTemplate(
-        id="t", name="T", category="C", description="", base_prompt=long_prompt, negative_prompt=""
+        id="t",
+        name="T",
+        category="C",
+        description="",
+        base_prompt=long_prompt,
+        negative_prompt="",
     )
     preview = format_style_preview(template)
-    prompt_line = next(line for line in preview.splitlines() if line.startswith("Prompt:"))
+    prompt_line = next(
+        line for line in preview.splitlines() if line.startswith("Prompt:")
+    )
     # "Prompt: " prefix + the (<=90-char, ellipsis-terminated) snippet.
     assert len(prompt_line) <= len("Prompt: ") + 90
     assert prompt_line.endswith("…")
@@ -283,7 +299,10 @@ async def test_modal_detail_disables_markup_interpretation(monkeypatch):
         negative_prompt="",
     )
     monkeypatch.setattr(
-        picker_module, "get_all_templates", lambda: {"malicious": malicious}, raising=False
+        picker_module,
+        "get_all_templates",
+        lambda: {"malicious": malicious},
+        raising=False,
     )
     app = ModalHarness()
     async with app.run_test(size=(100, 40)) as pilot:
@@ -528,7 +547,9 @@ async def test_style_picker_selection_inserts_style_token_into_draft():
         await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth, "the picker must have dismissed"
+        assert len(host.screen_stack) == baseline_depth, (
+            "the picker must have dismissed"
+        )
         assert composer.draft_text() == "/generate-image @style_anime "
 
 

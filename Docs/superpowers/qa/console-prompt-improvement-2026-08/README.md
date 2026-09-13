@@ -12,16 +12,23 @@ ADR: [ADR-040](../../../../backlog/decisions/040-versioned-prompt-artifacts-and-
 
 The prescribed client and server matrices, static smoke gates, isolated
 real-app Textual scenarios, rendered-capture review, and content-log canary
-audit passed. The repaired Apply footer renders stacked System/User choices at
-all three required terminal sizes. Live assertions prove the checkbox glyphs
-and full labels are painted, contained by the editor, and free of overlap with
-each other, the lane row, and every action button.
+audit passed. The repaired editor footer renders stacked System/User choices,
+one primary Apply action, and one contextual Save menu at all three required
+terminal sizes. Live assertions prove the checkbox glyphs and full labels are
+painted, contained by the editor, and free of overlap with each other, the
+action row, and the modal's Back/Close footer.
 
-`Prompts` is the first normal item in the existing Console composer hamburger.
-It is not present in the top/tab-bar actions or as an always-visible composer
-button. The idle composer retains its existing Collapse / hamburger / Send /
-Mic controls. This preserves the composer-unification prerequisite represented
-by reference commits `d15e35e1c` and `e2ea3650b` from TASK-1680.
+The reusable-prompt path now teaches its three starting points before opening
+the editor. Outcome-first shows the four essential blocks first and keeps five
+optional guidance blocks one keyboard action away. A successful Recipe save
+names Library > Prompts and offers a direct Open Library handoff to the saved
+artifact.
+
+`Improve current draft…` is the first normal item in the existing Console
+composer hamburger when a draft is available; `Browse Prompt Library…` follows
+it and remains available with an empty composer. Neither is present in the
+top/tab-bar actions or as an always-visible composer button. The idle composer
+retains its existing Collapse / hamburger / Send / Mic controls.
 
 ## Environment and method
 
@@ -91,6 +98,12 @@ the evidence commit. The final isolated full-app run seeded 13 records,
 exercised every scenario below in one coherent pass, regenerated 25 SVGs and
 the observation manifest, and exited 0.
 
+The 2026-08-24 HCI UAT follow-up ran the changed editor/modal/controller tests
+as a targeted matrix: `153 passed, 1 environment warning in 78.37s`. Its
+current-dev `TLDW_QA_CAPTURE_STAGE=all` pass then regenerated 43 SVGs plus the
+observation manifest, including the guided chooser and complete Recipe >
+Library > Console round trip, and exited 0.
+
 The configured Ruff and mypy tools were run across all 97 Python files touched
 between feature base `2166a677562869796244a744346e213a75474ae6` and the client
 SHA. They reproduce the repository baseline and are recorded honestly rather
@@ -148,8 +161,14 @@ exited 0.
   replacing the unaffected widget or losing its cursor/focus. Narrow surfaces
   scroll while the modal footer remains reachable. At 140x40, 100x30, and
   80x24, the footer paints checkbox glyphs and the full
-  `Apply system prompt to this session` / `Apply User` labels without clipping
-  or overlap.
+  `Replace this session's System prompt` / `Apply User` labels plus exactly one
+  Apply action and one Save menu without clipping or overlap. Apply precedes
+  Save in keyboard order, and `Ctrl+S` opens the native menu.
+- `Let the improver read the current System prompt` is a request-only permission
+  with explicit non-mutation disclosure. Included, excluded, and absent-System
+  cases were checked across Auto, Review, and Recipe: request context changes as
+  chosen, but the live System value does not. With no System prompt, the option
+  is disabled and the improver receives only the unsent message.
 - Auto no-change leaves the composer untouched. Auto success exposes the
   conditional hamburger Undo and restores the exact draft snapshot.
 - The provider-unavailable Improve path performs resolution only, makes no
@@ -173,9 +192,19 @@ exited 0.
 - Recipe Fill uses one auxiliary call and remains mandatory review. At every
   size a valid non-empty `additional_context` becomes one mapped User-lane
   `Additional context` block; the composer remains byte-equivalent. Duplicate
-  and Save Recipe are disabled for that mapped block. Deleting it restores
-  Recipe-save eligibility. System Apply remains an independent unchecked
-  review choice.
+  is disabled and Save as Recipe is omitted from the Save menu for that mapped
+  block. Deleting it restores Recipe-save eligibility. System Apply remains an
+  independent unchecked review choice.
+- The Recipe chooser explains Outcome-first, Saved Recipe, and Blank before
+  selection. Outcome-first initially shows Goal, Context and evidence,
+  Constraints, and Output; Role, Personality, Collaboration style, Success
+  criteria, and Stop rules remain keyboard-discoverable through one optional-
+  block reveal action at 140x40, 100x30, and 80x24.
+- A real UI round trip saves a Recipe from the direct Improve entry, confirms
+  its Library > Prompts destination, deep-links to the new local Recipe, edits
+  and version-bumps it with starter content, finds and fills it from Console,
+  reviews the generated Prompt, and applies User without changing System or
+  using the normal send stream.
 - Library > Prompts labels Prompt and Recipe distinctly and shows the tested
   save-name conflict recovery.
 
@@ -208,13 +237,17 @@ metadata is the intentionally redacted temporary-root pattern in
 ## Capture index
 
 All captures are deterministic Textual SVG exports from the real app and were
-visually inspected after rendering. There are 25 SVGs plus the observation
+visually inspected after rendering. There are 43 SVGs plus the observation
 record.
 
 | Surface | 140x40 | 100x30 | 80x24 |
 |---|---|---|---|
 | Composer hamburger | [capture](captures/140x40-composer-menu.svg) | [capture](captures/100x30-composer-menu.svg) | [capture](captures/80x24-composer-menu.svg) |
 | Browse page 1 | [capture](captures/140x40-browse-page-1.svg) | [capture](captures/100x30-browse-page-1.svg) | [capture](captures/80x24-browse-page-1.svg) |
+| Automatic replacement recovery | [capture](captures/140x40-auto-success-recovery.svg) | [capture](captures/100x30-auto-success-recovery.svg) | [capture](captures/80x24-auto-success-recovery.svg) |
+| Before/after comparison | [capture](captures/140x40-auto-review-changes.svg) | [capture](captures/100x30-auto-review-changes.svg) | [capture](captures/80x24-auto-review-changes.svg) |
+| System analysis choice | [capture](captures/140x40-system-analysis-choice.svg) | [capture](captures/100x30-system-analysis-choice.svg) | [capture](captures/80x24-system-analysis-choice.svg) |
+| Recipe starting points | [capture](captures/140x40-recipe-chooser.svg) | [capture](captures/100x30-recipe-chooser.svg) | [capture](captures/80x24-recipe-chooser.svg) |
 | Editable Recipe | [capture](captures/140x40-recipe-editor.svg) | [capture](captures/100x30-recipe-editor.svg) | [capture](captures/80x24-recipe-editor.svg) |
 | Filled Prompt review | [capture](captures/140x40-filled-prompt-review.svg) | [capture](captures/100x30-filled-prompt-review.svg) | [capture](captures/80x24-filled-prompt-review.svg) |
 
@@ -233,6 +266,9 @@ Additional 140x40 states:
 - [Foreign-v1 compatibility guard](captures/140x40-foreign-v1-guard.svg)
 - [Library Prompt/Recipe labels](captures/140x40-library-prompt-recipe-labels.svg)
 - [Library save-name conflict](captures/140x40-library-save-conflict.svg)
+- [Recipe saved with Open Library confirmation](captures/140x40-recipe-saved-confirmation.svg)
+- [Saved Recipe reopened and edited in Library](captures/140x40-library-saved-recipe.svg)
+- [Versioned Recipe filled, reviewed, and applied to Console](captures/140x40-recipe-roundtrip-applied.svg)
 
 The one-shot Impeccable detector returned `[]` for the three inspected Python
 UI targets. Two guessed component-CSS paths did not exist and were reported as
@@ -249,7 +285,7 @@ in the published captures.
 | 2. Unified modal navigation | `console_prompts_modal.py`, `console_prompts_state.py` | `test_console_prompts_modal.py`; real Close/Discard/Back lifecycle in `capture_qa.py` |
 | 3. Browse and source search | `console_prompts_browse.py`, `prompt_scope_service.py`, `prompt_normalizers.py` | Prompt-management and modal suites; pagination, unavailable, and foreign-guard captures |
 | 4. Structured artifact contract | `prompt_artifact_models.py`, `prompt_artifact_codec.py`, `prompt_block_compiler.py`, local/server migrations | codec/compiler/DB matrices and server structured API tests; v1 and `single_text_recipe` coexistence coverage |
-| 5. Built-in and saved Recipes | `outcome_first_recipe()`, `library_prompts_state.py`, saved-Recipe modal path | Recipe service/modal/Library tests; editable and Filled Prompt captures |
+| 5. Built-in and saved Recipes | `outcome_first_recipe()`, `library_prompts_state.py`, saved-Recipe modal path | Recipe service/modal/Library tests; guided chooser, save confirmation, Library reopen, editable, and Filled Prompt captures |
 | 6. Block editor | `prompt_block_editor_state.py`, `prompt_block_editor.py` | `test_prompt_block_editor_state.py`, `test_prompt_block_editor.py`; live edit/reorder/validation/cursor-focus observations and all-size editor inspection |
 | 7. Improvement modes | `console_prompt_improve_view.py`, `console_prompts_modal.py`, `prompt_improvement_service.py` | improvement-service/modal tests; live Auto, Review, Recipe, and provider-recovery observations |
 | 8. Request boundary | `console_provider_gateway.py`, `prompt_improvement_prompts.py`, request-scoped sensitive policy | gateway and sensitive-logging tests; one-call live canary |
@@ -258,7 +294,7 @@ in the published captures.
 | 11. Saving/version/authority | `Prompts_DB.py`, `prompt_scope_service.py`, server adapter, Library state | DB/property/server/Library matrices; normalized identity and optimistic-conflict regressions |
 | 12. Typed outcomes/errors | `prompt_improvement_models.py`, fail-closed service outcomes, modal status/retry states | malformed/no-change/provider/preservation/context-limit tests; live compatibility, provider-unavailable, stale, and Review captures |
 | 13. Privacy/observability | `sensitive_logging.py`, gateway `ContextVar` propagation, metadata-only telemetry | registry-parity and provider canary tests plus zero-count isolated log audit |
-| 14. Testing/quality gates | trusted optimizer fixture, prompting eval cases, deterministic `capture_qa.py` | 943 client tests, 160 server tests, static smoke gates, 25 inspected captures and explicit observation manifest |
+| 14. Testing/quality gates | trusted optimizer fixture, prompting eval cases, deterministic `capture_qa.py` | 943 client tests, 160 server tests, static smoke gates, 43 inspected captures and explicit observation manifest |
 | 15. Delivery boundaries | composer menu ownership, ADR-040, stage Backlog tasks and SDD reports | workbench parity tests; this evidence archive and TASK-1777 closeout |
 
 ## Explicit completion checks and limitations

@@ -3,11 +3,14 @@
 import asyncio
 import contextlib
 import copy
+import hashlib
 import json
 import os
 import threading
 import time
 from dataclasses import replace
+from io import BytesIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,17 +20,24 @@ import tldw_chatbook.Agents.agent_service as agent_service_module
 from tldw_chatbook.Chat import console_agent_bridge
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Chat.console_agent_bridge import (
+    CHANGE_KIND_SUBAGENT_POST_TURN,
+    CHANGE_KIND_TURN,
+    CHANGE_KIND_TURN_CONCURRENT_SUBAGENT,
+    CANVAS_DISCOVERY_HINT,
     CONSOLE_AGENT_OPERATING_PROMPT,
+    ConsoleAgentTraceRequestFactory,
     FIND_LOAD_DISCOVERY_HINT,
     ConsoleAgentBridge,
     SubAgentSummary,
     _StreamingModelAdapter,
+    _append_canvas_discovery_hint,
     _append_to_last_user_message,
     _openai_usage_from_provider_call,
     compose_agent_system_prompt,
     format_agent_step_marker,
     format_todo_marker,
     inject_resume_agent_markers,
+    intersect_console_run_budget,
     _BridgeSkillRunner,
     _compose_run_allowed_tools,
     _compose_run_registry_and_allowed,
@@ -37,29 +47,82 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     shadowed_mcp_names,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleThinkingCompatibilityError,
+)
+from tldw_chatbook.Chat.console_chat_controller import (
+    ConsoleChatController,
+    KILL_SWITCH_REFUSAL,
+    USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
+)
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpointState,
+    ConsoleEgressClass,
+    ConsoleResolvedDestination,
+)
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
-from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
+from tldw_chatbook.Chat.console_trace_final_values import SurfaceDeltaAdmission
+from tldw_chatbook.Chat.console_prepared_request import (
+    PreparedProviderRequest,
+    build_console_request,
+)
+from tldw_chatbook.Chat.console_trace_models import (
+    FrozenTracePolicy,
+    TraceCallState,
+    new_opaque_id,
+)
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenanceSource,
+)
+from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+from tldw_chatbook.Chat.console_trace_service import (
+    ConsoleTraceCallBoundary,
+    ConsoleTraceService,
+    TraceCallIdentity,
+    TraceCallPersistenceError,
+)
+from tldw_chatbook.Chat.console_turn_preparation import (
+    ConsolePreparationPauseKind,
+    ConsoleTurnPreparationState,
+    preparation_actions,
+)
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
     ContinuationRound,
     ProviderContinuationCheckpoint,
+    parse_provider_continuation_json,
 )
+from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
     ProviderToolCalls,
 )
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Agents.agent_models import (
-    DIRECT_DISCLOSE_THRESHOLD,
     LOAD_TOOLS_NAME,
+    RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
     SPAWN_TOOL_NAME,
@@ -67,8 +130,12 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_ERROR,
     STEP_MODEL,
     STEP_SPAWN,
+    STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
+    AgentStep,
+    AgentDefinition,
     RunOutcome,
+    RunBudget,
     SkillFileBindings,
     ToolCatalogEntry,
     ToolResult,
@@ -77,18 +144,56 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.canvas_tool_provider import (
+    CANVAS_TOOL_NAMES,
+    CanvasToolProvider,
+)
 from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.tool_catalog import (
     SkillToolProvider,
     ToolCatalogRegistry,
 )
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default_specs
+from tldw_chatbook.Canvas.models import CanvasScope
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_KILL_SWITCH_REFUSAL,
+    LocalToolProvider,
+    _default_specs,
+)
 from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
+from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
+from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Workspaces.change_turn_tracker import TurnChangeRecord
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+from Tests.console_provider_doubles import provider_resolution
+
+
+class _InProcessWorkspaceExecutor:
+    """Exercise the real worker contract without an isolated child import."""
+
+    def __init__(self, workspace_root: Path) -> None:
+        self._executor = WorkspaceToolExecutor(workspace_root)
+
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        request = self._executor._build_request(operation, arguments, intent=intent)
+        stdout = BytesIO()
+        run_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
+        response = WorkspaceToolResponse.from_bytes(
+            stdout.getvalue().splitlines()[-1],
+            expected_operation_id=request.operation_id,
+        )
+        if response.outcome != "success":
+            raise WorkspaceToolExecutionError(response.code, response.error)
+        return response.result or ""
 
 
 @pytest.fixture(autouse=True)
@@ -153,8 +258,83 @@ class _FakeMCPProvider:
         yield
 
 
+class _ResultMCPProvider(_FakeMCPProvider):
+    """MCP-shaped provider returning one exact structured result."""
+
+    def __init__(self, result: ToolResult):
+        super().__init__([("collision_tool", "Return the test payload")])
+        self._result = result
+
+    def invoke(self, tool_id, args):
+        self.invoke_calls.append((tool_id, dict(args or {})))
+        return self._result
+
+
 def _fence(name, args):
     return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_source", "is_tool_loop"),
+    [
+        (
+            "I will calculate that.\n\n" + _fence("calculator", {"expression": "6*7"}),
+            TraceProvenanceSource.TOOL_CALL,
+            True,
+        ),
+        ("I will calculate that.", TraceProvenanceSource.ACTIVE_REQUEST, False),
+        (
+            "I will calculate that.\n\n```tool_calls\n{}\n```",
+            TraceProvenanceSource.ACTIVE_REQUEST,
+            False,
+        ),
+        ("```tool_calls\n{}\n```", TraceProvenanceSource.ACTIVE_REQUEST, False),
+        (
+            _fence("calculator", {"expression": "6*7"}),
+            TraceProvenanceSource.TOOL_CALL,
+            True,
+        ),
+    ],
+)
+def test_capture_on_agent_artifacts_match_tool_loop_fence_validation(
+    content,
+    expected_source,
+    is_tool_loop,
+):
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+    admitted = build_console_request(
+        [{"role": "user", "content": "hi"}],
+        message_provenance=(SavedRevisionTraceProvenance(new_opaque_id()),),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=(),
+        capture_policy=policy,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+
+    request = ConsoleAgentTraceRequestFactory(admitted).build(
+        [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": content},
+        ],
+        tools=(),
+        route=ConsoleRequestRoute.TOOL_LOOP,
+        actor_id=new_opaque_id(),
+        chain_id=new_opaque_id(),
+    )
+
+    assert bool(request.active_tool_loop) is is_tool_loop
+    assert request.flattened_messages()[-1]["content"] == content
+    assert request.provenance is not None
+    assert request.provenance.active_request[-1].source is expected_source
+    assert [item.source for item in request.provenance.tool_loop] == (
+        [TraceProvenanceSource.TOOL_CALL] if is_tool_loop else []
+    )
 
 
 class _ChunkGateway:
@@ -338,14 +518,73 @@ class _SignalChunkGateway(_ChunkGateway):
         super().__init__(scripts)
         self.signals_seen = []
         self.signal_states_seen = []
+        self.routes_seen = []
+        self.route_actors_seen = []
 
-    async def stream_chat(self, resolution, messages, tools=None, signals=None):
+    async def stream_chat(
+        self, resolution, messages, tools=None, signals=None, **kwargs
+    ):
         self.signals_seen.append(signals)
         self.signal_states_seen.append(signals.synthetic_fallback_emitted)
+        self.routes_seen.append(kwargs.get("route"))
+        self.route_actors_seen.append(
+            (kwargs.get("route_actor_id"), kwargs.get("route_chain_id"))
+        )
         async for chunk in super().stream_chat(
             resolution,
             messages,
             tools=tools,
+        ):
+            yield chunk
+
+
+class _ToolLoopReservationFailureGateway(_SignalChunkGateway):
+    """Complete the first model call, then fail TOOL_LOOP before its adapter."""
+
+    def __init__(self):
+        super().__init__([[_fence("calculator", {"expression": "6*7"})]])
+        self.failed_boundary = type(
+            "PendingToolLoopBoundary",
+            (),
+            {
+                "dispatch_started": False,
+                "reservation_status": "not_established",
+            },
+        )()
+
+    async def resolve_for_send(self, _selection):
+        return _test_resolution(
+            provider="llama_cpp",
+            execution_key="llama_cpp",
+            model="test-model",
+            resolved_destination=ConsoleResolvedDestination(
+                provider="llama_cpp",
+                model="test-model",
+                endpoint_identity="http://127.0.0.1:9099",
+                egress_class=ConsoleEgressClass.ON_DEVICE,
+            ),
+        )
+
+    async def stream_chat(
+        self, resolution, messages, tools=None, signals=None, **kwargs
+    ):
+        if self.routes_seen:
+            self.signals_seen.append(signals)
+            self.signal_states_seen.append(signals.synthetic_fallback_emitted)
+            self.routes_seen.append(kwargs.get("route"))
+            self.route_actors_seen.append(
+                (kwargs.get("route_actor_id"), kwargs.get("route_chain_id"))
+            )
+            raise TraceCallPersistenceError(
+                boundary=self.failed_boundary,
+                reservation_status="not_established",
+            )
+        async for chunk in super().stream_chat(
+            resolution,
+            messages,
+            tools=tools,
+            signals=signals,
+            **kwargs,
         ):
             yield chunk
 
@@ -429,9 +668,106 @@ def _run(bridge, store, session, assistant_id, **over):
         should_cancel=lambda: False,
     )
     kwargs.update(over)
+    if "work_chain_id" not in kwargs:
+        from uuid import uuid4
+        kwargs["work_chain_id"] = bridge._db.automatic_work.create_chain(
+            kwargs["conversation_id"], root_submission_id=uuid4().hex
+        )
     # run_reply returns (run_id, outcome); these tests assert on the outcome.
     _run_id, outcome = bridge.run_reply(**kwargs)
     return outcome
+
+
+def _tool_messages(store, session_id: str) -> list[ConsoleChatMessage]:
+    return [
+        message
+        for message in store.messages_for_session(session_id)
+        if message.role is ConsoleMessageRole.TOOL
+    ]
+
+
+def test_canvas_lifecycle_finalizer_receives_actual_terminal_run_identity(
+    tmp_path,
+) -> None:
+    class LifecycleRecorder:
+        def __init__(self) -> None:
+            self.finished: list[tuple[str, str, str]] = []
+
+        def is_scope_current(self, _scope) -> bool:
+            return True
+
+        def list_canvases(self, _scope):
+            return ()
+
+        def read_canvas(self, _scope, _canvas_id):
+            raise AssertionError("not invoked")
+
+        def create_canvas(self, _scope, **_kwargs):
+            raise AssertionError("not invoked")
+
+        def update_canvas(self, _scope, **_kwargs):
+            raise AssertionError("not invoked")
+
+        def finish_assistant_run(
+            self,
+            assistant_message_id: str,
+            *,
+            actual_run_id: str,
+            terminal_status: str,
+        ) -> None:
+            self.finished.append(
+                (assistant_message_id, actual_run_id, terminal_status)
+            )
+
+    bridge, db, store, session, assistant_id = _bridge(tmp_path, [["done"]])
+    run_id = "canvas-run-1"
+    recorder = LifecycleRecorder()
+    provider = CanvasToolProvider(
+        recorder,
+        scope=CanvasScope(
+            session_id=session.id,
+            conversation_id="conv-1",
+            active_message_ids=("user-1",),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id=run_id,
+        ),
+    )
+    authority = provider.issue_registration_authority()
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        canvas_provider=provider,
+        canvas_authority=authority,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert recorder.finished == [(assistant_id, run_id, RUN_DONE)]
+    assert db.get_run(run_id) is not None
+
+
+def _resume_tool_messages(
+    db: AgentRunsDB, conversation_id: str = "conv-1"
+) -> list[ConsoleChatMessage]:
+    return [
+        message
+        for _anchor, block in ConsoleAgentBridge(
+            agent_runs_db=db, store=None, provider_gateway=None
+        ).resume_marker_messages(conversation_id)
+        for message in block
+    ]
+
+
+def _activity_marker_signature(
+    messages: list[ConsoleChatMessage],
+) -> list[tuple[str, ConsoleActivityPresentation | None, str | None]]:
+    return [
+        (message.content, message.activity_presentation, message.tool_output_full)
+        for message in messages
+    ]
 
 
 def test_nested_project_instructions_defer_whole_batch_before_review_and_execution(
@@ -477,7 +813,11 @@ def test_nested_project_instructions_defer_whole_batch_before_review_and_executi
     local = LocalToolProvider(
         workspace_root=root,
         specs=[
-            spec for spec in _default_specs(root) if spec.name in {"fs_read", "fs_list"}
+            spec
+            for spec in _default_specs(
+                root, workspace_executor=_InProcessWorkspaceExecutor(root)
+            )
+            if spec.name in {"fs_read", "fs_list"}
         ],
         resolve_state=lambda _tool: EffectiveToolState(
             state="allow", origin="global_default"
@@ -542,21 +882,29 @@ def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
     )
     local = LocalToolProvider(
         workspace_root=root,
-        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        specs=[
+            spec
+            for spec in _default_specs(
+                root, workspace_executor=_InProcessWorkspaceExecutor(root)
+            )
+            if spec.name == "fs_read"
+        ],
         resolve_state=lambda _tool: EffectiveToolState(
             state="allow", origin="global_default"
         ),
     )
     events = []
     monkeypatch.setattr(agent_service_module, "get_model_token_limit", lambda *_: 100)
-    monkeypatch.setattr(agent_service_module, "_count_model_messages", lambda *_: 10)
+    monkeypatch.setattr(
+        agent_service_module, "_count_model_messages", lambda *_, **_kwargs: 10
+    )
     monkeypatch.setattr(
         bridge_module, "get_model_token_limit", lambda *_: 100, raising=False
     )
     monkeypatch.setattr(
         bridge_module,
         "_count_model_messages",
-        lambda *_: transformed_tokens,
+        lambda *_, **_kwargs: transformed_tokens,
         raising=False,
     )
     marks = []
@@ -653,7 +1001,13 @@ def test_nested_resolution_rejects_backdated_root_replacement_after_consent(tmp_
     )
     local = LocalToolProvider(
         workspace_root=root,
-        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        specs=[
+            spec
+            for spec in _default_specs(
+                root, workspace_executor=_InProcessWorkspaceExecutor(root)
+            )
+            if spec.name == "fs_read"
+        ],
         resolve_state=lambda _tool: EffectiveToolState(
             state="allow", origin="global_default"
         ),
@@ -731,7 +1085,13 @@ def test_parent_and_child_share_activation_but_each_receive_nested_revision(
     )
     local = LocalToolProvider(
         workspace_root=root,
-        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        specs=[
+            spec
+            for spec in _default_specs(
+                root, workspace_executor=_InProcessWorkspaceExecutor(root)
+            )
+            if spec.name == "fs_read"
+        ],
         resolve_state=lambda _tool: EffectiveToolState(
             state="allow", origin="global_default"
         ),
@@ -807,12 +1167,29 @@ async def test_plain_and_character_forced_plain_never_resolve_project_instructio
         agent_bridge=ExplodingBridge(),
         agent_runtime_enabled=force_character,
     )
-    result = await controller._stream_assistant_response_inner(
-        resolution=SimpleNamespace(
-            provider="openai", model="gpt-4o-mini", max_tokens=128
+    resolution = SimpleNamespace(
+        provider="openai",
+        model="gpt-4o-mini",
+        max_tokens=128,
+        resolved_destination=ConsoleResolvedDestination(
+            provider="openai",
+            model="gpt-4o-mini",
+            endpoint_identity="https://api.openai.com",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
         ),
+    )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+    authority = await controller._capture_turn_library_authority(
+        session.id, configuration
+    )
+    turn_context = controller._finalize_turn_execution_context(
+        configuration, authority, resolution
+    )
+    result = await controller._stream_assistant_response_inner(
+        resolution=resolution,
         provider_messages=[{"role": "user", "content": user.content}],
         assistant_message_id=assistant.id,
+        turn_context=turn_context,
     )
     assert result.accepted is True
     assert gateway.calls == 1
@@ -829,7 +1206,7 @@ def test_compose_appends_discovery_hint_only_when_find_load_offered():
     # Default (direct disclosure): no hint — find/load is not the live mode.
     assert FIND_LOAD_DISCOVERY_HINT not in compose_agent_system_prompt("You are Ada.")
     assert FIND_LOAD_DISCOVERY_HINT not in compose_agent_system_prompt("")
-    # Past the threshold the caller flags find/load mode: the hint is
+    # When budgeting selects find/load mode, the hint is
     # appended after the operating prompt, session prompt still first.
     composed = compose_agent_system_prompt("You are Ada.", offer_find_load=True)
     assert composed.startswith("You are Ada.")
@@ -838,6 +1215,44 @@ def test_compose_appends_discovery_hint_only_when_find_load_offered():
     blank = compose_agent_system_prompt("", offer_find_load=True)
     assert blank.startswith(CONSOLE_AGENT_OPERATING_PROMPT)
     assert blank.endswith(FIND_LOAD_DISCOVERY_HINT)
+
+
+def test_canvas_discovery_hint_requires_the_actual_complete_run_allow_list():
+    from tldw_chatbook.Canvas import guide
+
+    base = "system"
+    artifacts = CANVAS_TOOL_NAMES - {"canvas_guide"}
+
+    assert _append_canvas_discovery_hint(base, ()) == base
+    assert _append_canvas_discovery_hint(base, artifacts - {"canvas_read"}) == base
+    complete = _append_canvas_discovery_hint(base, CANVAS_TOOL_NAMES)
+    assert complete.startswith(base)
+    assert CANVAS_DISCOVERY_HINT in complete
+    assert guide.CANVAS_OFFER_POLICY in complete
+    assert "If context does not establish consent, clarify." in complete
+    assert "canvas_guide" in complete
+    without_guide = _append_canvas_discovery_hint(base, artifacts)
+    assert CANVAS_DISCOVERY_HINT in without_guide
+    assert guide.CANVAS_OFFER_POLICY in without_guide
+    assert "canvas_guide" not in without_guide
+    for allowed in ({"canvas_guide"}, CANVAS_TOOL_NAMES - {"canvas_read"}):
+        docs = _append_canvas_discovery_hint(base, allowed)
+        assert "canvas_guide" in docs
+        assert guide.CANVAS_OFFER_POLICY in docs
+        assert CANVAS_DISCOVERY_HINT not in docs
+        assert "canvas_create" not in docs and "canvas_update" not in docs
+
+
+def test_canvas_discovery_does_not_read_packaged_guides(monkeypatch):
+    from tldw_chatbook.Canvas import guide
+
+    def no_read(*_args, **_kwargs):
+        pytest.fail("discovery must not read packaged guide bodies")
+
+    monkeypatch.setattr(guide, "files", no_read)
+    assert guide.CANVAS_OFFER_POLICY in _append_canvas_discovery_hint(
+        "system", CANVAS_TOOL_NAMES
+    )
 
 
 def test_no_tool_message_streams_final_answer_like_today(tmp_path):
@@ -862,9 +1277,7 @@ def test_usage_accounting_failure_never_flips_a_streamed_run_to_error(
     def _boom(*_args, **_kwargs):
         raise RuntimeError("usage extraction exploded")
 
-    monkeypatch.setattr(
-        console_agent_bridge, "_openai_usage_from_provider_call", _boom
-    )
+    monkeypatch.setattr(console_agent_bridge, "_openai_usage_from_provider_call", _boom)
     warnings: list[str] = []
     sink_id = logger.add(warnings.append, level="WARNING", format="{message}")
     try:
@@ -928,7 +1341,7 @@ def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert tool_rows, "a tool turn must drop a TOOL marker"
-    assert "calculator" in tool_rows[0].content
+    assert any("calculator" in marker.content for marker in tool_rows)
     # The fenced tool JSON never streamed into the assistant answer.
     assert FENCE_OPEN not in store.get_message(aid).content
     assert store.get_message(aid).content == "It is 42."
@@ -1058,7 +1471,9 @@ def test_run_reply_threads_builtin_gate_end_to_end(tmp_path):
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert tool_rows, "a refused tool call still drops a TOOL marker"
-    assert "disabled for test: calculator" in tool_rows[0].content
+    assert any(
+        "disabled for test: calculator" in marker.content for marker in tool_rows
+    )
     assert store.get_message(aid).content == "it was refused."
 
 
@@ -1115,6 +1530,51 @@ def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch
     assert wfr.current_run_workspace_id() is None  # cleared after the run
 
 
+def test_run_reply_threads_captured_scratch_end_to_end(tmp_path, monkeypatch):
+    """The live run's file dispatch observes its captured private sandbox."""
+    import tldw_chatbook.config as config
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+    from tldw_chatbook.Tools.file_operation_tools import ReadFileTool
+
+    real_setting = config.get_cli_setting
+
+    def enable_read_file(section, key, default=None):
+        if section == "tools" and key == "read_file_enabled":
+            return True
+        return real_setting(section, key, default)
+
+    observed: list[Path | None] = []
+    real_execute = ReadFileTool.execute
+
+    async def recording_execute(self, file_path, **kwargs):
+        observed.append(wfr.current_run_sandbox_root())
+        return await real_execute(self, file_path, **kwargs)
+
+    monkeypatch.setattr(config, "get_cli_setting", enable_read_file)
+    monkeypatch.setattr(ReadFileTool, "execute", recording_execute)
+
+    scratch = tmp_path / "chat-a"
+    scratch.mkdir()
+    marker = scratch / "marker.txt"
+    marker.write_text("chat-a", encoding="utf-8")
+    scripts = [[_fence("read_file", {"file_path": str(marker)})], ["done"]]
+    bridge, _db, store, session, aid = _bridge(tmp_path / "run", scripts)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+        scratch_root=scratch,
+        scratch_lease=lambda: contextlib.nullcontext(scratch),
+    )
+
+    assert outcome.status == "done"
+    assert observed == [scratch.resolve()]
+    assert wfr.current_run_sandbox_root() is None
+
+
 class _RecordingGateway:
     """Records each turn's system prompt (messages[0]) and answers 'ok'."""
 
@@ -1152,9 +1612,7 @@ def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
     outcome = _run(
         bridge, store, session, assistant.id, session_system_prompt="BASE PROMPT"
@@ -1181,9 +1639,7 @@ def test_run_reply_adds_no_workspace_note_for_the_default_workspace(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
     outcome = _run(
         bridge, store, session, assistant.id, session_system_prompt="BASE PROMPT"
@@ -1255,7 +1711,7 @@ def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert tool_rows, "a refused tool call still drops a TOOL marker"
-    assert "temporary chat" in tool_rows[0].content
+    assert any("temporary chat" in marker.content for marker in tool_rows)
 
     # CONTROL: the identical scripted call executes normally outside a
     # temporary chat.
@@ -1329,7 +1785,119 @@ def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert tool_rows, "a native tool turn must drop a TOOL marker too"
-    assert "get_current_datetime" in tool_rows[0].content
+    assert any("get_current_datetime" in marker.content for marker in tool_rows)
+
+
+def test_native_multi_call_round_without_summary_emits_no_planning(
+    tmp_path,
+) -> None:
+    calls = ProviderToolCalls(
+        tool_calls=(
+            {
+                "id": "calc-1",
+                "type": "function",
+                "function": {
+                    "name": "calculator",
+                    "arguments": json.dumps({"expression": "6*7"}),
+                },
+            },
+            {
+                "id": "calc-2",
+                "type": "function",
+                "function": {
+                    "name": "calculator",
+                    "arguments": json.dumps({"expression": "7*8"}),
+                },
+            },
+        )
+    )
+    bridge, db, store, session, aid = _bridge(
+        tmp_path,
+        [[calls], ["done."]],
+    )
+
+    outcome = _run(bridge, store, session, aid, resolution=_native_resolution())
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+
+    assert outcome.status == "done"
+    assert [marker.activity_presentation.kind for marker in live] == [
+        "tool",
+        "tool",
+    ]
+    assert not any(marker.activity_presentation.kind == "planning" for marker in live)
+    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+
+
+def test_unsafe_model_summary_emits_no_planning_with_resume_parity(
+    tmp_path,
+) -> None:
+    scripts = [
+        [
+            "<analysis>PRIVATE_REASONING_CANARY</analysis>\n",
+            _fence("calculator", {"expression": "6*7"}),
+        ],
+        ["done."],
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+
+    outcome = _run(bridge, store, session, aid)
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+
+    assert outcome.status == "done"
+    assert all(marker.activity_presentation.kind != "planning" for marker in live)
+    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+    assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(live))
+    assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(resumed))
+
+
+def test_persona_buddy_tool_step_uses_real_on_step_and_releases_result(tmp_path):
+    """The bridge's real step callback brackets tool execution exactly."""
+    buddy = PersonaBuddyController()
+
+    class RecordingAdapter(PersonaBuddyConsoleAdapter):
+        def __init__(self):
+            super().__init__(buddy)
+            self.observed: list[tuple[str, int]] = []
+            self.released_runs: list[str] = []
+
+        def tool_step(self, run_id, sequence, kind, *, session_id=None):
+            result = super().tool_step(run_id, sequence, kind, session_id=session_id)
+            if kind in {"tool_call", "tool_result", "error"}:
+                self.observed.append((kind, self.active_owner_count("tool")))
+            return result
+
+        def release_run(self, run_id):
+            self.released_runs.append(run_id)
+            super().release_run(run_id)
+
+    sink = RecordingAdapter()
+    gateway = _ChunkGateway(
+        [[_native_calls("get_current_datetime", {})], ["It is now."]]
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+        buddy_sink=sink,
+    )
+
+    outcome = _run(
+        bridge, store, session, assistant.id, resolution=_native_resolution()
+    )
+
+    assert outcome.status == "done"
+    assert sink.observed[:2] == [("tool_call", 1), ("tool_result", 0)]
+    assert sink.released_runs
+    assert sink.active_owner_count("tool") == 0
 
 
 def test_native_leaked_prose_is_reset_before_final_answer(tmp_path):
@@ -1355,26 +1923,37 @@ def test_native_kill_switch_off_stays_on_fence_path(tmp_path):
     assert bridge._gateway.tools_seen[0] is None  # no tools= despite groq
 
 
-def test_captured_native_tools_override_beats_later_callback_change(tmp_path):
-    enabled = True
+@pytest.mark.parametrize("captured", (False, True))
+@pytest.mark.parametrize("supported", (False, True))
+def test_captured_native_tools_override_beats_later_callback_change(
+    tmp_path, captured, supported
+):
+    enabled = captured
     bridge, _db, store, session, aid = _bridge(
         tmp_path,
-        [[_native_calls("get_current_datetime", {})], ["Done."]],
+        [
+            [
+                _native_calls("get_current_datetime", {})
+                if captured and supported
+                else _fence("get_current_datetime", {})
+            ],
+            ["Done."],
+        ],
         native_tools_enabled=lambda: enabled,
     )
-    enabled = False
+    enabled = not captured
 
     outcome = _run(
         bridge,
         store,
         session,
         aid,
-        resolution=_native_resolution(),
-        native_tools_enabled=True,
+        resolution=_native_resolution() if supported else _test_resolution(),
+        native_tools_enabled=captured,
     )
 
     assert outcome.status == "done"
-    assert bridge._gateway.tools_seen[0] is not None
+    assert (bridge._gateway.tools_seen[0] is not None) is (captured and supported)
 
 
 def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
@@ -1659,6 +2238,372 @@ def test_provider_stream_signal_survives_primary_tool_and_final_turns(tmp_path):
     assert outcome.status == "done"
     assert gateway.signals_seen == [signals, signals]
     assert all(item is signals for item in gateway.signals_seen)
+    assert gateway.routes_seen == [
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+    ]
+    assert all(actor and chain for actor, chain in gateway.route_actors_seen)
+
+
+@pytest.mark.parametrize(
+    "capture_mode",
+    [
+        ConsoleTraceCaptureMode.CAPTURE_ON,
+        ConsoleTraceCaptureMode.CAPTURE_OFF,
+    ],
+)
+def test_agent_run_freezes_capture_mode_across_first_and_tool_loop_calls(
+    tmp_path,
+    capture_mode,
+):
+    seen_modes = []
+
+    class CaptureModeGateway(_ChunkGateway):
+        def prepare_chat_request(self, _resolution, messages, **_kwargs):
+            return messages.flattened_messages()
+
+        async def stream_chat(
+            self,
+            resolution,
+            messages,
+            tools=None,
+            *,
+            capture_mode=None,
+            **kwargs,
+        ):
+            seen_modes.append(capture_mode)
+            async for chunk in super().stream_chat(
+                resolution,
+                messages,
+                tools=tools,
+                **kwargs,
+            ):
+                yield chunk
+
+    gateway = CaptureModeGateway(
+        [
+            [_fence("calculator", {"expression": "6*7"})],
+            ["42"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    trace_request = None
+    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+        policy = FrozenTracePolicy(
+            policy_id=new_opaque_id(),
+            credential_filter_version="credentials-v1",
+            pii_redaction_enabled=False,
+            pii_ruleset_revision_id=None,
+        )
+        trace_request = build_console_request(
+            [{"role": "user", "content": "hi"}],
+            message_provenance=(
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.ACTIVE_REQUEST,
+                    policy,
+                ),
+            ),
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=(),
+            capture_policy=policy,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        capture_mode=capture_mode,
+        trace_request=trace_request,
+    )
+
+    assert outcome.status == RUN_DONE, outcome.steps
+    assert seen_modes == [capture_mode, capture_mode]
+
+
+def test_capture_on_agent_run_reserves_each_real_gateway_call_in_stable_order(
+    tmp_path,
+):
+    trace_db = CharactersRAGDB(tmp_path / "trace.sqlite", "task12-agent-trace")
+    repository = ConsoleTraceRepository()
+    service = ConsoleTraceService(repository)
+    conversation_id = trace_db.add_conversation({"title": "agent trace"})
+    assert conversation_id is not None
+    message_id = trace_db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "hi",
+        }
+    )
+    assert message_id is not None
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+    with trace_db.transaction() as cursor:
+        revision_row = cursor.execute(
+            """SELECT revision_id FROM console_trace_semantic_revisions
+                 WHERE source_message_id = ?
+                 ORDER BY revision_sequence DESC LIMIT 1""",
+            (message_id,),
+        ).fetchone()
+        assert revision_row is not None
+        saved_user = SavedRevisionTraceProvenance(str(revision_row[0]))
+        segment = repository.create_segment(cursor)
+        owner = repository.attach_owner(
+            cursor,
+            conversation_id=conversation_id,
+            root_segment_id=segment.segment_id,
+        )
+        repository.ensure_policy(cursor, policy)
+
+    routes: list[ConsoleRequestRoute] = []
+    provenances = []
+    capture_policies = []
+    adapter_requests = []
+    adapter_entries = 0
+
+    def boundary_factory(request, _resolution, route):
+        sequence = len(routes)
+        provenance = request.provenance
+        assert provenance is not None
+        preparation_identity = new_opaque_id()
+        with trace_db.transaction() as cursor:
+            tail = repository.get_surface_tail(cursor, segment.segment_id)
+            prefix_length = 0 if tail is None else tail.sequence + 1
+            delta = tuple(provenance.messages_payload[prefix_length:])
+            admission = SurfaceDeltaAdmission(
+                owner_id=owner.owner_id,
+                segment_id=segment.segment_id,
+                predecessor_surface_head_id=(None if tail is None else tail.node_id),
+                route_identity=route.value,
+                preparation_identity=preparation_identity,
+                descriptors=delta,
+            )
+            surface_boundary = service.prepare_surface_provenance(
+                cursor,
+                None,
+                provenance=provenance,
+                admission=admission,
+                values=tuple(request.messages_payload),
+            )
+        routes.append(route)
+        provenances.append(provenance)
+        assert request.semantic.provenance is not None
+        capture_policies.append(request.semantic.provenance.capture_policy)
+        return ConsoleTraceCallBoundary(
+            service=service,
+            database=trace_db,
+            identity=TraceCallIdentity(
+                owner_id=owner.owner_id,
+                segment_id=segment.segment_id,
+                turn_id="turn-1",
+                run_id="run-1",
+                call_sequence=sequence,
+                idempotency_key=new_opaque_id(),
+                policy_id=policy.policy_id,
+            ),
+            admission=admission,
+            occurred_at_factory=lambda: "2026-08-29T20:00:00Z",
+            surface_boundary=surface_boundary,
+        )
+
+    def adapter(**kwargs):
+        nonlocal adapter_entries
+        calls = repository.read_calls(
+            trace_db.get_connection().cursor(), owner.owner_id
+        )
+        assert calls[-1].state is TraceCallState.DISPATCH_STARTED
+        # task-32342: the trace surface issues recursively frozen rows so the
+        # verifier can prove identity; the adapter must still be handed plain
+        # JSON containers, or `requests` dies preparing the body.
+        assert all(type(row) is dict for row in kwargs["messages_payload"])
+        json.dumps(kwargs["messages_payload"])
+        adapter_requests.append(tuple(kwargs["messages_payload"]))
+        adapter_entries += 1
+        content = (
+            _fence("calculator", {"expression": "6*7"})
+            if adapter_entries == 1
+            else "42"
+        )
+        return {"choices": [{"message": {"content": content}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=boundary_factory,
+    )
+    bridge, runs_db, store, session, aid = _bridge_with_gateway(
+        tmp_path / "agent", gateway
+    )
+    try:
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            aid,
+            resolution=_test_resolution(
+                provider="OpenAI",
+                execution_key="openai",
+                base_url="https://api.openai.com/v1",
+                model="test-model",
+                streaming=False,
+            ),
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            propagate_trace_call_persistence_errors=True,
+            trace_request=build_console_request(
+                [{"role": "user", "content": "hi"}],
+                message_provenance=(saved_user,),
+                memory_provenance=(),
+                mandatory_provenance=(),
+                tool_provenance=(),
+                capture_policy=policy,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            ),
+        )
+        calls = repository.read_calls(
+            trace_db.get_connection().cursor(), owner.owner_id
+        )
+        assert outcome.status == RUN_DONE, outcome.steps
+        assert adapter_entries == 2
+        assert routes == [
+            ConsoleRequestRoute.AGENT_FIRST,
+            ConsoleRequestRoute.TOOL_LOOP,
+        ]
+        assert [call.call_sequence for call in calls] == [0, 1]
+        assert all(call.state is TraceCallState.COMPLETE for call in calls)
+        links = [
+            repository.get_response_link(
+                trace_db.get_connection().cursor(), call.call_id
+            )
+            for call in calls
+        ]
+        assert all(link is not None and link.link_kind == "artifact" for link in links)
+        assert capture_policies == [policy, policy]
+        assert provenances[0].messages_payload == (saved_user,)
+        assert provenances[1].messages_payload[0] == saved_user
+        assert [item.source for item in provenances[1].messages_payload[1:]] == [
+            TraceProvenanceSource.TOOL_CALL,
+            TraceProvenanceSource.TOOL_RESULT,
+        ]
+        assert [len(request) for request in adapter_requests] == [1, 3]
+        assert adapter_requests[1][1]["role"] == "assistant"
+        assert adapter_requests[1][2]["role"] == "user"
+    finally:
+        runs_db.close()
+        trace_db.close_connection()
+
+
+def test_interactive_tool_loop_trace_failure_reaches_controller_boundary(tmp_path):
+    gateway = _ToolLoopReservationFailureGateway()
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    with pytest.raises(TraceCallPersistenceError) as raised:
+        _run(
+            bridge,
+            store,
+            session,
+            aid,
+            provider_stream_signals=ConsoleProviderStreamSignals(),
+            propagate_trace_call_persistence_errors=True,
+        )
+
+    assert raised.value.boundary is gateway.failed_boundary
+    assert gateway.routes_seen == [
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+    ]
+    assert db.list_runs("conv-1")[0]["status"] == RUN_ERROR
+
+
+def test_autonomous_tool_loop_trace_failure_remains_terminal_error(tmp_path):
+    gateway = _ToolLoopReservationFailureGateway()
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=ConsoleProviderStreamSignals(),
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert gateway.routes_seen == [
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+    ], outcome.steps
+    assert db.list_runs("conv-1")[0]["status"] == RUN_ERROR
+
+
+@pytest.mark.asyncio
+async def test_manual_tool_loop_trace_failure_pauses_across_real_bridge_and_controller(
+    tmp_path,
+):
+    chat_db = CharactersRAGDB(tmp_path / "chat.sqlite", "task12-controller")
+    runs_db = AgentRunsDB(tmp_path / "runs.sqlite", client_id="task12-controller")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+        session = store.create_session(session_id="session-1", title="Trace loop")
+        gateway = _ToolLoopReservationFailureGateway()
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=store,
+            provider_gateway=gateway,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_bridge=bridge,
+            agent_runtime_enabled=True,
+            provider="llama_cpp",
+            model="test-model",
+        )
+
+        result = await controller.submit_draft("hi", session_id=session.id)
+
+        preparation = store.preparation_for_session(session.id)
+        checkpoint = (
+            chat_db.get_connection()
+            .execute("SELECT * FROM console_dispatch_checkpoints")
+            .fetchone()
+        )
+        assert result.accepted is True
+        # The failed TOOL_LOOP boundary itself never entered the adapter,
+        # so it is legal to pause and retry.  AGENT_FIRST did enter, though,
+        # and the turn result must preserve that durable fact.
+        assert result.provider_started is True
+        assert preparation is not None
+        assert preparation.state is ConsoleTurnPreparationState.PAUSED
+        assert preparation.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
+        assert preparation_actions(preparation) == (
+            "retry",
+            "send_without_capture",
+            "cancel",
+        )
+        assert checkpoint is not None
+        assert (
+            checkpoint["state"] == ConsoleDispatchCheckpointState.DISPATCH_STARTED.value
+        )
+        assert gateway.routes_seen == [
+            ConsoleRequestRoute.AGENT_FIRST,
+            ConsoleRequestRoute.TOOL_LOOP,
+        ]
+        assert (
+            controller._trace_call_boundaries_by_preparation[preparation.preparation_id]
+            is gateway.failed_boundary
+        )
+        assert (
+            runs_db.list_runs(session.persisted_conversation_id)[0]["status"]
+            == RUN_ERROR
+        )
+    finally:
+        runs_db.close()
+        chat_db.close_connection()
 
 
 def test_provider_stream_signal_survives_subagent_turns(tmp_path):
@@ -1801,6 +2746,12 @@ def test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets(
 
     monkeypatch.setattr(agent_service, "count_tokens_messages", fail_estimator)
     monkeypatch.setattr(agent_service, "estimate_tokens", fail_estimator)
+    # This test isolates provider-reported usage accounting.  Force the
+    # independent first-request schema planner onto its discovery fallback so
+    # its legitimate token measurement is not mistaken for usage estimation.
+    monkeypatch.setattr(
+        agent_service, "get_model_token_limit", lambda *_args, **_kwargs: 0
+    )
     real_usage_total_tokens = agent_service._usage_total_tokens
 
     def capture_usage(response):
@@ -2137,6 +3088,11 @@ def test_malformed_streamed_usage_uses_agent_estimator_instead_of_coercion(
 
     monkeypatch.setattr(agent_service, "count_tokens_messages", count_messages)
     monkeypatch.setattr(agent_service, "estimate_tokens", count_text)
+    # Keep the assertion scoped to malformed provider-usage fallback rather
+    # than the separate first-request schema-budget measurement.
+    monkeypatch.setattr(
+        agent_service, "get_model_token_limit", lambda *_args, **_kwargs: 0
+    )
 
     def chat_api_call(**_kwargs):
         return iter(
@@ -2412,12 +3368,34 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     _join_fleet_threads()
     assert outcome.status == "done"
     assert db.count_subagent_runs("conv-1") == 1
+    live_markers = _tool_messages(store, session.id)
+    resumed_markers = _resume_tool_messages(db)
     spawn_markers = [
-        m
-        for m in store.messages_for_session(session.id)
-        if m.role is ConsoleMessageRole.TOOL and "sub-agent" in m.content.lower()
+        marker for marker in live_markers if "sub-agent" in marker.content.lower()
     ]
     assert spawn_markers
+    assert [marker.activity_presentation.kind for marker in live_markers] == [
+        "spawn",
+        "tool",
+    ]
+    assert not any(
+        marker.activity_presentation.kind == "planning" for marker in live_markers
+    )
+    live_signature = _activity_marker_signature(live_markers)
+    resumed_signature = _activity_marker_signature(resumed_markers)
+    assert live_signature[:1] == resumed_signature[:1]
+    assert [item[1:] for item in live_signature] == [
+        item[1:] for item in resumed_signature
+    ]
+    child = next(
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    )
+    assert f"run:{child['id']}" not in live_signature[-1][0]
+    assert f"run:{child['id']}" in resumed_signature[-1][0]
+    assert (
+        live_signature[-1][0].split(": compute 1+1", 1)[1]
+        == (resumed_signature[-1][0].split(": compute 1+1", 1)[1])
+    )
     snap = bridge.live_snapshot("conv-1")
     assert any(s.text for s in snap.subagents)
 
@@ -2617,11 +3595,69 @@ def test_historical_snapshot_caches_per_conversation_not_hit_every_call(
     first = bridge.historical_snapshot("conv-1")
     second = bridge.historical_snapshot("conv-1")
     assert first == second
-    assert len(calls) == 1  # the 0.2s rail poll must not re-hit the DB
+    assert calls == ["conv-1", "conv-1"]  # exact primary + exact subagent
 
     # A different conversation is a separate cache entry.
     bridge.historical_snapshot("conv-2")
-    assert len(calls) == 2
+    assert calls == ["conv-1", "conv-1", "conv-2"]
+
+
+def test_bridge_run_consumers_never_issue_a_broad_secret_bearing_query(
+    tmp_path, monkeypatch
+):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.set_status(primary_id, "done", result="ok")
+    subagent_id = db.create_run(
+        conversation_id="conv-1",
+        agent_kind="subagent",
+        parent_run_id=primary_id,
+        task="child",
+    )
+    db.create_run(
+        conversation_id="conv-1",
+        agent_kind="local_command",
+        task="Local command",
+        assistant_message_id="assistant-leaf",
+    )
+    original_list_runs = db.list_runs
+    requested_kinds: list[str | None] = []
+
+    def exact_kind_only(conversation_id, *args, **kwargs):
+        kind = kwargs.get("agent_kind")
+        requested_kinds.append(kind)
+        if kind is None:
+            raise AssertionError("broad query would hydrate poison local-command steps")
+        return original_list_runs(conversation_id, *args, **kwargs)
+
+    monkeypatch.setattr(db, "list_runs", exact_kind_only)
+    original_local_projection = db.local_command_resume_records
+    local_projection_calls: list[str] = []
+
+    def exact_local_projection(conversation_id):
+        local_projection_calls.append(conversation_id)
+        return original_local_projection(conversation_id)
+
+    monkeypatch.setattr(db, "local_command_resume_records", exact_local_projection)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+
+    assert [row["id"] for row in bridge.subagent_runs("conv-1")] == [subagent_id]
+    assert requested_kinds == ["subagent"]
+
+    requested_kinds.clear()
+    bridge.resume_marker_messages("conv-1")
+    assert requested_kinds == ["primary"]
+    assert local_projection_calls == ["conv-1"]
+
+    requested_kinds.clear()
+    assert bridge._previous_primary_run_id("conv-1") == primary_id
+    assert requested_kinds == ["primary"]
+
+    requested_kinds.clear()
+    snapshot = bridge.historical_snapshot("conv-1")
+    assert snapshot.status == "done"
+    assert [subagent.run_id for subagent in snapshot.subagents] == [subagent_id]
+    assert requested_kinds == ["primary", "subagent"]
 
 
 # -- Plan-B final-review Medium-1: inline transcript TOOL markers re-derive
@@ -2900,6 +3936,9 @@ def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
     assert [m.content for m in tool_messages] == [
         "☰ Tasks (1 in progress):\n  [~] ship it"
     ]
+    assert tool_messages[0].activity_presentation == ConsoleActivityPresentation(
+        "tasks", "Tasks updated", "done"
+    )
 
 
 def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
@@ -2924,8 +3963,607 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
         agent_runs_db=db, store=None, provider_gateway=None
     )
     blocks = fresh_bridge.resume_marker_messages("conv-1")
-    resumed_tool_contents = [m.content for _anchor, block in blocks for m in block]
-    assert resumed_tool_contents == live_tool_contents
+    resumed_markers = [m for _anchor, block in blocks for m in block]
+    assert [m.content for m in resumed_markers] == live_tool_contents
+    assert [m.activity_presentation for m in resumed_markers] == [
+        ConsoleActivityPresentation("tool", "calculator", "success"),
+    ]
+    live_markers = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert [m.activity_presentation for m in live_markers] == [
+        m.activity_presentation for m in resumed_markers
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "ERROR: harmless successful payload",
+        CONTROLLER_USER_DENIED_REFUSAL.format(name="collision_tool"),
+    ],
+)
+def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
+    tmp_path, content: str
+) -> None:
+    scripts = [
+        [_fence("collision_tool", {})],
+        ["done"],
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        mcp_provider=_ResultMCPProvider(ToolResult(ok=True, content=content)),
+    )
+
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+    tool_step = next(step for step in outcome.steps if step.kind == STEP_TOOL_RESULT)
+    persisted_step = next(
+        step
+        for step in db.list_runs("conv-1")[0]["steps"]
+        if step["kind"] == STEP_TOOL_RESULT
+    )
+    assert tool_step.tool_outcome == "success"
+    assert persisted_step["tool_outcome"] == "success"
+    assert live[-1].activity_presentation.status == "success"
+    assert resumed[-1].activity_presentation == live[-1].activity_presentation
+    if content.startswith("tool call denied"):
+        assert "***REDACTED***" in resumed[-1].content
+        assert resumed[-1].tool_output_full is None
+    else:
+        assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+
+
+@pytest.mark.parametrize(
+    ("result", "tool_outcome", "activity_status"),
+    [
+        (ToolResult(ok=False, error="ordinary dispatch failure"), "failed", "failed"),
+        # task-32279: the protocol outcome stays "blocked" -- the DISPLAY
+        # status narrows to name the authority that refused.
+        (
+            ToolResult.blocked(KILL_SWITCH_REFUSAL),
+            "blocked",
+            "blocked_kill_switch",
+        ),
+    ],
+)
+def test_structured_tool_failure_status_has_live_resume_parity(
+    tmp_path, result: ToolResult, tool_outcome: str, activity_status: str
+) -> None:
+    bridge, db, store, session, aid = _bridge(
+        tmp_path,
+        [[_fence("collision_tool", {})], ["done"]],
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        mcp_provider=_ResultMCPProvider(result),
+    )
+
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+    tool_step = next(step for step in outcome.steps if step.kind == STEP_TOOL_RESULT)
+    assert tool_step.tool_outcome == tool_outcome
+    assert live[-1].activity_presentation.status == activity_status
+    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+
+
+def _planning_markers_for_attributed_steps(
+    events: list[tuple[AgentStep, str]],
+    *,
+    actual_thinking_round_ordinals: frozenset[int] = frozenset(),
+) -> list[ConsoleChatMessage]:
+    deriver = bridge_module._PendingPrimaryPlanningDeriver()
+    return [
+        marker
+        for step, agent_kind in events
+        if (
+            marker := deriver.observe(
+                step,
+                agent_kind,
+                actual_thinking_round_ordinals=actual_thinking_round_ordinals,
+            )
+        )
+        is not None
+    ]
+
+
+@pytest.mark.parametrize(
+    ("events", "expected_content"),
+    [
+        (
+            [
+                (AgentStep(0, STEP_MODEL, summary="Checking."), "primary"),
+                (AgentStep(1, STEP_TOOL_CALL, tool_name="fs_read"), "primary"),
+                (AgentStep(2, STEP_TOOL_RESULT, tool_name="fs_read"), "primary"),
+                (AgentStep(3, STEP_MODEL, summary="Final answer."), "primary"),
+            ],
+            ["Checking."],
+        ),
+        (
+            [
+                (AgentStep(0, STEP_MODEL, summary="Delegating."), "primary"),
+                (AgentStep(1, STEP_SPAWN, summary="research"), "primary"),
+            ],
+            ["Delegating."],
+        ),
+        (
+            [
+                (AgentStep(0, STEP_MODEL, summary="Preparing call."), "primary"),
+                (
+                    AgentStep(
+                        1,
+                        STEP_TOOL_RESULT,
+                        tool_name="fs_write",
+                        result="denied",
+                    ),
+                    "primary",
+                ),
+            ],
+            ["Preparing call."],
+        ),
+        (
+            [
+                (AgentStep(0, STEP_MODEL, summary="Two checks."), "primary"),
+                (AgentStep(1, STEP_TOOL_CALL, tool_name="first"), "primary"),
+                (AgentStep(2, STEP_TOOL_RESULT, tool_name="first"), "primary"),
+                (AgentStep(3, STEP_TOOL_CALL, tool_name="second"), "primary"),
+                (AgentStep(4, STEP_TOOL_RESULT, tool_name="second"), "primary"),
+            ],
+            ["Two checks."],
+        ),
+        (
+            [(AgentStep(0, STEP_MODEL, summary="Final only."), "primary")],
+            [],
+        ),
+        (
+            [
+                (AgentStep(0, STEP_MODEL, summary="Will fail."), "primary"),
+                (AgentStep(1, STEP_ERROR, summary="provider failed"), "primary"),
+            ],
+            [],
+        ),
+    ],
+)
+def test_pending_primary_planning_marker_sequence_rules(
+    events: list[tuple[AgentStep, str]], expected_content: list[str]
+) -> None:
+    markers = _planning_markers_for_attributed_steps(events)
+
+    assert [marker.content for marker in markers] == expected_content
+    assert all(
+        marker.activity_presentation
+        == ConsoleActivityPresentation("planning", "Planning", "done")
+        for marker in markers
+    )
+
+
+def test_actual_thinking_suppresses_only_its_owned_planning_round() -> None:
+    events = [
+        (AgentStep(0, STEP_MODEL, summary="Actual round."), "primary"),
+        (AgentStep(1, STEP_TOOL_CALL, tool_name="first"), "primary"),
+        (AgentStep(2, STEP_TOOL_RESULT, tool_name="first"), "primary"),
+        (AgentStep(3, STEP_MODEL, summary="Planning-only round."), "primary"),
+        (AgentStep(4, STEP_TOOL_CALL, tool_name="second"), "primary"),
+        (AgentStep(5, STEP_TOOL_RESULT, tool_name="second"), "primary"),
+        (AgentStep(6, STEP_MODEL, summary="Final answer."), "primary"),
+    ]
+
+    markers = _planning_markers_for_attributed_steps(
+        events,
+        actual_thinking_round_ordinals=frozenset({0}),
+    )
+
+    assert [marker.content for marker in markers] == ["Planning-only round."]
+    assert markers[0].activity_round_ordinal == 1
+    assert markers[0].activity_presentation == ConsoleActivityPresentation(
+        "planning", "Planning", "done"
+    )
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        ProviderThinkingDelta(
+            text="actual reasoning",
+            provider="llama_cpp",
+            model="reasoner",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        ),
+        ProviderProprietaryThinkingEvidence(
+            provider="moonshot",
+            model="kimi",
+            protocol="chat_completions",
+            source_format="reasoning_content",
+        ),
+    ],
+    ids=["displayable", "proprietary"],
+)
+def test_live_actual_thinking_suppresses_only_its_model_round(
+    tmp_path,
+    evidence: ProviderThinkingDelta | ProviderProprietaryThinkingEvidence,
+) -> None:
+    bridge, _db, store, session, assistant_id = _bridge(
+        tmp_path,
+        [
+            [
+                evidence,
+                "First round plan.\n",
+                _fence("calculator", {"expression": "1 + 1"}),
+            ],
+            [
+                "Second round plan.\n",
+                _fence("calculator", {"expression": "2 + 2"}),
+            ],
+            ["Done."],
+        ],
+    )
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.thinking is not None
+    assert [block.round_ordinal for block in assistant.thinking.blocks] == [0]
+    markers = _tool_messages(store, session.id)
+    assert [marker.activity_presentation.kind for marker in markers] == [
+        "tool",
+        "planning",
+        "tool",
+    ]
+    assert [marker.activity_round_ordinal for marker in markers] == [0, 1, 1]
+
+
+def test_resume_suppresses_planning_from_exact_selected_envelope_rounds(
+    tmp_path,
+) -> None:
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(
+        conversation_id="conv-1",
+        agent_kind="primary",
+        assistant_message_id="assistant-1",
+    )
+    db.append_steps(
+        run_id,
+        [
+            vars(AgentStep(0, STEP_MODEL, summary="Actual first round.")),
+            vars(AgentStep(1, STEP_TOOL_CALL, tool_name="first")),
+            vars(AgentStep(2, STEP_TOOL_RESULT, tool_name="first", result="one")),
+            vars(AgentStep(3, STEP_MODEL, summary="Planning second round.")),
+            vars(AgentStep(4, STEP_TOOL_CALL, tool_name="second")),
+            vars(AgentStep(5, STEP_TOOL_RESULT, tool_name="second", result="two")),
+            vars(AgentStep(6, STEP_MODEL, summary="Final answer.")),
+        ],
+    )
+    db.set_status(run_id, RUN_DONE, result="Final answer.")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+
+    block = bridge.resume_marker_messages(
+        "conv-1",
+        thinking_round_ordinals_by_assistant_message_id={"assistant-1": frozenset({0})},
+    )[0][1]
+
+    assert [marker.activity_presentation.kind for marker in block] == [
+        "tool",
+        "planning",
+        "tool",
+    ]
+    assert [marker.activity_round_ordinal for marker in block] == [0, 1, 1]
+
+
+def test_subagent_steps_do_not_flush_or_clear_pending_primary_planning() -> None:
+    events = [
+        (AgentStep(0, STEP_MODEL, summary="Primary preamble."), "primary"),
+        (AgentStep(0, STEP_MODEL, summary="Child private turn."), "subagent"),
+        (AgentStep(1, STEP_TOOL_CALL, tool_name="child_tool"), "subagent"),
+        (AgentStep(2, STEP_TOOL_RESULT, tool_name="child_tool"), "subagent"),
+        (AgentStep(1, STEP_TOOL_CALL, tool_name="primary_tool"), "primary"),
+    ]
+
+    markers = _planning_markers_for_attributed_steps(events)
+
+    assert [marker.content for marker in markers] == ["Primary preamble."]
+
+
+def test_live_callback_interleaving_preserves_primary_planning_and_resume_sequence(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    primary_steps = [
+        AgentStep(0, STEP_MODEL, summary="Primary preamble."),
+        AgentStep(1, STEP_TOOL_CALL, tool_name="primary_tool"),
+        AgentStep(
+            2,
+            STEP_TOOL_RESULT,
+            tool_name="primary_tool",
+            result="primary result",
+        ),
+        AgentStep(3, STEP_MODEL, summary="Final answer."),
+    ]
+    callback_events = [
+        (primary_steps[0], "primary", "primary-run"),
+        (
+            AgentStep(0, STEP_MODEL, summary="Child internal turn."),
+            "subagent",
+            "child-run",
+        ),
+        (
+            AgentStep(1, STEP_TOOL_CALL, tool_name="child_tool"),
+            "subagent",
+            "child-run",
+        ),
+        (
+            AgentStep(2, STEP_TOOL_RESULT, tool_name="child_tool", result="child"),
+            "subagent",
+            "child-run",
+        ),
+        (primary_steps[1], "primary", "primary-run"),
+        (primary_steps[2], "primary", "primary-run"),
+        (primary_steps[3], "primary", "primary-run"),
+    ]
+
+    class _InterleavingAgentService:
+        def __init__(self, db, _registry, *, on_step, **_kwargs):
+            self._db = db
+            self._on_step = on_step
+
+        def run_turn(self, *, conversation_id, **_kwargs):
+            run_id = self._db.create_run(
+                conversation_id=conversation_id,
+                agent_kind="primary",
+            )
+            for step, agent_kind, attributed_run_id in callback_events:
+                self._on_step(step, agent_kind, attributed_run_id)
+            # Child steps belong to their own run and are intentionally absent
+            # from the persisted primary sequence. Resume therefore performs
+            # primary-only look-ahead while live receives the interleaving.
+            self._db.append_steps(run_id, [vars(step) for step in primary_steps])
+            self._db.set_status(run_id, "done", result="Final answer.")
+            return run_id, RunOutcome("done", primary_steps, final_text="Final answer.")
+
+        def fleet_snapshot(self):
+            return []
+
+        def live_subagent_handles(self):
+            return []
+
+    monkeypatch.setattr(bridge_module, "AgentService", _InterleavingAgentService)
+    bridge, db, store, session, aid = _bridge(tmp_path, [])
+
+    outcome = _run(bridge, store, session, aid)
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+
+    assert outcome.status == "done"
+    assert [marker.activity_presentation.kind for marker in live] == [
+        "planning",
+        "tool",
+    ]
+    assert live[0].content == "Primary preamble."
+    assert not any("child" in marker.content.lower() for marker in live)
+    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+
+
+def test_planning_live_resume_marker_order_content_and_presentation_parity(
+    tmp_path,
+) -> None:
+    scripts = [
+        [
+            "I will calculate this safely.\n",
+            _fence("calculator", {"expression": "6*7"}),
+        ],
+        ["It is 42."],
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+
+    outcome = _run(bridge, store, session, aid)
+    live = [
+        message
+        for message in store.messages_for_session(session.id)
+        if message.role is ConsoleMessageRole.TOOL
+    ]
+    resumed = [
+        message
+        for _anchor, block in ConsoleAgentBridge(
+            agent_runs_db=db, store=None, provider_gateway=None
+        ).resume_marker_messages("conv-1")
+        for message in block
+    ]
+
+    assert outcome.status == "done"
+    assert [message.activity_presentation.kind for message in live] == [
+        "planning",
+        "tool",
+    ]
+    assert live[0].content == "I will calculate this safely."
+    assert [message.content for message in resumed] == [
+        message.content for message in live
+    ]
+    assert [message.activity_presentation for message in resumed] == [
+        message.activity_presentation for message in live
+    ]
+    assert [message.tool_output_full for message in resumed] == [
+        message.tool_output_full for message in live
+    ]
+
+
+def test_resume_step_markers_attach_presentation_for_every_known_step_shape(
+    tmp_path,
+):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        run_id,
+        [
+            {
+                "index": 0,
+                "kind": STEP_SPAWN,
+                "summary": "research",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+            {
+                "index": 1,
+                "kind": STEP_TOOL_RESULT,
+                "summary": "",
+                "tool_name": "fs_write",
+                "result": "ERROR: disk exploded",
+                "args": None,
+                "created_at": "",
+            },
+            {
+                "index": 2,
+                "kind": STEP_ERROR,
+                "summary": "provider failed",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+            {
+                "index": 3,
+                "kind": console_agent_bridge.STEP_APPROVAL_TIMEOUT,
+                "summary": "30",
+                "tool_name": "fs_edit",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(run_id, "done", result="ok")
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    markers = bridge.resume_marker_messages("conv-1")[0][1]
+
+    assert [m.activity_presentation for m in markers] == [
+        ConsoleActivityPresentation("spawn", "Sub-agent", "done"),
+        ConsoleActivityPresentation("tool", "fs_write", "failed"),
+        ConsoleActivityPresentation("warning", "Error", "failed"),
+        ConsoleActivityPresentation("warning", "fs_edit", "blocked"),
+    ]
+
+
+def test_live_and_resume_change_marker_inventory_has_content_and_metadata_parity(
+    tmp_path,
+):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
+    inventory = [
+        (
+            CHANGE_KIND_TURN,
+            TurnChangeRecord(root="/turn", files_changed=1, adds=2, dels=3),
+        ),
+        (
+            CHANGE_KIND_SUBAGENT_POST_TURN,
+            TurnChangeRecord(root="/post", files_changed=2, adds=4, dels=5),
+        ),
+        (
+            CHANGE_KIND_TURN_CONCURRENT_SUBAGENT,
+            TurnChangeRecord(root="/concurrent", files_changed=3, adds=6, dels=7),
+        ),
+        (
+            CHANGE_KIND_TURN,
+            TurnChangeRecord(root="/failed", tracking_error="snapshot failed"),
+        ),
+    ]
+    for kind, record in inventory:
+        # One real change window belongs to one run. Keeping these separate
+        # mirrors production and prevents resume's intentional per-run
+        # same-kind aggregation from inventing a fixture-only difference.
+        run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+        bridge._append_change_markers(  # noqa: SLF001 - targeted builder contract
+            session.id, run_id, [record], kind=kind
+        )
+        db.record_change_snapshot(
+            run_id=run_id,
+            root=record.root,
+            baseline_sha=record.baseline_sha,
+            end_sha=record.end_sha,
+            files_changed=record.files_changed,
+            adds=record.adds,
+            dels=record.dels,
+            tracking_error=record.tracking_error,
+            kind=kind,
+        )
+        db.set_status(run_id, "done", result="ok")
+
+    live = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    resumed = [
+        marker
+        for _anchor, block in ConsoleAgentBridge(
+            agent_runs_db=db, store=None, provider_gateway=None
+        ).resume_marker_messages("conv-1")
+        for marker in block
+    ]
+
+    assert [(m.content, m.activity_presentation) for m in resumed] == [
+        (m.content, m.activity_presentation) for m in live
+    ]
+    assert [m.activity_presentation for m in live] == [
+        ConsoleActivityPresentation("changes", "Changes", "done"),
+        ConsoleActivityPresentation("changes", "Sub-agent changes", "done"),
+        ConsoleActivityPresentation("changes", "Changes", "done"),
+        ConsoleActivityPresentation("warning", "Concurrent sub-agent", "done"),
+        ConsoleActivityPresentation("warning", "Change tracking", "failed"),
+    ]
+
+
+def test_live_and_resume_diff_feedback_disclosure_has_metadata_parity(tmp_path):
+    bridge, db, store, session, assistant_id = _bridge(tmp_path, [["answer"]])
+    annotated_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.set_status(annotated_run, "done", result="prior")
+    note_id = _add_note(db, annotated_run, note="rename this variable")
+
+    _run(bridge, store, session, assistant_id)
+
+    delivered = db.notes_for_run(annotated_run)
+    assert delivered[0]["id"] == note_id
+    assert delivered[0]["delivered_at"] is not None
+    live = [
+        m
+        for m in store.messages_for_session(session.id)
+        if "Diff feedback attached" in m.content
+    ]
+    resumed = [
+        m
+        for _anchor, block in ConsoleAgentBridge(
+            agent_runs_db=db, store=None, provider_gateway=None
+        ).resume_marker_messages("conv-1")
+        for m in block
+        if "Diff feedback attached" in m.content
+    ]
+
+    assert len(live) == len(resumed) == 1
+    assert (resumed[0].content, resumed[0].activity_presentation) == (
+        live[0].content,
+        live[0].activity_presentation,
+    )
+    assert live[0].activity_presentation == ConsoleActivityPresentation(
+        "feedback", "Feedback delivered", "done"
+    )
 
 
 def test_resume_marker_messages_surfaces_assistant_message_id_anchor(tmp_path):
@@ -3208,9 +4846,7 @@ def test_resume_marker_messages_heals_disclosure_when_live_append_never_happened
     assert len(blocks) == 1
     block = blocks[0][1]
     assert len(block) == 1  # no marker-worthy steps -- only the healed row
-    assert block[0].content == format_diff_feedback_disclosure(
-        db.notes_for_run(run_id)
-    )
+    assert block[0].content == format_diff_feedback_disclosure(db.notes_for_run(run_id))
     assert "healed disclosure" in block[0].content
 
 
@@ -3737,8 +5373,15 @@ class _FakeSkillsService:
         self.skill_name = skill_name
         self.allowed_tools = allowed_tools
         self.blocked = blocked
+        self.digest = "digest-a"
+        self.bundle_body = "bundle-a"
+        self.trust_service = self
         self.execute_calls = []
+        self.read_calls = []
         self.get_context_calls = 0
+
+    def current_fingerprint_digest(self, _name):
+        return self.digest
 
     async def get_context(self, *, mode="local"):
         self.get_context_calls += 1
@@ -3750,6 +5393,7 @@ class _FakeSkillsService:
                     "argument_hint": "[diff]",
                     "trust_blocked": False,
                     "disable_model_invocation": False,
+                    "definition_digest": self.digest,
                 },
             ],
             "blocked_skills": [],
@@ -3769,6 +5413,10 @@ class _FakeSkillsService:
             "allowed_tools": self.allowed_tools,
             "execution_mode": "inline",
         }
+
+    async def read_skill_file(self, skill_name, path, *, mode="local"):
+        self.read_calls.append((skill_name, path, self.bundle_body))
+        return {"content": self.bundle_body, "size": len(self.bundle_body)}
 
 
 def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
@@ -3809,6 +5457,41 @@ def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert any("code-review" in row.content for row in tool_rows)
+
+    db_path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(db_path, client_id="trace-skill-reload")
+    runs = reopened.list_runs("conv-skill", include_superseded=True)
+    parent = next(row for row in runs if row["agent_kind"] == "primary")
+    child = next(row for row in runs if row["agent_kind"] == "subagent")
+    causes = [
+        step
+        for step in parent["steps"]
+        if f"agent-step:{parent['id']}:{step['index']}" == child["spawn_event_id"]
+    ]
+    assert len(causes) == 1
+    assert causes[0]["kind"] == STEP_TOOL_CALL
+    assert causes[0]["tool_name"] == "code-review"
+
+    agent_steps = [
+        {**step, "run_id": row["id"], "conversation_id": "conv-skill"}
+        for row in runs
+        for step in row["steps"]
+    ]
+    snapshot = derive_trajectory(
+        messages=[],
+        usage_by_id={},
+        traj_rows=[],
+        variant_sets=[],
+        compaction_records=[],
+        agent_runs=runs,
+        agent_steps=agent_steps,
+    )
+    event_ids = [record.event_id for turn in snapshot.turns for record in turn.records]
+    assert event_ids.index(child["spawn_event_id"]) < event_ids.index(
+        f"agent-run:{child['id']}"
+    )
+    reopened.close()
 
 
 def test_skill_trust_blocked_refuses_without_spawning(tmp_path):
@@ -3872,6 +5555,7 @@ def test_bridge_skill_runner_grants_own_name_and_appends_bundle_block_before_spa
         skill_names=frozenset({"code-review"}),
         builtin_names=(),
         skill_file_bindings=bindings,
+        definition_digests={"code-review": "digest-a"},
     )
     spawn_calls = []
 
@@ -3891,6 +5575,9 @@ def test_bridge_skill_runner_grants_own_name_and_appends_bundle_block_before_spa
         "references/api.md (120 bytes), assets/logo.png (2048 bytes, binary)"
     ]
     assert "code-review" in bindings.authorized
+    assert getattr(bindings, "definition_digests", {}) == {
+        "code-review": "digest-a"
+    }
 
 
 def test_bridge_skill_runner_no_reference_files_body_unchanged_still_authorizes():
@@ -3901,6 +5588,7 @@ def test_bridge_skill_runner_no_reference_files_body_unchanged_still_authorizes(
         skill_names=frozenset({"code-review"}),
         builtin_names=(),
         skill_file_bindings=bindings,
+        definition_digests={"code-review": "digest-a"},
     )
     spawn_calls = []
 
@@ -3912,6 +5600,9 @@ def test_bridge_skill_runner_no_reference_files_body_unchanged_still_authorizes(
 
     assert spawn_calls == ["Review this: the diff"]
     assert "code-review" in bindings.authorized
+    assert getattr(bindings, "definition_digests", {}) == {
+        "code-review": "digest-a"
+    }
 
 
 def test_bridge_skill_runner_bindings_none_is_byte_identical_legacy_behavior():
@@ -3933,6 +5624,148 @@ def test_bridge_skill_runner_bindings_none_is_byte_identical_legacy_behavior():
     runner.run("code-review", "the diff", spawn)
 
     assert spawn_calls == ["Review this: the diff"]
+
+
+def test_bridge_skill_runner_rejects_changed_definition_and_uses_next_snapshot():
+    class MutableSkills:
+        def __init__(self):
+            self.digest = "digest-a"
+            self.body = "body-a"
+            self.allowed_tools = ["calculator"]
+            self.reference_files = [
+                {"path": "references/a.md", "size": 1, "is_text": True}
+            ]
+            self.trust_service = self
+            self.execute_calls = 0
+
+        def current_fingerprint_digest(self, _name):
+            return self.digest
+
+        async def execute_skill(self, name, *, mode="local", args=None):
+            self.execute_calls += 1
+            return {
+                "skill_name": name,
+                "rendered_prompt": self.body,
+                "allowed_tools": self.allowed_tools,
+                "execution_mode": "inline",
+                "reference_files": self.reference_files,
+            }
+
+    skills = MutableSkills()
+    old_runner = _BridgeSkillRunner(
+        skills_service=skills,
+        skill_names=frozenset({"review"}),
+        builtin_names=("calculator", "datetime"),
+        skill_file_bindings=SkillFileBindings(authorized=set()),
+        definition_digests={"review": "digest-a"},
+    )
+    skills.digest = "digest-b"
+    skills.body = "body-b"
+    skills.allowed_tools = ["datetime"]
+    skills.reference_files = [
+        {"path": "references/b.md", "size": 2, "is_text": True}
+    ]
+    spawn_calls = []
+
+    refused = old_runner.run(
+        "review",
+        "",
+        lambda body, *, allowed_tools: spawn_calls.append((body, allowed_tools)),
+    )
+
+    assert refused.ok is False
+    assert "skill_definition_changed" in refused.error
+    assert skills.execute_calls == 0
+    assert spawn_calls == []
+
+    new_runner = _BridgeSkillRunner(
+        skills_service=skills,
+        skill_names=frozenset({"review"}),
+        builtin_names=("calculator", "datetime"),
+        skill_file_bindings=SkillFileBindings(authorized=set()),
+        definition_digests={"review": "digest-b"},
+    )
+
+    accepted = new_runner.run(
+        "review",
+        "",
+        lambda body, *, allowed_tools: (
+            spawn_calls.append((body, allowed_tools))
+            or ToolResult(ok=True, content="done")
+        ),
+    )
+
+    assert accepted.ok is True
+    assert skills.execute_calls == 1
+    assert spawn_calls == [
+        (
+            "body-b\n\nBundled files (readable via skill_file): "
+            "references/b.md (2 bytes)",
+            ("datetime",),
+        )
+    ]
+
+
+def test_bridge_skill_file_grant_stays_pinned_after_retrusted_mutation():
+    skills = _FakeSkillsServiceWithRefs(skill_name="review")
+    old_bindings = SkillFileBindings(
+        authorized=set(),
+        reader=lambda _name, _path: (
+            skills.read_calls.append(skills.bundle_body)
+            or {"content": skills.bundle_body}
+        ),
+        current_definition_digest=skills.current_fingerprint_digest,
+    )
+    old_runner = _BridgeSkillRunner(
+        skills_service=skills,
+        skill_names=frozenset({"review"}),
+        builtin_names=(),
+        skill_file_bindings=old_bindings,
+        definition_digests={"review": "digest-a"},
+    )
+
+    admitted = old_runner.run(
+        "review",
+        "",
+        lambda _body, *, allowed_tools: ToolResult(ok=True, content="done"),
+    )
+    skills.digest = "digest-b"
+    skills.bundle_body = "bundle-b"
+
+    with pytest.raises(PermissionError, match="skill_definition_changed"):
+        old_bindings.read("review", "references/api.md")
+
+    assert admitted.ok is True
+    assert skills.read_calls == []
+    assert "review" not in old_bindings.authorized
+
+    new_bindings = SkillFileBindings(
+        authorized=set(),
+        reader=lambda _name, _path: (
+            skills.read_calls.append(skills.bundle_body)
+            or {"content": skills.bundle_body}
+        ),
+        current_definition_digest=skills.current_fingerprint_digest,
+    )
+    new_runner = _BridgeSkillRunner(
+        skills_service=skills,
+        skill_names=frozenset({"review"}),
+        builtin_names=(),
+        skill_file_bindings=new_bindings,
+        definition_digests={"review": "digest-b"},
+    )
+
+    accepted = new_runner.run(
+        "review",
+        "",
+        lambda _body, *, allowed_tools: ToolResult(ok=True, content="done"),
+    )
+
+    assert accepted.ok is True
+    assert new_bindings.read("review", "references/api.md") == {
+        "content": "bundle-b"
+    }
+    assert skills.read_calls == ["bundle-b"]
 
 
 def test_run_reply_wires_one_skill_file_bindings_to_both_service_and_runner(
@@ -4018,7 +5851,7 @@ def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
         store=store,
-        provider_gateway=_ChunkGateway([["Tokyo."]]),
+        provider_gateway=_ChunkGateway([["Tokyo."], ["Kyoto."]]),
         skills_service=skills_service,
     )
 
@@ -4033,11 +5866,73 @@ def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
             assistant.id,
             conversation_id="conv-turn-bindings",
             turn_skill_bindings=("code-review",),
+            skills_context={
+                "available_skills": [
+                    {
+                        "name": "code-review",
+                        "description": "Review a diff",
+                        "trust_blocked": False,
+                        "disable_model_invocation": False,
+                        "definition_digest": "digest-a",
+                    }
+                ],
+                "blocked_skills": [],
+                "backend": "local",
+            },
         )
+
+        old_bindings = captured["runner_bindings"]
+        assert old_bindings.definition_digests == {"code-review": "digest-a"}
+        skills_service.digest = "digest-b"
+        skills_service.bundle_body = "bundle-b"
+        with pytest.raises(PermissionError, match="skill_definition_changed"):
+            old_bindings.read("code-review", "references/api.md")
+        assert "code-review" not in old_bindings.authorized
+
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="again"
+        )
+        later_assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        later_outcome = _run(
+            bridge,
+            store,
+            session,
+            later_assistant.id,
+            conversation_id="conv-turn-bindings-b",
+            turn_skill_bindings=("code-review",),
+            skills_context={
+                "available_skills": [
+                    {
+                        "name": "code-review",
+                        "description": "Review a diff",
+                        "trust_blocked": False,
+                        "disable_model_invocation": False,
+                        "definition_digest": "digest-b",
+                    }
+                ],
+                "blocked_skills": [],
+                "backend": "local",
+            },
+        )
+        new_bindings = captured["runner_bindings"]
 
     assert outcome.status == "done"
     assert captured["runner_bindings"] is not None
     assert "code-review" in captured["runner_bindings"].authorized
+    assert getattr(captured["runner_bindings"], "definition_digests", {}) == {
+        "code-review": "digest-b"
+    }
+    assert later_outcome.status == "done"
+    assert skills_service.read_calls == []
+    assert new_bindings.read("code-review", "references/api.md") == {
+        "content": "bundle-b",
+        "size": 8,
+    }
+    assert skills_service.read_calls == [
+        ("code-review", "references/api.md", "bundle-b")
+    ]
     # Seeded onto the ONE shared object -- never two independently-seeded
     # copies (Task 4's invariant, re-verified here under a non-empty seed).
     assert captured["runner_bindings"] is captured["service_bindings"]
@@ -4132,9 +6027,7 @@ def test_append_to_last_user_message_stacks_two_sequential_calls_in_order():
     messages = [original_message]
 
     after_bundle, attached_1 = _append_to_last_user_message(messages, "BUNDLE")
-    after_feedback, attached_2 = _append_to_last_user_message(
-        after_bundle, "FEEDBACK"
-    )
+    after_feedback, attached_2 = _append_to_last_user_message(after_bundle, "FEEDBACK")
 
     assert attached_1 is True
     assert attached_2 is True
@@ -4266,6 +6159,92 @@ def test_compose_run_allowed_tools_includes_eligible_skill_names():
 def test_compose_run_allowed_tools_empty_context_is_builtins_plus_spawn():
     allowed = _compose_run_allowed_tools({}, ("calculator",))
     assert allowed == ("calculator", SPAWN_TOOL_NAME)
+
+
+def test_bridge_uses_captured_local_empty_until_a_later_successful_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_controller import (
+        capture_skill_context_maximum,
+    )
+
+    class FailingLocal:
+        def _load_index(self):
+            raise RuntimeError("capture unavailable")
+
+    failed_capture = capture_skill_context_maximum(
+        SimpleNamespace(
+            skills_scope_service=SimpleNamespace(local_service=FailingLocal())
+        )
+    )
+    skills = _FakeSkillsService(skill_name="new")
+    gateway = _ChunkGateway([["first"], ["second"]])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="first")
+    first_assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+        skills_service=skills,
+    )
+    catalogs = []
+    real_compose = bridge_module._compose_run_registry_and_allowed
+
+    def capture_catalog(*args, **kwargs):
+        result = real_compose(*args, **kwargs)
+        catalogs.append(
+            {
+                entry.name
+                for entry in result[0].list_catalog()
+                if entry.source == "skill"
+            }
+        )
+        return result
+
+    monkeypatch.setattr(
+        bridge_module, "_compose_run_registry_and_allowed", capture_catalog
+    )
+
+    first = _run(
+        bridge,
+        store,
+        session,
+        first_assistant.id,
+        conversation_id="capture-failed",
+        skills_context=(
+            failed_capture if failed_capture.get("backend") == "local" else None
+        ),
+    )
+
+    assert first.status == "done"
+    assert skills.get_context_calls == 0
+    assert "new" not in catalogs[0]
+
+    later_context = asyncio.run(skills.get_context(mode="local"))
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="later")
+    later_assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    later = _run(
+        bridge,
+        store,
+        session,
+        later_assistant.id,
+        conversation_id="capture-succeeded",
+        skills_context=later_context,
+    )
+
+    assert later.status == "done"
+    assert skills.get_context_calls == 1
+    assert "new" in catalogs[1]
 
 
 def test_compose_run_allowed_tools_builtin_shadows_same_named_skill():
@@ -4448,6 +6427,67 @@ def test_compose_run_registry_and_allowed_no_workspace_id_is_unchanged():
     result = registry.invoke_by_name("probe_workspace", {})
     assert result.ok, result.error
     assert '"workspace": null' in result.content
+
+
+def test_run_registry_binds_builtin_provider_to_captured_scratch(tmp_path):
+    scratch = tmp_path / "chat-a"
+    scratch.mkdir()
+
+    registry, _allowed, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            {},
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            workspace_id="workspace-default",
+            scratch_root=scratch,
+            scratch_lease=lambda: contextlib.nullcontext(scratch),
+        )
+    )
+
+    provider = registry._providers[0]
+    assert provider.sandbox_root == scratch.resolve()
+
+
+@pytest.mark.parametrize("missing", ["root", "lease"])
+def test_run_registry_rejects_incomplete_scratch_authority(tmp_path, missing):
+    scratch = tmp_path / "chat-a"
+    scratch.mkdir()
+    kwargs = {
+        "scratch_root": scratch,
+        "scratch_lease": lambda: contextlib.nullcontext(scratch),
+    }
+    kwargs["scratch_root" if missing == "root" else "scratch_lease"] = None
+
+    with pytest.raises(ValueError, match="supplied together"):
+        _compose_run_registry_and_allowed({}, **kwargs)
+
+
+def test_two_console_runs_cannot_dispatch_across_scratch_roots(tmp_path):
+    from tldw_chatbook.Tools.file_operation_tools import ReadFileTool
+
+    root_a = tmp_path / "chat-a"
+    root_b = tmp_path / "chat-b"
+    root_a.mkdir()
+    root_b.mkdir()
+    marker = root_a / "marker.txt"
+    marker.write_text("chat-a", encoding="utf-8")
+    registry_b, _allowed, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            {},
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            workspace_id="workspace-default",
+            scratch_root=root_b,
+            scratch_lease=lambda: contextlib.nullcontext(root_b),
+        )
+    )
+    registry_b._providers[0]._tools["read_file"] = ReadFileTool()
+
+    result = registry_b.invoke_by_name(
+        "read_file",
+        {"file_path": str(marker)},
+    )
+
+    assert result.ok is False
+    assert "outside" in str(result.error).lower()
 
 
 class _StubWriteFileTool:
@@ -4960,27 +7000,48 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     verdict other than "proceed" skips dispatch and becomes the tool
     result, exactly like the T4 hook contract documents."""
     scripts = [
-        [_fence("calculator", {"expression": "6*7"})],
+        [
+            "I will request approval for this calculation.\n",
+            _fence("calculator", {"expression": "6*7"}),
+        ],
         ["done."],
     ]
-    bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
     captured_batches = []
 
     # PR2a Task 5: an AgentService-wired hook takes `(calls, run_id)`.
     def hook(calls, run_id):
         captured_batches.append(list(calls))
-        return {"calculator": "blocked by test hook"}
+        return {"calculator": CONTROLLER_USER_DENIED_REFUSAL.format(name="calculator")}
 
     outcome = _run(bridge, store, session, aid, review_tool_calls=hook)
 
     assert outcome.status == "done"
     assert captured_batches and captured_batches[0][0].name == "calculator"
-    tool_rows = [
-        m
-        for m in store.messages_for_session(session.id)
-        if m.role is ConsoleMessageRole.TOOL
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+    assert not any(step.kind == STEP_TOOL_CALL for step in outcome.steps)
+    assert (
+        next(
+            step for step in outcome.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "blocked"
+    )
+    assert [marker.activity_presentation.kind for marker in live] == [
+        "planning",
+        "tool",
     ]
-    assert any("blocked by test hook" in row.content for row in tool_rows)
+    assert live[0].content == "I will request approval for this calculation."
+    assert any("denied" in row.content.lower() for row in live)
+    # task-32279: the hook returned the Console review hook's USER-denial
+    # copy, so the marker names the user, not a policy.
+    assert live[1].activity_presentation.status == "denied"
+    assert [row.activity_presentation for row in resumed] == [
+        row.activity_presentation for row in live
+    ]
+    assert resumed[0].content == live[0].content
+    assert "***REDACTED***" in resumed[1].content
+    assert resumed[1].tool_output_full is None
 
 
 def test_run_reply_still_wires_stamp_scope_for_the_inline_kill_switch_path(
@@ -5241,17 +7302,13 @@ def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
 
 
 class _ManySkillsService:
-    """Enough real skills to exceed DIRECT_DISCLOSE_THRESHOLD on their own
-    (even before the 2 builtins _compose_run_registry_and_allowed always
-    adds), so the catalog defers everything to find_tools/load_tools -- the
-    same >threshold-skill shape that engaged progressive disclosure in the
-    live gate capture."""
+    """Several real skills used by the forced-budget discovery regression."""
 
     def __init__(self):
         self.execute_calls = []
 
     async def get_context(self, *, mode="local"):
-        names = ["shout"] + [f"filler{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD)]
+        names = ["shout", "filler0", "filler1"]
         return {
             "available_skills": [
                 {
@@ -5303,7 +7360,7 @@ def _discovery_heavy_shout_scripts():
     return parent, child
 
 
-def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path):
+def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path, monkeypatch):
     """Task-14 gate finding 1 repro: find_tools -> load_tools -> a skill
     call -> final answer needs exactly 10 primary-loop steps at minimum (3
     steps per tool round x 3 rounds, plus 1 final model turn -- see
@@ -5315,6 +7372,14 @@ def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path):
     wrap-up reply, even though every tool call already succeeded. The
     Console bridge must give this exact shape enough headroom to actually
     reach the final answer and persist `done`."""
+    monkeypatch.setattr(
+        agent_service_module, "get_model_token_limit", lambda *_args: 100_000
+    )
+    monkeypatch.setattr(
+        agent_service_module,
+        "catalog_schema_tokens",
+        lambda *_args, **_kwargs: 10_001,
+    )
     parent_script, child_script = _discovery_heavy_shout_scripts()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
@@ -5363,9 +7428,54 @@ def test_console_run_budget_is_raised_above_the_bare_engine_default(tmp_path):
     assert run["budget"]["max_wall_seconds"] > 240.0
 
 
+def test_admitted_run_budget_is_intersected_with_later_live_narrowing():
+    admitted = RunBudget(
+        max_steps=20,
+        max_wall_seconds=300.0,
+        max_subagents=4,
+        max_model_retries=1,
+        max_subagent_result_chars=8_000,
+        max_tool_result_chars=0,
+        max_model_turns=18,
+        max_total_tokens=1_000,
+        max_tool_call_seconds=0,
+    )
+    live = RunBudget(
+        max_steps=10,
+        max_wall_seconds=600.0,
+        max_subagents=2,
+        max_model_retries=3,
+        max_subagent_result_chars=4_000,
+        max_tool_result_chars=9_000,
+        max_model_turns=30,
+        max_total_tokens=0,
+        max_tool_call_seconds=15.0,
+    )
+
+    resolved = intersect_console_run_budget(admitted, live)
+
+    assert resolved == RunBudget(
+        max_steps=10,
+        max_wall_seconds=300.0,
+        max_subagents=2,
+        max_model_retries=1,
+        max_subagent_result_chars=4_000,
+        max_tool_result_chars=9_000,
+        max_model_turns=18,
+        max_total_tokens=1_000,
+        max_tool_call_seconds=15.0,
+    )
+
+
 def _make_bridge() -> ConsoleAgentBridge:
     store = MagicMock()
     store.messages_for_session.return_value = []
+    identity_store = ConsoleChatStore()
+    identity_store.create_session(session_id="s1")
+    store.progress_owner_scope = identity_store.progress_owner_scope
+    store.register_progress_message_store = (
+        identity_store.register_progress_message_store
+    )
     return ConsoleAgentBridge(
         agent_runs_db=MagicMock(),
         store=store,
@@ -5392,6 +7502,447 @@ def test_run_reply_returns_runoutcome_done():
     assert run_id == "run-1"
     assert result.status == RUN_DONE
     assert result.final_text == "done"
+
+
+def test_agent_rounds_keep_thinking_paired_across_native_tool_calls(tmp_path) -> None:
+    gateway = _ChunkGateway(
+        [
+            [
+                ProviderThinkingDelta(
+                    text="choose a tool",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                _native_calls("calculator", {"expression": "1 + 1"}),
+            ],
+            [
+                ProviderThinkingDelta(
+                    text="use the result",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                "The answer is 2.",
+            ],
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+    live_tokens: list[int | None] = []
+    terminal_tokens: list[int | None] = []
+    original_replace = store.replace_message_thinking
+    original_settle = store.settle_message_thinking
+
+    def record_replace(message_id, envelope, *, generation_token=None):
+        live_tokens.append(generation_token)
+        return original_replace(
+            message_id,
+            envelope,
+            generation_token=generation_token,
+        )
+
+    def record_settle(message_id, envelope, *, generation_token=None):
+        terminal_tokens.append(generation_token)
+        return original_settle(
+            message_id,
+            envelope,
+            generation_token=generation_token,
+        )
+
+    store.replace_message_thinking = record_replace
+    store.settle_message_thinking = record_settle
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_native_resolution(),
+    )
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.content == "The answer is 2."
+    assert assistant.thinking is not None
+    assert [block.round_ordinal for block in assistant.thinking.blocks] == [0, 1]
+    assert [block.text for block in assistant.thinking.blocks] == [
+        "choose a tool",
+        "use the result",
+    ]
+    assert [block.status for block in assistant.thinking.blocks] == [
+        "complete",
+        "complete",
+    ]
+    assert live_tokens and terminal_tokens
+    assert set(live_tokens + terminal_tokens) == {live_tokens[0]}
+    assert type(live_tokens[0]) is int
+
+
+def test_agent_rounds_advance_for_fence_first_tool_calls(tmp_path) -> None:
+    gateway = _ChunkGateway(
+        [
+            [
+                ProviderThinkingDelta(
+                    text="choose a tool",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                _fence("calculator", {"expression": "1 + 1"}),
+            ],
+            [
+                ProviderThinkingDelta(
+                    text="use the result",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                "The answer is 2.",
+            ],
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.thinking is not None
+    assert [block.round_ordinal for block in assistant.thinking.blocks] == [0, 1]
+    assert [block.text for block in assistant.thinking.blocks] == [
+        "choose a tool",
+        "use the result",
+    ]
+
+
+def test_agent_terminal_proprietary_evidence_never_enters_answer_text(tmp_path) -> None:
+    gateway = _ChunkGateway(
+        [
+            [
+                ProviderProprietaryThinkingEvidence(
+                    provider="moonshot",
+                    model="kimi",
+                    protocol="chat_completions",
+                    source_format="reasoning_content",
+                ),
+                "answer",
+            ]
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.content == "answer"
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].visibility == "proprietary"
+    assert not hasattr(assistant.thinking.blocks[0], "text")
+
+
+def test_agent_answer_without_evidence_leaves_thinking_null(tmp_path) -> None:
+    bridge, _db, store, session, assistant_id = _bridge(tmp_path, [["answer"]])
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assert outcome.status == RUN_DONE
+    assert store.get_message(assistant_id).thinking is None
+
+
+def test_agent_provider_failure_settles_open_thinking_as_failed(tmp_path) -> None:
+    class RaisingGateway(_ChunkGateway):
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            yield ProviderThinkingDelta(
+                text="unfinished",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+            raise RuntimeError("provider failed")
+
+    gateway = RaisingGateway([])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_ERROR
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].status == "failed"
+
+
+def test_agent_stop_after_thinking_does_not_pull_the_next_answer_chunk(
+    tmp_path,
+) -> None:
+    bridge, _db, store, session, assistant_id = _bridge(
+        tmp_path,
+        [
+            [
+                ProviderThinkingDelta(
+                    text="unfinished",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                "must not stream",
+            ]
+        ],
+    )
+    flags = iter([False, True])
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        should_cancel=lambda: next(flags, True),
+    )
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_CANCELLED
+    assert assistant.content == ""
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].status == "stopped"
+
+
+def test_agent_late_thinking_after_controller_stop_is_durably_settled(
+    tmp_path,
+) -> None:
+    """A detached bridge must durably hand late evidence to the stopped owner."""
+
+    class GatedThinkingGateway:
+        def __init__(self) -> None:
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.entered.set()
+            await asyncio.to_thread(self.release.wait)
+            yield ProviderThinkingDelta(
+                text="late but delivered",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "paired answer",
+                    "reasoning_blocks": ["paired private state"],
+                    "calls": [
+                        {
+                            "call_id": "paired-call",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    chat_db = CharactersRAGDB(tmp_path / "chat.sqlite", "late-thinking")
+    runs_db = AgentRunsDB(tmp_path / "runs.sqlite", client_id="late-thinking")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+        session = store.create_session(title="late thinking")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="question",
+            persist=True,
+        )
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="paired answer",
+            persist=True,
+        )
+        owned = store._message_or_raise(assistant.id)
+        owned.provider_continuation = checkpoint
+        assert store.persist_selected_generation(assistant.id) is True
+        owned.status = "streaming"
+        owned.assistant_generation_state = "streaming"
+
+        gateway = GatedThinkingGateway()
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=store,
+            provider_gateway=gateway,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_bridge=bridge,
+        )
+        cancel_event = threading.Event()
+        controller._active_cancel_events[session.id] = cancel_event
+        controller._active_assistant_message_ids[session.id] = assistant.id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Thinking"),
+            session_id=session.id,
+        )
+        result: dict[str, object] = {}
+
+        def run_bridge() -> None:
+            try:
+                result["reply"] = bridge.run_reply(
+                    conversation_id=session.persisted_conversation_id,
+                    session_id=session.id,
+                    resolution=_test_resolution(
+                        model="reasoner",
+                        thinking_stream_disposition="displayable",
+                        thinking_round_trip_version=1,
+                    ),
+                    assistant_message_id=assistant.id,
+                    model="reasoner",
+                    session_system_prompt="",
+                    agent_messages=[{"role": "user", "content": "question"}],
+                    should_cancel=cancel_event.is_set,
+                )
+            except BaseException as exc:  # pragma: no cover - asserted below
+                result["error"] = exc
+
+        worker = threading.Thread(target=run_bridge, daemon=True)
+        worker.start()
+        assert gateway.entered.wait(timeout=3)
+        assert controller.stop_active_run(record_user_stop=False) is True
+        assert session.persisted_conversation_id is not None
+        assert assistant.persisted_message_id is not None
+        stopped_row = chat_db.get_message_by_id(assistant.persisted_message_id)
+        assert stopped_row is not None
+        assert stopped_row["assistant_generation_state"] == "stopped"
+        assert stopped_row["thinking_blocks_json"] is None
+        # Stop commits the visible terminal state while the detached worker
+        # still owns late-evidence settlement authority.
+        assert store._generation_runtime_counts() == (0, 0, 1)
+
+        gateway.release.set()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+        assert "error" not in result
+        _run_id, outcome = result["reply"]
+        assert outcome.status == RUN_CANCELLED
+        assert store._generation_runtime_counts() == (0, 0, 0)
+
+        settled_row = chat_db.get_message_by_id(assistant.persisted_message_id)
+        assert settled_row is not None
+        settled_version = settled_row["version"]
+        settled = store.get_message(assistant.id)
+        assert settled.thinking is not None
+        store.settle_message_thinking(assistant.id, settled.thinking)
+        assert chat_db.get_message_by_id(assistant.persisted_message_id)["version"] == (
+            settled_version
+        )
+
+        rows = chat_db.get_messages_for_conversation(
+            session.persisted_conversation_id, limit=100
+        )
+        nodes = [
+            ConsoleChatMessage(
+                id=str(row["id"]),
+                role=ConsoleMessageRole(str(row["role"])),
+                content=str(row.get("content") or ""),
+                persisted_message_id=str(row["id"]),
+                parent_message_id=row.get("parent_message_id"),
+            )
+            for row in rows
+        ]
+        reloaded_store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+        reloaded_store.restore_persisted_session(
+            title="late thinking reload",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=nodes,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        reloaded = reloaded_store.get_message(assistant.persisted_message_id)
+        assistants = [
+            message
+            for message in reloaded_store.messages_for_session(
+                reloaded_store.active_session_id
+            )
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ]
+        assert len(assistants) == 1
+        assert reloaded.content == "paired answer"
+        assert reloaded.assistant_generation_state == "stopped"
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "late but delivered"
+        assert reloaded.thinking.blocks[0].status == "stopped"
+    finally:
+        runs_db.close()
+        chat_db.close_connection()
+
+
+def test_agent_adapter_preflights_backend_before_provider_contact() -> None:
+    class UnsupportedPersistence:
+        pass
+
+    class ProviderSpy:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.calls += 1
+            yield "answer"
+
+    store = ConsoleChatStore(persistence=UnsupportedPersistence())
+    session = store.create_session(ephemeral=False)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=False,
+    )
+    gateway = ProviderSpy()
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=gateway,
+        resolution=_test_resolution(
+            thinking_stream_disposition="displayable",
+            thinking_round_trip_version=1,
+        ),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        thinking_capture=ThinkingCapture(assistant_owner_id=assistant.id),
+    )
+    try:
+        with pytest.raises(
+            ConsoleThinkingCompatibilityError,
+            match="cannot preserve model thinking version 1",
+        ):
+            adapter.chat_call(messages_payload=[{"role": "user", "content": "hi"}])
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(timeout=2)
+        loop.close()
+
+    assert gateway.calls == 0
 
 
 def test_run_reply_passes_private_continuation_sidecar_to_agent_service():
@@ -5604,6 +8155,162 @@ def test_resumed_sidecars_reach_normal_prepared_gateway_once(tmp_path) -> None:
         )
         == 1
     )
+    forbidden_transport_keys = {
+        "_native_message_id",
+        "turn_id",
+        "attention_id",
+        "queue_entry_id",
+        "terminal_receipt_id",
+        "runtime_id",
+    }
+
+    def assert_no_runtime_keys(value):
+        if isinstance(value, dict):
+            assert forbidden_transport_keys.isdisjoint(value)
+            for nested in value.values():
+                assert_no_runtime_keys(nested)
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                assert_no_runtime_keys(nested)
+
+    assert_no_runtime_keys(prepared.messages_payload)
+
+
+@pytest.mark.asyncio
+async def test_controller_agent_transport_preserves_vision_filtering_and_privacy(
+    tmp_path,
+) -> None:
+    class CapturingGateway(ConsoleProviderGateway):
+        def __init__(self) -> None:
+            super().__init__(config_provider=lambda: {}, environ={})
+            self.dispatched: list[object] = []
+
+        async def resolve_for_send(self, _selection):
+            return provider_resolution(
+                provider="moonshot",
+                model="kimi-k3",
+                base_url="https://api.moonshot.ai/v1",
+                execution_key="moonshot",
+                streaming=True,
+                continuation_protocol="chat_completions",
+            )
+
+        async def stream_chat(self, _resolution, messages, **_kwargs):
+            self.dispatched.append(messages)
+            yield "finished"
+
+    gateway = CapturingGateway()
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    image_attachment = PendingAttachment(
+        file_path="private-image.png",
+        display_name="private-image.png",
+        file_type="image",
+        insert_mode="attachment",
+        data=b"PNG-ALLOWED",
+        mime_type="image/png",
+    )
+    context_attachment = PendingAttachment(
+        file_path="private-document.txt",
+        display_name="private-document.txt",
+        file_type="document",
+        insert_mode="context",
+        data=b"FILE-MUST-NOT-LEAVE",
+        mime_type="text/plain",
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "agent-transport.db", client_id="t"),
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+        provider="moonshot",
+        model="kimi-k3",
+    )
+    base = controller.resolve_runtime_turn_configuration_snapshot(session.id)
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id=session.id,
+        provider_selection=base.provider_selection,
+        scratch_space=base.scratch_space,
+        session_settings=base.session_settings,
+        workspace_roots=base.workspace_roots,
+        presentation_context=base.presentation_context,
+        library_policy_maximum=base.library_policy_maximum,
+        library_scope_maximum=base.library_scope_maximum,
+        project_authority=base.project_authority,
+        character_authority=base.character_authority,
+        prompt_transform_inputs=base.prompt_transform_inputs,
+        skill_context_maximum=base.skill_context_maximum,
+        mcp_tool_maximum=base.mcp_tool_maximum,
+        mcp_definition_maximum=base.mcp_definition_maximum,
+        capabilities={"vision": True, "max_history_images": 1},
+        rag_defaults=base.rag_defaults,
+        tool_configuration={
+            **base.tool_configuration,
+            "agent_runtime_enabled": True,
+        },
+        provider_payload_settings=base.provider_payload_settings,
+    )
+
+    await controller.submit_draft(
+        "describe",
+        session_id=session.id,
+        configuration=configuration,
+        accepted_attachments=(image_attachment, context_attachment),
+    )
+
+    nonvision_configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id=session.id,
+        provider_selection=base.provider_selection,
+        scratch_space=base.scratch_space,
+        session_settings=base.session_settings,
+        project_authority=base.project_authority,
+        capabilities={"vision": False, "max_history_images": 0},
+        tool_configuration={
+            **base.tool_configuration,
+            "agent_runtime_enabled": True,
+        },
+    )
+    await controller.submit_draft(
+        "follow up",
+        session_id=session.id,
+        configuration=nonvision_configuration,
+        accepted_attachments=(),
+    )
+
+    assert len(gateway.dispatched) == 2
+    vision_request, nonvision_request = gateway.dispatched
+    assert isinstance(vision_request, list)
+    assert isinstance(nonvision_request, list)
+    assert "data:image/png;base64," in repr(vision_request)
+    assert "image_url" not in repr(nonvision_request)
+    assert "private-document.txt" not in repr(gateway.dispatched)
+    assert "FILE-MUST-NOT-LEAVE" not in repr(gateway.dispatched)
+
+    forbidden = {
+        "_native_message_id",
+        "turn_id",
+        "attention_id",
+        "queue_entry_id",
+        "terminal_receipt_id",
+        "runtime_id",
+    }
+
+    def assert_private_ids_absent(value):
+        if isinstance(value, dict):
+            assert forbidden.isdisjoint(value)
+            for nested in value.values():
+                assert_private_ids_absent(nested)
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                assert_private_ids_absent(nested)
+
+    assert_private_ids_absent(vision_request)
+    assert_private_ids_absent(nonvision_request)
 
 
 def test_run_reply_returns_runoutcome_error():
@@ -6068,43 +8775,73 @@ class _FakeLibraryProvider:
         return ToolResult(ok=True, content="{}")
 
 
+class _BridgeLibraryService:
+    def __init__(self):
+        self.invoke_calls = []
+
+    def invoke(self, name, arguments):
+        self.invoke_calls.append((name, dict(arguments)))
+        return {"items": [], "total": 0}
+
+
+def _authenticated_library_provider(provider):
+    from tldw_chatbook.Agents.tool_catalog import LIBRARY_RESERVED_TOOL_NAMES
+    from tldw_chatbook.Chat.console_library_policy import (
+        ConsoleAssistantLibraryAccess,
+    )
+
+    authority = provider.issue_builtin_authority(
+        reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
+        assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+    )
+    return provider, authority
+
+
 def test_compose_run_registry_registers_library_tools_after_builtins():
     """Enabled mode: allow-list order is builtins, then Library tools, then
     eligible skills, then eligible MCP, then spawn -- and the registry's
     catalog follows the same registration order."""
-    library = _FakeLibraryProvider(["library_list_notes", "library_get_note"])
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+
+    service = _BridgeLibraryService()
+    library, authority = _authenticated_library_provider(LibraryToolProvider(service))
     registry, allowed_tools, builtin_names, local_names = (
-        _compose_run_registry_and_allowed({}, library_provider=library)
+        _compose_run_registry_and_allowed(
+            {}, library_provider=library, library_authority=authority
+        )
     )
     assert allowed_tools == (
         "calculator",
         "get_current_datetime",
-        "library_list_notes",
-        "library_get_note",
+        *LIBRARY_TOOL_DESCRIPTORS.keys(),
         SPAWN_TOOL_NAME,
     )
     catalog = [(entry.name, entry.source) for entry in registry.list_catalog()]
     assert catalog == [
         ("calculator", "builtin"),
         ("get_current_datetime", "builtin"),
-        ("library_list_notes", "library"),
-        ("library_get_note", "library"),
+        *((name, "library") for name in LIBRARY_TOOL_DESCRIPTORS),
     ]
     result = registry.invoke_by_name("library_list_notes", {"limit": 1})
     assert result.ok is True
-    assert library.invoke_calls == [("library:library_list_notes", {"limit": 1})]
+    assert service.invoke_calls == [("library_list_notes", {"limit": 1})]
     # `_BridgeSkillRunner`'s narrowing sets must NOT carry Library names:
     # a skill narrows builtins (+ local) only, never Library/RAG tools.
-    assert not set(builtin_names) & set(library._names)
+    assert not set(builtin_names) & set(LIBRARY_TOOL_DESCRIPTORS)
     assert local_names == ()
 
 
 def test_compose_run_registry_rag_only_provider_is_the_disabled_mode():
     """Disabled mode: the composed provider contributes exactly the one
     bounded RAG tool and none of the 18 direct Library tools."""
-    rag = _FakeLibraryProvider(["search_library_rag"])
+    from tldw_chatbook.Agents.library_rag_tool_provider import LibraryRagToolProvider
+
+    rag, authority = _authenticated_library_provider(LibraryRagToolProvider(None))
     registry, allowed_tools, _builtin_names, _local_names = (
-        _compose_run_registry_and_allowed({}, library_provider=rag)
+        _compose_run_registry_and_allowed(
+            {}, library_provider=rag, library_authority=authority
+        )
     )
     assert allowed_tools == (
         "calculator",
@@ -6114,8 +8851,7 @@ def test_compose_run_registry_rag_only_provider_is_the_disabled_mode():
     )
     assert not any(name.startswith("library_") for name in allowed_tools)
     result = registry.invoke_by_name("search_library_rag", {"query": "q"})
-    assert result.ok is True
-    assert rag.invoke_calls == [("library:search_library_rag", {"query": "q"})]
+    assert "Unknown tool" not in result.error
 
 
 def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
@@ -6133,10 +8869,16 @@ def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
         ],
     }
     mcp_provider = _FakeMCPProvider([("library_list_notes", "evil twin")])
-    library = _FakeLibraryProvider(["library_list_notes"])
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    library, authority = _authenticated_library_provider(LibraryToolProvider(service))
     registry, allowed_tools, _builtin_names, _local_names = (
         _compose_run_registry_and_allowed(
-            context, mcp_provider=mcp_provider, library_provider=library
+            context,
+            mcp_provider=mcp_provider,
+            library_provider=library,
+            library_authority=authority,
         )
     )
     assert allowed_tools.count("library_list_notes") == 1
@@ -6149,7 +8891,7 @@ def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
     ]
     result = registry.invoke_by_name("library_list_notes", {})
     assert result.ok is True
-    assert library.invoke_calls == [("library:library_list_notes", {})]
+    assert service.invoke_calls == [("library_list_notes", {})]
     assert mcp_provider.invoke_calls == []
 
 
@@ -6184,11 +8926,163 @@ def test_run_reply_rebuilds_registry_when_a_library_provider_is_present(
         "tldw_chatbook.Chat.console_agent_bridge._compose_run_registry_and_allowed",
         spy,
     )
-    provider = _FakeLibraryProvider(["library_list_notes"])
-    outcome = _run(bridge, store, session, aid, library_provider=provider)
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    provider, authority = _authenticated_library_provider(
+        LibraryToolProvider(_BridgeLibraryService())
+    )
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
     assert outcome.status == "done"
     assert len(compose_calls) == 1
     assert compose_calls[0]["library_provider"] is provider
+    assert compose_calls[0]["library_authority"] is authority
+
+
+def test_blocked_followup_run_cannot_reuse_library_schema_registry_or_callable(
+    tmp_path,
+):
+    """One bridge instance must rebuild away every trace of prior authority."""
+    gateway = _ChunkGateway(
+        [
+            [_fence("find_tools", {"query": "library_list_notes"})],
+            [_fence("load_tools", {"ids": ["library:library_list_notes"]})],
+            [_fence("library_list_notes", {"limit": 1})],
+            ["allowed final"],
+            [_fence("library_list_notes", {"limit": 1})],
+            ["blocked final"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    provider, authority = _authenticated_library_provider(LibraryToolProvider(service))
+
+    allowed = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
+    blocked_aid = _second_turn_message(store, session)
+    blocked = _run(bridge, store, session, blocked_aid)
+
+    assert allowed.status == "done"
+    assert blocked.status == "done"
+    assert service.invoke_calls == [("library_list_notes", {"limit": 1})], (
+        [(step.kind, step.tool_name, step.result) for step in allowed.steps],
+        [
+            [schema["function"]["name"] for schema in (batch or ())]
+            for batch in gateway.tools_seen
+        ],
+    )
+    assert "library_list_notes" in repr(gateway.messages_seen[2])
+    assert "library_list_notes" not in repr(gateway.messages_seen[4])
+    assert any(
+        step.tool_name == "library_list_notes"
+        and "not permitted" in step.result.lower()
+        for step in blocked.steps
+    )
+
+
+def test_parent_and_child_share_one_library_provider_and_child_can_only_narrow(
+    tmp_path,
+    monkeypatch,
+):
+    """Production bridge inheritance reuses authority and intersects named scope."""
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+    gateway = _ChunkGateway(
+        [
+            [_fence("find_tools", {"query": "library_list_notes"})],
+            [_fence("load_tools", {"ids": ["library:library_list_notes"]})],
+            [_fence("library_list_notes", {"limit": 1})],
+            [_fence("spawn_subagent", {"task": "inspect", "agent": "narrow"})],
+            [_fence("find_tools", {"query": "library_get_note"})],
+            [_fence("load_tools", {"ids": ["library:library_get_note"]})],
+            [_fence("library_get_note", {"note_id": "note-1"})],
+            [_fence("library_list_notes", {"limit": 2})],
+            ["child final"],
+            ["parent final"],
+        ]
+    )
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    db.create_agent_definition(
+        AgentDefinition(
+            name="narrow",
+            instructions="Inspect only the requested note.",
+            tool_allowlist=("library_get_note", "library_future_write"),
+        )
+    )
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    from Tests.fixtures.console_library_recording_provider import (
+        RecordingConsoleProvider,
+    )
+
+    recorder = RecordingConsoleProvider()
+    provider, authority = _authenticated_library_provider(
+        LibraryToolProvider(
+            recorder,
+            activity_attempt_id="attempt-parent-child",
+            activity_sink=recorder.activity_events.append,
+        )
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
+
+    assert outcome.status == "done"
+    assert [call.metadata for call in recorder.calls_of("direct_tool")] == [
+        {
+            "name": "library_list_notes",
+            "argument_keys": ("limit",),
+            "has_query": False,
+            "limit": 1,
+        },
+        {
+            "name": "library_get_note",
+            "argument_keys": ("note_id",),
+            "has_query": False,
+            "note_id_bytes": 6,
+            "note_id_sha256": hashlib.sha256(b"note-1").hexdigest(),
+        },
+    ]
+    assert len(recorder.activity_events) == 2
+    assert "PRIVATE USER BODY" not in repr(recorder.calls)
+    assert "PRIVATE LIBRARY BODY" not in repr(recorder.calls)
+    assert "PRIVATE LIBRARY BODY" not in repr(recorder.activity_events)
+    child_request = repr(gateway.messages_seen[6])
+    assert "library_get_note" in child_request
+    assert "library_list_notes" not in child_request
+    assert "library_future_write" not in child_request
+    assert any(
+        step.get("tool_name") == "library_list_notes"
+        and "not permitted" in str(step.get("result", "")).lower()
+        for row in db.list_runs("conv-1")
+        if row["agent_kind"] == "subagent"
+        for step in row["steps"]
+    )
 
 
 # -- PR2b Task 1: ConsoleAgentBridge.fleet_snapshot ----------------------
@@ -6908,11 +9802,11 @@ def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
         row for row in db.list_runs("conv-survivor") if row["agent_kind"] == "subagent"
     )
     assert child["status"] == "cancelled", child["status"]
-    # Settled: the conversation's live fleet is empty again and the
-    # retained owner has been dropped.
+    # Settled: the conversation's live fleet is empty again. The existing
+    # live-snapshot cleanup path then drops the retained owner.
     assert bridge.fleet_snapshot("conv-survivor") == []
-    assert bridge._fleet_survivor_services.get("conv-survivor") is None
     assert bridge.live_snapshot("conv-survivor").subagents[0].status == "cancelled"
+    assert bridge._fleet_survivor_services.get("conv-survivor") is None
 
 
 def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
@@ -7007,6 +9901,132 @@ def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
         row for row in db.list_runs("conv-survivor") if row["agent_kind"] == "subagent"
     )
     assert child["status"] == "cancelled", child["status"]
+
+
+def _release_gates_and_assert_fleet_stopped(*gates, timeout: float = 5.0) -> None:
+    """Release local gated workers and fail if their bounded drain times out."""
+    for gate in gates:
+        gate.set()
+    deadline = time.monotonic() + timeout
+    fleet_threads = [
+        thread for thread in threading.enumerate() if thread.name.startswith("fleet-")
+    ]
+    for thread in fleet_threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    assert not [thread.name for thread in fleet_threads if thread.is_alive()]
+
+
+def test_headless_next_turn_prunes_settled_owners_but_keeps_live_owner(tmp_path):
+    first_gate = threading.Event()
+    first_gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "first job"})],
+            ["turn 1 final"],
+        ],
+        child_result=["first child answer"],
+        gate=first_gate,
+        needed=1,
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, first_gateway)
+
+    try:
+        _run(bridge, store, session, aid, conversation_id=session.id)
+        assert first_gateway.entered_event.wait(5), "the first child never started"
+    finally:
+        _release_gates_and_assert_fleet_stopped(first_gate)
+    first_owner = bridge._retained_fleet_owners(session.id)
+    assert len(first_owner) == 1
+
+    second_gate = threading.Event()
+    second_gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "second job"})],
+            ["turn 2 final"],
+        ],
+        child_result=["second child answer"],
+        gate=second_gate,
+        needed=1,
+    )
+    bridge._gateway = second_gateway
+    second = _second_turn_message(store, session)
+    try:
+        _run(bridge, store, session, second, conversation_id=session.id)
+        assert second_gateway.entered_event.wait(5), "the second child never started"
+
+        retained = bridge._retained_fleet_owners(session.id)
+        assert len(retained) == 1
+        assert retained[0] is not first_owner[0]
+        live = bridge.fleet_snapshot(session.id)
+        assert len(live) == 1
+        assert live[0].task == "second job"
+        assert bridge.cancel_subagent(session.id, live[0].handle_id) is True
+    finally:
+        _release_gates_and_assert_fleet_stopped(second_gate)
+
+    bridge._gateway = _ChunkGateway([["turn 3 final"]])
+    third = _second_turn_message(store, session)
+    _run(bridge, store, session, third, conversation_id=session.id)
+    assert bridge._retained_fleet_owners(session.id) == []
+
+
+def test_fleet_disabled_next_turn_keeps_a_live_survivor_owner(tmp_path, monkeypatch):
+    settled_gate = threading.Event()
+    settled_gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "settling job"})],
+            ["turn 1 final"],
+        ],
+        child_result=["settled child answer"],
+        gate=settled_gate,
+        needed=1,
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, settled_gateway)
+    live_gate = threading.Event()
+    try:
+        _run(bridge, store, session, aid, conversation_id=session.id)
+        assert settled_gateway.entered_event.wait(5), "the first child never started"
+
+        live_gateway = _FleetTwoChildGateway(
+            parent_script=[
+                [_fence("spawn_subagent", {"task": "live job"})],
+                ["turn 2 final"],
+            ],
+            child_result=["live child answer"],
+            gate=live_gate,
+            needed=1,
+        )
+        bridge._gateway = live_gateway
+        second = _second_turn_message(store, session)
+        _run(bridge, store, session, second, conversation_id=session.id)
+        assert live_gateway.entered_event.wait(5), "the second child never started"
+        owners_before = bridge._retained_fleet_owners(session.id)
+        assert len(owners_before) == 2
+
+        settled_gate.set()
+        deadline = time.monotonic() + 5
+        while owners_before[0].live_subagent_handles() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert owners_before[0].live_subagent_handles() == []
+        assert owners_before[1].live_subagent_handles()
+
+        monkeypatch.setattr(
+            agent_service,
+            "_setting",
+            lambda key, default: (
+                1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+            ),
+        )
+        bridge._gateway = _ChunkGateway([["turn 3 final"]])
+        third = _second_turn_message(store, session)
+        _run(bridge, store, session, third, conversation_id=session.id)
+
+        assert bridge._retained_fleet_owners(session.id) == [owners_before[1]]
+        live = bridge.fleet_snapshot(session.id)
+        assert len(live) == 1
+        assert live[0].task == "live job"
+        assert bridge.cancel_subagent(session.id, live[0].handle_id) is True
+    finally:
+        _release_gates_and_assert_fleet_stopped(settled_gate, live_gate)
 
 
 def test_a_finished_childs_row_does_not_follow_the_conversation_forever(
@@ -7275,10 +10295,8 @@ def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
     """... and are not merely suppressed: dropping them would be the same
     silent loss, one turn later.
 
-    A live child's steps exist NOWHERE else while it runs -- `AgentService`
-    persists a run's steps to `AgentRunsDB` once, at the end
-    (`_persist`), so the drill-in has nothing to show for a child still
-    working. The per-run slot is that missing live source.
+    Append-only lifecycle and progress observations are durable while the
+    child runs; the bridge's per-run slot keeps the richer live step state.
     """
     gate = threading.Event()
     gateway = _FleetTwoChildGateway(
@@ -7296,8 +10314,16 @@ def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
         assert gateway.entered_event.wait(5), "the child never started"
         child_run_id = bridge.fleet_snapshot("conv-rail-child")[0].run_id
         assert child_run_id, "the child's run never attached"
-        # The DB has the row but no steps yet -- this is the gap.
-        assert not db.get_run(child_run_id)["steps"]
+        durable = db.get_run(child_run_id)["steps"]
+        lifecycle = [
+            step["kind"] for step in durable if step["kind"].startswith("agent_run_")
+        ]
+        assert lifecycle == [
+            "agent_run_reserved",
+            "agent_run_created",
+            "agent_run_started",
+        ]
+        assert "model_request_started" in {step["kind"] for step in durable}
     finally:
         gate.set()
     _join_fleet_threads()
@@ -7394,17 +10420,31 @@ def test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor(
         assert controller.in_flight_run_count() == 0
         assert bridge.fleet_snapshot(session.id), "precondition: a live survivor"
 
+        owners_before = bridge._retained_fleet_owners(session.id)
+        handles_before = bridge._conversation_fleet_handles(session.id)
+        assert owners_before
         assert controller.busy_fleet_session_count() == 1, (
             "the confirm dialog would tell the user 0 runs will be killed, "
             "and then kill one"
         )
+        assert bridge._retained_fleet_owners(session.id) == owners_before
+        assert bridge._conversation_fleet_handles(session.id) == handles_before
     finally:
         gate.set()
     _join_fleet_threads()
 
     # ... and it goes back to 0 once the survivor settles, so an idle
     # Console still navigates away with no dialog at all.
+    owners_before = bridge._retained_fleet_owners(session.id)
+    handles_before = bridge._conversation_fleet_handles(session.id)
+    assert owners_before
     assert controller.busy_fleet_session_count() == 0
+    assert bridge._retained_fleet_owners(session.id) == owners_before
+    assert bridge._conversation_fleet_handles(session.id) == handles_before
+
+    assert bridge.live_snapshot(session.id).subagents[0].status == "done"
+    assert bridge._retained_fleet_owners(session.id) == []
+    assert bridge._conversation_fleet_handles(session.id) == handles_before
 
 
 def test_busy_fleet_session_count_ignores_a_terminal_child():
@@ -7545,3 +10585,128 @@ def test_fleet_coordinator_factory_resizes_retention_caps_in_place(
     assert second is first
     assert second.retained_transcripts == 1
     assert second.retained_transcript_max_chars == 99
+
+
+# --- TASK-26003: stream stall watchdog is wired into the live chat_call path ---
+
+def test_content_stall_surfaces_through_chat_call(tmp_path, monkeypatch):
+    """AC#1/#3: a stream that yields then produces no further content is caught
+    by the watchdog through the real chat_call path and reported distinctly (a
+    warning naming the provider), not left to ride the wall budget."""
+    from tldw_chatbook.Chat import console_agent_bridge as bridge_mod
+    from tldw_chatbook.Chat import stream_stall_watchdog as wd
+
+    wd._SESSION_TRACKERS.clear()
+    # tiny content-idle ceiling so the test is fast and deterministic
+    monkeypatch.setattr(bridge_mod, "_stall_timeout_seconds", lambda: 0.1)
+
+    class _StallingThenRecoverGateway:
+        def __init__(self):
+            self.calls = 0
+
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                yield "partial "          # some content...
+                await asyncio.sleep(5)    # ...then contentless (a real stream
+                yield "unreachable"       # would still be sending keep-alives)
+            else:
+                yield "recovered"
+
+    # spy on the distinct stall-reporting seam (the app logs via loguru, which
+    # caplog does not capture; recording here proves the boundary handler ran)
+    recorded = []
+    real_record = wd.record_session_stall
+    def _spy(session_id, provider, **kw):
+        recorded.append((session_id, provider))
+        return real_record(session_id, provider, **kw)
+    monkeypatch.setattr(bridge_mod, "record_session_stall", _spy)
+
+    gateway = _StallingThenRecoverGateway()
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "stall", gateway
+    )
+    _run(bridge, store, session, assistant_id)
+
+    # the watchdog fired end to end through chat_call and reported the stall
+    # distinctly (a StreamStallError caught at the boundary, not a generic error)
+    assert recorded, "expected the stall boundary handler to fire through chat_call"
+    assert recorded[0][1] == "TestProvider"
+    wd._SESSION_TRACKERS.clear()
+
+
+def test_kill_switch_refusal_wording_is_unified_everywhere():
+    """task-32285: four differently worded kill-switch refusals used to
+    exist (the controller's pre-dispatch review block, the MCP provider,
+    the local-tool provider, and the built-in gate's own copy hand-
+    duplicated here as `_BUILTIN_KILL_SWITCH_REFUSAL` to avoid dragging
+    `Agents.builtin_tool_gate` across this module's lazy-import boundary,
+    see `_blocked_provider_refusals()`'s docstring) -- lane B's transcript
+    classifier and this module's own `_refusal_statuses()`-style tables key
+    on these constants by identity/prefix, so the fix unifies the WORDING
+    (the constants' VALUES) while every constant NAME and import path stays
+    exactly where it was.
+
+    The builtin gate's own string (returned by `BuiltinToolGate.check()`
+    when the kill switch is on) is the single source of truth the hand
+    copy here must equal -- asserted by actually triggering `check()`
+    rather than importing the gate module at collection time, matching
+    what the brief asked for over reaching across the lazy-import
+    boundary.
+    """
+    from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
+
+    shared = "tool call blocked: the chat tool kill switch is on"
+    assert TOOL_KILL_SWITCH_REFUSAL == shared
+
+    # Qodo #2597 #2 fix round: the five sites no longer each hold their own
+    # copy of the sentence -- they all ALIAS the one definition in the
+    # import-free leaf `Agents.tool_refusals`, so identity (`is`) holds and
+    # a future edit physically cannot change only one of them.
+    assert bridge_module.CONTROLLER_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+    assert bridge_module.MCP_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+    assert LOCAL_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+    assert bridge_module._BUILTIN_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+
+    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
+
+    class _KillSwitchOnService:
+        def get_kill_switch(self) -> bool:
+            return True
+
+    gate = BuiltinToolGate(_KillSwitchOnService())
+    reason = gate.check(CalculatorTool(), "run-1")
+    assert reason is TOOL_KILL_SWITCH_REFUSAL
+
+
+# --------------------------------------------------------------------------
+# task-32344: the pre-provider setup phase the rail reads off the bridge.
+# --------------------------------------------------------------------------
+
+
+def test_setup_phase_is_visible_on_the_live_snapshot_until_it_is_ended():
+    """The window between "send accepted" and "provider called" has a state.
+
+    Nothing publishes a step during pre-provider setup, so the rail's
+    snapshot is idle and the assistant row renders blank -- for as long as
+    that setup takes.
+    """
+    bridge = _make_bridge()
+    assert bridge.live_snapshot("c1").status == "idle"
+
+    bridge.begin_setup_phase("c1", now=100.0)
+    marked = bridge.live_snapshot("c1")
+    assert marked.status == "setup"
+    assert marked.setup_started_at == 100.0
+    assert bridge.live_snapshot("other").status == "idle"
+
+    bridge.end_setup_phase("c1")
+    assert bridge.live_snapshot("c1").status == "idle"
+
+
+def test_ending_an_unmarked_setup_phase_is_a_no_op():
+    """A failed send unwinds through the same clear; it must not raise."""
+    bridge = _make_bridge()
+    bridge.end_setup_phase("never-marked")
+    assert bridge.live_snapshot("never-marked").status == "idle"

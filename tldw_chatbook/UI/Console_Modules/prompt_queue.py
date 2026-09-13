@@ -2,8 +2,8 @@
 
 The registry and coordinator in :mod:`tldw_chatbook.Chat` own queue state and
 draining.  This module owns the UI boundary: content-free presentation,
-optimistic queue admission, exact draft restoration on refusal, and the one
-per-session Textual worker used to start a manual prompt chain.
+optimistic queue admission, and synchronous transfer into app-owned runtime
+custody before the accepted composer revision is committed.
 
 ``ConsolePromptQueueUIController`` deliberately owns no DOM.  Its dependencies
 are named, late-bound callables supplied by ``wiring.py`` so tests and runtime
@@ -13,7 +13,7 @@ session switches are observed at call time rather than frozen at construction.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, TYPE_CHECKING
 
@@ -24,7 +24,11 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleControllerActivity
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleControllerActivity,
+    ConsoleDispatchRecoveryAction,
+    ConsoleDispatchRecoveryState,
+)
 from tldw_chatbook.Chat.console_prompt_queue import (
     MAX_CONSOLE_QUEUE_ENTRIES,
     PromptQueueEntryPhase,
@@ -36,6 +40,7 @@ from tldw_chatbook.Chat.console_prompt_queue import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
     from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
 
 
@@ -51,14 +56,14 @@ def commit_queued_draft_transaction(
 ) -> None:
     """Clear only the admitted draft while keeping unsent text out of history."""
 
+    remaining = ""
     if visible_session_id == session_id and composer is not None:
-        if stash is None:
-            composer.clear_draft()
-        composer.clear_history()
+        composer.commit_captured_draft(stash)
+        remaining = composer.draft_text()
         sync_command_popup()
     undo_histories.pop(session_id, None)
     try:
-        store.set_session_draft(session_id, "")
+        store.set_session_draft(session_id, remaining)
     except KeyError:
         pass
 
@@ -102,6 +107,8 @@ class ConsolePromptQueuePresentation:
     pause_label: str
     primary_action: str
     pause_enabled: bool
+    recovery_actions: tuple[ConsoleDispatchRecoveryAction, ...] = ()
+    turn_recovery_id: str | None = field(default=None, repr=False)
 
 
 def derive_prompt_queue_presentation(
@@ -109,6 +116,9 @@ def derive_prompt_queue_presentation(
     activity: ConsoleControllerActivity,
     *,
     composer_collapsed: bool = False,
+    dispatch_recovery: ConsoleDispatchRecoveryState | None = None,
+    dispatch_recovery_blocked: bool = False,
+    turn_recovery_id: str | None = None,
 ) -> ConsolePromptQueuePresentation:
     """Derive exact visible queue vocabulary without reading a prompt body."""
 
@@ -175,19 +185,43 @@ def derive_prompt_queue_presentation(
         ),
         "",
     )
+    if turn_recovery_id is not None:
+        state_label = "Unsent turn needs attention"
+        pause_label = ""
+        primary_action = "turn-recovery"
+        pause_enabled = False
+        recovery_actions = ()
+    elif dispatch_recovery is not None:
+        state_label = dispatch_recovery.visible_copy
+        pause_label = ""
+        primary_action = "dispatch-recovery"
+        pause_enabled = False
+        recovery_actions = dispatch_recovery.actions
+    elif dispatch_recovery_blocked:
+        state_label = "Paused for response recovery"
+        pause_label = "Resume"
+        primary_action = "toggle-pause"
+        pause_enabled = False
+        recovery_actions = ()
+    else:
+        pause_enabled = count > 0
+        recovery_actions = ()
     return ConsolePromptQueuePresentation(
         revision=snapshot.revision,
         count=count,
         send_label=send_label,
         send_enabled=send_enabled,
         send_tooltip=send_tooltip,
-        shelf_visible=count > 0 and not composer_collapsed,
+        shelf_visible=(count > 0 or turn_recovery_id is not None)
+        and not composer_collapsed,
         state_label=state_label,
         paused=snapshot.mode is PromptQueueMode.PAUSED,
         next_preview=next_preview,
         pause_label=pause_label,
         primary_action=primary_action,
-        pause_enabled=count > 0,
+        pause_enabled=pause_enabled,
+        recovery_actions=recovery_actions,
+        turn_recovery_id=turn_recovery_id,
     )
 
 
@@ -282,8 +316,8 @@ class ConsolePromptQueueRegion(Widget):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="console-prompt-queue-row"):
-            yield Static("", id="console-prompt-queue-summary")
-            yield Static("", id="console-prompt-queue-preview")
+            yield Static("", id="console-prompt-queue-summary", markup=False)
+            yield Static("", id="console-prompt-queue-preview", markup=False)
             yield Button("Manage", id="console-prompt-queue-manage")
             yield Button("Pause", id="console-prompt-queue-pause")
 
@@ -317,11 +351,47 @@ class ConsolePromptQueueRegion(Widget):
             if presentation.next_preview
             else ""
         )
-        manage.disabled = presentation.count == 0
-        manage.tooltip = "Open the prompt queue manager."
-        pause.label = presentation.pause_label
-        pause.disabled = not presentation.pause_enabled
-        pause.tooltip = f"{presentation.pause_label} this session's prompt queue."
+        if presentation.primary_action == "turn-recovery":
+            manage.label = "Restore"
+            manage.disabled = False
+            manage.tooltip = "Restore this unsent turn."
+            pause.label = "Discard"
+            pause.disabled = False
+            pause.tooltip = "Discard this unsent turn."
+        elif presentation.primary_action == "dispatch-recovery":
+            first = (
+                presentation.recovery_actions[0]
+                if presentation.recovery_actions
+                else None
+            )
+            second = (
+                presentation.recovery_actions[1]
+                if len(presentation.recovery_actions) > 1
+                else None
+            )
+            manage.label = first.label if first is not None else "Unavailable"
+            manage.disabled = first is None or not first.enabled
+            manage.tooltip = (
+                first.disabled_reason or first.label
+                if first is not None
+                else presentation.state_label
+            )
+            pause.label = second.label if second is not None else "Unavailable"
+            pause.disabled = second is None or not second.enabled
+            pause.tooltip = (
+                second.disabled_reason or second.label
+                if second is not None
+                else presentation.state_label
+            )
+        else:
+            manage.label = "Manage"
+            manage.disabled = presentation.count == 0
+            manage.tooltip = "Open the prompt queue manager."
+            pause.label = presentation.pause_label
+            pause.disabled = not presentation.pause_enabled
+            pause.tooltip = (
+                f"{presentation.pause_label} this session's prompt queue."
+            )
         self.refresh(layout=True)
         return True
 
@@ -336,7 +406,27 @@ class ConsolePromptQueueRegion(Widget):
             return
         if event.button.id == "console-prompt-queue-manage":
             event.stop()
-            if self._on_manage_requested is not None:
+            if (
+                presentation.primary_action == "turn-recovery"
+                and presentation.turn_recovery_id is not None
+                and self._on_primary_requested is not None
+            ):
+                self._on_primary_requested(
+                    self._session_id,
+                    presentation.revision,
+                    f"turn-recovery:restore:{presentation.turn_recovery_id}",
+                )
+            elif (
+                presentation.primary_action == "dispatch-recovery"
+                and presentation.recovery_actions
+                and self._on_primary_requested is not None
+            ):
+                self._on_primary_requested(
+                    self._session_id,
+                    presentation.revision,
+                    presentation.recovery_actions[0].action_id.value,
+                )
+            elif self._on_manage_requested is not None:
                 self._on_manage_requested(self._session_id, presentation.revision)
             else:
                 self.post_message(
@@ -344,7 +434,27 @@ class ConsolePromptQueueRegion(Widget):
                 )
         elif event.button.id == "console-prompt-queue-pause":
             event.stop()
-            if presentation.primary_action == "review":
+            if (
+                presentation.primary_action == "turn-recovery"
+                and presentation.turn_recovery_id is not None
+                and self._on_primary_requested is not None
+            ):
+                self._on_primary_requested(
+                    self._session_id,
+                    presentation.revision,
+                    f"turn-recovery:discard:{presentation.turn_recovery_id}",
+                )
+            elif (
+                presentation.primary_action == "dispatch-recovery"
+                and len(presentation.recovery_actions) > 1
+                and self._on_primary_requested is not None
+            ):
+                self._on_primary_requested(
+                    self._session_id,
+                    presentation.revision,
+                    presentation.recovery_actions[1].action_id.value,
+                )
+            elif presentation.primary_action == "review":
                 if self._on_manage_requested is not None:
                     self._on_manage_requested(
                         self._session_id, presentation.revision
@@ -374,32 +484,40 @@ class ConsolePromptQueueUIController:
         self,
         *,
         chat_controller_accessor: Callable[[], Any],
+        capture_configuration: Callable[[str], "ConsoleTurnConfigurationSnapshot"],
         ensure_active_session: Callable[[], None],
         blocked_reason_accessor: Callable[[], str],
         setup_blocked_reason_accessor: Callable[[], str],
-        restore_stash: Callable[["ConsoleDraftStash | None"], None],
         append_system_message: Callable[[str], Awaitable[None]],
         notify: Callable[[str, str], None],
         focus_composer: Callable[[], None],
-        inflight_stashes_accessor: Callable[[], dict[str, Any]],
         note_follow_intent: Callable[[], None],
-        launch_chain: Callable[[str, str], None],
+        launch_chain: Callable[[str, str], str],
+        commit_captured_draft: Callable[[str, "ConsoleDraftStash | None"], None],
         commit_queued_draft: Callable[[str, "ConsoleDraftStash | None"], None],
+        turn_recovery_ids: Callable[[str], tuple[str, ...]],
+        restore_turn_recovery: Callable[[str], Any],
+        discard_turn_recovery: Callable[[str], bool],
+        load_recovered_turn: Callable[[str], None],
         edit_refusal: Callable[[str], str],
         sync_ui: Callable[[], Awaitable[None]],
     ) -> None:
         self._chat_controller_accessor = chat_controller_accessor
+        self._capture_configuration = capture_configuration
         self._ensure_active_session = ensure_active_session
         self._blocked_reason_accessor = blocked_reason_accessor
         self._setup_blocked_reason_accessor = setup_blocked_reason_accessor
-        self._restore_stash = restore_stash
         self._append_system_message = append_system_message
         self._notify = notify
         self._focus_composer = focus_composer
-        self._inflight_stashes_accessor = inflight_stashes_accessor
         self._note_follow_intent = note_follow_intent
         self._launch_chain = launch_chain
+        self._commit_captured_draft = commit_captured_draft
         self._commit_queued_draft = commit_queued_draft
+        self._turn_recovery_ids = turn_recovery_ids
+        self._restore_turn_recovery = restore_turn_recovery
+        self._discard_turn_recovery = discard_turn_recovery
+        self._load_recovered_turn = load_recovered_turn
         self._edit_refusal = edit_refusal
         self._sync_ui = sync_ui
 
@@ -408,6 +526,23 @@ class ConsolePromptQueueUIController:
     ) -> None:
         """Apply the shelf's state-specific primary action and repaint."""
 
+        if action.startswith("turn-recovery:"):
+            await self._handle_turn_recovery_intent(session_id, action)
+            return
+        if action in {"retry_response", "retry_anyway", "discard"}:
+            controller = self._chat_controller_accessor()
+            result = (
+                await controller.discard_dispatch_recovery(session_id)
+                if action == "discard"
+                else await controller.retry_dispatch_recovery(session_id)
+            )
+            if not result.accepted:
+                self._notify(
+                    result.visible_copy or "That recovery action is unavailable.",
+                    "warning",
+                )
+            await self._sync_ui()
+            return
         if action == "toggle-pause":
             await self.handle_pause_intent(
                 session_id, expected_revision=expected_revision
@@ -423,6 +558,40 @@ class ConsolePromptQueueUIController:
                 result.detail or "That prompt queue action is unavailable.",
                 "warning",
             )
+        await self._sync_ui()
+
+    async def _handle_turn_recovery_intent(self, session_id: str, action: str) -> None:
+        """Apply one exact, body-free runtime recovery action."""
+
+        operation, separator, turn_id = action.removeprefix("turn-recovery:").partition(
+            ":"
+        )
+        recovery_ids = self._turn_recovery_ids(session_id)
+        oldest_id = recovery_ids[0] if recovery_ids else None
+        if (
+            not separator
+            or operation not in {"restore", "discard"}
+            or not turn_id
+            or oldest_id != turn_id
+        ):
+            self._notify("That unsent turn is no longer available.", "warning")
+            await self._sync_ui()
+            return
+        if operation == "restore":
+            try:
+                self._restore_turn_recovery(turn_id)
+            except (KeyError, RuntimeError):
+                self._notify(
+                    "That unsent turn could not be restored safely.", "warning"
+                )
+                await self._sync_ui()
+                return
+            self._load_recovered_turn(session_id)
+            await self._sync_ui()
+            self._focus_composer()
+            return
+        if not self._discard_turn_recovery(turn_id):
+            self._notify("That unsent turn is no longer available.", "warning")
         await self._sync_ui()
 
     async def handle_pause_intent(
@@ -450,8 +619,18 @@ class ConsolePromptQueueUIController:
         controller = self._chat_controller_accessor()
         snapshot = controller.prompt_queue_registry.snapshot(session_id)
         activity = controller.activity_for(session_id)
+        recovery_ids = self._turn_recovery_ids(session_id)
+        turn_recovery_id = recovery_ids[0] if recovery_ids else None
         return derive_prompt_queue_presentation(
-            snapshot, activity, composer_collapsed=composer_collapsed
+            snapshot,
+            activity,
+            composer_collapsed=composer_collapsed,
+            dispatch_recovery_blocked=(
+                controller.prompt_queue_coordinator.dispatch_recovery_blocks_queue(
+                    session_id
+                )
+            ),
+            turn_recovery_id=turn_recovery_id,
         )
 
     def snapshot(self, session_id: str) -> PromptQueueSnapshot:
@@ -508,6 +687,7 @@ class ConsolePromptQueueUIController:
             entry_id=entry_id,
             text=text,
             expected_revision=expected_revision,
+            configuration=self._capture_configuration(session_id),
         )
 
     def move_waiting(
@@ -656,13 +836,17 @@ class ConsolePromptQueueUIController:
         self,
         draft: str,
         *,
+        session_id: str | None = None,
         stash: "ConsoleDraftStash | None" = None,
     ) -> ConsolePromptDispatchResult:
-        """Send now, queue behind accepted work, or refuse without draft loss."""
+        """Send now, queue behind accepted work, or refuse without draft loss.
+
+        ``session_id`` pins visible composer sends to the chat that owned the
+        captured draft. Other callers retain the active-session fallback.
+        """
 
         blocked_reason = self._blocked_reason_accessor().strip()
         if blocked_reason:
-            self._restore_stash(stash)
             setup_reason = self._setup_blocked_reason_accessor().strip()
             visible = (
                 setup_reason
@@ -680,15 +864,16 @@ class ConsolePromptQueueUIController:
                 ConsolePromptDispatchStatus.REFUSED, detail=visible
             )
 
-        self._ensure_active_session()
+        if session_id is None:
+            self._ensure_active_session()
         controller = self._chat_controller_accessor()
-        session_id = controller.store.active_session_id or ""
+        if session_id is None:
+            session_id = controller.store.active_session_id or ""
         snapshot = controller.prompt_queue_registry.snapshot(session_id)
         activity = controller.activity_for(session_id)
 
         if activity.preparing_before_acceptance and snapshot.total_count == 0:
             detail = "Preparing the current turn. Queueing becomes available once it is accepted."
-            self._restore_stash(stash)
             self._notify(detail, "warning")
             return ConsolePromptDispatchResult(
                 ConsolePromptDispatchStatus.REFUSED,
@@ -701,6 +886,7 @@ class ConsolePromptQueueUIController:
                 session_id,
                 text=draft,
                 expected_revision=snapshot.revision,
+                configuration=self._capture_configuration(session_id),
             )
             if queued.status is QueueMutationStatus.REROUTE_NORMAL_SEND:
                 return await self._stage_normal_chain(
@@ -716,7 +902,6 @@ class ConsolePromptQueueUIController:
 
         refusal = controller.send_refusal_copy(session_id)
         if refusal:
-            self._restore_stash(stash)
             self._notify(refusal, "warning")
             return ConsolePromptDispatchResult(
                 ConsolePromptDispatchStatus.REFUSED,
@@ -741,7 +926,6 @@ class ConsolePromptQueueUIController:
                 "Preparing the current turn. Queueing becomes available once it "
                 "is accepted."
             )
-            self._restore_stash(stash)
             self._notify(detail, "warning")
             return ConsolePromptDispatchResult(
                 ConsolePromptDispatchStatus.REFUSED,
@@ -751,7 +935,10 @@ class ConsolePromptQueueUIController:
         if activity.accepted_live_turn:
             snapshot = controller.prompt_queue_registry.snapshot(session_id)
             queued = controller.queue_prompt(
-                session_id, text=draft, expected_revision=snapshot.revision
+                session_id,
+                text=draft,
+                expected_revision=snapshot.revision,
+                configuration=self._capture_configuration(session_id),
             )
             if queued.applied:
                 self._commit_queued_draft(session_id, stash)
@@ -761,13 +948,18 @@ class ConsolePromptQueueUIController:
                 )
             if queued.status is not QueueMutationStatus.REROUTE_NORMAL_SEND:
                 return self._refuse_queue_mutation(queued, session_id, stash)
-        inflight = self._inflight_stashes_accessor()
-        if stash is not None:
-            inflight[session_id] = stash
-        else:
-            inflight.pop(session_id, None)
         self._note_follow_intent()
-        self._launch_chain(draft, session_id)
+        try:
+            self._launch_chain(draft, session_id)
+        except (RuntimeError, ValueError) as exc:
+            detail = str(exc) or "Console runtime refused this turn."
+            self._notify(detail, "warning")
+            return ConsolePromptDispatchResult(
+                ConsolePromptDispatchStatus.REFUSED,
+                session_id=session_id,
+                detail=detail,
+            )
+        self._commit_captured_draft(session_id, stash)
         return ConsolePromptDispatchResult(
             ConsolePromptDispatchStatus.SENT, session_id=session_id
         )
@@ -778,7 +970,6 @@ class ConsolePromptQueueUIController:
         session_id: str,
         stash: "ConsoleDraftStash | None",
     ) -> ConsolePromptDispatchResult:
-        self._restore_stash(stash)
         if result.status is QueueMutationStatus.FULL:
             detail = (
                 "Queue full "

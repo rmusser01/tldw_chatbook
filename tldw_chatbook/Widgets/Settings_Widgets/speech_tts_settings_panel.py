@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal
 
 from loguru import logger
 from rich.text import Text
@@ -32,9 +32,11 @@ from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, 
 from textual.worker import NoActiveWorker, get_current_worker
 
 from tldw_chatbook.Chat.console_voice_input import (
+    DEFAULT_HANDSFREE_SEND_DELAY_SECONDS,
     DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
     DEFAULT_REALTIME_MODEL,
     DEFAULT_REALTIME_PROVIDER,
+    acoustic_barge_in_enabled as _read_acoustic_barge_in,
     handsfree_engine as _read_handsfree_engine,
     realtime_enabled as _read_realtime_enabled,
     realtime_model as _read_realtime_model,
@@ -43,6 +45,13 @@ from tldw_chatbook.Chat.console_voice_input import (
     realtime_vad_silence_ms as _read_realtime_vad_silence_ms,
     realtime_vad_threshold as _read_realtime_vad_threshold,
     realtime_voice as _read_realtime_voice,
+)
+from tldw_chatbook.Chat.console_voice_settings import (
+    RESPONSE_EAGERNESS_DEFAULT_MS,
+    RESPONSE_EAGERNESS_MAX_MS,
+    RESPONSE_EAGERNESS_MIN_MS,
+    pipeline_aec_enabled,
+    response_eagerness_ms,
 )
 from tldw_chatbook.config import get_cli_setting, save_settings_to_cli_config
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
@@ -70,6 +79,13 @@ from tldw_chatbook.TTS.audio_cpp_recipes import (
     AUDIO_CPP_PINNED_RELEASE,
     AudioCppMatchState,
     AudioCppReferenceRequirement,
+)
+from tldw_chatbook.TTS.legacy_catalogs import (
+    LEGACY_DEFAULT_MODELS,
+    LEGACY_DEFAULT_VOICES,
+    LEGACY_MODEL_LABELS,
+    LEGACY_MODELS,
+    LEGACY_VOICE_OPTIONS,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import (
     FileOpen,
@@ -112,8 +128,6 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     CredentialSource,
     GlobalSpeechTTSEffectiveSource,
     GlobalSpeechTTSCredentialMutation,
-    GlobalSpeechTTSCredentialState,
-    GlobalSpeechTTSDefaults,
     GlobalSpeechTTSSaveProposal,
     GlobalSpeechTTSState,
     GlobalSpeechTTSValidationError,
@@ -128,41 +142,26 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     global_speech_tts_provider_configuration_state,
     project_audio_cpp_global_choices,
     required_openai_plaintext_confirmation_fingerprint,
+    MAX_GLOBAL_IDENTIFIER_CHARACTERS,
+    global_identifier_is_valid,
     restore_non_secret_defaults,
     validate_audio_cpp_managed_settings,
 )
 
+# TASK-21108: the draft-validation cluster below (bounds, the realtime
+# sibling draft, the detach/validate helpers, and the
+# ``SpeechTTSPanelDraftSnapshot`` payload) lives in the pure
+# ``speech_tts_panel_types`` module so ``app.py`` can read the payload class
+# without importing this 5,600-line widget module. These are re-exports, not
+# copies: ``type(x) is SpeechTTSPanelDraftSnapshot`` stays true across both
+# import paths.
+from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
+    _MAX_DRAFT_REVISION,
+    _PipelineVoiceSettingsDraft,
+    _RealtimeSettingsDraft,
+    SpeechTTSPanelDraftSnapshot,
+)
 
-_MAX_DRAFT_REVISION = 2**63 - 1
-_MAX_DRAFT_TEXT_CHARACTERS = 4096
-_MAX_DRAFT_GRAPH_DEPTH = 8
-_MAX_DRAFT_GRAPH_NODES = 4096
-_MAX_DRAFT_GRAPH_TEXT_CHARACTERS = 262_144
-_PRIVATE_DRAFT_KEYS = frozenset(
-    {
-        "token",
-        "api_key",
-        "auth_token",
-        "client_secret",
-        "access_token",
-        "refresh_token",
-        "password",
-        "passphrase",
-        "secret",
-        "credential",
-        "credentials",
-        "handoff_token",
-    }
-)
-_PRIVATE_DRAFT_KEY_SUFFIXES = (
-    "_token",
-    "_secret",
-    "_credential",
-    "_credentials",
-    "_password",
-    "_passphrase",
-    "_api_key",
-)
 
 _PROVIDER_OPTIONS = [
     (TTS_PROVIDER_LABELS[provider_id], provider_id)
@@ -184,6 +183,12 @@ _LANGUAGE_OPTIONS = [
 LeaveChoice = Literal["save", "discard", "cancel"]
 _GLOBAL_SPEECH_TTS_STACK_WIDTH = 104
 _COLLAPSIBLE_TITLE_FOCUS_SUFFIX = "::collapsible-title"
+# Select-option value for "enter an ID the known list does not carry". Never
+# persists: collection skips it and the handler swaps it for the modal flow.
+# The leading/trailing spaces make it structurally invalid as an identifier
+# (the shared validator rejects values that change under ``strip()``), so a
+# saved model/voice id can never collide with this UI action.
+_CUSTOM_ID_SENTINEL = " custom "
 _AUDIO_CPP_MANAGED_UI_SUPPORTED = os.name != "nt"
 _AUDIO_CPP_MANAGED_FIELD_IDS = frozenset(
     {
@@ -273,303 +278,6 @@ _REALTIME_HANDSFREE_ENGINE_OPTIONS = [
 ]
 
 
-@dataclass
-class _RealtimeSettingsDraft:
-    """Local editable copy of the realtime engine's plain config keys.
-
-    `realtime`/`dictation` are plain top-level config sections, not TTS
-    provider adapters -- there is no `GlobalSpeechTTSState` provider entry
-    for them and no TTS service adapter to reconfigure at runtime. This
-    stays a self-contained sibling draft, persisted through the same atomic
-    config writer other Settings surfaces use (`save_settings_to_cli_config`,
-    which is `apply_settings_mutation_to_cli_config` underneath), never a
-    second, bespoke config writer (TASK-2111).
-    """
-
-    enabled: bool
-    provider: str
-    model: str
-    voice: str
-    idle_timeout_minutes: str
-    handsfree_engine: str
-    turn_detection: str
-    vad_threshold: str
-    vad_silence_ms: str
-
-    def snapshot(self) -> tuple[bool, str, str, str, str, str, str, str, str]:
-        return (
-            self.enabled,
-            self.provider,
-            self.model,
-            self.voice,
-            self.idle_timeout_minutes,
-            self.handsfree_engine,
-            self.turn_detection,
-            self.vad_threshold,
-            self.vad_silence_ms,
-        )
-
-
-def _validated_realtime_draft_copy(value: object) -> _RealtimeSettingsDraft:
-    """Return one detached, structurally bounded Realtime draft."""
-
-    if type(value) is not _RealtimeSettingsDraft:
-        raise TypeError("Realtime Settings draft is invalid")
-    if type(value.enabled) is not bool:
-        raise TypeError("Realtime Settings draft is invalid")
-    for field_name in (
-        "provider",
-        "model",
-        "voice",
-        "idle_timeout_minutes",
-        "handsfree_engine",
-        "turn_detection",
-        "vad_threshold",
-        "vad_silence_ms",
-    ):
-        text = getattr(value, field_name)
-        if type(text) is not str or len(text) > _MAX_DRAFT_TEXT_CHARACTERS:
-            raise ValueError("Realtime Settings draft is invalid")
-    return replace(value)
-
-
-def _detached_draft_data(value: object) -> object:
-    """Detach one bounded JSON-like provider tree without private payloads."""
-
-    nodes = 0
-    text_characters = 0
-
-    def detach(item: object, depth: int) -> object:
-        nonlocal nodes, text_characters
-        nodes += 1
-        if depth > _MAX_DRAFT_GRAPH_DEPTH or nodes > _MAX_DRAFT_GRAPH_NODES:
-            raise ValueError("Global Speech & TTS draft is too large")
-        if item is None or type(item) is bool or type(item) is int:
-            return item
-        if type(item) is float:
-            if not math.isfinite(item):
-                raise ValueError("Global Speech & TTS draft is invalid")
-            return item
-        if type(item) is str:
-            text_characters += len(item)
-            if (
-                len(item) > _MAX_DRAFT_TEXT_CHARACTERS
-                or text_characters > _MAX_DRAFT_GRAPH_TEXT_CHARACTERS
-            ):
-                raise ValueError("Global Speech & TTS draft is too large")
-            return item
-        if type(item) is list:
-            return [detach(child, depth + 1) for child in item]
-        if type(item) is tuple:
-            return tuple(detach(child, depth + 1) for child in item)
-        if type(item) is dict:
-            detached: dict[str, object] = {}
-            for key, child in item.items():
-                if type(key) is not str:
-                    raise TypeError("Global Speech & TTS draft key is invalid")
-                normalized = key.casefold()
-                if normalized in _PRIVATE_DRAFT_KEYS or normalized.endswith(
-                    _PRIVATE_DRAFT_KEY_SUFFIXES
-                ):
-                    raise ValueError("Global Speech & TTS draft is private")
-                detached[key] = detach(child, depth + 1)
-            return detached
-        raise TypeError("Global Speech & TTS draft value is invalid")
-
-    return detach(value, 0)
-
-
-def _validated_global_speech_tts_state_copy(value: object) -> GlobalSpeechTTSState:
-    """Return one detached complete state after existing pure field validation."""
-
-    if type(value) is not GlobalSpeechTTSState:
-        raise TypeError("Global Speech & TTS draft is invalid")
-    validated = cast(GlobalSpeechTTSState, value)
-    defaults = validated.defaults
-    if type(defaults) is not GlobalSpeechTTSDefaults:
-        raise TypeError("Global Speech & TTS defaults are invalid")
-    default_values = (
-        defaults.provider_id,
-        defaults.model_mode,
-        defaults.model_id,
-        defaults.voice_mode,
-        defaults.voice_id,
-        defaults.response_format,
-        defaults.speed,
-        defaults.default_profile_id,
-    )
-    detached_defaults = _detached_draft_data(default_values)
-    assert isinstance(detached_defaults, tuple)
-    copied_defaults = GlobalSpeechTTSDefaults(*detached_defaults)
-
-    if type(validated.providers) is not dict or set(validated.providers) != set(
-        BUILT_IN_TTS_PROVIDER_ORDER
-    ):
-        raise ValueError("Global Speech & TTS draft is invalid")
-    copied_providers: dict[str, dict[str, object]] = {}
-    for provider_id, provider_values in validated.providers.items():
-        if type(provider_values) is not dict or any(
-            type(key) is not str for key in provider_values
-        ):
-            raise ValueError("Global Speech & TTS draft is invalid")
-        allowed = set(GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id]) - {"credential"}
-        if not set(provider_values).issubset(allowed):
-            raise ValueError("Global Speech & TTS draft is invalid")
-        detached = _detached_draft_data(provider_values)
-        assert isinstance(detached, dict)
-        copied_providers[provider_id] = detached
-
-    provider_ids = set(BUILT_IN_TTS_PROVIDER_ORDER)
-    if type(validated.credentials) is not dict or not set(
-        validated.credentials
-    ).issubset(provider_ids):
-        raise ValueError("Global Speech & TTS draft is invalid")
-    credential_metadata: list[tuple[object, ...]] = []
-    for provider_id, credential in validated.credentials.items():
-        if (
-            type(provider_id) is not str
-            or type(credential) is not GlobalSpeechTTSCredentialState
-            or credential.provider_id != provider_id
-        ):
-            raise ValueError("Global Speech & TTS credential metadata is invalid")
-        credential_metadata.append(
-            (
-                provider_id,
-                credential.provider_id,
-                credential.setting_key,
-                credential.environment_variable,
-                credential.source.value,
-                credential.local_saved,
-                credential.local_shadowed,
-            )
-        )
-    if type(validated.defaults_source) is not GlobalSpeechTTSEffectiveSource:
-        raise ValueError("Global Speech & TTS draft is invalid")
-    if (
-        type(validated.provider_sources) is not dict
-        or set(validated.provider_sources) != provider_ids
-        or any(
-            type(key) is not str or type(source) is not GlobalSpeechTTSEffectiveSource
-            for key, source in validated.provider_sources.items()
-        )
-    ):
-        raise ValueError("Global Speech & TTS draft is invalid")
-    if (
-        type(validated.provider_field_sources) is not dict
-        or set(validated.provider_field_sources) != provider_ids
-        or any(
-            type(provider_id) is not str
-            or type(sources) is not dict
-            or not set(sources).issubset(GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id])
-            or any(
-                type(field_id) is not str
-                or type(source) is not GlobalSpeechTTSEffectiveSource
-                for field_id, source in sources.items()
-            )
-            for provider_id, sources in validated.provider_field_sources.items()
-        )
-    ):
-        raise ValueError("Global Speech & TTS draft is invalid")
-    _detached_draft_data(
-        (
-            credential_metadata,
-            validated.defaults_source.value,
-            tuple(
-                (provider_id, source.value)
-                for provider_id, source in validated.provider_sources.items()
-            ),
-            tuple(
-                (
-                    provider_id,
-                    tuple(
-                        (field_id, source.value) for field_id, source in sources.items()
-                    ),
-                )
-                for provider_id, sources in validated.provider_field_sources.items()
-            ),
-        )
-    )
-    copied = replace(
-        validated,
-        defaults=copied_defaults,
-        providers=copied_providers,
-        credentials={},
-        defaults_source=GlobalSpeechTTSEffectiveSource.DEFAULT,
-        provider_sources={
-            provider_id: GlobalSpeechTTSEffectiveSource.DEFAULT
-            for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
-        },
-        provider_field_sources={
-            provider_id: {} for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
-        },
-    )
-    # These existing pure validators cover every provider field plus the
-    # defaults axes without performing provider, filesystem, or config I/O.
-    # A draft snapshot must also preserve an intentionally invalid field so
-    # the mounted Save action can focus it and explain the validation error.
-    for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
-        try:
-            build_global_speech_tts_save_proposal(
-                copied,
-                copied,
-                configure_provider=provider_id,
-            )
-        except GlobalSpeechTTSValidationError:
-            pass
-    return copied
-
-
-@dataclass(frozen=True, slots=True, repr=False)
-class SpeechTTSPanelDraftSnapshot:
-    """Complete process-local non-secret Speech/TTS panel draft."""
-
-    state: GlobalSpeechTTSState
-    original_state: GlobalSpeechTTSState
-    realtime_draft: _RealtimeSettingsDraft
-    realtime_original: _RealtimeSettingsDraft
-    configure_provider: str
-    draft_revision: int
-
-    def __post_init__(self) -> None:
-        if self.configure_provider not in BUILT_IN_TTS_PROVIDER_ORDER:
-            raise ValueError("Speech/TTS draft provider is invalid")
-        if (
-            type(self.draft_revision) is not int
-            or self.draft_revision < 0
-            or self.draft_revision > _MAX_DRAFT_REVISION
-        ):
-            raise ValueError("Speech/TTS draft revision is invalid")
-        object.__setattr__(
-            self,
-            "state",
-            _validated_global_speech_tts_state_copy(self.state),
-        )
-        object.__setattr__(
-            self,
-            "original_state",
-            _validated_global_speech_tts_state_copy(self.original_state),
-        )
-        object.__setattr__(
-            self,
-            "realtime_draft",
-            _validated_realtime_draft_copy(self.realtime_draft),
-        )
-        object.__setattr__(
-            self,
-            "realtime_original",
-            _validated_realtime_draft_copy(self.realtime_original),
-        )
-
-    def __repr__(self) -> str:
-        """Expose only bounded navigation metadata, never draft values."""
-
-        return (
-            "SpeechTTSPanelDraftSnapshot("
-            f"configure_provider={self.configure_provider!r}, "
-            f"draft_revision={self.draft_revision})"
-        )
-
-
 @dataclass(frozen=True)
 class _RealtimeSavePayload:
     """One validated realtime/dictation mutation, ready for the shared writer."""
@@ -577,6 +285,7 @@ class _RealtimeSavePayload:
     section_values: dict[str, dict[str, Any]]
     delete_keys: dict[str, tuple[str, ...]]
     persisted_draft: _RealtimeSettingsDraft
+    persisted_pipeline_draft: _PipelineVoiceSettingsDraft
 
 
 def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
@@ -601,6 +310,34 @@ def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
         # than writing a number the user never chose.
         vad_threshold=_format_optional_number(_read_realtime_vad_threshold()),
         vad_silence_ms=_format_optional_number(_read_realtime_vad_silence_ms()),
+        # TASK-32496: same "blank = unset" contract for the send delay --
+        # an unset key lets the readers' own default win.
+        handsfree_send_delay_seconds=_format_optional_number(
+            get_cli_setting("dictation", "handsfree_send_delay_seconds", None)
+        ),
+        acoustic_barge_in=_read_acoustic_barge_in(),
+    )
+
+
+def _read_pipeline_voice_settings_draft() -> _PipelineVoiceSettingsDraft:
+    """Read only the two canonical speculative-pipeline config keys."""
+
+    section = {
+        "response_eagerness_ms": get_cli_setting(
+            "dictation",
+            "response_eagerness_ms",
+            RESPONSE_EAGERNESS_DEFAULT_MS,
+        ),
+        "pipeline_aec_enabled": get_cli_setting(
+            "dictation",
+            "pipeline_aec_enabled",
+            True,
+        ),
+    }
+    config = {"dictation": section}
+    return _PipelineVoiceSettingsDraft(
+        response_eagerness_ms=str(response_eagerness_ms(config)),
+        pipeline_aec_enabled=pipeline_aec_enabled(config),
     )
 
 
@@ -751,6 +488,79 @@ class _OpenAINoneHTTPConfirmationModal(ModalScreen[bool]):
     def handle_confirm(self, event: Button.Pressed) -> None:
         event.stop()
         self.dismiss(True)
+
+
+class _CustomIdModal(ModalScreen[str | None]):
+    """Free-text entry for a model/voice ID outside the known list."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, axis_label: str, current: str) -> None:
+        super().__init__()
+        self.axis_label = axis_label
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        """Yield the editor: title, guidance, input, and Cancel/Confirm.
+
+        Returns:
+            The modal's widgets; the Input starts pre-filled with the
+            current saved identifier so an edit-in-place is natural.
+        """
+        with Vertical(classes="settings-speech-credential-modal"):
+            yield Static(
+                f"Set a custom {self.axis_label} ID",
+                classes="destination-section",
+            )
+            yield Static(
+                "Enter the exact identifier your provider expects. Known "
+                "choices are already offered in the dropdown; this is for "
+                "IDs the list does not carry (for example a voice discovered "
+                "in Speech Lab).",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield Input(
+                id="settings-speech-custom-id-value",
+                value=self.current,
+                placeholder="Exact identifier",
+                tooltip=f"Custom {self.axis_label} ID",
+            )
+            with Horizontal(classes="settings-action-row"):
+                yield Button("Cancel", id="settings-speech-custom-id-cancel")
+                yield Button(
+                    "Use this ID",
+                    id="settings-speech-custom-id-confirm",
+                    variant="primary",
+                )
+
+    def action_cancel(self) -> None:
+        """Dismiss with ``None`` (Escape key path; nothing is applied)."""
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#settings-speech-custom-id-cancel")
+    def handle_cancel(self, event: Button.Pressed) -> None:
+        """Dismiss with ``None`` when Cancel is pressed.
+
+        Args:
+            event: The Cancel button press; stopped so the panel never
+                sees it.
+        """
+        event.stop()
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#settings-speech-custom-id-confirm")
+    def handle_confirm(self, event: Button.Pressed) -> None:
+        """Dismiss with the input's current text for the panel to validate.
+
+        Args:
+            event: The confirm button press; stopped so the panel never
+                sees it.
+        """
+        event.stop()
+        self.dismiss(
+            self.query_one("#settings-speech-custom-id-value", Input).value
+        )
 
 
 class _GlobalSpeechTTSLeaveModal(ModalScreen[LeaveChoice]):
@@ -942,6 +752,8 @@ class SpeechTTSSettingsPanel(Vertical):
                 realtime_original=draft_snapshot.realtime_original,
                 configure_provider=draft_snapshot.configure_provider,
                 draft_revision=draft_snapshot.draft_revision,
+                pipeline_voice_draft=draft_snapshot.pipeline_voice_draft,
+                pipeline_voice_original=draft_snapshot.pipeline_voice_original,
             )
             self.original_state = deepcopy(restored.original_state)
             self.state = deepcopy(restored.state)
@@ -1053,6 +865,10 @@ class SpeechTTSSettingsPanel(Vertical):
         self._leave_save_waiters: dict[int, asyncio.Future[bool]] = {}
         self._managed_lease_hold: AudioCppManagedLeaseHold | None = None
         self._last_focused_control_id: str | None = None
+        # Axes ("model"/"voice") whose confirmed custom ID is written to the
+        # draft but whose Select has not been rebuilt yet. While an axis is
+        # pending, collection must not read the still-mounted stale value.
+        self._custom_id_rebuild_pending: set[str] = set()
         self._audio_cpp_scan_revision = 0
         self._audio_cpp_result_cleanup_pending = audio_cpp_result_cleanup_pending or (
             lambda: False
@@ -1062,10 +878,14 @@ class SpeechTTSSettingsPanel(Vertical):
         if restored is None:
             self._realtime_original = _read_realtime_settings_draft()
             self._realtime_draft = replace(self._realtime_original)
+            self._pipeline_voice_original = _read_pipeline_voice_settings_draft()
+            self._pipeline_voice_draft = replace(self._pipeline_voice_original)
             self._draft_revision = 0
         else:
             self._realtime_original = replace(restored.realtime_original)
             self._realtime_draft = replace(restored.realtime_draft)
+            self._pipeline_voice_original = replace(restored.pipeline_voice_original)
+            self._pipeline_voice_draft = replace(restored.pipeline_voice_draft)
             self._draft_revision = restored.draft_revision
         self._draft_revision_basis = self._draft_revision_values()
 
@@ -1143,6 +963,8 @@ class SpeechTTSSettingsPanel(Vertical):
             deepcopy(self.original_state),
             replace(self._realtime_draft),
             replace(self._realtime_original),
+            replace(self._pipeline_voice_draft),
+            replace(self._pipeline_voice_original),
             self.configure_provider,
         )
 
@@ -1169,6 +991,8 @@ class SpeechTTSSettingsPanel(Vertical):
             realtime_original=self._realtime_original,
             configure_provider=self.configure_provider,
             draft_revision=self._draft_revision,
+            pipeline_voice_draft=self._pipeline_voice_draft,
+            pipeline_voice_original=self._pipeline_voice_original,
         )
 
     def restore_draft_snapshot(
@@ -1188,6 +1012,8 @@ class SpeechTTSSettingsPanel(Vertical):
             realtime_original=snapshot.realtime_original,
             configure_provider=snapshot.configure_provider,
             draft_revision=snapshot.draft_revision,
+            pipeline_voice_draft=snapshot.pipeline_voice_draft,
+            pipeline_voice_original=snapshot.pipeline_voice_original,
         )
         focus_id = self._focused_id() if self.is_mounted else None
         live_metadata = self.state
@@ -1204,6 +1030,8 @@ class SpeechTTSSettingsPanel(Vertical):
             target.provider_field_sources = deepcopy(metadata.provider_field_sources)
         self._realtime_draft = replace(restored.realtime_draft)
         self._realtime_original = replace(restored.realtime_original)
+        self._pipeline_voice_draft = replace(restored.pipeline_voice_draft)
+        self._pipeline_voice_original = replace(restored.pipeline_voice_original)
         self.configure_provider = restored.configure_provider
         self._draft_revision = restored.draft_revision
         self._draft_revision_basis = self._draft_revision_values()
@@ -2091,15 +1919,16 @@ class SpeechTTSSettingsPanel(Vertical):
         """Return the global-selection draft state independently of setup."""
 
         try:
-            changed = (
-                self.state.defaults.snapshot()
-                != self.original_state.defaults.snapshot()
-            )
+            preferences = self.state.defaults.snapshot()
         except GlobalSpeechTTSValidationError as error:
             if "required" in str(error).lower():
                 return SpeechTTSConfigurationState.INCOMPLETE
             return SpeechTTSConfigurationState.INVALID
-        if changed:
+        try:
+            original_preferences = self.original_state.defaults.snapshot()
+        except GlobalSpeechTTSValidationError:
+            return SpeechTTSConfigurationState.UNSAVED
+        if preferences != original_preferences:
             return SpeechTTSConfigurationState.UNSAVED
         if self.state.defaults_source is GlobalSpeechTTSEffectiveSource.DEFAULT:
             return SpeechTTSConfigurationState.DEFAULT
@@ -2289,24 +2118,21 @@ class SpeechTTSSettingsPanel(Vertical):
             "Speech & TTS", classes="destination-section settings-column-title"
         )
         with Vertical(id="settings-speech-scope-banner", classes="settings-focus-card"):
-            yield Static(
-                "You are editing application-wide Speech & TTS defaults. "
-                "The Speech Studio can keep separate Studio preferences without "
-                "changing these values.",
+            banner = Static(
+                "Editing application-wide Speech & TTS defaults — Speech Studio "
+                "preferences stay separate.",
                 classes="settings-detail-row",
                 markup=False,
             )
-            yield Button(
-                "Open Speech Lab",
-                id="settings-speech-open-lab",
-                compact=True,
-                tooltip="Open Speech Lab without testing or refreshing a provider.",
+            banner.tooltip = (
+                "You are editing application-wide Speech & TTS defaults. "
+                "The Speech Studio can keep separate Studio preferences "
+                "without changing these values."
             )
+            yield banner
             yield Static(
-                "Voice profiles are managed in Lab > Speech > Voice Profiles "
-                "— open Speech Lab, above, to get there. Per-character "
-                "voices are assigned in the Roleplay character editor's "
-                "Voice & Speech section, not here.",
+                "Voice profiles: Speech Lab (open it from the actions below). "
+                "Per-character voices: the Roleplay character editor.",
                 id="settings-speech-profile-surfaces-note",
                 classes="settings-detail-row",
                 markup=False,
@@ -2323,6 +2149,8 @@ class SpeechTTSSettingsPanel(Vertical):
             id=self._PROVIDER_SETUP_CARD_ID,
             classes="settings-focus-card",
         )
+
+        yield from self._compose_pipeline_conversation_section()
 
         yield from self._compose_realtime_section()
 
@@ -2346,8 +2174,23 @@ class SpeechTTSSettingsPanel(Vertical):
                 "Restore Non-secret Defaults",
                 id="settings-speech-restore-defaults",
                 disabled=cleanup_pending,
+                tooltip=(
+                    "Reset the global defaults and the selected provider's "
+                    "non-secret fields in the draft. Saved credentials and "
+                    "environment-owned values stay untouched. Nothing "
+                    "persists until you Save."
+                ),
             )
-            yield Button("Open Speech Lab", id="settings-speech-open-lab-bottom")
+            yield Button(
+                "Open Speech Lab",
+                id="settings-speech-open-lab-bottom",
+                compact=True,
+                tooltip=(
+                    "Open the Speech Lab to test, refresh model and voice "
+                    "catalogs, and hear samples. Settings itself never "
+                    "contacts a server."
+                ),
+            )
         yield Static(
             self.result_text,
             id="settings-speech-save-result",
@@ -2412,6 +2255,67 @@ class SpeechTTSSettingsPanel(Vertical):
             await card.recompose()
         self._restore_focus(focus_token)
 
+    def _legacy_model_options(self, provider_id: str) -> list[tuple[str, str]]:
+        """Labeled known models for a legacy provider, plus the custom entry.
+
+        A current value the known list does not carry stays selectable as an
+        explicit "(custom)" option -- the same never-drop-a-saved-value rule
+        the audio.cpp exact choices and the realtime provider select follow.
+        """
+        options: list[tuple[str, str]] = []
+        known = LEGACY_MODELS.get(provider_id, ())
+        labels = LEGACY_MODEL_LABELS.get(provider_id, {})
+        for model_id in known:
+            options.append((labels.get(model_id, model_id), model_id))
+        current = self.state.defaults.model_id
+        if current and current not in known:
+            options.append((f"{current} (custom)", current))
+        options.append(("Custom…", _CUSTOM_ID_SENTINEL))
+        return options
+
+    def _legacy_voice_options(self, provider_id: str) -> list[tuple[str, str]]:
+        """Labeled known voices for a legacy provider, plus the custom entry."""
+        options: list[tuple[str, str]] = list(LEGACY_VOICE_OPTIONS.get(provider_id, ()))
+        known = {value for _label, value in options}
+        current = self.state.defaults.voice_id
+        if current and current not in known:
+            options.append((f"{current} (custom)", current))
+        options.append(("Custom…", _CUSTOM_ID_SENTINEL))
+        return options
+
+    _LOCAL_PROVIDER_DEPENDENCIES: ClassVar[dict[str, tuple[str, str, str]]] = {
+        # provider -> (label, availability attr on the snapshot, install extra)
+        "kokoro": ("Local Kokoro", "kokoro", "local_tts"),
+        "chatterbox": ("Local Chatterbox", "chatterbox", "chatterbox"),
+        "higgs": ("Local Higgs", "higgs", "higgs_tts"),
+    }
+
+    def _local_dependency_row(self, provider_id: str) -> Static | None:
+        """Inline install/readiness fact for a local provider form.
+
+        The same fact the Scope inspector reports, surfaced where the user
+        is about to configure the provider -- a first-run reader should not
+        have to know a collapsed inspector holds it.
+        """
+        info = self._LOCAL_PROVIDER_DEPENDENCIES.get(provider_id)
+        if info is None:
+            return None
+        label, availability_attr, extra = info
+        available = bool(getattr(self._local_dependencies, availability_attr))
+        if available:
+            copy = f"{label}: installed and importable."
+        else:
+            copy = (
+                f"{label}: not installed — install the extra "
+                f"'tldw_chatbook[{extra}]' and restart Chatbook first."
+            )
+        return Static(
+            copy,
+            id=f"settings-speech-{provider_id}-dependency-status",
+            classes="settings-status-row",
+            markup=False,
+        )
+
     def _compose_global_defaults_body(self) -> ComposeResult:
         """Yield the Global defaults card's children.
 
@@ -2434,10 +2338,13 @@ class SpeechTTSSettingsPanel(Vertical):
                 ("Exact", "exact"),
                 ("First available", "first_available"),
             ]
-            voice_policy_options = [
-                ("Exact", "exact"),
-                ("Server default", "server_default"),
-            ]
+            voice_policy_options = [("Exact", "exact")]
+            if defaults.voice_mode == "server_default":
+                # Keep invalid saved state visible so it can be corrected;
+                # ordinary Save rejects it before publishing preferences.
+                voice_policy_options.append(
+                    ("Server default (unsupported; choose Exact)", "server_default")
+                )
         yield Static("Global defaults", classes="destination-section")
         yield Static(
             f"Default voice setup: {self._defaults_configuration_state().value}.",
@@ -2447,7 +2354,7 @@ class SpeechTTSSettingsPanel(Vertical):
         )
         yield self._default_profile_row()
         yield self._row(
-            "Default TTS Provider",
+            "Default TTS provider",
             Select(
                 _PROVIDER_OPTIONS,
                 value=defaults.provider_id,
@@ -2503,13 +2410,25 @@ class SpeechTTSSettingsPanel(Vertical):
         else:
             yield self._row(
                 "Model value",
-                Input(
-                    value=defaults.model_id or "",
+                Select(
+                    self._legacy_model_options(defaults.provider_id),
+                    value=(
+                        defaults.model_id
+                        if defaults.model_mode == "exact"
+                        and defaults.model_id
+                        else Select.NULL
+                    ),
                     id="settings-speech-model-value",
+                    allow_blank=defaults.model_mode != "exact",
+                    compact=True,
                     disabled=defaults.model_mode != "exact",
-                    placeholder="Exact model ID",
-                    classes="settings-compact-input settings-speech-draft-field",
+                    tooltip=(
+                        "Known models for this provider; pick Custom… to "
+                        "enter an exact ID"
+                    ),
+                    classes="settings-compact-select settings-speech-draft-field",
                 ),
+                classes="settings-select-row",
                 error=self._default_error(
                     "default_model",
                     "settings-speech-model-value",
@@ -2569,13 +2488,37 @@ class SpeechTTSSettingsPanel(Vertical):
         else:
             yield self._row(
                 "Voice value",
-                Input(
-                    value=defaults.voice_id or "",
-                    id="settings-speech-voice-value",
-                    disabled=defaults.voice_mode != "exact",
-                    placeholder="Exact voice ID",
-                    classes="settings-compact-input settings-speech-draft-field",
+                Horizontal(
+                    Select(
+                        self._legacy_voice_options(defaults.provider_id),
+                        value=(
+                            defaults.voice_id
+                            if defaults.voice_mode == "exact"
+                            and defaults.voice_id
+                            else Select.NULL
+                        ),
+                        id="settings-speech-voice-value",
+                        allow_blank=defaults.voice_mode != "exact",
+                        compact=True,
+                        disabled=defaults.voice_mode != "exact",
+                        tooltip=(
+                            "Known voices for this provider; pick Custom… to "
+                            "enter an exact ID"
+                        ),
+                        classes="settings-compact-select settings-speech-draft-field",
+                    ),
+                    Button(
+                        "Browse in Speech Lab",
+                        id="settings-speech-browse-voices",
+                        compact=True,
+                        tooltip=(
+                            "Open Speech Lab with this provider selected to "
+                            "preview voices before committing one here"
+                        ),
+                    ),
+                    classes="settings-action-row",
                 ),
+                classes="settings-select-row",
                 error=self._default_error(
                     "default_voice",
                     "settings-speech-voice-value",
@@ -2605,12 +2548,12 @@ class SpeechTTSSettingsPanel(Vertical):
             ),
         )
         yield self._row(
-            "Speed",
+            "Speed (0.25-4.0)",
             Input(
                 value=str(defaults.speed),
                 id="settings-speech-speed",
                 disabled=audio_cpp_selected,
-                placeholder="0.25 - 4.0",
+                placeholder="1.0",
                 classes="settings-compact-input settings-speech-draft-field",
             ),
             error=self._default_error(
@@ -2636,20 +2579,13 @@ class SpeechTTSSettingsPanel(Vertical):
         """
         yield Static("Provider setup", classes="destination-section")
         yield Static(
-            f"Task: set up {TTS_PROVIDER_LABELS[self.configure_provider]} for "
-            "application-wide speech.",
-            id="settings-speech-provider-task",
-            classes="settings-status-row",
-            markup=False,
-        )
-        yield Static(
             f"Current status: {self._connection_readiness().connection.value}.",
             id="settings-speech-provider-current-status",
             classes="settings-status-row",
             markup=False,
         )
         yield self._row(
-            "Configure Provider",
+            "Configure provider",
             Select(
                 _PROVIDER_OPTIONS,
                 value=self.configure_provider,
@@ -2808,6 +2744,92 @@ class SpeechTTSSettingsPanel(Vertical):
                 markup=False,
             )
 
+    def _compose_pipeline_conversation_section(self) -> ComposeResult:
+        """Build the speculative pipeline's small canonical settings block."""
+
+        draft = self._pipeline_voice_draft
+        with Vertical(
+            id="settings-speech-pipeline-conversation",
+            classes="settings-focus-card",
+        ):
+            yield Static("Pipeline conversation", classes="destination-section")
+            yield Static(
+                "Transcription mode: Native live is preferred when the selected "
+                "speech-to-text backend supports it; otherwise the pipeline uses "
+                "the rolling-window fallback.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield Static(
+                "Cost: a remote rolling-window backend may process overlapping audio "
+                "more than once. Starting replies sooner can also create billable "
+                "discarded STT, model, or speech attempts when you continue talking.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield self._row(
+                "Response eagerness (ms)",
+                Input(
+                    value=draft.response_eagerness_ms,
+                    id="settings-speech-pipeline-response-eagerness-ms",
+                    placeholder=str(RESPONSE_EAGERNESS_DEFAULT_MS),
+                    type="integer",
+                    classes="settings-compact-input settings-speech-draft-field",
+                ),
+                error=self._error("pipeline", "response_eagerness_ms"),
+            )
+            yield self._row(
+                "Response preset",
+                Horizontal(
+                    Button(
+                        "Fast · 700 ms",
+                        id="settings-speech-pipeline-preset-fast",
+                        compact=True,
+                        classes="settings-speech-pipeline-preset",
+                        tooltip="Set response eagerness to 700 milliseconds.",
+                    ),
+                    Button(
+                        "Balanced · 1200 ms",
+                        id="settings-speech-pipeline-preset-balanced",
+                        compact=True,
+                        classes="settings-speech-pipeline-preset",
+                        tooltip="Set response eagerness to 1200 milliseconds.",
+                    ),
+                    Button(
+                        "Deliberate · 2000 ms",
+                        id="settings-speech-pipeline-preset-deliberate",
+                        compact=True,
+                        classes="settings-speech-pipeline-preset",
+                        tooltip="Set response eagerness to 2000 milliseconds.",
+                    ),
+                    classes="settings-action-row",
+                ),
+            )
+            yield Static(
+                "Safe range: 500-3000 ms. Presets — Fast: 700 ms; "
+                "Balanced: 1200 ms; Deliberate: 2000 ms. Values below 700 ms "
+                "are more likely to restart during a mid-thought pause.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield self._row(
+                "Echo cancellation",
+                Switch(
+                    value=draft.pipeline_aec_enabled,
+                    id="settings-speech-pipeline-aec-enabled",
+                    classes="settings-speech-field settings-speech-draft-field",
+                ),
+                error=self._error("pipeline", "pipeline_aec_enabled"),
+            )
+            yield Static(
+                "Keep echo cancellation on. Turning it off is for troubleshooting "
+                "only and forces half duplex while the assistant speaks. If echo "
+                "cancellation is warming, unhealthy, or unavailable, the pipeline "
+                "also switches to safe half duplex automatically.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+
     def _compose_realtime_section(self) -> ComposeResult:
         """Build the Realtime engine block: config keys owned by task 6.
 
@@ -2935,6 +2957,32 @@ class SpeechTTSSettingsPanel(Vertical):
                 ),
                 classes="settings-select-row",
                 error=self._error("realtime", "handsfree_engine"),
+            )
+            yield self._row(
+                "Send delay (seconds, pipeline engine)",
+                Input(
+                    value=draft.handsfree_send_delay_seconds,
+                    id="settings-speech-handsfree-send-delay",
+                    placeholder=str(DEFAULT_HANDSFREE_SEND_DELAY_SECONDS),
+                    classes=("settings-compact-input settings-speech-draft-field"),
+                ),
+                error=self._error("realtime", "handsfree_send_delay_seconds"),
+            )
+            yield self._row(
+                "Acoustic barge-in (headphones)",
+                Switch(
+                    value=draft.acoustic_barge_in,
+                    id="settings-speech-handsfree-acoustic-barge-in",
+                    classes="settings-speech-field settings-speech-draft-field",
+                ),
+                error=self._error("realtime", "acoustic_barge_in"),
+            )
+            yield Static(
+                "Acoustic barge-in lets your voice interrupt a speaking "
+                "reply. There is no echo cancellation: on speakers the "
+                "recognizer hears the reply itself -- use headphones.",
+                classes="settings-detail-row",
+                markup=False,
             )
             yield Static(
                 "Spoken commands do not work inside realtime mode -- there is "
@@ -3389,6 +3437,18 @@ class SpeechTTSSettingsPanel(Vertical):
                 return
 
             if provider_id == "kokoro":
+                dependency_row = self._local_dependency_row(provider_id)
+                if dependency_row is not None:
+                    yield dependency_row
+                yield Static(
+                    "Model files: kokoro-v0_19.onnx (~300 MB) plus voices.json. "
+                    "Set their paths below — see Docs ▸ Development ▸ TTS ▸ "
+                    "Kokoro Model Setup for the download utility and expected "
+                    "filenames.",
+                    id="settings-speech-kokoro-model-guidance",
+                    classes="settings-detail-row",
+                    markup=False,
+                )
                 yield self._select(
                     provider_id,
                     "device",
@@ -3400,13 +3460,13 @@ class SpeechTTSSettingsPanel(Vertical):
                     provider_id,
                     "onnx_model_path",
                     "ONNX model file",
-                    placeholder="Path to model file",
+                    placeholder="kokoro-v0_19.onnx (~300 MB)",
                 )
                 yield self._path(
                     provider_id,
                     "voices_json_path",
                     "Voices JSON file",
-                    placeholder="Path to voices.json",
+                    placeholder="voices.json",
                 )
                 yield self._input(provider_id, "max_tokens", "Max tokens")
                 yield self._switch(provider_id, "voice_mixing", "Voice mixing")
@@ -3416,102 +3476,138 @@ class SpeechTTSSettingsPanel(Vertical):
                 return
 
             if provider_id == "chatterbox":
-                yield self._select(
-                    provider_id,
-                    "device",
-                    "Device",
-                    [("CPU", "cpu"), ("CUDA", "cuda")],
-                )
-                yield self._path(
-                    provider_id,
-                    "voice_resource_directory",
-                    "Voice resource directory",
-                    placeholder="Path to voice resources",
-                )
-                yield self._input(provider_id, "temperature", "Temperature")
-                yield self._input(provider_id, "chunk_size", "Chunk size")
-                yield self._input(
-                    provider_id, "random_seed", "Random seed", placeholder="Optional"
-                )
-                yield self._input(provider_id, "candidates", "Candidates")
-                yield self._switch(
-                    provider_id, "validate_whisper", "Whisper validation"
-                )
-                yield self._switch(provider_id, "preprocess_text", "Text preprocessing")
-                yield self._switch(
-                    provider_id, "normalize_audio", "Audio normalization"
-                )
-                yield self._input(provider_id, "target_db", "Target dB")
-                yield self._input(provider_id, "max_chunk_size", "Max text chunk")
-                yield self._switch(provider_id, "streaming", "Streaming")
-                yield self._input(provider_id, "stream_chunk_size", "Stream chunk size")
-                yield self._switch(provider_id, "crossfade", "Crossfade")
-                yield self._input(
-                    provider_id, "crossfade_ms", "Crossfade duration (ms)"
-                )
+                dependency_row = self._local_dependency_row(provider_id)
+                if dependency_row is not None:
+                    yield dependency_row
+                with Collapsible(
+                    title="Compute and generation",
+                    collapsed=False,
+                    id="settings-speech-chatterbox-group-generation",
+                ):
+                    yield self._select(
+                        provider_id,
+                        "device",
+                        "Device",
+                        [("CPU", "cpu"), ("CUDA", "cuda")],
+                    )
+                    yield self._input(provider_id, "temperature", "Temperature")
+                    yield self._input(provider_id, "chunk_size", "Chunk size")
+                    yield self._input(
+                        provider_id, "random_seed", "Random seed", placeholder="Optional"
+                    )
+                    yield self._input(provider_id, "candidates", "Candidates")
+                with Collapsible(
+                    title="Voice and processing",
+                    collapsed=False,
+                    id="settings-speech-chatterbox-group-processing",
+                ):
+                    yield self._path(
+                        provider_id,
+                        "voice_resource_directory",
+                        "Voice resource directory",
+                        placeholder="Path to voice resources",
+                    )
+                    yield self._switch(
+                        provider_id, "validate_whisper", "Whisper validation"
+                    )
+                    yield self._switch(provider_id, "preprocess_text", "Text preprocessing")
+                    yield self._switch(
+                        provider_id, "normalize_audio", "Audio normalization"
+                    )
+                    yield self._input(provider_id, "target_db", "Target dB")
+                    yield self._input(provider_id, "max_chunk_size", "Max text chunk")
+                with Collapsible(
+                    title="Streaming",
+                    collapsed=True,
+                    id="settings-speech-chatterbox-group-streaming",
+                ):
+                    yield self._switch(provider_id, "streaming", "Streaming")
+                    yield self._input(provider_id, "stream_chunk_size", "Stream chunk size")
+                    yield self._switch(provider_id, "crossfade", "Crossfade")
+                    yield self._input(
+                        provider_id, "crossfade_ms", "Crossfade duration (ms)"
+                    )
                 return
 
             if provider_id == "higgs":
-                yield self._path(
-                    provider_id,
-                    "model_path",
-                    "Model path",
-                    placeholder="Local path or Hugging Face model ID",
-                )
-                yield self._path(
-                    provider_id,
-                    "voice_resource_directory",
-                    "Voice resource directory",
-                    placeholder="Path to voice samples",
-                )
-                yield self._select(
-                    provider_id,
-                    "device",
-                    "Device",
-                    [
-                        ("Auto", "auto"),
-                        ("CPU", "cpu"),
-                        ("CUDA", "cuda"),
-                        ("CUDA 0", "cuda:0"),
-                        ("CUDA 1", "cuda:1"),
-                        ("Apple MPS", "mps"),
-                    ],
-                )
-                yield self._switch(
-                    provider_id,
-                    "enable_flash_attention",
-                    "Enable flash attention",
-                )
-                yield self._select(
-                    provider_id,
-                    "dtype",
-                    "Data type",
-                    [
-                        ("Float32", "float32"),
-                        ("Float16", "float16"),
-                        ("BFloat16", "bfloat16"),
-                    ],
-                )
-                yield self._input(
-                    provider_id,
-                    "max_reference_duration",
-                    "Max reference duration",
-                )
-                yield self._select(
-                    provider_id, "language", "Default language", _LANGUAGE_OPTIONS
-                )
-                yield self._switch(provider_id, "voice_cloning", "Voice cloning")
-                yield self._switch(provider_id, "multi_speaker", "Multi-speaker")
-                yield self._input(provider_id, "speaker_delimiter", "Speaker delimiter")
-                yield self._switch(
-                    provider_id, "track_performance", "Performance tracking"
-                )
-                yield self._input(provider_id, "max_new_tokens", "Max new tokens")
-                yield self._input(provider_id, "temperature", "Temperature")
-                yield self._input(provider_id, "top_p", "Top P")
-                yield self._input(
-                    provider_id, "repetition_penalty", "Repetition penalty"
-                )
+                dependency_row = self._local_dependency_row(provider_id)
+                if dependency_row is not None:
+                    yield dependency_row
+                with Collapsible(
+                    title="Model and voice",
+                    collapsed=False,
+                    id="settings-speech-higgs-group-model",
+                ):
+                    yield self._path(
+                        provider_id,
+                        "model_path",
+                        "Model path",
+                        placeholder="Local path or Hugging Face model ID",
+                    )
+                    yield self._path(
+                        provider_id,
+                        "voice_resource_directory",
+                        "Voice resource directory",
+                        placeholder="Path to voice samples",
+                    )
+                with Collapsible(
+                    title="Compute",
+                    collapsed=False,
+                    id="settings-speech-higgs-group-compute",
+                ):
+                    yield self._select(
+                        provider_id,
+                        "device",
+                        "Device",
+                        [
+                            ("Auto", "auto"),
+                            ("CPU", "cpu"),
+                            ("CUDA", "cuda"),
+                            ("CUDA 0", "cuda:0"),
+                            ("CUDA 1", "cuda:1"),
+                            ("Apple MPS", "mps"),
+                        ],
+                    )
+                    yield self._switch(
+                        provider_id,
+                        "enable_flash_attention",
+                        "Enable flash attention",
+                    )
+                    yield self._select(
+                        provider_id,
+                        "dtype",
+                        "Data type",
+                        [
+                            ("Float32", "float32"),
+                            ("Float16", "float16"),
+                            ("BFloat16", "bfloat16"),
+                        ],
+                    )
+                with Collapsible(
+                    title="Generation",
+                    collapsed=True,
+                    id="settings-speech-higgs-group-generation",
+                ):
+                    yield self._input(
+                        provider_id,
+                        "max_reference_duration",
+                        "Max reference duration",
+                    )
+                    yield self._select(
+                        provider_id, "language", "Default language", _LANGUAGE_OPTIONS
+                    )
+                    yield self._switch(provider_id, "voice_cloning", "Voice cloning")
+                    yield self._switch(provider_id, "multi_speaker", "Multi-speaker")
+                    yield self._input(provider_id, "speaker_delimiter", "Speaker delimiter")
+                    yield self._switch(
+                        provider_id, "track_performance", "Performance tracking"
+                    )
+                    yield self._input(provider_id, "max_new_tokens", "Max new tokens")
+                    yield self._input(provider_id, "temperature", "Temperature")
+                    yield self._input(provider_id, "top_p", "Top P")
+                    yield self._input(
+                        provider_id, "repetition_penalty", "Repetition penalty"
+                    )
                 return
 
             if provider_id == "alltalk":
@@ -3551,12 +3647,16 @@ class SpeechTTSSettingsPanel(Vertical):
                 if isinstance(model_control, (Input, Select))
                 else None
             )
-            self.state.defaults.model_id = (
-                model_value
-                if self.state.defaults.model_mode == "exact"
-                and isinstance(model_value, str)
-                else None
-            )
+            if self.state.defaults.model_mode != "exact":
+                self.state.defaults.model_id = None
+            elif "model" in self._custom_id_rebuild_pending:
+                # A confirmed custom ID is in the draft but not yet on the
+                # mounted Select: keep the confirmed value.
+                pass
+            elif isinstance(model_value, str) and model_value != _CUSTOM_ID_SENTINEL:
+                # The sentinel is a transient modal trigger, never a draft
+                # value: while it is mounted the previous id stays put.
+                self.state.defaults.model_id = model_value
             if isinstance(voice_mode, str):
                 self.state.defaults.voice_mode = voice_mode
             voice_control = self.query_one("#settings-speech-voice-value")
@@ -3565,12 +3665,12 @@ class SpeechTTSSettingsPanel(Vertical):
                 if isinstance(voice_control, (Input, Select))
                 else None
             )
-            self.state.defaults.voice_id = (
-                voice_value
-                if self.state.defaults.voice_mode == "exact"
-                and isinstance(voice_value, str)
-                else None
-            )
+            if self.state.defaults.voice_mode != "exact":
+                self.state.defaults.voice_id = None
+            elif "voice" in self._custom_id_rebuild_pending:
+                pass
+            elif isinstance(voice_value, str) and voice_value != _CUSTOM_ID_SENTINEL:
+                self.state.defaults.voice_id = voice_value
             if isinstance(response_format, str):
                 self.state.defaults.response_format = response_format
             speed = self.query_one("#settings-speech-speed", Input).value
@@ -3663,6 +3763,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 values[field_id] = widget.value
 
         self._collect_realtime_visible_state()
+        self._collect_pipeline_voice_visible_state()
 
     def _collect_realtime_visible_state(self) -> None:
         """Copy the Realtime block's mounted widget values into its draft."""
@@ -3705,6 +3806,30 @@ class SpeechTTSSettingsPanel(Vertical):
             self._realtime_draft.turn_detection = mode_widget.value
         self._realtime_draft.vad_threshold = threshold_widget.value
         self._realtime_draft.vad_silence_ms = silence_widget.value
+        try:
+            send_delay_widget = self.query_one(
+                "#settings-speech-handsfree-send-delay", Input
+            )
+            barge_in_widget = self.query_one(
+                "#settings-speech-handsfree-acoustic-barge-in", Switch
+            )
+        except QueryError:
+            return
+        self._realtime_draft.handsfree_send_delay_seconds = send_delay_widget.value
+        self._realtime_draft.acoustic_barge_in = bool(barge_in_widget.value)
+
+    def _collect_pipeline_voice_visible_state(self) -> None:
+        """Copy the mounted pipeline controls into their separate draft."""
+
+        try:
+            eagerness = self.query_one(
+                "#settings-speech-pipeline-response-eagerness-ms", Input
+            )
+            aec = self.query_one("#settings-speech-pipeline-aec-enabled", Switch)
+        except QueryError:
+            return
+        self._pipeline_voice_draft.response_eagerness_ms = eagerness.value
+        self._pipeline_voice_draft.pipeline_aec_enabled = bool(aec.value)
 
     def has_unsaved_changes(self) -> bool:
         """Return whether any non-secret global value differs from its baseline."""
@@ -3746,7 +3871,11 @@ class SpeechTTSSettingsPanel(Vertical):
                 continue
             if proposal.settings or proposal.delete_setting_keys:
                 return True
-        return self._realtime_draft.snapshot() != self._realtime_original.snapshot()
+        return (
+            self._realtime_draft.snapshot() != self._realtime_original.snapshot()
+            or self._pipeline_voice_draft.snapshot()
+            != self._pipeline_voice_original.snapshot()
+        )
 
     def _announce_draft_state(self) -> None:
         """Publish the latest safe draft snapshot to the Settings shell."""
@@ -3867,8 +3996,13 @@ class SpeechTTSSettingsPanel(Vertical):
             )
             if "audio_cpp" in proposal.changed_provider_ids:
                 validate_audio_cpp_managed_settings(self.state.providers["audio_cpp"])
+            try:
+                original_preferences = self.original_state.defaults.snapshot()
+            except GlobalSpeechTTSValidationError:
+                # A valid draft must be able to replace invalid saved defaults.
+                original_preferences = None
             defaults_changed = (
-                proposal.preferences != self.original_state.defaults.snapshot()
+                proposal.preferences != original_preferences
                 # `default_profile_id` lives outside `TTSPreferencesSnapshot`
                 # (a distinct precedence rung -- see has_unsaved_changes and
                 # build_global_speech_tts_save_proposal), so the snapshot
@@ -3928,17 +4062,20 @@ class SpeechTTSSettingsPanel(Vertical):
         if realtime_payload is not None and not (guided_packages or guided_lease_refs):
             if not self._persist_realtime_draft(realtime_payload):
                 self._set_result(
-                    "Realtime engine settings were not saved.",
+                    "Voice engine settings were not saved.",
                     severity="error",
                 )
                 return None
             self._realtime_original = replace(realtime_payload.persisted_draft)
+            self._pipeline_voice_original = replace(
+                realtime_payload.persisted_pipeline_draft
+            )
 
         if not provider_save_required:
             # Only the realtime/dictation block changed; already persisted
             # locally above through the same atomic config writer -- no TTS
             # provider adapter round trip needed.
-            self._set_result("Saved locally. Realtime engine settings updated.")
+            self._set_result("Saved locally. Voice engine settings updated.")
             self._announce_draft_state()
             return None
 
@@ -4076,10 +4213,13 @@ class SpeechTTSSettingsPanel(Vertical):
             if not self._persist_realtime_draft(realtime_payload):
                 self._abort_pending_save(
                     request_id,
-                    "Realtime engine settings were not saved.",
+                    "Voice engine settings were not saved.",
                 )
                 return
             self._realtime_original = replace(realtime_payload.persisted_draft)
+            self._pipeline_voice_original = replace(
+                realtime_payload.persisted_pipeline_draft
+            )
         try:
             self._post_settings_save(request_id, proposal)
         except BaseException:
@@ -4125,6 +4265,65 @@ class SpeechTTSSettingsPanel(Vertical):
             leave_waiter.set_result(False)
 
     def _validated_realtime_payload(self) -> _RealtimeSavePayload | None:
+        """Validate and merge Realtime plus speculative-pipeline mutations."""
+
+        realtime_payload = self._validated_realtime_only_payload()
+        pipeline_changed = (
+            self._pipeline_voice_draft.snapshot()
+            != self._pipeline_voice_original.snapshot()
+        )
+        if not pipeline_changed:
+            return realtime_payload
+
+        raw_eagerness = self._pipeline_voice_draft.response_eagerness_ms.strip()
+        try:
+            eagerness_ms = int(raw_eagerness)
+        except (TypeError, ValueError):
+            eagerness_ms = None
+        if (
+            eagerness_ms is None
+            or str(eagerness_ms) != raw_eagerness
+            or eagerness_ms < RESPONSE_EAGERNESS_MIN_MS
+            or eagerness_ms > RESPONSE_EAGERNESS_MAX_MS
+        ):
+            raise GlobalSpeechTTSValidationError(
+                "pipeline",
+                "response_eagerness_ms",
+                "Response eagerness must be a whole number from 500 to 3000 ms.",
+            )
+
+        section_values = (
+            {
+                section: dict(values)
+                for section, values in realtime_payload.section_values.items()
+            }
+            if realtime_payload is not None
+            else {}
+        )
+        section_values.setdefault("dictation", {}).update(
+            {
+                "response_eagerness_ms": eagerness_ms,
+                "pipeline_aec_enabled": (
+                    self._pipeline_voice_draft.pipeline_aec_enabled
+                ),
+            }
+        )
+        return _RealtimeSavePayload(
+            section_values=section_values,
+            delete_keys=(
+                dict(realtime_payload.delete_keys)
+                if realtime_payload is not None
+                else {}
+            ),
+            persisted_draft=(
+                replace(realtime_payload.persisted_draft)
+                if realtime_payload is not None
+                else replace(self._realtime_draft)
+            ),
+            persisted_pipeline_draft=replace(self._pipeline_voice_draft),
+        )
+
+    def _validated_realtime_only_payload(self) -> _RealtimeSavePayload | None:
         """Validate the Realtime block draft; ``None`` when unchanged.
 
         Sibling validation shape to the global defaults' speed field: an
@@ -4203,10 +4402,34 @@ class SpeechTTSSettingsPanel(Vertical):
                 realtime_section["vad_silence_ms"] = silence
         else:
             removed.extend(("vad_threshold", "vad_silence_ms"))
-        delete_keys: dict[str, tuple[str, ...]] = (
-            {"realtime": tuple(removed)} if removed else {}
+        # TASK-32496: the pipeline send delay follows the optional-number
+        # contract (blank = unset = delete; a deliberate value must be
+        # positive); barge-in is an explicit Switch and always written.
+        send_delay = self._validated_optional_number(
+            self._realtime_draft.handsfree_send_delay_seconds,
+            field="handsfree_send_delay_seconds",
+            message="Send delay must be a positive number of seconds.",
+            cast=float,
+            low=0.0,
+            high=None,
+            exclusive_low=True,
         )
-        dictation_section = {"handsfree_engine": self._realtime_draft.handsfree_engine}
+        dictation_removed: list[str] = []
+        if send_delay is None:
+            dictation_removed.append("handsfree_send_delay_seconds")
+        elif send_delay.is_integer():
+            send_delay = int(send_delay)
+        dictation_section: dict[str, Any] = {
+            "handsfree_engine": self._realtime_draft.handsfree_engine,
+            "acoustic_barge_in": self._realtime_draft.acoustic_barge_in,
+        }
+        if send_delay is not None:
+            dictation_section["handsfree_send_delay_seconds"] = send_delay
+        delete_keys: dict[str, tuple[str, ...]] = {}
+        if removed:
+            delete_keys["realtime"] = tuple(removed)
+        if dictation_removed:
+            delete_keys["dictation"] = tuple(dictation_removed)
         return _RealtimeSavePayload(
             section_values={
                 "realtime": realtime_section,
@@ -4214,6 +4437,7 @@ class SpeechTTSSettingsPanel(Vertical):
             },
             delete_keys=delete_keys,
             persisted_draft=replace(self._realtime_draft),
+            persisted_pipeline_draft=replace(self._pipeline_voice_draft),
         )
 
     @staticmethod
@@ -4225,6 +4449,7 @@ class SpeechTTSSettingsPanel(Vertical):
         cast: Any,
         low: float,
         high: float | None,
+        exclusive_low: bool = False,
     ) -> Any:
         """Validate one optional numeric knob; blank means "unset".
 
@@ -4232,6 +4457,12 @@ class SpeechTTSSettingsPanel(Vertical):
         panel uses, so a bad value refuses the WHOLE Save with an inline
         error rather than being silently dropped -- a silently dropped
         threshold reads to the user as "the setting does nothing".
+        `exclusive_low` makes the bound strict (TASK-32496: a zero send
+        delay is a footgun the readers would warn-and-fallback on every
+        boot, so Settings refuses to write it at all). Non-finite values
+        are rejected BEFORE the bounds: `value < low` is False for NaN
+        (it compares False to everything) and infinity passes a positive
+        lower bound, yet neither belongs in config (PR #2638 Qodo #5).
         """
         text = (raw or "").strip()
         if not text:
@@ -4240,7 +4471,11 @@ class SpeechTTSSettingsPanel(Vertical):
             value = cast(text)
         except (TypeError, ValueError):
             raise GlobalSpeechTTSValidationError("realtime", field, message)
-        if value < low or (high is not None and value > high):
+        if not math.isfinite(value):
+            raise GlobalSpeechTTSValidationError("realtime", field, message)
+        if value < low or (exclusive_low and value == low) or (
+            high is not None and value > high
+        ):
             raise GlobalSpeechTTSValidationError("realtime", field, message)
         return value
 
@@ -4273,8 +4508,27 @@ class SpeechTTSSettingsPanel(Vertical):
                 )
             )
         except Exception:
-            logger.exception("Failed to save realtime engine settings")
+            logger.exception("Failed to save voice engine settings")
             return False
+
+    @on(Button.Pressed, ".settings-speech-pipeline-preset")
+    def handle_pipeline_response_preset(self, event: Button.Pressed) -> None:
+        """Apply one named preset to the editable numeric field."""
+
+        values = {
+            "settings-speech-pipeline-preset-fast": 700,
+            "settings-speech-pipeline-preset-balanced": 1200,
+            "settings-speech-pipeline-preset-deliberate": 2000,
+        }
+        value = values.get(event.button.id or "")
+        if value is None:
+            return
+        event.stop()
+        eagerness = self.query_one(
+            "#settings-speech-pipeline-response-eagerness-ms", Input
+        )
+        eagerness.value = str(value)
+        eagerness.focus()
 
     def submit_credential_mutation(
         self,
@@ -4604,7 +4858,10 @@ class SpeechTTSSettingsPanel(Vertical):
                 f"unchanged. {handoff_copy}"
             )
         else:
-            result_copy = f"Saved locally. Runtime reconfiguration: {handoff}."
+            result_copy = (
+                f"Saved locally. Runtime reconfiguration: {handoff}. "
+                "Open Speech Lab (below) to hear it."
+            )
         self._set_result(
             result_copy,
             severity=(
@@ -5025,8 +5282,8 @@ class SpeechTTSSettingsPanel(Vertical):
         if event.value == self.state.defaults.provider_id:
             return
         self._collect_visible_state()
+        persisted = self.original_state.defaults
         if event.value == "audio_cpp":
-            persisted = self.original_state.defaults
             if persisted.provider_id == "audio_cpp":
                 self.state.defaults.model_mode = persisted.model_mode
                 self.state.defaults.model_id = persisted.model_id
@@ -5039,6 +5296,17 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.state.defaults.voice_id = None
             self.state.defaults.response_format = "wav"
             self.state.defaults.speed = 1.0
+        elif event.value in LEGACY_DEFAULT_MODELS:
+            if persisted.provider_id == event.value:
+                self.state.defaults.model_mode = persisted.model_mode
+                self.state.defaults.model_id = persisted.model_id
+                self.state.defaults.voice_mode = persisted.voice_mode
+                self.state.defaults.voice_id = persisted.voice_id
+            else:
+                self.state.defaults.model_mode = "exact"
+                self.state.defaults.model_id = LEGACY_DEFAULT_MODELS[event.value]
+                self.state.defaults.voice_mode = "exact"
+                self.state.defaults.voice_id = LEGACY_DEFAULT_VOICES[event.value]
         await self._replace_card_bodies(
             self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
         )
@@ -5081,20 +5349,145 @@ class SpeechTTSSettingsPanel(Vertical):
         self._announce_draft_state()
 
     @on(Select.Changed, "#settings-speech-model-value")
-    async def handle_audio_cpp_model_changed(self, event: Select.Changed) -> None:
-        if (
-            self._syncing
-            or self.state.defaults.provider_id != "audio_cpp"
-            or self.state.defaults.model_mode != "exact"
-            or not isinstance(event.value, str)
-            or event.value == self.state.defaults.model_id
-        ):
+    @on(Select.Changed, "#settings-speech-voice-value")
+    async def handle_defaults_value_changed(self, event: Select.Changed) -> None:
+        axis = (
+            "model"
+            if event.select.id == "settings-speech-model-value"
+            else "voice"
+        )
+        if self._syncing or not isinstance(event.value, str):
+            return
+        if self.state.defaults.provider_id != "audio_cpp":
+            await self._handle_legacy_value_changed(event, axis=axis)
+            return
+        current = (
+            self.state.defaults.model_id
+            if axis == "model"
+            else self.state.defaults.voice_id
+        )
+        mode = (
+            self.state.defaults.model_mode
+            if axis == "model"
+            else self.state.defaults.voice_mode
+        )
+        if mode != "exact" or event.value == current:
             return
         self._collect_visible_state()
         await self._replace_card_bodies(
             self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
         )
         self._announce_draft_state()
+
+    async def _handle_legacy_value_changed(
+        self, event: Select.Changed, *, axis: str
+    ) -> None:
+        """Route the Custom… sentinel through the free-text modal.
+
+        Known-list picks need no card rebuild -- the option set is static --
+        so they only collect and announce, exactly like the Input they
+        replaced.
+        """
+        if event.value == _CUSTOM_ID_SENTINEL:
+            current = (
+                self.state.defaults.model_id
+                if axis == "model"
+                else self.state.defaults.voice_id
+            )
+            restore = current if current else Select.NULL
+            with event.select.prevent(Select.Changed):
+                event.select.value = restore
+            self.app.push_screen(
+                _CustomIdModal(
+                    "model" if axis == "model" else "voice",
+                    current or "",
+                ),
+                lambda value: self._custom_id_modal_result(axis, value),
+            )
+            return
+        self._collect_visible_state()
+        self._announce_draft_state()
+
+    def _custom_id_modal_result(self, axis: str, value: str | None) -> None:
+        """Apply one confirmed custom ID, or keep the draft untouched.
+
+        Acceptance uses ``global_identifier_is_valid`` — the same predicate
+        Save enforces — so a value rejected here could never have persisted.
+        A confirmed value also marks the axis rebuild-pending: until the
+        Select is rebuilt, ``_collect_visible_state`` must not read the
+        still-mounted previous value, or a Save racing the rebuild would
+        overwrite the confirmed ID.
+        """
+        if value is None:
+            return
+        if not global_identifier_is_valid(
+            value, max_characters=MAX_GLOBAL_IDENTIFIER_CHARACTERS
+        ):
+            self._set_result(
+                "Custom ID left unchanged — enter a non-empty identifier "
+                "of at most 512 characters with no leading or trailing "
+                "whitespace.",
+                severity="warning",
+            )
+            return
+        if axis == "model":
+            self.state.defaults.model_id = value
+        else:
+            self.state.defaults.voice_id = value
+        self._custom_id_rebuild_pending.add(axis)
+        self.run_worker(
+            self._rebuild_after_custom_id(axis), exclusive=True, exit_on_error=False
+        )
+
+    async def _rebuild_after_custom_id(self, axis: str) -> None:
+        """Rebuild the defaults card onto the confirmed value, then unfence.
+
+        Args:
+            axis: "model" or "voice"; cleared from the pending set only
+                after the rebuilt Select mounts, in ``finally`` so an
+                exception cannot freeze collection on that axis.
+        """
+        try:
+            await self._replace_card_bodies(
+                self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
+            )
+            self._announce_draft_state()
+            control_id = (
+                "#settings-speech-model-value"
+                if axis == "model"
+                else "#settings-speech-voice-value"
+            )
+            try:
+                self.query_one(control_id, Select).focus()
+            except QueryError:
+                pass
+        finally:
+            self._custom_id_rebuild_pending.discard(axis)
+
+    @on(Button.Pressed, "#settings-speech-browse-voices")
+    def handle_browse_voices(self, event: Button.Pressed) -> None:
+        """Open Speech Lab focused on voice selection for this provider.
+
+        The REFRESH_VOICES intent makes the Lab focus its voice selector
+        (TEST would focus the connection-test button instead). Navigation
+        still resolves a dirty draft through the screen's central
+        ``flush_pending_work`` gate, like every other outgoing navigation.
+        """
+        event.stop()
+        provider_id = self.state.defaults.provider_id
+        if provider_id not in BUILT_IN_TTS_PROVIDER_ORDER:
+            provider_id = self.configure_provider
+        self.run_worker(
+            self._open_lab(
+                SpeechTTSNavigationTarget(
+                    provider_id,
+                    SpeechTTSNavigationIntent.REFRESH_VOICES,
+                ),
+            ),
+            group="settings-speech-open-lab",
+            exclusive=True,
+            exit_on_error=False,
+        )
 
     @on(Input.Changed, "#settings-speech-audio_cpp-base-url")
     def handle_audio_cpp_base_url_changed(self, event: Input.Changed) -> None:
@@ -5437,6 +5830,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._clear_validation_errors()
         self.state = deepcopy(self.original_state)
         self._realtime_draft = replace(self._realtime_original)
+        self._pipeline_voice_draft = replace(self._pipeline_voice_original)
         self.result_text = "Reverted to the last successfully loaded global values."
 
     async def revert_to_saved(self) -> None:
@@ -5502,7 +5896,10 @@ class SpeechTTSSettingsPanel(Vertical):
             return
         self.state = restored
         self.result_text = (
-            "Non-secret defaults restored in the draft; choose Save to persist them."
+            "Non-secret defaults restored in the draft — global defaults and "
+            f"{TTS_PROVIDER_LABELS[self.configure_provider]} setup; saved "
+            "credentials and environment-owned values are unchanged. Choose "
+            "Save to persist."
         )
         try:
             await self.recompose()
@@ -5510,7 +5907,6 @@ class SpeechTTSSettingsPanel(Vertical):
         finally:
             self._transfer_managed_refs()
 
-    @on(Button.Pressed, "#settings-speech-open-lab")
     @on(Button.Pressed, "#settings-speech-open-lab-bottom")
     @on(Button.Pressed, "#settings-speech-audio-cpp-open-lab")
     def handle_open_lab(self, event: Button.Pressed) -> None:

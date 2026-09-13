@@ -216,11 +216,14 @@ def test_language_autodetect_japanese_prefers_kana():
 @pytest.mark.asyncio
 async def test_async_chunk_stream_sentences_overlap_boundary_matches_full():
     # --- Ported (chunking-engine-parity Task 4) -------------------------
-    # async_chunker depends on server-only http_client/exceptions modules
-    # and is deferred to sub-project #6 (spec §5.1 deferrals).
+    # async_chunker is NOT VENDORED — descope ruling (2026-08-23 spec
+    # §4.2): server-only http_client/exceptions deps and no chatbook
+    # consumer (chatbook chunks in-process).
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
-        reason="async_chunker deferred to #6 (server http_client/exceptions deps)",
+        reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
+                "§4.2: server http_client/exceptions deps; chatbook "
+                "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 
@@ -253,11 +256,14 @@ async def test_async_chunk_stream_sentences_overlap_boundary_matches_full():
 async def test_async_chunk_stream_sentences_overlap_matches_full():
 
     # --- Ported (chunking-engine-parity Task 4) -------------------------
-    # async_chunker depends on server-only http_client/exceptions modules
-    # and is deferred to sub-project #6 (spec §5.1 deferrals).
+    # async_chunker is NOT VENDORED — descope ruling (2026-08-23 spec
+    # §4.2): server-only http_client/exceptions deps and no chatbook
+    # consumer (chatbook chunks in-process).
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
-        reason="async_chunker deferred to #6 (server http_client/exceptions deps)",
+        reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
+                "§4.2: server http_client/exceptions deps; chatbook "
+                "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 
@@ -292,11 +298,14 @@ async def test_async_chunk_stream_sentences_overlap_matches_full():
 @pytest.mark.asyncio
 async def test_async_chunk_stream_overlap_clamps_to_max_size() -> None:
     # --- Ported (chunking-engine-parity Task 4) -------------------------
-    # async_chunker depends on server-only http_client/exceptions modules
-    # and is deferred to sub-project #6 (spec §5.1 deferrals).
+    # async_chunker is NOT VENDORED — descope ruling (2026-08-23 spec
+    # §4.2): server-only http_client/exceptions deps and no chatbook
+    # consumer (chatbook chunks in-process).
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
-        reason="async_chunker deferred to #6 (server http_client/exceptions deps)",
+        reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
+                "§4.2: server http_client/exceptions deps; chatbook "
+                "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 
@@ -331,11 +340,14 @@ async def test_async_chunk_stream_overlap_clamps_to_max_size() -> None:
 @pytest.mark.asyncio
 async def test_async_chunk_stream_sentences_no_overlap_matches_full():
     # --- Ported (chunking-engine-parity Task 4) -------------------------
-    # async_chunker depends on server-only http_client/exceptions modules
-    # and is deferred to sub-project #6 (spec §5.1 deferrals).
+    # async_chunker is NOT VENDORED — descope ruling (2026-08-23 spec
+    # §4.2): server-only http_client/exceptions deps and no chatbook
+    # consumer (chatbook chunks in-process).
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
-        reason="async_chunker deferred to #6 (server http_client/exceptions deps)",
+        reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
+                "§4.2: server http_client/exceptions deps; chatbook "
+                "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 
@@ -368,11 +380,14 @@ async def test_async_chunk_stream_sentences_no_overlap_matches_full():
 @pytest.mark.asyncio
 async def test_async_chunk_stream_words_no_space_language(monkeypatch):
     # --- Ported (chunking-engine-parity Task 4) -------------------------
-    # async_chunker depends on server-only http_client/exceptions modules
-    # and is deferred to sub-project #6 (spec §5.1 deferrals).
+    # async_chunker is NOT VENDORED — descope ruling (2026-08-23 spec
+    # §4.2): server-only http_client/exceptions deps and no chatbook
+    # consumer (chatbook chunks in-process).
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
-        reason="async_chunker deferred to #6 (server http_client/exceptions deps)",
+        reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
+                "§4.2: server http_client/exceptions deps; chatbook "
+                "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
     from tldw_chatbook.Chunking.engine.strategies.words import WordChunkingStrategy
@@ -407,11 +422,14 @@ async def test_async_chunk_stream_words_no_space_language(monkeypatch):
 @pytest.mark.asyncio
 async def test_async_chunk_stream_overlap_no_tail_dup_on_boundary():
     # --- Ported (chunking-engine-parity Task 4) -------------------------
-    # async_chunker depends on server-only http_client/exceptions modules
-    # and is deferred to sub-project #6 (spec §5.1 deferrals).
+    # async_chunker is NOT VENDORED — descope ruling (2026-08-23 spec
+    # §4.2): server-only http_client/exceptions deps and no chatbook
+    # consumer (chatbook chunks in-process).
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
-        reason="async_chunker deferred to #6 (server http_client/exceptions deps)",
+        reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
+                "§4.2: server http_client/exceptions deps; chatbook "
+                "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 

@@ -21,15 +21,19 @@
 #
 #########################################
 
+import atexit
 import json
 import sqlite3
 import threading
 import time
+import weakref
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, List, Dict, Any, Optional, Sequence, Union
+from typing import Iterator, List, Dict, Any, Literal, Mapping, Optional, Sequence, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party Libraries
 from loguru import logger
@@ -47,9 +51,69 @@ from tldw_chatbook.Backup_Recovery.participants import (
 
 from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
-from .sql_validation import validate_identifier
+from .sql_validation import get_safe_order_by_clause, validate_identifier
 from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Utils.fts5_match_forms import quote_fts5_token
+
+if TYPE_CHECKING:
+    from ..Subscriptions.watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
+
+
+_CURRENT_SCHEMA_VERSION = 2
+_AGENT_NAME_ORDER_PREFIX_CHARS = 96
+
+INTERRUPTED_RUN_ERROR = (
+    "Interrupted: the application stopped before this run finished."
+)
+INTERRUPTED_BRIEFING_ERROR = "interrupted"
+
+_SUBSCRIPTIONS_V1_TO_V2_MIGRATION_PATH = (
+    Path(__file__).parent
+    / "migrations"
+    / "subscriptions_v1_to_v2_briefing_provenance.sql"
+)
+
+
+def _briefing_items_v2_ddl() -> str:
+    """Read the shipped subscriptions v1-to-v2 schema artifact."""
+    return _SUBSCRIPTIONS_V1_TO_V2_MIGRATION_PATH.read_text(encoding="utf-8")
+
+
+def _sanitize_provenance_url(value: object) -> str | None:
+    """Strip credentials, query, and fragment from one HTTP(S) snapshot URL."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        if parsed.scheme.casefold() not in {"http", "https"} or not hostname:
+            return None
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        netloc = host if parsed.port is None else f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme.casefold(), netloc, parsed.path, "", ""))
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class BriefingProvenanceRow:
+    """One selected item's immutable snapshot at briefing publication."""
+
+    item_id: int
+    selection_position: int
+    citation_position: int | None
+    featured: bool
+    cited: bool
+    item_title: str | None
+    item_url: str | None
+    item_published_date: str | None
+    item_created_at: str | None
+    item_effective_date: str | None
+    source_id: int | None
+    source_name: str | None
+    source_type: str | None
+    source_url: str | None
 
 
 #: Fallback `auto_pause_threshold` when the config value is missing or
@@ -58,6 +122,168 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 #: `auto_pause_after_failures = 10`, so a broken/hand-edited config still
 #: produces the same default a fresh install would get.
 _DEFAULT_AUTO_PAUSE_THRESHOLD = 10
+
+#: Lock-wait ceiling for every connection this database opens, in
+#: milliseconds (task-19562 AC4).
+#:
+#: **Measured, not assumed** -- the acceptance criterion demanded exactly
+#: that. Against a real `SubscriptionsDB`, with one connection holding
+#: `BEGIN IMMEDIATE` for 1.0 s while a second timed its own:
+#:
+#:     busy_timeout (ms): 5000        <- inherited, nothing set it
+#:     journal_mode     : wal
+#:     second writer blocked for 1.07s -> acquired
+#:
+#: So the lane's PLAUSIBLE rating is CONFIRMED: nothing in this file,
+#: `base_db.py` or the private-path connector ever set `busy_timeout`, and
+#: Python's `sqlite3.connect(timeout=5.0)` default made it 5 s -- a writer
+#: collision really does block its caller for as long as the lock is held,
+#: up to that ceiling, and then raises `OperationalError`.
+#:
+#: Two narrowings the number does NOT support, both worth stating because
+#: the obvious readings are wrong:
+#:
+#: * `journal_mode = wal`, so readers never block writers and writers never
+#:   block readers. The exposure is **writer-vs-writer only**, not "any of
+#:   the 22 async service methods".
+#: * Setting this pragma is **not** the fix for the stall. 5000 is what the
+#:   connection already had; the value is written down here so it is pinned
+#:   and cannot drift silently if the connector ever passes its own
+#:   `timeout=`. Lowering it would only convert a stall into an earlier
+#:   `database is locked` exception on a path with no retry. The stall stops
+#:   mattering because the sqlite work no longer runs on the event loop
+#:   (part B, `Subscriptions/db_offload.py`), not because of this line.
+BUSY_TIMEOUT_MS = 5000
+
+#: Every live, writable `SubscriptionsDB`, weakly held, so the interpreter
+#: can checkpoint their WALs on the way out (see
+#: `_checkpoint_open_databases_at_exit`).
+_OPEN_SUBSCRIPTIONS_DBS: "weakref.WeakSet[SubscriptionsDB]" = weakref.WeakSet()
+_OPEN_DBS_LOCK = threading.Lock()
+_ATEXIT_REGISTERED = False
+
+#: True once the exit hook is running. Checked before every `logger` call on
+#: the settle path, and it is not defensive decoration: the first version of
+#: this hook logged a genuine warning from a test process whose temporary
+#: database directory had already been removed, and loguru's sink was gone
+#: too -- so the *diagnostic* raised `ValueError: I/O operation on closed
+#: file` and printed a logging traceback on every exit. A settle running
+#: during teardown reports nothing; there is nobody left to report to.
+_INTERPRETER_EXITING = False
+
+
+class _ThreadExitCleanup:
+    """Close and de-register one thread's connection when that thread ends.
+
+    Review of PR #1964. `SubscriptionsDB._connections` holds a **strong**
+    reference to every thread's connection so shutdown can count them, but
+    `close()` only removes the *calling* thread's entry. A worker thread that
+    ended without calling `close()` therefore left its connection pinned by
+    that dict for the life of the process -- descriptor, `-wal` and `-shm`
+    handles included. Measured over 20 concurrent short-lived threads: the
+    registry stayed at 21 entries and 43 open descriptors, permanently, and a
+    `gc.collect()` could not reclaim any of it.
+
+    Nothing outside the owning thread may close a sqlite3 connection --
+
+        ProgrammingError: SQLite objects created in a thread can only be
+        used in that same thread.
+
+    -- which is why `close_all_connections` reports other threads' connections
+    instead of closing them. The one place the rule *is* satisfied is the
+    dying thread itself: CPython clears a thread's `threading.local` storage
+    on that thread as it exits, so an object living only in that storage gets
+    finalized there. That is this class. Verified rather than assumed: over 10
+    threads, `__del__` ran 10 times, `threading.get_ident()` inside it matched
+    the ident recorded at construction every time, and the descriptor count on
+    the database returned to its pre-thread baseline (20 -> 0).
+
+    It deliberately does not checkpoint. The `-wal` is settled by SQLite when
+    the last connection to the database closes, and by `checkpoint_wal` /
+    `close_all_connections` on the shutdown path; a thread ending is not the
+    place to add I/O that could raise.
+
+    The instance must be reachable ONLY from the owning thread's local
+    storage. Handing a reference to anything longer-lived (the registry
+    included) would postpone the finalization this exists to trigger.
+    """
+
+    __slots__ = ("_connection", "_registry", "_lock", "_ident")
+
+    def __init__(self, connection, registry, lock, ident: int) -> None:
+        self._connection = connection
+        self._registry = registry
+        self._lock = lock
+        self._ident = ident
+
+    def detach(self) -> None:
+        """Give up ownership -- the connection was closed explicitly instead."""
+        self._connection = None
+
+    def __del__(self) -> None:
+        connection = self._connection
+        if connection is None:
+            return
+        self._connection = None
+        # Best-effort throughout: this runs during thread teardown, where a
+        # raised exception becomes an "Exception ignored in" traceback on
+        # stderr and helps nobody.
+        try:
+            with self._lock:
+                if self._registry.get(self._ident) is connection:
+                    del self._registry[self._ident]
+        except Exception:  # noqa: BLE001 -- thread teardown, best effort
+            pass
+        try:
+            connection.close()
+        except Exception:  # noqa: BLE001 -- thread teardown, best effort
+            pass
+
+
+def _checkpoint_open_databases_at_exit() -> None:
+    """Settle every open subscriptions database at interpreter exit.
+
+    task-19562, and the measurement matters more than the intent here.
+    `SubscriptionsDB` keeps **thread-local** connections and nothing ever
+    closed them, so an app that ran watchlist checks exited with a
+    connection still open per worker thread. The obvious conclusion --
+    that the `-wal` is therefore left behind -- was **tested and is false
+    for a clean exit**: a child process that wrote a 4.1 MB `-wal` and
+    exited normally left only `subs.db` on disk, with this hook suppressed
+    exactly as with it enabled. CPython finalizes the connection objects,
+    and SQLite checkpoints and removes the `-wal` when the last connection
+    to a database closes.
+
+    So this hook is not what saves the `-wal` on the ordinary path. What it
+    does buy is a *defined* moment and a defined error path: `atexit` runs
+    while imports and sqlite are still usable, rather than depending on
+    garbage-collection order during interpreter teardown (the regime that
+    produces "Exception ignored in:" noise). The behaviour it performs is
+    covered directly by
+    `Tests/Subscriptions/test_subscriptions_db_connection_lifecycle.py`.
+
+    The path where the `-wal` genuinely does survive is `app.py`'s
+    SIGINT/SIGTERM handler, which calls `os._exit(0)` -- that skips
+    `atexit` too, so no hook here can reach it. Recorded rather than
+    papered over; the hard-exit itself is task-19561's subject.
+
+    Deliberately best-effort and silent on failure: a diagnostic must never
+    be the thing that breaks the exit.
+    """
+    global _INTERPRETER_EXITING
+    _INTERPRETER_EXITING = True
+    with _OPEN_DBS_LOCK:
+        databases = list(_OPEN_SUBSCRIPTIONS_DBS)
+    for database in databases:
+        try:
+            if not Path(database.db_path_str).exists():
+                # The file went away under a still-live instance (routine
+                # for a temporary-directory test). There is nothing to
+                # settle, and touching it would only re-create it.
+                continue
+            database.close_all_connections()
+        except Exception:  # noqa: BLE001 -- interpreter shutdown, best effort
+            pass
 
 
 def _sqlite_unicode_casefold(value: Any) -> str:
@@ -214,7 +440,7 @@ _ITEM_ID_LOOKUP_CHUNK_SIZE = 500
 class SubscriptionsDB(BaseDB):
     """Database operations for subscription management."""
 
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = _CURRENT_SCHEMA_VERSION
 
     _AGENT_READ_REQUIRED_COLUMNS = {
         "subscriptions": frozenset(
@@ -225,8 +451,10 @@ class SubscriptionsDB(BaseDB):
                 "source",
                 "is_active",
                 "is_paused",
+                "check_frequency",
                 "last_checked",
                 "last_successful_check",
+                "consecutive_failures",
                 "created_at",
                 "updated_at",
             }
@@ -252,9 +480,84 @@ class SubscriptionsDB(BaseDB):
                 "effective_date",
             }
         ),
-        "watchlists": frozenset({"id", "name"}),
+        "watchlists": frozenset(
+            {
+                "id",
+                "name",
+                "is_active",
+                "briefing_selection_mode",
+                "default_briefing_preset_id",
+                "briefing_cadence_seconds",
+                "created_at",
+                "updated_at",
+            }
+        ),
         "watchlist_sources": frozenset({"watchlist_id", "subscription_id"}),
+        "local_watchlist_runs": frozenset(
+            {
+                "id",
+                "source_id",
+                "status",
+                "started_at",
+                "finished_at",
+                "stats_json",
+                "error_msg",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        "briefings": frozenset(
+            {
+                "id",
+                "watchlist_id",
+                "status",
+                "error",
+                "covers_through_item_id",
+                "covers_from_ts",
+                "selection_mode",
+                "preset_id",
+                "model_used",
+                "body_markdown",
+                "item_count",
+                "featured_count",
+                "overflow_count",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        "briefing_items": frozenset(
+            {
+                "briefing_id",
+                "item_id",
+                "live_item_id",
+                "selection_position",
+                "citation_position",
+                "featured",
+                "cited",
+                "item_title",
+                "item_url",
+                "item_published_date",
+                "item_created_at",
+                "item_effective_date",
+                "source_id",
+                "source_name",
+                "source_type",
+                "source_url",
+                "provenance_version",
+            }
+        ),
+        "briefing_presets": frozenset({"id", "name"}),
     }
+    _AGENT_READ_REQUIRED_INDEXES = frozenset(
+        {
+            "idx_watchlist_sources_subscription",
+            "idx_briefings_watchlist_status",
+            "idx_briefing_items_item",
+            "idx_local_watchlist_runs_batch",
+            "uq_local_watchlist_runs_active_source",
+            "uq_briefings_generating_watchlist",
+        }
+    )
 
     def __init__(
         self,
@@ -272,6 +575,24 @@ class SubscriptionsDB(BaseDB):
             read_only: Open an existing database without initializing schema
         """
         self._local = threading.local()
+        # Every thread-local connection this instance has open, keyed by the
+        # ident of the thread that owns it (task-19562). `threading.local` is
+        # invisible from any other thread, so without this registry nothing --
+        # not shutdown, not a test -- could even *count* the connections, let
+        # alone checkpoint behind them. Assigned before `super().__init__`
+        # because schema initialization touches `self.conn`.
+        #
+        # The reference held here is a STRONG one, which is why every entry is
+        # paired with a `_ThreadExitCleanup` in the owning thread's local
+        # storage (review of PR #1964): without that, a thread that ended
+        # without calling `close()` left its connection pinned by this dict for
+        # the life of the process -- descriptor and WAL lock included --
+        # inverting the very leak the registry was added to expose. A
+        # `weakref.WeakValueDictionary` would be tidier and is not available:
+        # CPython raises `TypeError: cannot create weak reference to
+        # 'sqlite3.Connection' object` (measured on 3.12.11).
+        self._connections: Dict[int, sqlite3.Connection] = {}
+        self._connections_lock = threading.Lock()
         self._read_only = read_only
         # Only the monotonic complete state is retained. A false/incomplete
         # probe is deliberately not cached: a background FTS backfill may
@@ -284,10 +605,32 @@ class SubscriptionsDB(BaseDB):
             except Exception:
                 self.close()
                 raise SubscriptionsDBUnavailableError() from None
+        elif not self.is_memory_db:
+            # Read-only instances have no `-wal` of their own to settle, and
+            # an in-memory database ceases to exist with its connection.
+            self._register_for_exit_checkpoint()
 
     @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
-        """Open/register the exact writable or existing read-only native route."""
+        """Return a connection with foreign-key enforcement enabled.
+
+        ``PRAGMA foreign_keys`` is per-connection and defaults to OFF, and
+        ``BaseDB._get_connection`` sets only ``row_factory``. Without this
+        override every ``ON DELETE CASCADE`` in this schema is inert, which
+        silently orphaned ``subscription_items`` whenever a subscription was
+        deleted. Matches ``ChaChaNotes_DB`` and ``Client_Media_DB_v2``, which
+        each enable it per connection.
+
+        task-22224 EXCEPTION -- connections here keep the legacy default
+        isolation level for now instead of the store template's
+        ``isolation_level = None`` (rule: ``Library_Ingest_Jobs_DB.py``
+        module docstring). This file's write paths knowingly rely on the
+        legacy implicit-BEGIN policy (see the long TASK-1362 comment above
+        the extraction-fingerprint migration, which documents the reliance
+        and works around its DDL gap with an explicit BEGIN IMMEDIATE), so
+        flipping requires this file's own commit/write-site census first --
+        its own task. Do NOT copy this pattern into new stores.
+        """
         _core_access(self)
         if self._read_only:
             conn = connect_private_sqlite(
@@ -302,6 +645,7 @@ class SubscriptionsDB(BaseDB):
             conn.row_factory = sqlite3.Row
             conn.create_function("unicode_casefold", 1, _sqlite_unicode_casefold, deterministic=True)
             conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
             if self._read_only:
                 conn.execute("PRAGMA query_only = ON;")
             else:
@@ -331,12 +675,26 @@ class SubscriptionsDB(BaseDB):
         with _core_operation(self):
             try:
                 conn = self.conn
+                versions = [
+                    int(row[0])
+                    for row in conn.execute("SELECT version FROM schema_version")
+                ]
+                if versions != [_CURRENT_SCHEMA_VERSION]:
+                    raise SubscriptionsDBUnavailableError()
                 for table, required_columns in self._AGENT_READ_REQUIRED_COLUMNS.items():
                     columns = {
                         row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")
                     }
                     if not required_columns <= columns:
                         raise SubscriptionsDBUnavailableError()
+                indexes = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_schema WHERE type = 'index'"
+                    )
+                }
+                if not self._AGENT_READ_REQUIRED_INDEXES <= indexes:
+                    raise SubscriptionsDBUnavailableError()
             except SubscriptionsDBUnavailableError:
                 raise
             except (sqlite3.Error, OSError):
@@ -372,6 +730,39 @@ class SubscriptionsDB(BaseDB):
         dedicated keepalive connection).
         """
         with _core_operation(self):
+            conn = self.conn
+            has_version_table = conn.execute(
+                "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'schema_version'"
+            ).fetchone()
+            if has_version_table:
+                versions = [int(row[0]) for row in conn.execute("SELECT version FROM schema_version")]
+                # Every version this build can open: the current one and the one
+                # it knows how to migrate from. Anything else -- a FUTURE version
+                # above all -- must reach the refusal below with the database
+                # untouched: normalizing it away would delete a newer build's
+                # marker and then run v2 assumptions over schema and data this
+                # build has never seen (Qodo #4).
+                recognized = set(versions) <= {1, _CURRENT_SCHEMA_VERSION}
+                if recognized and _CURRENT_SCHEMA_VERSION in versions:
+                    # The current version is present, possibly beside stale rows
+                    # left by an abnormal exit (the fresh-create path's
+                    # `INSERT OR IGNORE` and the migration path's `DELETE` +
+                    # insert can disagree about what "the" row is -- task-32343).
+                    # Normalize rather than refuse to open.
+                    if len(versions) > 1:
+                        with self.transaction() as tx_conn:
+                            tx_conn.execute(
+                                "DELETE FROM schema_version WHERE version != ?",
+                                (_CURRENT_SCHEMA_VERSION,),
+                            )
+                elif versions == [1]:
+                    self._migrate_from_v1_to_v2()
+                else:
+                    raise SubscriptionError(
+                        f"Unsupported subscriptions schema version {versions} in "
+                        f"{self.db_path_str}; this build supports {_CURRENT_SCHEMA_VERSION}"
+                    )
+
             with self.transaction() as conn:
                 conn.executescript("""
             PRAGMA foreign_keys = ON;
@@ -380,7 +771,7 @@ class SubscriptionsDB(BaseDB):
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY NOT NULL
             );
-            INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+            INSERT OR IGNORE INTO schema_version (version) VALUES (2);
             
             -- Unified subscription table with enhanced features
             CREATE TABLE IF NOT EXISTS subscriptions (
@@ -646,6 +1037,88 @@ class SubscriptionsDB(BaseDB):
             """)
             conn.executescript(SITE_CONFIGS_DDL)
             self._ensure_watchlists_schema(conn)
+
+    def _migrate_from_v1_to_v2(self) -> None:
+        """Atomically rebuild durable briefing provenance and active claims."""
+        with self.transaction(immediate=True) as conn:
+            conn.execute("ALTER TABLE briefing_items RENAME TO briefing_items_v1")
+            conn.execute(_briefing_items_v2_ddl())
+            legacy_rows = conn.execute(
+                "SELECT bi.briefing_id, bi.item_id, bi.featured, "
+                "i.id AS live_item_id, i.title AS item_title, i.url AS item_url, "
+                "i.published_date AS item_published_date, i.created_at AS item_created_at, "
+                "i.effective_date AS item_effective_date, "
+                "s.id AS source_id, s.name AS source_name, s.type AS source_type, "
+                "s.source AS source_url "
+                "FROM briefing_items_v1 bi "
+                "LEFT JOIN subscription_items i ON i.id = bi.item_id "
+                "LEFT JOIN subscriptions s ON s.id = i.subscription_id "
+                "ORDER BY bi.briefing_id, bi.item_id"
+            ).fetchall()
+            for row in legacy_rows:
+                conn.execute(
+                    "INSERT INTO briefing_items "
+                    "(briefing_id, item_id, live_item_id, featured, cited, "
+                    "item_title, item_url, item_published_date, item_created_at, "
+                    "item_effective_date, "
+                    "source_id, source_name, source_type, source_url, provenance_version) "
+                    "VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                    (
+                        row["briefing_id"],
+                        row["item_id"],
+                        row["live_item_id"],
+                        int(bool(row["featured"])),
+                        row["item_title"],
+                        _sanitize_provenance_url(row["item_url"]),
+                        row["item_published_date"],
+                        row["item_created_at"],
+                        row["item_effective_date"],
+                        row["source_id"],
+                        row["source_name"],
+                        row["source_type"],
+                        _sanitize_provenance_url(row["source_url"]),
+                    ),
+                )
+            conn.execute("DROP TABLE briefing_items_v1")
+            conn.execute(
+                "CREATE INDEX idx_briefing_items_item ON briefing_items(item_id)"
+            )
+            conn.execute(
+                "UPDATE local_watchlist_runs AS older "
+                "SET status = 'failed', error_msg = ?, "
+                "finished_at = COALESCE(finished_at, updated_at) "
+                "WHERE status IN ('queued', 'running') AND EXISTS ("
+                "SELECT 1 FROM local_watchlist_runs AS newer "
+                "WHERE newer.source_id = older.source_id "
+                "AND newer.status IN ('queued', 'running') "
+                "AND (newer.created_at > older.created_at "
+                "OR (newer.created_at = older.created_at AND newer.id > older.id)))",
+                (INTERRUPTED_RUN_ERROR,),
+            )
+            conn.execute(
+                "UPDATE briefings AS older SET status = 'failed', error = ? "
+                "WHERE status = 'generating' AND EXISTS ("
+                "SELECT 1 FROM briefings AS newer "
+                "WHERE newer.watchlist_id = older.watchlist_id "
+                "AND newer.status = 'generating' "
+                "AND (newer.created_at > older.created_at "
+                "OR (newer.created_at = older.created_at AND newer.id > older.id)))",
+                (INTERRUPTED_BRIEFING_ERROR,),
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX uq_local_watchlist_runs_active_source "
+                "ON local_watchlist_runs(source_id) "
+                "WHERE status IN ('queued', 'running')"
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX uq_briefings_generating_watchlist "
+                "ON briefings(watchlist_id) WHERE status = 'generating'"
+            )
+            conn.execute("DELETE FROM schema_version")
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?)",
+                (_CURRENT_SCHEMA_VERSION,),
+            )
 
     def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
@@ -1053,14 +1526,10 @@ class SubscriptionsDB(BaseDB):
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS briefing_items (
-                briefing_id INTEGER NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
-                item_id     INTEGER NOT NULL REFERENCES subscription_items(id) ON DELETE CASCADE,
-                featured BOOLEAN DEFAULT 0,
-                PRIMARY KEY (briefing_id, item_id)
-            )
-        """)
+            if not cursor.execute(
+                "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'briefing_items'"
+            ).fetchone():
+                cursor.execute(_briefing_items_v2_ddl())
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_briefings_watchlist_status "
                 "ON briefings(watchlist_id, status)"
@@ -1068,6 +1537,15 @@ class SubscriptionsDB(BaseDB):
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_briefing_items_item "
                 "ON briefing_items(item_id)"
+            )
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_local_watchlist_runs_active_source "
+                "ON local_watchlist_runs(source_id) "
+                "WHERE status IN ('queued', 'running')"
+            )
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_briefings_generating_watchlist "
+                "ON briefings(watchlist_id) WHERE status = 'generating'"
             )
 
             # Briefing presets + scripts (spec #2 phase 2a): a preset is a named,
@@ -1379,11 +1857,24 @@ class SubscriptionsDB(BaseDB):
     @property
     @_core_getter
     def conn(self):
-        """Thread-local database connection."""
+        """Thread-local database connection, registered for shutdown."""
         _core_access(self)
         cached = _core_cached_connection(self, getattr(self._local, "conn", None))
         if cached is None:
-            self._local.conn = self._get_connection()
+            connection = self._get_connection()
+            self._local.conn = connection
+            with self._connections_lock:
+                self._connections[threading.get_ident()] = connection
+            # Assigned LAST, and only into this thread's local storage: from
+            # here the cleanup owns closing and de-registering this connection
+            # when the thread ends (review of PR #1964). Nothing else may hold
+            # a reference to it, or it would never be finalized.
+            self._local.connection_cleanup = _ThreadExitCleanup(
+                connection,
+                self._connections,
+                self._connections_lock,
+                threading.get_ident(),
+            )
         return self._local.conn
 
     @_core_transaction
@@ -1392,19 +1883,335 @@ class SubscriptionsDB(BaseDB):
         """Count a read without adding commit/rollback semantics."""
         yield self.conn
 
+    def _register_for_exit_checkpoint(self) -> None:
+        """Join the set of databases the interpreter settles on the way out."""
+        global _ATEXIT_REGISTERED
+        with _OPEN_DBS_LOCK:
+            _OPEN_SUBSCRIPTIONS_DBS.add(self)
+            if not _ATEXIT_REGISTERED:
+                atexit.register(_checkpoint_open_databases_at_exit)
+                _ATEXIT_REGISTERED = True
+
+    def checkpoint_wal(self) -> bool:
+        """Fold the `-wal` back into the database file and truncate it.
+
+        task-19562. Nothing in this app ever checkpointed this database
+        explicitly. SQLite's automatic checkpoint keeps the `-wal` bounded
+        but never truncates it, so a long-running app carries whatever the
+        last burst of writes left there -- measured at 4.1 MB after 300
+        inserts, and 0 bytes after one `wal_checkpoint(TRUNCATE)`. That is
+        the standing cost this addresses; the file is separately (and
+        adequately) settled by SQLite itself when the last connection to it
+        closes, which is why the exit hook's own docstring is careful about
+        what it does and does not buy.
+
+        `TRUNCATE` needs every other connection to be idle; when one is not,
+        SQLite reports busy rather than raising, and this falls back to
+        `PASSIVE`, which folds in what it can without waiting. Either way the
+        database file is complete afterwards.
+
+        Returns:
+            True when the `-wal` was truncated, False when only a partial
+            (or no) checkpoint was possible -- including for an in-memory or
+            read-only database, which have nothing to checkpoint.
+        """
+        if self.is_memory_db or self._read_only:
+            return False
+        try:
+            connection = self.conn
+            if connection.in_transaction:
+                # A checkpoint cannot see past this connection's own open
+                # transaction; committing here would durably persist work the
+                # caller has not finished, so the honest answer is to decline.
+                return False
+            row = connection.execute("PRAGMA wal_checkpoint(TRUNCATE);").fetchone()
+        except Exception:  # noqa: BLE001
+            # Broader than sqlite3.Error on purpose: `self.conn` above can
+            # also raise from the private-path connector (the database file
+            # deleted under a still-live instance -- routine in tests, and
+            # possible at shutdown). A settle that cannot happen is a
+            # warning, never a raise out of a close path.
+            if not _INTERPRETER_EXITING:
+                logger.warning("SubscriptionsDB WAL checkpoint failed during shutdown")
+            return False
+        # (busy, log_pages, checkpointed_pages); busy=0 means TRUNCATE ran.
+        if row is not None and row[0] == 0:
+            return True
+        try:
+            self.conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+        except sqlite3.Error:
+            pass
+        return False
+
+    def close_all_connections(self) -> int:
+        """Settle this database for shutdown: checkpoint, then close.
+
+        task-19562. Closes the CALLING thread's connection after
+        checkpointing the `-wal` (the checkpoint is database-wide, so one
+        connection settles the file for all of them).
+
+        Connections owned by *other, still-live* threads are counted and
+        reported, not closed. That is a measured limitation, not an oversight:
+        sqlite3 refuses a cross-thread close --
+
+            ProgrammingError: SQLite objects created in a thread can only be
+            used in that same thread.
+
+        -- and an exception raised out of a shutdown path is worse than a
+        connection the operating system is about to reclaim anyway. The part
+        that actually matters for the file on disk (the checkpoint) is done
+        regardless of which thread calls this.
+
+        Connections whose thread has already EXITED are neither counted nor
+        retained: `_ThreadExitCleanup` closed and de-registered each of them on
+        its own thread as that thread ended (review of PR #1964). So the number
+        returned is the number of connections a still-live thread could
+        actually be using, and the registry itself holds no descriptor open.
+
+        Returns:
+            The number of connections still open on other live threads.
+        """
+        self.checkpoint_wal()
+        self.close()
+        with self._connections_lock:
+            remaining = len(self._connections)
+        if remaining and not _INTERPRETER_EXITING:
+            logger.debug(
+                "SubscriptionsDB connections remain open on other threads after "
+                "WAL checkpoint"
+            )
+        return remaining
+
     @_core_transaction
     @contextmanager
-    def transaction(self):
-        """Context manager for database transactions."""
+    def transaction(self, *, immediate: bool = False):
+        """Context manager for database transactions, safe to nest.
+
+        task-19562 part C. This used to commit unconditionally on exit. A
+        nested `with self.transaction()` therefore had its INNER exit
+        durably commit the OUTER transaction's work as well, so a later
+        failure in the outer scope could no longer roll back what the inner
+        block had already written -- silent partial persistence, with no
+        error anywhere.
+
+        Nesting is now tracked per thread (the connection is thread-local,
+        so the depth must be too), mirroring `ChaChaNotes_DB`'s
+        `TransactionContextManager`: only the OUTERMOST block commits or
+        rolls back, and an inner block simply yields the same connection. An
+        exception still propagates outward, so the outermost block rolls the
+        whole unit back as a caller would expect.
+
+        Measured, and the earlier note here was wrong. It claimed
+        `record_check_result` -- the call site the task named -- did not nest
+        ("instrumented depth 1"). Re-instrumented per argument shape:
+
+            record_check_result WITH stats    -> 2 entries, depths [1, 2]
+            record_check_result WITHOUT stats -> 1 entry,  depths [1]
+
+        The nesting is `record_check_result` -> `_update_subscription_stats`
+        -> `update_subscription_stats`, which opens its own `transaction()`
+        for the `subscription_stats` upsert. It is reached whenever `stats`
+        is truthy -- which is every real check, since `execute_run` always
+        passes stats. The earlier measurement can only have exercised the
+        `stats=None` path. So this was **live**, not latent: before this
+        change, the daily-statistics write durably committed the enclosing
+        subscription-health UPDATE. Nothing after that point in
+        `record_check_result` can fail today (only metric logging follows),
+        which is why no incident was ever observed -- but the ordering was
+        one added statement away from silent partial persistence.
+
+        Args:
+            immediate: Acquire SQLite's write lock before yielding.
+
+        Yields:
+            The thread-local `sqlite3.Connection`. The same object is yielded
+            to a nested block, so an inner `with` shares the outer's
+            transaction rather than starting its own.
+
+        Raises:
+            Exception: Whatever the body raises, re-raised unchanged after the
+                OUTERMOST block rolls back. An inner block does not roll back;
+                the exception propagates so the outermost can.
+        """
         conn = self.conn
+        if not hasattr(self._local, "transaction_depth"):
+            self._local.transaction_depth = 0
+
+        if self._local.transaction_depth > 0:
+            # Inner block: join the outer transaction. No commit, no
+            # rollback -- the outermost owns both.
+            self._local.transaction_depth += 1
+            try:
+                yield conn
+            finally:
+                self._local.transaction_depth -= 1
+            return
+
+        self._local.transaction_depth = 1
         try:
+            if immediate:
+                conn.execute("BEGIN IMMEDIATE")
             yield conn
             conn.commit()
         except Exception:
             conn.rollback()
             raise
+        finally:
+            self._local.transaction_depth = 0
 
     # --- Core Subscription Management ---
+
+    def _find_exact_source_id(
+        self, conn: sqlite3.Connection, source: str
+    ) -> Optional[int]:
+        """Return the first source ID matching the exact stored identity."""
+        row = conn.execute(
+            "SELECT id FROM subscriptions WHERE source = ? ORDER BY id LIMIT 1",
+            (source,),
+        ).fetchone()
+        return None if row is None else int(row[0])
+
+    def create_sources_exact_batch(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        result_mode: Literal["identity", "watchlist_source"] = "identity",
+    ) -> List[Dict[str, Any]]:
+        """Create an ordered exact-identity source batch under one write lock.
+
+        ``source`` identity trims outer whitespace only. Callers own payload
+        validation; this database-owner seam owns serialization so independent
+        processes cannot both pass lookup before either insert commits.
+
+        Args:
+            rows: Validated subscription mappings accepted by
+                :meth:`add_subscription`.
+            result_mode: Fixed database-owned result projection.  The default
+                preserves the historic identity-only outcome; ``watchlist_source``
+                adds a safe, allowlisted normalized row before commit.
+
+        Returns:
+            One ordered outcome mapping per input row.
+        """
+        if result_mode not in {"identity", "watchlist_source"}:
+            raise ValueError("invalid source batch result mode")
+        results: List[Dict[str, Any]] = []
+        with self.transaction(immediate=True) as conn:
+            for input_index, raw_row in enumerate(rows):
+                row = dict(raw_row)
+                source = str(row.pop("source")).strip()
+                source_id = self._find_exact_source_id(conn, source)
+                if source_id is not None:
+                    outcome = "existing"
+                else:
+                    source_id = self.add_subscription(source=source, **row)
+                    outcome = "created"
+                result = {
+                    "input_index": input_index,
+                    "outcome": outcome,
+                    "source_id": source_id,
+                }
+                if result_mode == "watchlist_source":
+                    stored = conn.execute(
+                        "SELECT id, name, type, source, description, tags, "
+                        "check_frequency, last_checked, last_successful_check, "
+                        "last_error, error_count, is_active, is_paused, "
+                        "extraction_method, extraction_rules, processing_options, "
+                        "auto_ingest, change_threshold, ignore_selectors, "
+                        "created_at, updated_at "
+                        "FROM subscriptions WHERE id = ?",
+                        (source_id,),
+                    ).fetchone()
+                    if stored is None:
+                        raise RuntimeError("source result materialization failed")
+                    result["source"] = self._materialize_watchlist_source_result(
+                        dict(stored)
+                    )
+                results.append(result)
+        return results
+
+    @staticmethod
+    def _materialize_watchlist_source_result(
+        row: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Build the fixed safe watchlist projection for a stored source.
+
+        The allowlisted query feeding this method intentionally excludes
+        authentication, custom headers, notification endpoints, and other
+        opaque configuration.  Materialization runs before the surrounding
+        ``BEGIN IMMEDIATE`` commits, so any malformed required value aborts
+        the entire source batch.
+        """
+
+        def json_mapping(value: Any) -> Dict[str, Any]:
+            if isinstance(value, Mapping):
+                return dict(value)
+            if not isinstance(value, str) or not value.strip():
+                return {}
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                return {}
+            return dict(parsed) if isinstance(parsed, Mapping) else {}
+
+        source_id = int(row["id"])
+        paused = bool(row.get("is_paused", False))
+        active = bool(row.get("is_active", True)) and not paused
+        error_count = int(row.get("error_count") or 0)
+        last_error = row.get("last_error")
+        if paused:
+            status_summary = "paused"
+        elif last_error:
+            status_summary = f"error ({error_count})" if error_count else "error"
+        else:
+            status_summary = "active" if active else "inactive"
+
+        settings: Dict[str, Any] = {}
+        for field in (
+            "check_frequency",
+            "extraction_method",
+            "change_threshold",
+            "auto_ingest",
+        ):
+            value = row.get(field)
+            if value is not None:
+                settings[field] = value
+        for field in ("extraction_rules", "processing_options"):
+            parsed = json_mapping(row.get(field))
+            if parsed:
+                settings[field] = parsed
+        if row.get("ignore_selectors"):
+            settings["ignore_selectors"] = [
+                selector.strip()
+                for selector in str(row["ignore_selectors"]).split("\n")
+                if selector.strip()
+            ]
+
+        tags = [
+            tag.strip()
+            for tag in str(row.get("tags") or "").split(",")
+            if tag.strip()
+        ]
+        return {
+            "id": f"local:subscription:{source_id}",
+            "backend": "local",
+            "entity_kind": "subscription",
+            "source_id": source_id,
+            "title": row.get("name") or "Untitled subscription",
+            "description": row.get("description"),
+            "source_type": row.get("type"),
+            "url": row.get("source"),
+            "active": active,
+            "paused": paused,
+            "tags": tags,
+            "group_ids": [],
+            "settings": settings,
+            "status_summary": status_summary,
+            "last_checked_or_scraped_at": row.get("last_checked")
+            or row.get("last_successful_check"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
 
     def add_subscription(
         self,
@@ -2074,7 +2881,7 @@ class SubscriptionsDB(BaseDB):
         Library's plural/singular widening is deliberately NOT copied: a
         reader scanning for a feed's own words wants exactly those words.
         """
-        return '"' + term.replace('"', '""') + '"'
+        return quote_fts5_token(term)
 
     #: The list-page projection shared by `get_new_items` and its
     #: `_search_items_rows` search half (TASK-15464). Deliberately NOT
@@ -2128,6 +2935,7 @@ class SubscriptionsDB(BaseDB):
         "i.canonical_url, i.duplicate_of, i.created_at, i.updated_at, "
         "i.queued_for_briefing, i.run_id, i.alert_matches, "
         "i.content_format, i.content_kind, i.is_flagged, "
+        "i.effective_date, "
         "substr(i.content, 1, 2000) AS content_preview, "
         "s.name as subscription_name, s.type as subscription_type"
     )
@@ -2150,6 +2958,10 @@ class SubscriptionsDB(BaseDB):
         "s.last_successful_check AS subscription_last_successful_check"
     )
     _AGENT_SEARCH_PAGE_LIMIT = 50
+    _AGENT_ITEM_ORDER_PROFILE = "subscription_items_agent"
+    _READER_ITEM_ORDER_PROFILE = "subscription_items_reader"
+    _AGENT_ITEM_ORDER_BY = get_safe_order_by_clause(_AGENT_ITEM_ORDER_PROFILE)
+    _READER_ITEM_ORDER_BY = get_safe_order_by_clause(_READER_ITEM_ORDER_PROFILE)
     _AGENT_MEMBERSHIP_SOURCE_LIMIT = 50
     _AGENT_MEMBERSHIP_COLLECTION_LIMIT = 20
     _AGENT_RESOLUTION_CANDIDATE_LIMIT = 20
@@ -2287,6 +3099,7 @@ class SubscriptionsDB(BaseDB):
         select_columns: Optional[str] = None,
         select_params: Sequence[Any] = (),
         fts_select_columns: Optional[str] = None,
+        order_profile: str = _AGENT_ITEM_ORDER_PROFILE,
     ) -> List[Any]:
         """The `search` half of `get_new_items`: FTS5 MATCH, LIKE fallback.
 
@@ -2299,6 +3112,7 @@ class SubscriptionsDB(BaseDB):
         ``\\`` stay literal). Either way the caller gets rows; the search
         box must never raise into the reader.
         """
+        selected_order_by = get_safe_order_by_clause(order_profile)
         columns = select_columns or self._LIST_ITEM_COLUMNS
         fts_columns = fts_select_columns or columns
         effective_fts_select_params = () if fts_select_columns else select_params
@@ -2317,7 +3131,7 @@ class SubscriptionsDB(BaseDB):
                     JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
                     JOIN subscriptions s ON i.subscription_id = s.id
                     {fts_where}
-                    ORDER BY i.effective_date DESC, i.id ASC
+                    ORDER BY {selected_order_by}
                     LIMIT ?
                     """,
                     tuple([*effective_fts_select_params, *params, match, limit]),
@@ -2347,11 +3161,344 @@ class SubscriptionsDB(BaseDB):
             FROM subscription_items i
             JOIN subscriptions s ON i.subscription_id = s.id
             {like_where}
-            ORDER BY i.effective_date DESC, i.id ASC
+            ORDER BY {selected_order_by}
             LIMIT ?
             """,
             tuple([*select_params, *params, *like_params, limit]),
         ).fetchall()
+
+    def _reader_item_predicates(
+        self,
+        *,
+        subscription_id: Optional[int],
+        status: Optional[str],
+        run_id: Optional[int],
+        watchlist_id: Optional[int],
+        unassigned_only: bool,
+        statuses: Optional[Sequence[str]],
+        is_flagged: Optional[bool],
+        since: Optional[str],
+    ) -> tuple[List[str], List[Any]]:
+        """Build every non-text Reader item predicate in one place."""
+        predicates, params = self._item_scope_predicates(
+            subscription_id=subscription_id,
+            status=status,
+            watchlist_id=watchlist_id,
+            statuses=statuses,
+            since=since,
+        )
+        if run_id is not None:
+            predicates.append("i.run_id = ?")
+            params.append(run_id)
+        if unassigned_only:
+            predicates.append(
+                "NOT EXISTS (SELECT 1 FROM watchlist_sources ws "
+                "WHERE ws.subscription_id = i.subscription_id)"
+            )
+        if is_flagged is not None:
+            predicates.append("i.is_flagged = ?")
+            params.append(1 if is_flagged else 0)
+        return predicates, params
+
+    def _reader_search_parts(
+        self, conn: Any, search_terms: Sequence[str]
+    ) -> tuple[str, List[str], List[Any]]:
+        """Return one stable FTS-or-LIKE search mode for a Reader query.
+
+        A page's matching high-water, count, rows, and subsequent arrival
+        count must answer the same search question.  Probe the FTS table once
+        before building those statements; an absent/incomplete/broken index
+        chooses the literal LIKE form for all of them.
+        """
+        if not search_terms:
+            return "", [], []
+        match = " AND ".join(self._quote_fts5_term(term) for term in search_terms)
+        if self._subscription_items_fts_is_complete(conn):
+            try:
+                conn.execute(
+                    "SELECT 1 FROM subscription_items_fts "
+                    "WHERE subscription_items_fts MATCH ? LIMIT 1",
+                    (match,),
+                ).fetchone()
+                return (
+                    "JOIN subscription_items_fts "
+                    "ON subscription_items_fts.rowid = i.id",
+                    ["subscription_items_fts MATCH ?"],
+                    [match],
+                )
+            except sqlite3.OperationalError:
+                logger.debug(
+                    "subscription_items_fts unavailable; Reader falling back to LIKE."
+                )
+        like_clauses: List[str] = []
+        like_params: List[Any] = []
+        for term in search_terms:
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like_clauses.append(
+                "(i.title LIKE ? ESCAPE '\\' OR i.content LIKE ? ESCAPE '\\' "
+                "OR i.author LIKE ? ESCAPE '\\')"
+            )
+            like_params.extend([f"%{escaped}%"] * 3)
+        return "", like_clauses, like_params
+
+    @staticmethod
+    def _reader_where_clause(predicates: Sequence[str]) -> str:
+        """Return a WHERE clause for fixed, internally-built predicates."""
+        return f"WHERE {' AND '.join(predicates)}" if predicates else ""
+
+    def _reader_matching_parts(
+        self,
+        conn: Any,
+        *,
+        subscription_id: Optional[int],
+        status: Optional[str],
+        run_id: Optional[int],
+        watchlist_id: Optional[int],
+        unassigned_only: bool,
+        statuses: Optional[Sequence[str]],
+        is_flagged: Optional[bool],
+        search: Optional[str],
+        since: Optional[str],
+    ) -> tuple[str, List[str], List[Any]]:
+        """Return the shared Reader FROM join, predicates, and parameters."""
+        predicates, params = self._reader_item_predicates(
+            subscription_id=subscription_id,
+            status=status,
+            run_id=run_id,
+            watchlist_id=watchlist_id,
+            unassigned_only=unassigned_only,
+            statuses=statuses,
+            is_flagged=is_flagged,
+            since=since,
+        )
+        search_terms = search.split() if search and search.strip() else []
+        search_join, search_predicates, search_params = self._reader_search_parts(
+            conn, search_terms
+        )
+        return search_join, [*predicates, *search_predicates], [*params, *search_params]
+
+    @staticmethod
+    def _validate_reader_query_inputs(
+        *,
+        status: Optional[str],
+        statuses: Optional[Sequence[str]],
+        limit: Optional[int] = None,
+        snapshot_max_item_id: Optional[int] = None,
+        after: Optional["WatchlistItemCursor"] = None,
+    ) -> None:
+        """Validate Reader API inputs shared by page and arrival queries."""
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be at least 1")
+        if status is not None and statuses is not None:
+            raise ValueError("Pass either status or statuses, not both.")
+        if after is None:
+            return
+        if snapshot_max_item_id is None:
+            raise ValueError("snapshot watermark is required for continuation")
+        if after.item_id < 1:
+            raise ValueError("cursor item id must be positive")
+        if snapshot_max_item_id < after.item_id:
+            raise ValueError("snapshot watermark must not be below cursor item id")
+
+    def _after_reader_page_high_water(self) -> None:
+        """Test synchronization seam immediately after the first-page high-water."""
+
+    def get_reader_items_page(
+        self,
+        *,
+        subscription_id: int | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        run_id: int | None = None,
+        watchlist_id: int | None = None,
+        unassigned_only: bool = False,
+        statuses: Sequence[str] | None = None,
+        is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
+        snapshot_max_item_id: int | None = None,
+        after: "WatchlistItemCursor | None" = None,
+    ) -> "WatchlistItemPage":
+        """Return one Reader page in a stable DESC/DESC item snapshot.
+
+        Args:
+            subscription_id: Optional source scope.
+            status: Optional single item status.
+            limit: Number of returned rows; must be at least one.
+            run_id: Optional producing-run scope.
+            watchlist_id: Optional collection-membership scope.
+            unassigned_only: Whether to include only unassigned sources.
+            statuses: Optional multiple-status scope, exclusive with ``status``.
+            is_flagged: Optional starred-state scope.
+            search: Optional literal title/content/author search.
+            since: Optional inclusive effective-date floor.
+            snapshot_max_item_id: Existing snapshot high-water for continuation.
+            after: Last returned Reader cursor for continuation.
+
+        Returns:
+            Immutable page data with raw SQLite row dictionaries.
+
+        Raises:
+            ValueError: If the page request or continuation cursor is invalid.
+        """
+        self._validate_reader_query_inputs(
+            status=status,
+            statuses=statuses,
+            limit=limit,
+            snapshot_max_item_id=snapshot_max_item_id,
+            after=after,
+        )
+        from ..Subscriptions.watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
+
+        with self.transaction() as conn:
+            # `transaction()` preserves nested write ownership but does not
+            # itself issue a BEGIN for read-only statements.  A first Reader
+            # page has three related SELECTs (high-water, count, rows), so
+            # start a deferred SQLite read transaction when no caller-owned
+            # transaction is active. It takes no write lock and pins one WAL
+            # snapshot on the first read. An outer transaction owns its own
+            # boundary, so never begin a nested transaction inside it.
+            if not conn.in_transaction:
+                conn.execute("BEGIN DEFERRED")
+            search_join, predicates, params = self._reader_matching_parts(
+                conn,
+                subscription_id=subscription_id,
+                status=status,
+                run_id=run_id,
+                watchlist_id=watchlist_id,
+                unassigned_only=unassigned_only,
+                statuses=statuses,
+                is_flagged=is_flagged,
+                search=search,
+                since=since,
+            )
+            first_page = after is None
+            if first_page and snapshot_max_item_id is None:
+                high_water_row = conn.execute(
+                    f"""
+                    SELECT COALESCE(MAX(i.id), 0)
+                    FROM subscription_items i
+                    {search_join}
+                    JOIN subscriptions s ON i.subscription_id = s.id
+                    {self._reader_where_clause(predicates)}
+                    """,
+                    tuple(params),
+                ).fetchone()
+                snapshot_max_item_id = int(high_water_row[0])
+                self._after_reader_page_high_water()
+            assert snapshot_max_item_id is not None
+            bounded_predicates = [*predicates, "i.id <= ?"]
+            bounded_params = [*params, snapshot_max_item_id]
+            snapshot_count: Optional[int] = None
+            if first_page:
+                count_row = conn.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM subscription_items i
+                    {search_join}
+                    JOIN subscriptions s ON i.subscription_id = s.id
+                    {self._reader_where_clause(bounded_predicates)}
+                    """,
+                    tuple(bounded_params),
+                ).fetchone()
+                snapshot_count = int(count_row[0])
+            if after is not None:
+                if after.effective_date is None:
+                    bounded_predicates.append("i.effective_date IS NULL AND i.id < ?")
+                    bounded_params.append(after.item_id)
+                else:
+                    bounded_predicates.append(
+                        "(i.effective_date IS NULL OR i.effective_date < datetime(?) "
+                        "OR (i.effective_date = datetime(?) AND i.id < ?))"
+                    )
+                    bounded_params.extend(
+                        [after.effective_date, after.effective_date, after.item_id]
+                    )
+            rows = conn.execute(
+                f"""
+                SELECT {self._LIST_ITEM_COLUMNS}
+                FROM subscription_items i
+                {search_join}
+                JOIN subscriptions s ON i.subscription_id = s.id
+                {self._reader_where_clause(bounded_predicates)}
+                ORDER BY {self._READER_ITEM_ORDER_BY}
+                LIMIT ?
+                """,
+                tuple([*bounded_params, limit + 1]),
+            ).fetchall()
+        visible_rows = [dict(row) for row in rows[:limit]]
+        has_more = len(rows) > limit
+        next_cursor = None
+        if has_more and visible_rows:
+            last_row = visible_rows[-1]
+            next_cursor = WatchlistItemCursor(last_row["effective_date"], last_row["id"])
+        return WatchlistItemPage(
+            items=tuple(visible_rows),
+            has_more=has_more,
+            snapshot_max_item_id=snapshot_max_item_id,
+            snapshot_count=snapshot_count,
+            next_cursor=next_cursor,
+        )
+
+    def count_reader_item_arrivals(
+        self,
+        *,
+        snapshot_max_item_id: int,
+        subscription_id: int | None = None,
+        status: str | None = None,
+        run_id: int | None = None,
+        watchlist_id: int | None = None,
+        unassigned_only: bool = False,
+        statuses: Sequence[str] | None = None,
+        is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
+    ) -> int:
+        """Count post-snapshot rows matching exactly one Reader query scope.
+
+        Args:
+            snapshot_max_item_id: Snapshot high-water that later rows exceed.
+            subscription_id: Optional source scope.
+            status: Optional single item status.
+            run_id: Optional producing-run scope.
+            watchlist_id: Optional collection-membership scope.
+            unassigned_only: Whether to include only unassigned sources.
+            statuses: Optional multiple-status scope, exclusive with ``status``.
+            is_flagged: Optional starred-state scope.
+            search: Optional literal title/content/author search.
+            since: Optional inclusive effective-date floor.
+
+        Returns:
+            Count of matching rows created after the supplied high-water.
+
+        Raises:
+            ValueError: If mutually exclusive status inputs are supplied.
+        """
+        self._validate_reader_query_inputs(status=status, statuses=statuses)
+        with self.transaction() as conn:
+            search_join, predicates, params = self._reader_matching_parts(
+                conn,
+                subscription_id=subscription_id,
+                status=status,
+                run_id=run_id,
+                watchlist_id=watchlist_id,
+                unassigned_only=unassigned_only,
+                statuses=statuses,
+                is_flagged=is_flagged,
+                search=search,
+                since=since,
+            )
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM subscription_items i
+                {search_join}
+                JOIN subscriptions s ON i.subscription_id = s.id
+                {self._reader_where_clause([*predicates, 'i.id > ?'])}
+                """,
+                tuple([*params, snapshot_max_item_id]),
+            ).fetchone()
+        return int(row[0])
 
     def search_items_for_agent(
         self,
@@ -2694,6 +3841,515 @@ class SubscriptionsDB(BaseDB):
                 continue
             result["collections"].append({"id": int(row["id"]), "name": row["name"]})
         return memberships
+
+    @staticmethod
+    def _validate_agent_page(limit: int, *, maximum: int = 50) -> None:
+        """Validate a bounded agent metadata page size."""
+        if not 1 <= limit <= maximum:
+            raise ValueError(f"limit must be between 1 and {maximum}")
+
+    def list_sources_for_agent(
+        self,
+        *,
+        name_query: Optional[str] = None,
+        source_type: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        is_paused: Optional[bool] = None,
+        watchlist_id: Optional[int] = None,
+        limit: int = 10,
+        after_name_casefold_prefix: Optional[str] = None,
+        after_name_prefix: Optional[str] = None,
+        after_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return one stable, allowlisted source-metadata page."""
+        self._validate_agent_page(limit)
+        cursor_values = (after_name_casefold_prefix, after_name_prefix, after_id)
+        if any(value is not None for value in cursor_values) and any(
+            value is None for value in cursor_values
+        ):
+            raise ValueError("source cursor fields must be supplied together")
+        predicates: List[str] = ["typeof(s.name) = 'text'"]
+        params: List[Any] = []
+        if name_query is not None:
+            predicates.append(
+                "instr(unicode_casefold(s.name), unicode_casefold(?)) > 0"
+            )
+            params.append(name_query)
+        if source_type is not None:
+            predicates.append("s.type = ?")
+            params.append(source_type)
+        if is_active is not None:
+            predicates.append("s.is_active = ?")
+            params.append(int(is_active))
+        if is_paused is not None:
+            predicates.append("s.is_paused = ?")
+            params.append(int(is_paused))
+        if watchlist_id is not None:
+            predicates.append(
+                "EXISTS (SELECT 1 FROM watchlist_sources ws "
+                "WHERE ws.subscription_id = s.id AND ws.watchlist_id = ?)"
+            )
+            params.append(watchlist_id)
+        if after_id is not None:
+            predicates.append(
+                f"s.id != ? AND (substr(unicode_casefold(s.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) > ? OR "
+                f"(substr(unicode_casefold(s.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(s.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) > ?) "
+                f"OR (substr(unicode_casefold(s.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(s.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                "AND s.id > ?))"
+            )
+            params.extend(
+                (
+                    after_id,
+                    after_name_casefold_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
+                    after_id,
+                )
+            )
+        where = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT s.id, s.name, s.type, s.source, s.is_active, s.is_paused,
+                       s.check_frequency, s.last_checked,
+                       s.last_successful_check, s.consecutive_failures,
+                       s.created_at, s.updated_at,
+                       substr(unicode_casefold(s.name), 1,
+                              {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_casefold_prefix,
+                       substr(s.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_prefix
+                FROM subscriptions s
+                {where}
+                ORDER BY name_casefold_prefix, name_prefix, s.id
+                LIMIT ?
+                """,
+                (*params, limit + 1),
+            ).fetchall()
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+        }
+
+    def list_collections_for_agent(
+        self,
+        *,
+        name_query: Optional[str] = None,
+        limit: int = 10,
+        after_name_casefold_prefix: Optional[str] = None,
+        after_name_prefix: Optional[str] = None,
+        after_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return one stable, allowlisted collection-metadata page."""
+        self._validate_agent_page(limit)
+        cursor_values = (after_name_casefold_prefix, after_name_prefix, after_id)
+        if any(value is not None for value in cursor_values) and any(
+            value is None for value in cursor_values
+        ):
+            raise ValueError("collection cursor fields must be supplied together")
+        predicates: List[str] = ["typeof(w.name) = 'text'"]
+        params: List[Any] = []
+        if name_query is not None:
+            predicates.append(
+                "instr(unicode_casefold(w.name), unicode_casefold(?)) > 0"
+            )
+            params.append(name_query)
+        if after_id is not None:
+            predicates.append(
+                f"w.id != ? AND (substr(unicode_casefold(w.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) > ? OR "
+                f"(substr(unicode_casefold(w.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(w.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) > ?) "
+                f"OR (substr(unicode_casefold(w.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(w.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                "AND w.id > ?))"
+            )
+            params.extend(
+                (
+                    after_id,
+                    after_name_casefold_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
+                    after_id,
+                )
+            )
+        where = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT w.id, w.name, w.is_active, w.briefing_selection_mode,
+                       w.default_briefing_preset_id, p.name AS default_preset_name,
+                       w.briefing_cadence_seconds, w.created_at, w.updated_at,
+                       substr(unicode_casefold(w.name), 1,
+                              {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_casefold_prefix,
+                       substr(w.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_prefix,
+                       COUNT(ws.subscription_id) AS source_count,
+                       (SELECT b.created_at FROM briefings b
+                        WHERE b.watchlist_id = w.id
+                        ORDER BY datetime(b.created_at) DESC, b.id DESC LIMIT 1)
+                           AS last_briefing_attempt_at,
+                       (SELECT b.created_at FROM briefings b
+                        WHERE b.watchlist_id = w.id AND b.status = 'complete'
+                        ORDER BY datetime(b.created_at) DESC, b.id DESC LIMIT 1)
+                           AS last_briefing_success_at,
+                       (SELECT b.status FROM briefings b
+                        WHERE b.watchlist_id = w.id
+                        ORDER BY datetime(b.created_at) DESC, b.id DESC LIMIT 1)
+                           AS last_briefing_status,
+                       (SELECT b.id FROM briefings b
+                        WHERE b.watchlist_id = w.id
+                        ORDER BY datetime(b.created_at) DESC, b.id DESC LIMIT 1)
+                           AS last_briefing_id
+                FROM watchlists w
+                LEFT JOIN watchlist_sources ws ON ws.watchlist_id = w.id
+                LEFT JOIN briefing_presets p
+                       ON p.id = w.default_briefing_preset_id
+                {where}
+                GROUP BY w.id
+                ORDER BY name_casefold_prefix, name_prefix, w.id
+                LIMIT ?
+                """,
+                (*params, limit + 1),
+            ).fetchall()
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+        }
+
+    @staticmethod
+    def _briefing_agent_columns() -> str:
+        """Return the fixed briefing-receipt projection."""
+        return (
+            "b.id, b.watchlist_id, w.name AS watchlist_name, b.status, "
+            "b.covers_through_item_id, b.covers_from_ts, b.selection_mode, "
+            "b.preset_id, p.name AS preset_name, b.model_used, "
+            "b.item_count, b.featured_count, b.overflow_count, "
+            "CASE WHEN b.body_markdown IS NOT NULL THEN 1 ELSE 0 END "
+            "AS body_available, length(CAST(COALESCE(b.body_markdown, '') AS BLOB)) "
+            "AS body_byte_count, b.created_at, b.updated_at, "
+            "datetime(b.created_at) AS sort_created_at"
+        )
+
+    def list_briefings_for_agent(
+        self,
+        *,
+        watchlist_id: Optional[int] = None,
+        statuses: Optional[Sequence[str]] = None,
+        since: Optional[str] = None,
+        limit: int = 10,
+        after_created_at: Optional[str] = None,
+        after_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return one newest-first briefing-receipt page."""
+        self._validate_agent_page(limit)
+        predicates: List[str] = [
+            "typeof(b.created_at) = 'text'",
+            "length(b.created_at) <= 128",
+        ]
+        params: List[Any] = []
+        if watchlist_id is not None:
+            predicates.append("b.watchlist_id = ?")
+            params.append(watchlist_id)
+        if statuses is not None:
+            placeholders = ", ".join("?" for _ in statuses)
+            predicates.append(f"b.status IN ({placeholders})")
+            params.extend(statuses)
+        if since is not None:
+            predicates.append("datetime(b.created_at) >= datetime(?)")
+            params.append(since)
+        if after_created_at is not None or after_id is not None:
+            if after_created_at is None or after_id is None:
+                raise ValueError("briefing cursor fields must be supplied together")
+            predicates.append(
+                "(datetime(b.created_at) < datetime(?) "
+                "OR (datetime(b.created_at) = datetime(?) AND b.id < ?))"
+            )
+            params.extend((after_created_at, after_created_at, after_id))
+        where = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT {self._briefing_agent_columns()}
+                FROM briefings b
+                JOIN watchlists w ON w.id = b.watchlist_id
+                LEFT JOIN briefing_presets p ON p.id = b.preset_id
+                {where}
+                ORDER BY datetime(b.created_at) DESC, b.id DESC
+                LIMIT ?
+                """,
+                (*params, limit + 1),
+            ).fetchall()
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+        }
+
+    def get_briefing_for_agent(self, briefing_id: int) -> Optional[Dict[str, Any]]:
+        """Return one allowlisted briefing receipt plus its Markdown body."""
+        with self.transaction() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {self._briefing_agent_columns()}, b.body_markdown
+                FROM briefings b
+                JOIN watchlists w ON w.id = b.watchlist_id
+                LEFT JOIN briefing_presets p ON p.id = b.preset_id
+                WHERE b.id = ?
+                """,
+                (briefing_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_latest_completed_briefing_for_agent(
+        self, watchlist_id: int, *, context_limit: int = 10
+    ) -> Optional[Dict[str, Any]]:
+        """Return the newest readable completion plus newer attempt receipts."""
+        self._validate_agent_page(context_limit, maximum=10)
+        with self.transaction() as conn:
+            completed = conn.execute(
+                f"""
+                SELECT {self._briefing_agent_columns()}
+                FROM briefings b
+                JOIN watchlists w ON w.id = b.watchlist_id
+                LEFT JOIN briefing_presets p ON p.id = b.preset_id
+                WHERE b.watchlist_id = ? AND b.status = 'complete'
+                ORDER BY datetime(b.created_at) DESC, b.id DESC
+                LIMIT 1
+                """,
+                (watchlist_id,),
+            ).fetchone()
+            if completed is None:
+                return None
+            newer = conn.execute(
+                f"""
+                SELECT {self._briefing_agent_columns()}
+                FROM briefings b
+                JOIN watchlists w ON w.id = b.watchlist_id
+                LEFT JOIN briefing_presets p ON p.id = b.preset_id
+                WHERE b.watchlist_id = ? AND b.status != 'complete'
+                  AND (datetime(b.created_at) > datetime(?)
+                       OR (datetime(b.created_at) = datetime(?) AND b.id > ?))
+                ORDER BY datetime(b.created_at) DESC, b.id DESC
+                LIMIT ?
+                """,
+                (
+                    watchlist_id,
+                    completed["created_at"],
+                    completed["created_at"],
+                    completed["id"],
+                    context_limit,
+                ),
+            ).fetchall()
+        return {
+            "briefing": dict(completed),
+            "newer_attempts": [dict(row) for row in newer],
+        }
+
+    def get_briefing_provenance_for_agent(
+        self,
+        briefing_id: int,
+        *,
+        limit: int = 50,
+        selected_after: Optional[tuple[int, int, int]] = None,
+        cited_after: Optional[tuple[int, int, int]] = None,
+    ) -> Dict[str, Any]:
+        """Return bounded immutable selected and cited provenance snapshots."""
+        self._validate_agent_page(limit)
+        columns = (
+            "item_id, live_item_id, selection_position, citation_position, "
+            "featured, cited, item_title, item_url, item_published_date, "
+            "item_created_at, item_effective_date, source_id, source_name, "
+            "source_type, source_url, provenance_version"
+        )
+        def page(
+            conn: sqlite3.Connection,
+            *,
+            position_column: str,
+            cited_only: bool,
+            after: Optional[tuple[int, int, int]],
+        ) -> List[sqlite3.Row]:
+            predicates = ["briefing_id = ?"]
+            params: List[Any] = [briefing_id]
+            if cited_only:
+                predicates.append("cited = 1")
+            if after is not None:
+                predicates.append(
+                    f"(({position_column} IS NULL), "
+                    f"COALESCE({position_column}, 0), item_id) > (?, ?, ?)"
+                )
+                params.extend(after)
+            return conn.execute(
+                f"""
+                SELECT {columns} FROM briefing_items
+                WHERE {' AND '.join(predicates)}
+                ORDER BY {position_column} IS NULL, {position_column}, item_id
+                LIMIT ?
+                """,
+                (*params, limit + 1),
+            ).fetchall()
+
+        with self.transaction() as conn:
+            selected = page(
+                conn,
+                position_column="selection_position",
+                cited_only=False,
+                after=selected_after,
+            )
+            cited = page(
+                conn,
+                position_column="citation_position",
+                cited_only=True,
+                after=cited_after,
+            )
+        return {
+            "selected": [dict(row) for row in selected[:limit]],
+            "selected_has_more": len(selected) > limit,
+            "cited": [dict(row) for row in cited[:limit]],
+            "cited_has_more": len(cited) > limit,
+        }
+
+    def list_operations_for_agent(
+        self,
+        *,
+        source_id: Optional[int] = None,
+        watchlist_id: Optional[int] = None,
+        limit: int = 10,
+        after_created_at: Optional[str] = None,
+        after_kind: Optional[str] = None,
+        after_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return bounded newest-first source-run and briefing receipts."""
+        self._validate_agent_page(limit)
+        cursor_values = (after_created_at, after_kind, after_id)
+        if any(value is not None for value in cursor_values) and any(
+            value is None for value in cursor_values
+        ):
+            raise ValueError("operation cursor fields must be supplied together")
+        run_predicates: List[str] = [
+            "typeof(r.created_at) = 'text'",
+            "length(r.created_at) <= 128",
+        ]
+        run_params: List[Any] = []
+        if source_id is not None:
+            run_predicates.append("r.source_id = ?")
+            run_params.append(source_id)
+        if watchlist_id is not None:
+            run_predicates.append(
+                "EXISTS (SELECT 1 FROM watchlist_sources ws "
+                "WHERE ws.subscription_id = r.source_id AND ws.watchlist_id = ?)"
+            )
+            run_params.append(watchlist_id)
+        if after_created_at is not None:
+            run_predicates.append(
+                "(datetime(r.created_at) < datetime(?) OR "
+                "(datetime(r.created_at) = datetime(?) AND "
+                "('source_check' > ? OR "
+                "('source_check' = ? AND r.id < ?))))"
+            )
+            run_params.extend(
+                (after_created_at, after_created_at, after_kind, after_kind, after_id)
+            )
+        run_where = (
+            f"WHERE {' AND '.join(run_predicates)}" if run_predicates else ""
+        )
+        briefing_predicates: List[str] = [
+            "typeof(b.created_at) = 'text'",
+            "length(b.created_at) <= 128",
+        ]
+        briefing_params: List[Any] = []
+        if watchlist_id is not None:
+            briefing_predicates.append("b.watchlist_id = ?")
+            briefing_params.append(watchlist_id)
+        if after_created_at is not None:
+            briefing_predicates.append(
+                "(datetime(b.created_at) < datetime(?) OR "
+                "(datetime(b.created_at) = datetime(?) AND "
+                "('briefing_generation' > ? OR "
+                "('briefing_generation' = ? AND b.id < ?))))"
+            )
+            briefing_params.extend(
+                (after_created_at, after_created_at, after_kind, after_kind, after_id)
+            )
+        briefing_where = (
+            f"WHERE {' AND '.join(briefing_predicates)}"
+            if briefing_predicates
+            else ""
+        )
+        with self.transaction() as conn:
+            runs = conn.execute(
+                f"""
+                SELECT r.id, r.source_id, s.name AS source_name, r.status,
+                       r.started_at, r.finished_at, r.stats_json,
+                       CASE WHEN r.error_msg IS NOT NULL THEN 1 ELSE 0 END AS has_error,
+                       r.created_at, r.updated_at,
+                       datetime(r.created_at) AS sort_created_at
+                FROM local_watchlist_runs r
+                JOIN subscriptions s ON s.id = r.source_id
+                {run_where}
+                ORDER BY datetime(r.created_at) DESC, r.id DESC
+                LIMIT ?
+                """,
+                (*run_params, limit + 1),
+            ).fetchall()
+            briefings = conn.execute(
+                f"""
+                SELECT {self._briefing_agent_columns()}
+                FROM briefings b
+                JOIN watchlists w ON w.id = b.watchlist_id
+                LEFT JOIN briefing_presets p ON p.id = b.preset_id
+                {briefing_where}
+                ORDER BY datetime(b.created_at) DESC, b.id DESC
+                LIMIT ?
+                """,
+                (*briefing_params, limit + 1),
+            ).fetchall()
+        combined = [
+            {"kind": "source_check", "row": dict(row)} for row in runs
+        ] + [
+            {"kind": "briefing_generation", "row": dict(row)}
+            for row in briefings
+        ]
+        combined.sort(key=lambda item: int(item["row"]["id"]), reverse=True)
+        combined.sort(key=lambda item: item["kind"])
+        combined.sort(
+            key=lambda item: str(item["row"]["sort_created_at"] or ""),
+            reverse=True,
+        )
+        return {
+            "operations": combined[:limit],
+            "has_more": len(combined) > limit,
+            "source_runs": [dict(row) for row in runs[:limit]],
+            "briefings": [dict(row) for row in briefings[:limit]],
+        }
+
+    def get_watchlist_run_for_agent(self, run_id: int) -> Optional[Dict[str, Any]]:
+        """Return one exact allowlisted source-check receipt."""
+        with self.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT r.id, r.source_id, s.name AS source_name, r.status,
+                       r.started_at, r.finished_at, r.stats_json,
+                       CASE WHEN r.error_msg IS NOT NULL THEN 1 ELSE 0 END AS has_error,
+                       r.created_at, r.updated_at
+                FROM local_watchlist_runs r
+                JOIN subscriptions s ON s.id = r.source_id
+                WHERE r.id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def get_new_items(
         self,
@@ -3182,6 +4838,208 @@ class SubscriptionsDB(BaseDB):
             ).fetchone()
         return int(row[0]) if row else None
 
+    def accept_watchlist_run(
+        self, source_id: int, *, created_at: str
+    ) -> Dict[str, Any]:
+        """Insert one queued source receipt or return its active winner."""
+        return self.accept_watchlist_runs([source_id], created_at=created_at)[0]
+
+    def accept_watchlist_runs(
+        self, source_ids: Sequence[int], *, created_at: str
+    ) -> List[Dict[str, Any]]:
+        """Atomically validate and accept a bounded ordered source batch."""
+        with self.transaction(immediate=True) as conn:
+            ordered_ids = [int(source_id) for source_id in source_ids]
+            if ordered_ids:
+                placeholders = ",".join("?" for _ in ordered_ids)
+                found = {
+                    int(row["id"])
+                    for row in conn.execute(
+                        f"SELECT id FROM subscriptions WHERE id IN ({placeholders})",
+                        ordered_ids,
+                    )
+                }
+                missing = next(
+                    (source_id for source_id in ordered_ids if source_id not in found),
+                    None,
+                )
+                if missing is not None:
+                    raise KeyError(f"Subscription not found: {missing}")
+
+            receipts: List[Dict[str, Any]] = []
+            for source_id in ordered_ids:
+                try:
+                    cursor = conn.execute(
+                        "INSERT INTO local_watchlist_runs "
+                        "(source_id, job_id, status, stats_json, created_at, updated_at) "
+                        "VALUES (?, ?, 'queued', ?, ?, ?)",
+                        (
+                            source_id,
+                            source_id,
+                            json.dumps({"source_id": source_id}),
+                            created_at,
+                            created_at,
+                        ),
+                    )
+                    row = conn.execute(
+                        "SELECT * FROM local_watchlist_runs WHERE id = ?",
+                        (cursor.lastrowid,),
+                    ).fetchone()
+                    receipt = dict(row)
+                    receipt["_claim_acquired"] = True
+                except sqlite3.IntegrityError as exc:
+                    if (
+                        getattr(exc, "sqlite_errorcode", None)
+                        != sqlite3.SQLITE_CONSTRAINT_UNIQUE
+                    ):
+                        raise
+                    winner = conn.execute(
+                        "SELECT * FROM local_watchlist_runs "
+                        "WHERE source_id = ? AND status IN ('queued', 'running') "
+                        "ORDER BY created_at DESC, id DESC LIMIT 1",
+                        (source_id,),
+                    ).fetchone()
+                    if winner is None:
+                        raise
+                    receipt = dict(winner)
+                    receipt["_claim_acquired"] = False
+                receipts.append(receipt)
+            return receipts
+
+    def transition_watchlist_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        finished_at: str,
+        stats_json: str | None = None,
+        error_msg: str | None = None,
+        log_text: str | None = None,
+    ) -> Dict[str, Any] | None:
+        """Guardedly terminalize an active source receipt, releasing its claim."""
+        if status in {"queued", "running"}:
+            raise ValueError("Terminal run status required")
+        with self.transaction() as conn:
+            updated = conn.execute(
+                "UPDATE local_watchlist_runs SET status = ?, finished_at = ?, "
+                "stats_json = COALESCE(?, stats_json), error_msg = ?, log_text = ?, "
+                "updated_at = ? WHERE id = ? AND status IN ('queued', 'running')",
+                (
+                    status,
+                    finished_at,
+                    stats_json,
+                    error_msg,
+                    log_text,
+                    finished_at,
+                    run_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def mark_watchlist_run_started(
+        self, run_id: int, *, started_at: str
+    ) -> Dict[str, Any] | None:
+        """Guardedly move one queued receipt to running without releasing it."""
+        with self.transaction() as conn:
+            updated = conn.execute(
+                "UPDATE local_watchlist_runs SET status = 'running', "
+                "started_at = COALESCE(started_at, ?), updated_at = ? "
+                "WHERE id = ? AND status = 'queued'",
+                (started_at, started_at, run_id),
+            )
+            if updated.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def accept_briefing(
+        self,
+        watchlist_id: int,
+        *,
+        created_at: str,
+        preset_id: int | None = None,
+    ) -> Dict[str, Any]:
+        """Insert one generating briefing or return its durable active winner."""
+        with self.transaction(immediate=True) as conn:
+            try:
+                cursor = conn.execute(
+                    "INSERT INTO briefings "
+                    "(watchlist_id, status, preset_id, created_at, updated_at) "
+                    "VALUES (?, 'generating', ?, ?, ?)",
+                    (watchlist_id, preset_id, created_at, created_at),
+                )
+                row = conn.execute(
+                    "SELECT * FROM briefings WHERE id = ?", (cursor.lastrowid,)
+                ).fetchone()
+                receipt = dict(row)
+                receipt["_claim_acquired"] = True
+                return receipt
+            except sqlite3.IntegrityError as exc:
+                if (
+                    getattr(exc, "sqlite_errorcode", None)
+                    != sqlite3.SQLITE_CONSTRAINT_UNIQUE
+                ):
+                    raise
+                winner = conn.execute(
+                    "SELECT * FROM briefings "
+                    "WHERE watchlist_id = ? AND status = 'generating' "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1",
+                    (watchlist_id,),
+                ).fetchone()
+                if winner is not None:
+                    receipt = dict(winner)
+                    receipt["_claim_acquired"] = False
+                    return receipt
+                raise
+
+    def transition_briefing(
+        self, briefing_id: int, *, status: str, error: str | None = None, **fields: Any
+    ) -> Dict[str, Any] | None:
+        """Guardedly terminalize one generating briefing, releasing its claim."""
+        if status == "generating":
+            raise ValueError("Terminal briefing status required")
+        allowed_fields = {
+            "covers_through_item_id",
+            "covers_from_ts",
+            "selection_mode",
+            "preset_id",
+            "model_used",
+            "body_markdown",
+            "item_count",
+            "featured_count",
+            "overflow_count",
+            "updated_at",
+        }
+        for key in fields:
+            if key not in allowed_fields or not validate_identifier(key, "column name"):
+                raise ValueError(f"transition_briefing: invalid field {key!r}")
+        assignments = ["status = ?", "error = ?"]
+        values: list[Any] = [status, error]
+        assignments.extend(f"{key} = ?" for key in fields)
+        values.extend(fields.values())
+        if "updated_at" not in fields:
+            assignments.append("updated_at = CURRENT_TIMESTAMP")
+        values.append(briefing_id)
+        with self.transaction() as conn:
+            updated = conn.execute(
+                f"UPDATE briefings SET {', '.join(assignments)} "
+                "WHERE id = ? AND status = 'generating'",
+                values,
+            )
+            if updated.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM briefings WHERE id = ?", (briefing_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
     def insert_briefing(self, watchlist_id: int, status: str = "generating") -> int:
         """Create a new `briefings` row for a watchlist.
 
@@ -3263,6 +5121,79 @@ class SubscriptionsDB(BaseDB):
                 f"UPDATE briefings SET {set_clause}{extra} WHERE id = ?",
                 values,
             )
+
+    def complete_briefing(
+        self,
+        briefing_id: int,
+        *,
+        body_markdown: str,
+        model_used: str,
+        covers_through_item_id: int | None,
+        covers_from_ts: str | None,
+        selection_mode: str,
+        preset_id: int | None,
+        overflow_count: int,
+        provenance: Sequence[BriefingProvenanceRow],
+    ) -> Dict[str, Any]:
+        """Atomically snapshot provenance and publish one completed briefing."""
+        with self.transaction() as conn:
+            for row in provenance:
+                live_item = conn.execute(
+                    "SELECT id FROM subscription_items WHERE id = ?", (row.item_id,)
+                ).fetchone()
+                conn.execute(
+                    "INSERT INTO briefing_items "
+                    "(briefing_id, item_id, live_item_id, selection_position, "
+                    "citation_position, featured, cited, item_title, item_url, "
+                    "item_published_date, item_created_at, item_effective_date, "
+                    "source_id, source_name, "
+                    "source_type, source_url, provenance_version) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)",
+                    (
+                        briefing_id,
+                        row.item_id,
+                        row.item_id if live_item is not None else None,
+                        row.selection_position,
+                        row.citation_position,
+                        int(row.featured),
+                        int(row.cited),
+                        row.item_title,
+                        _sanitize_provenance_url(row.item_url),
+                        row.item_published_date,
+                        row.item_created_at,
+                        row.item_effective_date,
+                        row.source_id,
+                        row.source_name,
+                        row.source_type,
+                        _sanitize_provenance_url(row.source_url),
+                    ),
+                )
+            updated = conn.execute(
+                "UPDATE briefings SET status = 'complete', error = NULL, "
+                "body_markdown = ?, model_used = ?, covers_through_item_id = ?, "
+                "covers_from_ts = ?, selection_mode = ?, preset_id = ?, "
+                "item_count = ?, featured_count = ?, overflow_count = ?, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'generating'",
+                (
+                    body_markdown,
+                    model_used,
+                    covers_through_item_id,
+                    covers_from_ts,
+                    selection_mode,
+                    preset_id,
+                    len(provenance),
+                    sum(row.featured for row in provenance),
+                    overflow_count,
+                    briefing_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("Briefing is not generating")
+            published = conn.execute(
+                "SELECT * FROM briefings WHERE id = ?", (briefing_id,)
+            ).fetchone()
+            return dict(published)
 
     def get_briefing(self, briefing_id: int) -> Optional[Dict[str, Any]]:
         """Fetch one `briefings` row by id.
@@ -3395,6 +5326,71 @@ class SubscriptionsDB(BaseDB):
                 WHERE w.briefing_cadence_seconds IS NOT NULL
                 ORDER BY w.id
                 """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_recent_briefings(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Recent briefings across ALL watchlists, newest first.
+
+        The Artifacts screen's Reports slot reads through this -- one bounded
+        query instead of per-watchlist fan-out (ADR-079). Narrow projection on
+        purpose (task-15464 pattern): no ``body_markdown`` blobs; the body is
+        read on open in the Watchlists artifacts pane.
+
+        Args:
+            limit: Maximum number of briefing rows to return; must be a
+                positive integer.
+
+        Returns:
+            One dict per briefing row, newest first, with keys
+            ``briefing_id``, ``watchlist_id``, ``watchlist_name``,
+            ``status``, ``created_at``, ``item_count``, ``model_used``,
+            ``complete_script_count``, ``complete_audio_count``, and
+            ``latest_audio_file_path`` (``None`` when no complete audio row
+            carries a file path).
+
+        Raises:
+            ValueError: If ``limit`` is not a positive integer.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    b.id AS briefing_id,
+                    b.watchlist_id AS watchlist_id,
+                    w.name AS watchlist_name,
+                    b.status AS status,
+                    b.created_at AS created_at,
+                    b.item_count AS item_count,
+                    b.model_used AS model_used,
+                    (
+                        SELECT COUNT(*) FROM briefing_scripts AS s
+                        WHERE s.briefing_id = b.id AND s.status = 'complete'
+                    ) AS complete_script_count,
+                    (
+                        SELECT COUNT(*) FROM briefing_audio AS a
+                        JOIN briefing_scripts AS s ON s.id = a.script_id
+                        WHERE s.briefing_id = b.id
+                          AND a.status = 'complete'
+                          AND a.file_path IS NOT NULL
+                    ) AS complete_audio_count,
+                    (
+                        SELECT a.file_path FROM briefing_audio AS a
+                        JOIN briefing_scripts AS s ON s.id = a.script_id
+                        WHERE s.briefing_id = b.id
+                          AND a.status = 'complete'
+                          AND a.file_path IS NOT NULL
+                        ORDER BY a.id DESC
+                        LIMIT 1
+                    ) AS latest_audio_file_path
+                FROM briefings AS b
+                JOIN watchlists AS w ON w.id = b.watchlist_id
+                ORDER BY b.created_at DESC, b.id DESC
+                LIMIT ?
+                """,
+                (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -3900,7 +5896,7 @@ class SubscriptionsDB(BaseDB):
         selection_mode: Optional[str] = None,
         default_preset_id: object = _UNSET,
         briefing_cadence_seconds: object = _UNSET,
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         """Write a watchlist's briefing selection mode, preset, and/or cadence.
 
         Three independent, optional writes in one call:
@@ -3941,7 +5937,8 @@ class SubscriptionsDB(BaseDB):
                 the current value alone.
 
         Returns:
-            None.
+            The committed schedule/settings receipt, or `None` when no
+            fields were supplied or the watchlist does not exist.
 
         Raises:
             ValueError: If `selection_mode` is given and is not one of the
@@ -3970,6 +5967,14 @@ class SubscriptionsDB(BaseDB):
             updates.append("briefing_selection_mode = ?")
             values.append(selection_mode)
         if default_preset_id is not _UNSET:
+            if default_preset_id is not None and (
+                type(default_preset_id) is not int
+                or not 1 <= default_preset_id <= 2**63 - 1
+            ):
+                raise ValueError(
+                    "set_watchlist_briefing_settings: default_preset_id must "
+                    "be a positive int, None, or omitted"
+                )
             updates.append("default_briefing_preset_id = ?")
             values.append(default_preset_id)
         if briefing_cadence_seconds is not _UNSET:
@@ -3991,10 +5996,49 @@ class SubscriptionsDB(BaseDB):
 
         values.append(watchlist_id)
         with self.transaction() as conn:
-            conn.execute(
+            if default_preset_id is not _UNSET and default_preset_id is not None:
+                preset = conn.execute(
+                    "SELECT 1 FROM briefing_presets WHERE id = ?",
+                    (default_preset_id,),
+                ).fetchone()
+                if preset is None:
+                    raise KeyError(default_preset_id)
+            cursor = conn.execute(
                 f"UPDATE watchlists SET {', '.join(updates)} WHERE id = ?",
                 values,
             )
+            if cursor.rowcount != 1:
+                return None
+            row = conn.execute(
+                """
+                SELECT
+                    w.id AS watchlist_id,
+                    w.name AS name,
+                    w.briefing_selection_mode AS briefing_selection_mode,
+                    w.default_briefing_preset_id AS default_briefing_preset_id,
+                    p.name AS default_preset_name,
+                    p.provider AS preset_provider,
+                    p.model AS preset_model,
+                    w.briefing_cadence_seconds AS briefing_cadence_seconds,
+                    (
+                        SELECT MAX(b.created_at)
+                        FROM briefings AS b
+                        WHERE b.watchlist_id = w.id
+                    ) AS last_attempt_at,
+                    (
+                        SELECT MAX(b.created_at)
+                        FROM briefings AS b
+                        WHERE b.watchlist_id = w.id
+                          AND b.status IN ('complete', 'empty')
+                    ) AS last_success_at
+                FROM watchlists AS w
+                LEFT JOIN briefing_presets AS p
+                  ON p.id = w.default_briefing_preset_id
+                WHERE w.id = ?
+                """,
+                (watchlist_id,),
+            ).fetchone()
+            return dict(row) if row is not None else None
 
     def get_subscription_items_by_ids(
         self, item_ids: Sequence[int]
@@ -4545,13 +6589,53 @@ class SubscriptionsDB(BaseDB):
             return results
 
     def close(self):
-        """Close database connections."""
-        if hasattr(self._local, "conn") and self._local.conn:
-            conn = self._local.conn
-            with _core_closing(self, conn) as allowed:
-                if allowed:
-                    conn.close()
-                    self._local.conn = None
+        """Close THIS thread's connection, checkpointing the `-wal` first.
+
+        Scope is unchanged from before task-19562 and is load-bearing: this
+        closes only the calling thread's connection and clears that thread's
+        slot, and the `conn` property reopens lazily, which is what makes it
+        safe for `app.py`'s FTS backfill to call it from a *pooled* thread
+        that will later serve other watchlists work. Do not "improve" it into
+        a close of the instance.
+
+        What is new is that the connection is checkpointed on the way out
+        (task-19562) and dropped from `_connections`, so the registry never
+        reports a connection that is already gone. Use
+        `close_all_connections` for the shutdown path, which adds the
+        database-wide settle.
+
+        The thread-exit cleanup is detached first (review of PR #1964): this
+        thread has closed and de-registered its own connection, so the
+        finalizer has nothing left to do and must not act on a connection this
+        thread may since have reopened.
+        """
+        connection = getattr(self._local, "conn", None)
+        if connection is None:
+            return
+        with _core_closing(self, connection) as allowed:
+            if not allowed:
+                return
+            connection = getattr(self._local, "conn", None)
+            if connection:
+                try:
+                    if not self.is_memory_db and not connection.in_transaction:
+                        mode = connection.execute("PRAGMA journal_mode;").fetchone()
+                        if mode and str(mode[0]).lower() == "wal":
+                            connection.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                except sqlite3.Error as exc:
+                    if not _INTERPRETER_EXITING:
+                        logger.warning(
+                            f"WAL checkpoint before close failed for "
+                            f"{self.db_path_str}: {exc}"
+                        )
+                connection.close()
+                cleanup = getattr(self._local, "connection_cleanup", None)
+                if cleanup is not None:
+                    cleanup.detach()
+                    self._local.connection_cleanup = None
+                self._local.conn = None
+            with self._connections_lock:
+                self._connections.pop(threading.get_ident(), None)
 
 
-# End of Subscriptions_DB.py
+    # End of Subscriptions_DB.py

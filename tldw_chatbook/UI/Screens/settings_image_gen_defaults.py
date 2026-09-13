@@ -24,32 +24,27 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
 import httpx
 from loguru import logger
 
 from tldw_chatbook.config import _get_effective_config_path
-from tldw_chatbook.Image_Generation.config import (
-    ImageGenerationConfig,
-    _NON_SECRET,
-    _resolve_secret,
-    _SECRETS,
-    normalize_comfyui_image_origin,
-)
-from tldw_chatbook.Image_Generation.listing import (
-    _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS,
-    _is_fal_configured,
-    _is_gemini_configured,
-    _is_comfyui_configured,
-    _is_modelstudio_configured,
-    _is_novita_configured,
-    _is_openrouter_configured,
-    _is_sd_cpp_configured,
-    _is_swarmui_configured,
-    _is_together_configured,
-)
 from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise, origin_set
 from tldw_chatbook.Utils.input_validation import validate_url
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Image_Generation.config import ImageGenerationConfig
+
+
+def normalize_comfyui_image_origin(value: str) -> str:
+    """Load the image config normalizer only when a draft needs it."""
+
+    from tldw_chatbook.Image_Generation.config import (
+        normalize_comfyui_image_origin as normalize,
+    )
+
+    return normalize(value)
 
 
 BACKEND_IDS: tuple[str, ...] = (
@@ -78,16 +73,16 @@ BACKEND_LABELS: dict[str, str] = {
 
 # backend_id -> the listing.py is_configured check to reuse (never
 # reimplemented here -- see the module docstring).
-_CONFIGURED_CHECKS = {
-    "stable_diffusion_cpp": _is_sd_cpp_configured,
-    "swarmui": _is_swarmui_configured,
-    "comfyui": _is_comfyui_configured,
-    "openrouter": _is_openrouter_configured,
-    "novita": _is_novita_configured,
-    "together": _is_together_configured,
-    "modelstudio": _is_modelstudio_configured,
-    "fal": _is_fal_configured,
-    "gemini": _is_gemini_configured,
+_CONFIGURED_CHECK_NAMES = {
+    "stable_diffusion_cpp": "_is_sd_cpp_configured",
+    "swarmui": "_is_swarmui_configured",
+    "comfyui": "_is_comfyui_configured",
+    "openrouter": "_is_openrouter_configured",
+    "novita": "_is_novita_configured",
+    "together": "_is_together_configured",
+    "modelstudio": "_is_modelstudio_configured",
+    "fal": "_is_fal_configured",
+    "gemini": "_is_gemini_configured",
 }
 
 
@@ -199,15 +194,17 @@ def build_backend_rows(cfg: ImageGenerationConfig) -> list[ImageGenBackendRow]:
     Returns:
         One ``ImageGenBackendRow`` per entry in ``BACKEND_IDS``, in that order.
     """
+    from tldw_chatbook.Image_Generation import listing
+
     enabled_backends = set(cfg.enabled_backends or [])
     key_sources = cfg.key_sources or {}
     rows: list[ImageGenBackendRow] = []
     for backend_id in BACKEND_IDS:
         enabled = backend_id in enabled_backends
-        check = _CONFIGURED_CHECKS[backend_id]
+        check = getattr(listing, _CONFIGURED_CHECK_NAMES[backend_id])
         try:
             configured = bool(check(cfg, enabled))
-        except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS:
+        except listing._IMAGE_LISTING_NONCRITICAL_EXCEPTIONS:
             configured = False
         rows.append(
             ImageGenBackendRow(
@@ -238,6 +235,8 @@ def effective_placeholder(cfg: ImageGenerationConfig, backend_id: str, toml_key:
     Returns:
         ``str(value)`` when the resolved flat field is set, else ``""``.
     """
+    from tldw_chatbook.Image_Generation.config import _NON_SECRET
+
     flat_field = _NON_SECRET[(backend_id, toml_key)]
     value = getattr(cfg, flat_field, None)
     if backend_id == "comfyui" and toml_key in {
@@ -268,6 +267,8 @@ def effective_secret_value(cfg: ImageGenerationConfig, backend_id: str) -> str |
         secret field (``stable_diffusion_cpp``) or none is currently
         resolved.
     """
+    from tldw_chatbook.Image_Generation.config import _SECRETS
+
     secret_entry = _SECRETS.get(backend_id)
     if secret_entry is None:
         return None
@@ -349,6 +350,8 @@ def key_source_after_clear(backend_id: str) -> str:
         ``"env:<VAR>"``, ``"keyring"``, or ``"missing"``. Backends with no
         secret field (``stable_diffusion_cpp``) always return ``"missing"``.
     """
+    from tldw_chatbook.Image_Generation.config import _resolve_secret, _SECRETS
+
     if backend_id not in _SECRETS:
         return "missing"
     return _resolve_secret(backend_id, {})[2]
@@ -765,6 +768,32 @@ def _guarded_get(
         or embedded secrets (e.g. a malformed-URL error message).
     """
     try:
+        # (TASK-19556 (c), checked and deliberately KEPT) This is the same
+        # SHAPE as the sitemap/crawl self-trust that task corrected, but not
+        # the same PROVENANCE: `url` is always an OPERATOR-CONFIGURED value,
+        # which `config.py`'s [web_security] contract permits to be private.
+        # The shipped default backend is a LOCALHOST SwarmUI instance, so
+        # dropping the self-trust would break the zero-key default probe.
+        #
+        # All FIVE callers, enumerated (independent review: the original note
+        # listed only the first three, omitting the two that also attach a
+        # credential header -- which are the ones that matter most):
+        #   `_probe_swarmui`, `_probe_reachability_only` -- `base_url` as-is;
+        #   `_probe_comfyui`  -- via `normalize_comfyui_image_origin`;
+        #   `_probe_openai_compatible`, `_probe_gemini` -- `{base_url}/models`
+        #     plus an `Authorization`/`x-goog-api-key` header. The GET below
+        #     sets `follow_redirects=False`, so that credential cannot be
+        #     carried to a host other than the configured one.
+        #
+        # Where `base_url` comes from, exactly (`settings_screen.
+        # _image_gen_test_form_values`): the live Input when the user has
+        # edited it, else `effective_placeholder(...)` -- the resolved
+        # `[image_generation]` value from config.toml (or its shipped
+        # default). So "typed this session" is NOT required; "explicitly
+        # configured by the operator" is, and both sources satisfy it. No
+        # discovery response, server-provided default, or imported document
+        # writes that section. A content-derived URL must never be handed to
+        # this helper.
         check_url_or_raise(url, trusted_origins=origin_set(url))
     except EgressBlockedError:
         return None, "Unreachable: blocked by egress policy"

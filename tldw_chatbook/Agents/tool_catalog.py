@@ -10,15 +10,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 from collections.abc import Sequence
-from dataclasses import dataclass
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, replace as _dataclass_replace
+from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
+    ContextManager,
     Iterable,
+    Iterator,
     Literal,
     Mapping,
     NamedTuple,
@@ -28,35 +34,85 @@ from typing import (
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+)
+from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
+from .library_rag_tool_provider import LibraryRagToolProvider, RAG_TOOL_NAME
+from .library_tool_provider import BuiltinLibraryAuthority, LibraryToolProvider
 from .agent_models import (
     AgentDefinition,
+    MESSAGE_TOOL_NAMES,
     CHECK_AGENTS_TOOL_NAME,
-    DIRECT_DISCLOSE_THRESHOLD,
+    DISCARD_AGENT_WORKTREE_TOOL_NAME,
+    FIND_TOOLS_RESULT_LIMIT,
     FIND_TOOLS_NAME,
+    FORK_CHAT_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
+    MERGE_AGENT_WORKTREE_TOOL_NAME,
+    NEW_CHAT_TOOL_NAME,
     RUN_LOG_SLICE_TOOL_NAME,
     RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
-    RunBudget,
     SEARCH_RUN_LOG_TOOL_NAME,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     SEND_TO_AGENT_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
+    ToolCall,
+    ToolProjectionAudience,
+    ToolRecordProjection,
     ToolResult,
     ToolSchema,
     WAIT_AGENTS_TOOL_NAME,
+    default_tool_record_projection,
+    failed_tool_record_projection,
 )
 from .run_context import current_run_id
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (tool_arg_coercion imports at the dispatch site.)
 from .run_log_search import (
     MAX_CROSS_RUN_RUNS,
     MAX_SLICE_RECORDS,
     MAX_STATS_GROUPS,
     STATS_GROUP_BY_FIELDS,
 )
+# NOTE (boot budget, ADR-097): `run_tool_policy` is annotation-only here
+# (`from __future__ import annotations` above); the TYPE_CHECKING import
+# keeps the module off the UI-ready census path. The live policy object is
+# constructed by its callers (see `Chat/console_agent_bridge.py`).
+if TYPE_CHECKING:
+    from .fleet_message_tools import (
+        READ_AGENT_MESSAGES_SCHEMA as READ_AGENT_MESSAGES_SCHEMA,
+        REPORT_TO_SUPERVISOR_SCHEMA as REPORT_TO_SUPERVISOR_SCHEMA,
+    )
+    from .run_tool_policy import RunToolPolicy
+
+LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
+    (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)
+)
+PROFILE_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "profile_search",
+        "profile_get",
+        "profile_propose",
+        "profile_update",
+        "profile_promote",
+    }
+)
+CANVAS_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
+    {"canvas_list", "canvas_read", "canvas_create", "canvas_update", "canvas_guide"}
+)
+
+
+class ToolExecutionPolicy(StrEnum):
+    """How the agent runtime may stop waiting after a tool starts."""
+
+    BOUNDED_ABANDONABLE = "bounded_abandonable"
+    DEFINITIVE_AFTER_START = "definitive_after_start"
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
     id="runtime:spawn_subagent",
@@ -71,7 +127,19 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
             "task": {
                 "type": "string",
                 "description": "Complete, self-contained task description.",
-            }
+            },
+            "isolation": {
+                "type": "string",
+                "enum": ["worktree"],
+                "description": (
+                    "Run this child in an isolated git worktree; its changes "
+                    "stay out of the shared tree until explicitly merged back "
+                    "with merge_agent_worktree. Worktree isolation governs "
+                    "the built-in filesystem tools; shell and virtual-CLI "
+                    "access are withheld from isolated children, and "
+                    "external (MCP) tools are outside its guarantee."
+                ),
+            },
         },
         "required": ["task"],
     },
@@ -101,6 +169,7 @@ def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
             # Shallow-copied so no future consumer of the built schema can
             # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
             "task": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["task"]),
+            "isolation": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["isolation"]),
             "agent": {
                 "type": "string",
                 "enum": [d.name for d in definitions],
@@ -142,9 +211,7 @@ WAIT_AGENTS_SCHEMA = ToolSchema(
             "ids": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": (
-                    "Handle ids to wait for (omit for all of them)."
-                ),
+                "description": ("Handle ids to wait for (omit for all of them)."),
             }
         },
         "required": [],
@@ -200,8 +267,7 @@ SEND_TO_AGENT_SCHEMA = ToolSchema(
             "message": {
                 "type": "string",
                 "description": (
-                    "The steering text to deliver. Plain text; must be "
-                    "non-empty."
+                    "The steering text to deliver. Plain text; must be non-empty."
                 ),
             },
         },
@@ -209,6 +275,67 @@ SEND_TO_AGENT_SCHEMA = ToolSchema(
     },
 )
 
+
+# TASK-28238 phase 2 Task 5: merge/discard for a worktree-isolated child
+# (Task 4's spawn_subagent isolation="worktree"). Pinned beside the fleet
+# schemas above and gated under the SAME `fleet_active` predicate -- a
+# worktree only exists for a fleet-launched child, so a run with no live
+# fleet has nothing to merge or discard.
+MERGE_AGENT_WORKTREE_SCHEMA = ToolSchema(
+    id="runtime:merge_agent_worktree",
+    name=MERGE_AGENT_WORKTREE_TOOL_NAME,
+    description=(
+        "Land a FINISHED isolation=\"worktree\" sub-agent's changes into "
+        "the shared workspace. Both modes require the user's explicit "
+        "confirmation: 'apply' lands the changes as UNCOMMITTED edits for "
+        "the user to review and commit themselves; 'merge' creates a real "
+        "merge commit on the shared branch. The child must have finished "
+        "(check with check_agents or wait_agents first). Only handles "
+        "from THIS turn's spawns are available -- merge or discard before "
+        "the turn ends, or the worktree is left on disk for manual cleanup."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "handle_id": {
+                "type": "string",
+                "description": "The isolated child's handle id.",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["apply", "merge"],
+                "description": (
+                    "'apply' (default): land as uncommitted changes for "
+                    "review. 'merge': create a real merge commit."
+                ),
+            },
+        },
+        "required": ["handle_id"],
+    },
+)
+
+DISCARD_AGENT_WORKTREE_SCHEMA = ToolSchema(
+    id="runtime:discard_agent_worktree",
+    name=DISCARD_AGENT_WORKTREE_TOOL_NAME,
+    description=(
+        "Permanently discard a FINISHED isolation=\"worktree\" sub-agent's "
+        "changes -- deletes its worktree and branch. Its work is not "
+        "recoverable afterward. Requires the user's explicit confirmation. "
+        "Only handles from THIS turn's spawns are available -- merge or "
+        "discard before the turn ends, or the worktree is left on disk "
+        "for manual cleanup."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "handle_id": {
+                "type": "string",
+                "description": "The isolated child's handle id.",
+            },
+        },
+        "required": ["handle_id"],
+    },
+)
 
 FIND_TOOLS_SCHEMA = ToolSchema(
     id="runtime:find_tools",
@@ -224,13 +351,78 @@ FIND_TOOLS_SCHEMA = ToolSchema(
 LOAD_TOOLS_SCHEMA = ToolSchema(
     id="runtime:load_tools",
     name=LOAD_TOOLS_NAME,
-    description="Load full schemas for catalog ids so you can call them.",
+    description=(
+        "Call alone in its tool batch. Select full schemas for catalog ids; "
+        "accepted ids replace the current catalog tool set, so include every "
+        "tool to retain."
+    ),
     parameters={
         "type": "object",
         "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
         "required": ["ids"],
     },
 )
+
+
+#: TASK-26007: cap on the tool-name listing embedded in find_tools'
+#: description; past it the listing degrades to prefix groups (AC#3).
+_FIND_TOOLS_LISTING_CHAR_LIMIT = 700
+
+
+_FUZZY_STOPWORDS = frozenset(
+    {
+        "a", "an", "and", "by", "for", "in", "of", "on", "or",
+        "the", "to", "with",
+    }
+)
+
+
+def _fuzzy_stem(token: str) -> str:
+    """Light deterministic stemming: files->file, reading->read."""
+    for suffix in ("ing", "es", "ed", "s"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+            return token[: -len(suffix)]
+    return token
+
+
+def _fuzzy_tokens(text: str) -> frozenset[str]:
+    return frozenset(
+        _fuzzy_stem(token)
+        for token in re.findall(r"[a-z0-9]+", text.casefold())
+        if token not in _FUZZY_STOPWORDS and len(token) > 1
+    )
+
+
+def build_find_tools_schema(names: "Sequence[str]") -> ToolSchema:
+    """find_tools' schema with the available tools named in its description.
+
+    TASK-26007 AC#2: a deferred catalog used to be invisible -- the model
+    saw only find_tools/load_tools and could conclude a present capability
+    was absent. Embedding the (bounded, deterministic) listing in the
+    search tool's own description closes that. Empty ``names`` returns the
+    plain schema object unchanged.
+    """
+    unique = sorted(dict.fromkeys(str(name) for name in names if str(name)))
+    if not unique:
+        return FIND_TOOLS_SCHEMA
+    listing = ", ".join(unique)
+    if len(listing) > _FIND_TOOLS_LISTING_CHAR_LIMIT:
+        groups: dict[str, int] = {}
+        for name in unique:
+            prefix = f"{name.split('_', 1)[0]}_*" if "_" in name else name
+            groups[prefix] = groups.get(prefix, 0) + 1
+        listing = ", ".join(
+            f"{group} ({count})" for group, count in sorted(groups.items())
+        )
+        label = "Available tool groups"
+    else:
+        label = "Available tools"
+    suffix = f" {label}: {listing}."
+    if len(suffix) > _FIND_TOOLS_LISTING_CHAR_LIMIT:
+        suffix = suffix[: _FIND_TOOLS_LISTING_CHAR_LIMIT] + "…"
+    return _dataclass_replace(
+        FIND_TOOLS_SCHEMA, description=FIND_TOOLS_SCHEMA.description + suffix
+    )
 
 SKILL_FILE_TOOL_SCHEMA = ToolSchema(
     id="runtime:skill_file",
@@ -277,6 +469,74 @@ INSTALL_SKILL_TOOL_SCHEMA = ToolSchema(
     },
 )
 
+PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA = ToolSchema(
+    id="runtime:prepare_managed_skill_promotion",
+    name=PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+    description=(
+        "Prepare an exact proposal to update one Chatbook-managed local skill "
+        "from independently verified Agent Lesson evidence. This action is "
+        "read-only: after review it returns replacement text for the user to "
+        "apply manually in Library > Skills; it never updates or re-trusts a skill."
+    ),
+    parameters={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "skill_name": {"type": "string", "minLength": 1},
+            "skill_public_id": {"type": "string", "minLength": 1},
+            "expected_version": {"type": "integer", "minimum": 0},
+            "expected_trust_state": {"type": "string", "minLength": 1},
+            "current_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+            },
+            "replacement_content": {"type": "string"},
+            "evidence": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "lesson_note_ids": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "minItems": 1,
+                        "uniqueItems": True,
+                    },
+                    "summary": {"type": "string", "minLength": 1},
+                    "provenance": {"type": "string", "minLength": 1},
+                    "verification": {"type": "string", "minLength": 1},
+                    "principle": {"type": "string", "minLength": 1},
+                    "rationale": {"type": "string", "minLength": 1},
+                    "procedural": {"type": "boolean"},
+                    "reusable": {"type": "boolean"},
+                    "independently_verified": {"type": "boolean"},
+                    "contradictory": {"type": "boolean"},
+                    "interaction_specific": {"type": "boolean"},
+                },
+                "required": [
+                    "lesson_note_ids",
+                    "summary",
+                    "provenance",
+                    "verification",
+                    "principle",
+                    "rationale",
+                    "procedural",
+                    "reusable",
+                    "independently_verified",
+                ],
+            },
+        },
+        "required": [
+            "skill_name",
+            "skill_public_id",
+            "expected_version",
+            "expected_trust_state",
+            "current_sha256",
+            "replacement_content",
+            "evidence",
+        ],
+    },
+)
+
 RUN_SKILL_SCRIPT_TOOL_SCHEMA = ToolSchema(
     id="runtime:run_skill_script",
     name=RUN_SKILL_SCRIPT_TOOL_NAME,
@@ -311,6 +571,84 @@ RUN_SKILL_SCRIPT_TOOL_SCHEMA = ToolSchema(
             },
         },
         "required": ["skill_name", "script_path"],
+    },
+)
+
+FORK_CHAT_TOOL_SCHEMA = ToolSchema(
+    id="runtime:fork_chat",
+    name=FORK_CHAT_TOOL_NAME,
+    description=(
+        "Fork the current chat into a new chat so the user can pursue a parallel "
+        "workstream: the conversation's active message history is copied verbatim "
+        "into a brand-new chat (nothing is removed from the current chat). The "
+        "user is asked to confirm every fork. The copy is a snapshot at the "
+        "moment of this call — your current in-progress reply is NOT included, "
+        "so put the workstream's framing into opening_prompt. opening_prompt is "
+        "placed in the new chat's input box as a draft the user reviews and "
+        "sends themselves; it is never sent automatically. instructions, when "
+        "given, become the new chat's standing system prompt (refused for "
+        "character chats). The new chat opens in the background; the user "
+        "switches to it when ready. Use sparingly — each call shows the user an "
+        "approval card, and do not retry after the user declines."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Short title for the new chat, e.g. 'Workstream: DB migration'.",
+            },
+            "opening_prompt": {
+                "type": "string",
+                "description": (
+                    "First message for the workstream, delivered as a draft in "
+                    "the new chat's input box for the user to review, edit, and send."
+                ),
+            },
+            "instructions": {
+                "type": "string",
+                "description": (
+                    "Optional standing system prompt for the new chat, replacing "
+                    "the forked chat's system prompt. Not allowed when the current "
+                    "chat is bound to a character."
+                ),
+            },
+        },
+        "required": [],
+    },
+)
+
+NEW_CHAT_TOOL_SCHEMA = ToolSchema(
+    id="runtime:new_chat",
+    name=NEW_CHAT_TOOL_NAME,
+    description=(
+        "Create a brand-new, empty chat for a parallel workstream unrelated to "
+        "the current conversation's history. The user is asked to confirm every "
+        "creation. opening_prompt is placed in the new chat's input box as a "
+        "draft the user reviews and sends themselves; it is never sent "
+        "automatically. instructions, when given, become the new chat's standing "
+        "system prompt. The new chat opens in the same workspace, in the "
+        "background; the user switches to it when ready. Use sparingly — each "
+        "call shows the user an approval card, and do not retry after the user "
+        "declines."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Short title for the new chat.",
+            },
+            "opening_prompt": {
+                "type": "string",
+                "description": "Draft first message placed in the new chat's input box.",
+            },
+            "instructions": {
+                "type": "string",
+                "description": "Optional standing system prompt for the new chat.",
+            },
+        },
+        "required": [],
     },
 )
 
@@ -430,7 +768,8 @@ RUN_LOG_STATS_TOOL_SCHEMA = ToolSchema(
         "properties": {
             "group_by": {
                 "type": "string",
-                "description": "Dimension to group by: " + ", ".join(STATS_GROUP_BY_FIELDS)
+                "description": "Dimension to group by: "
+                + ", ".join(STATS_GROUP_BY_FIELDS)
                 + " (default: tool). An unrecognised value falls back to tool.",
             },
             "tool": {
@@ -502,6 +841,18 @@ class ToolProvider(Protocol):
     def invoke(self, tool_id: str, args: dict) -> ToolResult: ...
 
 
+@runtime_checkable
+class ToolRecordProjectionProvider(Protocol):
+    """Optional provider hook for audience-specific tool-record redaction."""
+
+    def project_tool_record(
+        self,
+        audience: ToolProjectionAudience,
+        call: ToolCall,
+        result: ToolResult | None,
+    ) -> ToolRecordProjection: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ToolPathTarget:
     """One provider-validated path relevant to instruction discovery."""
@@ -563,12 +914,23 @@ class GateableTool(NamedTuple):
         module_name: Module under ``tldw_chatbook.Tools`` defining it.
         factory_name: Class name to instantiate.
         tool_name: The name the LLM calls it by.
+        title: Plain-language name for every surface that offers the gate
+            (task-32284) -- the first-run wizard's Tools step and the MCP
+            hub's Tool gates pane both render it. Required, with no
+            fallback: a row without copy would ship a blank switch, which
+            is exactly the failure this field exists to make impossible.
+        blurb: One-line, user-facing description of what turning the gate
+            on allows -- shown under the wizard's switch and as the hub
+            row's tooltip. ``⚠`` marks a tool that creates or changes data
+            on disk (a static judgment mirroring its ``risk_tags``).
     """
 
     gate_key: str
     module_name: str
     factory_name: str
     tool_name: str
+    title: str
+    blurb: str
 
 
 #: Built-ins registered unconditionally -- no gate, cannot be turned off.
@@ -581,34 +943,68 @@ ALWAYS_ON_BUILTIN_NAMES: tuple[str, ...] = ("calculator", "get_current_datetime"
 #: since a provider only lists what its gates already permit.
 _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
     GateableTool(
-        "read_file_enabled", "file_operation_tools", "ReadFileTool", "read_file"
+        "read_file_enabled",
+        "file_operation_tools",
+        "ReadFileTool",
+        "read_file",
+        "Read file",
+        "Read a file you point the assistant at. Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
         "list_directory_enabled",
         "file_operation_tools",
         "ListDirectoryTool",
         "list_directory",
+        "List directory",
+        "Browse the contents of a folder. Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
-        "write_file_enabled", "file_operation_tools", "WriteFileTool", "write_file"
+        "write_file_enabled",
+        "file_operation_tools",
+        "WriteFileTool",
+        "write_file",
+        "Write file",
+        "⚠ Creates or overwrites files on disk.",
     ),
     GateableTool(
-        "create_note_enabled", "note_management_tools", "CreateNoteTool", "create_note"
+        "create_note_enabled",
+        "note_management_tools",
+        "CreateNoteTool",
+        "create_note",
+        "Create note",
+        "⚠ Adds new notes to your notebook.",
     ),
     GateableTool(
-        "update_note_enabled", "note_management_tools", "UpdateNoteTool", "update_note"
+        "update_note_enabled",
+        "note_management_tools",
+        "UpdateNoteTool",
+        "update_note",
+        "Update note",
+        "⚠ Edits your existing notes.",
     ),
     GateableTool(
-        "glob_files_enabled", "file_operation_tools", "GlobFiles", "glob_files"
+        "glob_files_enabled",
+        "file_operation_tools",
+        "GlobFiles",
+        "glob_files",
+        "Find files",
+        "Match file names by pattern (like *.md). Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
-        "grep_files_enabled", "file_operation_tools", "GrepFiles", "grep_files"
+        "grep_files_enabled",
+        "file_operation_tools",
+        "GrepFiles",
+        "grep_files",
+        "Search in files",
+        "Search inside files for text. Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
         "expand_document_enabled",
         "document_expansion_tool",
         "ExpandDocumentTool",
         "expand_document",
+        "Expand document",
+        "Read the whole document behind a search result. Asks before running unless you approve a longer scope.",
     ),
 )
 
@@ -646,6 +1042,57 @@ def build_gateable_tool(entry: GateableTool) -> Any:
     return getattr(module, entry.factory_name)()
 
 
+_FILE_AUTHORITY_BUILTIN_NAMES = frozenset(
+    {
+        "read_file",
+        "write_file",
+        "list_directory",
+        "glob_files",
+        "grep_files",
+        "expand_document",
+    }
+)
+
+
+def redact_root_locator(value: Any, root: Path | None) -> Any:
+    """Replace an opaque private-root locator with model-safe relative text.
+
+    Tool-provider results are copied into both model history and run logs.
+    Console scratch roots are process-local capabilities, so their absolute
+    locator must be removed at that shared boundary. Containers are rebuilt
+    recursively because built-in tools return nested JSON-shaped values.
+
+    Args:
+        value: Tool result value or error text to sanitize.
+        root: Opaque root whose locator must not leave the provider.
+
+    Returns:
+        A value of the same JSON-compatible shape with root-owned paths made
+        relative and exact root occurrences replaced by ``.``. Non-Console
+        callers pass ``None`` and retain their existing output byte-for-byte.
+    """
+    if root is None:
+        return value
+    if isinstance(value, str):
+        locators = {str(root), root.as_posix()}
+        for locator in sorted(locators, key=len, reverse=True):
+            if locator:
+                value = value.replace(f"{locator}/", "")
+                value = value.replace(f"{locator}\\", "")
+                value = value.replace(locator, ".")
+        return value
+    if isinstance(value, dict):
+        return {
+            key: redact_root_locator(item, root)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_root_locator(item, root) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_root_locator(item, root) for item in value)
+    return value
+
+
 class BuiltinToolProvider:
     """Wraps tool_executor's built-in tools behind the provider interface."""
 
@@ -655,9 +1102,14 @@ class BuiltinToolProvider:
         self,
         gate: Any | None = None,
         workspace_id: str | None = None,
+        workspace_read_binding_ids: tuple[str, ...] | None = None,
+        workspace_write_binding_ids: tuple[str, ...] | None = None,
+        workspace_binding_authority: tuple[Any, ...] | None = None,
         ephemeral: bool = False,
         diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
         instruction_root: Path | None = None,
+        sandbox_root: Path | None = None,
+        sandbox_lease: Callable[[], ContextManager[Path]] | None = None,
     ) -> None:
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
@@ -668,6 +1120,13 @@ class BuiltinToolProvider:
         # in `builtin_tool_gate.builtin_permission_rows`) leaves
         # `allowed_file_roots` to fall back to the active workspace.
         self._workspace_id = workspace_id
+        self._workspace_read_binding_ids = workspace_read_binding_ids
+        self._workspace_write_binding_ids = workspace_write_binding_ids
+        self._workspace_binding_authority = workspace_binding_authority
+        self._sandbox_root = (
+            Path(sandbox_root).resolve() if sandbox_root is not None else None
+        )
+        self._sandbox_lease = sandbox_lease
         self._instruction_root = (
             Path(instruction_root).resolve() if instruction_root is not None else None
         )
@@ -749,6 +1208,41 @@ class BuiltinToolProvider:
         # a `deque.append` (single-argument contract, atomic in CPython).
         self._diff_sink = diff_sink
 
+    @property
+    def sandbox_root(self) -> Path | None:
+        """Return this provider's explicit run sandbox, when one was bound.
+
+        Returns:
+            The resolved per-run sandbox root, or ``None`` when absent.
+        """
+        return self._sandbox_root
+
+    @property
+    def sandbox_lease(self) -> Callable[[], ContextManager[Path]] | None:
+        """Return the lease factory paired with the explicit run sandbox.
+
+        Returns:
+            A context-manager factory that leases the sandbox generation, or
+            ``None`` when the provider has no explicit sandbox authority.
+        """
+        return self._sandbox_lease
+
+    @contextmanager
+    def _file_authority(self) -> Iterator[None]:
+        """Keep the explicit scratch generation alive for one file access."""
+        from tldw_chatbook.Tools.workspace_file_roots import run_file_sandbox
+
+        lease = (
+            self._sandbox_lease() if self._sandbox_lease is not None else nullcontext()
+        )
+        sandbox = (
+            run_file_sandbox(self._sandbox_root)
+            if self._sandbox_root is not None
+            else nullcontext()
+        )
+        with lease, sandbox:
+            yield
+
     def _tool_id(self, name: str) -> str:
         return f"{self.SOURCE}:{name}"
 
@@ -788,16 +1282,19 @@ class BuiltinToolProvider:
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
         from tldw_chatbook.Utils.path_validation import validate_path_multi
 
-        with run_workspace(self._workspace_id):
-            roots = allowed_file_roots(
-                write=write, sandbox_root=_tool_sandbox_root()
-            )
-        path = validate_path_multi(value, roots)
-        try:
-            path.relative_to(root)
-        except ValueError:
-            return (ToolPathTarget(path=path, kind="outside"),)
-        return (ToolPathTarget(path=path, kind=kind),)
+        with self._file_authority(), run_workspace(
+            self._workspace_id,
+            read_binding_ids=self._workspace_read_binding_ids,
+            write_binding_ids=self._workspace_write_binding_ids,
+            binding_authority=self._workspace_binding_authority,
+        ):
+            roots = allowed_file_roots(write=write, sandbox_root=_tool_sandbox_root())
+            path = validate_path_multi(value, roots)
+            try:
+                path.relative_to(root)
+            except ValueError:
+                return (ToolPathTarget(path=path, kind="outside"),)
+            return (ToolPathTarget(path=path, kind=kind),)
 
     def _resolve_gate(self) -> Any:
         """Return the provider's gate, building one lazily on first use.
@@ -857,7 +1354,7 @@ class BuiltinToolProvider:
 
             reason = blocked_reason(name, ephemeral=True)
             if reason is not None:
-                return ToolResult(ok=False, error=reason)
+                return ToolResult.blocked(reason)
         # Defense in depth: the run-level review hook is the primary gate
         # (it batches approvals into one card per turn), but a caller that
         # reaches invoke() without going through it must still not execute
@@ -876,9 +1373,14 @@ class BuiltinToolProvider:
         except Exception as exc:  # noqa: BLE001 — fail closed
             return ToolResult(ok=False, error=f"permission check failed: {exc}")
         if refusal is not None:
-            return ToolResult(ok=False, error=refusal)
+            return ToolResult.blocked(refusal)
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
 
+        authority = (
+            self._file_authority()
+            if name in _FILE_AUTHORITY_BUILTIN_NAMES
+            else nullcontext()
+        )
         try:
             # Providers bridge async tools; the loop's interface is sync.
             # Safe here: the service runs in a worker thread with no
@@ -889,12 +1391,23 @@ class BuiltinToolProvider:
             # concurrent run's. `self._workspace_id=None` keeps the
             # ContextVar at `None`, which is `allowed_file_roots`' own
             # documented fallback to the active workspace.
-            with run_workspace(self._workspace_id):
+            with authority, run_workspace(
+                self._workspace_id,
+                read_binding_ids=self._workspace_read_binding_ids,
+                write_binding_ids=self._workspace_write_binding_ids,
+                binding_authority=self._workspace_binding_authority,
+            ):
                 raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
-            return ToolResult(ok=False, error=str(exc))
+            return ToolResult(
+                ok=False,
+                error=redact_root_locator(str(exc), self._sandbox_root),
+            )
         if isinstance(raw, dict) and raw.get("error"):
-            return ToolResult(ok=False, error=str(raw["error"]))
+            return ToolResult(
+                ok=False,
+                error=redact_root_locator(str(raw["error"]), self._sandbox_root),
+            )
         if isinstance(raw, dict):
             # Raw before/after contents captured for UI diff rendering
             # (TASK-1351) are live-session display state only. This is the
@@ -916,7 +1429,10 @@ class BuiltinToolProvider:
                         self._diff_sink(
                             (
                                 name,
-                                str(raw.get("file_path") or "file"),
+                                redact_root_locator(
+                                    str(raw.get("file_path") or "file"),
+                                    self._sandbox_root,
+                                ),
                                 old_content,
                                 new_content,
                             )
@@ -929,6 +1445,7 @@ class BuiltinToolProvider:
             raw = {
                 key: value for key, value in raw.items() if key not in DIFF_CONTENT_KEYS
             }
+        raw = redact_root_locator(raw, self._sandbox_root)
         content = json.dumps(raw) if isinstance(raw, (dict, list)) else str(raw)
         return ToolResult(ok=True, content=content)
 
@@ -1072,6 +1589,10 @@ class ToolCatalogRegistry:
 
     def __init__(self, *, ephemeral: bool = False) -> None:
         self._providers: list[ToolProvider] = []
+        self._builtin_library_provider: ToolProvider | None = None
+        self._builtin_library_authority: BuiltinLibraryAuthority | None = None
+        self._canvas_provider: ToolProvider | None = None
+        self._canvas_authority: object | None = None
         # Whether the Console session owning THIS run is temporary ("not
         # saved locally"). Enforced in `invoke_by_name` -- the one choke
         # point every provider's `invoke()` is reached through -- rather
@@ -1088,6 +1609,31 @@ class ToolCatalogRegistry:
         self._catalog_snapshot: _CatalogSnapshot | None = None
         self._catalog_lock = threading.RLock()
         self._catalog_generation = 0
+        # Workspace assistant defaults (Task 7): THIS run's persona-policy
+        # call caps, enforced in `invoke_by_name` below. Set only by the
+        # per-run composition (`console_agent_bridge.
+        # _compose_run_registry_and_allowed`) on a FRESHLY built registry;
+        # deliberately NOT cleared by `reset_catalog_cache`, which
+        # `AgentService` calls at the top of the run tree -- AFTER this
+        # registry was composed and its policy armed, and BEFORE dispatch.
+        # Clearing there would disarm every run's caps.
+        self._run_tool_policy: RunToolPolicy | None = None
+
+    def set_run_tool_policy(self, policy: RunToolPolicy | None) -> None:
+        """Arm (or clear) this registry's per-run persona-policy call caps.
+
+        Workspace assistant defaults (Task 7): the per-run composition
+        builds a fresh ``RunToolPolicy`` from the workspace persona's
+        ``max_calls_per_turn`` rule verdicts and arms it here, so the cap
+        binds at ``invoke_by_name`` -- the one choke point every provider's
+        ``invoke()`` is reached through. ``None`` (the default, and the
+        no-rules posture) leaves invocation behavior unchanged.
+
+        Args:
+            policy: The policy to consult before every dispatch, or ``None``
+                to disable cap enforcement on this registry.
+        """
+        self._run_tool_policy = policy
 
     def register_provider(self, provider: ToolProvider) -> None:
         # The append lives inside the lock too, alongside the three
@@ -1100,6 +1646,126 @@ class ToolCatalogRegistry:
             # cache already built — invalidate so the next lookup rebuilds it.
             self._catalog_snapshot = None
             self._catalog_generation += 1
+
+    def register_builtin_library_provider(
+        self,
+        provider: ToolProvider,
+        authority: BuiltinLibraryAuthority | None,
+    ) -> bool:
+        """Register one exact in-tree Library provider with its live capability.
+
+        Source strings and structural lookalikes are deliberately irrelevant:
+        only the concrete built-in provider classes and the exact authority
+        object currently issued by that same instance cross this boundary.
+        """
+        provider_type = type(provider)
+        if provider_type is LibraryToolProvider:
+            expected_names = frozenset(LIBRARY_TOOL_DESCRIPTORS)
+        elif provider_type is LibraryRagToolProvider:
+            expected_names = frozenset({RAG_TOOL_NAME})
+        else:
+            return False
+        if (
+            not isinstance(authority, BuiltinLibraryAuthority)
+            or authority.assistant_access is not ConsoleAssistantLibraryAccess.ALLOWED
+            or authority.reserved_names is not LIBRARY_RESERVED_TOOL_NAMES
+            or not provider.authenticates_builtin_authority(authority)
+        ):
+            return False
+        try:
+            entries = provider.list_catalog()
+        except Exception:  # noqa: BLE001 - malformed provider fails closed
+            return False
+        if (
+            frozenset(entry.name for entry in entries) != expected_names
+            or any(entry.source != "library" for entry in entries)
+        ):
+            return False
+        with self._catalog_lock:
+            if self._builtin_library_provider is not None:
+                return False
+            self._builtin_library_provider = provider
+            self._builtin_library_authority = authority
+            self._providers.append(provider)
+            self._catalog_snapshot = None
+            self._catalog_generation += 1
+        return True
+
+    def register_canvas_provider(self, provider: object, authority: object) -> bool:
+        """Register only an exact live scoped Canvas provider and capability.
+
+        Canvas names are reserved even while Canvas is unavailable.  Neither
+        matching names/source strings nor a structural protocol lookalike can
+        acquire the reversible-conversation-local approval classification.
+        """
+
+        from .canvas_tool_provider import (  # deferred off the default boot path
+            CANVAS_MUTATION_APPROVAL_CLASSIFICATION,
+            CanvasToolProvider,
+            CanvasToolRegistrationAuthority,
+        )
+
+        if type(provider) is not CanvasToolProvider:
+            return False
+        assert isinstance(provider, CanvasToolProvider)
+        if (
+            type(authority) is not CanvasToolRegistrationAuthority
+            or authority.classification
+            is not CANVAS_MUTATION_APPROVAL_CLASSIFICATION
+            or not provider.authenticates_registration_authority(authority)
+            or not provider.scope_is_current()
+        ):
+            return False
+        try:
+            entries = provider.list_catalog()
+        except Exception:  # noqa: BLE001 - malformed provider fails closed
+            return False
+        if (
+            frozenset(entry.name for entry in entries) != CANVAS_RESERVED_TOOL_NAMES
+            or any(entry.source != "canvas" for entry in entries)
+        ):
+            return False
+        with self._catalog_lock:
+            if self._canvas_provider is not None:
+                return False
+            self._canvas_provider = provider
+            self._canvas_authority = authority
+            self._providers.append(provider)
+            self._catalog_snapshot = None
+            self._catalog_generation += 1
+        return True
+
+    def _authenticated_builtin_library_name(
+        self, provider: ToolProvider, name: str
+    ) -> bool:
+        """Return whether ``name`` is live-authorized for this exact provider."""
+        authority = self._builtin_library_authority
+        return bool(
+            provider is self._builtin_library_provider
+            and isinstance(authority, BuiltinLibraryAuthority)
+            and authority.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
+            and authority.reserved_names is LIBRARY_RESERVED_TOOL_NAMES
+            and name in LIBRARY_RESERVED_TOOL_NAMES
+            and provider.authenticates_builtin_authority(authority)
+        )
+
+    def _authenticated_canvas_name(self, provider: ToolProvider, name: str) -> bool:
+        """Return whether one reserved name has its exact live Canvas owner."""
+
+        from .canvas_tool_provider import (  # deferred off the default boot path
+            CanvasToolProvider,
+            CanvasToolRegistrationAuthority,
+        )
+
+        authority = self._canvas_authority
+        return bool(
+            provider is self._canvas_provider
+            and type(provider) is CanvasToolProvider
+            and type(authority) is CanvasToolRegistrationAuthority
+            and name in CANVAS_RESERVED_TOOL_NAMES
+            and provider.authenticates_registration_authority(authority)
+            and provider.scope_is_current()
+        )
 
     def reset_catalog_cache(self) -> None:
         """Drop the owner-map/name-map cache; call once at the start of a run.
@@ -1115,17 +1781,68 @@ class ToolCatalogRegistry:
             self._catalog_generation += 1
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
-        return list(self._ensure_catalog_cache().entries)
+        entries = self._ensure_catalog_cache().entries
+        provider = self._canvas_provider
+        return [
+            entry
+            for entry in entries
+            if entry.name not in CANVAS_RESERVED_TOOL_NAMES
+            or (provider is not None and self._authenticated_canvas_name(provider, entry.name))
+        ]
 
-    def find(self, query: str) -> list[ToolCatalogEntry]:
-        needle = query.strip().lower()
+    def find(
+        self,
+        query: str,
+        *,
+        allowed_names: Iterable[str] | None = None,
+        limit: int = FIND_TOOLS_RESULT_LIMIT,
+    ) -> list[ToolCatalogEntry]:
+        """Return deterministic, relevance-ranked catalog metadata.
+
+        Args:
+            query: Case-insensitive name or description substring to find.
+            allowed_names: Optional name allow-list applied before ranking.
+            limit: Maximum number of matching catalog rows to return.
+
+        Returns:
+            Matching entries ordered by exact, prefix, name-substring, then
+            description-substring relevance with deterministic tie-breaking.
+        """
+        needle = query.strip().casefold()
         if not needle:
             return []
-        return [
-            e
-            for e in self.list_catalog()
-            if needle in e.name.lower() or needle in e.one_line_description.lower()
-        ]
+        allowed = None if allowed_names is None else frozenset(allowed_names)
+        # TASK-26007: tier 4 -- stemmed-token overlap, so a paraphrase
+        # ("find files by name") reaches a tool sharing no literal
+        # substring. Deterministic: more matched tokens rank earlier, ties
+        # break on (name, id) exactly like the substring tiers.
+        query_tokens = _fuzzy_tokens(needle)
+        ranked: list[tuple[int, int, str, str, ToolCatalogEntry]] = []
+        for entry in self.list_catalog():
+            if allowed is not None and entry.name not in allowed:
+                continue
+            name = entry.name.casefold()
+            description = entry.one_line_description.casefold()
+            bias = 0
+            if name == needle:
+                rank = 0
+            elif name.startswith(needle):
+                rank = 1
+            elif needle in name:
+                rank = 2
+            elif needle in description:
+                rank = 3
+            else:
+                matched = len(
+                    query_tokens & _fuzzy_tokens(f"{name} {description}")
+                )
+                if not matched or not query_tokens:
+                    continue
+                rank = 4
+                bias = len(query_tokens) - matched
+            ranked.append((rank, bias, name, entry.id, entry))
+        ranked.sort(key=lambda item: item[:4])
+        return [item[4] for item in ranked[: max(int(limit), 0)]]
 
     def _build_owner_cache(
         self,
@@ -1135,6 +1852,19 @@ class ToolCatalogRegistry:
         accepted_entries: list[ToolCatalogEntry] = []
         for provider in self._providers:
             for entry in provider.list_catalog():
+                if (
+                    entry.name in CANVAS_RESERVED_TOOL_NAMES
+                    and not self._authenticated_canvas_name(provider, entry.name)
+                ):
+                    continue
+                if (
+                    self._ephemeral
+                    and entry.source == "library"
+                    and not self._authenticated_builtin_library_name(
+                        provider, entry.name
+                    )
+                ):
+                    continue
                 if entry.id in by_id or entry.name in by_name:
                     continue
                 record = _ToolOwnerRecord(
@@ -1196,20 +1926,144 @@ class ToolCatalogRegistry:
     def _owner_record_for_name(self, name: str) -> _ToolOwnerRecord | None:
         return self._ensure_catalog_cache().by_name.get(name)
 
-    def resolve_owner_for_name(
-        self, name: str
-    ) -> tuple[str, ToolProvider] | None:
+    def resolve_owner_for_name(self, name: str) -> tuple[str, ToolProvider] | None:
         """Atomically resolve one LLM-facing name to its cached first owner."""
         record = self._owner_record_for_name(name)
         if record is None:
             return None
         return record.tool_id, record.provider
 
+    def has_tool_record_projection(self, name: str) -> bool:
+        """Return whether this tool's cached owner opted into projection.
+
+        This registry-owned distinction controls compatibility behavior at
+        runtime.  It is deliberately not a flag returned by an untrusted
+        projector, which could otherwise request the permissive fallback.
+        """
+        record = self._owner_record_for_name(name)
+        return record is not None and isinstance(
+            record.provider, ToolRecordProjectionProvider
+        )
+
+    def is_canvas_reversible_conversation_local_mutation(self, name: str) -> bool:
+        """Return the narrow nominal pre-authorization for Canvas mutations."""
+
+        from .canvas_tool_provider import (  # deferred off the default boot path
+            CANVAS_MUTATION_APPROVAL_CLASSIFICATION,
+            CanvasToolProvider,
+        )
+
+        record = self._owner_record_for_name(name)
+        if (
+            record is None
+            or type(record.provider) is not CanvasToolProvider
+            or not self._authenticated_canvas_name(record.provider, name)
+        ):
+            return False
+        try:
+            return (
+                record.provider.approval_classification_for(record.tool_id)
+                is CANVAS_MUTATION_APPROVAL_CLASSIFICATION
+            )
+        except Exception:  # noqa: BLE001 - approval classification fails closed
+            return False
+
+    def project_tool_record(
+        self,
+        audience: ToolProjectionAudience,
+        call: ToolCall,
+        result: ToolResult | None,
+    ) -> ToolRecordProjection:
+        """Return the owning provider's safe record view for one audience.
+
+        Existing providers intentionally do not need to implement the hook:
+        their fallback is byte-compatible with the records the runtime wrote
+        before projections existed.  A sensitive provider that cannot project
+        is fail-closed; no exception text, raw arguments, or raw result is
+        retained by the fallback.
+        """
+        record = self._owner_record_for_name(call.name)
+        provider = record.provider if record is not None else None
+        if not isinstance(provider, ToolRecordProjectionProvider):
+            return default_tool_record_projection(call, result)
+        try:
+            projected = provider.project_tool_record(audience, call, result)
+            if not isinstance(projected, ToolRecordProjection):
+                raise TypeError("tool projection returned an invalid value")
+            if (
+                not isinstance(projected.content, str)
+                or not isinstance(projected.error, str)
+                or not isinstance(projected.error_category, str)
+                or projected.ok not in {None, True, False}
+            ):
+                raise TypeError("tool projection contains invalid metadata")
+            json.dumps(dict(projected.arguments), sort_keys=True, allow_nan=False)
+            return projected
+        except Exception as exc:  # noqa: BLE001 -- content boundary fails closed
+            category = type(exc).__name__[:64] or "ProjectionError"
+            return failed_tool_record_projection(call, result, category)
+
+    def _coerce_arguments(self, name, tool_id, provider, args: dict) -> dict:
+        """Repair JSON-string arguments against the tool's declared schema.
+
+        Never raises and never blocks a call: a provider that cannot produce a
+        schema simply gets the arguments unchanged, because failing to repair
+        is strictly better than failing to dispatch.
+        """
+        try:
+            schema = provider.load_schema(tool_id)
+            from .tool_arg_coercion import coerce_tool_args  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
+            repaired, coerced = coerce_tool_args(args, getattr(schema, "parameters", None))
+        except Exception:  # noqa: BLE001 -- repair is best-effort by design
+            return args
+        if coerced:
+            # Reported, not masked: a model that systematically mis-encodes
+            # arguments is a prompt/model problem the operator should see.
+            logger.warning(
+                "Repaired JSON-string tool arguments for {} (fields: {}).",
+                name,
+                ", ".join(coerced),
+            )
+        return repaired
+
     def invoke_by_name(self, name: str, args: dict) -> ToolResult:
         record = self._owner_record_for_name(name)
         if record is None:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
         tool_id, provider = record.tool_id, record.provider
+        if name in CANVAS_RESERVED_TOOL_NAMES:
+            if not self._authenticated_canvas_name(provider, name):
+                from .canvas_tool_provider import CanvasToolProvider
+
+                if isinstance(provider, CanvasToolProvider) and not provider.canvas_enabled:
+                    return ToolResult.blocked(
+                        "Canvas is disabled. Restart Chatbook after re-enabling it."
+                    )
+                return ToolResult.blocked(
+                    "Canvas authority is unavailable."
+                )
+            if name in {"canvas_create", "canvas_update"} and not (
+                self.is_canvas_reversible_conversation_local_mutation(name)
+            ):
+                return ToolResult.blocked(
+                    "Canvas reversible conversation-local authority is unavailable."
+                )
+        # TASK-26005: repair arguments the model JSON-encoded as strings before
+        # anything downstream sees them. Placed here rather than at either
+        # `provider.invoke` below because this method has two dispatch sites and
+        # is the one line every provider is reached through -- the same reason
+        # the ephemeral gate and the call caps live here.
+        args = self._coerce_arguments(name, tool_id, provider, args)
+        # Workspace assistant defaults (Task 7): persona-policy call caps,
+        # refused BEFORE dispatch in the exact error-`ToolResult` shape the
+        # unknown-tool branch above uses. Narrowing-only -- a capped tool is
+        # refused, never widened; the run id keys the counters so concurrent
+        # sub-agent runs sharing this registry keep independent budgets.
+        if self._run_tool_policy is not None:
+            allowed, refusal = self._run_tool_policy.check(current_run_id(), name)
+            if not allowed:
+                return ToolResult(ok=False, error=refusal)
         # THE choke point for the temporary-session ("not saved locally")
         # guarantee. Every provider's invoke() is reached through this one
         # line, so gating here -- rather than in each provider -- is what
@@ -1220,13 +2074,15 @@ class ToolCatalogRegistry:
         # Returns a ToolResult rather than raising: the pure loop must never
         # see an exception out of tool invocation.
         if self._ephemeral:
+            if self._authenticated_canvas_name(provider, name):
+                return provider.invoke(tool_id, args)
+            if self._authenticated_builtin_library_name(provider, name):
+                return provider.invoke(tool_id, args)
             from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason
 
-            reason = tool_blocked_reason(
-                name, source=record.source, ephemeral=True
-            )
+            reason = tool_blocked_reason(name, source=record.source, ephemeral=True)
             if reason is not None:
-                return ToolResult(ok=False, error=reason)
+                return ToolResult.blocked(reason)
         return provider.invoke(tool_id, args)
 
     def timeout_for(self, name: str) -> float | None:
@@ -1248,16 +2104,71 @@ class ToolCatalogRegistry:
         getter = getattr(record.provider, "timeout_for", None)
         return getter(record.tool_id) if getter is not None else None
 
+    def execution_policy_for(self, name: str) -> ToolExecutionPolicy:
+        """Resolve code-owned execution ownership for one tool name.
 
-def initial_disclosure(
-    registry: ToolCatalogRegistry, budget: RunBudget
-) -> tuple[list[ToolSchema], bool]:
-    """Small catalog → direct-disclose everything, drop find/load.
+        Providers without this optional capability, missing tools, invalid
+        values, and provider errors retain the bounded abandonable behavior.
+        Only an explicit enum value may disable the runtime timeout.
+        """
+        record = self._owner_record_for_name(name)
+        if record is None:
+            return ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        getter = getattr(record.provider, "execution_policy_for", None)
+        if getter is None:
+            return ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        try:
+            policy = getter(record.tool_id)
+        except Exception:  # noqa: BLE001 - unknown policy fails closed
+            return ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        return (
+            policy
+            if isinstance(policy, ToolExecutionPolicy)
+            else ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        )
 
-    Returns (active schemas, offer_find_load).
+
+def probe_initial_catalog(
+    registry: ToolCatalogRegistry,
+    allowed_names: Iterable[str],
+    max_schema_tokens: int,
+    measure_schema_set: Callable[[tuple[ToolSchema, ...]], int],
+) -> tuple[ToolSchema, ...] | None:
+    """Return every allowed schema only when each cumulative set is proven fit.
+
+    Args:
+        registry: Catalog whose allowed schemas are probed in stable order.
+        allowed_names: Tool names eligible for initial disclosure.
+        max_schema_tokens: Maximum measured size for the full disclosed set.
+        measure_schema_set: Callback that measures each cumulative schema set.
+
+    Returns:
+        Every allowed schema when all cumulative measurements fit; otherwise
+        ``None`` so the caller can switch to progressive discovery.
     """
-    catalog = registry.list_catalog()
-    if len(catalog) <= DIRECT_DISCLOSE_THRESHOLD:
-        schemas = [registry.load_schema(e.id) for e in catalog]
-        return schemas[: budget.max_active_tools], False
-    return [], True
+    if type(max_schema_tokens) is not int or max_schema_tokens <= 0:
+        return None
+    allowed = frozenset(allowed_names)
+    schemas: list[ToolSchema] = []
+    try:
+        for entry in registry.list_catalog():
+            if entry.name not in allowed or entry.name in MESSAGE_TOOL_NAMES:
+                continue
+            schemas.append(registry.load_schema(entry.id))
+            measured = measure_schema_set(tuple(schemas))
+            if type(measured) is not int or measured <= 0:
+                return None
+            if measured > max_schema_tokens:
+                return None
+    except Exception:
+        return None
+    return tuple(schemas)
+
+
+def __getattr__(name: str):
+    """Keep the public progress-schema exports lazy until explicitly requested."""
+    if name in {"READ_AGENT_MESSAGES_SCHEMA", "REPORT_TO_SUPERVISOR_SCHEMA"}:
+        from . import fleet_message_tools
+
+        return getattr(fleet_message_tools, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

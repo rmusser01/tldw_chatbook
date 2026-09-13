@@ -232,6 +232,8 @@ class RuntimeMaintenance:
             ("sync_scope_service", "server_service", "server_sync_service"),
             ("unified_mcp_service", "local_service", "local_mcp_control_service"),
             ("unified_mcp_service", "server_service", "server_unified_mcp_service"),
+            ("writing_scope_service", "local_service", "local_writing_service"),
+            ("research_scope_service", "local_service", "local_research_service"),
         ):
             caller = getattr(app, caller_name, None)
             if caller is not None and getattr(caller, child_name, None) is not getattr(
@@ -248,6 +250,9 @@ class RuntimeMaintenance:
                 app.evaluation_orchestrator,
                 app.local_audio_services_service,
                 app.file_notes_session_owner,
+                getattr(app, "_notes_sync_runtime_owner", None),
+                getattr(app, "writing_scope_service", None),
+                getattr(app, "research_scope_service", None),
                 getattr(app, "manual_sync_control_service", None),
                 getattr(app, "local_first_sync_service", None),
                 getattr(app, "sync_scope_service", None),
@@ -331,6 +336,21 @@ class RuntimeMaintenance:
                     app.file_notes_session_owner,
                     "Notes.file_notes_session_owner",
                     "FileNotesSessionOwner",
+                ),
+                _bind(
+                    getattr(app, "_notes_sync_runtime_owner", None),
+                    "Notes.notes_sync_runtime",
+                    "NotesSyncRuntimeOwner",
+                ),
+                _bind(
+                    getattr(app, "writing_scope_service", None),
+                    "Writing_Interop.writing_scope_service",
+                    "WritingScopeService",
+                ),
+                _bind(
+                    getattr(app, "research_scope_service", None),
+                    "Research_Interop.research_scope_service",
+                    "ResearchScopeService",
                 ),
                 _bind(
                     app._tts_handler,
@@ -569,8 +589,11 @@ class RuntimeMaintenance:
         finally:
             if not self.closed:
                 self._settled = False
-        if cancellation is not None:
-            raise cancellation
+            if cancellation is not None:
+                # A still-busy resume hook may raise before returning. The
+                # monitor must retain cancellation across that refused attempt
+                # while it continues owning and settling the closed hooks.
+                raise cancellation
 
     def retire_local_caches(self):
         """Fence ordinary storage, then release only this thread's owned caches."""

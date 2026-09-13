@@ -23,7 +23,12 @@ from datetime import date
 from pathlib import Path
 from typing import Mapping
 
-from tldw_chatbook.Library.library_export_scope import ExportScope, export_scope_label
+from tldw_chatbook.Library.library_export_scope import (
+    _CONTENTS_PREVIEW_LIMIT,
+    ExportScope,
+    _count_phrase,
+    export_scope_label,
+)
 
 # Exact copy values. The F4 plan's Global Constraints originally pinned
 # EXPORT_HEADER_COPY/EXPORT_BUTTON_COPY to "Export chatbook" -- task-2857
@@ -36,6 +41,11 @@ EMPTY_SCOPE_COPY = "Nothing to export in this scope."
 CHOOSE_DESTINATION_COPY = "Choose destination…"
 DESTINATION_PLACEHOLDER_COPY = "No destination chosen"
 EXPORT_BUTTON_COPY = "Export bundle (.zip)"
+# task-32232 AC#3: after a failed run the same button is the Retry -- it
+# says so, matching the ingest queue's "Retry this batch" grammar rather
+# than leaving the user to guess that re-pressing "Export bundle (.zip)"
+# is the retry.
+EXPORT_RETRY_BUTTON_COPY = "Retry export"
 SERVER_DISABLED_TOOLTIP_COPY = "Export packages local content only."
 
 # task-2858 AC#3 (LIB-11): the Export button's tooltip always names either
@@ -50,10 +60,12 @@ EXPORT_BUTTON_RUNNING_TOOLTIP = "An export is already running."
 EXPORT_BUTTON_COUNTING_TOOLTIP = "Waiting for item counts before exporting."
 EXPORT_BUTTON_NO_DESTINATION_TOOLTIP = "Choose a destination before exporting."
 
-# The creator's own quality options (thumbnail/compressed/original); default
-# is the cheapest one, matching the design spec.
 MEDIA_QUALITY_OPTIONS = ("thumbnail", "compressed", "original")
-DEFAULT_MEDIA_QUALITY = "thumbnail"
+# task-32353 AC#1 (critique #10): the default used to be "thumbnail", which
+# "keeps a small preview image instead of the full file" -- a silent data
+# reduction chosen for someone whose reason for exporting is usually to keep
+# the files. A lossy bundle is now something you ask for.
+DEFAULT_MEDIA_QUALITY = "original"
 
 # task-2859 item 3: the helper line used to be one FIXED sentence describing
 # "original" quality ("original copies full media files into the zip"),
@@ -65,6 +77,49 @@ _MEDIA_QUALITY_HELPER_COPY: dict[str, str] = {
     "compressed": "shrinks media files before adding them to the zip",
     "original": "copies full media files into the zip",
 }
+
+
+# task-32353 AC#2, corrected by Qodo #1 on PR #2601: this phrase used to name
+# the quality chooser's value ("previews only" / "compressed files" / "full
+# files"). It cannot. ``ChatbookCreator._collect_media`` reads ``quality``
+# exactly ONCE -- to stamp it into the manifest -- and otherwise writes the
+# same payload for every option: each item's stored ``content`` as a .txt plus
+# a metadata JSON. The original media file is never in the archive at all (the
+# Media table holds no file path; see that method's own comment). So the line
+# states what the archive actually holds, and says it the same way whichever
+# option is selected -- a bundle summary must not describe an artifact the
+# writer never produces.
+# ponytail: quality-invariant because the knob is inert downstream. If
+# ``_collect_media`` ever implements thumbnail/compressed for real, this goes
+# back to varying by option -- and the chooser's own helper captions
+# (``_MEDIA_QUALITY_HELPER_COPY`` above), which describe the same absent
+# behaviour, must be corrected in the SAME change.
+_BUNDLE_PAYLOAD_COPY = "text only"
+
+
+def format_export_bytes(size_bytes: int) -> str:
+    """Return a byte count in the Export canvas's own "N KB" spelling.
+
+    One formatter for both halves of the same promise: the pre-write
+    estimate on ``consequence_line`` and the post-write receipt in
+    ``format_last_export_line``. They round identically so "about 4 KB"
+    is never followed by a receipt saying "4.1 KB" for the same bundle.
+
+    Args:
+        size_bytes: A non-negative byte count.
+
+    Returns:
+        e.g. ``"4 KB"`` -- never "0 KB" for a non-empty bundle (anything
+        under 1 KB rounds up to 1).
+    """
+    # ponytail: KB only, inherited from the receipt's own rounding -- a
+    # multi-GB media library's ESTIMATE reads "about 1048576 KB before
+    # compression" (the receipt never saw numbers that large). Switch both
+    # halves to a unit-stepping formatter (``library_ingest_state.
+    # _human_size`` already steps) and re-pin the critique-9 receipt string
+    # in the SAME change; splitting them would let estimate and receipt
+    # round differently, which is the drift this function exists to prevent.
+    return f"{max(1, round(size_bytes / 1024))} KB"
 
 
 def media_quality_helper_copy(media_quality: str) -> str:
@@ -162,6 +217,13 @@ class LibraryExportFormState:
             ``_reset_library_export_transient_state`` -- unlike every
             other field above, this is NOT derived from the current
             scope/form.
+        consequence_line: task-32353 AC#2: what pressing Export will
+            actually write -- item count, fidelity and estimated size in
+            one line above the button; ``""`` while counts are loading.
+        contents_lines: task-32353 AC#2: the in-scope items' titles (at
+            most ``_CONTENTS_PREVIEW_LIMIT``, then a ``"+ N more"``
+            summary), or ``()`` when the scope's items are not
+            enumerable up front.
     """
 
     scope: ExportScope
@@ -182,6 +244,24 @@ class LibraryExportFormState:
     # task-14902: True while the quality chooser's direct-pick strip
     # renders below its (still-visible) opener button.
     quality_choices_visible: bool = False
+    consequence_line: str = ""
+    contents_lines: tuple[str, ...] = ()
+    # task-32251 AC#3: why the last "Choose destination…" pick was
+    # refused, rendered on the destination line itself. "" once a usable
+    # destination is chosen.
+    destination_error: str = ""
+
+    @property
+    def submit_blocked_reason(self) -> str:
+        """Why the Export button is off right now, or ``""`` when it is on.
+
+        task-32362: the blocked button's reason had to reach a mouse
+        tooltip to be read at all -- ``"No destination chosen"`` sat
+        three rows up. The inline reason under the button and the
+        tooltip are THE SAME STRING because both come from
+        ``export_button_tooltip``; there is no second sentence to drift.
+        """
+        return "" if self.export_enabled else export_button_tooltip(self)
 
 
 def build_library_export_form_state(
@@ -192,12 +272,16 @@ def build_library_export_form_state(
     description: str,
     media_quality: str,
     destination: str,
+    destination_error: str = "",
     destination_exists: bool = False,
     running: bool = False,
     status_line: str = "",
     error_line: str = "",
     last_export_line: str = "",
     quality_choices_visible: bool = False,
+    titles: tuple[str, ...] = (),
+    approx_bytes: int | None = None,
+    item_count: int | None = None,
 ) -> LibraryExportFormState:
     """Build the export canvas's full display state.
 
@@ -212,6 +296,8 @@ def build_library_export_form_state(
         media_quality: The quality control's current value.
         destination: The chosen destination path (already ``.zip``-
             normalized by the caller), or ``""``.
+        destination_error: Why the last chosen destination was refused,
+            or ``""``.
         destination_exists: Whether ``destination`` already exists on
             disk -- an already-observed filesystem truth the caller
             supplies; this function performs no I/O of its own.
@@ -221,6 +307,17 @@ def build_library_export_form_state(
         last_export_line: The durable receipt line (task-2858 AC#3,
             LIB-12), already formatted by ``format_last_export_line`` --
             this function only passes it through.
+        titles: The in-scope items' titles (``ExportPreview.titles``),
+            already observed by the counts worker; ``()`` when the
+            scope's items are not enumerable up front.
+        approx_bytes: Their total stored size in bytes
+            (``ExportPreview.approx_bytes``), or ``None`` when unknown --
+            ``None`` is rendered as honest copy, never as a zero.
+        item_count: How many ACTIVE rows the preview resolved
+            (``ExportPreview.item_count``), or ``None`` where no preview
+            ran. Where present it, not ``counts``, is the bundle's count:
+            ``count_export_scope`` trusts an explicit selection's length
+            without re-checking the rows still exist.
 
     Returns:
         The canvas's full display state.
@@ -242,6 +339,53 @@ def build_library_export_form_state(
     export_enabled = (
         not running and not counts_loading and total > 0 and bool(destination_clean)
     )
+    # task-32353 AC#2 (critique #10): the canvas asked for a destination and
+    # a name and then wrote a bundle nobody had seen the contents of, at a
+    # fidelity chosen by a control rendered at the same weight as "sort".
+    # This states the consequence in one line, above the button.
+    payload = f" · {_BUNDLE_PAYLOAD_COPY}" if show_media_fields else ""
+    # "before compression" is load-bearing, not padding: this counts the
+    # content going IN, while the receipt after the run stats the zip that
+    # came OUT (live check: a 9 KB estimate wrote a 4 KB archive). Without
+    # the qualifier the two numbers read as a contradiction.
+    size = (
+        f" · about {format_export_bytes(approx_bytes)} before compression"
+        if approx_bytes is not None
+        else " · size known once it runs"
+    )
+    # A media-only scope counts media items; a mixed scope counts items.
+    noun = "media item" if scope.kind == "media" else "item"
+    # Qodo #7: ``count_export_scope`` trusts ``len(scope.ids)`` for an
+    # explicit selection without checking those rows are still active, so a
+    # selection whose item was trashed underneath promised more than the
+    # archive would hold. The preview applies the collector's own
+    # deleted/trashed filter, so where it ran, IT is the bundle's count.
+    bundle_total = total if item_count is None else item_count
+    consequence_line = (
+        ""
+        # Qodo #6: an empty scope has no bundle to describe, and
+        # ``format_export_bytes`` floors at 1 KB -- "Bundle: 0 media items
+        # ... about 1 KB" used to sit directly above "Nothing to export in
+        # this scope." ``empty_scope_line`` is the only line that case needs.
+        if counts_loading or bundle_total <= 0
+        else f"Bundle: {_count_phrase(bundle_total, noun)}{payload}{size}"
+    )
+    # The preview lands with the counts, so neither line renders before them.
+    # ``titles`` is capped at the limit + 1 by the query, so its length only
+    # says WHETHER the list was truncated -- the remainder comes from the
+    # preview's own active-row count (Qodo #7), falling back to the counts
+    # where no preview ran.
+    extra = bundle_total - _CONTENTS_PREVIEW_LIMIT
+    contents_lines = (
+        ()
+        if counts_loading
+        else tuple(titles[:_CONTENTS_PREVIEW_LIMIT])
+        + (
+            (f"+ {extra} more",)
+            if len(titles) > _CONTENTS_PREVIEW_LIMIT and extra > 0
+            else ()
+        )
+    )
     return LibraryExportFormState(
         scope=scope,
         scope_line=scope_line,
@@ -259,6 +403,9 @@ def build_library_export_form_state(
         overwrite_line=overwrite_line,
         last_export_line=last_export_line,
         quality_choices_visible=quality_choices_visible,
+        consequence_line=consequence_line,
+        contents_lines=contents_lines,
+        destination_error=destination_error,
     )
 
 
@@ -298,8 +445,35 @@ def export_button_tooltip(state: LibraryExportFormState) -> str:
     return EMPTY_SCOPE_COPY
 
 
+def format_empty_export_error(requested: int) -> str:
+    """Return the "the bundle would have been empty" failure line.
+
+    task-32232: a non-empty selection that collected ZERO items used to
+    write a bundle holding README + ``content_items: []`` and report
+    success. The creator now refuses to write that archive, and this is
+    the canvas copy for it -- it names what the user actually asked for
+    (``requested``) so "produced no content" cannot be read as "you
+    selected nothing".
+
+    Args:
+        requested: How many items the failed run had selected.
+
+    Returns:
+        e.g. ``"✗ export produced no content · 3 items were selected"``
+        (``"· 1 item was selected"`` for a single-item selection).
+    """
+    if requested == 1:
+        return "✗ export produced no content · 1 item was selected"
+    return f"✗ export produced no content · {requested} items were selected"
+
+
 def format_last_export_line(
-    path: str, exported_at: float, *, now: float | None = None
+    path: str,
+    exported_at: float,
+    *,
+    now: float | None = None,
+    item_count: int | None = None,
+    size_bytes: int | None = None,
 ) -> str:
     """Return the durable "Last export: <path> · <relative time>" receipt line.
 
@@ -319,14 +493,27 @@ def format_last_export_line(
             defaults to the real current time. Exposed so tests can pin
             it instead of depending on wall-clock time (mirrors
             ``default_export_name``'s ``today`` parameter).
+        item_count: How many ``content_items`` the WRITTEN archive holds,
+            read back from its manifest after the zip landed (task-32232
+            AC#4) -- never the requested selection size.
+        size_bytes: The written archive's size on disk, likewise stat'd
+            from the artifact.
 
     Returns:
-        ``""`` when ``path`` is empty; otherwise the formatted receipt,
-        e.g. ``"Last export: /tmp/out.zip · 2m ago"``.
+        ``""`` when ``path`` is empty; ``"✓ exported · N items · X KB ·
+        <path>"`` once the artifact's own facts are known; otherwise the
+        pre-readback fallback ``"Last export: /tmp/out.zip · 2m ago"``
+        (a receipt restored from a session that recorded only the path).
     """
     clean_path = str(path or "").strip()
     if not clean_path:
         return ""
+    if item_count is not None and size_bytes is not None:
+        item_word = "item" if item_count == 1 else "items"
+        return (
+            f"✓ exported · {item_count} {item_word} · "
+            f"{format_export_bytes(size_bytes)} · {clean_path}"
+        )
     current = time.time() if now is None else now
     elapsed = max(0.0, current - exported_at)
     if elapsed < _SECONDS_PER_MINUTE:
@@ -338,6 +525,35 @@ def format_last_export_line(
     else:
         relative = f"{int(elapsed // _SECONDS_PER_DAY)}d ago"
     return f"Last export: {clean_path} · {relative}"
+
+
+def describe_unusable_destination(path: Path) -> str:
+    """Say why a chosen export destination cannot be written, or "".
+
+    task-32251 AC#3/AC#4: the form accepted anything ``FileSave`` handed
+    back -- including the concatenated
+    ``.../Library export.zip/private/tmp/.../notes-bundle.zip`` a
+    pre-filled path field produced -- and only found out at write time,
+    where the user got ``[Errno 2] No such file or directory:
+    '...notes-bundle.zip.partial'``. The same facts are knowable the
+    moment the destination is chosen.
+
+    Args:
+        path: The ``.zip``-normalized destination.
+
+    Returns:
+        A sentence naming what is wrong, or ``""`` when the destination
+        can be written.
+    """
+    parent = path.parent
+    try:
+        if parent.is_dir():
+            return "That name is a folder." if path.is_dir() else ""
+        if parent.exists():
+            return f"{parent.name} is a file, not a folder."
+        return f"The folder {parent} does not exist."
+    except OSError as error:
+        return f"That destination cannot be used ({error.strerror or error})."
 
 
 def normalize_export_destination(path: Path) -> Path:
@@ -353,10 +569,15 @@ def normalize_export_destination(path: Path) -> Path:
         path: The raw path returned by the ``FileSave`` dialog.
 
     Returns:
-        ``path`` unchanged if it already ends in ``.zip`` (case-
-        insensitive), else ``path`` with its suffix replaced by
-        ``.zip``.
+        ``path`` with its suffix canonically ``.zip`` (lowercase): an
+        existing case-insensitive ``.ZIP``/``.Zip`` suffix is REWRITTEN to
+        ``.zip``, any other suffix is replaced, a missing one appended.
+
+        The archive writer compares suffixes case-sensitively and writes
+        the lowercase file; preserving an uppercase suffix here made the
+        form show -- and overwrite-check -- a different file from the one
+        the writer replaces (PR #2634 review).
     """
-    if path.suffix.lower() == ".zip":
+    if path.suffix == ".zip":
         return path
     return path.with_suffix(".zip")

@@ -15,6 +15,18 @@ from typing import Any, Mapping
 HASH_VERSION = 1
 
 
+def canonical_thinking_blocks_json(value: object) -> str:
+    """Return one supported thinking envelope's canonical JSON representation."""
+    from tldw_chatbook.Chat.thinking_blocks import (
+        dump_thinking_blocks_json,
+        parse_thinking_blocks_json,
+    )
+
+    canonical = dump_thinking_blocks_json(parse_thinking_blocks_json(value))
+    assert canonical is not None
+    return canonical
+
+
 def canonical_payload_hash(payload: Mapping[str, Any]) -> str:
     """Return ``sha256:<hex>`` over the canonical JSON encoding of ``payload``.
 

@@ -5,10 +5,13 @@ from __future__ import annotations
 from contextlib import contextmanager
 import inspect
 from pathlib import Path
+import sqlite3
 from typing import Iterator
 
 import pytest
 
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import (
     DEFAULT_WORKSPACE_ID,
@@ -31,6 +34,125 @@ def build_test_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
     return LocalWorkspaceRegistryService(
         WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
     )
+
+
+def test_folder_binding_without_app_owner_starts_no_change_review_thread(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Registry persistence alone must not own background snapshot work."""
+    import tldw_chatbook.Workspaces.change_turn_tracker as tracker
+
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+    service.set_change_review_enabled("ws-review", True)
+    root = tmp_path / "root"
+    root.mkdir()
+    calls: list[Path] = []
+    monkeypatch.setattr(tracker, "initialize_shadow_root", calls.append)
+
+    service.add_folder_binding("ws-review", root)
+
+    assert calls == []
+
+
+def test_folder_binding_notifies_attached_change_review_owner(tmp_path: Path) -> None:
+    """A durable binding add is handed to the app-owned lifecycle service."""
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+    root = tmp_path / "root"
+    root.mkdir()
+    calls = []
+
+    class Owner:
+        def binding_added(self, workspace_id, binding) -> None:
+            calls.append((workspace_id, binding))
+
+    service.attach_change_review_consent_service(Owner())
+    binding = service.add_folder_binding("ws-review", root)
+
+    assert calls == [("ws-review", binding)]
+
+
+def test_change_review_missing_row_is_disabled(tmp_path: Path) -> None:
+    """Workspace consent is opt-in even when the global capability exists."""
+    from tldw_chatbook.Workspaces import change_review_consent
+
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+
+    result = service.read_change_review_consent("ws-review")
+
+    assert result.state is change_review_consent.ChangeReviewState.DISABLED
+    assert result.revision == change_review_consent.MISSING_CHANGE_REVIEW_REVISION
+    assert service.change_review_enabled("ws-review") is False
+
+
+def test_change_review_compare_and_set_checks_state_and_revision(
+    tmp_path: Path,
+) -> None:
+    """A stale missing-row observation cannot invert a newer choice."""
+    from tldw_chatbook.Workspaces import change_review_consent
+
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+    missing = service.read_change_review_consent("ws-review")
+
+    enabled = service.compare_and_set_change_review_consent(
+        "ws-review",
+        expected=missing,
+        enabled=True,
+    )
+
+    assert enabled.state is change_review_consent.ChangeReviewState.ENABLED
+    assert enabled.revision != missing.revision
+    with pytest.raises(change_review_consent.ChangeReviewStateConflict):
+        service.compare_and_set_change_review_consent(
+            "ws-review",
+            expected=missing,
+            enabled=False,
+        )
+    assert service.read_change_review_consent("ws-review") == enabled
+
+
+def test_change_review_successful_writes_get_distinct_frozen_clock_revisions(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Revisions close disable/re-enable ABA even under a frozen clock."""
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+    monkeypatch.setattr(service, "_now_factory", lambda: "frozen")
+
+    revisions = []
+    for enabled in (False, True, False):
+        service.set_change_review_enabled("ws-review", enabled)
+        revisions.append(service.read_change_review_consent("ws-review").revision)
+
+    assert len(set(revisions)) == len(revisions)
+
+
+def test_change_review_storage_failure_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A failed registry read cannot silently become consent."""
+    from tldw_chatbook.Workspaces import change_review_consent
+
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+
+    @contextmanager
+    def broken_connection():
+        raise sqlite3.OperationalError("simulated")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(service.db, "connection", broken_connection)
+
+    result = service.read_change_review_consent("ws-review")
+
+    assert result.state is change_review_consent.ChangeReviewState.UNAVAILABLE
+    assert result.revision == ""
+    assert service.change_review_enabled("ws-review") is False
 
 
 def test_registry_persists_active_workspace(tmp_path: Path) -> None:
@@ -215,6 +337,81 @@ def test_registry_links_note_without_hiding_other_workspaces(tmp_path: Path) -> 
     memberships = service.get_item_memberships("note", "note-1")
 
     assert {membership.workspace_id for membership in memberships} == {"ws-a", "ws-b"}
+
+
+def test_unlink_membership_removes_only_matching_membership_and_scope_item(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    media_db = MediaDatabase(tmp_path / "media.sqlite", client_id="client-1")
+    media_id, _media_uuid, _message = media_db.add_media_with_keywords(
+        url="file:///research-source.txt",
+        title="Canonical source",
+        media_type="document",
+        content="Canonical content must survive workspace unlink.",
+    )
+    assert media_id is not None
+    item_id = str(media_id)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.link_membership("ws-a", item_type="media", item_id=item_id, role="source")
+    service.link_membership(
+        "ws-a", item_type="media", item_id=item_id, role="reference"
+    )
+    service.link_membership("ws-b", item_type="media", item_id=item_id, role="source")
+    service.set_workspace_scope(
+        "ws-a",
+        RagScope(
+            items=(
+                ScopeItem("media", item_id),
+                ScopeItem("media", "42"),
+                ScopeItem("note", item_id),
+            ),
+            updated_at="2026-08-24T12:00:00Z",
+        ),
+    )
+
+    assert service.unlink_membership(
+        "ws-a", item_type="media", item_id=item_id
+    ) is True
+    assert service.unlink_membership(
+        "ws-a", item_type="media", item_id=item_id
+    ) is False
+
+    assert {
+        (membership.workspace_id, membership.role)
+        for membership in service.get_item_memberships("media", item_id)
+    } == {("ws-a", "reference"), ("ws-b", "source")}
+    scope = service.get_workspace_scope("ws-a")
+    assert scope is not None
+    assert scope.items == (ScopeItem("media", "42"), ScopeItem("note", item_id))
+    canonical = media_db.get_media_by_id(media_id)
+    assert canonical is not None
+    assert canonical["content"] == "Canonical content must survive workspace unlink."
+
+
+def test_unlink_reference_membership_keeps_source_scope_selected(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.link_membership("ws-a", item_type="media", item_id="41", role="source")
+    service.link_membership(
+        "ws-a", item_type="media", item_id="41", role="reference"
+    )
+    scope = RagScope(
+        items=(ScopeItem("media", "41"),),
+        updated_at="2026-08-24T12:00:00Z",
+    )
+    service.set_workspace_scope("ws-a", scope)
+
+    assert service.unlink_membership(
+        "ws-a", item_type="media", item_id="41", role="reference"
+    ) is True
+
+    assert service.get_workspace_scope("ws-a") == scope
+    memberships = service.get_item_memberships("media", "41")
+    assert [(membership.workspace_id, membership.role) for membership in memberships] == [
+        ("ws-a", "source")
+    ]
 
 
 def test_registry_persists_runtime_bindings_without_secrets(tmp_path: Path) -> None:
@@ -594,7 +791,7 @@ def test_unarchive_collision_with_live_name_is_explained(tmp_path: Path) -> None
 
     with pytest.raises(WorkspaceRegistryServiceError) as excinfo:
         service.unarchive_workspace("ws-a")
-    assert "rename it before unarchiving" in str(excinfo.value)
+    assert "already exists" in str(excinfo.value)
 
 
 def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) -> None:
@@ -603,7 +800,7 @@ def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) ->
     db = WorkspaceDB(tmp_path / "mig.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        conn.execute("DELETE FROM schema_version WHERE version = 2")  # simulate a pre-v2 database (receipts keep later migrations idle)
         for wid, name in (("w1", "Same Name"), ("w2", "same name"), ("w3", "SAME NAME")):
             conn.execute(
                 """
@@ -641,7 +838,7 @@ def test_v2_migration_dedupes_across_groups_without_collision(tmp_path: Path) ->
     db = WorkspaceDB(tmp_path / "mig-cross-group.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        conn.execute("DELETE FROM schema_version WHERE version = 2")  # simulate a pre-v2 database (receipts keep later migrations idle)
         # Group 1: "Foo" / "foo" duplicates. Group 2: a lone pre-existing
         # "Foo (2)" that is NOT a duplicate of anything by itself, but is
         # exactly the candidate name group 1's rename would naively produce.
@@ -682,7 +879,7 @@ def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) 
     db = WorkspaceDB(tmp_path / "mig-preexisting-suffix.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        conn.execute("DELETE FROM schema_version WHERE version = 2")  # simulate a pre-v2 database (receipts keep later migrations idle)
         for wid, name in (("w1", "Bar"), ("w2", "bar"), ("w3", "Bar (2)")):
             conn.execute(
                 """
@@ -710,3 +907,285 @@ def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) 
 
     assert index_row is not None
     assert len({n.strip().casefold() for n in names}) == len(names)
+
+
+# ---------------------------------------------------------------------------
+# TASK-21118: switch-seam repair + mutation generation
+# ---------------------------------------------------------------------------
+
+
+def _insert_stale_default_binding(db: WorkspaceDB, binding_id: str) -> None:
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO workspace_runtime_bindings (
+                binding_id,
+                workspace_id,
+                binding_kind,
+                label,
+                locator,
+                status,
+                metadata_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                binding_id,
+                DEFAULT_WORKSPACE_ID,
+                RuntimeBindingKind.LOCAL_FILESYSTEM.value,
+                "Unsafe local files",
+                "/tmp",
+                RuntimeBindingStatus.READY.value,
+                "{}",
+                "2026-06-08T00:00:00Z",
+                "2026-06-08T00:00:00Z",
+            ),
+        )
+
+
+def test_switching_to_default_strips_stale_runtime_bindings(tmp_path: Path) -> None:
+    """The workspace-switch seam owns the Default-binding repair (TASK-21118).
+
+    The repair used to run inside `ensure_default_workspace` on every
+    Console context read (~1.25x per keystroke). The keystroke path is now
+    read-only, so activating Default must strip stale bindings itself --
+    otherwise a Settings/Console switch straight to Default would leave a
+    capability-granting binding live until the next boot.
+    """
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.set_active_workspace("ws-a")
+    _insert_stale_default_binding(service.db, "stale-default-binding")
+
+    service.set_active_workspace(DEFAULT_WORKSPACE_ID)
+
+    assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
+    assert service.get_runtime_binding("stale-default-binding") is None
+
+
+def test_mutation_generation_bumps_on_every_record_mutator(tmp_path: Path) -> None:
+    """Every workspace-record mutator must advance `mutation_generation`.
+
+    The Console keystroke memo revalidates against this counter instead of
+    re-reading SQLite, so a mutator that forgets to bump would serve a
+    STALE workspace context after that mutation -- the exact defect class
+    AC "invalidated by workspace-change events" exists to prevent.
+    """
+    service = build_test_registry(tmp_path)
+
+    generation = service.mutation_generation
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.set_active_workspace("ws-a")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.rename_workspace("ws-a", "Workspace A2")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.clear_active_workspace()
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.ensure_default_workspace()  # restores + activates Default
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.archive_workspace("ws-a")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.unarchive_workspace("ws-a")
+    assert service.mutation_generation > generation
+
+
+def test_mutation_generation_is_stable_across_pure_reads(tmp_path: Path) -> None:
+    """Reads must NOT advance the generation, or the memo never serves a hit."""
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+
+    generation = service.mutation_generation
+    service.get_active_workspace()
+    service.get_workspace(DEFAULT_WORKSPACE_ID)
+    service.list_workspaces()
+    service.list_runtime_bindings(DEFAULT_WORKSPACE_ID)
+    service.list_workspace_memberships(DEFAULT_WORKSPACE_ID)
+    # ensure with an active workspace already resting on Default and no
+    # stale bindings changes nothing -- and must therefore bump nothing.
+    service.ensure_default_workspace()
+    assert service.mutation_generation == generation
+
+
+def test_mutation_generation_bumps_on_binding_and_membership_mutators(
+    tmp_path: Path,
+) -> None:
+    """Binding and membership mutators must advance `mutation_generation`.
+
+    TASK-22201 widened the generation contract to the Console context
+    build's whole display read set: the run tick serves
+    `list_runtime_bindings` / `list_workspace_memberships` from a
+    generation-keyed view, so a binding or membership write that forgot to
+    bump would leave the Console rail's runtime/handoff rows STALE until
+    the next unrelated workspace mutation.
+    """
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+
+    generation = service.mutation_generation
+    service.save_runtime_binding(
+        WorkspaceRuntimeBinding(
+            workspace_id="ws-a",
+            binding_id="binding-1",
+            binding_kind=RuntimeBindingKind.GIT_WORKTREE,
+            label="Repo",
+            locator="/tmp/repo",
+            status=RuntimeBindingStatus.INSPECT_ONLY,
+            metadata={"branch": "dev"},
+        )
+    )
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conversation-1",
+        title="Linked conversation",
+    )
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.remove_runtime_binding("binding-1")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.remove_runtime_binding("binding-1")  # already gone
+    assert service.mutation_generation == generation
+
+
+def test_restore_as_resolves_collision_atomically_without_activation(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="old", name="Client A")
+    service.archive_workspace("old")
+    service.create_workspace(workspace_id="new", name="Client A")
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.unarchive_workspace("old", name="Client A")
+    unchanged = service.get_workspace("old")
+    assert unchanged.archived and unchanged.name == "Client A"
+    restored = service.unarchive_workspace("old", name="Client A recovered")
+    assert restored.name == "Client A recovered" and not restored.archived
+    assert not restored.active
+    assert service.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
+
+
+@pytest.mark.parametrize("name", ["", "   ", 123, b"replacement"])
+def test_restore_as_rejects_invalid_workspace_names_without_mutation(tmp_path, name):
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="old", name="Original")
+    service.archive_workspace("old")
+    before = service.get_workspace("old")
+    generation = service.mutation_generation
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.unarchive_workspace("old", name=name)
+    assert service.get_workspace("old") == before
+    assert service.mutation_generation == generation
+
+
+@pytest.mark.parametrize("name", ["  Project α / 東京 🧪  ", "x" * 4096, "Project\nNotes"])
+def test_restore_as_preserves_existing_workspace_name_policy(tmp_path, name):
+    service = build_test_registry(tmp_path)
+    # Creation already defines the supported workspace-name contract.
+    created = service.create_workspace(workspace_id="old", name=name)
+    service.archive_workspace("old")
+    restored = service.unarchive_workspace("old", name=name)
+    assert restored.name == created.name == name.strip()
+
+
+def test_concurrent_restore_rejects_stale_name_and_does_not_publish_success(
+    tmp_path, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    winner = build_test_registry(tmp_path)
+    winner.create_workspace(workspace_id="old", name="Original")
+    winner.archive_workspace("old")
+    loser = build_test_registry(tmp_path)
+    read_archived = Event()
+    winner_committed = Event()
+    get_workspace = loser.get_workspace
+
+    def pause_after_initial_read(workspace_id):
+        record = get_workspace(workspace_id)
+        if record is not None and record.archived:
+            read_archived.set()
+            assert winner_committed.wait(5)
+        return record
+
+    monkeypatch.setattr(loser, "get_workspace", pause_after_initial_read)
+    generation = loser.mutation_generation
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(loser.unarchive_workspace, "old", name="Losing choice")
+        try:
+            assert read_archived.wait(5)
+            restored = winner.unarchive_workspace("old", name="Winning choice")
+            assert restored.name == "Winning choice"
+        finally:
+            winner_committed.set()
+        with pytest.raises(WorkspaceNotFound):
+            pending.result(timeout=5)
+    assert winner.get_workspace("old").name == "Winning choice"
+    assert loser.mutation_generation == generation
+    winner.db.close()
+    loser.db.close()
+
+
+def test_concurrent_unicode_restore_names_remain_unique(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    first = build_test_registry(tmp_path)
+    second = build_test_registry(tmp_path)
+    for cid in ("first", "second"):
+        first.create_workspace(workspace_id=cid, name=cid)
+        first.archive_workspace(cid)
+    ready = Barrier(2)
+    for service in (first, second):
+        original = service.db.transaction
+
+        @contextmanager
+        def synchronized_transaction(*, immediate=False, transaction=original):
+            ready.wait(timeout=5)
+            with transaction(immediate=immediate) as conn:
+                yield conn
+
+        monkeypatch.setattr(service.db, "transaction", synchronized_transaction)
+
+    def restore(service, cid, name):
+        try:
+            return service.unarchive_workspace(cid, name=name)
+        except WorkspaceRegistryServiceError:
+            return None
+        finally:
+            service.db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = [
+            pool.submit(restore, first, "first", "É"),
+            pool.submit(restore, second, "second", "é"),
+        ]
+        results = [future.result(timeout=8) for future in pending]
+    assert sum(result is not None for result in results) == 1
+    assert len([w for w in first.list_workspaces() if w.name.casefold() == "é"]) == 1
+    first.db.close()
+    second.db.close()

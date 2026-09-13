@@ -88,6 +88,11 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "the shared, styled .console-rail-section-body class, never "
         "selected via .console-agent-section itself."
     ),
+    "console-activity-detail-placeholder": (
+        "empty lazy-render sentinel inside the styled activity detail stack; "
+        "its presence records hidden expandable output until refresh replaces "
+        "it, and it is never selected or painted independently."
+    ),
     "console-attachment-indicator": (
         "duplicates the widget's own id (#console-attachment-indicator); "
         "text/visibility are driven by query_one(#id) + styles.display, "
@@ -122,6 +127,21 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "duplicates the widget's own id (#console-fleet-coachmark); shown/"
         "hidden entirely via query_one(#id) + styles.display/height, never "
         "selected via the class."
+    ),
+    "console-inspector-outer-scroll-hint": (
+        "duplicates #console-inspector-outer-scroll-hint; the pinned cue's "
+        "height/display are set inline and its copy is updated through the "
+        "id, so this class carries no independent style."
+    ),
+    "console-left-rail-outer-hint": (
+        "duplicates #console-left-rail-outer-hint; the pinned cue's "
+        "height/display are set inline and its copy is updated through the "
+        "id, so this class carries no independent style."
+    ),
+    "console-live-work-status-badge": (
+        "semantic duplicate of #console-live-work-status-badge stacked on "
+        "the styled ds-status-badge base; swaps toggle it through the id and "
+        "the class is never queried or styled separately."
     ),
     "console-markdown-footer": (
         "query-selector handle: ConsoleMarkdownMessage.sync_message reads "

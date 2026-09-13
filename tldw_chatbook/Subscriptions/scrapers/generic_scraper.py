@@ -12,8 +12,28 @@ from urllib.parse import urljoin, urlparse
 #
 # Third-Party Imports
 import httpx
-from bs4 import BeautifulSoup
 from loguru import logger
+
+# bs4 is extras-only (`[subscriptions]` among others): guarded so a base
+# install can import this module; parsing degrades at use time (TASK-21104).
+try:
+    from bs4 import BeautifulSoup
+except ImportError:  # pragma: no cover - exercised via the base-install probe
+    BeautifulSoup = None  # type: ignore[assignment]
+
+_BS4_INSTALL_HINT = (
+    "beautifulsoup4 is required to parse web pages for scraping pipelines, "
+    "but it is not installed. "
+    "Install it with: pip install tldw_chatbook[subscriptions]"
+)
+
+
+def _require_beautifulsoup() -> type:
+    """Return the BeautifulSoup class or raise an actionable ImportError."""
+    if BeautifulSoup is None:
+        raise ImportError(_BS4_INSTALL_HINT)
+    return BeautifulSoup
+
 
 #
 # Local Imports
@@ -184,7 +204,7 @@ class GenericWebScrapingPipeline(BaseScrapingPipeline):
         items = []
 
         try:
-            soup = BeautifulSoup(raw_content, "html.parser")
+            soup = _require_beautifulsoup()(raw_content, "html.parser")
 
             # Check if this is a listing page or single article
             if self._is_listing_page(soup):

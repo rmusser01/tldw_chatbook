@@ -22,6 +22,7 @@ from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from Tests.console_provider_doubles import with_destination
 
 
 REMOVED_CHAT_ROOT_NAMES = (
@@ -95,7 +96,7 @@ class _BlockingProviderGateway:
         self._block_forever = asyncio.Event()
 
     async def resolve_for_send(self, selection) -> ConsoleProviderResolution:
-        return ConsoleProviderResolution(
+        return with_destination(ConsoleProviderResolution(
             provider=selection.provider,
             base_url="",
             model=(
@@ -103,7 +104,7 @@ class _BlockingProviderGateway:
             ),
             ready=True,
             execution_key="openai",
-        )
+        ))
 
     async def stream_chat(self, resolution, messages, **kwargs):
         del resolution, messages

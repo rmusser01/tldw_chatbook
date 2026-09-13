@@ -1,10 +1,29 @@
-"""
-Shared version information for packaging
-"""
+"""Shared version information for packaging."""
 
-# Version info - should match pyproject.toml
-VERSION = "0.1.6.2"
-VERSION_TUPLE = (0, 1, 6, 2)
+import re
+import tomllib
+from pathlib import Path
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _read_project_version() -> str:
+    with (_PROJECT_ROOT / "pyproject.toml").open("rb") as stream:
+        return str(tomllib.load(stream)["project"]["version"])
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    release = re.match(r"^\d+(?:\.\d+)*", version)
+    if release is None:
+        raise ValueError(
+            f"Project version must start with a numeric release: {version!r}"
+        )
+    return tuple(int(part) for part in release.group(0).split("."))
+
+
+VERSION = _read_project_version()
+VERSION_TUPLE = _version_tuple(VERSION)
 
 # Company/Product info
 COMPANY_NAME = "TLDW Project"

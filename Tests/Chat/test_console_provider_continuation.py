@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
+from threading import Event, Thread
 
 import pytest
 
@@ -36,6 +36,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from Tests.console_provider_doubles import provider_resolution
 
 
 def _active_checkpoint() -> ProviderContinuationCheckpoint:
@@ -148,6 +149,79 @@ def test_first_tool_batch_force_creates_preallocated_owner_and_stream_reuses_it(
         database.close_connection()
 
 
+def test_continuation_commit_gap_rejects_fork_until_live_owner_is_published(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = CharactersRAGDB(
+        tmp_path / "continuation-fork-gap.sqlite",
+        "continuation-fork-gap",
+    )
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="Durable continuation")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Use the calculator",
+            persist=True,
+        )
+        owner = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=True,
+        )
+        committed = Event()
+        release = Event()
+        failures: list[BaseException] = []
+        original = database.create_assistant_with_continuation
+
+        def blocking_create(**kwargs):
+            result = original(**kwargs)
+            committed.set()
+            assert release.wait(2)
+            return result
+
+        monkeypatch.setattr(
+            database,
+            "create_assistant_with_continuation",
+            blocking_create,
+        )
+
+        def persist() -> None:
+            try:
+                store.persist_provider_continuation_event(
+                    ToolBatchReady(
+                        ContinuationEventContext(
+                            owner.id,
+                            "run-primary",
+                            "primary",
+                            "persistent",
+                        ),
+                        _active_checkpoint(),
+                        None,
+                    )
+                )
+            except BaseException as exc:  # pragma: no cover - assertion reports it
+                failures.append(exc)
+
+        thread = Thread(target=persist)
+        thread.start()
+        assert committed.wait(2)
+        eligibility = store.fork_eligibility(owner.id)
+        assert eligibility.eligible is False
+        assert "changing" in eligibility.reason.lower()
+        release.set()
+        thread.join(2)
+        assert not thread.is_alive()
+        assert failures == []
+        assert store.get_message(owner.id).persisted_message_id == owner.id
+        assert session.id not in store._fork_source_transitions
+    finally:
+        database.close_connection()
+
+
 def _store_with_checkpoint(*, content: str = ""):
     database = CharactersRAGDB(":memory:", "console-continuation-test")
     store = ConsoleChatStore(persistence=ChatPersistenceService(database))
@@ -252,7 +326,11 @@ def test_visible_discard_projects_explicit_checkpoint_clear(tmp_path) -> None:
             json.loads(entries[0]["envelope"]["payload_ciphertext"]),
             key=dataset_key,
         )
-        assert payload == {"content": "Visible", "role": "assistant"}
+        assert payload == {
+            "assistant_generation_state": "discarded",
+            "content": "Visible",
+            "role": "assistant",
+        }
     finally:
         database.close_connection()
 
@@ -295,7 +373,7 @@ def test_user_edit_clears_complete_k3_checkpoint_and_refreshes_owner_version() -
         database.close_connection()
 
 
-def test_user_edit_preserves_non_k3_checkpoint_and_refreshes_owner_version() -> None:
+def test_user_edit_clears_non_k3_checkpoint_and_refreshes_owner_version() -> None:
     database, store, _session, owner = _store_with_checkpoint(content="Visible")
     try:
         before = store.get_message(owner.id).provider_continuation_message_version
@@ -306,9 +384,9 @@ def test_user_edit_preserves_non_k3_checkpoint_and_refreshes_owner_version() -> 
         assert updated.persisted_message_id is not None
         row = database.get_message_by_id(updated.persisted_message_id)
         assert row is not None
-        assert updated.provider_continuation == _active_checkpoint()
+        assert updated.provider_continuation is None
         assert updated.provider_continuation_message_version == before + 1
-        assert row["provider_continuation_json"] is not None
+        assert row["provider_continuation_json"] is None
         assert row["content"] == "Edited visible"
     finally:
         database.close_connection()
@@ -447,17 +525,13 @@ async def test_resume_target_mismatch_blocks_before_bridge_or_tool() -> None:
 
         async def resolve_for_send(self, selection):
             self.calls += 1
-            return type(
-                "Resolution",
-                (),
-                {
-                    "ready": True,
-                    "provider": "ZAI",
-                    "model": "glm-5",
-                    "base_url": "https://api.z.ai/v1",
-                    "api_mode": "chat_completions",
-                },
-            )()
+            return provider_resolution(
+                ready=True,
+                provider="ZAI",
+                model="glm-5",
+                base_url="https://api.z.ai/v1",
+                api_mode="chat_completions",
+            )
 
     gateway = Gateway()
     controller = ConsoleChatController(
@@ -485,7 +559,7 @@ async def test_resume_without_translator_sets_specific_unavailable_warning() -> 
 
     class Gateway:
         async def resolve_for_send(self, _selection):
-            return SimpleNamespace(
+            return provider_resolution(
                 ready=True,
                 provider="Moonshot",
                 model="kimi-k2",
@@ -579,7 +653,7 @@ async def test_resume_excludes_visible_owner_and_reports_failed_completion(
             return [translated]
 
         async def resolve_for_send(self, _selection):
-            return SimpleNamespace(
+            return provider_resolution(
                 ready=True,
                 provider="Moonshot",
                 model="kimi-k2",
@@ -804,7 +878,7 @@ async def test_resume_forwards_only_policy_retained_prior_complete_sidecars(
                 return [{"role": "assistant", "content": "active translated"}]
 
             async def resolve_for_send(self, _selection):
-                return SimpleNamespace(
+                return provider_resolution(
                     ready=True,
                     provider=provider,
                     model=model,
@@ -835,7 +909,10 @@ async def test_resume_forwards_only_policy_retained_prior_complete_sidecars(
             captured["restore_provider_target"] if expected_prior else None
         )
         provider_rows = captured["provider_messages"]
-        assert sum(row.get("content") == "prior visible answer" for row in provider_rows) == 1
+        assert (
+            sum(row.get("content") == "prior visible answer" for row in provider_rows)
+            == 1
+        )
         assert all(row.get("content") != "active visible" for row in provider_rows)
     finally:
         database.close_connection()
@@ -858,7 +935,7 @@ async def test_concurrent_resume_is_serialized_at_controller_session_boundary(
             self.calls += 1
             resolving.set()
             await release.wait()
-            return SimpleNamespace(
+            return provider_resolution(
                 ready=True,
                 provider="Moonshot",
                 model="kimi-k2",
@@ -918,7 +995,7 @@ async def test_stale_variant_recovery_rejects_inactive_owner_before_side_effects
 
         async def resolve_for_send(self, _selection):
             self.calls += 1
-            return SimpleNamespace(
+            return provider_resolution(
                 ready=True,
                 provider="Moonshot",
                 model="kimi-k2",
@@ -992,7 +1069,7 @@ async def test_resume_revalidates_active_variant_after_async_resolution(
             self.calls += 1
             store.set_active_leaf(session.id, sibling.id)
             await asyncio.sleep(0)
-            return SimpleNamespace(
+            return provider_resolution(
                 ready=ready,
                 provider="Moonshot",
                 model="kimi-k2",
@@ -1141,7 +1218,7 @@ async def test_accepted_recovery_is_false_while_checkpoint_remains_active(
             return []
 
         async def resolve_for_send(self, _selection):
-            return SimpleNamespace(
+            return provider_resolution(
                 ready=True,
                 provider="Moonshot",
                 model="kimi-k2",

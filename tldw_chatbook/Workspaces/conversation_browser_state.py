@@ -1,8 +1,8 @@
-"""Pure display state for the Console grouped conversation browser."""
+"""Pure display state for the Console Default/unassigned conversation browser."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import total_ordering
 from typing import Iterable, Mapping, Protocol
@@ -12,9 +12,96 @@ from .models import DEFAULT_WORKSPACE_ID
 
 CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT = 75
 CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT = 12
+#: Nominal (minimum) height of one browser row in terminal lines: title line
+#: + metadata line + the row's bottom margin. Rows whose titles wrap render
+#: taller. This constant intentionally stays at the minimum: it only feeds
+#: the visible-row-count heuristic below, where a slight overestimate merely
+#: loads a row or two more than fits (the rail scrolls); it must NOT be used
+#: for layout math (the tray derives real heights from the wrap result --
+#: see console_workspace_context.py, same contract as
+#: ``CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT`` in display_state.py).
+CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT = 3
+#: Fixed chrome the Chats tray mounts around its rows (search input, section
+#: header, status copy, frame border). Subtracted from the section budget
+#: before converting to rows so the built list fits its half of the rail
+#: without the bounded section scrolling the tail rows out of view.
+CONSOLE_CONVERSATION_BROWSER_CHROME_LINES = 8
+#: The historical bounded-section ceiling (``MAX_SECTION_CONTENT_LINES`` in
+#: Widgets/Console/console_bounded_section.py). The adaptive budget never
+#: drops below it, so short or unmeasured rails keep today's behaviour.
+CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES = 20
 
 
-def _parse_browser_timestamp(value: str) -> datetime | None:
+def console_rail_section_height_budget(body_height: int | None) -> int:
+    """Return one peer rail section's adaptive height budget in lines.
+
+    The rail's two peer list sections -- Workspaces and Conversations --
+    each get half the measured rail body height as their growth ceiling, so
+    on a tall terminal both expand to fill the available space together
+    instead of stopping at the historical fixed ceilings. Small or
+    unmeasured heights keep the historical ceiling, so short terminals see
+    no change.
+
+    Args:
+        body_height: Available rail body height in terminal lines, or
+            ``None`` when the rail body has not been measured yet.
+
+    Returns:
+        A line budget: never below
+        ``CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES``, and on tall rails about
+        half the available lines.
+    """
+    if body_height is None or int(body_height) <= 0:
+        return CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+    return max(
+        CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES,
+        int(body_height) // 2,
+    )
+
+
+def console_conversation_browser_group_row_limit(body_height: int | None) -> int:
+    """Return the adaptive visible-row cap for the Chats browser section.
+
+    Converts the Chats section's share of the rail
+    (`console_rail_section_height_budget`) into visible rows at the nominal
+    row height, minus the tray's fixed chrome, so the list fills its half of
+    a tall rail instead of stopping at the historical 12-row default. Small
+    or unmeasured heights keep that default, so short terminals see no
+    change.
+
+    Args:
+        body_height: Available rail body height in terminal lines, or
+            ``None`` when the rail body has not been measured yet.
+
+    Returns:
+        A visible-row cap: never below
+        ``CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT``, and on tall rails
+        about half the available lines (less chrome) converted to rows.
+    """
+    budget = console_rail_section_height_budget(body_height)
+    adaptive_rows = (
+        budget - CONSOLE_CONVERSATION_BROWSER_CHROME_LINES
+    ) // CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT
+    return max(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT, adaptive_rows)
+
+
+def parse_browser_timestamp(value: str) -> datetime | None:
+    """Parse a browser-row timestamp, defaulting a naive value to UTC.
+
+    Public (task-32177): ``Library/library_notes_state.py`` needs this same
+    parse for its own absolute-timestamp label and previously imported the
+    underscore-prefixed name directly out of this module.
+
+    Args:
+        value: An ISO-8601 timestamp as stored on a browser row, with either
+            a ``+00:00`` or a trailing ``Z`` offset, or none at all.
+            Surrounding whitespace is ignored.
+
+    Returns:
+        The parsed timestamp, made timezone-aware in UTC when the value
+        carried no offset of its own; ``None`` when the value is empty or
+        is not an ISO-8601 timestamp.
+    """
     text = str(value or "").strip()
     if not text:
         return None
@@ -88,7 +175,7 @@ def format_console_relative_age(value: str, *, now: datetime) -> str:
     Returns:
         Compact age label, or an empty string when the value is unparseable.
     """
-    parsed = _parse_browser_timestamp(value)
+    parsed = parse_browser_timestamp(value)
     if parsed is None:
         return ""
     if now.tzinfo is None:
@@ -187,6 +274,19 @@ class ConsoleConversationBrowserInputRow:
     run_marker: str = ""
     #: Content-free count of unsent prompts for a live native session.
     queued_count: int = 0
+    #: task-31207: sanitized custom icon glyph for this conversation ("" when
+    #: unset). Supplied by the controller from ``conversations.metadata``
+    #: (``console_appearance``); the display layer renders it as-is.
+    icon: str = ""
+    #: task-31207: canonical ``#rrggbb`` tint for the icon ("" when unset).
+    color: str = ""
+    #: TASK-32309: local character id for character conversations (None for
+    #: every other row). The flat Conversations lane excludes these rows;
+    #: the Character section owns them (workspace-scoped character rows stay
+    #: in their workspace Tree node -- workspace wins).
+    character_id: str | None = None
+    #: TASK-32309: character display name ("" when unknown).
+    character_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -225,12 +325,26 @@ class ConsoleConversationBrowserRow:
     star_enabled: bool = True
     source_kind: str = "persisted"
     subagent_count: int = 0
+    #: Session-only pending reports, separate from saved sub-agent runs.
+    progress_count: int = 0
     #: TASK-717: False when the conversation record is known to be missing.
     openable: bool = True
     #: Parallel-agents spec PA-T8: resolved fleet run-marker glyph, or "".
     run_marker: str = ""
     #: Content-free count of unsent prompts for a live native session.
     queued_count: int = 0
+    #: task-31207: sanitized custom icon glyph ("" when unset). Part of row
+    #: value equality so the tray's structural recompose guard repaints on an
+    #: appearance change instead of skipping it as a no-op.
+    icon: str = ""
+    #: task-31207: canonical ``#rrggbb`` icon tint ("" when unset).
+    color: str = ""
+    #: TASK-32309: local character id for character conversations (None for
+    #: every other row). Part of row value equality so identity changes
+    #: repaint instead of skipping as a no-op.
+    character_id: str | None = None
+    #: TASK-32309: character display name ("" when unknown).
+    character_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -253,6 +367,9 @@ class ConsoleConversationBrowserGroup:
     collapsed: bool
     rows: tuple[ConsoleConversationBrowserRow, ...]
     count: int
+    #: Stable registry identity for typed workspace actions.  Rendering must
+    #: never recover authority from ``label`` or from a list position.
+    workspace_id: str = ""
     hidden_count: int = 0
     preference_collapsed: bool = False
     empty_copy: str = ""
@@ -358,16 +475,17 @@ def build_console_conversation_browser_state(
     result_limit: int = CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     group_row_limit: int = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     subagent_counts: Mapping[str, int] | None = None,
+    progress_counts: Mapping[str, int] | None = None,
     now: datetime | None = None,
 ) -> ConsoleConversationBrowserState:
-    """Build a deterministic grouped conversation browser snapshot.
+    """Build the deterministic flat Default/unassigned browser snapshot.
 
     Args:
         rows: Input rows from the eventual controller layer. The builder does
             not query services or mutate UI preferences.
-        active_workspace_id: Workspace id that should be expanded by default.
-        group_collapse_preferences: Tri-state collapse preferences where a
-            missing key means use the builder default.
+        active_workspace_id: Retained compatibility input; ownership no longer
+            depends on the active named workspace.
+        group_collapse_preferences: Flat Chats collapse preference mapping.
         query: Search text matched against row title, workspace, status, and
             scope copy.
         marks_available: Whether local star state is available for rendering.
@@ -379,10 +497,11 @@ def build_console_conversation_browser_state(
         subagent_counts: Historical sub-agent count keyed by conversation id.
             Only persisted rows can carry a non-zero count; missing/None
             entries default to 0.
+        progress_counts: Body-free pending reports keyed by live native session identity.
         now: Reference time for computing relative age labels. Defaults to now.
 
     Returns:
-        Grouped, capped, immutable display state.
+        Flat, capped, immutable display state with one Chats section.
     """
 
     preferences = dict(group_collapse_preferences or {})
@@ -392,91 +511,17 @@ def build_console_conversation_browser_state(
     safe_result_limit = max(1, int(result_limit))
     safe_group_row_limit = max(0, int(group_row_limit))
     reference_now = now or datetime.now(timezone.utc)
-    prepared_rows = tuple(_normalize_input_row(row, now=reference_now) for row in rows)
+    all_prepared_rows = _dedupe_rows(
+        _normalize_input_row(row, now=reference_now) for row in rows
+    )
+    prepared_rows = tuple(row for row in all_prepared_rows if _belongs_to_chats(row))
     filtered_rows = tuple(
         row
         for row in prepared_rows
         if not query_active or _row_matches(row, normalized_query)
     )
 
-    starred_rows = _dedupe_rows(
-        row for row in filtered_rows if row.starred and bool(row.conversation_id)
-    )
-    workspace_rows_by_group: dict[str, list[ConsoleConversationBrowserInputRow]] = {}
-    workspace_labels: dict[str, str] = {}
-    chat_rows: list[ConsoleConversationBrowserInputRow] = []
-
-    for row in filtered_rows:
-        if _belongs_to_chats(row):
-            chat_rows.append(row)
-            continue
-        workspace_id = _text_or_none(row.workspace_id)
-        if workspace_id is None:
-            chat_rows.append(row)
-            continue
-        group_id = f"workspace:{workspace_id}"
-        workspace_rows_by_group.setdefault(group_id, []).append(row)
-        workspace_labels.setdefault(group_id, row.workspace_label or workspace_id)
-
-    sorted_starred_rows = _sort_starred_rows(starred_rows)
-    starred_section = _build_row_section(
-        section_id="starred",
-        label="Starred",
-        rows=sorted_starred_rows,
-        # TASK-2154.3 (LY-04): an empty section default-collapses to a quiet
-        # single-line header (same default Chats already used) instead of
-        # announcing "No starred conversations." before any user intent.
-        # Expanding it still shows the empty copy; an active query
-        # force-expands only when the section has matches (see
-        # `_build_row_section`).
-        preference_collapsed=_resolve_collapsed(
-            preferences,
-            "section:starred",
-            default_collapsed=not bool(sorted_starred_rows),
-        ),
-        query_active=query_active,
-        group_row_limit=safe_group_row_limit,
-        empty_copy="No starred conversations.",
-        counts=counts,
-    )
-    workspace_groups = _build_workspace_groups(
-        rows_by_group=workspace_rows_by_group,
-        labels=workspace_labels,
-        active_workspace_id=_text_or_none(active_workspace_id),
-        preferences=preferences,
-        query_active=query_active,
-        group_row_limit=safe_group_row_limit,
-        counts=counts,
-    )
-    workspaces_preference_collapsed = _resolve_collapsed(
-        preferences,
-        "section:workspaces",
-        # TASK-2154.3 (LY-04): same empty-default-collapse as Starred/Chats.
-        default_collapsed=not bool(workspace_groups),
-    )
-    # TASK-2154.3 (LY-04): an active query always expands the section, so a
-    # no-match search keeps "No workspace conversations." as its feedback
-    # (the pre-2154.3 default did the same by never default-collapsing).
-    workspaces_collapsed = workspaces_preference_collapsed and not query_active
-    workspaces_section = ConsoleConversationBrowserSection(
-        section_id="workspaces",
-        label="Workspaces",
-        collapsed=workspaces_collapsed,
-        groups=workspace_groups,
-        count=sum(group.count for group in workspace_groups),
-        hidden_count=(
-            sum(group.count for group in workspace_groups)
-            if workspaces_collapsed
-            else sum(group.hidden_count for group in workspace_groups)
-        ),
-        empty_copy="No workspace conversations.",
-        # TASK-912 AC#1: `_most_urgent_run_marker` duck-types on `.run_marker`,
-        # so passing the groups themselves (each already the most-urgent glyph
-        # among ITS full pre-cap rows) yields the most-urgent glyph across the
-        # whole section without re-walking every row.
-        run_marker=_most_urgent_run_marker(workspace_groups),
-    )
-    chat_input_rows = _sort_normal_rows(_dedupe_rows(chat_rows))
+    chat_input_rows = _sort_normal_rows(filtered_rows)
     chat_preference_collapsed = _resolve_collapsed(
         preferences,
         "section:chats",
@@ -489,11 +534,12 @@ def build_console_conversation_browser_state(
         preference_collapsed=chat_preference_collapsed,
         query_active=query_active,
         group_row_limit=safe_group_row_limit,
-        empty_copy="No chats.",
+        empty_copy="No Default or unassigned conversations. Named-workspace conversations are under Workspaces.",
         counts=counts,
+        progress_counts=progress_counts,
     )
 
-    sections = (starred_section, workspaces_section, chats_section)
+    sections = (chats_section,)
     effective_total_count = (
         _safe_non_negative_int(result_total_count)
         if result_total_count is not None
@@ -549,12 +595,17 @@ def _normalize_input_row(
         openable=bool(row.openable),
         run_marker=str(row.run_marker or ""),
         queued_count=max(0, int(row.queued_count)),
+        icon=str(row.icon or ""),
+        color=str(row.color or ""),
+        character_id=_text_or_none(row.character_id),
+        character_label=str(row.character_label or ""),
     )
 
 
 def _to_browser_row(
     row: ConsoleConversationBrowserInputRow,
     counts: Mapping[str, int] | None = None,
+    progress_counts: Mapping[str, int] | None = None,
 ) -> ConsoleConversationBrowserRow:
     subagent_count = int((counts or {}).get(row.conversation_id or "", 0))
     return ConsoleConversationBrowserRow(
@@ -572,9 +623,16 @@ def _to_browser_row(
         star_enabled=row.star_enabled,
         source_kind=row.source_kind,
         subagent_count=subagent_count,
+        progress_count=max(
+            0, int((progress_counts or {}).get(row.native_session_id or "", 0))
+        ),
         openable=bool(row.openable),
         run_marker=str(row.run_marker or ""),
         queued_count=max(0, int(row.queued_count)),
+        icon=str(row.icon or ""),
+        color=str(row.color or ""),
+        character_id=_text_or_none(row.character_id),
+        character_label=str(row.character_label or ""),
     )
 
 
@@ -588,9 +646,12 @@ def _build_row_section(
     group_row_limit: int,
     empty_copy: str,
     counts: Mapping[str, int] | None = None,
+    progress_counts: Mapping[str, int] | None = None,
 ) -> ConsoleConversationBrowserSection:
     collapsed = preference_collapsed and not (query_active and bool(rows))
-    visible_rows, hidden_count = _visible_rows(rows, collapsed, group_row_limit, counts)
+    visible_rows, hidden_count = _visible_rows(
+        rows, collapsed, group_row_limit, counts, progress_counts
+    )
     return ConsoleConversationBrowserSection(
         section_id=section_id,
         label=label,
@@ -700,6 +761,7 @@ def _build_workspace_groups(
     query_active: bool,
     group_row_limit: int,
     counts: Mapping[str, int] | None = None,
+    progress_counts: Mapping[str, int] | None = None,
 ) -> tuple[ConsoleConversationBrowserGroup, ...]:
     groups: list[
         tuple[str, str, str, tuple[ConsoleConversationBrowserInputRow, ...]]
@@ -724,7 +786,7 @@ def _build_workspace_groups(
         )
         collapsed = preference_collapsed and not (query_active and bool(group_rows))
         visible_rows, hidden_count = _visible_rows(
-            group_rows, collapsed, group_row_limit, counts
+            group_rows, collapsed, group_row_limit, counts, progress_counts
         )
         browser_groups.append(
             ConsoleConversationBrowserGroup(
@@ -733,6 +795,7 @@ def _build_workspace_groups(
                 collapsed=collapsed,
                 rows=visible_rows,
                 count=len(group_rows),
+                workspace_id=workspace_id,
                 hidden_count=hidden_count,
                 preference_collapsed=preference_collapsed,
                 empty_copy="No workspace conversations.",
@@ -757,13 +820,14 @@ def _visible_rows(
     collapsed: bool,
     group_row_limit: int,
     counts: Mapping[str, int] | None = None,
+    progress_counts: Mapping[str, int] | None = None,
 ) -> tuple[tuple[ConsoleConversationBrowserRow, ...], int]:
     if collapsed:
         return (), 0
     visible_input_rows = rows[:group_row_limit] if group_row_limit else ()
     hidden_count = max(0, len(rows) - len(visible_input_rows))
     return tuple(
-        _to_browser_row(row, counts) for row in visible_input_rows
+        _to_browser_row(row, counts, progress_counts) for row in visible_input_rows
     ), hidden_count
 
 
@@ -773,9 +837,10 @@ def _dedupe_rows(
     seen: set[str] = set()
     deduped: list[ConsoleConversationBrowserInputRow] = []
     for row in rows:
-        if row.row_key in seen:
+        stable_id = str(row.conversation_id or row.row_key or "")
+        if stable_id in seen:
             continue
-        seen.add(row.row_key)
+        seen.add(stable_id)
         deduped.append(row)
     return tuple(deduped)
 
@@ -783,17 +848,62 @@ def _dedupe_rows(
 def _sort_normal_rows(
     rows: tuple[ConsoleConversationBrowserInputRow, ...],
 ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-    return tuple(
-        sorted(
-            rows,
-            key=lambda row: (
-                not row.selected,
-                ReverseKey(row.updated_sort),
-                row.title.casefold(),
-                row.row_key,
+    return tuple(sorted(rows, key=console_conversation_starred_recency_sort_key))
+
+
+def console_conversation_starred_recency_sort_key(
+    row: object,
+) -> tuple[bool, "ReverseKey", str, str]:
+    """Return the one starred-first, recency-descending conversation key."""
+    stable_id = str(
+        getattr(row, "conversation_id", "") or getattr(row, "row_key", "") or ""
+    )
+    return (
+        not bool(getattr(row, "starred", False)),
+        ReverseKey(str(getattr(row, "updated_sort", "") or "")),
+        str(getattr(row, "title", "") or "").casefold(),
+        stable_id,
+    )
+
+
+def overlay_console_conversation_markers(
+    rows: Iterable[ConsoleConversationBrowserInputRow],
+    *,
+    starred_ids: Iterable[str],
+    selected_conversation_id: str | None,
+    run_markers: Mapping[str, str],
+) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+    """Overlay current keyed markers while retaining every unchanged row object."""
+    starred = {str(conversation_id) for conversation_id in starred_ids}
+    selected_id = str(selected_conversation_id or "").strip()
+    markers = {str(key): str(value or "") for key, value in run_markers.items()}
+    overlaid: list[ConsoleConversationBrowserInputRow] = []
+    for row in rows:
+        conversation_id = str(row.conversation_id or "").strip()
+        if not conversation_id:
+            overlaid.append(row)
+            continue
+        values = (
+            conversation_id in starred,
+            conversation_id == selected_id,
+            (
+                markers[conversation_id]
+                if conversation_id in markers
+                else row.run_marker
             ),
         )
-    )
+        if values == (row.starred, row.selected, row.run_marker):
+            overlaid.append(row)
+            continue
+        overlaid.append(
+            replace(
+                row,
+                starred=values[0],
+                selected=values[1],
+                run_marker=values[2],
+            )
+        )
+    return tuple(overlaid)
 
 
 def _sort_starred_rows(
@@ -848,6 +958,12 @@ def _scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
 
 
 def _belongs_to_chats(row: ConsoleConversationBrowserInputRow) -> bool:
+    # TASK-32309: character conversations are owned by the Character rail
+    # section (or their workspace Tree node when workspace-scoped), never the
+    # flat Conversations lane -- the same one-owner-per-conversation rule the
+    # workspace Tree already follows.
+    if _text_or_none(row.character_id) is not None:
+        return False
     return row.scope_type == "global" or row.workspace_id in (
         None,
         DEFAULT_WORKSPACE_ID,
@@ -896,9 +1012,7 @@ def _capped_hidden_count(
     collapsed groups), so summing it across expanded sections yields exactly the
     silently-dropped total.
     """
-    return sum(
-        section.hidden_count for section in sections if not section.collapsed
-    )
+    return sum(section.hidden_count for section in sections if not section.collapsed)
 
 
 def _build_status_copy(

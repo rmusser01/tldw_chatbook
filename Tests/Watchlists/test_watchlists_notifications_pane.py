@@ -82,7 +82,7 @@ def _cell_style(table: DataTable, row_key: str, column_index: int) -> Style:
 @pytest.mark.asyncio
 async def test_notifications_pane_renders_table_and_toolbar():
     app = NotificationsPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(NotificationsPane)
         assert pane.query_one("#notifications-table", DataTable)
         assert pane.query_one("#notifications-refresh-button", Button)
@@ -94,7 +94,7 @@ async def test_notifications_pane_renders_table_and_toolbar():
 async def test_notifications_pane_carries_one_line_of_guidance_when_empty():
     """TASK-2313, AC#4: matching Runs/Rules' identical fix."""
     app = NotificationsPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(NotificationsPane)
         assert pane.notifications == [], "precondition: nothing seeded"
         hint = pane.query_one("#notifications-empty-state", Static)

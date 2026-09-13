@@ -4,6 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from tldw_chatbook.Subscriptions.watchlist_opml_service import WatchlistOpmlService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistBackend, WatchlistScopeService
+from tldw_chatbook.Subscriptions.watchlist_item_page import (
+    WatchlistItemCursor,
+    WatchlistItemPage,
+)
 
 
 def make_scope_service():
@@ -173,6 +177,84 @@ async def test_list_items_rejects_server():
     scope_service, _, _ = make_scope_service()
     with pytest.raises(ValueError, match="Item listing is only supported for the local backend"):
         await scope_service.list_items(runtime_backend=WatchlistBackend.SERVER)
+
+
+@pytest.mark.asyncio
+async def test_list_reader_items_page_forwards_explicit_scope():
+    scope_service, local_service, _ = make_scope_service()
+    cursor = WatchlistItemCursor("2026-08-25 12:00:00", 21)
+    page = WatchlistItemPage(
+        items=(),
+        has_more=False,
+        snapshot_max_item_id=42,
+        snapshot_count=0,
+        next_cursor=None,
+    )
+    local_service.list_reader_items_page = AsyncMock(return_value=page)
+
+    result = await scope_service.list_reader_items_page(
+        runtime_backend=WatchlistBackend.LOCAL,
+        source_id="7",
+        snapshot_max_item_id=42,
+        after=cursor,
+    )
+
+    local_service.list_reader_items_page.assert_awaited_once_with(
+        source_id="7",
+        status=None,
+        limit=50,
+        run_id=None,
+        watchlist_id=None,
+        unassigned_only=False,
+        statuses=None,
+        is_flagged=None,
+        search=None,
+        since=None,
+        snapshot_max_item_id=42,
+        after=cursor,
+    )
+    assert result is page
+
+
+@pytest.mark.asyncio
+async def test_list_reader_items_page_rejects_server_before_dispatch():
+    scope_service, local_service, server_service = make_scope_service()
+    policy = MagicMock()
+    scope_service.policy_enforcer = policy
+
+    with pytest.raises(
+        ValueError, match="Item listing is only supported for the local backend"
+    ):
+        await scope_service.list_reader_items_page(
+            runtime_backend=WatchlistBackend.SERVER
+        )
+
+    local_service.list_reader_items_page.assert_not_awaited()
+    server_service.list_reader_items_page.assert_not_awaited()
+    policy.require_allowed.assert_called_once_with(
+        action_id="watchlists.items.list.server"
+    )
+
+
+@pytest.mark.asyncio
+async def test_count_reader_item_arrivals_rejects_server_before_dispatch():
+    scope_service, local_service, server_service = make_scope_service()
+    policy = MagicMock()
+    scope_service.policy_enforcer = policy
+
+    with pytest.raises(
+        ValueError, match="Item listing is only supported for the local backend"
+    ):
+        await scope_service.count_reader_item_arrivals(
+            runtime_backend=WatchlistBackend.SERVER,
+            snapshot_max_item_id=42,
+        )
+
+    local_service.count_reader_item_arrivals.assert_not_awaited()
+    server_service.count_reader_item_arrivals.assert_not_awaited()
+    policy.require_allowed.assert_called_once_with(
+        action_id="watchlists.items.list.server"
+    )
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ from typing import Any, Mapping
 from loguru import logger
 
 from ..runtime_policy.types import PolicyDeniedError
+from .watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
 from .watchlist_opml_service import WatchlistOpmlService
 from .watchlist_preview_service import WatchlistPreviewService
 
@@ -123,6 +124,28 @@ class WatchlistScopeService:
         if self.server_service is None:
             raise ValueError("Server watchlists backend is unavailable.")
         return self.server_service
+
+    def create_form_source_types(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> tuple[str, ...]:
+        """Return the active backend's ordered create-form source types.
+
+        Args:
+            runtime_backend: Backend contract to inspect. ``None`` selects
+                the local backend.
+
+        Returns:
+            Ordered source-type identifiers supported by that backend's
+            create form.
+
+        Raises:
+            ValueError: If the backend is invalid or unavailable.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        service = self._service_for_backend(backend)
+        return service.CREATE_FORM_SOURCE_TYPES
 
     def _get_run_executor(self) -> Any:
         local_service = self.local_service
@@ -279,6 +302,130 @@ class WatchlistScopeService:
                 is_flagged=is_flagged,
                 search=search,
                 since=since,
+            )
+        )
+
+    async def list_reader_items_page(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        source_id: Any = None,
+        status: str | None = None,
+        limit: int = 50,
+        run_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+        statuses: list[str] | None = None,
+        is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
+        snapshot_max_item_id: int | None = None,
+        after: WatchlistItemCursor | None = None,
+    ) -> WatchlistItemPage:
+        """Return one stable Reader page from the local item authority.
+
+        Args:
+            runtime_backend: Target backend; Reader paging is local-only.
+            source_id: Optional subscription scope.
+            status: Optional single status scope.
+            limit: Maximum rows in the page.
+            run_id: Optional producing-run scope.
+            watchlist_id: Optional watchlist scope.
+            unassigned_only: Whether to include only unassigned sources.
+            statuses: Optional multiple-status scope.
+            is_flagged: Optional starred-state scope.
+            search: Optional full-text terms.
+            since: Optional effective-date floor.
+            snapshot_max_item_id: Existing snapshot high-water.
+            after: Optional continuation cursor.
+
+        Returns:
+            The typed page returned by the local service.
+
+        Raises:
+            ValueError: If the Server backend is requested.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "items.list")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError(
+                "Item listing is only supported for the local backend in this slice."
+            )
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(
+            service.list_reader_items_page(
+                source_id=source_id,
+                status=status,
+                limit=limit,
+                run_id=run_id,
+                watchlist_id=watchlist_id,
+                unassigned_only=unassigned_only,
+                statuses=statuses,
+                is_flagged=is_flagged,
+                search=search,
+                since=since,
+                snapshot_max_item_id=snapshot_max_item_id,
+                after=after,
+            )
+        )
+
+    async def count_reader_item_arrivals(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        snapshot_max_item_id: int,
+        source_id: Any = None,
+        status: str | None = None,
+        run_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+        statuses: list[str] | None = None,
+        is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
+    ) -> int:
+        """Count local Reader arrivals without replacing its snapshot.
+
+        Args:
+            runtime_backend: Target backend; Reader counts are local-only.
+            snapshot_max_item_id: Snapshot high-water that arrivals exceed.
+            source_id: Optional subscription scope.
+            status: Optional single status scope.
+            run_id: Optional producing-run scope.
+            watchlist_id: Optional watchlist scope.
+            unassigned_only: Whether to include only unassigned sources.
+            statuses: Optional multiple-status scope.
+            is_flagged: Optional starred-state scope.
+            search: Optional full-text terms.
+            since: Optional effective-date floor.
+
+        Returns:
+            Number of matching rows created after the high-water.
+
+        Raises:
+            ValueError: If the Server backend is requested.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "items.list")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError(
+                "Item listing is only supported for the local backend in this slice."
+            )
+        service = self._service_for_backend(backend)
+        return int(
+            await self._maybe_await(
+                service.count_reader_item_arrivals(
+                    snapshot_max_item_id=snapshot_max_item_id,
+                    source_id=source_id,
+                    status=status,
+                    run_id=run_id,
+                    watchlist_id=watchlist_id,
+                    unassigned_only=unassigned_only,
+                    statuses=statuses,
+                    is_flagged=is_flagged,
+                    search=search,
+                    since=since,
+                )
             )
         )
 
@@ -622,6 +769,13 @@ class WatchlistScopeService:
                         "Local watchlist run launch did not return a run identifier."
                     )
                 resolved_run_id = self._run_id_from_item_id(run_id)
+                if (
+                    isinstance(launched, Mapping)
+                    and launched.get("_claim_acquired") is False
+                ):
+                    return await self._maybe_await(
+                        service.wait_for_terminal_run(resolved_run_id)
+                    )
                 try:
                     return await self._maybe_await(execute_run(resolved_run_id))
                 except asyncio.CancelledError:
@@ -1001,14 +1155,19 @@ class WatchlistScopeService:
                     existing_count += 1
                 else:
                     source = await self._maybe_await(service.create_source(payload))
-                    created.append(dict(source))
                     source_id = source.get("source_id")
+                    if str(source.get("creation_outcome") or "created").casefold() == (
+                        "existing"
+                    ):
+                        existing_count += 1
+                    else:
+                        created.append(dict(source))
                 if url and source_id is not None:
                     source_ids_by_url[url] = int(source_id)
             folder = str(payload.get("folder") or "").strip()
             if not folder or source_id is None:
                 continue
-            key = folder.lower()
+            key = folder.casefold()
             if key not in resolved_folders:
                 watchlist, was_created = await self._maybe_await(
                     service.resolve_or_create_watchlist(folder)

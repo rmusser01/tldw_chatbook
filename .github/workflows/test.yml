@@ -2,9 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [ "main", "dev" ]
-  pull_request:
-    branches: [ "main", "dev" ]
+    branches: ["main"]
   workflow_dispatch:
     inputs:
       backup_platform_only:
@@ -22,25 +20,18 @@ on:
           - replacement-diagnostic
           - support-diagnostic
         default: full
-  schedule:
-    # Nightly deep run (08:30 UTC); the job checks out dev explicitly because
-    # scheduled workflows execute from the default branch.
-    - cron: '30 8 * * *'
 
-# One run per workflow per ref: a new push supersedes the previous run instead of
-# queueing another alongside it. Without this, every push to `dev` stacked a full
-# run - 50+ obsolete runs accumulated, all competing for scarce macOS runners.
-# The event name is part of the group so different trigger types (push,
-# pull_request, schedule) never cancel each other, and `main` is never cancelled
-# so its history stays complete.
+# Comprehensive tests run on main pushes or explicit dispatch. Pull requests
+# use the bounded fast lane in derived-artifacts.yml; scheduled full-tree
+# breadth lives in nightly-deep.yml, activated from default-branch main.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.backup_platform_selection == 'support-diagnostic' && '-support-diagnostic' || '' }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Keep the shared push-only cancellation policy. `main` and manual runs are
+  # never cancelled; this workflow no longer accepts pull_request events.
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
   
 env:
   PYTEST_TIMEOUT: 300
@@ -55,34 +46,47 @@ defaults:
 
 jobs:
   core-tests:
-    # task-1465: full coverage on every PR replaces `-m unit` (which selected
-    # 27 of ~950 files while ~590 files ran in no PR-triggered job). The UI
-    # shard is its own job below; OS/Python breadth lives in nightly-deep.
-    name: Core Tests (all but UI) - Python ${{ matrix.python-version }} - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    # task-1465: complete-tree coverage replaces `-m unit` (which selected 27
+    # of ~950 files while ~590 files ran in no comprehensive job). The UI shard
+    # is its own job below; OS/Python breadth lives in nightly-deep.
+    #
+    # TASK-21411: sharded, because the 120-minute budget stopped being the
+    # question. Read from a killed run's own log: the ubuntu leg started
+    # pytest at 15:44:55 and was still emitting progress steadily -- no
+    # stall -- when the cap killed it at 17:39 having reached **60%**. So the
+    # suite needs ~190 minutes on a 4-vCPU runner, and no timeout this side
+    # of GitHub's 6-hour ceiling makes a single job a sane place to put it.
+    # Six deterministic pytest-shard slices are ~32 min each, roughly a
+    # quarter of the budget, and xdist still parallelizes within each slice.
+    #
+    # ubuntu only, on purpose. The measured constrained pool is ubuntu (~12
+    # concurrent slots), so the max-parallel bound below is the capacity
+    # control. Cross-platform breadth lives in nightly-deep.
+    name: Core Tests (all but UI) - shard ${{ matrix.shard }}/${{ strategy.job-total }}
+    runs-on: ubuntu-latest
+    # Kept at 120 as headroom: the per-shard estimate is ~32 min, so this is
+    # ~4x margin rather than a target. A shard that approaches it is a signal
+    # to resize the matrix, not to raise the cap again.
     if: github.event_name != 'workflow_dispatch' || inputs.backup_platform_only != true
-    # 120, not 60: the suite grew past the old budget -- the ubuntu leg was
-    # killed by the 60-minute cap mid-run (TASK-18608) while the macOS leg
-    # finished at ~58m. 2x headroom over the observed ~60m worst leg.
     timeout-minutes: 120
     strategy:
       fail-fast: false
+      # Six live Tests runs previously asked for ~100 ubuntu jobs against an
+      # account ceiling of roughly 12. Three core plus three UI shards leaves
+      # capacity for short required checks from other workflows.
+      max-parallel: 3
       matrix:
-        include:
-          - os: ubuntu-latest
-            python-version: "3.12"
-          - os: macos-latest
-            python-version: "3.12"
+        shard: [0, 1, 2, 3, 4, 5]
 
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: "3.12"
         cache: 'pip'
 
     - name: Install all dependencies
@@ -99,22 +103,29 @@ jobs:
 
     - name: Setup test environment
       run: |
+        # Mandatory Canvas zero-egress/browser tests are collected by core shards.
+        python -m playwright install --with-deps chromium
         python -c "import nltk; nltk.download('punkt', quiet=True)"
         python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
 
     - name: Run core tests in parallel
+      # pytest-shard slices the collected list deterministically, so the union
+      # of the six shards is exactly the set one unsharded job would have run
+      # -- the same contract the UI job below relies on.
       run: |
         pytest Tests --ignore=Tests/UI \
           -n auto --dist loadscope --max-worker-restart=3 \
+          --shard-id=${{ matrix.shard }} --num-shards=6 \
           --timeout=300 \
           --json-report --json-report-omit log \
-          --json-report-file=core-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json
+          --json-report-file=core-test-results-${{ matrix.shard }}.json
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: core-test-results-${{ matrix.os }}-${{ matrix.python-version }}
+        # Per-shard, so matrix siblings cannot overwrite each other's report.
+        name: core-test-results-${{ matrix.shard }}
         path: |
           core-test-results-*.json
 
@@ -126,7 +137,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11"]
+        python-version: ["3.12"]
 
     steps:
     - uses: actions/checkout@v4
@@ -198,6 +209,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
@@ -216,6 +228,13 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-test.txt
         pip install pytest-json-report
+        # The vendored tldw_profile_core package (packages/tldw_profile_core/
+        # src, mapped via pyproject package-dir) is importable only when the
+        # distribution is installed; requirements.txt alone leaves every UI
+        # shard dead at collection (ModuleNotFoundError via
+        # Sync_Interop/sync_readiness.py) — the other jobs already install
+        # the project.
+        pip install -e .
         # Install textual dev tools for better debugging
         pip install textual-dev
 
@@ -251,10 +270,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python 3.11
+    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
-        python-version: "3.11"
+        python-version: "3.12"
         cache: 'pip'
 
     - name: Install core and test dependencies at the Textual floor
@@ -337,82 +356,6 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
   
-  nightly-deep:
-    # task-1465: the deep tiers' only home — serial execution (order-regression
-    # canary), thorough Hypothesis profile, the --run-slow tests (which
-    # previously ran NOWHERE), CSS parse cache off (task-1459 soak), coverage,
-    # and the OS/Python breadth removed from the PR gate. Scheduled workflows
-    # run from the default branch, so this checks out dev explicitly.
-    name: Nightly Deep - Python ${{ matrix.python-version }} - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.backup_platform_only != true
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            python-version: "3.11"
-          - os: ubuntu-latest
-            python-version: "3.12"
-          - os: ubuntu-latest
-            python-version: "3.13"
-          - os: macos-latest
-            python-version: "3.12"
-          - os: windows-latest
-            python-version: "3.12"
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: dev
-        fetch-depth: 0
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-
-    - name: Install all dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools wheel
-        pip install -r requirements.txt
-        pip install -r requirements-test.txt
-        pip install pytest-json-report pytest-cov
-        pip install -e ".[embeddings_rag,websearch,chunker]"
-        # pydub (+ its 3.13 audioop shim) only: the briefings audio tests need
-        # these two and nothing else from the `audio` extra, which would also drag
-        # in faster-whisper/ctranslate2/onnxruntime for no benefit here.
-        pip install pydub "audioop-lts; python_version >= '3.13'"
-
-    - name: Setup test environment
-      run: |
-        python -c "import nltk; nltk.download('punkt', quiet=True)"
-        python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
-
-    - name: Run deep suite (serial, thorough, slow tiers, cache-off)
-      env:
-        TLDW_HYPOTHESIS_PROFILE: thorough
-        TLDW_TEST_CSS_CACHE: "0"
-      run: |
-        pytest ./Tests/ \
-          --run-slow \
-          --timeout=600 \
-          --json-report --json-report-omit log \
-          --json-report-file=nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json \
-          --cov=tldw_chatbook \
-          --cov-report=xml:coverage-nightly-${{ matrix.os }}-${{ matrix.python-version }}.xml
-
-    - name: Upload nightly results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}
-        path: |
-          nightly-test-results-*.json
-          coverage-nightly-*.xml
-
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
@@ -438,21 +381,27 @@ jobs:
         pip install pytest-json-report
         python .github/scripts/generate_test_summary.py
     
-    - name: Comment PR with results
-      if: github.event_name == 'pull_request'
-      continue-on-error: true
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          const summary = fs.readFileSync('test-summary.md', 'utf8');
-          
-          await github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: summary
-          });
+    # TASK-21411: this job declares `needs:` and `if: always()`, which makes it
+    # RUN after those jobs whatever they did -- it never inspected what they
+    # did. On run 32647831275 it reported `success` while all twelve UI shards
+    # were red. A summary that cannot go red is not a gate, and this is the
+    # check most likely to be marked required.
+    #
+    # `always()` stays: the summary is worth publishing on failure too. The
+    # verdict remains the final step.
+    - name: Require every gated job to have succeeded
+      if: >-
+        needs.core-tests.result != 'success' ||
+        needs.ui-tests.result != 'success' ||
+        needs.textual-minimum.result != 'success' ||
+        needs.artifact-lease-gate.result != 'success'
+      run: |
+        echo "core-tests:          ${{ needs.core-tests.result }}"
+        echo "ui-tests:            ${{ needs.ui-tests.result }}"
+        echo "textual-minimum:     ${{ needs.textual-minimum.result }}"
+        echo "artifact-lease-gate: ${{ needs.artifact-lease-gate.result }}"
+        echo "::error::A gated test job did not succeed; see the results above."
+        exit 1
 
   backup-platform-windows:
     name: Backup product qualification - Windows 2022 - Python 3.12 - ${{ matrix.selection }}

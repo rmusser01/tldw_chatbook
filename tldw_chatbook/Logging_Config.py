@@ -3,7 +3,10 @@
 #
 # Imports
 import asyncio
+import faulthandler
 import logging
+import os
+import signal
 import sys
 import traceback
 from logging.handlers import RotatingFileHandler
@@ -20,6 +23,7 @@ from textual.widgets import RichLog
 #
 # Local Imports
 from tldw_chatbook.config import get_cli_log_file_path, get_cli_setting
+from tldw_chatbook.Utils.log_sanitizer import redact_log_line
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathError,
     lexical_path,
@@ -295,6 +299,66 @@ class PrivateRotatingFileHandler(RotatingFileHandler):
         self._harden_existing_generations()
 
 
+class RedactingFileFormatter(logging.Formatter):
+    """Formatter that masks recognized credentials and PII in every record.
+
+    TASK-23190. Redaction here is a property of the *sink*, not of the caller:
+    a record is sanitized on the way to disk whoever logged it and whether or
+    not that code opted in. The standing rule from the loguru ``diagnose``
+    incident is to fix disclosure at the sink rather than at each call site,
+    and TASK-23108 leans on exactly that by telling users "Details are in Logs
+    (F3)" while its own user-facing paths log only exception type names.
+
+    Applied at the format step rather than as a ``logging.Filter`` for two
+    reasons:
+
+    * A filter would have to rewrite ``record.msg``/``record.args``, and the
+      record object is shared with every other handler on the logger. Mutating
+      it changes what the terminal and the in-app Logs screen see, and does so
+      from whichever thread emitted the record.
+    * Only the formatted string contains the exception traceback and stack
+      info. A filter that scrubbed ``record.msg`` would leave a credential
+      embedded in ``str(exc)`` -- the exact shape TASK-23108 was filed about --
+      untouched in the ``exc_info`` block appended after it.
+
+    ``redact_log_line`` is reused verbatim -- the same function the in-app Logs
+    buffer applies -- so file and clipboard diagnostics share the same policy.
+    Its ``MAX_REDACTED_LINE_CHARS`` cap is kept rather than disabled: the cap
+    cuts on a token boundary before redaction, preserving credential detection
+    while bounding sanitizer work. A record longer than 2,000 characters is
+    truncated on disk as well as in the Logs screen.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Return formatted diagnostics with recognized credentials/PII masked.
+
+        Args:
+            record: Log record whose message, exception and stack information
+                are formatted before redaction.
+
+        Returns:
+            Formatted sink text with recognized credentials and PII masked,
+            subject to the sanitizer's token-aligned length limit.
+
+        Raises:
+            KeyError: If message interpolation references a missing argument key.
+            TypeError: If message arguments or record values cannot be formatted.
+            ValueError: If a format specifier is invalid or a required formatter
+                field is absent from the record.
+        """
+
+        return redact_log_line(super().format(record))
+
+
+def _private_file_formatter() -> logging.Formatter:
+    """Return the redacting formatter used by the private file sink."""
+
+    return RedactingFileFormatter(
+        "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
 def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
     """Install the private file sink, leaving existing handlers on failure."""
 
@@ -310,11 +374,17 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
             None,
         )
         if existing_handler is not None:
-            if not any(
-                isinstance(item, PersistentDiagnosticFilter)
-                for item in existing_handler.filters
-            ):
-                existing_handler.addFilter(PersistentDiagnosticFilter())
+            # Reconcile handlers installed under the former metadata-only
+            # policy; the formatter masks credentials and PII in log text.
+            for item in tuple(existing_handler.filters):
+                if isinstance(item, PersistentDiagnosticFilter):
+                    existing_handler.removeFilter(item)
+            # TASK-23190. Reconciled for the same reason the filter above is:
+            # a handler installed by an earlier revision (or by any other
+            # caller that built one) would otherwise keep writing unredacted
+            # lines for the rest of the process.
+            if not isinstance(existing_handler.formatter, RedactingFileFormatter):
+                existing_handler.setFormatter(_private_file_formatter())
             root_logger.info("Private rotating file logging is already installed.")
             # TASK-1240 (M8). This path returns True exactly like the install
             # path below, so it has to emit exactly like it too. An earlier
@@ -336,13 +406,7 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
                 encoding="utf-8",
             )
             file_handler.setLevel(file_log_level)
-            file_handler.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
-                    datefmt="%Y-%m-%d %H:%M:%S",
-                )
-            )
-            file_handler.addFilter(PersistentDiagnosticFilter())
+            file_handler.setFormatter(_private_file_formatter())
             root_logger.addHandler(file_handler)
             root_logger.info(
                 "Private rotating file logging installed at level %s.",
@@ -432,6 +496,96 @@ def _forward_loguru_to_standard(message) -> None:
         std_logger.log(std_level, record["message"], extra=extra)
 
 
+#: Where faulthandler writes. Sits beside the private application log, and is
+#: treated with the same care: a dump contains live stack frames.
+CRASH_DUMP_FILENAME = "faulthandler.log"
+
+#: Dumps append, so an unattended process that keeps hitting the same fault
+#: could grow the file without bound. Reset at startup once past this ceiling.
+#: ponytail: truncate-at-startup, not real rotation -- a single oversized file
+#: is the only failure mode, and one previous crash is what anyone actually
+#: reads. Move to a generation scheme only if that proves insufficient.
+CRASH_DUMP_MAX_BYTES = 1_048_576
+
+#: Held open for the process lifetime: faulthandler writes to this descriptor
+#: from a signal/fault context, so it cannot be reopened lazily.
+_crash_dump_stream = None
+
+
+def enable_crash_forensics():
+    """Install faulthandler so a segfault or deadlock leaves evidence.
+
+    Writes to the private log directory rather than stderr, because a TUI owns
+    the screen and a dump printed there is lost with the alternate buffer. All
+    threads are included so a deadlock -- not just a crash -- is diagnosable,
+    and ``SIGUSR2`` dumps on demand from a process that is still hung.
+
+    Never raises: this is a diagnostic aid, and failing to install it must not
+    become a boot failure.
+
+    Returns:
+        The dump file path, or None when forensics could not be installed.
+    """
+    global _crash_dump_stream
+
+    if _crash_dump_stream is not None:
+        # `configure_application_logging` runs twice in a normal boot; the
+        # first install is the one that counts.
+        return None
+
+    stream = None
+    try:
+        log_directory = lexical_path(get_cli_log_file_path()).parent
+        secure_private_directory(log_directory, create=True, application_owned=True)
+        dump_path = log_directory / CRASH_DUMP_FILENAME
+
+        descriptor = os.open(
+            dump_path,
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        stream = os.fdopen(descriptor, "ab", buffering=0)
+
+        # Bound the file through the descriptor we just opened, not by path.
+        # `os.truncate(path, 0)` follows symlinks, so a link planted at
+        # faulthandler.log would have had its TARGET truncated before the
+        # O_NOFOLLOW open refused it.
+        if os.fstat(stream.fileno()).st_size > CRASH_DUMP_MAX_BYTES:
+            os.ftruncate(stream.fileno(), 0)
+
+        faulthandler.enable(file=stream, all_threads=True)
+
+        # On-demand dump from a wedged process. Absent on Windows.
+        on_demand_signal = getattr(signal, "SIGUSR2", None)
+        if on_demand_signal is not None and hasattr(faulthandler, "register"):
+            try:
+                faulthandler.register(
+                    on_demand_signal, file=stream, all_threads=True, chain=False
+                )
+            except (OSError, RuntimeError, ValueError):
+                # Some embeddings disallow handler registration; the crash
+                # dump above is the part that matters.
+                pass
+
+        # Keep a reference so the descriptor outlives this frame.
+        _crash_dump_stream = stream
+        return dump_path
+    except Exception as exc:  # noqa: BLE001 -- must never break startup
+        if stream is not None:
+            # Otherwise the descriptor leaks on every failed attempt.
+            try:
+                stream.close()
+            except OSError:
+                pass
+        # Swallowing silently would make a misconfiguration invisible -- this
+        # branch hid a TypeError during development. Report the class only; the
+        # message could carry a path.
+        logging.debug(
+            "Crash forensics unavailable (exception_type=%s).", type(exc).__name__
+        )
+        return None
+
+
 def configure_application_logging(app_instance):
     """Sets up all logging handlers, including Loguru integration."""
     # FIXME - LOGGING MAY BRING BACK BLINKING
@@ -440,6 +594,9 @@ def configure_application_logging(app_instance):
     logging.getLogger().addHandler(temp_handler)
     # This first logging.info will go to the stderr handler from the initial basicConfig
     logging.info("--- _setup_logging START (from Logging_Config.py) ---")
+    # Install before the rest of setup: a crash during logging configuration is
+    # exactly the sort this is meant to catch (TASK-26037).
+    enable_crash_forensics()
     logging.getLogger("requests").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -502,7 +659,10 @@ def configure_application_logging(app_instance):
     # This message will go to Loguru's sink (which forwards to std logging,
     # but std logging has no handlers yet, so it might hit Python's "last resort" stderr).
     # Or, better, print to stderr just for this one-off setup message if needed, then rely on proper handlers.
-    if initial_handlers_removed_count > 0:
+    from tldw_chatbook.Utils.startup_logging import startup_stderr_is_quiet
+
+    quiet_startup = startup_stderr_is_quiet()
+    if initial_handlers_removed_count > 0 and not quiet_startup:
         # Using print here because logging state is actively being changed.
         # This should be one of the last messages to hit raw stderr if setup is correct.
         print(
@@ -518,10 +678,11 @@ def configure_application_logging(app_instance):
     initial_log_level = getattr(logging, initial_log_level_str, logging.INFO)
     root_logger.setLevel(initial_log_level)
     # (A temporary print to confirm, as logging to root_logger now might go to "last resort" until a handler is added)
-    print(
-        f"INFO: _setup_logging: Root logger level set to {logging.getLevelName(root_logger.level)}",
-        file=sys.stderr,
-    )
+    if not quiet_startup:
+        print(
+            f"INFO: _setup_logging: Root logger level set to {logging.getLevelName(root_logger.level)}",
+            file=sys.stderr,
+        )
 
     # --- Add TextualHandler (to standard logging) ---
     # (Your existing TextualHandler setup code is fine)
@@ -532,7 +693,17 @@ def configure_application_logging(app_instance):
     )
     if not has_textual_handler:
         textual_console_handler = TextualHandler()
-        textual_console_handler.setLevel(initial_log_level)  # Respects app_config
+        # TASK-21147 (UAT G-7): pre-mount, TextualHandler falls back to
+        # printing on stderr — the cold-start "wall of INFO" (DB migrations
+        # etc.) a first-time user sees before the TUI takes over. Under the
+        # default quiet startup it is capped at WARNING; the file and
+        # RichLog handlers keep the configured level, and
+        # TLDW_VERBOSE_STARTUP=1 restores the historical behavior.
+        textual_console_handler.setLevel(
+            max(initial_log_level, logging.WARNING)
+            if quiet_startup
+            else initial_log_level
+        )
         console_formatter = logging.Formatter(
             "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",

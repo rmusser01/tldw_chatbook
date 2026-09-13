@@ -16,6 +16,26 @@ from tldw_chatbook.Utils.log_sanitizer import (
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
 
 
+def _synthetic(*parts: str) -> str:
+    """Assemble a synthetic credential at import time from fragments.
+
+    The fragments exist so that no committed line of this file contains a
+    contiguous string in a real token shape (TASK-19555 Qodo round, rule
+    497144). Secret scanners -- including GitHub push protection, which
+    rejects the whole branch rather than the file -- match on the literal, so
+    splitting the detector-bearing prefix is what makes the fixture shippable.
+    The assembled value is byte-identical to the one the redactor must handle,
+    so nothing about the test weakens.
+
+    Args:
+        *parts: Fragments to join, split at the detector prefix.
+
+    Returns:
+        The joined synthetic credential.
+    """
+    return "".join(parts)
+
+
 def _iter_leaf_key_names(mapping):
     """Yield leaf mapping keys from the shipped configuration structure."""
     for key, value in mapping.items():
@@ -23,6 +43,88 @@ def _iter_leaf_key_names(mapping):
             yield from _iter_leaf_key_names(value)
         else:
             yield key
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "api_key_count",
+        "api_key_source",
+        "auth_token_present",
+        "server_key",
+        "attempt_token",
+    ],
+)
+def test_diagnostic_redaction_preserves_noncredential_fields(field):
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    line = f"{field}=diagnostic-value status=failed"
+    assert redact_log_line(line) == line
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "api_key",
+        "OPENAI_API_KEY",
+        "x-session-key",
+        "password",
+        "api_token",
+        "provider_api_token",
+        "full_name",
+        "email_address",
+    ],
+)
+def test_diagnostic_redaction_removes_private_fields_and_keeps_following_status(field):
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    line = f"{field}=PRIVATE_VALUE status=failed phase=trace_reservation"
+    expected = f"{field}=***REDACTED*** status=failed phase=trace_reservation"
+    assert redact_log_line(line) == expected
+    assert redact_log_line(expected) == expected
+
+
+def test_logging_change_preserves_legacy_trace_credential_projection():
+    from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+
+    value = {"content": "key=messages status=failed"}
+    assert CredentialSanitizer().sanitize(value).value == {
+        "content": "key=[credential omitted]"
+    }
+
+
+def test_log_helpers_keep_diagnostic_fields_before_the_sink():
+    fields = {
+        "server_key": "llama_cpp",
+        "attempt_token": "run-42",
+        "api_key": "PRIVATE_VALUE",
+    }
+    assert sanitize_dict(fields) == {
+        "server_key": "llama_cpp",
+        "attempt_token": "run-42",
+        "api_key": "***REDACTED***",
+    }
+    assert create_safe_log_message("api_key={} status=failed", "PRIVATE_VALUE") == (
+        "api_key=***REDACTED*** status=failed"
+    )
+
+
+def test_private_key_material_is_redacted_but_its_configured_file_path_is_readable():
+    key = "-----BEGIN PRIVATE KEY-----\nPRIVATE_BODY\n-----END PRIVATE KEY-----"
+    assert sanitize_string(f"TLS failed: {key}; status=failed") == (
+        "TLS failed: ***REDACTED***; status=failed"
+    )
+    assert sanitize_dict({"tls_private_key": "/etc/certs/server.pem"}) == {
+        "tls_private_key": "/etc/certs/server.pem"
+    }
+
+
+@pytest.mark.parametrize("field", ["database_url", "dsn", "connection_string"])
+def test_connection_diagnostics_keep_host_and_database_but_remove_credentials(field):
+    values = {field: "postgresql://elise:PRIVATE_VALUE@localhost:5432/chatbook"}
+    assert sanitize_dict(values) == {
+        field: "postgresql://***REDACTED***@localhost:5432/chatbook"
+    }
 
 
 def test_real_shipped_sensitive_key_names_are_redacted() -> None:
@@ -44,7 +146,13 @@ def test_real_shipped_sensitive_key_names_are_redacted() -> None:
     result = sanitize_dict(sentinels)
 
     assert set(result) == set(sentinels)
-    assert all(value == "***REDACTED***" for value in result.values())
+    # These are a keystroke toggle, a cache toggle and a certificate-file path.
+    benign = {"auto_save_on_every_key", "openai_cache_key", "tls_private_key"}
+    assert {
+        key: value for key, value in result.items() if value != "***REDACTED***"
+    } == {key: sentinels[key] for key in benign}, {
+        key for key, value in result.items() if value != "***REDACTED***"
+    }
 
 
 @pytest.mark.parametrize(
@@ -56,9 +164,6 @@ def test_real_shipped_sensitive_key_names_are_redacted() -> None:
         "Set-Cookie",
         "credential",
         "credentials",
-        "database_url",
-        "connection-string",
-        "dsn",
     ],
 )
 def test_log_protocol_fields_are_redacted_without_expanding_config_policy(
@@ -132,7 +237,7 @@ def test_sensitive_container_value_is_redacted_before_recursion(value) -> None:
             "max_tokens=42 api_key=PRIVATE_LATER",
             "max_tokens=42 api_key=***REDACTED***",
         ),
-        ("api_key=PRIVATE_QUERY&safe=visible", "api_key=***REDACTED***"),
+        ("api_key=PRIVATE_QUERY&safe=visible", "api_key=***REDACTED***&safe=visible"),
         (
             "api_key=\nrefresh_token=PRIVATE_NEXT",
             "api_key=\nrefresh_token=***REDACTED***",
@@ -199,6 +304,11 @@ def test_all_config_derived_sensitive_labels_redact_quoted_and_unquoted_values()
         quoted = f'{label}="PRIVATE_QUOTED_{index}"'
         unquoted = f"{label}=PRIVATE_UNQUOTED_{index}"
 
+        if label in {"auto_save_on_every_key", "openai_cache_key", "tls_private_key"}:
+            assert sanitize_string(quoted) == quoted
+            assert sanitize_string(unquoted) == unquoted
+            continue
+
         assert sanitize_string(quoted) == f'{label}="***REDACTED***"'
         assert sanitize_string(unquoted) == f"{label}=***REDACTED***"
 
@@ -224,21 +334,40 @@ def test_standalone_bearer_credential_preserves_scheme_only() -> None:
     assert sanitize_string("Bearer PRIVATE_BEARER") == "Bearer ***REDACTED***"
 
 
-def test_url_userinfo_removes_both_username_and_password() -> None:
+@pytest.mark.parametrize(
+    "username", ["user", "o'connor", "alice+user", "alice;user", "alice'user"]
+)
+def test_url_userinfo_removes_both_username_and_password(username: str) -> None:
     """Redact URL credentials as one neutral marker."""
-    result = sanitize_string("https://user:PRIVATE_PASSWORD@example.test/private")
+    result = sanitize_string(
+        f"https://{username}:PRIVATE_PASSWORD@example.test/private"
+    )
 
     assert result == "https://***REDACTED***@example.test/private"
-    assert "user" not in result
+    assert username not in result
     assert "PRIVATE_PASSWORD" not in result
 
 
 @pytest.mark.parametrize(
     "raw",
     [
-        "sk-proj-DO_NOT_USE_EXAMPLE_123456",
-        "sk-ant-api03-DO_NOT_USE_EXAMPLE_123456",
-        "sk-DONOTUSEEXAMPLEONLY1234567890",
+        '{"url":"http://localhost","password":"head@PRIVATE_TAIL"}',
+        "{'url':'http://localhost','password':'head@PRIVATE_TAIL'}",
+        'url=http://localhost,password="head@PRIVATE_TAIL" status=failed',
+        "url=http://localhost,password=head@PRIVATE_TAIL status=failed",
+    ],
+)
+def test_url_redaction_does_not_cross_into_separate_credential_fields(raw):
+    assert sanitize_string(raw) == raw.replace("head@PRIVATE_TAIL", "***REDACTED***")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # Assembled, not literal -- see `_synthetic` (TASK-19555 Qodo round).
+        _synthetic("sk", "-proj-DO_NOT_USE_EXAMPLE_123456"),
+        _synthetic("sk", "-ant-api03-DO_NOT_USE_EXAMPLE_123456"),
+        _synthetic("sk", "-DONOTUSEEXAMPLEONLY1234567890"),
         "AIza" + "DO_NOT_USE_EXAMPLE_ONLY_" + "0" * 11,
     ],
     ids=("openai-project", "anthropic", "openai-legacy", "google"),
@@ -270,7 +399,8 @@ def test_uppercase_standalone_credential_shapes_are_not_recognized(raw: str) -> 
 
 def test_labeled_standalone_shaped_value_has_one_idempotent_marker() -> None:
     """Assignment redaction consumes a key-shaped quoted secret only once."""
-    raw = 'api_key="sk-proj-DO_NOT_USE_EXAMPLE_123456"'
+    secret = _synthetic("sk", "-proj-DO_NOT_USE_EXAMPLE_123456")
+    raw = f'api_key="{secret}"'
     sanitized = sanitize_string(raw)
 
     assert sanitized == 'api_key="***REDACTED***"'
@@ -310,6 +440,32 @@ def test_safe_log_calls_callback_once_with_sanitized_final_message() -> None:
     safe_log(calls.append, "api_key={}", "PRIVATE_CALLBACK")
 
     assert calls == ["api_key=***REDACTED***"]
+
+
+def test_diagnostic_redaction_preserves_nonsecret_keys_and_following_fields() -> None:
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    raw = (
+        "2026-09-08 09:35:26,775 provider=llama_cpp model=qwen3.7-27b "
+        "server_key=local key=messages attempt_token=68092c648f674162a19c88e6c12d0a4c "
+        "api_key=not-a-real-key status=failed phase=trace_reservation "
+        "python_version=3.14.7 sqlite_version=3.51.2"
+    )
+    assert redact_log_line(raw) == raw.replace("not-a-real-key", "***REDACTED***")
+
+
+@pytest.mark.parametrize(
+    "pii", ["elise@example.test", "123-45-6789", "+1 (415) 555-0123"]
+)
+def test_diagnostic_redaction_masks_pii_without_erasing_the_error(pii: str) -> None:
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    rendered = redact_log_line(
+        f"Lookup failed for {pii}; phase=provider_entry status=failed"
+    )
+    assert pii not in rendered
+    assert "Lookup failed for " in rendered
+    assert "phase=provider_entry status=failed" in rendered
 
 
 def test_long_non_matching_text_remains_unchanged() -> None:
@@ -410,7 +566,7 @@ class TestLogSanitizer:
         msg = create_safe_log_message(
             "User {} logged in with key {}",
             "john",
-            "sk-DONOTUSEEXAMPLEONLY1234567890",
+            _synthetic("sk", "-DONOTUSEEXAMPLEONLY1234567890"),
         )
         assert msg == "User john logged in with key ***REDACTED***"
 
@@ -430,3 +586,367 @@ class TestLogSanitizer:
         assert "***REDACTED***" in clean_args[2]
         assert clean_kwargs["token"] == "***REDACTED***"
         assert clean_kwargs["safe"] == "value"
+
+
+# ---------------------------------------------------------------------------
+# TASK-19555: the sink-side redactor applied to every record entering the
+# in-app log collector, plus the hyphen-normalization repair it depends on.
+# ---------------------------------------------------------------------------
+
+
+class TestSinkRedaction:
+    """`redact_log_line` and its two halves."""
+
+    @pytest.mark.parametrize(
+        "header",
+        ["x-auth-token", "X-Session-Key", "x-client-secret", "api-secret"],
+    )
+    def test_hyphenated_header_names_are_recognised_as_secret_bearing(
+        self, header: str
+    ) -> None:
+        """The normalization used to be computed and then thrown away.
+
+        `is_sensitive_config_key` received the RAW key, and its
+        `_key`/`_token`/`_secret` rules are underscore-suffix matches, so
+        every hyphenated header whose sensitivity comes from a suffix was
+        classified harmless and its value written out verbatim. These are the
+        exact names provider request logging produces.
+        """
+        line = f"sending {header}: DONOTUSEEXAMPLEONLYzz9911"
+        assert "DONOTUSEEXAMPLEONLYzz9911" not in sanitize_string(line)
+
+    def test_max_tokens_is_not_a_false_positive_after_normalization(self) -> None:
+        """`max-tokens` normalizes to `max_tokens`, which is still not `_token`."""
+        assert sanitize_string("max-tokens=4096") == "max-tokens=4096"
+
+    @pytest.mark.parametrize(
+        "header",
+        ["Ocp-Apim-Subscription-Key", "X-Subscription-Token"],
+    )
+    def test_task_19558_probe_headers_stay_recognised(self, header: str) -> None:
+        """TASK-19558 named three probe keys; TASK-19555's repair covers two.
+
+        Re-asserted here (not merely assumed from the parametrized case
+        above) because the finding named these exact header names and they
+        are the ones live provider request logging produces.
+        """
+        line = f"{header}: DONOTUSEEXAMPLEONLYzz9911"
+        assert "DONOTUSEEXAMPLEONLYzz9911" not in sanitize_string(line)
+
+    def test_url_key_credentials_are_removed_without_hiding_ordinary_keys(self) -> None:
+        """URL query credentials and recognizable tokens remain protected."""
+        url = (
+            "https://www.googleapis.com/customsearch/v1"
+            "?key=AIzaSyDONOTUSEEXAMPLEONLY12345&cx=abc"
+        )
+        sanitized = sanitize_string(url)
+        assert "AIzaSyDONOTUSEEXAMPLEONLY12345" not in sanitized
+        credential = _synthetic("AI", "za", "a" * 35)
+        assert sanitize_dict({"key": credential}) == {"key": "***REDACTED***"}
+        assert sanitize_dict({"key": "messages"}) == {"key": "messages"}
+
+    def test_the_bare_key_rule_did_not_leak_into_config_encryption(self) -> None:
+        """Scope of the fix, pinned.
+
+        `is_sensitive_config_key` also decides which config fields get
+        ENCRYPTED and how many the Privacy & Security screen counts as
+        protected. Widening it for a logging-only reason would silently
+        change both, so `key` was added to the log-only set instead.
+        """
+        from tldw_chatbook.Utils.sensitive_config_keys import (
+            is_sensitive_config_key,
+        )
+
+        assert is_sensitive_config_key("key") is False
+        assert is_sensitive_config_key("openai_api_key") is True
+
+    def test_home_directory_collapses_to_tilde(self) -> None:
+        """The account name is a real-name identifier; the path shape is not."""
+        from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
+        assert (
+            redact_user_paths("saved /Users/janedoe/Notes/Q3.pdf")
+            == "saved ~/Notes/Q3.pdf"
+        )
+        assert redact_user_paths("/home/janedoe/.cache/x") == "~/.cache/x"
+        assert (
+            redact_user_paths(r"read C:\Users\janedoe\AppData\x") == r"read ~\AppData\x"
+        )
+
+    def test_url_paths_are_not_mistaken_for_home_directories(self) -> None:
+        """Case-sensitive on purpose: `/users/` in a REST URL is not a home."""
+        from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
+        url = "GET https://api.example.com/users/alice/profile"
+        assert redact_user_paths(url) == url
+
+    def test_redact_log_line_applies_both_halves(self) -> None:
+        from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+        secret = _synthetic("sk", "-DONOTUSEEXAMPLE1234567890")
+        line = f"upload /Users/janedoe/x.pdf with api_key={secret}"
+        redacted = redact_log_line(line)
+        assert "janedoe" not in redacted
+        assert secret not in redacted
+        assert "upload ~/x.pdf" in redacted
+
+    def test_redact_log_line_leaves_ordinary_diagnostics_alone(self) -> None:
+        """Redaction must not be so eager that the Logs screen stops helping."""
+        from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+        line = "RAG search returned 12 chunks in 340ms (mode=hybrid)"
+        assert redact_log_line(line) == line
+
+    @pytest.mark.parametrize(
+        "credential",
+        [
+            # Every one is assembled by `_synthetic` rather than written as a
+            # literal: see that helper for why (Qodo rule 497144 / GitHub push
+            # protection). The values reaching the redactor are unchanged.
+            _synthetic("ghp", "_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaaaaaaaa"),
+            _synthetic("gho", "_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaaaaaaaa"),
+            _synthetic("github", "_pat_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaaaaaa"),
+            _synthetic("hf", "_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaa"),
+            _synthetic("sk", "-or-v1-DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaa"),
+            _synthetic("AKI", "ADONOTUSEEXAMPLE1"),
+            _synthetic("xox", "b-1234567890-DONOTUSEEXAMPLEONLY"),
+            _synthetic(
+                "eyJ", "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+                ".DONOTUSEEXAMPLE1",
+            ),
+        ],
+    )
+    def test_unlabelled_provider_token_shapes_are_redacted(
+        self, credential: str
+    ) -> None:
+        """TASK-19555 review: the empty state claimed API keys were "always"
+        removed while `ghp_`, `hf_`, `sk-or-v1-`, `AKIA…` and JWTs all walked
+        straight through, because the standalone set only knew four shapes.
+        The copy is now "recognised formats" AND the set is wider."""
+        assert credential not in sanitize_string(f"request failed: {credential}")
+
+    def test_windows_home_paths_redact_in_either_case_and_over_unc(self) -> None:
+        """`Users` was a literal, so only the `C:\\Users\\` spelling redacted."""
+        from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
+        assert redact_user_paths(r"c:\users\janedoe\Notes") == r"~\Notes"
+        assert redact_user_paths(r"C:\Users\janedoe\Notes") == r"~\Notes"
+        assert redact_user_paths(r"\\FILESRV\Users\janedoe\Notes") == r"~\Notes"
+
+    def test_oversized_lines_are_truncated_before_redaction(self) -> None:
+        """Cost is linear in length and the buffer bounds line COUNT only."""
+        from tldw_chatbook.Utils.log_sanitizer import (
+            MAX_REDACTED_LINE_CHARS,
+            redact_log_line,
+        )
+
+        redacted = redact_log_line("payload " + "y" * 60_000)
+        assert len(redacted) < MAX_REDACTED_LINE_CHARS + 200
+        assert "truncated, 60008 chars" in redacted
+
+    def test_ordinary_length_lines_are_not_marked_truncated(self) -> None:
+        from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+        assert "truncated" not in redact_log_line("a short diagnostic line")
+
+
+# ---------------------------------------------------------------------------
+# TASK-19555 Qodo round: two security defects in the first cut of the above.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Cookie: theme=light; session_id=PRIVATE_SESSION; csrftoken=PRIVATE_CSRF",
+        'Authorization: Digest username="alice", realm="example", nonce="PRIVATE_NONCE", response="PRIVATE_RESPONSE"',
+    ],
+)
+def test_nested_authentication_fields_remain_inside_the_credential(header):
+    redacted = sanitize_string(header + "\nphase=provider_entry status=failed")
+    assert "PRIVATE_" not in redacted
+    assert redacted.endswith("\nphase=provider_entry status=failed")
+
+
+@pytest.mark.parametrize("label", ["User", "user", "USER"])
+def test_character_user_label_masks_name_and_keeps_diagnostics(label):
+    raw = (
+        f"Loading character and image for ID: 42, {label}: Alice Example "
+        "provider=llamacpp model=qwen3.7-27b"
+    )
+    assert sanitize_string(raw) == raw.replace("Alice Example", "***REDACTED***")
+    assert sanitize_dict({label: "Alice Example", "model_name": "qwen3.7-27b"}) == {
+        label: "***REDACTED***",
+        "model_name": "qwen3.7-27b",
+    }
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Cookie: theme=light; session_id=PRIVATE_SESSION; csrf=PRIVATE_CSRF",
+        "Set-Cookie: session_id=PRIVATE_SESSION; Path=/; HttpOnly; SameSite=Lax",
+        "Set-Cookie: session_id=PRIVATE_SESSION; Expires=Wed, 09 Jun 2027 10:18:14 GMT; csrf=PRIVATE_CSRF",
+        'Authorization: Digest username="Alice", nonce="PRIVATE_NONCE", response="PRIVATE_RESPONSE"',
+        'Proxy-Authorization: Digest username="Alice", nonce="PRIVATE_NONCE", response="PRIVATE_RESPONSE"',
+    ],
+)
+@pytest.mark.parametrize("separator", [" ", " | "])
+def test_protocol_headers_preserve_separate_same_line_diagnostics(header, separator):
+    suffix = separator + "phase=provider_entry status=failed"
+    redacted = sanitize_string(header + suffix)
+    assert redacted == header.split(":", 1)[0] + ": ***REDACTED***" + suffix
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Cookie: phase=PRIVATE_PHASE; status=PRIVATE_STATUS",
+        'Cookie: session="PRIVATE_START | phase=PRIVATE_PHASE status=PRIVATE_STATUS"',
+        "Set-Cookie: phase=PRIVATE_PHASE; status=PRIVATE_STATUS",
+        'Authorization: Digest username="Alice", phase="PRIVATE_PHASE", response="PRIVATE_RESPONSE"',
+        'Proxy-Authorization: Digest username="Alice \\" | phase=PRIVATE_PHASE", response="PRIVATE_RESPONSE"',
+    ],
+)
+def test_protocol_parameter_names_and_quoted_diagnostics_remain_private(header):
+    assert sanitize_string(header) == header.split(":", 1)[0] + ": ***REDACTED***"
+
+
+@pytest.mark.parametrize(
+    "key", ["aws_secret_access_key", "secret_access_key", "secret_key", "bearer_token"]
+)
+def test_explicit_credential_aliases_are_masked(key):
+    assert "PRIVATE_VALUE" not in sanitize_string(f"{key}=PRIVATE_VALUE status=failed")
+    assert sanitize_dict({key: "PRIVATE_VALUE", "server_key": "messages"}) == {
+        key: "***REDACTED***",
+        "server_key": "messages",
+    }
+
+
+@pytest.mark.parametrize("label", ["connection_string", "connection-string", "dsn"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Server=localhost;Uid=alice;Pwd=PRIVATE_PASSWORD;Database=chatbook",
+        'Server=localhost;User ID="alice";Password="PRIVATE PASSWORD";Database=chatbook',
+        "Server=localhost;Uid=alice;Pwd={PRIVATE_PREFIX;Mode=PRIVATE_SUFFIX};Database=chatbook",
+    ],
+)
+def test_database_connection_fields_preserve_host_and_database(label, value):
+    redacted = sanitize_string(f"{label}={value}")
+    assert "alice" not in redacted
+    assert "PRIVATE" not in redacted
+    assert "Server=localhost" in redacted
+    assert "Database=chatbook" in redacted
+    structured = sanitize_dict({label: value})[label]
+    assert "alice" not in structured
+    assert "PRIVATE" not in structured
+    assert "Server=localhost" in structured
+    assert "Database=chatbook" in structured
+
+
+@pytest.mark.parametrize("fragment", ["a.", "a%"])
+def test_nonmatching_address_candidates_do_not_rescan_prefixes(fragment):
+    import time
+
+    # These 32KB no-match inputs took seconds with overlapping regex starts.
+    # A generous ceiling avoids machine-speed-sensitive microbenchmarks.
+    value = fragment * 16_000
+    started = time.monotonic()
+    assert sanitize_string(value) == value
+    assert time.monotonic() - started < 0.5
+
+
+class TestRedactionOrderAndPathBoundaries:
+    """Truncation must not manufacture a partial secret, and the literal
+    home substitution must not rewrite half of somebody else's username."""
+
+    def test_credential_astride_the_truncation_boundary_leaves_no_fragment(
+        self,
+    ) -> None:
+        """Truncating BEFORE redaction cut tokens out of pattern range.
+
+        `_STANDALONE_CREDENTIALS` all carry minimum lengths (`sk-` needs 20+
+        trailing characters). A secret straddling the cap was therefore sliced
+        into a fragment too short to match, and the fragment stayed in the
+        Logs view and in "Copy visible logs" -- the exact surface this task
+        exists to protect.
+        """
+        from tldw_chatbook.Utils.log_sanitizer import (
+            MAX_REDACTED_LINE_CHARS,
+            redact_log_line,
+        )
+
+        secret = _synthetic("sk", "-", "B" * 40)
+        # Land the cap inside the token: 13 of its characters fall before it.
+        head = "x" * (MAX_REDACTED_LINE_CHARS - 20)
+        line = f"{head} token {secret} tail " + "y " * 5000
+
+        redacted = redact_log_line(line)
+
+        assert secret not in redacted
+        # ...and no leading slice of it either.
+        assert _synthetic("sk", "-B") not in redacted
+
+    def test_truncation_keeps_whole_tokens_and_still_reports_the_real_length(
+        self,
+    ) -> None:
+        from tldw_chatbook.Utils.log_sanitizer import (
+            MAX_REDACTED_LINE_CHARS,
+            redact_log_line,
+        )
+
+        line = "chunk " * 5000
+        redacted = redact_log_line(line)
+
+        assert "truncated, 30000 chars" in redacted
+        assert len(redacted) < MAX_REDACTED_LINE_CHARS + 100
+        # No half-word at the seam: every retained token is intact.
+        body = redacted.split("…")[0]
+        assert set(body.split()) <= {"chunk"}
+
+    def test_one_unbroken_token_larger_than_the_cap_is_withheld_entirely(
+        self,
+    ) -> None:
+        """No safe cut exists inside a single token, so none is attempted."""
+        from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+        blob = "Q" * 9000
+        redacted = redact_log_line(blob)
+
+        assert "Q" * 50 not in redacted
+        assert "9000" in redacted
+
+    def test_a_home_prefixing_another_account_is_not_partially_replaced(
+        self, monkeypatch
+    ) -> None:
+        """`str.replace` rewrote `/Users/jan` inside `/Users/janedoe`.
+
+        That left `edoe` -- still identifying -- and destroyed the `/Users/`
+        prefix `_HOME_ROOTS_POSIX` needed in order to fire, so the fallback
+        could not clean up after it either.
+        """
+        monkeypatch.setenv("HOME", "/Users/jan")
+        from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
+        assert redact_user_paths("/Users/janedoe/Notes/x.pdf") == "~/Notes/x.pdf"
+        assert "edoe" not in redact_user_paths("/Users/janedoe/Notes/x.pdf")
+
+    def test_the_windows_home_literal_respects_segment_boundaries_too(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("USERPROFILE", r"C:\Users\jan")
+        from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
+        assert redact_user_paths(r"C:\Users\janedoe\Notes") == r"~\Notes"
+
+    def test_an_exotic_home_outside_users_and_home_still_collapses(
+        self, monkeypatch
+    ) -> None:
+        """The literal pass is what covers `/root` and `$HOME` overrides."""
+        monkeypatch.setenv("HOME", "/srv/appdata")
+        from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
+        assert redact_user_paths("/srv/appdata/db.sqlite") == "~/db.sqlite"
+        # A sibling that merely shares the prefix must survive intact.
+        assert redact_user_paths("/srv/appdata-backup/db") == "/srv/appdata-backup/db"

@@ -19,6 +19,7 @@ from unittest.mock import Mock, patch
 
 from tldw_chatbook import config
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
+from tldw_chatbook.Evals.eval_errors import DatasetLoadingError
 from tldw_chatbook.Evals.eval_errors import EvaluationError, ErrorContext, ErrorCategory
 from tldw_chatbook.Evals.eval_runner import EvalSampleResult
 from tldw_chatbook.Utils.private_paths import PrivatePathError
@@ -189,16 +190,27 @@ class TestEvaluationOrchestrator:
                     }
                     mock_db.get_model.return_value = model_config
 
-                    # Start evaluation (will fail but should track)
-                    try:
+                    # The run is expected to fail here -- the dataset is a
+                    # name, not a loadable dataset. What is under test is what
+                    # happens around that failure, so the failure is captured
+                    # rather than swallowed: `except Exception: pass` would also
+                    # absorb a broken mock or an unrelated crash, and the test
+                    # would pass having exercised nothing. Asserting the type
+                    # keeps this pinned to the intended path.
+                    with pytest.raises(DatasetLoadingError):
                         await orchestrator.run_evaluation(
                             task_id="test_task", model_id="test-model", max_samples=10
                         )
-                    except Exception:
-                        pass  # Expected to fail in test environment
 
-                    # Check if tracking was attempted
-                    # Note: In real implementation, task would be added to _active_tasks
+                    # The three things "tracks active tasks" actually means. The
+                    # original ended here with two comments saying the check had
+                    # not been written.
+                    mock_db.create_run.assert_called()
+                    mock_db.update_run_status.assert_called()
+                    assert orchestrator._active_tasks == {}, (
+                        "a run that failed left its task registered; the tracking "
+                        f"this test is named for leaks: {orchestrator._active_tasks}"
+                    )
 
     def test_database_initialization(self, tmp_path):
         """Test database is properly initialized."""

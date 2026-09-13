@@ -50,7 +50,7 @@ async def _notice_text(detail: TaskDetail) -> tuple[str, bool]:
 
 @pytest.mark.asyncio
 async def test_late_recurring_renders_notice_with_skipped_count():
-    """A missed-while-away recurring task shows the notice + exact count."""
+    """A late recurring task shows the notice + exact count."""
     async with _DetailHarnessApp().run_test() as pilot:
         detail = pilot.app.query_one(TaskDetail)
         detail.set_task(
@@ -63,7 +63,7 @@ async def test_late_recurring_renders_notice_with_skipped_count():
         await pilot.pause()
         text, visible = await _notice_text(detail)
         assert visible
-        assert "Missed while away" in text
+        assert "Ran late" in text
         assert "1 earlier occurrence(s) were skipped" in text
         assert "not replayed" in text
 
@@ -85,8 +85,8 @@ async def test_late_one_time_renders_notice_without_count():
         await pilot.pause()
         text, visible = await _notice_text(detail)
         assert visible
-        assert "Missed while away" in text
-        assert "occurrence ran late" in text
+        assert "Ran late" in text
+        assert "dispatched well after its scheduled time" in text
         assert "skipped" not in text
 
 
@@ -176,3 +176,38 @@ async def test_cleared_task_hides_notice():
         await pilot.pause()
         _, visible_after = await _notice_text(detail)
         assert not visible_after
+
+
+@pytest.mark.asyncio
+async def test_the_notice_never_claims_the_scheduler_was_not_running():
+    """task-19562: the app must not assert a cause it cannot know.
+
+    `SchedulerLoop.tick` awaits every due handler serially, so one slow
+    handler pushes the tasks behind it past the missed-fire grace while the
+    scheduler is running the whole time. The row that results is identical
+    to one from an app that was closed. The old copy -- "Missed while away
+    ... (the scheduler was not running at the scheduled time)" -- was
+    therefore false for an ordinary, reachable case.
+
+    Checked across every branch of the notice, because the false sentence
+    lived in only one of the three and a copy edit could easily restore it
+    in another.
+    """
+    forbidden = ("Missed while away", "was not running")
+    cases = (
+        dict(missed_at=NOW - timedelta(hours=2), missed_count=1),
+        dict(missed_at=NOW - timedelta(hours=2), missed_count=0),
+        dict(missed_at=NOW - timedelta(days=200), missed_count=-1),
+    )
+    async with _DetailHarnessApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        for case in cases:
+            detail.set_task(_reminder(last_status=TaskStatus.COMPLETED, **case))
+            await pilot.pause()
+            text, visible = await _notice_text(detail)
+            assert visible
+            for phrase in forbidden:
+                assert phrase not in text, (
+                    f"the notice claims a cause the app cannot know: {text!r}"
+                )
+            assert "Ran late" in text

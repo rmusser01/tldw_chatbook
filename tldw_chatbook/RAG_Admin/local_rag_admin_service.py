@@ -14,7 +14,12 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Optional
 
-from ..Chunking.chunking_interop_library import get_chunking_service
+# (task-21102) ``Chunking.auto_selection`` / ``Chunking.chunking_interop_
+# library`` are deliberately NOT imported at module scope: this module is on
+# the app's boot-import path (``RAG_Admin/__init__`` <- app.py), and any
+# ``tldw_chatbook.Chunking`` import executes the full shim + vendored engine
+# (~15k LOC). Both names are imported function-locally at their use sites --
+# a sys.modules hit after the first template operation.
 
 
 class LocalRAGAdminService:
@@ -29,9 +34,13 @@ class LocalRAGAdminService:
         media_service: Any = None,
     ):
         self.media_db = media_db
-        self.chunking_service = chunking_service or (
-            get_chunking_service(media_db) if media_db is not None else None
-        )
+        # ``not chunking_service`` (not ``is None``) preserves the original
+        # ``chunking_service or ...`` falsy semantics exactly.
+        if not chunking_service and media_db is not None:
+            from ..Chunking.chunking_interop_library import get_chunking_service
+
+            chunking_service = get_chunking_service(media_db)
+        self.chunking_service = chunking_service or None
         self._vector_store = vector_store
         self.media_service = media_service
 
@@ -118,21 +127,63 @@ class LocalRAGAdminService:
             decorated.get("template") or decorated.get("template_json")
         )
         decorated["tags"] = self._extract_template_tags(decorated, template_config)
+        # (auto-selection spec §4.3/AC 14) A legacy row named "auto" —
+        # minted before the CRUD reservation — is never hidden or deleted:
+        # the listing flags it ``name_reserved`` so surfaces can render it
+        # as shadowed by the picker sentinel, and auto tier 1 skips it by
+        # name (never selected, never auto-shadowed). Case-insensitive on
+        # the whole word (Qodo #4): "Auto"/"AUTO" render indistinguishably
+        # from the picker's built-in Auto option, so they are flagged too.
+        from ..Chunking.auto_selection import AUTO_SENTINEL
+
+        if str(decorated.get("name") or "").strip().lower() == AUTO_SENTINEL:
+            decorated["name_reserved"] = True
+        # (task 10, AC-24a) The listing surface carries validity DATA: a
+        # stored-invalid template is listed WITH a flag rather than hidden
+        # or silently applied. The flag is computed here (the data half);
+        # where it renders is the UI task's. The validator never raises
+        # (Task 6 contract: ``{valid, errors, warnings}``), so decoration
+        # cannot break a listing.
+        validated = {
+            key: value
+            for key, value in template_config.items()
+            if key not in ("name", "description")
+        }
+        result = self._validate_template_body(validated)
+        decorated["template_valid"] = bool(result["valid"])
+        issues = [
+            f"{issue['field']}: {issue['message']}"
+            for issue in result["errors"]
+        ]
+        if issues:
+            decorated["template_validation_errors"] = issues
         return decorated
 
     @staticmethod
-    def _with_template_tags(
-        template: Mapping[str, Any], tags: Sequence[str] | None
-    ) -> dict[str, Any]:
-        payload = dict(template)
-        if tags is None:
-            return payload
-        normalized_tags = LocalRAGAdminService._normalize_tags(tags)
-        metadata = dict(payload.get("metadata") or {})
-        metadata["tags"] = normalized_tags
-        payload["metadata"] = metadata
-        payload["tags"] = normalized_tags
-        return payload
+    def _validate_template_body(body: Mapping[str, Any]) -> dict[str, Any]:
+        """Run the server-parity validator on a template body.
+
+        Never raises (the validator's own contract, Task 6): returns
+        ``{"valid": bool, "errors": [...], "warnings": [...]}`` so callers
+        can flag rather than crash. An un-runnable body (not a mapping)
+        reports invalid instead of blowing up the listing/apply surface.
+        """
+        # Lazy: module scope would be circular (RAG_Admin imports this
+        # module's package through the scope service).
+        from .template_validation import validate_template
+
+        if not isinstance(body, Mapping):
+            return {
+                "valid": False,
+                "errors": [
+                    {
+                        "field": "template",
+                        "message": "template body is not an object",
+                    }
+                ],
+                "warnings": [],
+            }
+        return validate_template(dict(body))
 
     def _get_collection(self, collection_name: str) -> Any:
         return self._require_chroma_client().get_collection(name=collection_name)
@@ -178,7 +229,7 @@ class LocalRAGAdminService:
         templates = [
             self._decorate_template_record(template)
             for template in list(
-                self._require_chunking_service().get_all_templates(include_system=True)
+                self._require_chunking_service().get_all_templates(include_builtin=True)
                 or []
             )
         ]
@@ -186,13 +237,13 @@ class LocalRAGAdminService:
             templates = [
                 template
                 for template in templates
-                if not bool(template.get("is_system", False))
+                if not bool(template.get("is_builtin", False))
             ]
         if not include_custom:
             templates = [
                 template
                 for template in templates
-                if bool(template.get("is_system", False))
+                if bool(template.get("is_builtin", False))
             ]
         if tags:
             requested_tags = {str(tag) for tag in tags if str(tag).strip()}
@@ -219,10 +270,13 @@ class LocalRAGAdminService:
         user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         service = self._require_chunking_service()
+        # task-8: tags persist in the v7 ``tags`` column (the interop also
+        # moves any body tags there), not embedded in the JSON body.
         template_id = service.create_template(
             name=name,
             description=description,
-            template_json=self._with_template_tags(template, tags),
+            template_json=dict(template),
+            tags=self._normalize_tags(tags) if tags is not None else None,
         )
         return self._decorate_template_record(
             service.get_template_by_id(int(template_id))
@@ -238,20 +292,11 @@ class LocalRAGAdminService:
     ) -> dict[str, Any]:
         service = self._require_chunking_service()
         existing = self.get_template(template_name)
-        template_payload: dict[str, Any] | None = None
-        if template is not None:
-            template_payload = self._with_template_tags(
-                template, tags if tags is not None else existing.get("tags")
-            )
-        elif tags is not None:
-            template_payload = self._with_template_tags(
-                self._parse_template_config(existing.get("template_json")),
-                tags,
-            )
         service.update_template(
             int(existing["id"]),
             description=description,
-            template_json=template_payload,
+            template_json=dict(template) if template is not None else None,
+            tags=self._normalize_tags(tags) if tags is not None else None,
         )
         return self._decorate_template_record(
             service.get_template_by_id(int(existing["id"]))
@@ -260,6 +305,29 @@ class LocalRAGAdminService:
     def delete_template(self, template_name: str, *, hard_delete: bool = False) -> None:
         existing = self.get_template(template_name)
         self._require_chunking_service().delete_template(int(existing["id"]))
+
+    def diagnostics_are_thread_safe(self) -> bool:
+        """Report whether ``get_template_diagnostics`` may run off the loop.
+
+        (TASK-21126) The diagnostics payload's only I/O is the legacy-chunk
+        census, a read-only SELECT against the media DB. ``MediaDatabase``
+        hands out THREAD-LOCAL connections, so a worker thread opens its
+        own — fine (and WAL-safe) for a file-backed database, but for a
+        ``:memory:`` one it opens a *different, empty* database and the
+        census would silently report zero legacy items instead of raising.
+        Every production wiring is file-backed (``app.media_db``); the
+        memory case is tests and ephemeral fixtures, and it stays on the
+        calling thread rather than getting a wrong answer quietly.
+
+        Returns:
+            True when the census is safe to run on a worker thread.
+        """
+        db = self.media_db
+        if db is None:
+            # No media DB: `get_legacy_chunk_report_line` returns "" without
+            # touching sqlite, so there is nothing thread-bound to protect.
+            return True
+        return not bool(getattr(db, "is_memory_db", False))
 
     def get_template_diagnostics(self) -> dict[str, Any]:
         service = self._require_chunking_service()
@@ -319,8 +387,36 @@ class LocalRAGAdminService:
         override_options: Optional[Mapping[str, Any]] = None,
         include_metadata: bool = False,
     ) -> dict[str, Any]:
+        """Apply a stored template to text.
+
+        (task 10, AC-24b) A stored-invalid template body is REFUSED here
+        with the named :class:`InvalidTemplateError` -- never an unnamed
+        engine error surfacing mid-chunk. The apply path cannot rely on
+        validate-on-write alone: stored-invalid rows exist (v6→v7
+        conversion can mint them; rows written before the gate existed),
+        and they remain deliberately editable (update validates the NEW
+        body only) -- so apply is the last line of defense.
+        """
         record = self.get_template(template_name)
         template_config = self._parse_template_config(record.get("template_json"))
+        validation = self._validate_template_body(
+            {
+                key: value
+                for key, value in template_config.items()
+                if key not in ("name", "description")
+            }
+        )
+        if not validation["valid"]:
+            from ..Chunking.chunking_interop_library import InvalidTemplateError
+
+            summary = "; ".join(
+                f"{issue['field']}: {issue['message']}"
+                for issue in validation["errors"][:3]
+            )
+            raise InvalidTemplateError(
+                f"Template '{template_name}' failed validation and was "
+                f"refused: {summary}"
+            )
         method, options = self._chunking_options_from_template(template_config)
         options.update(dict(override_options or {}))
 
@@ -474,6 +570,31 @@ class LocalRAGAdminService:
             raise ValueError("Local media reprocess backend is unavailable.")
         return method(media_id, **options)
 
+    async def rechunk_legacy_media(
+        self,
+        *,
+        rag_service: Any = None,
+        indexing_db: Any = None,
+        progress_callback: Any = None,
+    ) -> dict[str, Any]:
+        """Re-chunk every older-engine item (task-13, spec §10.2-§10.2.1).
+
+        Thin delegate to the Library re-chunk service (the owner of the
+        per-item flow, the hard-delete replacement ruling, and the forced
+        re-index); reached through the scope service's ``rag.admin.launch``
+        action.
+        """
+        if self.media_db is None:
+            raise ValueError("Local re-chunk backend is unavailable (no media DB).")
+        from ..Library.library_rechunk_service import rechunk_legacy_items
+
+        return await rechunk_legacy_items(
+            self.media_db,
+            rag_service=rag_service,
+            indexing_db=indexing_db,
+            progress_callback=progress_callback,
+        )
+
     def count_chunks_by_engine_version(self, db: Any) -> dict[str, int]:
         """Count media items per chunking-engine version (read-only).
 
@@ -491,6 +612,16 @@ class LocalRAGAdminService:
         report never needs the chunking service or vector store backends,
         and never mutates anything (a plain SELECT; stamp + report only,
         there is no re-chunk action).
+
+        BLOCKING. Cost is proportional to live chunk rows; media schema v8
+        (TASK-21126) adds ``idx_unvectorizedmediachunks_engine_census``, a
+        partial covering index whose column order is chosen so this exact
+        SQL text uses it *without* ``ANALYZE`` -- do not re-spell the query
+        (the ``WHERE deleted = 0`` and the ``GROUP BY
+        chunk_engine_version`` are what match the index) and do not call
+        this from the event loop. Async callers go through
+        ``RAGAdminScopeService.get_template_diagnostics``, which offloads
+        it; ``Tests/DB/test_media_db_schema_v8.py`` pins the plan.
 
         Args:
             db: The ``MediaDatabase`` (or compatible) holding

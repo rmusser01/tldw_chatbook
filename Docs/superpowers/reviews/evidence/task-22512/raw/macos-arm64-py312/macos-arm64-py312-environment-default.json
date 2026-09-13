@@ -1,0 +1,102 @@
+{
+  "account_profile_candidate_count": 2,
+  "actual_startup": {
+    "capture_within_bound": true,
+    "captured_byte_count": 733,
+    "command_discovery": true,
+    "default_module_discovery": true,
+    "module_discovery": false,
+    "profile_contract_applicable": true,
+    "profile_extended_module_discovery": false,
+    "profile_marker_present": false,
+    "sensitive_key_repopulated_by_profile": false,
+    "startup_completed": true
+  },
+  "collection_command": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/common.py",
+      "collect-row",
+      "--row-dir",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py312.dyUMVp",
+      "--evidence-root",
+      "Docs/superpowers/reviews/evidence/task-22512/raw",
+      "--replace"
+    ],
+    "working_directory": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-22512-persistent-terminal"
+  },
+  "command": {
+    "argv": [
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py312.dyUMVp/venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/environment_probe.py",
+      "--shell",
+      "default",
+      "--json-out",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py312.dyUMVp/env-default.json"
+    ],
+    "working_directory": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-22512-persistent-terminal"
+  },
+  "completed_at_utc": "2026-08-29T07:34:44.764702+00:00",
+  "elapsed_seconds": 1.122527,
+  "generation_id": "da323923a7f348b295cfc0af98b333a8",
+  "initial_key_count": 10,
+  "initial_keys": [
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOGNAME",
+    "PATH",
+    "SHELL",
+    "TERM",
+    "TMPDIR",
+    "USER"
+  ],
+  "mandatory": true,
+  "measurements": {
+    "current_rss_bytes": null,
+    "peak_rss_bytes": 25624576
+  },
+  "platform": {
+    "architecture": "arm64",
+    "os": "Darwin",
+    "os_release": "24.6.0",
+    "os_version": "Darwin Kernel Version 24.6.0: Mon Jul 14 11:30:40 PDT 2025; root:xnu-11417.140.69~1/RELEASE_ARM64_T6041",
+    "python_executable_name": "python",
+    "python_implementation": "CPython",
+    "python_version": "3.12.11"
+  },
+  "probe": "environment-default",
+  "row_id": "macos-arm64-py312",
+  "rows": [
+    {
+      "available": true,
+      "id": "environment-default-shell",
+      "initial_key_count": 10,
+      "mandatory": true,
+      "sensitive_initial_key_count": 0,
+      "status": "PASS"
+    }
+  ],
+  "runtime": {
+    "kind": "host"
+  },
+  "schema_version": 1,
+  "sensitive_initial_key_count": 0,
+  "started_at_utc": "2026-08-29T07:34:43.641735+00:00",
+  "status": "PASS",
+  "synthetic_profile": {
+    "capture_within_bound": true,
+    "captured_byte_count": 595,
+    "command_discovery": true,
+    "default_module_discovery": true,
+    "module_discovery": true,
+    "profile_contract_applicable": true,
+    "profile_extended_module_discovery": true,
+    "profile_marker_present": true,
+    "sensitive_key_repopulated_by_profile": true,
+    "startup_completed": true
+  }
+}

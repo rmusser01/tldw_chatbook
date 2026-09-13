@@ -16,261 +16,233 @@ _AGENTIC_SOURCE = _CSS_ROOT / "components/_agentic_terminal.tcss"
 _SETTINGS_SOURCE = _CSS_ROOT / "components/_settings_splash_theme.tcss"
 _SHARED_SOURCE = _CSS_ROOT / "components/_shared_components.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
+
+# TASK-25812/TASK-24459: the build now emits the bundle PLUS per-screen
+# sheets split from the screen-owned modules (agentic terminal, evals,
+# scheduling). "Reaches the generated output" means the union -- a rule in
+# a split sheet is exactly as live as one in the bundle (agentic sheets
+# load via the owning screens' CSS_PATH / the boot path; the feature
+# sheets load via TldwCli._SCREEN_OWNED_ROUTE_CSS on first navigation).
+_GENERATED_SHEETS = (
+    _BUNDLED_STYLESHEET,
+    _CSS_ROOT / "screen_agentic_console.tcss",
+    _CSS_ROOT / "screen_agentic_library.tcss",
+    _CSS_ROOT / "screen_agentic_settings.tcss",
+    _CSS_ROOT / "screen_feature_evals.tcss",
+    _CSS_ROOT / "screen_feature_scheduling.tcss",
+    _CSS_ROOT / "screen_feature_watchlists.tcss",
+)
+
+
+def _generated_css_text() -> str:
+    return "\n".join(sheet.read_text(encoding="utf-8") for sheet in _GENERATED_SHEETS)
+
+
 _LIBRARY_SCREEN_SOURCE = _REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.py"
 
 _LIBRARY_NOTES_COMPACT_GEOMETRY = {
+    "#library-shell-grid.library-notes-compact #library-canvas": {
+        "padding": "0",
+        "margin": "0",
+        "border": "none",
+    },
     "#library-shell-grid.library-notes-compact": {
         "padding": "0",
         "margin": "0",
         "border": "none",
     },
-    "#library-canvas.library-notes-compact": {
-        "padding": "0",
-        "margin": "0",
-        "border": "none",
-    },
-    "#library-canvas.library-notes-compact #library-notes-canvas": {
+    "#library-shell-grid.library-notes-compact #library-notes-canvas": {
         "height": "100%",
         "min-height": "0",
         "padding": "0",
         "margin": "0",
     },
-    "#library-canvas.library-notes-compact #library-notes-header": {
+    "#library-shell-grid.library-notes-compact #library-notes-authority": {
+        "height": "2",
+        "min-height": "2",
+        "max-height": "2",
+        "text-wrap": "wrap",
+        "overflow": "hidden hidden",
+    },
+    "#library-shell-grid.library-notes-compact #library-notes-header": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "text-wrap": "nowrap",
         "text-overflow": "ellipsis",
     },
-    "#library-canvas.library-notes-compact #library-notes-filter-row": {
+    "#library-shell-grid.library-notes-compact #library-notes-filter-row": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-notes-browse-actions": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-        "overflow-x": "hidden",
-    },
-    "#library-canvas.library-notes-compact #library-notes-sort-choices": {
+    "#library-shell-grid.library-notes-compact #library-notes-browse-actions": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-notes-transfer-actions": {
+    "#library-shell-grid.library-notes-compact #library-notes-sort-choices": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-notes-selection-actions": {
+    "#library-shell-grid.library-notes-compact #library-notes-transfer-actions": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-notes-status-row": {
+    "#library-shell-grid.library-notes-compact #library-notes-selection-actions": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "overflow-x": "hidden",
+    },
+    "#library-shell-grid.library-notes-compact #library-notes-status-row": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-notes-selection-status": {
+    "#library-shell-grid.library-notes-compact #library-notes-selection-status": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-notes-list": {
+    "#library-shell-grid.library-notes-compact #library-notes-list": {
         "height": "1fr",
         "min-height": "0",
         "overflow-y": "auto",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-heading": {
+    "#library-shell-grid.library-notes-compact #library-note-heading": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-note-title-row": {
+    "#library-shell-grid.library-notes-compact #library-note-title-row": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-note-editor-region": {
+    "#library-shell-grid.library-notes-compact #library-note-editor-region": {
         "height": "1fr",
         "min-height": "0",
         "overflow-y": "hidden",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-body": {
+    "#library-shell-grid.library-notes-compact #library-note-body": {
         "height": "1fr",
         "min-height": "0",
         "max-height": "100%",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-preview-region": {
+    "#library-shell-grid.library-notes-compact #library-note-preview-region": {
         "height": "1fr",
         "min-height": "0",
         "max-height": "100%",
         "overflow-y": "auto",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-preview-body": {
+    "#library-shell-grid.library-notes-compact #library-note-preview-body": {
         "height": "auto",
         "min-height": "0",
         "border": "none",
         "overflow-y": "hidden",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-status": {
+    "#library-shell-grid.library-notes-compact #library-note-status": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "text-wrap": "nowrap",
         "text-overflow": "ellipsis",
     },
-    "#library-canvas.library-notes-compact #library-notes-canvas.library-note-validation #library-note-status": {
+    "#library-shell-grid.library-notes-compact .library-note-validation #library-note-status": {
         "height": "2",
         "min-height": "2",
         "max-height": "2",
         "text-wrap": "wrap",
     },
-    "#library-canvas.library-notes-compact #library-note-primary-actions": {
+    "#library-shell-grid.library-notes-compact #library-note-primary-actions": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-conflict-region": {
+    "#library-shell-grid.library-notes-compact #library-note-conflict-region": {
         "height": "3",
         "min-height": "3",
         "max-height": "3",
     },
-    "#library-canvas.library-notes-compact #library-note-conflict-copy": {
+    "#library-shell-grid.library-notes-compact #library-note-conflict-copy": {
         "height": "2",
         "min-height": "2",
         "max-height": "2",
     },
-    "#library-canvas.library-notes-compact #library-note-conflict-actions": {
+    "#library-shell-grid.library-notes-compact #library-note-conflict-actions": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-delete-confirmation": {
+    "#library-shell-grid.library-notes-compact #library-note-delete-confirmation": {
         "height": "2",
         "min-height": "2",
         "max-height": "2",
     },
-    "#library-canvas.library-notes-compact #library-note-delete-confirm-copy": {
+    "#library-shell-grid.library-notes-compact #library-note-delete-confirm-copy": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "text-wrap": "nowrap",
         "text-overflow": "ellipsis",
     },
-    "#library-canvas.library-notes-compact #library-note-delete-actions": {
+    "#library-shell-grid.library-notes-compact #library-note-delete-actions": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-context-region": {
+    "#library-shell-grid.library-notes-compact #library-note-context-region": {
         "height": "1fr",
         "min-height": "0",
         "overflow-y": "auto",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-context-status": {
+    # task-32177: #library-note-context-status was a dead duplicate of
+    # #library-note-status (removed, not just hidden) -- its geometry entry
+    # is gone with the widget.
+    "#library-shell-grid.library-notes-compact #library-notes-create-heading": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+    },
+    "#library-shell-grid.library-notes-compact #library-notes-create-viewport": {
+        "height": "1fr",
+        "min-height": "0",
+        "overflow-y": "auto",
+        "overflow-x": "hidden",
+    },
+    "#library-shell-grid.library-notes-compact #library-note-load-heading": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+    },
+    "#library-shell-grid.library-notes-compact #library-note-loading": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "text-wrap": "nowrap",
         "text-overflow": "ellipsis",
     },
-    "#library-canvas.library-notes-compact #library-notes-create-heading": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-    },
-    "#library-canvas.library-notes-compact #library-notes-create-viewport": {
+    "#library-shell-grid.library-notes-compact #library-note-load-state": {
         "height": "1fr",
         "min-height": "0",
-        "overflow-y": "auto",
-        "overflow-x": "hidden",
+        "overflow": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-notes-sync-heading": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-    },
-    "#library-canvas.library-notes-compact #library-notes-sync-viewport": {
-        "height": "1fr",
-        "min-height": "0",
-        "overflow-y": "auto",
-        "overflow-x": "hidden",
-    },
-    "#library-canvas.library-notes-compact #library-notes-sync-purpose": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-        "margin": "0",
-        "overflow-x": "hidden",
-    },
-    "#library-canvas.library-notes-compact #library-notes-sync-folder-row": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-        "margin": "0",
-        "overflow-x": "hidden",
-    },
-    "#library-canvas.library-notes-compact #library-notes-sync-direction-row": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-        "margin": "0",
-        "overflow-x": "hidden",
-    },
-    "#library-canvas.library-notes-compact #library-notes-sync-conflict-row": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-        "margin": "0",
-        "overflow-x": "hidden",
-    },
-    "#library-canvas.library-notes-compact #library-notes-sync-actions": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-        "margin": "0",
-        "overflow-x": "hidden",
-    },
-    "#library-canvas.library-notes-compact #library-notes-sync-status": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-        "margin": "0",
-        "overflow-x": "hidden",
-    },
-    "#library-canvas.library-notes-compact #library-notes-sync-activity": {
-        "height": "auto",
-        "min-height": "1",
-        "overflow-x": "hidden",
-    },
-    "#library-canvas.library-notes-compact #library-note-load-heading": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-    },
-    "#library-canvas.library-notes-compact #library-note-loading": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-        "text-wrap": "nowrap",
-        "text-overflow": "ellipsis",
-    },
-    "#library-canvas.library-notes-compact #library-note-loading-viewport": {
+    "#library-shell-grid.library-notes-compact #library-note-loading-viewport": {
         "height": "1fr",
         "min-height": "0",
         "overflow-y": "auto",
@@ -293,6 +265,41 @@ def _rule_body(css: str, selector: str) -> str:
     if body is None:
         raise AssertionError(f"Missing CSS rule for {selector}")
     return body
+
+
+def test_css_bundle_build_is_independent_of_wall_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two identical source trees produce byte-identical app bundles."""
+    css_dir = tmp_path / "css"
+    css_dir.mkdir()
+    (css_dir / "module.tcss").write_text("Screen { color: white; }\n")
+    output = css_dir / "bundle.tcss"
+    monkeypatch.setattr(css_builder, "CSS_MODULES", ["module.tcss"])
+
+    class FirstClock:
+        @staticmethod
+        def now():
+            return FirstClock()
+
+        def strftime(self, _format: str) -> str:
+            return "2026-08-29 01:00:00"
+
+    class SecondClock(FirstClock):
+        @staticmethod
+        def now():
+            return SecondClock()
+
+        def strftime(self, _format: str) -> str:
+            return "2026-08-29 02:00:00"
+
+    monkeypatch.setattr(css_builder, "datetime", FirstClock, raising=False)
+    css_builder.build_css(css_dir, output)
+    first = output.read_bytes()
+    monkeypatch.setattr(css_builder, "datetime", SecondClock, raising=False)
+    css_builder.build_css(css_dir, output)
+
+    assert output.read_bytes() == first
 
 
 def _declarations(css: str, selector: str) -> dict[str, str]:
@@ -351,18 +358,84 @@ def _bundled_module(bundle: str, module_path: str) -> str:
     return bundle.split(marker, 1)[1].split("/* ===== MODULE:", 1)[0].strip()
 
 
+def _generated_agentic_css() -> str:
+    """The agentic module as the app actually loads it, post-split.
+
+    TASK-25812 split the module across the bundle (multi-screen remainder)
+    and three per-screen sheets. Contracts about "the generated form of this
+    module" now run against the union of those outputs.
+    """
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    parts = [_bundled_module(bundle, "components/_agentic_terminal.tcss")]
+    for filename in css_builder.AGENTIC_SPLIT_SHEETS.values():
+        parts.append((_CSS_ROOT / filename).read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def test_library_notes_compact_source_module_is_exactly_bundled() -> None:
-    source = _AGENTIC_SOURCE.read_text(encoding="utf-8").strip()
+    """Every byte of the source module reaches exactly one generated output.
+
+    Pre-split this was `bundle section == source`. The split makes that
+    false BY DESIGN, so the contract is now the splitter's own lossless
+    partition, re-checked here against the COMMITTED outputs: the bundle's
+    module section must equal the remainder, and each split sheet must end
+    with its owner's moved blocks. A hand-edit to any generated file still
+    fails loudly, which is this test's entire purpose.
+    """
+    source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
+    remainder, _ = css_builder.split_agentic_terminal(source, css_dir=_CSS_ROOT)
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
 
-    assert _bundled_module(bundle, "components/_agentic_terminal.tcss") == source
+    assert (
+        _bundled_module(bundle, "components/_agentic_terminal.tcss")
+        == remainder.strip()
+    )
+    # EXACT equality against a fresh rebuild, not endswith: a suffix check
+    # accepts stale or hand-inserted CSS ahead of the expected tail (Qodo
+    # #2281), which is precisely the drift this test exists to refuse.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as rebuilt_dir:
+        css_builder.build_agentic_split(_CSS_ROOT, Path(rebuilt_dir))
+        for filename in css_builder.AGENTIC_SPLIT_SHEETS.values():
+            committed = (_CSS_ROOT / filename).read_text(encoding="utf-8")
+            rebuilt = (Path(rebuilt_dir) / filename).read_text(encoding="utf-8")
+            assert committed == rebuilt, (
+                f"{filename} differs from a fresh build_agentic_split -- "
+                "regenerate with build_css.py and commit the result"
+            )
+
+
+def test_console_bounded_sections_have_no_legacy_fractional_css_owner() -> None:
+    """Only the bounded viewport may own direct-section scrolling geometry."""
+
+    stylesheets = (
+        _AGENTIC_SOURCE.read_text(encoding="utf-8"),
+        _generated_agentic_css(),
+    )
+
+    for css in stylesheets:
+        without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+        assert "#console-left-rail-body .console-rail-section-body" not in (
+            without_comments
+        )
+        assert not re.search(
+            r"(?:^|})[^{}]*\.console-rail-section-body[^{}]*\{"
+            r"[^{}]*max-height\s*:\s*20%",
+            without_comments,
+            flags=re.DOTALL,
+        )
+        viewport = _declarations(css, ".console-bounded-section-viewport")
+        assert viewport["overflow-y"] == "auto"
+        assert viewport["overflow-x"] == "hidden"
+        assert viewport["scrollbar-gutter"] == "stable"
 
 
 def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> None:
     stylesheets = (
         _library_screen_default_css(),
         _AGENTIC_SOURCE.read_text(encoding="utf-8"),
-        _BUNDLED_STYLESHEET.read_text(encoding="utf-8"),
+        _generated_css_text(),
     )
 
     for selector, expected in _LIBRARY_NOTES_COMPACT_GEOMETRY.items():
@@ -373,6 +446,24 @@ def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> 
                 value,
                 value,
             ], (selector, name, declarations)
+
+
+def test_file_notes_error_ink_and_disabled_opacity_are_app_tier() -> None:
+    stylesheets = (
+        _AGENTIC_SOURCE.read_text(encoding="utf-8"),
+        _generated_css_text(),
+    )
+
+    for css in stylesheets:
+        git_error = _declarations(css, ".file-notes-git-commit-error")
+        save_error = _declarations(css, "#file-notes-save-status.-error")
+        assert git_error["color"] == "$ds-status-error-readable"
+        assert save_error["color"] == "$ds-status-error-readable"
+        assert git_error["background"] == "$error-darken-3"
+        assert save_error["background"] == "$error-darken-3"
+        disabled = _declarations(css, "LibraryFileNotesWorkspace Button:disabled")
+        assert disabled["opacity"] == "100%"
+        assert disabled["text-opacity"] == "100%"
 
 
 def _missing_fixture(
@@ -425,11 +516,11 @@ def test_css_manifest_declares_only_existing_settings_source() -> None:
 def test_settings_splash_theme_rules_have_source_and_bundle_integrity() -> None:
     assert _SETTINGS_SOURCE.is_file()
     settings_source = _SETTINGS_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
     # The live, feature-scoped theme-editor + splash-viewer selectors remain.
     required_selectors = (
         "#settings-theme-tree",
-        ".settings-preview-grid",
+        ".settings-theme-preview",
         ".settings-splash-gallery",
         "#settings-splash-card-list",
         "#settings-splash-preview-scroll",
@@ -483,8 +574,13 @@ def test_splash_theme_module_has_no_bare_or_generic_component_selectors() -> Non
 def test_relocated_shared_component_rules_are_present() -> None:
     """The moved generic rules live in _shared_components and reach the bundle."""
     shared = _SHARED_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
-    for selector in (".setting-label", ".section-header", ".preview-panel", ".action-buttons"):
+    bundle = _generated_css_text()
+    for selector in (
+        ".setting-label",
+        ".section-header",
+        ".preview-panel",
+        ".action-buttons",
+    ):
         assert selector in shared
         assert selector in bundle
     # The app-wide scrollbar default now lives in core, not a feature module.
@@ -494,19 +590,66 @@ def test_relocated_shared_component_rules_are_present() -> None:
 
 def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() -> None:
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
 
     for css in (source, bundle):
         inspector_handle = _rule_body(css, ".console-inspector-rail-handle")
         assert "height: 100%;" in inspector_handle
-        assert "min-height: 20;" in inspector_handle
+        assert "min-height: 12;" in inspector_handle
         assert "max-height: 100%;" in inspector_handle
         assert "background: $ds-surface-panel;" in inspector_handle
 
 
+def test_library_modular_css_compact_shell_and_emergency_return_reach_bundle() -> None:
+    """Production CSS owns the narrow box model and its visible return seam."""
+    source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
+
+    for css in (source, bundle):
+        compact = _declarations(css, "#library-shell-grid.library-notes-compact")
+        assert compact["padding"] == "0"
+        assert compact["margin"] == "0"
+        assert compact["border"] == "none"
+
+        emergency_return = _declarations(css, "#library-emergency-return")
+        assert emergency_return["width"] == "100%"
+        assert emergency_return["height"] == "1"
+        assert emergency_return["min-height"] == "1"
+        assert emergency_return["border"] == "none"
+
+
+def test_console_edge_ownership_rules_reach_generated_bundle() -> None:
+    """Source and bundle retain the edge-native Console shell contract."""
+    source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
+
+    for css in (source, bundle):
+        grid = _declarations(css, "#console-workspace-grid")
+        assert grid["padding"] == "0"
+        assert grid["border-top"] == "solid $ds-grid-line"
+        assert grid["border-bottom"] == "solid $ds-grid-line"
+        assert "border-left" not in grid
+        assert "border-right" not in grid
+
+        transcript = _declarations(css, "#console-transcript-region")
+        assert transcript["border"] == "none"
+
+        left = _declarations(css, "#console-left-rail:focus")
+        assert "border" not in left
+        assert left["outline"] == "none"
+
+        transcript_focus = _declarations(
+            css,
+            "#console-transcript-region.console-transcript-region-focused #console-transcript-title",
+        )
+        assert transcript_focus["background"] == "$ds-focus-bg"
+        assert transcript_focus["color"] == "$ds-focus-fg"
+        assert transcript_focus["text-style"] == "bold underline"
+
+
 def test_settings_category_rules_have_source_and_bundle_integrity() -> None:
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
 
     for css in (source, bundle):
         category_pane = _rule_body(css, "#settings-category-pane")
@@ -520,3 +663,475 @@ def test_settings_category_rules_have_source_and_bundle_integrity() -> None:
 
         group_title = _rule_body(css, ".settings-category-group-title")
         assert "margin: 0;" in group_title
+
+
+# --- TASK-25812: split_agentic_terminal unit contracts (Qodo #2281 #3) ------
+
+
+def test_split_partition_is_lossless_and_ownership_is_conservative() -> None:
+    """The splitter's classification rules, each on a minimal input.
+
+    A block moves only when EVERY id/class token belongs to exactly one
+    owner; anything ambiguous stays. These are the shapes that decide
+    whether a rule silently vanishes from a surface, so each gets a named
+    case rather than trusting the full-file run to cover them.
+    """
+    css = (
+        "/* header comment { brace inside comment } */\n"
+        ".console-thing { color: red; }\n"
+        ".library-thing > Button { color: blue; }\n"
+        ".console-thing .library-thing { color: green; }\n"
+        "Button { color: white; }\n"
+        ".ds-panel .console-thing { color: black; }\n"
+        ".settings-input-label { color: grey; }\n"
+        "#settings-only { padding: 1; }\n"
+        "/* tail comment */\n"
+    )
+    remainder, moved = css_builder.split_agentic_terminal(css)
+
+    # Lossless: every byte lands in exactly one output.
+    reassembled = sorted(
+        remainder.splitlines()
+        + [line for text in moved.values() for line in text.splitlines()]
+    )
+    assert reassembled == sorted(css.splitlines())
+
+    assert ".console-thing { color: red; }" in moved["console"]
+    assert ".library-thing > Button" in moved["library"]
+    assert "#settings-only" in moved["settings"]
+    # Multi-owner selector stays.
+    assert ".console-thing .library-thing" in remainder
+    # Bare TYPE subject stays.
+    assert "Button { color: white; }" in remainder
+    # A non-owner token anywhere pins the block to the bundle.
+    assert ".ds-panel .console-thing" in remainder
+    # Pinned cross-surface vocabulary stays even though it prefix-matches.
+    assert ".settings-input-label" in remainder
+    # Comments (including braces inside them) travel with the next block.
+    assert "brace inside comment" in remainder + moved["console"]
+
+
+def test_split_demotes_moved_blocks_that_later_kept_blocks_tie_with() -> None:
+    """Intra-module cascade-order safety, both directions.
+
+    A moved block parses after the whole bundle. A KEPT block later in the
+    module that shares its selector used to win the tie by source order and
+    would now lose it -- so the moved block must be demoted. A kept block
+    EARLIER keeps its relative order and must not cause demotion.
+    """
+    # A tie needs the SAME selector (equal specificity); the incident case
+    # was a comma group carrying the moved rule's exact selector.
+    css = (
+        ".console-a { color: red; }\n"
+        ".mixed-tok, .console-a { color: blue; }\n"  # kept, LATER, exact tie
+        ".console-b { color: green; }\n"
+    )
+    remainder, moved = css_builder.split_agentic_terminal(css)
+    assert ".console-a { color: red; }" in remainder, (
+        "moved block sharing a selector with a LATER kept block must be "
+        "demoted or it wins a cascade tie it used to lose"
+    )
+    assert ".console-b" in moved["console"]
+
+    css2 = (
+        ".mixed-tok, .console-c { color: blue; }\n"  # kept, EARLIER
+        ".console-c { color: red; }\n"
+    )
+    remainder2, moved2 = css_builder.split_agentic_terminal(css2)
+    assert ".console-c { color: red; }" in moved2["console"], (
+        "a kept block EARLIER in the module preserves relative order and "
+        "must not force a demotion"
+    )
+
+
+def test_split_demotion_sees_later_modules(tmp_path: Path) -> None:
+    """Cross-module cascade-order safety (Qodo #2281 #8).
+
+    A selector collision with a module AFTER the agentic one in
+    CSS_MODULES (features, utilities) must demote the moved block: those
+    modules used to win the tie by bundle order and a screen sheet would
+    now beat them.
+    """
+    css_dir = tmp_path / "css"
+    (css_dir / "utilities").mkdir(parents=True)
+    (css_dir / "utilities" / "_overrides.tcss").write_text(
+        ".console-x { color: white; }\n", encoding="utf-8"
+    )
+    css = ".console-x { color: red; }\n.console-y { color: green; }\n"
+
+    remainder, moved = css_builder.split_agentic_terminal(css, css_dir=css_dir)
+    assert ".console-x" in remainder, (
+        "a moved block colliding with a LATER module's selector must be "
+        "demoted -- utilities exist to override anything"
+    )
+    assert ".console-y" in moved["console"]
+
+    # Without a tree, only the intra-module pass applies.
+    remainder_none, moved_none = css_builder.split_agentic_terminal(css)
+    assert ".console-x" in moved_none["console"]
+
+
+def test_split_sheets_carry_only_their_own_owners_rules() -> None:
+    """No sheet holds another surface's tokens (Qodo #2281 finding 8).
+
+    The union harnesses deliberately model the steady-state app, so they
+    cannot catch a Console rule generated into the Library sheet -- a
+    misplacement that would strand the rule behind the wrong screen's
+    first-visit load. This checks ownership at the GENERATION level
+    instead: every ``{owner}-`` prefixed token in a sheet belongs to that
+    sheet's owner (the pinned cross-surface vocabulary lives in the bundle
+    and must not appear in any sheet at all).
+    """
+    owners = tuple(css_builder.AGENTIC_SPLIT_SHEETS)
+    for owner, filename in css_builder.AGENTIC_SPLIT_SHEETS.items():
+        text = re.sub(
+            r"/\*.*?\*/",
+            "",
+            (_CSS_ROOT / filename).read_text(encoding="utf-8"),
+            flags=re.DOTALL,
+        )
+        selector_text = " ".join(match for match in re.findall(r"([^{}]+)\{", text))
+        tokens = set(re.findall(r"[#.]([A-Za-z0-9_-]+)", selector_text))
+        for token in sorted(tokens):
+            assert token not in css_builder.AGENTIC_SPLIT_PINNED_TOKENS, (
+                f"{filename}: pinned cross-surface token .{token} must stay "
+                "in the bundle -- regenerate with build_css.py"
+            )
+            for other in owners:
+                if other == owner:
+                    continue
+                assert token != other and not token.startswith(other + "-"), (
+                    f"{filename}: token .{token} belongs to the {other} "
+                    f"surface but was generated into the {owner} sheet"
+                )
+
+
+# --- TASK-24459: screen-owned split contracts (evals + scheduling) ----------
+
+
+def _split_spec(module: str) -> "css_builder.ScreenOwnedSplit":
+    return css_builder._SPLITS_BY_MODULE[module]
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["features/_evals.tcss", "features/_scheduling.tcss"],
+)
+def test_screen_owned_module_is_exactly_partitioned(module: str) -> None:
+    """Every byte of a screen-owned module reaches exactly one output.
+
+    The same contract the agentic module carries: the bundle's module
+    section must equal the splitter's remainder, and each committed sheet
+    must EXACTLY equal a fresh rebuild (suffix checks accept stale CSS
+    ahead of the expected tail -- Qodo #2281).
+    """
+    spec = _split_spec(module)
+    source = (_CSS_ROOT / module).read_text(encoding="utf-8")
+    remainder, _ = css_builder.split_owned_module(source, spec, css_dir=_CSS_ROOT)
+
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    assert _bundled_module(bundle, module) == remainder.strip()
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as rebuilt_dir:
+        css_builder.build_screen_owned_sheets(_CSS_ROOT, Path(rebuilt_dir))
+        for filename in spec.sheets.values():
+            committed = (_CSS_ROOT / filename).read_text(encoding="utf-8")
+            rebuilt = (Path(rebuilt_dir) / filename).read_text(encoding="utf-8")
+            assert committed == rebuilt, (
+                f"{filename} differs from a fresh build_screen_owned_sheets "
+                "-- regenerate with build_css.py and commit the result"
+            )
+
+
+def test_screen_owned_splitter_multi_prefix_and_keep_shapes() -> None:
+    """The scheduling spec's two prefixes are ONE owner; helpers stay.
+
+    `scheduling-*` and `schedules-*` tokens both belong to the single
+    scheduling sheet, so a selector mixing them still moves. A helper
+    class with no owner prefix (`pane-hidden` -- composed only by
+    scheduling screens today, but unprefixed) pins its block to the
+    bundle, conservatively.
+    """
+    spec = _split_spec("features/_scheduling.tcss")
+    css = (
+        "#scheduling-list-pane { padding: 1; }\n"
+        "#schedules-shell .scheduling-inspector-label { color: red; }\n"
+        "#scheduling-detail-pane.pane-hidden { display: none; }\n"
+        ".pane-hidden { display: none; }\n"
+    )
+    remainder, moved = css_builder.split_owned_module(css, spec)
+    sheet = moved["scheduling"]
+    assert "#scheduling-list-pane" in sheet
+    assert "#schedules-shell .scheduling-inspector-label" in sheet, (
+        "both prefixes belong to the one scheduling owner -- a mixed "
+        "selector must still move"
+    )
+    assert "#scheduling-detail-pane.pane-hidden" in remainder, (
+        "an unprefixed helper token anywhere in the selector pins the "
+        "block to the bundle"
+    )
+    assert ".pane-hidden { display: none; }" in remainder
+
+
+def test_cross_split_selector_overlap_refuses_to_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two lazy sheets carrying the same selector must fail the build.
+
+    Their cascade order depends on which screen the user visits first --
+    an ordering no audit can pin -- so `build_screen_owned_sheets` refuses.
+
+    Today the demotion pass makes this state unreachable through the
+    natural path: a moved unit colliding with ANY selector of a later
+    split's module is demoted to the bundle first (verified by writing this
+    test the natural way -- it did not raise). The guard is the backstop
+    for when that analysis rots (a future intra-module-only demotion, a
+    builder calling the splitter without `css_dir`), so it is exercised at
+    its own level: `_build_one_split` stubbed to report overlapping moved
+    selectors.
+    """
+    specs = (
+        css_builder.ScreenOwnedSplit(
+            module="features/_alpha.tcss",
+            sheets={"alpha": "screen_feature_alpha.tcss"},
+            prefixes={"alpha": ("alpha",)},
+            pinned=frozenset(),
+        ),
+        css_builder.ScreenOwnedSplit(
+            module="features/_beta.tcss",
+            sheets={"beta": "screen_feature_beta.tcss"},
+            prefixes={"beta": ("beta",)},
+            pinned=frozenset(),
+        ),
+    )
+    reported = {
+        "features/_alpha.tcss": {"screen_feature_alpha.tcss": {".shared-x"}},
+        "features/_beta.tcss": {"screen_feature_beta.tcss": {".shared-x"}},
+    }
+    monkeypatch.setattr(css_builder, "SCREEN_OWNED_SPLITS", specs)
+    monkeypatch.setattr(
+        css_builder,
+        "_build_one_split",
+        lambda css_dir, output_dir, split: reported[split.module],
+    )
+    with pytest.raises(AssertionError, match="cross-split selector overlap"):
+        css_builder.build_screen_owned_sheets(tmp_path, tmp_path)
+
+    # Mutation check the other direction: disjoint moved sets pass.
+    reported["features/_beta.tcss"] = {
+        "screen_feature_beta.tcss": {".beta-only"}
+    }
+    css_builder.build_screen_owned_sheets(tmp_path, tmp_path)
+
+
+def test_screen_owned_sheets_are_wired_to_app_routes() -> None:
+    """Every non-agentic split sheet is app-loaded by some route.
+
+    A split whose sheet no route loads is dead CSS from the user's point
+    of view: the bundle no longer carries the rules and nothing ever
+    parses the sheet. Deliberately the APP's route map, not the screens'
+    ``CSS_PATH``: Textual loads ``CSS_PATH`` under any app, including the
+    UI-test harnesses that model the unstyled tier, and shipping the moved
+    half of a module into those harnesses flipped three destination-shell
+    geometry tests (2026-09-04). See ``TldwCli._ensure_screen_owned_css``.
+    """
+    from tldw_chatbook.app import TldwCli
+
+    app_loaded = {
+        name
+        for names in TldwCli._SCREEN_OWNED_ROUTE_CSS.values()
+        for name in names
+    }
+    for split in css_builder.SCREEN_OWNED_SPLITS:
+        if split.module == css_builder.AGENTIC_SPLIT_MODULE:
+            continue  # TASK-25812 wiring predates the app seam
+        for sheet_name in split.sheets.values():
+            assert (_CSS_ROOT / sheet_name).is_file(), (
+                f"{sheet_name} missing from css/"
+            )
+            assert sheet_name in app_loaded, (
+                f"{sheet_name} is split off the bundle but no route in "
+                "TldwCli._SCREEN_OWNED_ROUTE_CSS loads it -- the moved "
+                "rules would never parse. Screens must NOT take it onto "
+                "CSS_PATH instead (harness-tier contract; see this test's "
+                "docstring)."
+            )
+    # And the inverse: the map names only sheets the build actually emits.
+    emitted = {
+        filename
+        for split in css_builder.SCREEN_OWNED_SPLITS
+        for filename in split.sheets.values()
+    }
+    for names in TldwCli._SCREEN_OWNED_ROUTE_CSS.values():
+        for name in names:
+            assert name in emitted, (
+                f"_SCREEN_OWNED_ROUTE_CSS names {name}, which no split emits"
+            )
+
+
+def test_screens_do_not_take_owned_sheets_onto_css_path() -> None:
+    """The harness-tier regression cannot quietly come back via CSS_PATH."""
+    import importlib
+
+    for screen_module, screen_name in [
+        ("tldw_chatbook.UI.Screens.scheduling.schedules_workbench", "SchedulesWorkbench"),
+        ("tldw_chatbook.UI.Screens.scheduling.workbench_host_screen", "WorkbenchHostScreen"),
+        ("tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
+        (
+            "tldw_chatbook.UI.Screens.watchlists_collections_screen",
+            "WatchlistsCollectionsScreen",
+        ),
+    ]:
+        try:
+            screen_cls = getattr(importlib.import_module(screen_module), screen_name)
+        except ImportError as exc:  # optional-deps environments
+            pytest.skip(f"{screen_module} unavailable here: {exc}")
+        css_path = getattr(screen_cls, "CSS_PATH", None) or []
+        for entry in css_path:
+            assert "screen_feature_" not in str(entry), (
+                f"{screen_name}.CSS_PATH loads {entry}: harnesses would "
+                "style themselves with the moved half of the module (the "
+                "2026-09-04 destination-shell flip); load via "
+                "TldwCli._SCREEN_OWNED_ROUTE_CSS instead"
+            )
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+async def test_schedules_visit_loads_the_screen_owned_sheet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """First navigation to Schedules parses the split sheet; boot does not.
+
+    The functional half of the app-seam contract: the sheet is absent from
+    the app stylesheet at `_ui_ready` (that absence IS the boot-CSS win)
+    and present after arriving at the route.
+    """
+    import asyncio
+
+    home = tmp_path / "home"
+    data = tmp_path / "data"
+    config = tmp_path / "config"
+    for sub in (home, data, config):
+        sub.mkdir(parents=True, exist_ok=True)
+    config_file = config / "tldw_cli" / "config.toml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        "[first_run]\nsetup_completed = true\n\n[splash_screen]\nenabled = false\n"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
+    monkeypatch.setenv("TLDW_TEST_MODE", "1")
+
+    from tldw_chatbook.app import TldwCli
+
+    sheet = str(_CSS_ROOT / "screen_feature_scheduling.tcss")
+    app = TldwCli()
+    async with app.run_test(size=(170, 48)) as pilot:
+        while not getattr(app, "_ui_ready", False):
+            await asyncio.sleep(0.01)
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            await pilot.pause()
+        assert not app.stylesheet.has_source(sheet, ""), (
+            "the scheduling sheet must NOT ride the boot parse -- that "
+            "deferral is the entire TASK-24459 byte win"
+        )
+        await pilot.press("ctrl+7")
+        deadline = asyncio.get_running_loop().time() + 30.0
+        while asyncio.get_running_loop().time() < deadline:
+            await pilot.pause()
+            if type(app.screen).__name__ == "SchedulesWorkbench":
+                break
+        assert type(app.screen).__name__ == "SchedulesWorkbench"
+        assert app.stylesheet.has_source(sheet, ""), (
+            "arriving at Schedules must load the split sheet, or the moved "
+            "rules never style the real app"
+        )
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A configured `default_tab = schedules` boots with the sheet loaded.
+
+    Qodo #2409 finding 2: the in-app navigation test above never exercises
+    `_push_initial_screen`'s loading call -- deleting that call would leave
+    a schedules-default user unstyled on every boot and no test would go
+    red. This one boots through the real initial-push boundary.
+    """
+    import asyncio
+
+    home = tmp_path / "home"
+    data = tmp_path / "data"
+    config = tmp_path / "config"
+    for sub in (home, data, config):
+        sub.mkdir(parents=True, exist_ok=True)
+    config_file = config / "tldw_cli" / "config.toml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        "[first_run]\nsetup_completed = true\n\n[splash_screen]\n"
+        "enabled = false\n\n[general]\ndefault_tab = \"schedules\"\n"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
+    monkeypatch.setenv("TLDW_TEST_MODE", "1")
+
+    from tldw_chatbook.app import TldwCli
+
+    sheet = str(_CSS_ROOT / "screen_feature_scheduling.tcss")
+    app = TldwCli()
+    async with app.run_test(size=(170, 48)) as pilot:
+        while not getattr(app, "_ui_ready", False):
+            await asyncio.sleep(0.01)
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            await pilot.pause()
+        assert type(app.screen).__name__ == "SchedulesWorkbench", (
+            f"configured default tab did not land: {type(app.screen).__name__}"
+        )
+        assert app.stylesheet.has_source(sheet, ""), (
+            "booting INTO Schedules must load the split sheet through "
+            "_push_initial_screen, or a schedules-default user is unstyled"
+        )
+
+
+def test_stale_split_sheets_are_removed_when_their_module_leaves(
+    tmp_path: Path,
+) -> None:
+    """A partial build must not leave a dead module's generated sheet behind.
+
+    Qodo #2409 finding 3: `_build_one_split` skips absent modules, so a
+    previously generated sheet would linger in css_dir for the app's route
+    map to load -- rules whose module is no longer a build input.
+    """
+    css_dir = tmp_path / "css"
+    stage = tmp_path / "stage"
+    css_dir.mkdir()
+    stage.mkdir()
+    (css_dir / "screen_feature_evals.tcss").write_text(
+        ".evals-ghost { color: red; }\n", encoding="utf-8"
+    )
+    # No features/_evals.tcss in this tree, nothing staged -> stale, removed.
+    css_builder._remove_stale_split_sheets(css_dir, stage)
+    assert not (css_dir / "screen_feature_evals.tcss").exists()
+
+    # Present module keeps its sheet even when this build staged nothing
+    # new for it (the builders would have raised before publish otherwise).
+    (css_dir / "features").mkdir()
+    (css_dir / "features" / "_evals.tcss").write_text(
+        ".evals-live { color: blue; }\n", encoding="utf-8"
+    )
+    (css_dir / "screen_feature_evals.tcss").write_text(
+        ".evals-live { color: blue; }\n", encoding="utf-8"
+    )
+    css_builder._remove_stale_split_sheets(css_dir, stage)
+    assert (css_dir / "screen_feature_evals.tcss").exists()

@@ -9,6 +9,8 @@ from typing import Dict, Optional, Any
 from enum import Enum
 from urllib.parse import urlparse
 import requests
+import threading
+
 from requests.auth import HTTPBasicAuth
 
 #
@@ -49,6 +51,23 @@ class ConfluenceAuth:
         self.auth_method = auth_method
         self.session = requests.Session()
         self._auth_configured = False
+        #: Serializes use of the shared `requests.Session` (task-585 review).
+        #:
+        #: `requests.Session` is not thread-safe -- cookies, connection pool
+        #: and headers are mutable and unsynchronized. That was harmless while
+        #: every call ran inline on the event loop: `scrape_many`'s
+        #: `asyncio.gather` looked concurrent but each blocking `make_request`
+        #: serialized the others anyway. Moving those calls to
+        #: `asyncio.to_thread` made the concurrency real, so N worker threads
+        #: could touch one session at once.
+        #:
+        #: A lock rather than a thread-local session: `self.session` also
+        #: carries the AUTH configuration (`configure_api_token` and friends
+        #: set `.auth`/`.headers`/`.cookies` on it), so per-thread copies would
+        #: silently stop inheriting any configuration applied after the thread
+        #: made its first call. Serialized-but-off-loop still delivers what the
+        #: offload was for: the UI no longer freezes for the request duration.
+        self._session_lock = threading.Lock()
 
     def configure_api_token(self, username: str, api_token: str) -> None:
         """
@@ -195,9 +214,17 @@ class ConfluenceAuth:
             True if authentication is successful, False otherwise
         """
         try:
-            # Try to get current user info
-            response = self.session.get(
-                f"{self.base_url}/rest/api/user/current", timeout=10
+            # Try to get current user info. TASK-589: routes through the
+            # egress guard like every other request in this module -- a raw
+            # session.get here bypassed SSRF protection (including the
+            # metadata hard-block) on a caller-named base_url.
+            response = guarded_fetch_requests(
+                f"{self.base_url}/rest/api/user/current",
+                session=self.session,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=origin_set(self.base_url),
+                timeout=10,
+                headers={"Accept": "application/json"},
             )
 
             if response.status_code == 200:
@@ -274,7 +301,8 @@ class ConfluenceAuth:
             # Non-GET / param-carrying calls: pre-check + timeout (no manual
             # redirect loop; the Confluence API does not redirect these).
             check_url_or_raise(url, trusted_origins=trusted)
-            response = self.session.request(method, url, **kwargs)
+            with self._session_lock:
+                response = self.session.request(method, url, **kwargs)
 
         # Log request details for debugging
         logger.debug(f"{method} {url} - Status: {response.status_code}")

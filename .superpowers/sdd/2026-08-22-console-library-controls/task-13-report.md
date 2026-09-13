@@ -1,0 +1,348 @@
+# Task 13 implementation report
+
+## Outcome
+
+Task 13 moves eligible immediate and queued ordinary user-text sends behind one
+store-owned automatic Library preparation gate. The gate consumes the exact
+Task-8 execution context and executed draft, always searches the fixed
+notes/media/conversations categories, applies the frozen active Note/Media scope,
+and makes provider composition/call unreachable until preparation is ready.
+
+The store owns one immutable preparation per session with exact ID/state CAS,
+navigation-independent lifetime, and a shared cancel path for manual, queued,
+close, and shutdown handling. Evidence success seals one bundle used by the same
+provider request; zero-match and bypass attach only the bounded Task-12
+contribution; failure/timeout pauses with bounded codes and never dispatches.
+Retry keeps the preparation ID and frozen request/authority/destination while
+creating a new attempt. Bypass does not change standing policy.
+
+The mounted retrieval controller no longer reads or performs automatic-RAG
+send work and no longer emits fail-open/placeholder notices. Its explicit manual
+Search Library launch/capture remains intact; the obsolete standing
+`rag_auto_retrieve_on_send` modal, callback, and runtime/config ownership are
+removed, leaving only the one-time compatibility migration input.
+
+Task 13 uses volatile ACCEPTED/DISPATCH_STARTED transitions only as an in-memory
+provider fence. It does not claim Task-14 durable acceptance/checkpoint atomicity,
+post-commit recovery, assistant terminal state, or any recovery UI. A queued
+retrieval pause returns the exact claim to pending, stops the current coordinator
+advance, and does not auto-retry or spin later entries.
+
+## Compatibility and security review
+
+Every ready gateway must supply Task-9's typed, credential-free classified
+destination. Missing destinations fail closed before preparation/provider
+dispatch; Retry re-resolves and requires exact equality with the frozen
+destination. There is no `unknown://unresolved` synthesis, so Task-8's Unknown
+fail-closed boundary cannot be weakened by a compatibility fallback.
+
+Automatic admission is a closed map: manual and queued plain user text are
+eligible, including nonblank text with attachments; attachment-only, agent wakes,
+commands, skill mentions, explicit evidence, Never, bypass, and unknown future
+origins skip automatic spend. Explicit evidence and Never still use the hidden
+commit preparation required by spec section 6.3, without retrieval or a visible
+Preparing-Library projection. The success integration test proves the exact
+sealed bundle content reaches the same provider request, while failure and race
+tests fence all provider calls.
+
+## TDD and verification
+
+- Pre-edit affected baseline: 464 passed, 1 inherited
+  `RequestsDependencyWarning`, 43.44s.
+- RED: the complete new test file failed collection because
+  `ConsolePreparationOutcome` did not exist, before production edits.
+- Final affected command:
+
+  `../../.venv/bin/python -m pytest Tests/Chat/test_console_automatic_library_preparation.py Tests/Chat/test_console_chat_controller.py Tests/UI/test_console_auto_rag_on_send.py Tests/UI/test_console_rag_settings_modal.py Tests/UI/test_console_retrieval_controller.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_turn_library_authority.py Tests/Chat/test_console_turn_execution_context.py Tests/Chat/test_console_turn_preparation.py Tests/Chat/test_library_preparation.py Tests/UI/test_console_controller_wiring.py -q`
+
+  Result: 486 passed, 1 inherited warning, 34.90s.
+- Scoped Ruff and `git diff --check` passed.
+- Required restored mutations all failed their named ratchets: retrieval-failure
+  fall-through, current-composer query, narrowed/manual categories, duplicate
+  explicit-evidence retrieval, Retry refresh, Bypass policy mutation, weakened
+  CAS (three apparent winners), and queued Cancel foreground copy.
+
+An adjacent `test_console_runtime_ownership` check has a pre-existing isolated
+fixture defect: its `object.__new__(TldwCli)` lacks `notes_sync_runtime_owner` and
+raises before reaching Console shutdown. Task-13 production does not touch that
+runtime owner and this warning was not expanded into unrelated scope.
+
+## Fix round 1
+
+Review-driven production-path REDs proved that Retry and Bypass resume the exact
+already-admitted manual or queued send without a second submit, preserving its
+draft, Task-8 authority, destination, attachment/evidence/prefill identities, and
+queue owner. Queue recovery retains the exact claim, blocks later entries without
+spin, and either completes that claim once or releases it on Cancel.
+
+State transitions now follow the existing live boundaries: COMMITTING starts at
+the acceptance attempt, ACCEPTED follows the established USER/assistant ownership
+boundary, and DISPATCH_STARTED occurs immediately before the real agent/provider
+call. Provider preflight refusal therefore settles an ACCEPTED volatile owner
+without falsely claiming dispatch. Preaccept persistence/assistant/refusal and
+queued-authorization exits roll back or cancel exact ownership; accepted owners
+survive store session removal until their live turn settles. This is process-memory
+state only and makes no Task-14 durability/checkpoint claim.
+
+The final review gate was 578 passed with the inherited Requests warning in
+49.07s. Runtime ownership companions were 24 passed; the UI ownership set was 10
+passed/1 deselected with the independently reproduced fixture defect above. The
+Task-13 production-path file was 34 passed. Nine restored mutations killed the
+dead-end continuation, stranded refusal, attachment exclusion, fail-open evidence
+probe, eager dispatch claim, unconditional accepted-owner close pop, legacy
+toggle, missing-destination fallback, and outcome leak variants. A separate
+RED/green boundary probe caught and fixed stranded USER-persistence failure.
+Scoped Ruff, whole-production source scans, and `git diff --check` passed.
+
+## Files
+
+- `tldw_chatbook/Chat/console_chat_controller.py`
+- `tldw_chatbook/Chat/console_chat_store.py`
+- `tldw_chatbook/Chat/console_prompt_queue_coordinator.py`
+- `tldw_chatbook/Chat/console_runtime.py`
+- `tldw_chatbook/UI/Console_Modules/retrieval.py`
+- `tldw_chatbook/UI/Console_Modules/session.py`
+- `tldw_chatbook/UI/Screens/chat_screen.py`
+- `tldw_chatbook/Widgets/Console/console_rag_settings_modal.py`
+- `tldw_chatbook/config.py`
+- `Tests/Chat/test_console_automatic_library_preparation.py`
+- adjacent authority/retrieval ownership regression tests
+- TASK-19900.3 plan/notes, this report, and the shared progress ledger
+
+ADR required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`. ADR-079 already
+owns the implemented admission, authority, recovery-action, and fail-closed
+provider-boundary decisions.
+
+## Fix round 2
+
+Recovered queued sends now keep their exact claimed entry until one coordinator
+finalizer observes the resumed result. Accepted results acknowledge once and
+advance normally; refusal or exception returns the exact entry to the pending
+head, releases the reservation, pauses later entries, and never spins. Only the
+recovered path defers registry settlement; the controller's volatile ACCEPTED
+state still begins at the existing USER/assistant ownership boundary.
+
+The live-only continuation now freezes the original attachment objects, resolved
+prefill value and one-shot identity, and production staged-evidence launch at
+admission. Retry and Bypass never reread current staged state, consume only the
+original matching identities after acceptance, and leave attachments, evidence,
+prefill, and composer changes made during the pause untouched. This remains
+volatile Task-13 state and makes no Task-14 reconstruction or durability claim.
+
+Recovery destination resolution, queue reclaim, submit exceptions, stale CAS,
+and repeated action races return the stable `ConsoleSubmitResult` contract and
+cannot strand READY or a claimed entry. `DISPATCH_STARTED` is now crossed only
+immediately before `stream_chat` or `agent_bridge.run_reply`; direct request
+preparation and agent setup remain ACCEPTED and settle without a false dispatch.
+Session close synchronously removes only cancellable preparations; an accepted
+owner remains until its cancelled live task's existing finalizer settles it.
+
+Round-2 baseline was 578 passed with one inherited Requests warning. The complete
+RED matrix produced 22 expected failures and 35 passes before production. Final
+affected verification was 601 passed/1 inherited warning in 38.49s; runtime,
+queue-registry/coordinator, and queue-UI companions were 100 passed/1 inherited
+warning in 16.97s. Eight restored mutations were killed: removed recovered
+finalization, live staged-input reread, resolver exception escape, loser
+`KeyError`, early direct dispatch, early agent dispatch, eager close settlement,
+and continuation/evidence leakage. Scoped Ruff, Ruff format check, source scans,
+and `git diff --check` passed. The sole production occurrence of the old config
+key remains ADR-079's required one-time v44→v45 migration seed; there is no
+standing automatic-policy read or UI callback.
+
+## Fix round 3
+
+Post-accept queued recovery now distinguishes the exact coordinator-owned
+`accepted_live_turn` from a preaccept refusal. A direct request-preparation or
+agent setup exception after USER/assistant acceptance returns a stable accepted
+`ConsoleSubmitResult`, retains the exact USER and failed assistant identities,
+acknowledges the reclaimed entry once, and pauses later work without returning
+that accepted entry to pending or creating a second USER on Retry/Bypass.
+
+One volatile `_active_submit_tasks` fence now owns the complete submit lifecycle,
+from before the first await through the submit finalizer. Shutdown tombstones new
+work, cancels and awaits both submit and stream tasks, removes a pre-preparation
+transient echo coherently, and rechecks immediately before the direct provider or
+agent bridge call so a cancellation-resistant preflight cannot dispatch later.
+Close cancels the exact submit but preserves COMMITTING/ACCEPTED preparation and
+sidecars until that task's finalizer settles them. Self-shutdown never awaits or
+cancels its own task. These owners remain volatile only and add no Task-14
+checkpoint or restart claim.
+
+One-shot prefill consumption now uses a store-owned monotonic opaque revision,
+so re-arming identical text during an in-flight turn survives the older turn's
+compare-and-clear. Explicit staged evidence is held as an exact live launch lease
+plus its captured production result: context capture does not consume the launch,
+acceptance releases only that identity, and preaccept failure, Cancel, or a newer
+replacement leaves the appropriate launch staged.
+
+Round-3 baseline was 601 affected tests and 100 runtime/queue/UI companions.
+The bounded RED run produced 11 expected failures before teardown hardening, then
+14 focused review probes passed. Final affected verification was 613 passed and
+runtime/queue/UI companions were 100 passed, each with the inherited Requests
+warning. Seven restored mutations were killed: ignored accepted-live ownership,
+unawaited submit shutdown, missing direct and agent shutdown rechecks, early
+COMMITTING close removal, equality/unconditional prefill clearing, and early
+evidence release. Scoped Ruff lint/format, source/privacy scans, and diff checks
+passed.
+
+## Fix round 4
+
+The submit registry now owns each exact `asyncio.Task` under a thread-safe lock,
+with its resolved session as metadata. A second same-session refusal cannot
+replace the first pending owner; provisional binding, exact-task finalization,
+per-session close, and global shutdown all preserve every live task. Synchronous
+`begin_shutdown()` marshals queue/preparation teardown and cancellation to the
+asyncio owner loop, while same-loop cancellation remains direct and closed or
+completed task loops are bounded no-ops.
+
+Cancellation after USER/assistant ownership now returns the exact accepted
+`ConsoleSubmitResult` at the inner boundary where the committed IDs and context
+epoch are still known. Direct and agent preflight cancellation retain those
+identities, mark the assistant failed without claiming provider dispatch, and
+let recovered queue ownership acknowledge once. Preaccept cancellation remains
+an unaccepted result. Close-time READY cleanup tolerates only the exact transient
+echo already removed with its session; an unrelated store failure still
+propagates, and the staged evidence launch is neither consumed nor released.
+One-shot prefill consumption now accepts only an exact non-negative `int`, so
+`bool` cannot alias revision 1.
+
+The round-3 report had two governance defects. It retained the original
+11-file affected command instead of the reviewer-expanded gate, so its printed
+command did not reproduce the claimed 613 count. It also stated that whole-file
+Ruff format checking passed. At `c3bc719b1`, formatter checks from HEAD content
+were clean for the test and controller files but failed for
+`console_chat_store.py`; therefore the blanket round-3 format claim is withdrawn.
+Round 4 leaves that pre-existing store drift untouched, proves the changed store
+range independently, and prints the exact reviewer-verified gates below.
+
+Affected gate (613 passed/1 inherited warning at the clean `c3bc719b1`
+baseline; 623 passed/1 inherited warning after the 10 new collected probes):
+
+```bash
+../../.venv/bin/python -m pytest Tests/Architecture/test_console_wave6_inventory.py Tests/Chat/test_console_automatic_library_preparation.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store_library_policy.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_turn_library_authority.py Tests/Chat/test_console_turn_execution_context.py Tests/Chat/test_console_turn_preparation.py Tests/Chat/test_library_preparation.py Tests/UI/test_console_auto_rag_on_send.py Tests/UI/test_console_harness_config_honesty.py Tests/UI/test_console_rag_settings_modal.py Tests/UI/test_console_retrieval_controller.py Tests/UI/test_console_controller_wiring.py Tests/test_config_console_defaults.py -q
+```
+
+Companion gate (100 passed/1 inherited warning before and after round 4):
+
+```bash
+../../.venv/bin/python -m pytest Tests/Chat/test_console_runtime_lifetime.py Tests/Chat/test_console_prompt_queue.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_prompt_queue_modal.py -q
+```
+
+The focused production-path file passed 79 tests. Five restored counterfactual
+families were killed: session-key replacement lost the first owner; direct
+foreign-thread teardown failed both debug-mode direct/agent probes; blanket
+postaccept cancellation produced `CancelledError` instead of accepted truth;
+unguarded READY echo cleanup raised `KeyError`; and `isinstance` admitted a bool
+token. Scoped Ruff lint passes. Exact formatter checks pass for the changed test
+and controller files and for store lines 2455–2485; the whole store still fails
+exactly as its HEAD baseline does. Source/privacy scans and `git diff --check`
+pass. ADR required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`; ADR-079 already
+owns these volatile admission and teardown boundaries. TASK-19900.3 remains In
+Progress with all 22 acceptance criteria unchecked because Task14+ durable
+checkpoint/reconstruction and recovery UI remain out of scope.
+
+## Fix round 5
+
+Closed event-loop submit owners are now detached synchronously under the submit
+registry's RLock without cancellation, scheduling, or awaiting. The registry
+binds each task to its exact preparation identity in the same critical section
+that admits the store preparation. Cleanup legally abandons, rolls back, or
+settles only preparation identities exclusive to unreachable tasks, then drops
+their bounded outcome and continuation sidecars. A live peer sharing the same
+session and preparation remains authoritative; its normal cancellation/finalizer
+path still owns cleanup. Removing the controller's strong registry edge breaks
+the bidirectional ownership cycle. Public weak-reference collection now proves
+the closed task is no longer retained while the closed loop's exception handler
+honestly captures Python's expected destroyed-pending-task diagnostic.
+
+Shutdown snapshots submit and stream owners before the queue tombstone. An
+explicit `try/finally` retains a queue or presentation-callback exception while
+preparation abandonment, owner-loop cancellation signals, and headless-round
+cancellation all execute, then the same-thread caller receives the original
+exception. The off-thread
+scheduled callback consumes that exception only after cleanup so asyncio cannot
+log its raw text; live task cancellation remains marshalled to each owner loop.
+
+The original round-5 test evidence incorrectly set private asyncio
+`_log_destroy_pending` flags and manually closed Task coroutines before garbage
+collection. Its claim of no pending-task/coroutine warning on the emergency
+already-closed-loop path is retracted: those test-only operations suppressed the
+behavior under review. The no-diagnostic claim applies only to supported
+shutdown coordinated with live owner loops. Emergency closed-loop detachment is
+fail-closed ownership cleanup, not terminal Task shutdown, recovery, or
+durability; public asyncio correctly reports `Task was destroyed but it is
+pending!` when the abandoned pending Task is later collected.
+
+Pre-edit reproducibility used the exact round-4 gates: 623 passed/1 inherited
+Requests warning for the affected gate and 100 passed/1 inherited warning for
+the companion gate. The first debug RED was 3 expected failures; an added
+off-thread privacy RED failed with the raw callback exception in the loop error
+handler. The historical 4-test debug run remains evidence for ownership cleanup
+and callback privacy, but its blanket no-warning conclusion is invalid for the
+emergency closed-loop case and is superseded by the lifecycle correction below.
+The historical exact commands were:
+
+```bash
+PYTHONASYNCIODEBUG=1 ../../.venv/bin/python -m pytest Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_drops_exact_volatile_ownership Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown Tests/Chat/test_console_automatic_library_preparation.py::test_shutdown_callback_failure_rethrows_after_all_task_cleanup -q
+```
+
+Result: 4 passed/1 inherited warning.
+
+```bash
+../../.venv/bin/python -m pytest Tests/Architecture/test_console_wave6_inventory.py Tests/Chat/test_console_automatic_library_preparation.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store_library_policy.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_turn_library_authority.py Tests/Chat/test_console_turn_execution_context.py Tests/Chat/test_console_turn_preparation.py Tests/Chat/test_library_preparation.py Tests/UI/test_console_auto_rag_on_send.py Tests/UI/test_console_harness_config_honesty.py Tests/UI/test_console_rag_settings_modal.py Tests/UI/test_console_retrieval_controller.py Tests/UI/test_console_controller_wiring.py Tests/test_config_console_defaults.py -q
+```
+
+Result: 627 passed/1 inherited warning.
+
+```bash
+../../.venv/bin/python -m pytest Tests/Chat/test_console_runtime_lifetime.py Tests/Chat/test_console_prompt_queue.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_prompt_queue_modal.py -q
+```
+
+Result: 100 passed/1 inherited warning. Both required restored mutations were
+killed: skipping closed-loop unregister/cleanup failed at the retained registry,
+and re-raising the queue callback before teardown failed at the unset headless
+cancel signal. Scoped Ruff lint and changed-file formatting pass; the unchanged
+whole `console_chat_store.py` still fails formatting exactly as its HEAD input
+does. Source/privacy scans find no new log or credential sink, and
+`git diff --check` passes. ADR required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`; ADR-079 already
+owns volatile preparation and shutdown authority. TASK-19900.3 remains In
+Progress with all 22 acceptance criteria unchecked because Task14+ durability,
+checkpoint reconstruction, and recovery UI remain out of scope.
+
+## Lifecycle evidence correction
+
+All three Task-13 test-only uses of private asyncio warning suppression and
+manual Task-coroutine closure are removed. The supported probe now starts a real
+automatic submit, awaits `ConsoleChatController.shutdown()` while its owner loop
+is alive, closes that loop, drops the submit/controller references, and proves
+through public exception handling, warning capture, and weak references that
+the task and controller collect with no destroyed-pending or never-awaited
+diagnostic. Registry, preparation, outcome, and continuation ownership are
+empty and the provider is never called.
+
+The emergency probe deliberately closes the owner loop first, calls
+`begin_shutdown()`, and proves exact synchronous volatile detachment, no
+provider call, no closed-loop API error, and a broken controller/task ownership
+cycle. Its public loop exception handler then captures the one expected `Task
+was destroyed but it is pending!` diagnostic after GC; warning capture proves
+the test leaves no unhandled never-awaited coroutine. A mixed closed/live probe
+shows that the closed peer cannot remove a live same-session preparation and
+that awaited shutdown still takes the live owner to normal terminal cleanup.
+
+The exact clean-head baselines were 627 affected tests and 100 companion tests,
+each with the inherited Requests dependency warning. RED changed only the
+emergency public-diagnostic expectation and failed because the old private
+suppression kept the handler empty. Final `PYTHONASYNCIODEBUG=1` lifecycle focus
+was 5 passed/1 inherited warning; the exact affected gate is now 628 passed/1
+inherited warning, and companions remain 100 passed/1 inherited warning. The
+expected emergency Task diagnostic is captured and asserted data, not an
+uncaptured pytest warning. Production behavior is unchanged; only controller
+lifecycle docstrings now state the supported and emergency contracts. ADR
+required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`. TASK-19900.3
+remains In Progress with all 22 acceptance criteria unchecked; this correction
+makes no Task14+ durability, reconstruction, recovery, or clean emergency
+shutdown claim.

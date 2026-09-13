@@ -518,6 +518,8 @@ def test_panel_snapshot_rejects_private_non_data_leaves(hostile: object) -> None
         "semantic_vad",
         "0.5",
         "500",
+        "",
+        False,
     )
 
     with pytest.raises((TypeError, ValueError)):
@@ -554,6 +556,8 @@ def test_panel_snapshot_roundtrips_invalid_url_but_strips_credential_metadata() 
         "semantic_vad",
         "0.5",
         "500",
+        "",
+        False,
     )
     snapshot = SpeechTTSPanelDraftSnapshot(
         state=state,
@@ -1333,7 +1337,7 @@ async def test_cancelled_settings_identity_worker_releases_app_owned_hold(
 
 
 async def _wait_for(condition, pilot, *, attempts: int = 160) -> bool:
-    deadline = time.monotonic() + max(1.0, attempts * 0.02)
+    deadline = time.monotonic() + max(30.0, attempts * 0.02)
     while time.monotonic() < deadline:
         if condition():
             return True
@@ -2070,6 +2074,15 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+
+    monkeypatch.setattr(
+        "tldw_chatbook.app.get_cli_setting",
+        lambda section, key=None, default=None: (
+            False
+            if section == "splash_screen" and key == "enabled"
+            else default
+        ),
+    )
 
     monkeypatch.setattr(
         LLMManagementWindow,

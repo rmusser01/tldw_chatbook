@@ -98,9 +98,7 @@ def test_pillow_requirement_is_consistent_and_not_frozen() -> None:
     assert str(project_pillow.specifier) == str(requirements_pillow.specifier), (
         "pyproject.toml and requirements.txt disagree on the Pillow requirement"
     )
-    assert not any(
-        spec.operator == "==" for spec in project_pillow.specifier
-    ), (
+    assert not any(spec.operator == "==" for spec in project_pillow.specifier), (
         "Pillow must not be frozen to an exact version: renderer determinism is "
         "owned by console_visual_transcript, and freezing an image parser this "
         "app points at untrusted input is not an acceptable price for it "
@@ -198,6 +196,7 @@ class _ImmediateGateway:
         messages,
         tools: list | None = None,
         signals: ConsoleProviderStreamSignals | None = None,
+        **kwargs,
     ) -> AsyncIterator[str]:
         del resolution, tools
         self.requests.append(messages)
@@ -704,6 +703,7 @@ def test_probe_answers_require_exact_normalized_values() -> None:
         messages,
         tools: list | None = None,
         signals: ConsoleProviderStreamSignals | None = None,
+        **kwargs,
     ) -> AsyncIterator[str]:
         del resolution, tools
         gateway.requests.append(messages)

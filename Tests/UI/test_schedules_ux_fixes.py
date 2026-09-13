@@ -45,8 +45,10 @@ def test_schedules_bindings_avoid_terminal_conventions() -> None:
 
 
 def test_schedules_bindings_use_single_letters() -> None:
+    # redesign PR-4 task 4: `c` (create) renamed to `n` (spec §12, survey
+    # §3 "straight rename/rebind").
     bound = {binding.key for binding in SchedulesWorkbench.BINDINGS}
-    assert {"c", "d", "s"} <= bound
+    assert {"n", "d", "s"} <= bound
 
 
 def test_every_binding_has_an_implemented_action() -> None:
@@ -69,8 +71,15 @@ def test_footer_shortcuts_match_bindings_exactly() -> None:
 
 
 def test_stub_actions_removed() -> None:
+    # redesign PR-4 task 4: `action_pause_resume` used to be forbidden
+    # here because only a never-wired stub of that name had ever existed
+    # -- spec §12's `p` key now gives it a real, tested implementation
+    # (routes reminders to `action_toggle_enabled`, definitions to
+    # `_toggle_definition_lifecycle`), so the assertion inverts for that
+    # one name. `action_run_now` (never a real binding's action string --
+    # the run-now key was always `action_run_task_now`) stays forbidden.
     assert not hasattr(SchedulesWorkbench, "action_run_now")
-    assert not hasattr(SchedulesWorkbench, "action_pause_resume")
+    assert hasattr(SchedulesWorkbench, "action_pause_resume")
 
 
 def test_conflict_type_labels_are_plain_language() -> None:

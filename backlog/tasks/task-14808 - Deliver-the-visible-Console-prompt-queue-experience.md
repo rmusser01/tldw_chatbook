@@ -12,7 +12,7 @@ labels:
 dependencies:
   - TASK-14806
 references:
-  - backlog/decisions/046-visible-bounded-console-prompt-queue.md
+  - backlog/decisions/098-visible-bounded-console-prompt-queue.md
   - backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
 documentation:
   - Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
@@ -42,7 +42,7 @@ Expose the already-safe bounded queue through an honest keyboard-first Console s
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Characterize the current composer, session-tab, conversation-row, send, voice, hands-free, help, and geometry seams; TASK-14801's intended Console reference is unavailable because that ID is occupied by unrelated roleplay work, so use the current mounted code as authority and document exact mount points.\n2. Add ConsolePromptQueueRegion and ConsolePromptQueueUIController under UI/Console_Modules, wire them with late-bound dependencies, and keep chat_screen.py limited to shrinking compatibility delegation.\n3. Join Enter/button/voice/hands-free/programmatic draft dispatch to typed sent/queued/refused outcomes with exact stash restoration and one per-session chain worker.\n4. Add the session-pinned revision-aware manager modal and all edit/reorder/remove/clear/pause/resume/retry/skip/context-review recovery actions while materializing only the actively edited prompt body.\n5. Integrate shelf, collapsed/background labels, F1 help, marker legend, lifecycle focus preservation, responsive TCSS, and user documentation without a new shortcut or setting.\n6. Add pure/mounted/joined/lifecycle/privacy/geometry tests, run mutation checks and reached suites, then complete isolated live verification, backlog notes, DoD, and final program audit.\n\nADR required: no new ADR\nADR path: backlog/decisions/046-visible-bounded-console-prompt-queue.md and backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md\nReason: ADR-046 already fixes ownership, interaction, recovery, privacy, and lifecycle behavior; ADR-031 fixes the keyboard and help constraints.
+1. Characterize the current composer, session-tab, conversation-row, send, voice, hands-free, help, and geometry seams; TASK-14801's intended Console reference is unavailable because that ID is occupied by unrelated roleplay work, so use the current mounted code as authority and document exact mount points.\n2. Add ConsolePromptQueueRegion and ConsolePromptQueueUIController under UI/Console_Modules, wire them with late-bound dependencies, and keep chat_screen.py limited to shrinking compatibility delegation.\n3. Join Enter/button/voice/hands-free/programmatic draft dispatch to typed sent/queued/refused outcomes with exact stash restoration and one per-session chain worker.\n4. Add the session-pinned revision-aware manager modal and all edit/reorder/remove/clear/pause/resume/retry/skip/context-review recovery actions while materializing only the actively edited prompt body.\n5. Integrate shelf, collapsed/background labels, F1 help, marker legend, lifecycle focus preservation, responsive TCSS, and user documentation without a new shortcut or setting.\n6. Add pure/mounted/joined/lifecycle/privacy/geometry tests, run mutation checks and reached suites, then complete isolated live verification, backlog notes, DoD, and final program audit.\n\nADR required: no new ADR\nADR path: backlog/decisions/098-visible-bounded-console-prompt-queue.md and backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md\nReason: ADR-098 already fixes ownership, interaction, recovery, privacy, and lifecycle behavior; ADR-031 fixes the keyboard and help constraints.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -86,7 +86,7 @@ Expose the already-safe bounded queue through an honest keyboard-first Console s
   browser-toggle characterization still differs from the controller state it
   asserts.
 
-ADR required: no new ADR. ADR-046 and ADR-031 remain the governing decisions.
+ADR required: no new ADR. ADR-098 and ADR-031 remain the governing decisions.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 

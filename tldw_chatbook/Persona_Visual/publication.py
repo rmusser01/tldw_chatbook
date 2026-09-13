@@ -22,6 +22,7 @@ from typing import Any
 from uuid import uuid4
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
+from tldw_chatbook.Utils.path_validation import validate_canonical_directory
 from tldw_chatbook.Utils.private_paths import secure_private_directory
 
 from . import assets as asset_boundary
@@ -32,16 +33,14 @@ from .assets import (
 from .repository import (
     PersonaVisualIdentity,
     PersonaVisualRepository,
+    _source_context_json,
+    _visual_owner_id,
 )
 from .validation import validate_persona_visual_manifest
-
 
 _ERROR_PREFIX = "persona_visual_"
 _READ_CHUNK_BYTES = 64 * 1024
 _MANIFEST_LIMIT = 2 * 1024 * 1024
-_SOURCE_CONTEXT_KEYS = frozenset(
-    {"source_id", "provenance", "license", "source_server_commit"}
-)
 _SOURCE_KINDS = frozenset({"imported", "manual"})
 _SUFFIXES = {
     "image/png": ".png",
@@ -86,7 +85,7 @@ class PersonaVisualPublicationAssetSource:
 class PersonaVisualPublicationSnapshot:
     """One complete immutable publication request; it is not an editable model."""
 
-    persona_id: str
+    persona_id: str | None
     persona_revision: int
     title: str
     manifest_json: str
@@ -95,6 +94,8 @@ class PersonaVisualPublicationSnapshot:
     description: str = ""
     source_kind: str = "manual"
     source_context: tuple[tuple[str, str], ...] = ()
+    buddy_id: str | None = None
+    buddy_revision: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +110,7 @@ class PersonaVisualPublicationResult:
 @dataclass(frozen=True, slots=True)
 class _PinnedSource:
     parts: tuple[str, ...]
-    directory_identities: tuple[tuple[int, int, int, int, int], ...]
+    directory_identities: tuple[tuple[int, ...], ...]
     identity: tuple[int, int, int, int, int]
     byte_count: int
     sha256: str
@@ -153,7 +154,8 @@ def publish_persona_visual(
     Args:
         repository: Idle Persona Visual repository that owns the activation.
         snapshot: Fully bounded manifest, provenance, asset, and authority snapshot.
-        source_root: Absolute root containing the snapshotted source assets.
+        source_root: Absolute root containing the snapshotted source assets;
+            may be the profile itself or its private import/workspace directory.
         profile_root: Absolute profile root receiving immutable pack storage.
         authority_guard: Side-effect-free callback checked before and inside the
             repository transaction.
@@ -382,6 +384,8 @@ def publish_persona_visual(
                 if snapshot.expected_identity is None:
                     graph = repository.activate_new_pack(
                         persona_id=snapshot.persona_id,
+                        buddy_id=snapshot.buddy_id,
+                        buddy_revision=snapshot.buddy_revision,
                         title=snapshot.title,
                         description=snapshot.description,
                         source_kind=snapshot.source_kind,
@@ -394,7 +398,10 @@ def publish_persona_visual(
                     )
                 else:
                     graph = repository.publish_version(
+                        source_context=context or None,
                         persona_id=snapshot.persona_id,
+                        buddy_id=snapshot.buddy_id,
+                        buddy_revision=snapshot.buddy_revision,
                         manifest=manifest,
                         manifest_storage_relpath=manifest_storage,
                         assets=asset_rows,
@@ -487,7 +494,7 @@ def cleanup_persona_visual_publication_candidate(
     cleanup_path, cleanup_secret = capability
     _require_idle_repository(repository)
     try:
-        profile_path = _canonical_root(profile_root, must_exist=True)
+        profile_path = validate_canonical_directory(profile_root)
     except (OSError, TypeError, ValueError):
         raise PersonaVisualPublicationError("persona_visual_cleanup_denied") from None
     candidate_path = profile_path / cleanup_path
@@ -574,11 +581,15 @@ def _validate_snapshot(
     try:
         if type(snapshot) is not PersonaVisualPublicationSnapshot:
             raise ValueError
+        _visual_owner_id(snapshot.persona_id, snapshot.buddy_id)
+        if snapshot.buddy_id is not None and (
+            type(snapshot.buddy_revision) is not int
+            or snapshot.buddy_revision < 1
+            or snapshot.persona_revision != 0
+        ):
+            raise ValueError
         if (
-            type(snapshot.persona_id) is not str
-            or not snapshot.persona_id
-            or len(snapshot.persona_id) > 200
-            or type(snapshot.persona_revision) is not int
+            type(snapshot.persona_revision) is not int
             or snapshot.persona_revision < 0
             or type(snapshot.title) is not str
             or not snapshot.title
@@ -597,7 +608,7 @@ def _validate_snapshot(
         ):
             raise ValueError
         for value in (
-            snapshot.persona_id,
+            _visual_owner_id(snapshot.persona_id, snapshot.buddy_id),
             snapshot.title,
             snapshot.description,
             snapshot.manifest_json,
@@ -624,26 +635,10 @@ def _validate_snapshot(
             if type(item) is not tuple or len(item) != 2:
                 raise ValueError
             key, value = item
-            if (
-                type(key) is not str
-                or key not in _SOURCE_CONTEXT_KEYS
-                or key in context
-                or type(value) is not str
-                or not value
-                or len(value) > 256
-            ):
-                raise ValueError
-            value.encode("utf-8")
-            stripped = value.strip()
-            if (
-                "/" in value
-                or "\\" in value
-                or any(ord(character) < 32 for character in value)
-                or stripped in {".", ".."}
-                or stripped.startswith(("{", "[", "~"))
-            ):
+            if type(key) is not str or key in context or type(value) is not str:
                 raise ValueError
             context[key] = value
+        _source_context_json(context)
         sources: list[tuple[str, PersonaVisualAssetMetadata]] = []
         metadata_items: list[PersonaVisualAssetMetadata] = []
         source_keys: set[str] = set()
@@ -685,7 +680,11 @@ def _preflight_identity(
 ):
     expected = snapshot.expected_identity
     try:
-        current = repository.get_active_persona_pack(snapshot.persona_id)
+        current = (
+            repository.get_active_buddy_pack(snapshot.buddy_id)
+            if snapshot.buddy_id is not None
+            else repository.get_active_persona_pack(snapshot.persona_id)
+        )
     except ValueError:
         raise PersonaVisualPublicationError(
             "persona_visual_identity_changed"
@@ -709,6 +708,8 @@ def _preflight_identity(
         or current.identity != expected
         or expected.persona_id != snapshot.persona_id
         or expected.persona_revision != snapshot.persona_revision
+        or expected.buddy_id != snapshot.buddy_id
+        or expected.buddy_revision != snapshot.buddy_revision
     ):
         raise PersonaVisualPublicationError("persona_visual_identity_changed")
     return current
@@ -828,8 +829,8 @@ def _publication_roots(
     *, repository: PersonaVisualRepository, snapshot: PersonaVisualPublicationSnapshot,
 ) -> tuple[Path, Path]:
     try:
-        source = _canonical_root(source_root, must_exist=True)
-        profile = _canonical_root(profile_root, must_exist=True)
+        source = validate_canonical_directory(source_root)
+        profile = validate_canonical_directory(profile_root)
         if (
             source == profile
             or source.is_relative_to(profile)
@@ -842,22 +843,6 @@ def _publication_roots(
         raise PersonaVisualPublicationError(
             "persona_visual_publication_denied"
         ) from None
-
-
-def _canonical_root(value: os.PathLike[str] | str, *, must_exist: bool) -> Path:
-    raw = os.fspath(value)
-    if type(raw) is not str or not raw or "\x00" in raw:
-        raise ValueError
-    path = Path(raw)
-    if not path.is_absolute() or str(path) != raw:
-        raise ValueError
-    resolved = path.resolve(strict=must_exist)
-    if resolved != path:
-        raise ValueError
-    metadata = os.lstat(path)
-    if not stat.S_ISDIR(metadata.st_mode):
-        raise ValueError
-    return path
 
 
 def _open_absolute_directory_chain(path: Path) -> list[int]:
@@ -908,7 +893,7 @@ def _pin_source_asset(
     parts = tuple(source.split("/"))
     current = source_root_fd
     opened_directories: list[int] = []
-    directory_identities: list[tuple[int, int, int, int, int]] = []
+    directory_identities: list[tuple[int, ...]] = []
     file_fd = -1
     try:
         for component in parts[:-1]:
@@ -920,8 +905,13 @@ def _pin_source_asset(
             opened_directories.append(child)
             named = os.stat(component, dir_fd=current, follow_symlinks=False)
             opened = os.fstat(child)
+            # Retain full metadata except for our pinned publication ancestors,
+            # whose timestamps change when materializing the new version.
             identity = _file_identity(opened)
-            if not stat.S_ISDIR(named.st_mode) or _file_identity(named) != identity:
+            if (
+                not stat.S_ISDIR(named.st_mode)
+                or _file_identity(named) != identity
+            ):
                 raise ValueError
             directory_identities.append(identity)
             current = child

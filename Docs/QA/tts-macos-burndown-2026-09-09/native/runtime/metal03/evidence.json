@@ -1,0 +1,1712 @@
+{
+  "run_id": "metal-shutdown-recovery-03",
+  "pid": 91254,
+  "started_utc": "2026-09-09T06:42:04.211984+00:00",
+  "source_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown",
+  "source_revision": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "source_relevant_before": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/source-relevant-before.json",
+  "native_base": "238ab6a9e321c17de8e120559f57efeedaeb1345",
+  "source_file_count": 98,
+  "imported_package": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook/__init__.py",
+  "working_checkout_revision_informational": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "working_checkout_status_informational": "M Tests/TTS/test_kokoro_pytorch_runtime.py\n M Tests/TTS/test_kokoro_validation.py\n M Tests/TTS/test_legacy_bridge.py\n M backlog/docs/lessons-live-verification.md\n M backlog/docs/lessons-testing-evidence.md\n M tldw_chatbook/TTS/backends/alltalk.py\n M tldw_chatbook/TTS/backends/higgs.py\n M tldw_chatbook/TTS/backends/kokoro.py\n M tldw_chatbook/TTS/kokoro_pytorch.py\n M tldw_chatbook/TTS/legacy_catalogs.py\n M tldw_chatbook/UI/Speech/speech_playground_pane.py\n?? Docs/Development/TTS/Live_Validation.md\n?? Tests/TTS/test_kokoro_onnx_lifecycle.py\n?? Tests/TTS/test_live_validation_harness.py\n?? Tests/TTS/test_local_provider_contracts.py\n?? Tests/UI/test_speech_kokoro_defaults.py\n?? \"backlog/tasks/task-32147 - Repair-active-request-shutdown-in-the-native-audio.cpp-server.md\"\n?? \"backlog/tasks/task-32148 - Add-repeatable-opt-in-live-TTS-cancellation-and-playback-validation.md\"\n?? \"backlog/tasks/task-32149 - Qualify-non-English-Kokoro-speech-on-macOS-ARM.md\"\n?? \"backlog/tasks/task-32150 - Retain-Kokoro-ONNX-native-workers-through-cancellation-and-close.md\"\n?? \"backlog/tasks/task-32151 - Qualify-registered-Higgs-Audio-V2-on-macOS-CPU.md\"\n?? \"backlog/tasks/task-32152 - Qualify-AllTalk-V2-with-a-local-ARM-CPU-engine.md\"\n?? \"backlog/tasks/task-32153 - Qualify-Kokoro-ONNX-on-Linux-ARM-and-physical-Linux-playback.md\"\n?? \"backlog/tasks/task-32154 - Qualify-real-OpenAI-cloud-TTS-delivery.md\"\n?? \"backlog/tasks/task-32155 - Qualify-real-ElevenLabs-cloud-TTS-delivery.md\"\n?? \"backlog/tasks/task-32156 - Qualify-Kokoro-ONNX-on-Windows-CPU.md\"\n?? \"backlog/tasks/task-32157 - Qualify-Kokoro-on-a-real-CUDA-host.md\"\n?? \"backlog/tasks/task-32158 - Qualify-Chatterbox-on-a-real-CUDA-host.md\"\n?? \"backlog/tasks/task-32159 - Honor-configured-Kokoro-engine-and-voices-in-the-Speech-Lab.md\"\n?? \"backlog/tasks/task-32162 - Stop-Kokoro-PyTorch-between-internal-synthesis-segments.md\"\n?? scripts/validate_live_tts.py\n?? scripts/verify_live_tts_content.py",
+  "device": "metal",
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+  "phases": [
+    {
+      "name": "01-owned-sigterm-during-native-compute",
+      "started_monotonic": 2172229.119789916,
+      "sink_events": [],
+      "http": [
+        {
+          "url": "http://127.0.0.1:18952/v1/audio/speech",
+          "started": 2172229.3029725,
+          "body_sha256": "44006960bff82d5c51d0931f89aabe2205f3d41f580d15e08bf345511263d471",
+          "body_sent": 2172229.304196791,
+          "response_wait_started": 2172229.304198708,
+          "exception": "RemoteProtocolError",
+          "send_terminal": 2172233.25506125
+        }
+      ],
+      "sink_runs": [],
+      "states": [
+        "failed"
+      ],
+      "outcomes": [
+        false
+      ],
+      "stop_outcomes": [],
+      "expected_text": "A silver compass marks the beginning of this deliberate native shutdown check. The local speech server is preparing a complete spoken passage while the application waits for its response. The observer must find the actual synthesis and graph computation on a sampled stack before sending the shutdown signal. Owned request threads must finish before their model resources are released. A fresh server will then speak a separate short reply, and the output device must consume that whole reply. This pending request ends with emerald forest. A silver compass marks the beginning of this deliberate native shutdown check. The local speech server is preparing a complete spoken passage while the application waits for its response. The observer must find the actual synthesis and graph computation on a sampled stack before sending the shutdown signal. Owned request threads must finish before their model resources are released. A fresh server will then speak a separate short reply, and the output device must consume that whole reply. This pending request ends with emerald forest. A silver compass marks the beginning of this deliberate native shutdown check. The local speech server is preparing a complete spoken passage while the application waits for its response. The observer must find the actual synthesis and graph computation on a sampled stack before sending the shutdown signal. Owned request threads must finish before their model resources are released. A fresh server will then speak a separate short reply, and the output device must consume that whole reply. This pending request ends with emerald forest. A silver compass marks the beginning of this deliberate native shutdown check. The local speech server is preparing a complete spoken passage while the application waits for its response. The observer must find the actual synthesis and graph computation on a sampled stack before sending the shutdown signal. Owned request threads must finish before their model resources are released. A fresh server will then speak a separate short reply, and the output device must consume that whole reply. This pending request ends with emerald forest.",
+      "message_id": "6fa27e9c-be34-4711-aa26-7d9ea4378de0",
+      "request_id": 1,
+      "destination_fingerprint": "sha256:ce5ecb51e3c6b220118470a61f13c93b5d7df2bd663481a338ca0813350f2eb5",
+      "retry_failed_auto": false,
+      "sample_attempts": [
+        {
+          "command": [
+            "/usr/bin/sample",
+            "91269",
+            "1",
+            "1",
+            "-file",
+            "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-1.txt"
+          ],
+          "started": 2172229.334726,
+          "ended": 2172230.65104625,
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "Sampling process 91269 for 1 second with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 91269 written to file /private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-1.txt\n",
+          "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-1.txt",
+          "sha256": "1e41be7881c85aeba089542d6e4cc5763f59864373a805df938ed14f9cce7da7",
+          "not_compute_yet": "Sample has no simultaneous synthesis and ggml computation frames"
+        },
+        {
+          "command": [
+            "/usr/bin/sample",
+            "91269",
+            "1",
+            "1",
+            "-file",
+            "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-2.txt"
+          ],
+          "started": 2172230.753885166,
+          "ended": 2172231.927868,
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "Sampling process 91269 for 1 second with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 91269 written to file /private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-2.txt\n",
+          "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-2.txt",
+          "sha256": "b63b810d81fa22bca2e52eb57ea0949ece4a1bb1f3cf9a8b33948de021b5a794",
+          "not_compute_yet": "Sample has no simultaneous synthesis and ggml computation frames"
+        },
+        {
+          "command": [
+            "/usr/bin/sample",
+            "91269",
+            "1",
+            "1",
+            "-file",
+            "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-3.txt"
+          ],
+          "started": 2172232.029820916,
+          "ended": 2172233.231356125,
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "Sampling process 91269 for 1 second with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 91269 written to file /private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-3.txt\n",
+          "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-3.txt",
+          "sha256": "48df926b42a3d53f46cc1de115aab260e312a67c206828e7d8b4fd5525e42e03"
+        }
+      ],
+      "inflight_barrier": {
+        "pid": 91269,
+        "ppid": 91254,
+        "command": "/private/tmp/tts-macos-burndown/native/build-metal/bin/audiocpp_server --config /private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/server.json",
+        "process_generation": 1,
+        "kind": "pending_http_plus_exact_pid_sampled_synthesis_and_ggml_compute",
+        "sample_path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-3.txt",
+        "sample_sha256": "48df926b42a3d53f46cc1de115aab260e312a67c206828e7d8b4fd5525e42e03",
+        "sample_ended": 2172233.231356125,
+        "at": 2172233.234168625,
+        "resources": {
+          "generation_owner": true,
+          "stream_owner": false,
+          "file_owner": false,
+          "active_tasks": 1,
+          "retained_io": 0,
+          "retained_cleanup": 0,
+          "admitted_operations": 1,
+          "responses": 0,
+          "adapter_leases": 1
+        },
+        "model_frames": [
+          "+           !     99 std::__unique_if<engine::models::supertonic::SupertonicSession>::__unique_single std::make_unique[abi:ne190102]<engine::models::supertonic::SupertonicSession, engine::runtime::TaskSpec const&, engine::runtime::SessionOptions const&, std::shared_ptr<engine::models::supertonic::SupertonicAssets const> const&>(engine::runtime::TaskSpec const&, engine::runtime::SessionOptions const&, std::shared_ptr<engine::models::supertonic::SupertonicAssets const> const&)  (in audiocpp_server) + 132  [0x104e38f38]",
+          "+           !       64 engine::models::supertonic::SupertonicSession::SupertonicSession(engine::runtime::TaskSpec, engine::runtime::SessionOptions, std::shared_ptr<engine::models::supertonic::SupertonicAssets const>)  (in audiocpp_server) + 80  [0x104e5705c]",
+          "+           !       35 engine::models::supertonic::SupertonicSession::SupertonicSession(engine::runtime::TaskSpec, engine::runtime::SessionOptions, std::shared_ptr<engine::models::supertonic::SupertonicAssets const>)  (in audiocpp_server) + 524  [0x104e57218]",
+          "+             265 engine::models::supertonic::SupertonicSession::run(engine::runtime::TaskRequest const&)  (in audiocpp_server) + 200  [0x104e57704]",
+          "+               262 engine::models::supertonic::SupertonicNativeRuntime::synthesize(std::basic_string<char> const&, engine::models::supertonic::SupertonicGenerationOptions const&, engine::models::supertonic::SupertonicTextTokenizer const&)  (in audiocpp_server) + 440  [0x104e3b23c]",
+          "+               3 engine::models::supertonic::SupertonicNativeRuntime::synthesize(std::basic_string<char> const&, engine::models::supertonic::SupertonicGenerationOptions const&, engine::models::supertonic::SupertonicTextTokenizer const&)  (in audiocpp_server) + 80  [0x104e3b0d4]",
+          "+             20 engine::models::supertonic::SupertonicSession::run(engine::runtime::TaskRequest const&)  (in audiocpp_server) + 200  [0x104e57704]",
+          "+               20 engine::models::supertonic::SupertonicNativeRuntime::synthesize(std::basic_string<char> const&, engine::models::supertonic::SupertonicGenerationOptions const&, engine::models::supertonic::SupertonicTextTokenizer const&)  (in audiocpp_server) + 440  [0x104e3b23c]",
+          "+                 3 std::__unique_if<engine::models::supertonic::SupertonicSession>::__unique_single std::make_unique[abi:ne190102]<engine::models::supertonic::SupertonicSession, engine::runtime::TaskSpec const&, engine::runtime::SessionOptions const&, std::shared_ptr<engine::models::supertonic::SupertonicAssets const> const&>(engine::runtime::TaskSpec const&, engine::runtime::SessionOptions const&, std::shared_ptr<engine::models::supertonic::SupertonicAssets const> const&)  (in audiocpp_server) + 132  [0x104e38f38]",
+          "+                   3 engine::models::supertonic::SupertonicSession::SupertonicSession(engine::runtime::TaskSpec, engine::runtime::SessionOptions, std::shared_ptr<engine::models::supertonic::SupertonicAssets const>)  (in audiocpp_server) + 80  [0x104e5705c]",
+          "+                 2 std::__unique_if<engine::models::supertonic::SupertonicSession>::__unique_single std::make_unique[abi:ne190102]<engine::models::supertonic::SupertonicSession, engine::runtime::TaskSpec const&, engine::runtime::SessionOptions const&, std::shared_ptr<engine::models::supertonic::SupertonicAssets const> const&>(engine::runtime::TaskSpec const&, engine::runtime::SessionOptions const&, std::shared_ptr<engine::models::supertonic::SupertonicAssets const> const&)  (in audiocpp_server) + 132  [0x104e38f38]",
+          "+                   2 engine::models::supertonic::SupertonicSession::SupertonicSession(engine::runtime::TaskSpec, engine::runtime::SessionOptions, std::shared_ptr<engine::models::supertonic::SupertonicAssets const>)  (in audiocpp_server) + 80  [0x104e5705c]",
+          "+                 1 std::__unique_if<engine::models::supertonic::SupertonicSession>::__unique_single std::make_unique[abi:ne190102]<engine::models::supertonic::SupertonicSession, engine::runtime::TaskSpec const&, engine::runtime::SessionOptions const&, std::shared_ptr<engine::models::supertonic::SupertonicAssets const> const&>(engine::runtime::TaskSpec const&, engine::runtime::SessionOptions const&, std::shared_ptr<engine::models::supertonic::SupertonicAssets const> const&)  (in audiocpp_server) + 132  [0x104e38f38]",
+          "+                   1 engine::models::supertonic::SupertonicSession::SupertonicSession(engine::runtime::TaskSpec, engine::runtime::SessionOptions, std::shared_ptr<engine::models::supertonic::SupertonicAssets const>)  (in audiocpp_server) + 80  [0x104e5705c]",
+          "+                 1 std::__unique_if<engine::models::supertonic::SupertonicSession>::__unique_single std::make_unique[abi:ne190102]<engine::models::supertonic::SupertonicSession, engine::runtime::TaskSpec const&, engine::runtime::SessionOptions const&, std::shared_ptr<engine::models::supertonic::SupertonicAssets const> const&>(engine::runtime::TaskSpec const&, engine::runtime::SessionOptions const&, std::shared_ptr<engine::models::supertonic::SupertonicAssets const> const&)  (in audiocpp_server) + 132  [0x104e38f38]",
+          "+                   1 engine::models::supertonic::SupertonicSession::SupertonicSession(engine::runtime::TaskSpec, engine::runtime::SessionOptions, std::shared_ptr<engine::models::supertonic::SupertonicAssets const>)  (in audiocpp_server) + 80  [0x104e5705c]"
+        ],
+        "compute_frames": [
+          "+               : | 186 ggml_backend_graph_compute  (in audiocpp_server) + 52  [0x104f30448]",
+          "+               : | 3 ggml_backend_graph_compute  (in audiocpp_server) + 32  [0x104f30434]",
+          "+               : | 27 ggml_backend_graph_compute  (in audiocpp_server) + 52  [0x104f30448]",
+          "+               : | 11 ggml_backend_graph_compute  (in audiocpp_server) + 32  [0x104f30434]",
+          "+               : | 11 ggml_backend_graph_compute  (in audiocpp_server) + 52  [0x104f30448]",
+          "+               : | 14 ggml_backend_graph_compute  (in audiocpp_server) + 52  [0x104f30448]",
+          "+               : | 2 ggml_backend_graph_compute  (in audiocpp_server) + 32  [0x104f30434]",
+          "+                 ! 13 ggml_backend_graph_compute  (in audiocpp_server) + 32  [0x104f30434]",
+          "+                 ! 4 ggml_backend_graph_compute  (in audiocpp_server) + 32  [0x104f30434]",
+          "+                   3 ggml_backend_graph_compute  (in audiocpp_server) + 32  [0x104f30434]",
+          "6       ggml_backend_graph_compute  (in audiocpp_server) + 32  [0x104f30434]"
+        ]
+      },
+      "terminated_owned_child": {
+        "pid": 91269,
+        "ppid": 91254,
+        "generation": 1,
+        "command": "/private/tmp/tts-macos-burndown/native/build-metal/bin/audiocpp_server --config /private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/server.json",
+        "signal": "SIGTERM"
+      },
+      "signal_sent": 2172233.253862625,
+      "child_exit_at": 2172236.779692166,
+      "child_exit_code": 0,
+      "shutdown_seconds": 3.525829541031271,
+      "released_resources": {
+        "generation_owner": false,
+        "stream_owner": false,
+        "file_owner": false,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "adapter_leases": 0
+      },
+      "runtime_passed": true
+    },
+    {
+      "name": "02-fresh-server-successor-playback",
+      "started_monotonic": 2172236.81652725,
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172240.599567625
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172247.025988541
+        }
+      ],
+      "http": [
+        {
+          "url": "http://127.0.0.1:18952/v1/audio/speech",
+          "started": 2172236.901221958,
+          "body_sha256": "dba19bf410a31eb2ed2448d4039a1787bc1aaa70b0d2359d8cec73f8bdec92c5",
+          "body_sent": 2172236.902637458,
+          "response_wait_started": 2172236.902639416,
+          "response_headers": 2172240.534904625,
+          "status": 200,
+          "send_terminal": 2172240.534999041
+        }
+      ],
+      "sink_runs": [
+        {
+          "started": 2172240.537257041,
+          "outcome": "success",
+          "elapsed_seconds": 6.32981412531808,
+          "audio": {
+            "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/artifacts/02-fresh-server-successor-playback-source.wav",
+            "sha256": "532d14e8c0540059f637dd1e00bd48414eb680d405aa7500ebe2416d81dc34be",
+            "frames": 277302,
+            "sample_rate": 44100,
+            "channels": 1,
+            "seconds": 6.288027210884354,
+            "rms": 0.04678040111863575,
+            "peak": 0.375244140625
+          },
+          "declared_pcm_bytes": 554604,
+          "captured_pcm_bytes": 554604
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "stop_outcomes": [],
+      "expected_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "message_id": "9c376f8e-d31d-4e70-84ed-547da53b0f49",
+      "request_id": 2,
+      "destination_fingerprint": "sha256:ce5ecb51e3c6b220118470a61f13c93b5d7df2bd663481a338ca0813350f2eb5",
+      "retry_failed_auto": false,
+      "released_resources": {
+        "generation_owner": false,
+        "stream_owner": false,
+        "file_owner": false,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "adapter_leases": 0
+      },
+      "runtime_passed": true
+    }
+  ],
+  "processes": [
+    {
+      "state": "stopped",
+      "process_generation": 0,
+      "observation_version": 0,
+      "endpoint": null,
+      "tts_capability": "unknown",
+      "consecutive_health_failures": 0,
+      "last_failure": null,
+      "diagnostics": [],
+      "dropped_diagnostic_lines": 0,
+      "label": "cold before destination resolution"
+    },
+    {
+      "state": "running",
+      "process_generation": 1,
+      "observation_version": 3,
+      "endpoint": "http://127.0.0.1:18952",
+      "tts_capability": "available",
+      "consecutive_health_failures": 0,
+      "last_failure": null,
+      "diagnostics": [
+        {
+          "stream": "stderr",
+          "text": "audio.cpp is optimized for CUDA. The metal server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA."
+        }
+      ],
+      "dropped_diagnostic_lines": 0,
+      "label": "01-owned-sigterm-during-native-compute admitted",
+      "pid": 91269,
+      "returncode": null
+    },
+    {
+      "state": "unavailable",
+      "process_generation": 1,
+      "observation_version": 5,
+      "endpoint": null,
+      "tts_capability": "unknown",
+      "consecutive_health_failures": 0,
+      "last_failure": {
+        "process_generation": 1,
+        "code": "process_exited",
+        "message": "The audio.cpp server exited unexpectedly",
+        "retryable": true,
+        "recovery_action": "open_diagnostics"
+      },
+      "diagnostics": [
+        {
+          "stream": "stderr",
+          "text": "audio.cpp is optimized for CUDA. The metal server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA."
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: testing tensor API for f16 support"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_init_from_source: error compiling source"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: - the tensor API is not supported in this environment - disabling"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_init: using embedded metal library"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_init: loaded in 0.019 sec"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: GPU name:   MTL0 (Apple M5 Max)"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: GPU family: MTLGPUFamilyApple10  (1010)"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: simdgroup reduction   = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: simdgroup matrix mul. = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: has unified memory    = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: has bfloat            = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: has tensor            = false"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: use residency sets    = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: use shared buffers    = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: recommendedMaxWorkingSetSize  = 115448.73 MB"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: allocating"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: found device: Apple M5 Max"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: picking default device: Apple M5 Max"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use fusion         = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use concurrency    = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use graph optimize = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: allocating"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: found device: Apple M5 Max"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: picking default device: Apple M5 Max"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use fusion         = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use concurrency    = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use graph optimize = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_get_rows_f32', name = 'kernel_get_rows_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_get_rows_f32                           0x105c7e8e0 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f32_f32', name = 'kernel_cpy_f32_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f32                            0x105c7f160 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_repeat_f32', name = 'kernel_repeat_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_repeat_f32                             0x105c7f9e0 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0_cb=0      0x105c80560 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_concat', name = 'kernel_concat'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_concat                                 0x105c80de0 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_conv_2d_dw_1d_whcn', name = 'kernel_conv_2d_dw_1d_whcn'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_conv_2d_dw_1d_whcn                     0x105c81160 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=0_cb=0      0x105c817e0 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_norm_mul_add_f32_4', name = 'kernel_norm_mul_add_f32_4'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_norm_mul_add_f32_4                     0x105c81b60 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1      0xc4ce1c000 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1_cb=0      0xc4ce1c380 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=104_cnt=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=104_cnt=0             0xc4ce1c700 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=2_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=2_nf=1_rb=0_cb=0      0xc4ce1ca80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_im2col_f32', name = 'kernel_im2col_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_im2col_f32                             0xc4ce1d180 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=10_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=10_cnt=1            0xc4ce1d500 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_4', name = 'kernel_mul_mv_f32_f32_4_nsg=1_ne12=2_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_4_nsg=1_ne12=2_r2=1_r3=1      0xc4ce1d880 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_sum_rows_f32_f32_4', name = 'kernel_sum_rows_f32_f32_4_op=10'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_sum_rows_f32_f32_4_op=10               0xc4ce1dc00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_soft_max_f32', name = 'kernel_soft_max_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f32                           0xc4ce1df80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=2_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=2_ne13=1_r2=1_r3=1      0xc4ce1e300 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_sum_rows_f32_f32', name = 'kernel_sum_rows_f32_f32_op=10'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_sum_rows_f32_f32_op=10                 0xc4ce1e680 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0      0xc4ce1ea00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=101_cnt=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=101_cnt=0             0xc4ce1ed80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_4', name = 'kernel_mul_mv_f32_f32_4_nsg=2_ne12=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_4_nsg=2_ne12=1_r2=1_r3=1      0xc4ce1f100 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=101_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=101_cnt=1           0xc4ce1f480 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=1_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=1_nf=1_rb=1_cb=0      0xc4ce1f800 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=1_cb=0      0xc4ce1fb80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_4', name = 'kernel_mul_mv_f32_f32_4_nsg=1_ne12=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_4_nsg=1_ne12=1_r2=1_r3=1      0xc4ce64000 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=1_cb=0      0xc4ce64380 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=114_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=114_cnt=1             0xc4ce64700 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f16_f32', name = 'kernel_cpy_f16_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_cpy_f16_f32                            0xc4ce64e00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1      0xc4ce65180 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=104_cnt=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=104_cnt=0           0xc4ce65500 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_im2col_f16', name = 'kernel_im2col_f16'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_im2col_f16                             0xc4ce65c00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f16', name = 'kernel_mul_mm_f16_f16_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f16_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1      0xc4ce65f80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=10_cnt=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=10_cnt=0            0xc4ce66300 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=4_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=4_ne13=1_r2=1_r3=1      0xc4ce66680 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_soft_max_f32_4', name = 'kernel_soft_max_f32_4'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f32_4                         0xc4ce66a00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=4_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=4_ne13=1_r2=1_r3=1      0xc4ce66d80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=101_cnt=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=101_cnt=0           0xc4ce67100 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f16_f16', name = 'kernel_cpy_f16_f16'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_cpy_f16_f16                            0xc4ce67480 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=100_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=100_cnt=1           0xc4ce67800 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=1_ne13=2_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=1_ne13=2_r2=1_r3=1      0xc4ce67b80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=10_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=10_cnt=1              0xc4ce1ce00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32', name = 'kernel_mul_mv_f32_f32_nsg=1_ne12=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_nsg=1_ne12=1_r2=1_r3=1      0xc4ce84000 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=1_bco=1_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=1_bco=1_ne12=1_ne13=1_r2=1_r3=1      0xc4ce84700 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_conv_2d_dw_whcn', name = 'kernel_conv_2d_dw_whcn'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_conv_2d_dw_whcn                        0xc4ce84a80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=3_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=3_nf=1_rb=1_cb=0      0xc4ce84e00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=15_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=15_cnt=1            0xc4ce85180 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=16_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=16_cnt=1            0xc4ce85500 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f16_f32_4', name = 'kernel_mul_mv_f16_f32_4_nsg=1_ne12=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f16_f32_4_nsg=1_ne12=1_r2=1_r3=1      0xc4ce85880 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=115_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=115_cnt=1           0xc4ce85c00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f16_f32_4', name = 'kernel_mul_mv_f16_f32_4_nsg=2_ne12=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f16_f32_4_nsg=2_ne12=1_r2=1_r3=1      0xc4ce85f80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=3_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=3_nf=1_rb=0_cb=0      0xc4ce86680 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=1_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=1_nf=1_rb=0_cb=0      0xc4ce86a00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=2_ne13=8_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=2_ne13=8_r2=1_r3=1      0xc4ce86d80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=2_ne13=8_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=2_ne13=8_r2=1_r3=1      0xc4ce87100 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=2_ne13=2_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=2_ne13=2_r2=1_r3=1      0xc4ce87480 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=10_cnt=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=10_cnt=0              0xc4ce87800 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32', name = 'kernel_mul_mv_f32_f32_nsg=1_ne12=2_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_nsg=1_ne12=2_r2=1_r3=1      0xc4ce87b80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=1_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=1_nf=1_rb=0_cb=0      0xc4ce65880 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=1_ne13=1_r2=1_r3=1      0xc4ce64a80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=14_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=14_cnt=1            0xc4ceb8380 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=3_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=3_nf=1_rb=1_cb=0      0xc4ceb8700 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=0_bco=0_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=0_bco=0_ne12=1_ne13=1_r2=1_r3=1      0xc4ceb8a80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=3_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=3_nf=1_rb=0_cb=0      0xc4ceb9180 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stdout",
+          "text": "audiocpp_server listening on http://127.0.0.1:18952"
+        },
+        {
+          "stream": "stderr",
+          "text": "audiocpp_server failed to send error response: socket send failed"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_free: deallocating"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_free: deallocating"
+        },
+        {
+          "stream": "stdout",
+          "text": "audiocpp_server stopped"
+        }
+      ],
+      "dropped_diagnostic_lines": 0,
+      "label": "after unexpected child exit"
+    },
+    {
+      "state": "running",
+      "process_generation": 2,
+      "observation_version": 8,
+      "endpoint": "http://127.0.0.1:18952",
+      "tts_capability": "available",
+      "consecutive_health_failures": 0,
+      "last_failure": null,
+      "diagnostics": [
+        {
+          "stream": "stderr",
+          "text": "audio.cpp is optimized for CUDA. The metal server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA."
+        }
+      ],
+      "dropped_diagnostic_lines": 0,
+      "label": "02-fresh-server-successor-playback admitted",
+      "pid": 91327,
+      "returncode": null
+    },
+    {
+      "state": "running",
+      "process_generation": 2,
+      "observation_version": 8,
+      "endpoint": "http://127.0.0.1:18952",
+      "tts_capability": "available",
+      "consecutive_health_failures": 0,
+      "last_failure": null,
+      "diagnostics": [
+        {
+          "stream": "stderr",
+          "text": "audio.cpp is optimized for CUDA. The metal server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA."
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: testing tensor API for f16 support"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_init_from_source: error compiling source"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: - the tensor API is not supported in this environment - disabling"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_init: using embedded metal library"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_init: loaded in 0.008 sec"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: GPU name:   MTL0 (Apple M5 Max)"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: GPU family: MTLGPUFamilyApple10  (1010)"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: simdgroup reduction   = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: simdgroup matrix mul. = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: has unified memory    = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: has bfloat            = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: has tensor            = false"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: use residency sets    = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: use shared buffers    = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_device_init: recommendedMaxWorkingSetSize  = 115448.73 MB"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: allocating"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: found device: Apple M5 Max"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: picking default device: Apple M5 Max"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use fusion         = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use concurrency    = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use graph optimize = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: allocating"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: found device: Apple M5 Max"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: picking default device: Apple M5 Max"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use fusion         = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use concurrency    = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_init: use graph optimize = true"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_get_rows_f32', name = 'kernel_get_rows_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_get_rows_f32                           0x10110b340 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f32_f32', name = 'kernel_cpy_f32_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f32                            0x10110be80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_repeat_f32', name = 'kernel_repeat_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_repeat_f32                             0x10110c700 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0_cb=0      0x10110d280 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_concat', name = 'kernel_concat'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_concat                                 0x10110db00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_conv_2d_dw_1d_whcn', name = 'kernel_conv_2d_dw_1d_whcn'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_conv_2d_dw_1d_whcn                     0x10110de80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0      0x10110e500 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_norm_mul_add_f32_4', name = 'kernel_norm_mul_add_f32_4'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_norm_mul_add_f32_4                     0x10110e880 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1      0xba2dfc000 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1_cb=0      0xba2dfc380 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=104_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=104_cnt=1           0xba2dfc700 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_im2col_f32', name = 'kernel_im2col_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_im2col_f32                             0xba2dfce00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=10_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=10_cnt=1            0xba2dfd180 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_4', name = 'kernel_mul_mv_f32_f32_4_nsg=1_ne12=2_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_4_nsg=1_ne12=2_r2=1_r3=1      0xba2dfd500 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_sum_rows_f32_f32_4', name = 'kernel_sum_rows_f32_f32_4_op=10'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_sum_rows_f32_f32_4_op=10               0xba2dfd880 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_soft_max_f32_4', name = 'kernel_soft_max_f32_4'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f32_4                         0xba2dfdc00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=2_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=2_ne13=1_r2=1_r3=1      0xba2dfdf80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=101_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=101_cnt=1           0xba2dfe300 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=2_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=2_nf=1_rb=0_cb=0      0xba2dfe680 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_4', name = 'kernel_mul_mv_f32_f32_4_nsg=2_ne12=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_4_nsg=2_ne12=1_r2=1_r3=1      0xba2dfea00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=1_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=1_nf=1_rb=1_cb=0      0xba2dfed80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=1_cb=0      0xba2dff100 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_4', name = 'kernel_mul_mv_f32_f32_4_nsg=1_ne12=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_4_nsg=1_ne12=1_r2=1_r3=1      0xba2dff480 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=1_cb=0      0xba2dff800 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=114_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=114_cnt=1             0xba2dffb80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f16_f32', name = 'kernel_cpy_f16_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_cpy_f16_f32                            0xba24a4380 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=0_cb=0      0xba24a4700 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1      0xba24a4a80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=104_cnt=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=104_cnt=0             0xba24a4e00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_im2col_f16', name = 'kernel_im2col_f16'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_im2col_f16                             0xba24a5500 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f16', name = 'kernel_mul_mm_f16_f16_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f16_bci=0_bco=1_ne12=1_ne13=1_r2=1_r3=1      0xba24a5880 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=4_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=4_ne13=1_r2=1_r3=1      0xba24a5c00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_soft_max_f32', name = 'kernel_soft_max_f32'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f32                           0xba24a5f80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=4_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=4_ne13=1_r2=1_r3=1      0xba24a6300 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_sum_rows_f32_f32', name = 'kernel_sum_rows_f32_f32_op=10'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_sum_rows_f32_f32_op=10                 0xba24a6680 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=101_cnt=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=101_cnt=0             0xba24a6a00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f16_f16', name = 'kernel_cpy_f16_f16'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_cpy_f16_f16                            0xba24a6d80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=100_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=100_cnt=1           0xba24a7100 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=1_ne13=2_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=1_ne13=2_r2=1_r3=1      0xba24a7480 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=10_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=10_cnt=1              0xba24a7800 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32', name = 'kernel_mul_mv_f32_f32_nsg=1_ne12=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_nsg=1_ne12=1_r2=1_r3=1      0xba24a7b80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=1_bco=1_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=1_bco=1_ne12=1_ne13=1_r2=1_r3=1      0xba24a4000 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_conv_2d_dw_whcn', name = 'kernel_conv_2d_dw_whcn'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_conv_2d_dw_whcn                        0xba285c000 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=104_cnt=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=104_cnt=0           0xba285c380 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=3_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=3_nf=1_rb=1_cb=0      0xba285c700 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=15_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=15_cnt=1            0xba285ca80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=16_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=16_cnt=1            0xba285ce00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f16_f32_4', name = 'kernel_mul_mv_f16_f32_4_nsg=1_ne12=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f16_f32_4_nsg=1_ne12=1_r2=1_r3=1      0xba285d180 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=115_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=115_cnt=1           0xba285d500 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f16_f32_4', name = 'kernel_mul_mv_f16_f32_4_nsg=2_ne12=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f16_f32_4_nsg=2_ne12=1_r2=1_r3=1      0xba285d880 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=3_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=3_nf=1_rb=0_cb=0      0xba285df80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=1_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=1_nf=1_rb=0_cb=0      0xba285e300 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=2_ne13=8_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=2_ne13=8_r2=1_r3=1      0xba285e680 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=10_cnt=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=10_cnt=0              0xba285ea00 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=2_ne13=8_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=2_ne13=8_r2=1_r3=1      0xba285ed80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=2_ne13=2_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1_ne12=2_ne13=2_r2=1_r3=1      0xba285f100 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32', name = 'kernel_mul_mv_f32_f32_nsg=1_ne12=2_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_nsg=1_ne12=2_r2=1_r3=1      0xba285f480 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=1_nf=1_rb=0_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=1_nf=1_rb=0_cb=0      0xba285f800 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=1_ne13=1_r2=1_r3=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1_ne12=1_ne13=1_r2=1_r3=1      0xba285fb80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=14_cnt=1'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=14_cnt=1            0xba2dfca80 | th_max = 1024 | th_width =   32"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=3_nf=1_rb=1_cb=0'"
+        },
+        {
+          "stream": "stderr",
+          "text": "ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=3_nf=1_rb=1_cb=0      0xba24c0000 | th_max = 1024 | th_width =   32"
+        }
+      ],
+      "dropped_diagnostic_lines": 0,
+      "label": "after successful fresh-message recovery",
+      "pid": 91327,
+      "returncode": null
+    },
+    {
+      "state": "stopped",
+      "process_generation": 2,
+      "observation_version": 16,
+      "endpoint": null,
+      "tts_capability": "unknown",
+      "consecutive_health_failures": 0,
+      "last_failure": null,
+      "diagnostics": [],
+      "dropped_diagnostic_lines": 0,
+      "label": "final owned shutdown"
+    }
+  ],
+  "scope": "Mounted production Speech pane; trusted Console store/admission/handler; real HTTP and output device. Not a full Console shell navigation test.",
+  "content_validation": "Full WAV and real device drain checked; independently transcribe every success WAV against expected_text before claiming linguistic completeness.",
+  "status": "runtime_passed_content_transcription_pending",
+  "validator_files": {
+    "native_shutdown_support.py": "f97b26da0480d0893382bc58868c573640571b41b3f5e0806ffb014a4222f3a1",
+    "native_shutdown_worker.py": "1de261d22b2cfba45f1ff1f34efcfbf33c64703089a0aab6c92a7b4ca718f0b2",
+    "validate_native_shutdown.py": "ad0801a3e335849fc0ec7ba167cca71aefa429bd4e4db6b64fa57e03e5bcc174"
+  },
+  "original_harness_sha256": "66f95e1db668e4634e89d8f54cd5d25ad0a47ead8c4caea0dbbe57ba2472a977",
+  "binary_sha256": "3e613916d94f2dbf28ca88566b71a5a6c9d195936e9ec5e7fe0660053de4b68a",
+  "native_source_and_patch_verified": true,
+  "server_config_sha256": "a69fbf41ac0253342695c7f2ed0f6db73382fb25b28258f5bfd1c0c02be1228f",
+  "model_sha256": "b312b57797d40ac5c09d915893dbdbaf6405b7dc043f544776c5c95712dff88c",
+  "model_path": "/private/tmp/tts-macos-live-validation/audio-cpp/models/supertonic-3-f16/supertonic-3-f16.gguf",
+  "model_spec_path": "/private/tmp/tts-macos-burndown/native/source/model_specs/supertonic.json",
+  "model_spec_sha256": "5b794553c086b111b741b6a2a9d91c7cd09da862b346b8b2b48d36d94b36fcc6",
+  "native_patch_sha256": "faa692effa31ef5b7836e2b727fda0a9452a19008a8c679686dceda1c1831dac",
+  "binary_uuid": "UUID: 31B07DCA-31AA-3075-A54A-CCA82DD6A3B7 (arm64) /private/tmp/tts-macos-burndown/native/build-metal/bin/audiocpp_server",
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "native_shutdown_exit_zero": true,
+  "fresh_server_generation": 2,
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": false,
+    "stream_owner": false,
+    "file_owner": false,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "adapter_leases": 0
+  },
+  "owned_process_exits": {
+    "91269": 0,
+    "91327": 0
+  },
+  "shutdown_joined": true,
+  "notices": [
+    {
+      "message": "TTS failed: TTS generation failed; retry",
+      "severity": "error"
+    }
+  ],
+  "completions": [
+    {
+      "message_id": "6fa27e9c-be34-4711-aa26-7d9ea4378de0",
+      "error": "TTS generation failed; retry",
+      "audio_file": null
+    },
+    {
+      "message_id": "9c376f8e-d31d-4e70-84ed-547da53b0f49",
+      "error": null,
+      "audio_file": null
+    }
+  ],
+  "device_streams": [
+    {
+      "phase": "02-fresh-server-successor-playback",
+      "sample_rate": 44100,
+      "channels": 1,
+      "frames": 277830,
+      "audible_frames": 244501,
+      "callbacks": 315,
+      "callback_errors": [],
+      "first_audible": 2172240.893380208,
+      "last_audible": 2172246.865299291,
+      "rendered_audio": {
+        "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/artifacts/02-fresh-server-successor-playback-device-0.wav",
+        "sha256": "885183ce28aed80c93d22aac505699f7684ab2ad2f9bedccd75bf12efe78be34",
+        "frames": 277830,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 6.3,
+        "rms": 0.04673592824275234,
+        "peak": 0.375244140625
+      }
+    }
+  ],
+  "ended_utc": "2026-09-09T06:42:23.043983+00:00",
+  "working_checkout_revision_at_end_informational": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "working_checkout_status_at_end_informational": "M Tests/TTS/test_kokoro_pytorch_runtime.py\n M Tests/TTS/test_kokoro_validation.py\n M Tests/TTS/test_legacy_bridge.py\n M backlog/docs/lessons-live-verification.md\n M backlog/docs/lessons-testing-evidence.md\n M tldw_chatbook/TTS/backends/alltalk.py\n M tldw_chatbook/TTS/backends/higgs.py\n M tldw_chatbook/TTS/backends/kokoro.py\n M tldw_chatbook/TTS/kokoro_pytorch.py\n M tldw_chatbook/TTS/legacy_catalogs.py\n M tldw_chatbook/UI/Speech/speech_playground_pane.py\n?? Docs/Development/TTS/Live_Validation.md\n?? Tests/TTS/test_kokoro_onnx_lifecycle.py\n?? Tests/TTS/test_live_validation_harness.py\n?? Tests/TTS/test_local_provider_contracts.py\n?? Tests/UI/test_speech_kokoro_defaults.py\n?? \"backlog/tasks/task-32147 - Repair-active-request-shutdown-in-the-native-audio.cpp-server.md\"\n?? \"backlog/tasks/task-32148 - Add-repeatable-opt-in-live-TTS-cancellation-and-playback-validation.md\"\n?? \"backlog/tasks/task-32149 - Qualify-non-English-Kokoro-speech-on-macOS-ARM.md\"\n?? \"backlog/tasks/task-32150 - Retain-Kokoro-ONNX-native-workers-through-cancellation-and-close.md\"\n?? \"backlog/tasks/task-32151 - Qualify-registered-Higgs-Audio-V2-on-macOS-CPU.md\"\n?? \"backlog/tasks/task-32152 - Qualify-AllTalk-V2-with-a-local-ARM-CPU-engine.md\"\n?? \"backlog/tasks/task-32153 - Qualify-Kokoro-ONNX-on-Linux-ARM-and-physical-Linux-playback.md\"\n?? \"backlog/tasks/task-32154 - Qualify-real-OpenAI-cloud-TTS-delivery.md\"\n?? \"backlog/tasks/task-32155 - Qualify-real-ElevenLabs-cloud-TTS-delivery.md\"\n?? \"backlog/tasks/task-32156 - Qualify-Kokoro-ONNX-on-Windows-CPU.md\"\n?? \"backlog/tasks/task-32157 - Qualify-Kokoro-on-a-real-CUDA-host.md\"\n?? \"backlog/tasks/task-32158 - Qualify-Chatterbox-on-a-real-CUDA-host.md\"\n?? \"backlog/tasks/task-32159 - Honor-configured-Kokoro-engine-and-voices-in-the-Speech-Lab.md\"\n?? \"backlog/tasks/task-32162 - Stop-Kokoro-PyTorch-between-internal-synthesis-segments.md\"\n?? scripts/validate_live_tts.py\n?? scripts/verify_live_tts_content.py",
+  "relevant_source_changes": [],
+  "checkout_patch_changed": false,
+  "process_exit_record": {
+    "pid": 91254,
+    "run_id": "metal-shutdown-recovery-03",
+    "intended_exit_code": 0
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "artifacts": [
+    {
+      "filename": "pyte-0.8.2-py3-none-any.whl",
+      "kind": "wheel",
+      "license": null,
+      "license_classifiers": [
+        "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)"
+      ],
+      "license_expression": null,
+      "license_files": [
+        {
+          "name": "LICENSE",
+          "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
+        }
+      ],
+      "name": "pyte",
+      "sha256": "85db42a35798a5aafa96ac4d8da78b090b2c933248819157fc0e6f78876a0135",
+      "sha256_after_install": "85db42a35798a5aafa96ac4d8da78b090b2c933248819157fc0e6f78876a0135",
+      "sha256_before_install": "85db42a35798a5aafa96ac4d8da78b090b2c933248819157fc0e6f78876a0135",
+      "size_bytes": 31627,
+      "tags": [
+        "py3-none-any"
+      ],
+      "version": "0.8.2"
+    },
+    {
+      "filename": "wcwidth-0.8.3-py3-none-any.whl",
+      "kind": "wheel",
+      "license": null,
+      "license_classifiers": [],
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "name": "LICENSE",
+          "sha256": "70b98a95a2144eb70af8017fa8c6d95ce247e40867436e8bc649e137fe13d21a"
+        }
+      ],
+      "name": "wcwidth",
+      "sha256": "d5b73dba6158a595ec9370350e7f2637bcac8d6c5e4fde34f30fcffb6103a5e4",
+      "sha256_after_install": "d5b73dba6158a595ec9370350e7f2637bcac8d6c5e4fde34f30fcffb6103a5e4",
+      "sha256_before_install": "d5b73dba6158a595ec9370350e7f2637bcac8d6c5e4fde34f30fcffb6103a5e4",
+      "size_bytes": 331669,
+      "tags": [
+        "py3-none-any"
+      ],
+      "version": "0.8.3"
+    }
+  ],
+  "collection_command": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/common.py",
+      "collect-row",
+      "--row-dir",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py312.dyUMVp",
+      "--evidence-root",
+      "Docs/superpowers/reviews/evidence/task-22512/raw",
+      "--replace"
+    ],
+    "working_directory": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-22512-persistent-terminal"
+  },
+  "command": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/terminal_qualification/common.py",
+      "prepare-row",
+      "--row-id",
+      "macos-arm64-py312",
+      "--row-dir",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py312.dyUMVp",
+      "--requirement",
+      "pyte==0.8.2",
+      "--requirement",
+      "wcwidth>=0.2.14,<1",
+      "--json-out",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py312.dyUMVp/artifacts.json"
+    ],
+    "working_directory": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-22512-persistent-terminal"
+  },
+  "completed_at_utc": "2026-08-29T07:34:30.143016+00:00",
+  "elapsed_seconds": 1.972519,
+  "generation_id": "da323923a7f348b295cfc0af98b333a8",
+  "mandatory": true,
+  "measurements": {
+    "current_rss_bytes": null,
+    "peak_rss_bytes": 30064640
+  },
+  "platform": {
+    "architecture": "arm64",
+    "os": "Darwin",
+    "os_release": "24.6.0",
+    "os_version": "Darwin Kernel Version 24.6.0: Mon Jul 14 11:30:40 PDT 2025; root:xnu-11417.140.69~1/RELEASE_ARM64_T6041",
+    "python_executable_name": "python",
+    "python_implementation": "CPython",
+    "python_version": "3.12.11"
+  },
+  "probe": "artifacts",
+  "requirements": [
+    "pyte==0.8.2",
+    "wcwidth>=0.2.14,<1"
+  ],
+  "resolved_distributions": [
+    {
+      "name": "pip",
+      "primary_file": "pip/__init__.py",
+      "primary_file_sha256": "68a8affec4deed46c4eea9ad0a29c9bad163a8dd0c9dd6506757ca2cdc0514b1",
+      "record_file": "pip-25.0.1.dist-info/RECORD",
+      "record_file_sha256": "0af0d826f1baa1612d828938b9eccd62da7b985d320716b1af256cb71b98cf60",
+      "version": "25.0.1"
+    },
+    {
+      "name": "pyte",
+      "primary_file": "pyte/__init__.py",
+      "primary_file_sha256": "5279e4cfba52135248b5ce33c7a915100046c6a679f4aff3d6f873643fb1eb44",
+      "record_file": "pyte-0.8.2.dist-info/RECORD",
+      "record_file_sha256": "07dfde7fe4f28003acf8eefc01b8d34387e1881583187fd750a4ce5cbee5519d",
+      "version": "0.8.2"
+    },
+    {
+      "name": "wcwidth",
+      "primary_file": "wcwidth/__init__.py",
+      "primary_file_sha256": "2feead2f63ec7862737414280fe225acb61f252c18ec7a53af4d330ecec29ae0",
+      "record_file": "wcwidth-0.8.3.dist-info/RECORD",
+      "record_file_sha256": "ca1aad9235dc4765c941ba2fed56bd33bbbc9612db9cae8b951ee0de068caadf",
+      "version": "0.8.3"
+    }
+  ],
+  "row_id": "macos-arm64-py312",
+  "rows": [
+    {
+      "artifact_count": 2,
+      "id": "artifact-download-hash-offline-install",
+      "mandatory": true,
+      "status": "PASS"
+    }
+  ],
+  "runtime": {
+    "kind": "host"
+  },
+  "schema_version": 1,
+  "started_at_utc": "2026-08-29T07:34:28.170281+00:00",
+  "status": "PASS"
+}

@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -28,6 +28,7 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_service import (
     RUN_LOG_PROMPT_SECTION,
     AgentService,
+    FirstRequestSchemaPlan,
     RunLogRequestPlan,
 )
 from tldw_chatbook.Agents.project_instruction_resolver import (
@@ -38,7 +39,6 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
-    initial_disclosure,
 )
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -56,6 +56,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
+from Tests.console_provider_doubles import provider_resolution
 
 
 def _ui_module():
@@ -469,8 +470,14 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
         native_tools=False,
         response_reserve_tokens=10,
     )
-    active, _offer_find_load = initial_disclosure(registry, config.budget)
-    active = tuple(schema for schema in active if schema.name in config.allowed_tools)
+    active = ()
+    first_request_plan = FirstRequestSchemaPlan(
+        active_schemas=active,
+        runtime_schemas=(),
+        offer_find_load=False,
+        log_active=False,
+        system_prompt=config.system_prompt,
+    )
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
     monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
@@ -512,6 +519,7 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
         messages=[{"role": "user", "content": "question"}],
         config=config,
         api_endpoint="openai",
+        first_request_schema_plan=first_request_plan,
     )
 
     assert [item.code for item in preview_snapshot.primary_delivery.outcomes] == [
@@ -708,7 +716,11 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
     native_names = {
         item["function"]["name"] for item in preview.next_send_payload["tools"]
     }
-    assert {"fs_read", "mcp__srv__search"} <= native_names
+    # The deliberately invalid schema estimator forces discovery mode.  The
+    # exact preview therefore advertises the discovery pair, not the fresh
+    # local/MCP catalog entries themselves; those remain discoverable by name.
+    assert {"find_tools", "load_tools"} <= native_names
+    assert {"fs_read", "mcp__srv__search"}.isdisjoint(native_names)
     assert "search_run_log" not in native_names
     assert "install_skill" not in native_names
     assert "run_skill_script" not in native_names
@@ -718,7 +730,10 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
     )
     gateway.resolve_for_send.assert_awaited_once()
     controller._compose_mcp_provider.assert_awaited_once_with(
-        session.id, publish_counts=False
+        session.id,
+        publish_counts=False,
+        maximum_tool_ids=frozenset(),
+        maximum_definition_hashes=MappingProxyType({}),
     )
     controller._compose_local_provider.assert_called_once()
 
@@ -839,7 +854,8 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
     tool_names = {
         item["function"]["name"] for item in preview.next_send_payload["tools"]
     }
-    assert {"code-review", "skill_file"} <= tool_names
+    assert {"find_tools", "load_tools", "skill_file"} <= tool_names
+    assert "code-review" not in tool_names
 
 
 @pytest.mark.asyncio
@@ -1021,7 +1037,15 @@ async def test_parked_session_preview_does_not_publish_global_mcp_counts(
         lambda **_kwargs: True,
     )
 
-    async def compose_mcp(_session_id, *, publish_counts=True):
+    async def compose_mcp(
+        _session_id,
+        *,
+        publish_counts=True,
+        maximum_tool_ids=None,
+        maximum_definition_hashes=None,
+    ):
+        assert maximum_tool_ids == frozenset()
+        assert maximum_definition_hashes == MappingProxyType({})
         if publish_counts:
             controller._publish_mcp_inspector_counts(1, 2)
         return None
@@ -1038,7 +1062,10 @@ async def test_parked_session_preview_does_not_publish_global_mcp_counts(
     assert app.console_mcp_tool_count == 41
     assert app.console_mcp_not_connected_count == 7
     controller._compose_mcp_provider.assert_awaited_once_with(
-        parked.id, publish_counts=False
+        parked.id,
+        publish_counts=False,
+        maximum_tool_ids=frozenset(),
+        maximum_definition_hashes=MappingProxyType({}),
     )
 
 
@@ -1251,6 +1278,12 @@ async def test_controller_preview_does_not_advance_live_session_state(
     consent.assert_not_called()
     state_setter.assert_not_called()
     exact_builder.assert_called_once()
+    preview_kwargs = exact_builder.call_args.kwargs
+    scratch_snapshot = controller._scratch_spaces.snapshot(session.id)
+    assert preview_kwargs["scratch_root"] == scratch_snapshot.root
+    with preview_kwargs["scratch_lease"]() as leased_root:
+        assert leased_root == scratch_snapshot.root
+    assert controller._scratch_spaces.dispose()
 
 
 @pytest.mark.asyncio
@@ -1419,13 +1452,13 @@ async def test_captured_context_uses_own_session_destination_model_system_and_re
 
         async def resolve_for_send(self, selection):
             self.selections.append(selection)
-            return SimpleNamespace(
-                ready=True,
-                provider=selection.provider,
-                execution_key=f"exec-{selection.provider}",
-                model=selection.explicit_model,
-                max_tokens=selection.max_tokens,
-            )
+            return provider_resolution(
+                       ready=True,
+                       provider=selection.provider,
+                       execution_key=f"exec-{selection.provider}",
+                       model=selection.explicit_model,
+                       max_tokens=selection.max_tokens,
+                   )
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(
@@ -1531,14 +1564,14 @@ async def test_captured_context_uses_provider_fallbacks_for_images_and_admission
 
         async def resolve_for_send(self, selection):
             self.selections.append(selection)
-            return SimpleNamespace(
-                ready=True,
-                provider=selection.provider,
-                execution_key=selection.provider,
-                model=selection.explicit_model or selection.configured_model,
-                max_tokens=selection.max_tokens,
-                base_url=selection.base_url,
-            )
+            return provider_resolution(
+                       ready=True,
+                       provider=selection.provider,
+                       execution_key=selection.provider,
+                       model=selection.explicit_model or selection.configured_model,
+                       max_tokens=selection.max_tokens,
+                       base_url=selection.base_url,
+                   )
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(

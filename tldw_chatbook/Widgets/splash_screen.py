@@ -16,11 +16,13 @@ from textual.message import Message
 
 from loguru import logger
 
+from ..Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from ..config import get_cli_setting
 
 # Import the registration system and load all effects
 from ..Utils.Splash_Screens import load_all_effects, get_effect_class
 from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 
 class SplashScreen(Container):
@@ -55,7 +57,7 @@ class SplashScreen(Container):
         self,
         *,
         card_name: Optional[str] = None,
-        duration: float = 1.5,
+        duration: float = DEFAULT_SPLASH_DURATION_SECONDS,
         skip_on_keypress: bool = True,
         show_progress: bool = True,
         reduced_motion: bool = False,
@@ -85,12 +87,25 @@ class SplashScreen(Container):
         self.show_progress = show_progress
         self.reduced_motion = bool(reduced_motion)
 
+        # TASK-21591. Textual routes a key event to `App.focused or
+        # App.screen` and bubbles it UPWARD from there, so a Container that
+        # is never focused never sees one -- `on_key` below could not fire
+        # and the shipped, default-true `[splash_screen] skip_on_keypress`
+        # was inert. Focus is what makes the skip reachable, so it is taken
+        # only when the skip is wanted: with `skip_on_keypress = false` this
+        # widget stays unfocusable, which also keeps the Settings splash
+        # PREVIEW (which passes False) from stealing focus from the settings
+        # controls around it.
+        self.can_focus = bool(skip_on_keypress)
+
         # Animation state
         self.start_time = time.time()
         self.animation_timer: Optional[Timer] = None
         self.fade_timer: Optional[Timer] = None
         self.auto_close_timer: Optional[Timer] = None
         self.effect_handler: Optional[Any] = None
+        self._animation_interval: float = 0.05
+        self._last_frame_content: Optional[str] = None
 
         # Select splash card
         self.card_name = card_name or self._select_card()
@@ -105,7 +120,7 @@ class SplashScreen(Container):
         """Load splash screen configuration from settings."""
         default_config = {
             "enabled": True,
-            "duration": 2.5,
+            "duration": DEFAULT_SPLASH_DURATION_SECONDS,
             "skip_on_keypress": True,
             "card_selection": "random",
             "show_progress": True,
@@ -277,7 +292,7 @@ class SplashScreen(Container):
 
         # Progress bar (if enabled)
         if self.show_progress:
-            yield ProgressBar(
+            yield PausableProgressBar(
                 total=100,
                 show_eta=False,
                 show_percentage=True,
@@ -297,6 +312,11 @@ class SplashScreen(Container):
         )
         # Start the splash screen
         await self._start_splash()
+
+        # TASK-21591: take focus so key events are routed here rather than to
+        # the screen. Only when the skip is enabled -- see `__init__`.
+        if self.skip_on_keypress:
+            self.focus()
 
         # Schedule auto-close
         if self.duration > 0:
@@ -352,19 +372,40 @@ class SplashScreen(Container):
                 logger.debug(f"Terminal size: {width}x{height}")
 
                 # Create effect handler with card data as kwargs
+                effect_kwargs = dict(self.card_data)
+                card_reveal_duration = effect_kwargs.get("duration")
+                if (
+                    card_reveal_duration is not None
+                    and self.duration > 0
+                    and card_reveal_duration > self.duration
+                ):
+                    # A reveal longer than the splash's own lifetime would be
+                    # cut off mid-reveal when the auto-close timer fires, which
+                    # reads as the intro skipping from an early frame straight
+                    # to its end. Compress the reveal to fit the lifetime.
+                    effect_kwargs["duration"] = self.duration
                 try:
                     self.effect_handler = effect_class(
-                        self, width=width, height=height, **self.card_data
+                        self, width=width, height=height, **effect_kwargs
                     )
+                    self._animation_interval = max(
+                        float(self.card_data.get("animation_speed", 0.05)), 0.01
+                    )
+                    self._last_frame_content = None
+                    # Render frame 0 synchronously: playback must be visible
+                    # the moment the splash mounts, and a contended event loop
+                    # must not let the auto-close timer beat every frame.
+                    self._render_animation_frame()
 
                     # Start animation timer
                     self.animation_timer = self.set_interval(
-                        self.card_data.get("animation_speed", 0.05),
+                        self._animation_interval,
                         self._update_animation,
                     )
                     logger.debug(f"Animation started successfully for {effect_type}")
                 except Exception as e:
                     logger.error(f"Failed to create effect {effect_type}: {e}")
+                    self.effect_handler = None
                     self._display_static_fallback()
             else:
                 logger.warning(f"Unknown effect type: {effect_type}")
@@ -407,27 +448,76 @@ class SplashScreen(Container):
         return 80, 24
 
     def _update_animation(self) -> None:
-        """Update animation frame."""
+        """Update animation frame.
+
+        TASK-21595: the repaint passes ``layout=False``. ``Static.update``
+        defaults to ``layout=True``, so every animation frame used to arm a
+        full ``Screen._refresh_layout`` / ``Compositor.reflow``; at the
+        ``animation_speed`` values the shipped cards use (0.01-0.1 s, i.e.
+        10-100 fps) that is 10-100 whole-screen layout passes per second
+        during startup, the one moment the app is already contended.
+
+        Skipping layout is sound because ``#splash-display`` cannot be sized
+        by its content: both stylesheets that select it pin it to
+        ``width: 100%; height: 100%`` (``css/features/_splash.tcss`` and
+        ``css/components/_settings_splash_theme.tcss``), so its box is
+        entirely container-driven. ``Tests/UI/test_timer_path_layout_cost.py``
+        pins that as a geometry-equivalence A/B rather than by inspection.
+        """
         # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
         if not self.is_attached or not self.screen.is_active:
             return
         if self.effect_handler:
             try:
-                # Get next frame from effect
-                frame_content = self.effect_handler.update()
-
-                if frame_content:
-                    # Update display
-                    display = self.query_one("#splash-display", Static)
-                    display.update(frame_content)
-
-                self.current_frame += 1
+                self._render_animation_frame()
             except Exception as e:
                 logger.error(f"Error updating animation frame: {e}")
                 # Stop animation and show static fallback
                 if self.animation_timer:
                     self.animation_timer.stop()
                 self._display_static_fallback()
+
+    def _render_animation_frame(self) -> None:
+        """Render one animation frame into the display widget.
+
+        Playback is frame-locked: the effect's clock is re-anchored so one
+        *rendered* frame advances it by exactly one animation interval.
+        Textual's interval timer permanently skips callbacks that could not
+        run while the event loop was blocked, and the effects derive their
+        progression from ``time.time() - effect.start_time`` -- so without
+        this re-anchor, startup contention (imports, first paint, terminal
+        writes) lets wall-clock time race ahead of rendered frames and
+        reveals jump forward, in the worst case from the first frame
+        straight to the final one. With it, contention merely slows the
+        animation down.
+        """
+        if self.effect_handler is None:
+            return
+        # current_frame counts already-rendered frames, so the frame about
+        # to be rendered sits (current_frame + 1) intervals into the effect.
+        # Delta-clocked effects (FRAME_DELTA_CLOCK) instead read start_time
+        # as their previous-frame timestamp and reset it inside update(), so
+        # they get a constant one-interval delta per rendered frame -- an
+        # increasingly old anchor would compound their per-frame deltas and
+        # accelerate them (Qodo review of PR #2329).
+        if getattr(self.effect_handler, "FRAME_DELTA_CLOCK", False):
+            self.effect_handler.start_time = time.time() - self._animation_interval
+        else:
+            self.effect_handler.start_time = (
+                time.time() - (self.current_frame + 1) * self._animation_interval
+            )
+        frame_content = self.effect_handler.update()
+        if not frame_content:
+            return
+        if frame_content != self._last_frame_content:
+            # Update display. layout=False: splash frames repaint the same
+            # fixed-size display region, and a layout pass per frame was
+            # 10-100 whole-screen reflows per second during startup
+            # (TASK-21595's regression test pins this).
+            display = self.query_one("#splash-display", Static)
+            display.update(frame_content, layout=False)
+            self._last_frame_content = frame_content
+        self.current_frame += 1
 
     def update_progress(self, value: float, text: str = "") -> None:
         """Update progress bar and text.
@@ -452,10 +542,35 @@ class SplashScreen(Container):
             pass
 
     async def on_key(self, event: events.Key) -> None:
-        """Handle key press events."""
+        """Dismiss the splash on any key, when the skip is enabled.
+
+        TASK-21591. The key is CONSUMED: the splash is a modal overlay over
+        an app that is not interactive yet, and while it is up the key's
+        whole job is to dismiss it. Letting the event bubble instead was
+        tried and rejected -- it preserved ``ctrl+q``/``ctrl+p`` during the
+        splash, but it also let a shell-destination key through, and because
+        ``action_shell_destination`` *posts* its ``NavigateToScreen`` the
+        request was then handled AFTER the now-immediate splash close had
+        pushed the initial screen, so F9 mid-splash landed the user on
+        Settings. That is the exact behaviour task-1339 locked (see
+        ``test_navigation_keypress_during_splash_is_safely_ignored``).
+        Stopping the event keeps every already-decided contract intact; the
+        cost is that ``ctrl+q`` during the splash dismisses it and needs a
+        second press to quit, which no task or test has asserted otherwise.
+        """
         if self.skip_on_keypress and not self._skip_requested:
             event.stop()
             event.prevent_default()
+            self.request_skip()
+
+    def request_skip(self) -> None:
+        """Skip the splash in response to a user action, if allowed.
+
+        Public seam for skip triggers that are not the focused splash's own
+        key handling (``on_key`` above routes here too; idempotent via
+        ``_request_close``).
+        """
+        if self.skip_on_keypress:
             self._request_close()
 
     def _request_close(self) -> None:

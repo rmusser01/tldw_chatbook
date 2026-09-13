@@ -52,8 +52,13 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatSession,
+    ConsoleChatStore,
+    ConsoleDispatchSettlementError,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.console_provider_doubles import provider_resolution
 
 
 _MISSING = object()
@@ -103,6 +108,10 @@ class _PersistenceBase:
         self.update_calls.append(kwargs)
         return True
 
+    def replace_assistant_generation_projection(self, **kwargs: Any) -> int:
+        self.update_calls.append(kwargs)
+        return 1
+
 
 class _ReadyCitationPersistence(_PersistenceBase):
     canonical_citation_writes_ready = True
@@ -140,6 +149,12 @@ class _ReadyCitationPersistence(_PersistenceBase):
             if outcome is not None:
                 return str(outcome)
         return message_id or f"msg-{len(self.create_calls)}"
+
+
+class _RefusingUpdatePersistence(_ReadyCitationPersistence):
+    def update_message_content(self, **kwargs: Any) -> bool:
+        self.update_calls.append(kwargs)
+        return False
 
 
 class _NoCitationKwargPersistence(_PersistenceBase):
@@ -219,13 +234,7 @@ class _RealDirectGateway:
         self.chunks = chunks
 
     async def resolve_for_send(self, _selection: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            ready=True,
-            visible_copy="",
-            provider="llama_cpp",
-            model="test-model",
-            max_tokens=128,
-        )
+        return provider_resolution(max_tokens=128)
 
     async def stream_chat(
         self,
@@ -278,12 +287,15 @@ def real_citation_stack_factory(tmp_path: Path):
             citation_repository=repository,
         )
         store = ConsoleChatStore(persistence=persistence)
-        session = store.ensure_session(
-            settings=ConsoleSessionSettings(provider="llama_cpp")
-        )
-        session.persisted_conversation_id = persistence.create_conversation(
-            runtime_backend="local"
-        )
+        store.ensure_session(settings=ConsoleSessionSettings(provider="llama_cpp"))
+        # Deliberately NOT pre-created. `create_conversation` writes the
+        # conversation row but no `console_conversation_library_policy` row,
+        # and `commit_durable_turn` then takes its "conversation already
+        # exists" branch, finds `policy_row is None`, and refuses the turn
+        # with "Durable Console Library policy no longer matches acceptance."
+        # -- so the send produced a USER row and nothing else. Letting the
+        # first turn create the conversation writes the row and its policy in
+        # the same transaction, which is what production does.
         stack = _RealCitationStack(
             db_path=db_path,
             client_id=client_id,
@@ -470,11 +482,22 @@ def _real_controller(
 
 
 def _real_assistant(store: ConsoleChatStore):
-    return next(
-        message
-        for message in store.messages_for_session(store.active_session_id)
-        if message.role is ConsoleMessageRole.ASSISTANT
+    """Return the session's assistant row, naming the failure when there is none.
+
+    A bare `next(...)` here raised StopIteration out of the calling coroutine,
+    which Python re-raises as `RuntimeError: coroutine raised StopIteration` --
+    a message that names neither the store, the session, nor the fact that the
+    send produced no assistant row at all.
+    """
+    messages = list(store.messages_for_session(store.active_session_id))
+    assistant = next(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), None
     )
+    assert assistant is not None, (
+        "the send produced no ASSISTANT row; the session holds "
+        f"{[(m.role.value, m.content[:24]) for m in messages]}"
+    )
+    return assistant
 
 
 def _citation_row_counts(db: CharactersRAGDB) -> dict[str, int]:
@@ -742,11 +765,11 @@ def test_append_failure_clears_callback_and_deferral_before_reraising() -> None:
             terminal_citation_finalizer=lambda body: None,
         )
 
-    registered_ids = set(store._nodes_by_session[session.id])
-    assert len(registered_ids) == 1
-    message_id = registered_ids.pop()
-    assert message_id not in store._terminal_citation_finalizers
-    assert message_id not in store._terminal_persistence_deferred_ids
+    # A failed durable setup never publishes a ghost tree node.
+    assert store._nodes_by_session[session.id] == {}
+    assert store.messages_for_session(session.id) == []
+    assert store._terminal_citation_finalizers == {}
+    assert store._terminal_persistence_deferred_ids == set()
     _assert_terminal_state_paired(store)
 
 
@@ -958,6 +981,55 @@ def test_ambiguous_first_failure_retries_same_id_and_same_write_once() -> None:
     )
 
 
+def test_exhausted_terminal_create_restores_live_state_and_retries_same_turn() -> None:
+    persistence = _ReadyCitationPersistence(
+        outcomes=[RuntimeError("first"), RuntimeError("second"), None]
+    )
+    store = ConsoleChatStore(persistence=persistence)
+    sealed_write = _sealed_write_for_body(_BODY_SENTINEL)
+    _, message_id = _append_eligible(store, lambda body: sealed_write)
+    store.append_stream_chunk(message_id, _BODY_SENTINEL)
+    before = store.get_message(message_id)
+
+    with pytest.raises(
+        ConsoleDispatchSettlementError,
+        match="Terminal assistant persistence was refused",
+    ):
+        store.mark_message_complete(message_id)
+
+    rolled_back = store.get_message(message_id)
+    assert rolled_back == before
+    assert message_id in store._terminal_citation_finalizers
+    assert message_id in store._terminal_persistence_deferred_ids
+
+    completed = store.mark_message_complete(message_id)
+
+    assert completed.status == "complete"
+    assert completed.content == _BODY_SENTINEL
+    assert completed.persisted_message_id == message_id
+    assert len(persistence.create_calls) == 3
+    assert {call["message_id"] for call in persistence.create_calls} == {message_id}
+
+
+def test_refused_empty_deferred_terminal_update_restores_live_state() -> None:
+    persistence = _RefusingUpdatePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    _, message_id = _append_eligible(store)
+    live = store._message_or_raise(message_id)
+    live.persisted_message_id = "durable-assistant"
+    before = store.get_message(message_id)
+
+    with pytest.raises(
+        ConsoleDispatchSettlementError,
+        match="Terminal assistant persistence was refused",
+    ):
+        store.mark_message_complete(message_id)
+
+    assert store.get_message(message_id) == before
+    assert message_id in store._terminal_citation_finalizers
+    assert message_id in store._terminal_persistence_deferred_ids
+
+
 @pytest.mark.parametrize(
     "second_failure",
     [
@@ -966,7 +1038,7 @@ def test_ambiguous_first_failure_retries_same_id_and_same_write_once() -> None:
     ],
     ids=["ambiguous", "citation-unavailable"],
 )
-def test_ambiguous_retry_failure_is_abandoned_without_ordinary_insert(
+def test_ambiguous_retry_failure_restores_without_ordinary_insert(
     second_failure: BaseException,
 ) -> None:
     persistence = _ReadyCitationPersistence(
@@ -976,31 +1048,30 @@ def test_ambiguous_retry_failure_is_abandoned_without_ordinary_insert(
     sealed_write = _sealed_write_for_body(_BODY_SENTINEL)
     session_id, message_id = _append_eligible(store, lambda body: sealed_write)
     store.append_stream_chunk(message_id, _BODY_SENTINEL)
+    before = store.get_message(message_id)
     log_stream, handler_id = _capture_logs()
     try:
-        completed = store.mark_message_complete(message_id)
+        with pytest.raises(ConsoleDispatchSettlementError):
+            store.mark_message_complete(message_id)
     finally:
         logger.remove(handler_id)
 
     output = log_stream.getvalue()
-    assert completed.status == "complete"
-    assert completed.content == _BODY_SENTINEL
-    assert completed.persisted_message_id is None
+    assert store.get_message(message_id) == before
     assert len(persistence.create_calls) == 2
     assert all(
         call["message_id"] == message_id and call["citation_write"] is sealed_write
         for call in persistence.create_calls
     )
-    assert message_id not in store._pending_persistence_message_ids
+    assert message_id in store._pending_persistence_message_ids
+    assert message_id in store._terminal_citation_finalizers
+
     assert "terminal_citation_persistence_abandoned" in output
     _assert_content_free_diagnostics(output, sealed_write=sealed_write)
 
-    store.get_message(message_id)
-    store.messages_for_session(session_id)
-    assert len(persistence.create_calls) == 2
 
 
-def test_fallback_failure_is_abandoned_without_later_polling_create() -> None:
+def test_fallback_failure_restores_without_later_polling_create() -> None:
     persistence = _ReadyCitationPersistence(
         outcomes=[
             CitationPersistenceUnavailable("deterministic"),
@@ -1011,37 +1082,41 @@ def test_fallback_failure_is_abandoned_without_later_polling_create() -> None:
     sealed_write = _sealed_write_for_body(_BODY_SENTINEL)
     session_id, message_id = _append_eligible(store, lambda body: sealed_write)
     store.append_stream_chunk(message_id, _BODY_SENTINEL)
+    before = store.get_message(message_id)
 
-    completed = store.mark_message_complete(message_id)
+    with pytest.raises(ConsoleDispatchSettlementError):
+        store.mark_message_complete(message_id)
 
-    assert completed.status == "complete"
-    assert completed.persisted_message_id is None
+    assert store.get_message(message_id) == before
     assert len(persistence.create_calls) == 2
     assert persistence.create_calls[0]["citation_write"] is sealed_write
     assert "citation_write" not in persistence.create_calls[1]
     assert {call["message_id"] for call in persistence.create_calls} == {message_id}
-    assert message_id not in store._pending_persistence_message_ids
+    assert message_id in store._pending_persistence_message_ids
+    assert message_id in store._terminal_citation_finalizers
     store.get_message(message_id)
     store.messages_for_session(session_id)
     assert len(persistence.create_calls) == 2
 
 
-def test_finalizer_none_ordinary_failure_is_abandoned_without_later_create() -> None:
+def test_finalizer_none_ordinary_failure_restores_without_later_create() -> None:
     persistence = _ReadyCitationPersistence(
         outcomes=[RuntimeError(_EXCEPTION_SENTINEL)]
     )
     store = ConsoleChatStore(persistence=persistence)
     session_id, message_id = _append_eligible(store, lambda body: None)
     store.append_stream_chunk(message_id, _BODY_SENTINEL)
+    before = store.get_message(message_id)
 
-    completed = store.mark_message_complete(message_id)
+    with pytest.raises(ConsoleDispatchSettlementError):
+        store.mark_message_complete(message_id)
 
-    assert completed.status == "complete"
-    assert completed.persisted_message_id is None
+    assert store.get_message(message_id) == before
     assert len(persistence.create_calls) == 1
     assert persistence.create_calls[0]["message_id"] == message_id
     assert "citation_write" not in persistence.create_calls[0]
-    assert message_id not in store._pending_persistence_message_ids
+    assert message_id in store._pending_persistence_message_ids
+    assert message_id in store._terminal_citation_finalizers
     store.get_message(message_id)
     store.messages_for_session(session_id)
     assert len(persistence.create_calls) == 1
@@ -1274,12 +1349,12 @@ def test_terminal_selected_answer_citations_survive_restart(
             "[S1]",
             "[S99]",
         ]
-        assert [
-            item.evidence_ordinal for item in selected_attempt.occurrences
-        ] == [1, 1, None]
-        assert [
-            item.structural_state for item in selected_attempt.occurrences
-        ] == [
+        assert [item.evidence_ordinal for item in selected_attempt.occurrences] == [
+            1,
+            1,
+            None,
+        ]
+        assert [item.structural_state for item in selected_attempt.occurrences] == [
             StructuralValidationState.VALID,
             StructuralValidationState.VALID,
             StructuralValidationState.UNKNOWN_MARKER,
@@ -1297,6 +1372,76 @@ def test_terminal_selected_answer_citations_survive_restart(
 
 
 @pytest.mark.integration
+@pytest.mark.asyncio
+async def test_real_durable_fail_closed_finalizer_persists_the_body_once(
+    real_citation_stack_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-22302 review: a finalizer that fails closed must not lose the answer.
+
+    `finalize()` returns None when the builder cannot seal -- a real, logged
+    outcome ("attempt_or_seal_failure"), and the supported way to fall back to
+    an ordinary message. On a DURABLE turn that combination is delicate, because
+    the dispatch checkpoint has already written the assistant row with EMPTY
+    content:
+
+    * the final body must still be flushed, or the durable row keeps '' while
+      the in-memory message reads complete; and
+    * the flush must be an UPDATE, because `create_message`'s existing-row
+      handling lives inside its `prepared_citation is not None` branch -- with
+      no citation it falls through to `add_message` and inserts against an id
+      that already exists.
+
+    So: one row, carrying the body, and no citation rows.
+    """
+    stack = real_citation_stack_factory("real-fail-closed")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+
+    def unsealable(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("seal-sentinel")
+
+    monkeypatch.setattr(CitationTraceBuilder, "seal", unsealable, raising=False)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    log_stream, handler_id = _capture_logs()
+    try:
+        result = await controller.submit_draft("question")
+    finally:
+        logger.remove(handler_id)
+
+    assistant = _real_assistant(stack.store)
+    assert result.accepted is True
+    assert assistant.content == _BODY_SENTINEL
+
+    persisted = stack.db.get_message_by_id(assistant.id)
+    assert persisted is not None
+    assert persisted["content"] == _BODY_SENTINEL, (
+        "the durable row kept the checkpoint's empty content -- the answer was "
+        f"lost on the fail-closed path: {persisted['content']!r}"
+    )
+
+    duplicates = (
+        stack.db.get_connection()
+        .execute("SELECT count(*) FROM messages WHERE id = ?", (assistant.id,))
+        .fetchone()[0]
+    )
+    assert duplicates == 1, f"the terminal write duplicated the row ({duplicates})"
+
+    # Fail CLOSED: an ordinary message, with no citation provenance at all.
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 0
+
+    # ...and the terminal write must COMPLETE, not be abandoned. Without the
+    # citation guard this path calls `create_message` against an id that already
+    # exists, which raises `ConflictError: Unique constraint violation` -- and
+    # `mark_message_complete` swallows it into this one log line. The body still
+    # looks right (the UPDATE above already landed), so nothing else here would
+    # notice.
+    assert "terminal_citation_persistence_abandoned" not in log_stream.getvalue(), (
+        "the terminal write was abandoned -- an exception was swallowed on the "
+        "fail-closed path"
+    )
+
+
 @pytest.mark.asyncio
 async def test_real_rollback_deterministic_unavailable_falls_back_without_trace_rows(
     real_citation_stack_factory,
@@ -1673,9 +1818,9 @@ def test_repair_deferral_append_failure_releases_both_states() -> None:
             defer_terminal_persistence=True,
         )
 
-    registered_id = next(iter(store._nodes_by_session[session.id]))
-    assert registered_id not in store._provisional_terminal_selection_ids
-    assert registered_id not in store._terminal_persistence_deferred_ids
+    assert store._nodes_by_session[session.id] == {}
+    assert store._provisional_terminal_selection_ids == set()
+    assert store._terminal_persistence_deferred_ids == set()
 
 
 def test_atomic_repair_replaces_one_deferred_row_without_early_persistence() -> None:
@@ -2235,3 +2380,288 @@ def test_one_terminal_write_ready_finalizer_fails_closed_to_ordinary_message() -
     assert persistence.create_calls[0]["message_id"] == message.id
     assert persistence.create_calls[0]["content"] == completed.content
     assert "citation_write" not in persistence.create_calls[0]
+
+
+# ---------------------------------------------------------------------------
+# TASK-22617: does a settlement failure lose the citation trace?
+#
+# `resume_durable_postcommit`'s `except BaseException:` arm publishes a
+# recovery owner with `terminal_citation_finalizer=None` hard-coded, while the
+# enclosing continuation's finalizer IS in scope. Two readings were filed: the
+# same data-loss class as TASK-22302, or a deliberate guard against attributing
+# content whose delivery is unknown.
+#
+# These tests establish the answer empirically, one per ordering of failure vs
+# finalizer arming. The verdict is NOT data loss, and the mechanism is
+# structural (measured, not read):
+#
+#   - `durable_owner_publication` -- the effect that ARMS the finalizer -- also
+#     registers the session's dispatch recovery (`publish_durable_turn_owners`
+#     -> `publish_durable_dispatch_checkpoint` -> `_dispatch_recoveries_by_
+#     session[...] = recovery`). The failure arm only publishes a recovery
+#     owner when no recovery exists, so the None publish is UNREACHABLE once a
+#     finalizer is armed. Instrumented: across both orderings it fired exactly
+#     once, in the pre-arming test.
+#   - In the one reachable ordering (failure BEFORE owner publication) nothing
+#     was ever armed, the continuation survives the failure, and the resume's
+#     owner-publication effect forwards `continuation.terminal_citation_
+#     finalizer` (TASK-22302) -- re-arming and persisting the trace.
+#   - The unreachability above holds only at EFFECT granularity. Inside owner
+#     publication itself, arming precedes the checkpoint call that registers
+#     the recovery, so a failure in that window DOES reach the None publish
+#     with a finalizer armed (Qodo caught this ordering gap on #2146; the
+#     window test below confirms it empirically). There the store's
+#     non-clearing contract is load-bearing, not defence in depth: a None
+#     publish never clears armed state, only declines to arm -- pinned both
+#     through the realistic window and directly at store level.
+# ---------------------------------------------------------------------------
+
+
+def _spy_recovery_publish(stack, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Record each `publish_durable_recovery_owner` call's finalizer-presence.
+
+    The mechanism TASK-22617 rests on is WHETHER the failure arm's None publish
+    runs, and a post-hoc `dispatch_recovery_for_session` check cannot see that:
+    the arm itself restores a recovery after its publish gate, so the recovery
+    is non-None afterwards in every ordering (a mutation proved that assert
+    vacuous). Observe the call, not the aftermath.
+    """
+
+    calls: list[bool] = []
+    original = stack.store.publish_durable_recovery_owner
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("terminal_citation_finalizer") is not None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(stack.store, "publish_durable_recovery_owner", spy)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_settlement_failure_before_arming_still_persists_the_trace(
+    real_citation_stack_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure BEFORE `durable_owner_publication`: nothing armed yet.
+
+    The recovery owner is published with `terminal_citation_finalizer=None`
+    while no finalizer has ever been armed. If the resume did not re-arm via
+    the continuation, the trace would be unpersistable from here on.
+    """
+
+    stack = real_citation_stack_factory("settle-early")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    original = stack.store.publish_durable_turn_identity
+    calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("injected identity publication")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(stack.store, "publish_durable_turn_identity", fail_once)
+    publish_calls = _spy_recovery_publish(stack, monkeypatch)
+    first = await controller.submit_draft("question")
+    assert first.accepted is True, "harness precondition: the turn was accepted"
+    assert publish_calls == [False], (
+        "positive control: the failure arm's recovery publish (with a None "
+        "finalizer) must RUN in the pre-arming ordering -- if it stopped "
+        "running, the sibling test's zero-calls assertion proves nothing"
+    )
+    assert first.preparation_id in controller._durable_postcommit_continuations
+    assert stack.store._terminal_citation_finalizers == {}, (
+        "harness precondition violated: the finalizer was already armed, so "
+        "this test would no longer cover the fail-BEFORE-arming ordering"
+    )
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 0
+
+    resumed = await controller.resume_durable_postcommit(first.preparation_id)
+
+    assert resumed.accepted is True
+    assert calls == 2, "harness precondition: the resume re-ran the effect"
+    assistant = _real_assistant(stack.store)
+    assert assistant.content == _BODY_SENTINEL
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 1, (
+        "a settlement failure before finalizer arming lost the citation "
+        "trace: the recovery owner's None was load-bearing after all"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settlement_failure_after_arming_keeps_the_armed_finalizer(
+    real_citation_stack_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure AFTER `durable_owner_publication`: the finalizer is armed.
+
+    The None publish in the failure arm is UNREACHABLE here, and that is the
+    load-bearing fact this test pins: the same effect that armed the finalizer
+    already registered the dispatch recovery, so the arm's `dispatch_recovery_
+    for_session is None` gate skips the publish. The armed finalizer survives
+    untouched and fires when the resume completes the turn.
+    """
+
+    stack = real_citation_stack_factory("settle-late")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    original = stack.store._project_workspace_membership_after_commit
+    calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("injected workspace projection")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        stack.store, "_project_workspace_membership_after_commit", fail_once
+    )
+    publish_calls = _spy_recovery_publish(stack, monkeypatch)
+    first = await controller.submit_draft("question")
+    assert first.accepted is True, "harness precondition: the turn was accepted"
+    assert first.preparation_id in controller._durable_postcommit_continuations
+    assert stack.store._terminal_citation_finalizers != {}, (
+        "harness precondition violated: owner publication did not arm the "
+        "finalizer, so this test no longer covers the fail-AFTER-arming "
+        "ordering (did the effect order change?)"
+    )
+    assert publish_calls == [], (
+        "the mechanism this test pins broke: the failure arm's None publish "
+        "RAN while a finalizer was armed. Owner publication is supposed to "
+        "have registered the dispatch recovery already, gating that publish "
+        "off -- re-examine TASK-22617 before trusting the None"
+    )
+
+    resumed = await controller.resume_durable_postcommit(first.preparation_id)
+
+    assert resumed.accepted is True
+    assert calls == 2, "harness precondition: the resume re-ran the effect"
+    assistant = _real_assistant(stack.store)
+    assert assistant.content == _BODY_SENTINEL
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 1, (
+        "publishing the recovery owner with terminal_citation_finalizer=None "
+        "cleared the already-armed finalizer and lost the citation trace"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_none_recovery_publish_never_clears_an_armed_finalizer(
+    real_citation_stack_factory,
+) -> None:
+    """Defence in depth for TASK-22617, pinned where it is reachable.
+
+    The realistic route to this state is the arming-to-registration window
+    inside owner publication (see the window test above). This pins the same
+    property directly at store level, with no controller in the loop: a None
+    publish must never CLEAR armed state, only decline to arm.
+    """
+
+    stack = real_citation_stack_factory("settle-sticky")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    # A completed turn retires its acceptance (its cached commit then raises
+    # ConsoleDurableAcceptanceRetired), so use a turn whose settlement FAILED:
+    # the acceptance stays live and the commit stays retrievable.
+    def fail_always(*args, **kwargs):
+        raise RuntimeError("injected identity publication")
+
+    original = stack.store.publish_durable_turn_identity
+    stack.store.publish_durable_turn_identity = fail_always
+    try:
+        result = await controller.submit_draft("question")
+    finally:
+        stack.store.publish_durable_turn_identity = original
+    assert result.accepted is True
+
+    session_id = stack.store.active_session_id
+    assistant = _real_assistant(stack.store)
+    finalizer = object()
+    stack.store._terminal_citation_finalizers[assistant.id] = finalizer
+    commit = stack.store.durable_turn_commit_for(
+        result.preparation_id,
+        fingerprint=stack.store.durable_acceptance_fingerprint_for(
+            result.preparation_id
+        ),
+    )
+    assert commit is not None, "harness precondition: the commit is cached"
+
+    stack.store.publish_durable_recovery_owner(
+        session_id,
+        commit,
+        terminal_citation_finalizer=None,
+    )
+
+    assert stack.store._terminal_citation_finalizers.get(assistant.id) is finalizer, (
+        "a None recovery publish cleared an armed terminal citation finalizer"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settlement_failure_inside_owner_publication_window(
+    real_citation_stack_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure BETWEEN arming and recovery registration (Qodo #2 on #2146).
+
+    Inside `publish_durable_turn_owners`, `_hydrate_durable_turn_owner_messages`
+    ARMS the finalizer before `publish_durable_dispatch_checkpoint` registers
+    the dispatch recovery. A failure in that window reaches the failure arm
+    with a finalizer armed AND no recovery registered -- so the None publish
+    RUNS while armed, which the effect-granular ordering tests above cannot
+    reach. This is where the store's non-clearing behaviour stops being
+    defence in depth and becomes load-bearing: the None publish must leave the
+    armed finalizer alone, and the resume must still persist the trace.
+    """
+
+    stack = real_citation_stack_factory("settle-window")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    original_checkpoint = stack.store.publish_durable_dispatch_checkpoint
+    checkpoint_calls = 0
+
+    def checkpoint_fail_once(*args, **kwargs):
+        nonlocal checkpoint_calls
+        checkpoint_calls += 1
+        if checkpoint_calls == 1:
+            raise RuntimeError("injected checkpoint publication")
+        return original_checkpoint(*args, **kwargs)
+
+    monkeypatch.setattr(
+        stack.store, "publish_durable_dispatch_checkpoint", checkpoint_fail_once
+    )
+    publish_calls = _spy_recovery_publish(stack, monkeypatch)
+    first = await controller.submit_draft("question")
+    assert first.accepted is True, "harness precondition: the turn was accepted"
+    assert stack.store._terminal_citation_finalizers != {}, (
+        "harness precondition violated: arming no longer precedes checkpoint "
+        "publication inside owner publication, so the window this test covers "
+        "has closed -- re-examine TASK-22617's ordering model"
+    )
+    assert publish_calls == [False], (
+        "harness precondition violated: the failure arm's None publish did "
+        "not run in the arming-to-registration window; this test no longer "
+        "covers the armed+None combination"
+    )
+    assert stack.store._terminal_citation_finalizers != {}, (
+        "the None recovery publish cleared the armed finalizer -- the store's "
+        "non-clearing behaviour is load-bearing in this window and broke"
+    )
+
+    resumed = await controller.resume_durable_postcommit(first.preparation_id)
+
+    assert resumed.accepted is True
+    assistant = _real_assistant(stack.store)
+    assert assistant.content == _BODY_SENTINEL
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 1, (
+        "a settlement failure between finalizer arming and recovery "
+        "registration lost the citation trace"
+    )

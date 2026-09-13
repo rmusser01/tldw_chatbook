@@ -34,7 +34,7 @@ def _copy_build_source(destination: Path) -> None:
     ignored = shutil.ignore_patterns(
         "__pycache__", "*.pyc", "*.pyo", ".DS_Store", "build", "dist", "*.egg-info"
     )
-    for name in ("tldw_chatbook", "Packaging"):
+    for name in ("tldw_chatbook", "Packaging", "packages"):
         shutil.copytree(REPO_ROOT / name, destination / name, ignore=ignored)
     for name in (
         "pyproject.toml",
@@ -345,6 +345,16 @@ def test_worker_is_in_wheel_and_sdist(built_artifacts: tuple[Path, Path]) -> Non
         assert retired not in sdist_members
     assert not any(name.startswith("Packaging/backup_age/") for name in names)
     assert not any(name.startswith("Packaging/backup_age/") for name in sdist_members)
+
+
+def test_backup_product_wheel_includes_shared_profile_runtime(built_artifacts):
+    """Installed restore opens the same shared profile package as the application."""
+    wheel, sdist = built_artifacts
+    relative = "packages/tldw_profile_core/src/tldw_profile_core/__init__.py"
+    expected = (REPO_ROOT / relative).read_bytes()
+    with zipfile.ZipFile(wheel) as archive:
+        assert archive.read("tldw_profile_core/__init__.py") == expected
+    assert _sdist_members(sdist)[relative] == expected
 
 
 def test_source_checkout_runs_python_worker_and_decrypts_fixed_fixture(

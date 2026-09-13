@@ -129,7 +129,7 @@ if credentials:
    credential_observations.append({'issues':list(issues),'records':records})
   return issues
  credential_owner.process_credentials=observed_credentials
-stop_diagnostics=observe_threads(fixture/'ui-stacks.log',interval=100)
+stop_diagnostics=observe_threads(fixture/'ui-stacks.log',interval=30)
 async def main():
  app=TldwCli()
  app.app_config['_first_run']=False
@@ -224,7 +224,7 @@ async def main():
    rejection=await asyncio.to_thread(app.recovery_service.wait,refused,timeout=195 if sys.platform=='win32' else 65)
    (fixture/'ui-credential-observed-shape.json').write_text(json.dumps({'captures':credential_shapes,'read_errors':credential_read_errors},indent=2))
    assert rejection['state']=='failed' and rejection['issues']==('review_required',),dict(rejection)
-   assert len(credential_observations)==1
+   assert len(credential_observations)==1,dict(rejection)
    reviewed=set(credential_observations[0]['issues'])
    assert set(rejection['review_issues'])==reviewed
    assert not destination.exists() and selector.read_bytes()==original_config
@@ -275,7 +275,7 @@ async def main():
   roots={row.logical_id:row for row in doc.directories if row.parent_id is None}
   producers={row.logical_id:row for row in doc.producer_inventory}
   ordinary={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local','db.prompts.primary','chatbooks.registry','db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local'}
-  trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles'}
+  trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles','persona.assets':'persona_visual'}
   assert not any(tuple(slot.get('owners',()))==('recovery.credentials',) for slot in screen._inspection_summary['destination_slots'])
   for index,slot in enumerate(screen._inspection_summary['destination_slots']):
    key=slot['logical_id']

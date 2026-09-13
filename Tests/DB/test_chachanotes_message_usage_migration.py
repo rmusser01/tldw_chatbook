@@ -8,6 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -44,7 +48,9 @@ def test_migration_adds_usage_json_and_bumps_version(tmp_path, monkeypatch):
     db_path = tmp_path / "chachanotes.db"
     _seed_v29_database(db_path, monkeypatch)
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     connection = db.get_connection()
     assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert "usage_json" in _message_columns(connection)
@@ -54,7 +60,9 @@ def test_migration_adds_usage_json_and_bumps_version(tmp_path, monkeypatch):
 def test_usage_json_excluded_from_sync_triggers(tmp_path, monkeypatch):
     db_path = tmp_path / "chachanotes.db"
     _seed_v29_database(db_path, monkeypatch)
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     connection = db.get_connection()
     triggers = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'messages_sync%'"
@@ -111,7 +119,9 @@ def test_migration_is_idempotent_when_column_already_present(tmp_path, monkeypat
         assert "usage_json" in _message_columns(connection)
         db.close_connection()
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")  # must not raise
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )  # must not raise
     connection = db.get_connection()
     assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert "usage_json" in _message_columns(connection)

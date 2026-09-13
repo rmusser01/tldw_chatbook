@@ -48,6 +48,22 @@ class PersonaVisualImportRequested(Message):
     """Ask the screen to import one Persona Visual archive for review."""
 
 
+class PetdexImportRequested(Message):
+    """Review a Petdex source for this saved local Persona."""
+
+
+class PersonaVisualExportRequested(Message):
+    """Export the saved native Buddy with carried artwork notices."""
+
+
+class BuddyCharacterCreateRequested(Message):
+    """Review a saved Buddy or native archive as an independent character."""
+
+    def __init__(self, *, archive: bool = False) -> None:
+        self.archive = archive
+        super().__init__()
+
+
 class PersonaVisualSaveRequested(Message):
     """Ask the screen to publish its current isolated draft exactly once."""
 
@@ -138,7 +154,7 @@ class PersonasPersonaVisualPackWidget(Vertical):
     BUNDLED_CSS = """
     PersonasPersonaVisualPackWidget {
         width: 100%;
-        height: 27;
+        height: 33;
         min-height: 20;
         margin-top: 1;
         padding: 1;
@@ -181,9 +197,9 @@ class PersonasPersonaVisualPackWidget(Vertical):
 
     PersonasPersonaVisualPackWidget #personas-persona-visual-actions {
         width: 100%;
-        height: 6;
+        height: 12;
         layout: grid;
-        grid-size: 3 2;
+        grid-size: 3 4;
         grid-gutter: 0 1;
         margin-top: 1;
     }
@@ -200,7 +216,7 @@ class PersonasPersonaVisualPackWidget(Vertical):
     }
 
     PersonasPersonaVisualPackWidget.-narrow {
-        height: 31;
+        height: 37;
     }
 
     PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-body {
@@ -222,6 +238,8 @@ class PersonasPersonaVisualPackWidget(Vertical):
         self._selected: PersonaVisualDraftRow | None = None
         self._dirty = False
         self._preview_content: Widget | None = None
+        # Task 11: review-only carried-policy line (see show_policy_rule_notice).
+        self._policy_rule_notice: str = ""
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -279,6 +297,29 @@ class PersonasPersonaVisualPackWidget(Vertical):
                 "Cancel Draft",
                 id="personas-persona-visual-cancel",
                 classes="console-action-subdued",
+            )
+
+            yield Button(
+                "Create character…",
+                id="personas-persona-visual-create-character",
+                classes="console-action-secondary",
+                tooltip="Create an independent character from this saved Buddy.",
+            )
+            yield Button(
+                "From Buddy archive…",
+                id="personas-persona-visual-character-archive",
+                classes="console-action-secondary",
+            )
+
+            yield Button(
+                "Petdex…",
+                id="personas-persona-visual-petdex",
+                classes="console-action-secondary",
+            )
+            yield Button(
+                "Export saved pack…",
+                id="personas-persona-visual-export",
+                classes="console-action-secondary",
             )
 
     def on_mount(self) -> None:
@@ -373,6 +414,23 @@ class PersonasPersonaVisualPackWidget(Vertical):
         self._busy = busy
         self._sync_copy_and_controls()
 
+    def show_policy_rule_notice(self, count: int) -> None:
+        """Surface the imported pack's carried policy-rule count (Task 11).
+
+        The carried rules are narrowing-only review metadata — they are
+        never applied by import; this line just makes them visible before
+        publishing. ``count`` <= 0 clears the line.
+        """
+        safe_count = max(0, int(count or 0))
+        self._policy_rule_notice = (
+            f"Carries {safe_count} narrowing-only tool policy rule(s) "
+            "— review before publishing."
+            if safe_count
+            else ""
+        )
+        if self.is_mounted:
+            self._sync_copy_and_controls()
+
     def set_preview(self, renderable: object, *, state: str) -> Widget | None:
         """Mount a decoded selected preview and return its weak-targetable widget."""
 
@@ -423,6 +481,8 @@ class PersonasPersonaVisualPackWidget(Vertical):
             "unavailable": "Persona Visual is unavailable for this Persona.",
             "unsaved": "Save Persona first to author a visual pack.",
         }[self._availability]
+        if self._policy_rule_notice:
+            notice = f"{notice}\n{self._policy_rule_notice}"
         self.query_one("#personas-persona-visual-notice", Static).update(notice)
         status = self._status_copy()
         self.query_one("#personas-persona-visual-status", Static).update(status)
@@ -442,6 +502,18 @@ class PersonasPersonaVisualPackWidget(Vertical):
         activatable = self._inventory is not None and self._inventory.activatable
         self.query_one("#personas-persona-visual-save", Button).disabled = not (
             available and idle and self._dirty and activatable
+        )
+        self.query_one(
+            "#personas-persona-visual-create-character", Button
+        ).disabled = not (available and idle and not self._dirty and activatable)
+        self.query_one(
+            "#personas-persona-visual-character-archive", Button
+        ).disabled = not (available and idle)
+        self.query_one("#personas-persona-visual-petdex", Button).disabled = not (
+            available and idle and not self._dirty
+        )
+        self.query_one("#personas-persona-visual-export", Button).disabled = not (
+            available and idle and not self._dirty and activatable
         )
         cancel_allowed = available and (
             self._dirty or self._busy in {"importing", "preparing", "previewing"}
@@ -495,6 +567,26 @@ class PersonasPersonaVisualPackWidget(Vertical):
         event.stop()
         self.post_message(PersonaVisualImportRequested())
 
+    @on(Button.Pressed, "#personas-persona-visual-petdex")
+    def _petdex_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PetdexImportRequested())
+
+    @on(Button.Pressed, "#personas-persona-visual-export")
+    def _export_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaVisualExportRequested())
+
+    @on(Button.Pressed, "#personas-persona-visual-create-character")
+    def _create_character_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(BuddyCharacterCreateRequested())
+
+    @on(Button.Pressed, "#personas-persona-visual-character-archive")
+    def _character_archive_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(BuddyCharacterCreateRequested(archive=True))
+
     @on(Button.Pressed, "#personas-persona-visual-save")
     def _save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -507,13 +599,16 @@ class PersonasPersonaVisualPackWidget(Vertical):
 
 
 __all__ = [
+    "BuddyCharacterCreateRequested",
     "PersonaVisualAddCustomRequested",
     "PersonaVisualCancelRequested",
     "PersonaVisualClearRequested",
+    "PersonaVisualCustomStateDialog",
+    "PersonaVisualExportRequested",
     "PersonaVisualImportRequested",
     "PersonaVisualPreviewRequested",
     "PersonaVisualReplaceRequested",
     "PersonaVisualSaveRequested",
-    "PersonaVisualCustomStateDialog",
     "PersonasPersonaVisualPackWidget",
+    "PetdexImportRequested",
 ]

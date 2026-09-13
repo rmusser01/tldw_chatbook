@@ -1,0 +1,231 @@
+{
+  "collection_command": {
+    "argv": [
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb\\venv\\Scripts\\python.exe",
+      "-B",
+      "scripts\\terminal_qualification\\common.py",
+      "collect-row",
+      "--row-dir",
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb",
+      "--evidence-root",
+      "D:\\a\\_temp\\task22512-collected"
+    ],
+    "working_directory": "D:\\a\\tldw_chatbook\\tldw_chatbook"
+  },
+  "command": {
+    "argv": [
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb\\venv\\Scripts\\python.exe",
+      "-B",
+      "scripts\\terminal_qualification\\pywinpty_probe.py",
+      "--artifact-manifest",
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb\\artifacts.json",
+      "--json-out",
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb\\pywinpty.json"
+    ],
+    "working_directory": "D:\\a\\tldw_chatbook\\tldw_chatbook"
+  },
+  "completed_at_utc": "2026-08-30T02:42:48.341898+00:00",
+  "elapsed_seconds": 23.953,
+  "generation_id": "2b1adae613fb4d17bbb0be992bd10d50",
+  "mandatory": true,
+  "measurements": {
+    "current_rss_bytes": null,
+    "peak_rss_bytes": null
+  },
+  "platform": {
+    "architecture": "AMD64",
+    "os": "Windows",
+    "os_release": "10",
+    "os_version": "10.0.26100",
+    "python_executable_name": "python.exe",
+    "python_implementation": "CPython",
+    "python_version": "3.11.9"
+  },
+  "probe": "pywinpty",
+  "row_id": "win-amd64-py311",
+  "rows": [
+    {
+      "artifact_filename": "pywinpty-3.0.5-cp311-cp311-win_amd64.whl",
+      "artifact_sha256": "af7a8720c78776ddd6259b71dd567944f766a6cd67f8d2887fbc4973967bacda",
+      "artifact_size_bytes": 2092466,
+      "artifact_verified_during_probe": true,
+      "distribution_version": "3.0.5",
+      "id": "package-pywinpty-3.0.5",
+      "mandatory": true,
+      "native_execution": true,
+      "primary_file_name": "winpty/__init__.py",
+      "primary_file_sha256": "0a7e8f1e0c9c867049153c277c766d3e1394ef5bac7f4aeec46bd735ade0a3d0",
+      "record_file_name": "pywinpty-3.0.5.dist-info/RECORD",
+      "record_file_sha256": "6c382628f2e0ad8aa08419062476e5d94777d8c5f4c1659e6e0c356f1505f1b5",
+      "status": "PASS"
+    },
+    {
+      "id": "windows-platform-floor",
+      "mandatory": true,
+      "minimum_windows_build": 17763,
+      "native_execution": true,
+      "status": "PASS",
+      "windows_build": 26100
+    },
+    {
+      "fresh_worker": true,
+      "id": "windows-low-level-api",
+      "low_level_api": true,
+      "mandatory": true,
+      "native_execution": true,
+      "status": "PASS",
+      "worker_std_streams_fd_backed": true
+    },
+    {
+      "constructed": true,
+      "id": "windows-conpty-only",
+      "mandatory": true,
+      "native_execution": true,
+      "status": "PASS"
+    },
+    {
+      "id": "windows-job-admission-membership",
+      "job_admitted_before_conpty": true,
+      "job_member_count": 10,
+      "job_membership_complete": true,
+      "mandatory": true,
+      "native_execution": true,
+      "normal_cleanup_all_wait_object_0": true,
+      "normal_cleanup_expected_process_count": 2,
+      "normal_cleanup_retained_handle_count": 2,
+      "normal_cleanup_wait_object_0_count": 2,
+      "status": "PASS",
+      "terminal_child_member_before_crash": true,
+      "terminal_grandchild_member_before_crash": true
+    },
+    {
+      "id": "windows-handle-inheritance",
+      "job_handle_non_inheritable": true,
+      "mandatory": true,
+      "native_execution": true,
+      "status": "PASS"
+    },
+    {
+      "credit_limit_bytes": 65536,
+      "id": "windows-one-credit-bounded-read",
+      "mandatory": true,
+      "max_concurrent_readers": 1,
+      "max_unacknowledged_credits": 1,
+      "measured_chunk_count": 621,
+      "native_execution": true,
+      "one_credit_max_bytes": 8760,
+      "read_api_accepts_size": false,
+      "status": "PASS",
+      "upstream_read_buffer_bytes": 32768
+    },
+    {
+      "cancel_completed": true,
+      "cancel_completed_at_handoff": true,
+      "cancel_completed_post_close": false,
+      "cancel_entered": true,
+      "cancel_returned_after_close": false,
+      "concurrent_operation_count": 4,
+      "id": "windows-concurrent-io-close",
+      "inflight_operation_category_count": 1,
+      "io_inflight_at_handoff": true,
+      "mandatory": true,
+      "max_concurrent_readers": 1,
+      "native_execution": true,
+      "priority_close_completed": true,
+      "priority_close_preempted_inflight": true,
+      "quiet_terminal_quiescent_before_handoff": true,
+      "quiet_terminal_startup_drained": true,
+      "read_completed_at_handoff": false,
+      "read_completed_post_close": true,
+      "read_entered": true,
+      "read_returned_after_close": true,
+      "resize_completed": true,
+      "resize_completed_at_handoff": true,
+      "resize_completed_post_close": false,
+      "resize_entered": true,
+      "resize_returned_after_close": false,
+      "status": "PASS",
+      "write_completed": true,
+      "write_completed_at_handoff": true,
+      "write_completed_post_close": false,
+      "write_entered": true,
+      "write_returned_after_close": false
+    },
+    {
+      "default_module_discovery": true,
+      "id": "windows-profile-module-discovery",
+      "mandatory": true,
+      "native_execution": true,
+      "profile_extended_module_discovery": true,
+      "profile_module_discovery": true,
+      "status": "PASS"
+    },
+    {
+      "alternate_isolated": false,
+      "alternate_screen": true,
+      "id": "windows-unicode-alternate-screen",
+      "mandatory": true,
+      "native_execution": true,
+      "primary_restored": true,
+      "status": "FAIL",
+      "unicode_roundtrip": true
+    },
+    {
+      "app_crash_observed": true,
+      "crash_all_descendants_wait_object_0": true,
+      "crash_app_process_separate": true,
+      "crash_app_sole_job_handle_owner": true,
+      "crash_descendant_set_stable": true,
+      "crash_descendants_ready_before_abort": true,
+      "crash_job_handle_non_inheritable": true,
+      "crash_known_descendant_count": 7,
+      "crash_supervisor_job_handle_count": 0,
+      "crash_supervisor_synchronize_handle_count": 7,
+      "crash_wait_object_0_count": 7,
+      "crash_worker_admitted_before_conpty": true,
+      "id": "windows-app-crash-descendant-cleanup",
+      "mandatory": true,
+      "native_execution": true,
+      "status": "PASS"
+    },
+    {
+      "captured_byte_count": 26303,
+      "digest_equal": false,
+      "eof_observed": false,
+      "id": "windows-eof-output-integrity",
+      "mandatory": true,
+      "missing_eof_bounded": true,
+      "native_execution": true,
+      "output_integrity": false,
+      "post_exit_drain_bounded": true,
+      "sequence_complete": false,
+      "status": "FAIL",
+      "terminal_child_crash_observed": true,
+      "terminal_child_eof_observed": false
+    },
+    {
+      "four_session_count": 4,
+      "four_session_rss_delta_bytes": 73965568,
+      "four_session_rss_limit_bytes": 268435456,
+      "id": "four-session-managed-rss",
+      "mandatory": true,
+      "native_execution": true,
+      "rss_controller_process_count": 1,
+      "rss_crash_session_present": false,
+      "rss_fixture_process_count": 4,
+      "rss_fixture_processes_excluded": true,
+      "rss_helper_process_count": 5,
+      "rss_ipc_included_in_worker": true,
+      "rss_measurement_complete": true,
+      "rss_sample_live_session_count": 4,
+      "rss_worker_process_count": 1,
+      "status": "PASS"
+    }
+  ],
+  "runtime": {
+    "kind": "host"
+  },
+  "schema_version": 1,
+  "started_at_utc": "2026-08-30T02:42:24.381699+00:00",
+  "status": "FAIL"
+}

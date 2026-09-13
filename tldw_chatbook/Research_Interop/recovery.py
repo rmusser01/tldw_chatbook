@@ -67,12 +67,14 @@ class _Adapter:
     activation_required: bool = True
 
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
+        from tldw_chatbook.DB.recovery_operations import _sqlite_inventory_status
+
         context = discovery_context(config)
         path = database_path(config, "research_db_path")
-        try:
-            status = "included" if path.is_file() else "missing_required"
-        except OSError:
-            status = "unavailable"
+        status = _sqlite_inventory_status(
+            config, path, owner=self.owner_id, setting_name="research_db_path",
+            optional_default=True,
+        )
         return (
             StorageItem(
                 self.owner_id,

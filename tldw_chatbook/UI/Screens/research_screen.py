@@ -8,6 +8,7 @@ from loguru import logger
 from textual.app import ComposeResult
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Research_Workspace_Modules.mode_bar import ResearchModeStrip
 from ..Research_Window import ResearchWindow
 
 
@@ -25,6 +26,7 @@ class ResearchScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         """Compose the screen's content: the ResearchWindow plus any pending
         state restoration."""
+        yield ResearchModeStrip(active_route="research", id="research-mode-strip")
         self.research_window = ResearchWindow(
             self.app_instance,
             id="research-window",

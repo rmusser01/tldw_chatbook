@@ -834,6 +834,7 @@ async def _evaluate_representation(
         resolution,
         prepared,
         signals=signals,
+        route=None,
     ):
         if isinstance(item, ProviderToolCalls):
             raise ValueError("Visual evaluation does not permit provider tool calls.")

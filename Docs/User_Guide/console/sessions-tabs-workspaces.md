@@ -16,8 +16,8 @@ layout tour). Everything on this page lives in two places:
 
 - The **tab strip** — the row of tabs directly under the
   "Conversation" title above the transcript.
-- The **"Console context"** rail on the left — its separate **Sessions**,
-  **Workspaces**, **Conversations**, and **Details** sections. If the rail is
+- The **"Console context"** rail on the left — its separate **Workspaces**,
+  **Conversations**, **Character**, and **Details** sections. If the rail is
   collapsed, click the **Context->** handle at the left edge to open it when
   the viewport can retain a usable transcript.
 
@@ -39,26 +39,44 @@ strip: "Each tab runs its own agent — up to 3 in parallel (change in
 Settings > Console Behavior)." Dismiss it with its "✕". The "3" is the
 default limit — the banner shows whatever your configured limit is.
 
-**Sessions section** (left rail). Names the active conversation ("None" when
-no conversation is active yet); hover the value to see its durable id.
+**Workspaces section** (left rail). Shows the active workspace on one compact
+line, keeps **Switch**, **New**, and **RAG** together, and renders every
+named workspace in a native Tree with its conversations as children. The
+built-in Default workspace is intentionally absent from the Tree; **Switch**
+is the route to it. **RAG** narrows retrieval to the active workspace's
+items — see [Context & RAG](context-and-rag.md).
 
-**Workspaces section** (left rail). Shows "Workspace" plus the active
-workspace name, with "Switch", "New", and "RAG Scope" buttons. "RAG Scope"
-narrows retrieval to this workspace's items — see
-[Context & RAG](context-and-rag.md).
+**Conversations section** (left rail). A separate **Search conversations**
+box with **Clear**, a **New conversation** button, and a flat list containing
+only Default-workspace and unassigned conversations. A conversation assigned
+to a named workspace appears under that workspace in the Tree instead, never
+in both places. Character conversations never appear in this list — they
+belong to the Character section below (or to their workspace in the Tree,
+when they were created inside one). Starred entries sort first inside their
+one owner; starring is a property and action, not a duplicate Starred group.
 
-**Conversations section** (left rail). A "Search conversations" box with a
-"Clear" button, a "New conversation" button, and three collapsible groups:
-"Starred", "Workspaces", and "Chats".
-Empty groups start collapsed as quiet one-line headers — expand one to see
-its empty copy (for example "No starred conversations."); while you search,
-groups with no matches stay expanded so the "No ... conversations." feedback
-stays visible. Each row shows the conversation title
-plus a secondary line of `<workspace> - <state> - <age>` (for example
-"Chats - active session - 1m"), and ends with a star toggle ("☆" / "★").
+**Character section** (left rail). Shows up to four local character cards or
+unavailable-character groups, with up to five recent saved conversations in
+the one expanded group. Only global and Default-scope character
+conversations are listed and counted here: a character chat created inside a
+named workspace stays under that workspace's node in the Tree — the same
+one-owner rule the rest of the rail follows. Search returns at most eight
+saved local character
+conversations and never sends titles or transcript text to a network service.
+Each search result keeps its title, character name, and Local/age metadata
+on separate lines so the metadata remains readable in the narrow rail.
+When a Context search is active, **Continue search in Character chats** opens
+that same validated query in Ctrl+K's complete local Character-chat results.
+Enter or double-click opens an exact saved conversation in its Console tab;
+single-click selects it. **View all N in Roleplay** opens that character's
+complete saved history. A current card with no saved chats offers **Start in
+Console**, while the overall empty state offers **Open Roleplay**. Chats whose
+card was deleted or cannot be identified are never guessed open: use **Repair
+in Library**, or **View all N in Library**, to resolve them. Turning off
+`show_character_avatar` hides only the image; these navigation controls remain.
 
 **Details section** (left rail, collapsed by default). Status lines for
-"Storage", "Sync", "File tools", "Server", and "ACP", plus a "Handoff" list.
+"Storage", "Sync", "Local file tools", "Server", and "ACP", plus a "Handoff" list.
 On a local-only setup the server lines collapse into one line:
 "Server features (sync, handoff, ACP): not configured. Chats stay local."
 
@@ -80,22 +98,92 @@ half-typed message is still in the composer when you come back.
 
 ### "Switch Session" (Ctrl+K)
 
-A fuzzy finder over your conversations. Type into "Search conversations…" to
-filter, press Enter to activate the top result, or move through results with
-↑/↓ and press Enter (or click) on the one you want. F2 renames the
-highlighted result when it is an open tab. Esc cancels.
+Ctrl+K is an operational switchboard for open Console agents and saved local
+conversations. It opens immediately in **Active**, ordered as **Waiting for
+you**, **Working**, **New results**, **Current**, then **Other open**. Each
+result names both its state and destination; multiple signals for the same
+conversation collapse into one row with a `+N` count rather than producing
+duplicates.
 
-### Conversation browser
+Start typing to filter the safe session metadata shown in the switcher. Search
+understands literal title text, `workspace:<name>`, and state filters including
+`is:waiting`, `is:working`, `is:new`, `is:current`, `is:open`, `is:saved`,
+`is:running`, `is:approval`, `is:queued`, `is:failed`, `is:finished`, and
+`is:unavailable`. The phrases "needs attention", "waiting on me", and "new
+results" are friendly aliases. Search never reads transcript bodies, creates
+embeddings, or sends a network request.
+
+Operational filters intentionally overlap: `running` and `queued` both route
+to the complete **Working** group, while a resumed persisted conversation can
+match both `saved` and `open`. This keeps a lifecycle detail from hiding an
+otherwise relevant agent or destination.
+
+When a nonblank Active search has no match, the switcher automatically widens
+that search to local **History** and labels the widened scope. Press **F3** (or
+choose a mode button) to cycle **Active**, **History**, and **Character chats**.
+Active and History share one query. Character chats keeps its own Keyword query,
+never widens a zero-match search, and searches local chats in the current Data
+Profile only—no remote results, embeddings, or Meaning mode. Its rows show title,
+character, state, and relative age; only the selected row's matching excerpt and
+absolute update time appear in the fixed detail area. History and Character chats
+load at most 50 rows per page. Previous/Next and the internal result scroll keep
+the complete switcher within 35 terminal rows and retain four two-line results at
+52×20.
+
+Character Keyword queries accept up to 200 characters without control characters;
+Active and History retain their separate 512-character limit. Context hands off
+only a query accepted by the Character Keyword boundary.
+
+In Active with a blank query, **Enter** opens the most recently used *other* tab, making
+Ctrl+K then Enter a fast two-tab toggle. Once you type a query or use ↑/↓,
+Enter opens the highlighted committed result; pointer activation follows the
+same target. **F2** renames only a focused open-agent result—focus the row with
+↓ first—and never falls back to an unrelated tab; it does nothing in Character
+chats. Opening a Character chat keeps Ctrl+K mounted during cancellable
+preflight, changes to a non-cancellable finishing state at commit, and closes
+only after the exact conversation is visible. **Esc** or the always-visible
+**Cancel** button closes without switching or marking anything seen; during
+Character preflight it cancels the open, while a finishing commit must settle.
+
+Unavailable Character rows offer **Open Library** for the exact local chat.
+The switcher stays open while Library checks that exact local selection and pending
+saves. Cancel stops that attempt without losing the query or highlighted row;
+Finishing begins only after admission and cannot be cancelled. Transcript rendering
+then continues in Library for the admitted conversation.
+Library Back returns to Console Context Character where supported, with Console's
+visible fallback at narrow widths. It does not restore the previous switcher visit;
+a fresh Ctrl+K starts in Active.
+
+Unseen successful results show a compact outcome notice at the exact
+destination and are marked seen only after that notice visibly loads. Failed,
+stuck, stopped, and cancelled results remain unseen until you choose **Mark
+seen** in the destination notice. If a temporary session disappeared, Active
+shows **Session unavailable** with its own receipt-keyed **Mark seen** action;
+it never guesses another destination. If local activity receipts are
+temporarily unavailable, the status is reported honestly while open agents and
+History remain usable.
+
+### Conversations (Default and unassigned)
 
 | Control | What it does |
 |---|---|
-| "Search conversations" + "Clear" | Filters the row list, settling about a fifth of a second after you stop typing; "Clear" resets it immediately |
+| "Search conversations" + "Clear" | Filters only Default and unassigned conversations; "Clear" resets it without changing Workspaces search |
 | "New conversation" | Starts a fresh conversation |
-| "Starred" / "Workspaces" / "Chats" | Groups; click a header's ▸/▾ toggle to expand or collapse |
 | Conversation row | Click to open it in the Console |
-| "☆" / "★" | Stars or unstars the conversation — starred rows collect under "Starred" |
+| "☆" / "★" | Stars or unstars the conversation; starred rows sort first in this same list |
 
 ### Workspaces
+
+**Default Persona.** The shared New Workspace dialog lets you create a workspace
+Agent, choose a saved Persona, or select **None**. The Console's **Details →
+Default Persona…** control and **Settings → Workspaces** edit the default for
+future new conversations. Read and write memory requires explicit confirmation.
+Choosing None stays cleared after restart; automatic setup does not recreate it.
+
+New chats, temporary chats and the first chat opened in a workspace use its
+available default once. An explicit Persona or None choice wins. Existing,
+copied and moved conversations keep their assignment when the default changes.
+If a saved default is unavailable, Chatbook reports it and starts with None.
 
 | Control | What it does |
 |---|---|
@@ -103,7 +191,40 @@ highlighted result when it is an open tab. Esc cancels.
 | "New" | Opens the "New Workspace" dialog — see below |
 | "Rename" (in the switcher) | Opens "Rename Workspace" — edit the name, then "Save" |
 | "Archive" (in the switcher) | Opens "Archive workspace?" — "Its conversations stay saved and remain visible in Library; the workspace disappears from the switcher and the Console browser." Confirm with "Archive" |
-| "RAG Scope" | Narrows retrieval to this workspace — see [Context & RAG](context-and-rag.md) |
+| "RAG" | Narrows retrieval to this workspace — see [Context & RAG](context-and-rag.md) |
+| "Search workspaces" | Searches named workspace names and their associated conversation titles independently of Conversations search; delete the query to clear it |
+| Up/Down, Page Up/Page Down, Home/End | Navigates and pages the native Tree |
+| "Load more…" / "Retry" | Loads the next bounded page for that workspace or retries a failed page without discarding settled children |
+| "Star" / "Unstar" or `s` on a conversation leaf | Changes its starred property in place; starred leaves sort first inside that workspace |
+
+The Tree deliberately separates the row you are inspecting from the Console
+context that is already active:
+
+| Interaction or state | What it means |
+|---|---|
+| Single-click a workspace or conversation | Selects the row without activating it. A collapsed workspace also expands so its children are visible; clicking an expanded workspace does not collapse it. |
+| Double-click the selected workspace or conversation / Enter | Activates that workspace or opens that conversation. Both clicks must belong to the same stable row; a reflow cannot retarget the gesture. |
+| Disclosure marker / Space / Left / Right | Toggles, collapses, expands, or moves through workspace branches without activating a different Console context. |
+| "Load more…" / "Retry" | Runs immediately; these action rows do not require a select-then-activate step. |
+| `▌` selected, `●` active workspace, `›` active conversation | `▌` is the Tree row currently prepared for Enter or double-click. `●` and `›` identify the workspace and conversation that already own the Console session; selection alone does not move them. |
+| Full-label help | A one-row `Selected: <full label> · Enter open` context follows the Tree cursor. Pointer hover shows the full label only when the painted row is genuinely truncated; reflow clears stale tooltips. With the Tree focused, F1 shows the complete selected label and the click, Enter, Space, Left, and Right grammar. |
+| Settings > Console Behavior > Rail layout scope | **Global** is the default and keeps one arrangement across workspace switches. **Per workspace** restores and keeps each workspace's existing saved arrangement. |
+| What the selected layout scope saves | Whether the Context and Inspect rails are open, direct section disclosures (including **More**), and explicit rail-open behavior markers. Compact responsive collapse may temporarily override the rendering without rewriting those choices. |
+| What it does not save | Local or outer scroll positions, Workspaces search disclosure, Tree selection, pointer tooltip, and focus are transient. Switching layout scope neither deletes the inactive scope's records nor turns those transient states into preferences. |
+| Pinned Inspect summary | `What happens if I send now?` stays above Inspect scrolling and reports six fixed rows: its heading plus **Where**, **Scope**, **Run**, **Sources**, and **Approvals**, all from the same Console snapshot. On a short terminal (the rail below sixteen rows, which includes 80x24) it shrinks to two rows — the heading and **Run**, which already rolls up the other four — so the scrolling body keeps room for a whole section. The heading says so: it reads `If I send now? · +4 more`. The four hidden facts stay complete in the block's tooltip and, with the block focused, in **F1**. |
+| Inspect **More** | Empty Tools, Approvals, and Artifacts groups stay under **More**. A nonzero, pending, blocked, available, or otherwise actionable group promotes into the main Inspect sequence; collapsing More never hides an actionable group. |
+
+Workspaces search can reveal matching conversation results whose parent branch
+was closed. Those temporary disclosure changes are discarded when the search
+is cleared, restoring the exact disclosure state from before the search.
+
+Context preserves complete reading bodies up to 15 rows for Model, Agent, and
+Details; 20 for Workspaces and Conversations; and 35 for Character.
+Longer sections scroll locally, while **▼ more sections — scroll** means to
+scroll the outer rail to reach complete later sections. Inspector sections keep
+their separate 20-row ceiling. Character art remains centered and complete with
+its aspect ratio preserved: it only scales down to fit and is never stretched,
+cropped, or enlarged merely to fill the 35-row body.
 
 **The "New Workspace" dialog** is the same creation dialog Settings ▸
 Workspaces and Library use. It opens with a **name** prefilled "Workspace N"
@@ -141,29 +262,56 @@ Alt+W.
 
 ### Session project folders
 
+Every live Console Chat starts with its own private temporary scratch space.
+Creating or sending a Chat never asks for a folder. Relative local file-tool
+paths use that scratch space, and closing then reopening a saved conversation
+starts with a new empty scratch space. Scratch is removed with ordinary
+best-effort deletion; it is not secure erase, and a hard process or OS crash
+can leave unreferenced temporary residue that later Chatbook processes never
+discover or attach.
+
+A named Workspace may add explicit folder bindings to its Chat's private
+scratch authority. Folders are optional: a Workspace without one still works
+with scratch only. Built-in file tools can use private scratch plus the
+Workspace's live bound folders. Local `fs_*` and Git tools use private scratch
+unless project instructions explicitly select one binding; that selected
+binding then remains their single working root and keeps its read-only or
+read-write guard.
+
 Project instructions are local per-session state. A new session starts
 enabled and asks you to choose when more than one eligible local-filesystem
 binding exists; exactly one eligible binding may be selected. That binding is
-both the instruction authority root and the working directory for local and
-built-in file/git tools. Chatbook never searches global or personal
+both the instruction authority root and the working directory for local
+`fs_*` and Git tools. Chatbook never searches global or personal
 instruction files and never ascends above the selected root.
 
-Legacy sessions and sessions where project instructions are disabled keep the
-older local-tool behavior: `[console] workspace_root` is the confinement root,
-or the app's startup working directory when it is empty. A selected
-project-instruction binding takes precedence over that fallback only while the
-feature is enabled for that session. Bindings marked read-only expose only
+When project instructions are disabled or no project folder is selected, local
+`fs_*` and Git tools return to this Chat's private scratch space. The legacy
+`[console] workspace_root` setting remains available to non-Console callers;
+it never grants a Console Chat access, and Console does not fall back to the
+app's startup working directory. Bindings marked read-only expose only
 read-capable tools. Folder names and instruction contents are not synchronized;
 the local control fields stay with the local conversation record.
+
+Whichever root is in effect, some paths inside it are still refused: your SSH,
+GPG and cloud-provider credential directories, Chatbook's own `config.toml`,
+its permission store, and its databases. A tool asking for one of those is
+answered with "protected path", even when the root you chose contains it — so
+a session rooted at your home directory cannot read `~/.ssh/id_rsa` or rewrite
+the file that records which tools you approved.
 
 ### Details
 
 Open the "Details" header in the left rail to see where your chats live:
-"Storage" (local database status), "Sync", "File tools", "Server", and "ACP"
+"Storage" (local database status), "Sync", "Local file tools", "Server", and "ACP"
 lines (for example "Sync: Off", "Server: Not configured"), and a "Handoff"
 list that reads "No handoff package is ready." until a handoff package
 exists. If none of the server features are configured, the section shows the
 single summary line quoted in the layout tour instead.
+
+For Chats, the file row reads **Private scratch**. A named Workspace with live
+folder bindings reads **Private scratch + N folders**. A missing binding is
+reported separately instead of making the scratch status look unavailable.
 
 ## Common tasks
 
@@ -175,6 +323,10 @@ single summary line quoted in the layout tour instead.
 3. Switch back with Alt+1 (or click the first tab). A ● marker on the other
    tab means its run is still going; ✓ means it finished while you were away.
 
+Each tab's private scratch is independent. A relative file created in one Chat
+is absent from the other, even when both tabs resume the same saved
+conversation.
+
 **Rename a tab**
 
 1. Click the tab to make it active (skip if it already is).
@@ -183,16 +335,21 @@ single summary line quoted in the layout tour instead.
 
 **Find an old conversation**
 
-1. Press Ctrl+K, type a few characters of the title, and press Enter to open
-   the top match — or,
-2. In the left rail, type into "Search conversations" and click the row you
-   want under "Starred", "Workspaces", or "Chats".
+1. Press Ctrl+K, press F3 for **History** (or type a title and let a zero-match
+   Active search widen automatically), then press Enter to open the highlighted
+   match — or,
+2. For a named-workspace conversation, search in **Workspaces**, disclose its
+   parent if needed, and select the conversation leaf.
+3. For a Default or unassigned conversation, search in **Conversations** and
+   select its flat row.
 
 **Star a conversation**
 
-1. Find its row in the "Conversations" browser.
-2. Click the "☆" at the end of the row. It becomes "★" and the conversation
-   is pinned under "Starred". Click "★" to unstar.
+1. Find it under its named workspace in the Tree, or in the flat
+   **Conversations** list when it belongs to Default or no workspace.
+2. Use **Star**/**Unstar** (or press `s` while its Tree leaf has the cursor),
+   or click the flat row's "☆"/"★" control. The row stays in the same owner
+   and moves within that owner's starred-first order.
 
 **Create and switch to a new workspace**
 
@@ -219,14 +376,44 @@ single summary line quoted in the layout tour instead.
 Press Escape (or click "Cancel") anywhere in the "New Workspace" dialog —
 nothing is created, no matter what you had typed or added.
 
+## Persistent Terminal sessions
+
+The pinned **Context** rail includes a Terminal row, and the command palette
+contains the same open action. This opens a dedicated user-only workspace for
+up to four app-global sessions. **New**, **Rename**, **Focus**, **Close**,
+cleanup **Retry**, and **Jump live** act on the retained session owner rather
+than a particular conversation screen, so navigation and recomposition do not
+restart or discard a running shell.
+
+Terminal requires the shared saved raw-CLI unlock and its own per-launch arm.
+It is a real host terminal, not a Workspace tool: the active Workspace or home
+directory is only its starting directory and provides no confinement. See
+[Persistent Terminal: user-only interactive PTY](agent-runs-and-tools.md#persistent-terminal-user-only-interactive-pty)
+for authority, privacy, limits, key routing, cleanup, and platform support.
+
 ## Keyboard & commands
 
 | Key | Action |
 |---|---|
 | Ctrl+T | New Console tab |
-| Ctrl+K | "Switch Session" fuzzy finder |
+| Ctrl+K | Open the Active/History/Character chats switchboard |
+| Ctrl+K, Enter | Toggle to the most recently used other open tab when the query is blank |
+| F3 (in switcher) | Cycle Active/History/Character chats; Active and History share a query while Character chats keeps its own |
+| F2 (focused open-agent result) | Rename that exact open tab |
 | Alt+1 … Alt+9 | Jump to tab 1–9 |
 | Alt+W | "Change Workspace" switcher |
+| Alt+I | Open the Inspect rail and move focus into it; press again to close it. Works at every terminal width, including below 84 columns where the rail's handle is hidden |
+| Tab / Shift+Tab | Move within the Console region you are already in — the composer's controls, the Context rail, the transcript, or the Inspect rail. Tab deliberately does **not** cross between them; **F6** / **Shift+F6** do, and **Alt+I** enters the Inspect rail directly |
+
+Everything in the Inspect rail that Tab can land on shows where focus is
+without relying on colour alone. Buttons — the rail header, section
+chevrons, "Refresh", "Search Library", "Narrow…", **More** — take a solid
+accent edge (`█`) down their left side; the collapsed rail's handle takes
+the same edge on its right, where it has room. A focused row is wrapped in
+corner brackets (`┌ … ┐`) instead, which is what tells "this row has focus"
+apart from "the whole list has focus" — the scrolling body draws the `█`
+edge alongside every one of its sections. The pinned send summary is drawn
+in a full accent box.
 
 ## Related settings & docs
 
@@ -260,6 +447,8 @@ nothing is created, no matter what you had typed or added.
 - A brand-new conversation can't be starred until it has been sent or saved —
   the star's tooltip says "Send or save this conversation before starring."
 - The Default workspace can't be renamed or archived.
+- Chats never require a folder. Use a named Workspace only when local file
+  tools need access outside private scratch.
 - Launching the app from inside a project with a `.SKILLS/` folder can pop
   its own import prompt on startup, separately from anything workspace- or
   tab-related — see [Project skills](../library/skills.md#project-skills-skills).
@@ -283,3 +472,64 @@ the registry; Console now reconciles its own session against it on the
 next resume instead of staying stale until an in-Console switch, so the
 Default-workspace paragraph above gained a one-sentence note on that; the
 rest of this page's content unchanged from the prior stamp).*
+*Reconciled against the TASK-20937 native Workspace Tree and exclusive
+Default/unassigned ownership implementation — 2026-08-23. Additional
+same-cell terminal-client verification remains tracked by TASK-20937.6.*
+
+## Archive, find, review and resume a saved chat
+
+In Console context → Conversations, choose **Archive this chat** to put an idle,
+saved conversation away. Its messages, branches and workspace are preserved.
+The receipt offers **Undo**, **View archived** and **Done**. A chat with a draft,
+attachments, unsaved messages, or running/queued work must finish saving or have
+that work resolved before it can be archived. An archived open tab remains
+readable; restore it before sending again. If you leave Console while the archive
+finishes, its completion notice points you to **Archived chats** for recovery.
+
+1. Choose **Archived chats** in Console context, or open the session switcher
+   and choose **Archived chats**. Library opens in its **Archived** scope.
+2. Search the conversation title or saved message text. **Active**, **Archived**
+   and **All** control which conversations are included; switching scope keeps
+   the query. Workspace archival is shown separately beside each row.
+3. Select the conversation to open its **Read** / **Info** reader. It is
+   read-only. Use message navigation and **Find in complete transcript…**, then
+   **Find previous** / **Find next**, to inspect the saved transcript.
+4. Choose **Restore and resume** to continue the original conversation. If its
+   workspace is archived, the confirmation explains that the whole workspace
+   will be restored. If its name is in use, choose a replacement name.
+5. Console opens the original conversation and saved branch. If already open,
+   its existing tab and draft are reused. Type the next message in the composer.
+
+Deleting an archived chat moves it to Trash; its archive flag does not hide it
+from deleted-conversation recovery.
+
+**Restore only** returns a chat to active history without switching Console.
+**Use as source** adds the selected conversation as source context; use **Resume**
+when you want to continue its own history.
+
+If recovery stops after restoring the workspace, the error message identifies
+what completed. Choose **Resume** again from Library to retry the remaining
+conversation recovery; the restored workspace stays available.
+
+For several conversations, enter **Select**, choose rows on the current page,
+and use **Archive selected** or **Restore selected**. The receipt reports actual
+changes and any skipped conversations. **Undo** reverses only successful changes;
+if a conversation has changed since then, refresh and restore it explicitly.
+
+The quick session switcher searches titles, workspaces and status. Choose
+**Search all chats…** to carry that query into Library's full-text search.
+
+## Recover an archived workspace
+
+Open **Switch / Alt+W**, enable **Show archived**, and choose **Restore** or
+**Restore as** beside the workspace. The same controls are in **Settings →
+Workspaces**. Restoring does not activate the workspace; choose **Switch** when
+ready. **Restore as** resolves a name reused by another active workspace.
+
+Archiving a workspace hides the group from normal Console browsing. Its saved
+conversations remain in Library, with the workspace marked archived. This is
+separate from individually archiving a conversation.
+
+Closing a tab removes the open session. Saved history stays in Library; the
+close dialog separately lists unsaved messages, drafts, attachments and live or
+queued work that closing would discard or cancel.

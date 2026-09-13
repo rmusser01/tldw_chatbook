@@ -31,6 +31,7 @@ from tldw_chatbook.Library.library_rag_service import LibraryRagSearchRequest
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 def _repair_contract(context: str) -> CitationRepairContract:
@@ -190,6 +191,7 @@ async def test_controller_rejects_duck_typed_repair_contract():
 @pytest.mark.asyncio
 async def test_console_controller_wires_current_staged_rag_capture(monkeypatch):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
         title="Source",

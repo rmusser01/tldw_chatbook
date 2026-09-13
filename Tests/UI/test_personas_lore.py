@@ -734,8 +734,8 @@ class TestLoreModeIntegration:
             assert (
                 screen.query_one("#personas-mode-placeholder", Static).display is False
             )
-            # The detail widget is mounted but stays hidden until a book is selected.
-            assert screen.query_one(PersonasLoreDetailWidget).display is False
+            # The heavy detail widget is not mounted until a book is selected.
+            assert not list(screen.query(PersonasLoreDetailWidget))
             rows = screen.query_one("#personas-library-rows", ListView).children
             texts = [str(s.renderable) for r in rows for s in r.query(Static).results()]
             assert "Blackreach" in texts
@@ -751,6 +751,9 @@ class TestLoreModeIntegration:
             await _select_first_lore(pilot, screen)
             detail = screen.query_one(PersonasLoreDetailWidget)
             assert detail.display is True
+            assert not list(screen.query("#ccp-character-editor-view"))
+            assert not list(screen.query("#ccp-persona-editor-view"))
+            assert not list(screen.query("#personas-dictionary-detail"))
             table = screen.query_one("#personas-lore-entries-table", DataTable)
             assert table.row_count == 1
             assert detail.settings_payload()["name"] == "Blackreach"

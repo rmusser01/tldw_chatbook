@@ -391,7 +391,7 @@ async def test_real_native_console_session_switch_drives_dictionary_summary_per_
 
         # Create and activate a second native session through the real
         # "new chat" action (mirrors how a user opens a second tab).
-        await pilot.click("#console-new-chat-tab")
+        console.query_one("#console-new-chat-tab").press()
         session_b_id = await _wait_for_active_session_change(store, pilot, session_a_id)
         assert session_b_id != session_a_id
         session_b = next(s for s in store.sessions() if s.id == session_b_id)
@@ -402,7 +402,7 @@ async def test_real_native_console_session_switch_drives_dictionary_summary_per_
 
         # --- Switch to session A (has an attached conversation dictionary) ---
         calls_before = len(service.calls)
-        await pilot.click(f"#console-session-tab-{session_a_id}")
+        console.query_one(f"#console-session-tab-{session_a_id}").press()
         await _wait_for_active_session_id(store, pilot, session_a_id)
 
         assert len(service.calls) == calls_before + 1
@@ -421,7 +421,7 @@ async def test_real_native_console_session_switch_drives_dictionary_summary_per_
 
         # --- Switch to session B (no dictionaries attached) ---
         calls_before_b = len(service.calls)
-        await pilot.click(f"#console-session-tab-{session_b_id}")
+        console.query_one(f"#console-session-tab-{session_b_id}").press()
         await _wait_for_active_session_id(store, pilot, session_b_id)
 
         assert len(service.calls) == calls_before_b + 1

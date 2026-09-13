@@ -19,7 +19,10 @@ mount is required.
 """
 
 from Tests.UI.app_factory import _build_test_app
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
@@ -137,8 +140,7 @@ def test_available_actions_also_offers_variant_nav_for_off_path_user_sibling():
 
     service = ConsoleMessageActionService()
     action_ids = [
-        action.action_id
-        for action in service.available_actions(snapshot_with_count)
+        action.action_id for action in service.available_actions(snapshot_with_count)
     ]
 
     assert "variant-previous" in action_ids

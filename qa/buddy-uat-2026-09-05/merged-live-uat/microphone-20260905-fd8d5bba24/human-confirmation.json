@@ -1,0 +1,6 @@
+{
+  "run_id": "microphone-20260905-fd8d5bba24",
+  "question": "Did you say the test phrase aloud during the recording window?",
+  "answer": "no",
+  "interpretation": "No speech was attempted; zero accepted speech is not evidence of a microphone failure."
+}

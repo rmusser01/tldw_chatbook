@@ -70,7 +70,7 @@ def _safe_label(value: object, *, fallback: str) -> str:
 class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
     """Confirm automatic speech for one sanitized effective destination."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     AutoSpeakConsentModal {
         align: center middle;
     }
@@ -101,6 +101,8 @@ class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
         provider_label: str,
         sanitized_destination: str,
         charges_may_apply: bool,
+        *,
+        scope_label: str | None = None,
     ) -> None:
         super().__init__()
         self.provider_label = _safe_label(provider_label, fallback="TTS provider")
@@ -108,6 +110,7 @@ class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
             sanitized_destination
         )
         self.charges_may_apply = charges_may_apply is True
+        self.scope_label = _safe_label(scope_label, fallback="the selected Buddy scope") if scope_label is not None else None
 
     def __repr__(self) -> str:
         return (
@@ -137,7 +140,7 @@ class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
                     markup=False,
                 )
             yield Static(
-                "Only new replies in this conversation will be spoken.",
+                (f"Buddy will speak queued updates for {self.scope_label}." if self.scope_label is not None else "Only new replies in this conversation will be spoken."),
                 markup=False,
             )
             with Horizontal(id="console-auto-speak-consent-actions"):
@@ -228,6 +231,31 @@ class ConsoleAutoSpeakCoordinator:
         self._modal_generation += 1
         self._modal_open = False
         self._modal_callback_consumed = True
+
+    @property
+    def modal_result_pending(self) -> bool:
+        """Whether a destination-consent modal is awaiting the user's choice.
+
+        TASK-32509: pushing that modal SUSPENDS the ChatScreen underneath,
+        and `on_screen_suspend` quiesces this coordinator -- whose unmount
+        tombstones the pending modal callback, so the user's Enable press
+        arrives dead and consent is silently discarded. The suspend path
+        consults this property to leave a mid-consent coordinator mounted.
+
+        PR #2656 Qodo #1: True only while the modal is open AND its
+        dismiss callback has NOT fired. Once Enable/Cancel dismisses the
+        modal, the async finish work runs with the callback already
+        consumed -- a suspend in that window (e.g. the user navigates
+        away during the awaited destination re-resolution in `finish`)
+        must quiesce the coordinator like any other, or the hidden
+        screen's coordinator stays subscribed forever.
+
+        Returns:
+            True while the consent modal is up and its result callback is
+            still live; False otherwise (including the post-dismissal
+            async-finish window).
+        """
+        return self._modal_open and not self._modal_callback_consumed
 
     def _schedule_work(
         self,

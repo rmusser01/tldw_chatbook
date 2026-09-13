@@ -7,30 +7,22 @@ from ipaddress import ip_address
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.provider_endpoint_contract import (
+    URL_BASED_PROVIDER_KEYS,
     canonical_connection_identity,
     resolve_provider_endpoint,
 )
 
 UNSAVED_ENDPOINT_COPY = (
-    "Provider blocked: save the endpoint in Settings before using it from Console."
+    "Provider blocked: this endpoint is not saved. Save it with Save model "
+    "defaults in Console Settings, or in F4 Settings, before sending."
 )
-URL_BASED_PROVIDER_KEYS = frozenset(
-    {
-        "aphrodite",
-        "custom",
-        "custom_2",
-        "koboldcpp",
-        "llama_cpp",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_ollama",
-        "local_vllm",
-        "ollama",
-        "oobabooga",
-        "qwencloud",
-        "tabbyapi",
-        "vllm",
-    }
+#: Single source of the llama.cpp origin Chatbook defaults to (and teaches in
+#: its docs) when nothing is configured. The stock `llama-server` port 8080 is
+#: covered by local discovery candidates, not by this default.
+DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
+INVALID_LLAMACPP_BASE_URL_COPY = (
+    "Provider blocked: invalid llama.cpp base URL. "
+    "Use an http(s) URL such as http://127.0.0.1:9099."
 )
 _ENDPOINT_SETTING_KEYS = (
     "api_base_url",

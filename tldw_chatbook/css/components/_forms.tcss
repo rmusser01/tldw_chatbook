@@ -5,68 +5,68 @@
  * ======================================== */
 
 .form-label {
-    margin-bottom: 1;
-    text-style: bold;
+    margin-bottom: $ds-space-stack;
+    text-style: $ds-text-strong;
 }
 
 .form-section-title {
-    text-style: bold;
+    text-style: $ds-text-strong;
     color: $secondary;
-    margin: 2 0 1 0;
+    margin: $ds-space-section 0 $ds-space-stack 0;
     border-bottom: solid $primary-background;
-    padding-bottom: 1;
+    padding-bottom: $ds-space-stack;
 }
 
 .form-description {
-    color: $text-muted;
-    margin-bottom: 2;
-    text-style: italic;
+    color: $ds-text-muted;
+    margin-bottom: $ds-space-section;
+    text-style: $ds-text-emphasis;
 }
 
 .form-actions {
-    margin-top: 2;
+    margin-top: $ds-space-section;
     layout: horizontal;
     height: auto;
     align: center middle;
 }
 
 .form-actions Button {
-    margin: 0 1 0 0;
+    margin: 0 $ds-space-inline 0 0;
 }
 
 .provider-models-textarea {
-    height: 5;
-    margin-bottom: 1;
+    height: $ds-textarea-min-height;
+    margin-bottom: $ds-space-stack;
 }
 
 /* Standardized form components */
 .form-input {
     width: 100%;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .form-textarea {
     width: 100%;
     height: auto;
-    min-height: 5;
-    margin-bottom: 1;
+    min-height: $ds-textarea-min-height;
+    margin-bottom: $ds-space-stack;
 }
 
 
 .form-checkbox {
-    margin: 1 0;
+    margin: $ds-space-stack 0;
 }
 
 /* Form layout helpers */
 .form-row {
     width: 100%;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .form-col {
     width: 1fr;
-    padding: 0 1;
+    padding: 0 $ds-space-inline;
 }
 
 .form-col:first-child {
@@ -79,14 +79,14 @@
 
 /* Form sections */
 .form-section-collapsible {
-    margin: 1 0;
+    margin: $ds-space-stack 0;
 }
 
 /* Button groups */
 .button-group {
     width: 100%;
     height: auto;
-    margin: 2 0;
+    margin: $ds-space-section 0;
 }
 
 .button-group-left {
@@ -102,29 +102,29 @@
 }
 
 .form-button {
-    margin: 0 1;
+    margin: 0 $ds-space-inline;
 }
 
 /* Status areas */
 .status-label {
-    margin-top: 2;
+    margin-top: $ds-space-section;
     margin-bottom: 0;
-    color: $text-muted;
+    color: $ds-text-muted;
 }
 
 .status-area {
     width: 100%;
-    background: $surface;
+    background: $ds-surface-raised;
     border: round $border;
-    padding: 1;
-    margin-top: 1;
+    padding: $ds-space-inset;
+    margin-top: $ds-space-stack;
 }
 
 /* Title/Author input fields fix */
 .title-author-row Input {
-    height: 3;
+    height: $ds-control-height;
     width: 100%;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 Input:focus,
@@ -167,6 +167,29 @@ Input.-textual-compact:focus {
 LibraryFileNotesWorkspace Input:focus,
 LibraryFileNotesWorkspace TextArea:focus {
     outline: none;
+}
+
+/* Long-form Notes bodies keep their resting fill while typing. The heavy
+ * semantic perimeter is the focus cue; it costs no rows or columns and leaves
+ * compact fields and every unrelated TextArea on the shared focused fill. */
+#library-note-body:focus,
+#file-notes-editor:focus {
+    outline: heavy $ds-action-focus;
+    background: $ds-surface-raised;
+}
+
+/* Some decorative themes intentionally place `$primary` close to `$panel`
+ * (pastel_dreams measures 1.03:1). Keep the semantic outline, and make the
+ * existing TextArea border the contrast-safe second boundary without adding
+ * geometry. Textual's mode class is the reliable cross-theme lightness seam. */
+.-dark-mode #library-note-body:focus,
+.-dark-mode #file-notes-editor:focus {
+    border: solid white;
+}
+
+.-light-mode #library-note-body:focus,
+.-light-mode #file-notes-editor:focus {
+    border: solid black;
 }
 
 /* TASK-2300. `Select:focus` used to be in the rule above, and it is the one
@@ -257,13 +280,13 @@ Select:focus {
 ToggleButton:focus {
     outline: none;
     border: solid $ds-focus-accent;
-    background: $surface;
+    background: $ds-surface-raised;
 }
 
 ToggleButton.-textual-compact:focus {
     outline: none;
     border: none;
-    background: $surface;
+    background: $ds-surface-raised;
 }
 
 ToggleButton:focus > .toggle--label,
@@ -281,11 +304,11 @@ Switch:focus {
 
 /* New base media ingestion form styling */
 .form-input {
-    height: 3;
+    height: $ds-control-height;
     width: 100%;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
     border: solid $primary;
-    padding: 0 1;
+    padding: 0 $ds-space-inline;
 }
 
 .form-input:focus {
@@ -301,13 +324,13 @@ Switch:focus {
 }
 
 .form-select {
-    height: 3;
+    height: $ds-control-height;
     width: 100%;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .form-checkbox {
-    margin: 1 0;
+    margin: $ds-space-stack 0;
 }
 
 /* Responsive metadata columns */
@@ -315,7 +338,7 @@ Switch:focus {
     layout: horizontal;
     width: 100%;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .metadata-col {
@@ -327,48 +350,48 @@ Switch:focus {
 .mode-toggle-container {
     width: 100%;
     height: auto;
-    margin-bottom: 1;
-    padding: 1;
+    margin-bottom: $ds-space-stack;
+    padding: $ds-space-inset;
 }
 
 .mode-title {
-    text-style: bold;
+    text-style: $ds-text-strong;
     color: $primary;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .mode-toggle {
     width: 100%;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 /* Essential container sections - CRITICAL for Input widget visibility */
 .essential-section {
     width: 100%;
     height: auto;        /* Allow container to size to content */
-    margin-bottom: 2;
-    padding: 1;
+    margin-bottom: $ds-space-section;
+    padding: $ds-space-inset;
 }
 
 .media-options-section {
     width: 100%;
     height: auto;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-section;
 }
 
 .options-section {
     width: 100%;
     height: auto;
-    margin-bottom: 2;
-    padding: 1;
+    margin-bottom: $ds-space-section;
+    padding: $ds-space-inset;
 }
 
 .process-button-section {
     width: 100%;
     height: auto;
-    margin-top: 2;
-    padding: 1;
+    margin-top: $ds-space-section;
+    padding: $ds-space-inset;
     align: center middle;
 }
 
@@ -376,13 +399,13 @@ Switch:focus {
 .time-range-row {
     width: 100%;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .time-col {
     width: 1fr;
     height: auto;
-    padding: 0 1;
+    padding: 0 $ds-space-inline;
 }
 
 .time-col:first-child {
@@ -409,11 +432,11 @@ Switch:focus {
 /* Form textarea styling */
 .form-textarea {
     width: 100%;
-    min-height: 5;
+    min-height: $ds-textarea-min-height;
     max-height: 10;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
     border: solid $primary;
-    padding: 1;
+    padding: $ds-space-inset;
 }
 
 .form-textarea:focus {

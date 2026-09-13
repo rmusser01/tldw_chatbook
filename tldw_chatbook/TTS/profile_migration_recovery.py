@@ -23,7 +23,11 @@ from typing import Final
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite_descriptor
 from tldw_chatbook.TTS import profile_schema
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileRepositoryError,
+    _migration_cleanup_owner,
+    _ProfileMigrationValidationOwner,
+)
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
     MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
@@ -36,6 +40,8 @@ from tldw_chatbook.TTS.profile_migration_namespace import (
     MigrationTombstoneKey,
     ParentAuthority,
     move_exact_noreplace,
+)
+from tldw_chatbook.TTS.profile_migration_namespace import (
     remove_exact as remove_exact_namespace,
 )
 from tldw_chatbook.Utils import private_paths
@@ -45,7 +51,6 @@ from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     secure_private_directory,
 )
-
 
 _SIDECARS: Final = ("-wal", "-shm", "-journal")
 _RECOVERY_LOCK = Lock()
@@ -699,6 +704,7 @@ def _validate_authoritative_targets(
         if before is None or before.kind != kind or before.identity.st_nlink != 1:
             raise ValueError
         file_fd = _open_leaf(parent_fd, row.target, _native=_native)
+        owner = _ProfileMigrationValidationOwner(file_fd, native=_native)
         try:
             opened_before = os.fstat(file_fd)
             if not private_paths._same_identity(opened_before, before.identity):
@@ -710,6 +716,9 @@ def _validate_authoritative_targets(
                     isolation_level=None,
                     _native_outcome=_reader_outcome,
                 )
+            owner.connection = connection
+            owner.reader_outcome = _reader_outcome
+            body_error = None
             try:
                 connection.row_factory = sqlite3.Row
                 connection.execute("PRAGMA foreign_keys = ON")
@@ -720,14 +729,25 @@ def _validate_authoritative_targets(
                 profile_schema.validate_profile_store_version(
                     connection, version_row[0]
                 )
-            finally:
+            except BaseException as error:
+                body_error = error
+            try:
                 _close_reader(_native, connection, _reader_outcome)
+            except BaseException as error:
+                owner.parent_fd = parent_fd
+                from tldw_chatbook.TTS.profile_errors import _raise_migration_cleanup_failure
+
+                _raise_migration_cleanup_failure(owner, body_error, error)
+            owner.connection = None
+            if body_error is not None:
+                raise body_error
             _hash_sqlite(file_fd)
             opened_after = os.fstat(file_fd)
             if not private_paths._same_identity(opened_before, opened_after):
                 raise ValueError
         finally:
-            _native_close(_native, os, file_fd)
+            if owner.connection is None:
+                _native_close(_native, os, file_fd)
         _require_configured_parent(
             selected, parent_authority.identity, exact_links=True, _native=_native
         )
@@ -965,6 +985,18 @@ def recover_profile_migration_publication(
                         settled = True
                 except BaseException as error:
                     attempt_error = error
+
+                cleanup_owner = _migration_cleanup_owner(attempt_error)
+                if cleanup_owner is not None:
+                    if deferred is not None:
+                        from tldw_chatbook.TTS.profile_errors import (
+                            _raise_migration_cleanup_failure,
+                        )
+
+                        _raise_migration_cleanup_failure(
+                            cleanup_owner, deferred, attempt_error
+                        )
+                    raise attempt_error
 
                 if attempt_error is None and settled:
                     break

@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
+from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Static
+from textual.css.query import NoMatches, QueryError
+from textual.message import Message
+from textual.widget import Widget
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleStagedContextState
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
 
 
 _STATUS_CLASS_MAP = {
@@ -17,6 +26,26 @@ _STATUS_CLASS_MAP = {
     "running": {"retrieving", "running", "stale"},
     "blocked": {"blocked", "missing", "unavailable"},
 }
+
+#: User-facing copy for each legacy-row status class (TASK-32332). The CSS
+#: class stays the styling seam; the TEXT the user reads is sentence-case
+#: copy, and the unclassifiable catch-all says "Off" instead of exposing the
+#: developer token "muted".
+_STATUS_CLASS_COPY = {
+    "ready": "Ready",
+    "running": "Retrieving",
+    "blocked": "Blocked",
+    "muted": "Off",
+}
+
+
+class ConsoleStagedSourceOpenRequested(Message):
+    """Request navigation to one staged source's canonical Library row."""
+
+    def __init__(self, *, source_type: str, source_id: str) -> None:
+        super().__init__()
+        self.source_type = source_type
+        self.source_id = source_id
 
 
 def _normalize_source_status(status: str) -> str:
@@ -43,7 +72,13 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
     display-state contract.
     """
 
-    def __init__(self, state: ConsoleStagedContextState, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        state: ConsoleStagedContextState,
+        *,
+        on_reconcile: Callable[[], None] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Initialize the staged-context tray.
 
         Args:
@@ -52,77 +87,196 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
         """
         super().__init__(**kwargs)
         self.state = state
+        self._on_reconcile = on_reconcile
+
+    def _body_widgets(self) -> list[Widget]:
+        """Build the body while keeping the stable header outside its viewport."""
+
+        body: list[Widget] = []
+        if self.state.summary:
+            body.append(
+                Static(
+                    self.state.summary,
+                    id="console-staged-context-summary",
+                    classes="console-staged-context-summary",
+                    markup=False,
+                )
+            )
+
+        if self.state.source_rows:
+            for index, row in enumerate(self.state.source_rows):
+                primary = Button(
+                    Text(f"{row.status.title()} · {row.title} · {row.source_type}"),
+                    id=f"console-staged-source-primary-{index}",
+                    classes=(
+                        "console-staged-source-primary "
+                        f"console-staged-source-primary-{row.status}"
+                    ),
+                )
+                primary.source_row_index = index
+                detail_children: list[Widget] = [
+                    Static(
+                        row.snippet or "No snippet available.",
+                        markup=False,
+                    ),
+                    *(
+                        # TASK-32330: listed-only rows state what happens.
+                        [
+                            Static(
+                                "This handoff kind is listed for the run; "
+                                "its content is not sent to the model.",
+                                markup=False,
+                            )
+                        ]
+                        if row.status == "listed"
+                        else []
+                    ),
+                    Static(
+                        f"Authority: {row.authority}",
+                        markup=False,
+                    ),
+                    Static(
+                        f"Freshness: {row.freshness}",
+                        markup=False,
+                    ),
+                ]
+                if row.action_label == "Open in Library":
+                    action = Button(
+                        row.action_label,
+                        id=f"console-staged-source-action-{index}",
+                        classes="console-staged-source-action",
+                    )
+                    action.source_row_index = index
+                    detail_children.append(action)
+                else:
+                    detail_children.append(
+                        Static(
+                            f"Action: {row.action_label}",
+                            markup=False,
+                        )
+                    )
+                detail = Vertical(
+                    *detail_children,
+                    id=f"console-staged-source-detail-{index}",
+                    classes="console-staged-source-detail",
+                )
+                detail.display = False
+                body.append(
+                    Vertical(
+                        primary,
+                        detail,
+                        id=f"console-staged-context-row-{index}",
+                        classes="console-staged-source-row",
+                    )
+                )
+        elif self.state.rows:
+            for index, row in enumerate(self.state.rows):
+                status_class = _normalize_source_status(row.status)
+                body.append(
+                    Vertical(
+                        Static(
+                            str(row.value),
+                            id=f"console-staged-source-name-{index}",
+                            classes="console-staged-source-name",
+                            markup=False,
+                        ),
+                        Static(
+                            _STATUS_CLASS_COPY.get(status_class, status_class),
+                            id=f"console-staged-source-status-{index}",
+                            classes=f"console-staged-source-status {status_class}",
+                            markup=False,
+                        ),
+                        id=f"console-staged-context-row-{index}",
+                        classes="console-staged-source-row",
+                    )
+                )
+        else:
+            body.append(
+                Static(
+                    "No sources attached. Stage sources from Library.",
+                    id="console-staged-context-empty",
+                    classes="console-staged-context-empty",
+                )
+            )
+
+        if self.state.recovery:
+            body.append(
+                Static(
+                    self.state.recovery,
+                    id="console-staged-context-recovery",
+                    classes="console-staged-context-recovery",
+                    markup=False,
+                )
+            )
+        return body
 
     def compose(self) -> ComposeResult:
-        with Horizontal(classes="console-staged-context-header"):
+        header = Horizontal(classes="console-staged-context-header")
+        header.styles.height = 1
+        header.styles.min_height = 1
+        header.styles.max_height = 1
+        with header:
             yield Static(
-                "Sources",
+                "Sources — next send",
                 id="console-staged-context-title",
                 classes="console-rail-section-title",
             )
             yield Static(
-                str(self.state.source_count),
+                (
+                    "none"
+                    if not self.state.source_count
+                    else str(self.state.source_count)
+                ),
                 id="console-staged-context-count",
                 classes="console-staged-context-count",
             )
 
-        if self.state.summary:
-            # PR-T1 final review (I1): the summary is built from a launch
-            # title/source that came from user data (a note title, a media
-            # filename), so it is the same untrusted class as the source
-            # name/status rows below -- and it was the ONLY Static in this
-            # widget rendering such text with markup enabled. A title
-            # containing `[/]` raised `MarkupError` right here in compose;
-            # since staged launches now survive navigation (D3), the
-            # restore succeeded on every subsequent visit and the crash
-            # landed inside `switch_screen`, so Console became permanently
-            # unopenable rather than failing once.
-            yield Static(
-                self.state.summary,
-                id="console-staged-context-summary",
-                classes="console-staged-context-summary",
-                markup=False,
-            )
+        yield ConsoleBoundedSection(*self._body_widgets(), section_id="sources")
 
-        if self.state.rows:
-            for index, row in enumerate(self.state.rows):
-                status_class = _normalize_source_status(row.status)
-                with Vertical(
-                    id=f"console-staged-context-row-{index}",
-                    classes="console-staged-source-row",
-                ):
-                    yield Static(
-                        str(row.value),
-                        id=f"console-staged-source-name-{index}",
-                        classes="console-staged-source-name",
-                        markup=False,
-                    )
-                    yield Static(
-                        status_class,
-                        id=f"console-staged-source-status-{index}",
-                        classes=f"console-staged-source-status {status_class}",
-                        markup=False,
-                    )
-        else:
-            yield Static(
-                "No sources attached. Stage sources from Library.",
-                id="console-staged-context-empty",
-                classes="console-staged-context-empty",
-            )
+    @on(Button.Pressed, ".console-staged-source-primary")
+    def _toggle_source_detail(self, event: Button.Pressed) -> None:
+        """Reveal one source's secondary details only after activation."""
+        event.stop()
+        index = getattr(event.button, "source_row_index", None)
+        if type(index) is not int:
+            return
+        try:
+            detail = self.query_one(f"#console-staged-source-detail-{index}")
+        except QueryError:
+            return
+        detail.display = not detail.display
 
-        if self.state.recovery:
-            yield Static(
-                self.state.recovery,
-                id="console-staged-context-recovery",
-                classes="console-staged-context-recovery",
+    @on(Button.Pressed, ".console-staged-source-action")
+    def _open_staged_source(self, event: Button.Pressed) -> None:
+        """Post a typed navigation request for one supported source."""
+        event.stop()
+        index = getattr(event.button, "source_row_index", None)
+        if type(index) is not int or not 0 <= index < len(self.state.source_rows):
+            return
+        row = self.state.source_rows[index]
+        from tldw_chatbook.Library.library_rag_state import (
+            canonical_library_open_source_type,
+        )
+
+        source_type = canonical_library_open_source_type(row.source_type)
+        if not source_type:
+            return
+        self.post_message(
+            ConsoleStagedSourceOpenRequested(
+                source_type=source_type,
+                source_id=row.source_id,
             )
+        )
 
     def sync_state(self, state: ConsoleStagedContextState) -> None:
         """Refresh the mounted tray from a new staged-context snapshot.
 
         Equality-guarded like the other Console tray widgets; a real change
-        recomposes only this widget (row count, Attach button, and recovery
-        line presence all vary with the state), never the owning screen.
+        recomposes only this widget (source-row count, summary, empty
+        state, and recovery line presence all vary with the state), never
+        the owning screen. There is no in-tray Attach button (TASK-32337
+        docstring fix: the empty state directs to Library, whose search
+        controls sit directly beneath this tray in the Inspector).
 
         Args:
             state: Staged-context display-state snapshot to render.
@@ -131,3 +285,17 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
             return
         self.state = state
         self.refresh(recompose=True)
+        self.call_after_refresh(self._request_section_reconcile)
+
+    def _request_section_reconcile(self) -> None:
+        """Settle local demand before invalidating the Inspector owner."""
+
+        try:
+            section = self.query_one(
+                "#console-bounded-section-sources", ConsoleBoundedSection
+            )
+        except (NoMatches, QueryError):
+            return
+        section.request_reconcile()
+        if self._on_reconcile is not None:
+            self._on_reconcile()

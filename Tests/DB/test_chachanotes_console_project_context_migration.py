@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
@@ -85,11 +89,13 @@ def test_v41_to_v42_adds_nullable_local_column(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "chachanotes.db"
     conversation_id = _seed_v41_database(db_path, monkeypatch)
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     connection = db.get_connection()
     columns = _conversation_columns(connection)
 
-    assert _version(connection) == 42
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert columns[COLUMN_NAME][3] == 0
     row = connection.execute(
         "SELECT title, console_project_context_json FROM conversations WHERE id = ?",
@@ -120,9 +126,11 @@ def test_v41_to_v42_recovers_column_present_version_still_41(
         assert _version(connection) == 41
         db.close_connection()
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     connection = db.get_connection()
-    assert _version(connection) == 42
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert (
         connection.execute(
             "SELECT console_project_context_json FROM conversations WHERE id = ?",
@@ -435,8 +443,20 @@ def test_fresh_schema_contains_console_project_context_column(tmp_path) -> None:
     connection = db.get_connection()
     columns = _conversation_columns(connection)
 
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 42
-    assert _version(connection) == 42
+    # M8: deliberately `>= 42`, not `== 42` -- this file only owns the
+    # v41->v42 console_project_context migration, and a LATER, unrelated
+    # migration (e.g. task-18300's own v42->v43 message_exchanges table)
+    # legitimately bumps `_CURRENT_SCHEMA_VERSION` further without this
+    # file needing to know or care. The exact current-version pin lives in
+    # exactly one place -- as of task-19554 that is
+    # `Tests/DB/test_chachanotes_sync_conflict_preservation_migration.py`'s
+    # the newest migration's exact current-version test (the pin moves to
+    # own file on every bump, rather than staying on an older one from
+    # which it can only drift) -- this assertion only
+    # needs to confirm a fresh schema landed AT OR PAST this migration's
+    # own version, not the overall latest.
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 42
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert columns[COLUMN_NAME][2].upper() == "TEXT"
     assert columns[COLUMN_NAME][3] == 0
     db.close_connection()

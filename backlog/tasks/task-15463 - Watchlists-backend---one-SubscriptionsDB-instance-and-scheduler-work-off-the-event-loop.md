@@ -1,6 +1,6 @@
 ---
 id: TASK-15463
-title: Watchlists backend: one SubscriptionsDB instance and scheduler work off the event loop
+title: 'Watchlists backend: one SubscriptionsDB instance and scheduler work off the event loop'
 status: Done
 assignee:
   - '@claude'

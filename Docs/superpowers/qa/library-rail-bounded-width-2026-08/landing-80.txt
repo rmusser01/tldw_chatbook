@@ -1,0 +1,62 @@
+Detached tmux PTY capture — FAILED ordinary landing geometry
+Session: tldw22301-80
+Pane: 80x52
+stty launch size: 80x52
+CWD: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/library-rail-bounded-width
+Command: python3.12 (/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m tldw_chatbook.app)
+Scratch config: /tmp/tldw-task22301/config.toml
+Config: library.media_reader.custom_widths_enabled=false; library_width=31
+Visible route: Library landing / no selected rail row; expected canvas absent
+Visible focus: Search Library input focus treatment
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Rol  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Navigation                                                      Collapse     │
+│     Import…                                                                  │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ ▊ Search Library…                                                          ▎ │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│                                                                              │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│  Browse                                                                 ▾    │
+│    Media (0) — your files                                                    │
+│    Conversations (0)                                                         │
+│    Notes (0)                                                                 │
+│    Prompts (0) — reuse                                                       │
+│    Skills (0) — AI add-ons                                                   │
+│    Collections — item sets                                                   │
+│    Search / RAG — find all                                                   │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│  Create                                                                 ▾    │
+│    New note                                                                  │
+│    New prompt                                                                │
+│    New skill                                                                 │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│  Study                                                                  ▾    │
+│    Study decks (0)                                                           │
+│      see what carries over                                                   │
+│    Flashcards due: 0                                                         │
+│      see what carries over                                                   │
+│    Quizzes (0)                                                               │
+│      see what carries over                                                   │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│  Import / Export                                                        ▾    │
+│    Import…                                                                   │
+│    Export                                                                    │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│  Details                                                                ▸    │
+│  Back to Get started                                                         │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+  / focus search | i import content | F1 · F6 · Ctrl+P · Ctrl+Q

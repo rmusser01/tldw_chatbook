@@ -11,29 +11,24 @@ Handles the creation and packaging of chatbooks from database content.
 from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call
 from tldw_chatbook.Backup_Recovery.local_content_lifetime import own_database
 
+import hashlib
+import html
 import json
 import os
 import shutil
 import tempfile
 import threading
 import zipfile
-import hashlib
-import html
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Dict, Any, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
 from loguru import logger
 
-from .chatbook_models import (
-    ChatbookManifest,
-    ChatbookContent,
-    ContentItem,
-    ContentType,
-    ChatbookVersion,
-    Relationship,
-)
+from ..Canvas.archive import export_canvas_archive, validate_exported_canvas_origins
+from ..Chat.assistant_generation_state import normalize_assistant_generation_state
 from ..Chat.citation_service_factory import (
     build_local_citation_conversation_service,
 )
@@ -41,6 +36,14 @@ from ..Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
 )
+from ..Chat.thinking_blocks import (
+    THINKING_EXPORT_WARNING,
+    ThinkingEnvelopeValidationError,
+    ThinkingEnvelopeVersionError,
+    normalize_thinking_history_policy,
+    thinking_envelope_to_exchange,
+)
+from ..config import load_console_library_migration_seed
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
@@ -48,10 +51,17 @@ from ..Prompt_Management.prompt_chatbook_record import encode_chatbook_prompt_re
 from ..STT.persistence import load_transcription_provenance_document
 from ..Utils.input_validation import sanitize_string
 from ..Utils.path_validation import validate_filename
+from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
 from ..Utils.text import sanitize_filename
-from ..Utils.paths import get_user_data_dir
-
+from .chatbook_models import (
+    ChatbookContent,
+    ChatbookManifest,
+    ChatbookVersion,
+    ContentItem,
+    ContentType,
+    Relationship,
+)
 
 CITATION_MESSAGE_EXPORT_KEYS = ("citation_validation", "evidence_bundle", "citations")
 MAX_CITATION_REPORT_SNIPPET_CHARS = 1000
@@ -125,6 +135,48 @@ class PromptChatbookExportError(RuntimeError):
             "PromptChatbookExportError("
             f"archive_item_id={self.archive_item_id!r}, category={self.category!r})"
         )
+
+
+class ChatbookExportEmptyError(RuntimeError):
+    """Every selected item failed to collect -- refuse to write the archive.
+
+    task-32232: ``create_chatbook`` raises this instead of packaging a
+    bundle holding only a README and ``content_items: []`` while reporting
+    success (the Library's selected-media export did exactly that for
+    every canonical ``local:media:<n>`` id).
+
+    Attributes:
+        requested: How many selected items the run started with.
+    """
+
+    def __init__(self, requested: int) -> None:
+        """Build the error for a selection that collected nothing.
+
+        Args:
+            requested: How many items the run had selected -- every one of
+                which failed to collect. Always >= 1: the guard that raises
+                this never fires for an empty selection.
+        """
+        self.requested = requested
+        super().__init__(
+            f"Export produced no content: none of the {requested} selected "
+            "items could be collected."
+        )
+
+
+#: The content types ``create_chatbook`` actually collects. ``EMBEDDING``/
+#: ``EVALUATION`` have no collector, so a selection naming one must not
+#: count towards the "asked for N, collected 0" guard below.
+_COLLECTED_CONTENT_TYPES = frozenset(
+    {
+        ContentType.CONVERSATION,
+        ContentType.NOTE,
+        ContentType.CHARACTER,
+        ContentType.MEDIA,
+        ContentType.PROMPT,
+        ContentType.KEPT_BRIEFING,
+    }
+)
 
 
 class ChatbookCreator:
@@ -400,6 +452,54 @@ class ChatbookCreator:
                 f"ChatbookCreator.create_chatbook: Final stats - conversations={manifest.total_conversations}, notes={manifest.total_notes}, characters={manifest.total_characters}, media={manifest.total_media_items}, prompts={manifest.total_prompts}, kept_briefings={manifest.total_kept_briefings}"
             )
 
+            # task-32232: refuse to write a bundle that carries NOTHING the
+            # caller selected. Every collector logs-and-continues per item
+            # (a deleted row, an unparseable id, a serialization failure),
+            # so a whole selection could fail and still produce a
+            # README-plus-empty-manifest archive the caller reported as a
+            # success -- the data-loss shape this guard closes. A PARTIAL
+            # collection still succeeds (the archive genuinely holds
+            # content); only "asked for N, collected 0" fails.
+            #
+            # Selected media counts as requested even when ``include_media``
+            # is False (PR #2568 review): ``ChatbookCreationWindow`` lets a
+            # user select only media with "Include media files" unchecked,
+            # and skipping the collector under that flag is not a reason to
+            # call the resulting empty archive a success.
+            requested_items = sum(
+                len(ids)
+                for content_type, ids in content_selections.items()
+                if content_type in _COLLECTED_CONTENT_TYPES
+            )
+            if requested_items and not manifest.content_items:
+                raise ChatbookExportEmptyError(requested_items)
+
+            exported_conversation_ids = tuple(
+                str(conversation["id"]) for conversation in content.conversations
+            )
+            if exported_conversation_ids and self.db_paths.get("ChaChaNotes"):
+                canvas_db = CharactersRAGDB(
+                    self.db_paths["ChaChaNotes"],
+                    "chatbook_canvas_exporter",
+                    console_library_migration_seed=load_console_library_migration_seed(),
+                )
+                try:
+                    with canvas_db.transaction():
+                        canvas_archive = export_canvas_archive(
+                            canvas_db,
+                            exported_conversation_ids,
+                            work_dir,
+                        )
+                        validate_exported_canvas_origins(
+                            canvas_archive,
+                            tuple(content.conversations),
+                        )
+                finally:
+                    canvas_db.close_connection()
+                if canvas_archive is not None:
+                    manifest.canvas_archive = canvas_archive
+                    manifest.version = ChatbookVersion.V3
+
             # Write manifest
             manifest_path = work_dir / "manifest.json"
             logger.info(
@@ -419,7 +519,37 @@ class ChatbookCreator:
             logger.info(
                 f"ChatbookCreator.create_chatbook: Creating ZIP archive at {output_path}"
             )
-            self._create_zip_archive(work_dir, output_path, partial_path)
+            try:
+                self._create_zip_archive(
+                    work_dir,
+                    output_path,
+                    partial_path,
+                    deterministic=manifest.version is ChatbookVersion.V3,
+                )
+            except OSError as error:
+                # task-32251 AC#4, narrowed by review F6: ONLY the packaging
+                # step. A live export reported `[Errno 2] No such file or
+                # directory: '...notes-bundle.zip.partial'` -- an internal
+                # temp file the user never named -- and the first fix caught
+                # `OSError` for the whole method, so a failure READING a
+                # source file would have claimed the bundle could not be
+                # written. Those still fall through to the generic branch.
+                # Metadata only, deliberately: an OSError's own message
+                # carries the destination path, and this sink is persistent.
+                logger.error(
+                    "ChatbookCreator.create_chatbook: could not write the "
+                    "archive error_type={}",
+                    type(error).__name__,
+                )
+                reason = error.strerror or "the file system refused the write"
+                return (
+                    False,
+                    f"Could not write the bundle to {output_path}: {reason}.",
+                    {
+                        "missing_dependencies": list(self.missing_dependencies),
+                        "auto_included": list(self.auto_included_characters),
+                    },
+                )
 
             # Best-effort size calc: the archive is already finalized on disk
             # (os.replace done inside _create_zip_archive), so a stat() failure
@@ -441,6 +571,8 @@ class ChatbookCreator:
             dependency_info = {
                 "missing_dependencies": list(self.missing_dependencies),
                 "auto_included": list(self.auto_included_characters),
+                "archive_version": manifest.version.value,
+                "canvas_included": manifest.canvas_archive is not None,
             }
 
             # Build success message
@@ -462,6 +594,25 @@ class ChatbookCreator:
                     "cancelled": True,
                     "missing_dependencies": list(self.missing_dependencies),
                     "auto_included": list(self.auto_included_characters),
+                },
+            )
+        except ChatbookExportEmptyError as exc:
+            # task-32232: the caller renders its own copy for this one --
+            # ``dependency_info["empty_export_requested"]`` carries the
+            # selection size so the UI can say how many items were asked
+            # for without re-deriving it from a message string.
+            logger.error(
+                "ChatbookCreator.create_chatbook: refused to write an empty "
+                "archive ({} items selected, 0 collected)",
+                exc.requested,
+            )
+            return (
+                False,
+                str(exc),
+                {
+                    "missing_dependencies": list(self.missing_dependencies),
+                    "auto_included": list(self.auto_included_characters),
+                    "empty_export_requested": exc.requested,
                 },
             )
         except PromptChatbookExportError as exc:
@@ -513,7 +664,35 @@ class ChatbookCreator:
             )
             return
 
-        db = own_database(CharactersRAGDB(db_path, "chatbook_creator"))
+        db = own_database(CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        ))
+        try:
+            self._collect_conversations_with_database(
+                conversation_ids,
+                work_dir,
+                manifest,
+                content,
+                auto_include_dependencies,
+                db=db,
+            )
+        finally:
+            db.close_connection()
+
+    def _collect_conversations_with_database(
+        self,
+        conversation_ids: list[str],
+        work_dir: Path,
+        manifest: ChatbookManifest,
+        content: ChatbookContent,
+        auto_include_dependencies: bool,
+        *,
+        db: CharactersRAGDB,
+    ) -> None:
+        """Collect conversations through one caller-owned database handle."""
+
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
             sidecar_path=get_user_data_dir()
@@ -614,6 +793,9 @@ class ChatbookCreator:
                     "created_at": created_at,
                     "updated_at": last_modified,
                     "character_id": conv.get("character_id"),
+                    "thinking_history_policy": normalize_thinking_history_policy(
+                        conv.get("thinking_history_policy")
+                    ),
                     "active_leaf_message_id": str(active_leaf)
                     if active_leaf is not None
                     else None,
@@ -626,11 +808,22 @@ class ChatbookCreator:
                 contains_private = any(
                     "_private" in message for message in exported_messages
                 )
+                contains_thinking = any(
+                    bool(message.get("_thinking", {}).get("blocks"))
+                    for message in exported_messages
+                )
                 if contains_private:
                     conv_data["private_data_warning"] = (
                         "This conversation contains private provider continuation data."
                     )
                     citation_metadata["contains_private_provider_continuation"] = True
+                if contains_thinking:
+                    citation_metadata["contains_model_thinking"] = True
+                if contains_private or contains_thinking:
+                    conv_data["sensitive_data_warning"] = THINKING_EXPORT_WARNING
+                    citation_metadata["sensitive_data_warning"] = (
+                        THINKING_EXPORT_WARNING
+                    )
 
                 # Write conversation file
                 conv_file = self._conversation_export_path(
@@ -676,20 +869,34 @@ class ChatbookCreator:
 
     @staticmethod
     def _conversation_graph_messages(
-        db: CharactersRAGDB, conversation_id: str
+        db: CharactersRAGDB, conversation_id: str, *, limit: int | None = None
     ) -> list[dict[str, Any]]:
-        """Return every row needed to reconstruct one conversation graph."""
+        """Return graph rows in archive order, optionally capped at SQL fetch.
+
+        Args:
+            db: Caller-owned database handle.
+            conversation_id: Conversation whose complete graph is projected.
+            limit: Optional SQL row ceiling, including any overflow sentinel.
+
+        Returns:
+            Message mappings in timestamp and insertion order.
+
+        Raises:
+            _ConversationGraphProjectionError: The database returns no row list.
+        """
         cursor = db.execute_query(
             """
             SELECT id, conversation_id, parent_message_id, sender, content,
                    image_data, image_mime_type, timestamp, role, deleted,
                    variant_of, variant_number, is_selected_variant,
-                   total_variants, provider_continuation_json
+                   total_variants, provider_continuation_json,
+                   thinking_blocks_json, assistant_generation_state
               FROM messages
              WHERE conversation_id = ?
              ORDER BY timestamp ASC, rowid ASC
-            """,
-            (conversation_id,),
+            """
+            + (" LIMIT ?" if limit is not None else ""),
+            (conversation_id, limit) if limit is not None else (conversation_id,),
         )
         rows = cursor.fetchall()
         if not isinstance(rows, list):
@@ -715,8 +922,9 @@ class ChatbookCreator:
         path.reverse()
         return path
 
+    @classmethod
     def _export_message_chunk(
-        self,
+        cls,
         chunk: Sequence[Mapping[str, Any]],
         extra_attachments: Mapping[str, list],
         conv_dir: Path,
@@ -762,13 +970,58 @@ class ChatbookCreator:
                 "total_variants": int(msg.get("total_variants") or 1),
             }
             private_json = msg.get("provider_continuation_json")
+            checkpoint = None
             if private_json is not None:
                 checkpoint = parse_provider_continuation_json(private_json)
                 canonical = dump_provider_continuation_json(checkpoint)
                 message_data["_private"] = {
                     "provider_continuation": json.loads(canonical or "null")
                 }
-            attachment_entries = self._export_message_attachments(
+            # Soft deletion retains the durable semantic envelope and only
+            # changes visibility/ownership. V2 archives keep the tombstone for
+            # graph identity, but the V2 importer deliberately rejects
+            # `_thinking` on a deleted row. Project only active thinking into
+            # the archive; do not mutate the retained database bytes or strip
+            # the separately governed private continuation.
+            thinking_json = (
+                None if message_data["deleted"] else msg.get("thinking_blocks_json")
+            )
+            if thinking_json is not None:
+                if message_data["role"] != "assistant":
+                    raise _ConversationGraphProjectionError(
+                        "Conversation graph projection unavailable."
+                    )
+                try:
+                    thinking_payload = thinking_envelope_to_exchange(thinking_json)
+                except ThinkingEnvelopeVersionError as error:
+                    raise _ConversationGraphProjectionError(str(error)) from None
+                except ThinkingEnvelopeValidationError:
+                    raise _ConversationGraphProjectionError(
+                        "Conversation graph projection unavailable."
+                    ) from None
+                if thinking_payload is not None:
+                    message_data["_thinking"] = thinking_payload
+            raw_state = msg.get("assistant_generation_state")
+            if raw_state is not None and message_data["role"] != "assistant":
+                raise _ConversationGraphProjectionError(
+                    "Conversation graph projection unavailable."
+                )
+            try:
+                generation_state = normalize_assistant_generation_state(
+                    role=message_data["role"],
+                    raw_state=raw_state,
+                    has_valid_active_continuation=(
+                        checkpoint is not None and checkpoint.state == "active"
+                    ),
+                )
+            except ValueError:
+                raise _ConversationGraphProjectionError(
+                    "Conversation graph projection unavailable."
+                ) from None
+            message_data["assistant_generation_state"] = (
+                generation_state.value if generation_state is not None else None
+            )
+            attachment_entries = cls._export_message_attachments(
                 msg,
                 extra_attachments.get(str(message_id), []),
                 conv_dir,
@@ -776,7 +1029,7 @@ class ChatbookCreator:
             )
             if attachment_entries:
                 message_data["attachments"] = attachment_entries
-            citation_payload = self._message_citation_export_payload(msg)
+            citation_payload = cls._message_citation_export_payload(msg)
             if citation_payload:
                 message_data.update(citation_payload)
                 citation_messages.append(message_data)
@@ -811,8 +1064,9 @@ class ChatbookCreator:
 
         return mimetypes.guess_extension(mime_type) or ".bin"
 
+    @classmethod
     def _export_message_attachments(
-        self,
+        cls,
         msg: Mapping[str, Any],
         extra_rows: list[Mapping[str, Any]],
         conv_dir: Path,
@@ -857,7 +1111,7 @@ class ChatbookCreator:
             data = row.get("data")
             if not data:
                 continue
-            extension = self._attachment_extension(row.get("mime_type"))
+            extension = cls._attachment_extension(row.get("mime_type"))
             file_name = f"{message_id}-{row['position']}{extension}"
             (attachments_dir / file_name).write_bytes(data)
             entries.append(
@@ -1162,7 +1416,11 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = own_database(CharactersRAGDB(db_path, "chatbook_creator"))
+        db = own_database(CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        ))
         notes_dir = work_dir / "content" / "notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1245,7 +1503,11 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = own_database(CharactersRAGDB(db_path, "chatbook_creator"))
+        db = own_database(CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        ))
         chars_dir = work_dir / "content" / "characters"
         chars_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1544,7 +1806,11 @@ class ChatbookCreator:
             )
             return
 
-        db = own_database(CharactersRAGDB(db_path, "chatbook_creator"))
+        db = own_database(CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        ))
         kept_dir = work_dir / "content" / "kept_briefings"
         kept_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1732,7 +1998,11 @@ class ChatbookCreator:
                 )
                 return
 
-            db = own_database(CharactersRAGDB(db_path, "chatbook_creator"))
+            db = own_database(CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            ))
 
             try:
                 # Get character card (which includes all details)
@@ -1857,7 +2127,23 @@ class ChatbookCreator:
                 f.write(", ".join(manifest.tags))
                 f.write("\n")
 
-            if any(
+            sensitive_items = [
+                item
+                for item in manifest.content_items
+                if item.metadata.get("sensitive_data_warning")
+            ]
+            if sensitive_items:
+                f.write("\n## Sensitive conversation data\n\n")
+                f.write(f"{THINKING_EXPORT_WARNING}\n")
+                if any(
+                    item.metadata.get("contains_private_provider_continuation")
+                    for item in sensitive_items
+                ):
+                    f.write(
+                        "This chatbook contains private provider continuation data. "
+                        "Share it only with trusted recipients.\n"
+                    )
+            elif any(
                 item.metadata.get("contains_private_provider_continuation")
                 for item in manifest.content_items
             ):
@@ -1897,10 +2183,17 @@ class ChatbookCreator:
                 f.write("See individual content files for licensing information.")
 
     def _create_zip_archive(
-        self, work_dir: Path, output_path: Path, partial_path: Path
+        self,
+        work_dir: Path,
+        output_path: Path,
+        partial_path: Path,
+        *,
+        deterministic: bool = False,
     ) -> None:
         """Zip work_dir into a sibling .partial, then atomically replace output_path."""
         files = [p for p in work_dir.rglob("*") if p.is_file()]
+        if deterministic:
+            files.sort(key=lambda path: path.relative_to(work_dir).as_posix())
         total = len(files)
         file_fd = -1
         partial_created = False
@@ -1920,8 +2213,22 @@ class ChatbookCreator:
                 ) as archive:
                     for idx, file_path in enumerate(files):
                         self._check_cancel()
-                        arcname = file_path.relative_to(work_dir)
-                        archive.write(file_path, arcname)
+                        arcname = file_path.relative_to(work_dir).as_posix()
+                        if deterministic:
+                            info = zipfile.ZipInfo(
+                                arcname,
+                                date_time=(1980, 1, 1, 0, 0, 0),
+                            )
+                            info.compress_type = zipfile.ZIP_DEFLATED
+                            info.create_system = 3
+                            info.external_attr = 0o100600 << 16
+                            with file_path.open("rb") as source, archive.open(
+                                info, "w"
+                            ) as destination:
+                                while chunk := source.read(64 * 1024):
+                                    destination.write(chunk)
+                        else:
+                            archive.write(file_path, arcname)
                         self._emit_progress("packaging", idx + 1, total)
                 archive_stream.flush()
                 os.fsync(archive_stream.fileno())

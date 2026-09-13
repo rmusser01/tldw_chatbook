@@ -1,0 +1,152 @@
+Agents :: FAILED Tests/Agents/test_search_run_log_runtime_tool.py::test_real_closure_recovers_full_content_beyond_both_caps
+Agents :: FAILED Tests/Agents/test_search_run_log_runtime_tool.py::test_sensitive_large_result_has_no_recoverable_run_log_handle
+Agents :: FAILED Tests/Agents/test_run_skill_script_runtime_tool.py::test_run_skill_script_absent_and_falls_through_when_not_wired
+Agents :: FAILED Tests/Agents/test_run_skill_script_runtime_tool.py::test_subagent_can_also_dispatch_and_be_pinned_run_skill_script
+Architecture :: FAILED Tests/Architecture/test_console_wave6_inventory.py::test_fleet_task_ratchet_is_earned
+Architecture :: FAILED Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]
+Character_Chat :: FAILED Tests/Character_Chat/test_character_persona_scope_service.py::test_app_wires_character_persona_services
+Chat :: ERROR Tests/Chat/test_chat_mocked_apis.py::TestMockedChatAPIs::test_openai_streaming_mocked
+Chat :: ERROR Tests/Chat/test_chat_mocked_apis.py::TestMockedStreamingAPIs::test_streaming_chunk_processing
+Chat :: ERROR Tests/Chat/test_chat_mocked_apis.py::TestMockedStreamingAPIs::test_streaming_error_handling
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_browse_next_then_previous_mutates_screen_state_only
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_browse_clamps_at_boundaries
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_browse_noop_for_single_variant_message
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_keep_reorders_store_and_resets_browse
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_keep_noop_when_browsed_index_is_zero
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_keep_evicts_stale_render_cache_entries_so_rebuild_shows_kept_variant
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_regenerate_refused_at_cap
+Chat :: FAILED Tests/Chat/test_console_agent_swap.py::test_mcp_tool_call_session_approval_suppresses_card_on_next_turn
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_regenerate_refused_while_inflight
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_h3_edit_regenerate_refuses_before_capacity_or_inflight_checks
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_regenerate_failure_leaves_message_untouched_and_reports_error
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_regenerate_success_appends_variant_and_browses_to_new_index
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_regenerate_success_inherits_style_from_position_zero_meta
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_routes_keep_button_for_generation_message
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_routes_variant_next_for_generation_message
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_routes_regenerate_for_generation_message
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_blocks_generation_regenerate_when_ephemeral
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_posts_store_issued_speech_snapshot
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_routes_speak_for_generation_message2026-08-23 14:40:50.513 | DEBUG    | tldw_chatbook.config:<module>:66 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_does_not_forge_user_speech_snapshot
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_speak_marks_message_as_speaking
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_routes_speak_stop_to_tts_playback_event
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_speak_stop_safe_when_nothing_speaking
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_handle_console_message_action_speak_stop_does_not_clear_other_message
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_failed_speech_clears_on_any_next_message_action
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_rejected_stop_post_does_not_claim_stopped
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_real_handler_stop_order_settles_and_notifies_once
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_rejected_owned_stop_retains_lifecycle_for_retry
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_dispatch_console_command_blocks_generate_image_when_ephemeral
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_generate_image_handler_threads_prepared_fields_into_batch
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_llm_context_options_disabled_by_kill_switch
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_llm_context_options_resolves_ready_provider
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_llm_context_options_provider_not_ready
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_llm_context_options_resolution_exception_degrades_gracefully
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_generate_image_handler_no_prompt_uses_llm_composed_context_end_to_end
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_generate_image_handler_no_prompt_llm_call_raises_falls_back
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_generate_image_handler_no_prompt_llm_timeout_falls_back
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_generate_image_handler_no_prompt_llm_empty_response_falls_back
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_generate_image_handler_no_prompt_kill_switch_off_skips_llm_path
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_generate_image_handler_prompt_present_never_resolves_llm_context
+Chat :: FAILED Tests/Chat/test_console_generation_actions.py::test_generate_image_handler_restores_draft_when_batch_raises
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_command_uses_raw_instruction_one_memory_image_and_count_one
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_refusals_happen_before_generic_preparation_or_generation[:comfyui-pendings0]
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_refusals_happen_before_generic_preparation_or_generation[:comfyui @anime change it-pendings1]
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_refusals_happen_before_generic_preparation_or_generation[:comfyui change it-pendings2]
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_refusals_happen_before_generic_preparation_or_generation[:comfyui change it-pendings3]
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_refusals_happen_before_generic_preparation_or_generation[:comfyui change it-pendings4]
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_refusals_happen_before_generic_preparation_or_generation[:comfyui change it-pendings5]
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_source_header_read_runs_off_loop_while_pump_remains_responsive
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_oversize_source_is_rejected_before_decode_or_dispatch
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_canonical_validation_performs_the_only_full_source_decode
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_h3_warning_band_is_rejected_by_canonical_ceiling_before_full_decode
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_stop_before_adapter_success_is_expected_and_retains_source
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_app_owned_task_cancellation_drains_linearized_runner_before_reraise[success]
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_app_owned_task_cancellation_drains_linearized_runner_before_reraise[cancel]
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_terminal_generation_never_syncs_stale_origin_screen
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_persistence_failure_retains_source_and_emits_sanitized_copy
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_failure_guidance_persistence_error_falls_back_without_masking_primary[before_append-expected_attempts0]
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_failure_guidance_persistence_error_falls_back_without_masking_primary[after_append-expected_attempts1]
+Chat :: FAILED Tests/Chat/test_console_h3_image_edit.py::test_postcommit_consume_exception_keeps_success_and_logs_only_type
+Chat :: FAILED Tests/Chat/test_kimi_zai_provider_contract.py::test_streaming_adapter_carries_terminal_candidate_into_model_turn
+Chat :: FAILED Tests/Chat/test_console_generation_card.py::test_generation_card_row_replaces_image_row
+Chat :: FAILED Tests/Chat/test_console_generation_card.py::test_transcript_row_signature_changes_on_browse
+Chat :: FAILED Tests/Chat/test_console_command_suggestions.py::test_bare_slash_lists_commands_then_skills
+Chat :: FAILED Tests/Chat/test_console_diff_feedback_delivery.py::test_no_pending_notes_leaves_payload_byte_identical
+Chat :: FAILED Tests/Chat/test_console_command_suggestions.py::test_skill_named_like_a_command_is_deduplicated
+Chat :: FAILED Tests/Chat/test_console_command_suggestions.py::test_no_builtin_command_falls_back_to_the_extension_description
+Chat :: FAILED Tests/Chat/test_console_headless_wake_invariants.py::test_a_disposed_runtime_refuses_the_wake_and_loses_nothing
+Chat :: FAILED Tests/Chat/test_console_video_actions.py::test_handle_console_message_action_routes_video_play_with_persisted_storage_id
+Chat :: FAILED Tests/Chat/test_console_video_actions.py::test_handle_console_message_action_routes_video_save_with_persisted_storage_id
+Chat :: FAILED Tests/Chat/test_console_video_actions.py::test_video_play_resolves_webm_from_metadata
+Chat :: FAILED Tests/Chat/test_console_video_actions.py::test_video_save_copy_preserves_webm_extension_and_collision_names
+Chat :: FAILED Tests/Chat/test_console_headless_wake_invariants.py::test_a_wake_racing_app_exit_leaves_consistent_durable_state
+Chat :: FAILED Tests/Chat/test_fleet_settle_fanout.py::test_drain_row_is_terminal_at_fire_time_on_the_raise_path_too
+Chat :: FAILED Tests/Chat/test_chat_mocked_apis.py::TestMockedChatAPIs::test_openai_streaming_mocked
+Chat :: FAILED Tests/Chat/test_console_run_status_surfaces.py::test_inspector_live_work_and_status_reflect_active_run
+Chat :: FAILED Tests/Chat/test_console_run_status_surfaces.py::test_inspector_returns_to_ready_when_run_inactive
+Chat :: FAILED Tests/Chat/test_console_run_status_surfaces.py::test_inspector_blocked_still_wins_over_running
+Chat :: FAILED Tests/Chat/test_console_agent_diff_channel.py::test_write_file_marker_carries_session_only_diff
+Chat :: FAILED Tests/Chat/test_console_project_instruction_persistence_boundary.py::test_automatic_nested_body_is_absent_from_every_durable_and_diagnostic_surface
+Chat :: FAILED Tests/Chat/test_console_agent_diff_channel.py::test_non_diff_tool_marker_has_no_diff
+Chat :: FAILED Tests/Chat/test_child_run_scope_ordering.py::test_raise_path_row_not_terminal_at_scope_exit_settles_via_run_child_finally
+Chat :: FAILED Tests/Chat/test_console_attachment_riders.py::TestSaveImageToastEscaping::test_single_save_toast_escapes_path
+Chat :: FAILED Tests/Chat/test_console_attachment_riders.py::TestSaveImageToastEscaping::test_multi_save_toast_escapes_path
+Chat :: FAILED Tests/Chat/test_chat_mocked_apis.py::TestMockedStreamingAPIs::test_streaming_chunk_processing
+Chat :: FAILED Tests/Chat/test_chat_mocked_apis.py::TestMockedStreamingAPIs::test_streaming_error_handling
+Chunking :: FAILED Tests/Chunking/test_chunker_v2.py::TestV2Chunker::test_process_text_tokenizer_override
+Chunking :: FAILED Tests/Chunking/test_chunking_interop_v7.py::TestNoIsSystemAnywhere::test_no_is_system_in_production_tree
+Chunking :: FAILED Tests/Chunking/test_golden_parity.py::test_golden_parity[tokens-cjk]
+Evals :: FAILED Tests/Evals/character_probe/test_conversation_storage.py::test_character_probe_never_imports_the_word_bench_measurement_stack
+Image_Generation :: FAILED Tests/Image_Generation/test_http_client.py::test_fetch_json_strips_authorization_on_cross_origin_redirect
+Image_Generation :: FAILED Tests/Image_Generation/test_http_client.py::test_fetch_bytes_via_post_strips_credentials_on_cross_origin_redirect
+Image_Generation :: FAILED Tests/Image_Generation/test_image_format_utils.py::test_fetch_image_bytes_strips_credentials_on_cross_origin_redirect
+integration :: ERROR    root:app.py:6000 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+integration :: ERROR    root:app.py:6000 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+integration :: FAILED Tests/integration/test_console_agent_marker_anchoring_e2e.py::test_agent_marker_anchoring_across_two_sibling_branches_on_resume
+integration :: FAILED Tests/integration/test_library_ingest_flow.py::test_ingest_button_opens_canvas
+integration :: FAILED Tests/integration/test_console_agent_marker_anchoring_e2e.py::test_retry_supersedes_prior_run_dropping_its_resume_markers
+Internal_Prompts :: FAILED Tests/Internal_Prompts/test_websearch_prompt_parity.py::test_result_relevance_eval_parity
+LLM_Calls :: FAILED Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_manifest_boundary_changes_only_summarization_owner_diagnostics
+LLM_Calls :: FAILED Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_manifest_boundary_rejects_owned_digest_schema_changes
+LLM_Calls :: FAILED Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_manifest_boundary_rejects_unreconciled_owned_digest
+LLM_Management :: FAILED Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_success_with_config
+LLM_Management :: FAILED Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_args_override_config
+LLM_Management :: FAILED Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_api_url_override
+LLM_Management :: FAILED Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_kwargs_passthrough
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_documents_list_the_exact_standalone_and_private_inventories[mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_expanded_local_tool_group_copy_names_watchlists_everywhere
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Built-in tools-expected0-extra-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Built-in tools-expected0-missing-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Built-in tools-expected0-duplicate-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Resource templates-expected1-extra-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Resource templates-expected1-missing-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Resource templates-expected1-duplicate-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Prompts-expected2-extra-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Prompts-expected2-missing-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Prompts-expected2-duplicate-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Library tools excluded from standalone-expected3-extra-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Library tools excluded from standalone-expected3-missing-mcp.md]
+MCP :: FAILED Tests/MCP/test_mcp_documentation_contract.py::test_exact_inventory_contract_rejects_mutations[Library tools excluded from standalone-expected3-duplicate-mcp.md]
+Media_DB :: ERROR    root:Client_Media_DB_v2.py:1153 Transaction failed; rolling back (error_type=OperationalError).
+Media_DB :: ERROR    root:Client_Media_DB_v2.py:1926 Schema initialization/migration failed: Migration v5->v6 failed: duplicate column name: chunk_engine_version
+Media_DB :: ERROR    root:Client_Media_DB_v2.py:889 Database initialization block finished for /private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pytest-of-macbook-dev/pytest-6747/popen-gw0/test_reading_progress_reopens_0/test_db.sqlite, but failed.
+Media_DB :: FAILED Tests/Media_DB/test_media_db_v2.py::TestDatabaseCRUDAndSync::test_reading_progress_reopens_through_versioned_migration
+Notes :: FAILED Tests/Notes/test_note_import_windows_fs.py::test_windows_adapter_recursively_discovers_and_reads_folder
+Notes :: FAILED Tests/Notes/test_note_import_windows_fs.py::test_windows_adapter_preserves_discovery_bounds[deep_tree-bounds_overrides4-max_depth_exceeded]
+Performance :: FAILED Tests/Performance/test_app_startup_performance.py::test_citation_artifact_reconciliation_is_deferred_and_policy_gated[False-0]
+Performance :: FAILED Tests/Performance/test_app_startup_performance.py::test_citation_artifact_reconciliation_is_deferred_and_policy_gated[True-1]
+Performance :: FAILED Tests/Performance/test_app_startup_performance.py::test_legacy_citation_migration_is_deferred_and_policy_gated[False-0]
+Performance :: FAILED Tests/Performance/test_app_startup_performance.py::test_legacy_citation_migration_is_deferred_and_policy_gated[True-1]
+ProductionApp :: FAILED Tests/ProductionApp/test_reactive_ownership_maturity.py::test_production_app_tests_contain_no_surrogate_application_patterns
+ProductionApp :: FAILED Tests/ProductionApp/test_reactive_ownership_maturity.py::test_registered_routes_use_fresh_production_owners_and_safe_snapshots
+ProductionApp :: FAILED Tests/ProductionApp/test_retired_destination_root_state.py::test_registered_destinations_own_state_without_retired_root_mirrors
+QA :: FAILED Tests/QA/test_console_notes_workspace_uat.py::test_console_agent_reads_then_updates_configured_workspace_note
+RAG_Search :: FAILED Tests/RAG_Search/test_fts5_match_forms_shared.py::test_plain_search_and_rag_answer_answer_the_same_inflection_miss
+ROOT :: FAILED Tests/test_stdlib_logging_format_style.py::test_no_stdlib_logger_uses_loguru_brace_style
+TTS :: FAILED Tests/TTS/test_tts_app_ownership.py::test_app_lifecycle_shutdown_drains_all_owners_in_authority_order
+Widgets :: FAILED Tests/Widgets/Library/test_library_conversations_canvas.py::test_conversations_canvas_fresh_disabled_reasons_remain_specific
+Widgets :: FAILED Tests/Widgets/Library/test_library_note_import_canvas.py::test_wrapper_handler_keeps_destination_input_mounted_during_burst_typing
+Widgets :: FAILED Tests/Widgets/test_console_video_card_rows.py::test_video_message_renders_video_card_row
+Widgets :: FAILED Tests/Widgets/Library/test_library_note_import_canvas.py::test_wrapper_keeps_applied_collision_rename_focused_when_edit_clears_choice
+Widgets :: FAILED Tests/Widgets/test_console_video_card_rows.py::test_expired_tombstone_stays_a_row

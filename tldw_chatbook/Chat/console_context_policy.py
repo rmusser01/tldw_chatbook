@@ -62,9 +62,7 @@ class ConsoleContextPolicyDefaults:
     trigger_ratio: float = DEFAULT_COMPACTION_TRIGGER_RATIO
     target_ratio: float = DEFAULT_COMPACTION_TARGET_RATIO
     summary_max_tokens: int = DEFAULT_SUMMARY_MAX_TOKENS
-    failure_behavior: CompactionFailureBehavior = (
-        CompactionFailureBehavior.STOP_AND_ASK
-    )
+    failure_behavior: CompactionFailureBehavior = CompactionFailureBehavior.STOP_AND_ASK
     carry_forward_mode: ContextCarryForwardMode = (
         ContextCarryForwardMode.MEMORY_WITH_RECENT_TURNS
     )
@@ -143,9 +141,7 @@ class ConsoleContextPolicyOverrides:
         if not isinstance(source, Mapping):
             raise ContextPolicyError("Context policy overrides must be a mapping.")
         return cls(
-            budget_mode=_optional_enum(
-                source, "budget_mode", ContextBudgetMode
-            ),
+            budget_mode=_optional_enum(source, "budget_mode", ContextBudgetMode),
             custom_budget_tokens=_optional_int(source, "custom_budget_tokens"),
             compaction_mode=_optional_enum(
                 source, "compaction_mode", ContextCompactionMode
@@ -320,9 +316,7 @@ def resolve_context_policy(
         else None
     )
     if available_capacity is not None and available_capacity <= 0:
-        errors.append(
-            "Mandatory request material leaves no conversation capacity."
-        )
+        errors.append("Mandatory request material leaves no conversation capacity.")
         available_capacity = 0
 
     effective_budget: int | None
@@ -370,9 +364,7 @@ def resolve_context_policy(
 
 def _validate_complete_policy(policy: ConsoleContextPolicyDefaults) -> None:
     _validate_enum("budget_mode", policy.budget_mode, ContextBudgetMode)
-    _validate_enum(
-        "compaction_mode", policy.compaction_mode, ContextCompactionMode
-    )
+    _validate_enum("compaction_mode", policy.compaction_mode, ContextCompactionMode)
     _validate_enum(
         "compaction_representation",
         policy.compaction_representation,
@@ -386,9 +378,7 @@ def _validate_complete_policy(policy: ConsoleContextPolicyDefaults) -> None:
         policy.carry_forward_mode,
         ContextCarryForwardMode,
     )
-    _validate_optional_positive_int(
-        "custom_budget_tokens", policy.custom_budget_tokens
-    )
+    _validate_optional_positive_int("custom_budget_tokens", policy.custom_budget_tokens)
     _validate_positive_int("summary_max_tokens", policy.summary_max_tokens)
     _validate_ratio("trigger_ratio", policy.trigger_ratio)
     _validate_ratio("target_ratio", policy.target_ratio)

@@ -23,12 +23,10 @@ where each one can be driven deterministically:
 * **Caps still apply**: `max_parallel_runs`, per-session busy refusal,
   and the shared dispatch that carries the wall clock and token ceiling.
 
-Rig note: "headless" here is produced by the production seam
-`ConsoleRuntime.leave_console(view)` -- what `ChatScreen.on_unmount`
-calls through `leave_console_runtime`. Every test asserts, as a harness
-precondition, that this really did set the visit's Event and really did
-NOT dispose the controller; otherwise a green could mean the test never
-reached the state the old gate refused.
+Rig note: "headless" here is produced by the production pure-detach seam
+`ConsoleRuntime.leave_console(view, generation)`. Every test asserts that
+the exact view detached without setting the controller cancellation Event
+or disposing the controller.
 """
 
 from __future__ import annotations
@@ -75,19 +73,18 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 async def _leave_console(rig) -> ConsoleRuntime:
     """Attach a view, then end the visit through the production seam.
 
-    `ConsoleRuntime.leave_console` is exactly what `ChatScreen.on_unmount`
-    reaches through `leave_console_runtime`. The two preconditions are the
-    point: the visit Event MUST be set (that is the state the old gate
-    refused, so a test that skipped it would prove nothing) and the
-    controller must NOT be disposed (a navigation is not an app exit).
+    `ConsoleRuntime.leave_console` is the production navigation seam. It
+    requires the exact attachment token and clears only view projections.
     """
     controller = rig[-1]
     runtime = _runtime_for(rig)
     view = _mounted_view()
-    runtime.attach_view(view)
-    assert await runtime.leave_console(view) is True, "the visit never ended"
-    assert controller._shutdown_requested.is_set(), (
-        "harness precondition: leaving Console must set the visit's Event"
+    generation = runtime.attach_view(view)
+    assert await runtime.leave_console(view, generation) is True, (
+        "the exact view never detached"
+    )
+    assert not controller._shutdown_requested.is_set(), (
+        "ordinary navigation signalled domain cancellation"
     )
     assert controller._disposed is False, (
         "harness precondition: a navigation must not dispose the runtime"
@@ -146,12 +143,13 @@ async def test_a_visit_that_merely_ended_does_not_refuse_the_wake(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_disposed_runtime_refuses_the_wake_and_loses_nothing(tmp_path):
-    """The other direction: app exit still refuses -- and refusal is not loss.
+    """App exit fences delivery while durable state remains restart-claimable.
 
     `dispose()` closes the provider gateway and cancels/awaits every
     session's stream task, so a turn started here could reach nobody. The
-    pending entry, the durable mark and the unstamped ledger all survive
-    for the next process.
+    durable mark and unstamped ledger survive for the next process. The
+    coordinator's in-memory pending registry is intentionally discarded at
+    process teardown and rebuilt from those durable layers on the next mount.
     """
     rig = _controller_rig(tmp_path)
     chacha, app, runs_db, store, session, gateway, _bridge, controller = rig
@@ -169,19 +167,26 @@ async def test_a_disposed_runtime_refuses_the_wake_and_loses_nothing(tmp_path):
         wake.on_fleet_drained(
             _drain(session.id, _survivor(run_id, session_id=session.id))
         )
+        wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
 
         assert await _quiet(lambda: gateway.payloads, seconds=1.0), (
             "a DISPOSED runtime delivered a wake turn -- its gateway is closed "
             "and its stream tasks are cancelled; nothing it produced could "
             "reach anyone"
         )
-        assert wake.has_pending(session.id), "a refused wake keeps its pending bit"
-        assert not (runs_db.get_run(run_id) or {}).get("wake_delivered_at"), (
-            "a refused wake must never stamp the delivered ledger"
+        assert not wake.has_pending(session.id), (
+            "process teardown must release the ephemeral pending registry"
         )
-        assert _marked(app, session.id), "a refused wake must not clear the mark"
+        assert not (runs_db.get_run(run_id) or {}).get("wake_delivered_at"), (
+            "a refused wake must remain recoverable from the durable ledger"
+        )
+        assert _marked(app, session.id), (
+            "the durable mark is the restart claim after volatile state is fenced"
+        )
         assert _notice_rows(store, session.id) == [], (
-            "a refused wake left an orphaned notice row"
+            "repeated post-dispose drains left an orphaned or duplicate notice"
         )
     finally:
         chacha.close()
@@ -222,25 +227,17 @@ async def test_a_disposed_controller_never_reopens_for_a_new_view(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_relaxed_wake_gate_does_not_revive_the_visits_cancellation(
+async def test_navigation_detach_preserves_the_round_then_wake_delivery(
     tmp_path,
 ):
-    """AC#2 is not widened: the same controller denies AND delivers.
-
-    The gate change must not be reachable as "leaving Console no longer
-    means anything". On ONE controller, in one run: a round armed during
-    the visit resolves to `deny` when the visit ends (AC#2's documented
-    semantics, untouched), and a survivor settling immediately afterwards
-    still gets its full wake turn (AC#1). If a future edit ever relaxed
-    the visit Event itself instead of the gate, the first half goes red.
-    """
+    """Pure detach neither resolves a decision nor blocks later wake work."""
     rig = _controller_rig(tmp_path)
     chacha, app, runs_db, store, session, gateway, _bridge, controller = rig
     try:
         controller.mcp_approval_timeout_seconds = lambda: 60.0
         runtime = _runtime_for(rig)
         view = _mounted_view()
-        runtime.attach_view(view)
+        generation = runtime.attach_view(view)
 
         decisions: dict[str, str] = {}
         armed = threading.Event()
@@ -258,13 +255,16 @@ async def test_the_relaxed_wake_gate_does_not_revive_the_visits_cancellation(
         assert armed.wait(timeout=2), "the round never armed"
         await asyncio.sleep(0.2)  # let the poll loop reach its first wait
 
-        assert await runtime.leave_console(view) is True
-        worker.join(timeout=10)
-        assert not worker.is_alive(), "the round never resolved after leaving"
-        assert decisions == {"write_file": "deny"}, (
-            "leaving Console must still DENY a parked approval round: "
-            f"{decisions}"
+        assert await runtime.leave_console(view, generation) is True
+        worker.join(timeout=1)
+        assert worker.is_alive(), "navigation resolved the pending round"
+        assert decisions == {}
+        round_id = next(iter(controller._pending_approval_rounds))
+        controller.resolve_pending_approval(
+            {"write_file": "deny"}, round_id=round_id
         )
+        worker.join(timeout=5)
+        assert decisions == {"write_file": "deny"}
 
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         controller.fleet_wake.on_fleet_drained(
@@ -347,13 +347,12 @@ async def test_exactly_once_across_a_refusal_a_retry_and_a_restart_headless(
         )
         restart_wake = restart_controller.fleet_wake
         restart_wake.wire(app=app)
-        assert marks.has_mark(
-            session.id, ConversationLocalMarksService.FLEET_UNSEEN
-        ), "harness precondition: the mark outlives the delivery (off-view)"
+        assert marks.has_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN), (
+            "harness precondition: the mark outlives the delivery (off-view)"
+        )
 
         assert restart_wake.seed_from_marks() == 0, (
-            "the mount claim re-announced a run the ledger already shows "
-            "delivered"
+            "the mount claim re-announced a run the ledger already shows delivered"
         )
         assert restart_wake.pending_conversation_ids() == ()
         restart_wake.retry_soon()
@@ -376,7 +375,7 @@ async def test_exactly_once_across_a_refusal_a_retry_and_a_restart_headless(
         assert "first child result" not in notice, (
             "the restarted process re-announced the already-delivered result"
         )
-        assert (runs_db.get_run(run_two) or {}).get("wake_delivered_at")
+        assert await _settle(lambda: bool((runs_db.get_run(run_two) or {}).get("wake_delivered_at")))
         assert (runs_db.get_run(run_id) or {}).get("wake_delivered_at") == stamp, (
             "the first run's delivered stamp moved across the restart"
         )
@@ -385,34 +384,10 @@ async def test_exactly_once_across_a_refusal_a_retry_and_a_restart_headless(
 
 
 @pytest.mark.asyncio
-async def test_a_crash_killed_child_swept_to_error_wakes_nobody_after_a_restart(
+async def test_legacy_crash_result_is_visible_but_cannot_borrow_a_new_chain(
     tmp_path,
 ):
-    """No phantom wake: a run reconciled to `error` carries no mark.
-
-    A hard crash leaves a child stuck `running`; the next process's
-    `AgentRunsDB.__init__` sweeps it to `error` (`reconcile_orphaned_runs`).
-    That row never settled through the fan-out, so no FLEET_UNSEEN mark was
-    ever written for it and the mount claim -- the ONLY headless path a
-    restarted process has -- must find nothing to announce.
-
-    The non-vacuous control: the same conversation's genuinely settled,
-    marked run IS claimed by the same call.
-
-    **What the orphan is NOT exempt from, measured rather than assumed.**
-    The first version of this test also asserted the swept orphan could
-    never appear in a later legitimate wake's notice. It failed, and the
-    code is right: `AgentRunsDB.undelivered_wake_runs` deliberately
-    includes `error` runs and its docstring records choosing `>=` on the
-    parent/child timestamps *"so a restart-reconcile sweep that stamps an
-    orphaned child and its parent in the same pass still reports the
-    child"*. An interrupted child is genuinely owed to the supervisor --
-    the news is "it died", and saying so once with its honest status is
-    the contract. So the property pinned below is the true one: the orphan
-    wakes NOBODY on its own (no mark, nothing claimed), and when a real
-    completion in the same conversation does trigger a wake it is
-    announced with its real `error` status, exactly once, and never again.
-    """
+    """Unmarked legacy history stays pending; later chains cannot authorize it."""
     chacha_path = tmp_path / "chacha.sqlite"
     rig = _controller_rig(tmp_path)
     chacha, app, runs_db, store, session, gateway, _bridge, controller = rig
@@ -454,9 +429,8 @@ async def test_a_crash_killed_child_swept_to_error_wakes_nobody_after_a_restart(
         restart_wake = restart_controller.fleet_wake
         restart_wake.wire(app=app)
 
-        assert restart_wake.seed_from_marks() == 0, (
-            "a crash-killed child swept to `error` was claimed as a wake"
-        )
+        assert restart_wake.seed_from_marks() == 1
+        assert restart_wake.has_pending(session.id)
         restart_wake.retry_soon()
         assert await _quiet(lambda: restart_gateway.payloads, seconds=1.0), (
             "a crash-killed child woke the supervisor after a restart"
@@ -474,20 +448,9 @@ async def test_a_crash_killed_child_swept_to_error_wakes_nobody_after_a_restart(
         assert await _settle(lambda: restart_gateway.payloads)
         notice = str(restart_gateway.payloads[-1][-1]["content"])
         assert "a genuinely settled result" in notice
-        # The orphan rides along in this legitimate wake -- by design -- and
-        # must be announced HONESTLY, never as a success.
-        assert f"[{crashed}]" in notice, (
-            "an interrupted child is owed to the supervisor and must be "
-            f"announced when a wake next runs: {notice[:400]}"
-        )
-        assert f"[{crashed}] " in notice and "— error" in notice, (
-            "the swept orphan was announced without its real `error` status: "
-            f"{notice[:400]}"
-        )
-        # ...and exactly once: the stamp closes it out for good.
-        assert (swept_db.get_run(crashed) or {}).get("wake_delivered_at"), (
-            "an announced run must be stamped, or the next wake repeats it"
-        )
+        assert f"[{crashed}]" not in notice
+        assert (swept_db.get_run(crashed) or {}).get("wake_delivered_at") is None
+        assert restart_wake.pause_reason(session.id) == "legacy_lineage"
         _p3, third = _terminal_subagent_run(
             swept_db, session.id, result="a third result"
         )
@@ -519,31 +482,19 @@ async def test_a_wake_racing_app_exit_leaves_consistent_durable_state(tmp_path):
     -> `shutdown()` cancels EVERY session's stream task, wake turns
     included (the `leave_console` exemption is deliberately not shutdown's).
 
-    What must hold is not a particular branch but CONSISTENCY between the
-    two durable layers, because that is what exactly-once rests on:
-
-    * stamped ledger  => the notice row exists and the pending entry is
-      gone (the supervisor was woken; a restart must not re-announce it);
-    * unstamped ledger => the pending entry AND the ◈ mark survive (a
-      restart owes it and will claim it).
-
-    A "stamped but nothing landed" or "unstamped but dropped from pending"
-    outcome is a lost or duplicated completion, and neither is acceptable.
-
-    **Measured branch** (probe run, recorded so nobody has to re-derive
-    it): `stamped=True, notices=1, pending=False, marked=True`. The turn
-    is ACCEPTED before it streams, so quitting mid-stream truncates the
-    reply but does not un-deliver the wake -- the same semantics a mounted
-    Console has when the user presses Stop on a wake turn. The ◈ mark
-    survives (off-view), so the user is still pointed at it next launch.
+    The terminal coordinator fence clears volatile pending/delivering state.
+    Once the notice itself crossed durable acceptance, its exact run IDs must
+    still be stamped even after that fence; otherwise restart recovery would
+    announce the already-persisted notice twice. The ◈ mark may remain as the
+    app-exit attention hint, but the ledger is the exact restart de-duplicator.
     """
     rig = _controller_rig(tmp_path)
     chacha, app, runs_db, store, session, gateway, _bridge, controller = rig
     try:
         runtime = _runtime_for(rig)
         view = _mounted_view()
-        runtime.attach_view(view)
-        assert await runtime.leave_console(view) is True
+        generation = runtime.attach_view(view)
+        assert await runtime.leave_console(view, generation) is True
 
         gateway.stream_gate = asyncio.Event()  # park the turn mid-stream
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
@@ -560,28 +511,24 @@ async def test_a_wake_racing_app_exit_leaves_consistent_durable_state(tmp_path):
 
         await runtime.dispose()
         gateway.stream_gate.set()
-        await _settle(lambda: wake.delivering_conversation_id() is None)
-
-        stamped = bool((runs_db.get_run(run_id) or {}).get("wake_delivered_at"))
-        notices = _notice_rows(store, session.id)
-        if stamped:
-            assert notices, (
-                "the ledger says this completion was delivered, but no notice "
-                "row ever landed -- a restart will never re-announce it"
-            )
-            assert not wake.has_pending(session.id), (
-                "a stamped completion is still pending; the next claim would "
-                "announce it twice"
-            )
-        else:
-            assert wake.has_pending(session.id), (
-                "an unstamped completion was dropped from the pending "
-                "registry -- nothing will ever wake the supervisor for it"
-            )
-            assert _marked(app, session.id), (
-                "an unstamped completion lost its ◈ mark, so no restart can "
-                "claim it either"
-            )
+        assert await _settle(lambda: not wake.delivering_conversation_ids())
+        chain = runs_db.get_run(run_id)["work_chain_id"]
+        snapshot = runs_db.automatic_work.snapshot(chain)
+        assert snapshot.used["generation"] == 1
+        assert snapshot.status == "review_required" or runs_db.get_run(run_id)["wake_delivered_at"]
+        # ADR-135's durable claim is the no-replay fence even when shutdown
+        # makes the completion outcome uncertain and preserves it for review.
+        assert runs_db.undelivered_wake_runs(session.id) == []
+        assert not wake.has_pending(session.id), (
+            "a stamped completion is still pending; the next claim would "
+            "announce it twice"
+        )
+        assert _marked(app, session.id), (
+            "an interrupted wake lost the durable restart claim"
+        )
+        assert len(_notice_rows(store, session.id)) == 1, (
+            "a durably accepted wake must keep exactly one notice"
+        )
     finally:
         chacha.close()
 
@@ -617,7 +564,7 @@ async def test_the_kill_switch_is_read_fresh_at_the_headless_fire_point(
         assert wake.has_pending(session.id), "OFF still records the completion"
         assert _marked(app, session.id), "OFF keeps the ◈ indicator working"
         assert not (runs_db.get_run(run_id) or {}).get("wake_delivered_at")
-        assert wake.seed_from_marks() == 0, "OFF seeds nothing at the mount claim"
+        assert wake.seed_from_marks() == 1, "OFF preserves saved-result discovery"
 
         monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "true")
         wake.retry_soon()
@@ -668,6 +615,11 @@ async def test_the_global_cap_defers_a_headless_wake_like_any_other_send(tmp_pat
             ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"),
             session_id=busy_sessions[0].id,
         )
+        assert await _quiet(lambda: gateway.payloads, seconds=0.1)
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"),
+            session_id=busy_sessions[1].id,
+        )
         assert await _settle(lambda: gateway.payloads), (
             "freeing a cap slot never retried the deferred headless wake"
         )
@@ -712,8 +664,7 @@ async def test_a_busy_session_defers_a_headless_wake_until_it_goes_terminal(
             _drain(session.id, _survivor(run_id, session_id=session.id))
         )
         assert await _quiet(lambda: gateway.payloads), (
-            "a headless wake must never fire into a session whose run is in "
-            "flight"
+            "a headless wake must never fire into a session whose run is in flight"
         )
         assert dispatches == [], (
             "the wake tried to SEND into a busy session and relied on "
@@ -773,7 +724,7 @@ async def test_a_headless_wake_resolves_with_the_same_selection_as_a_manual_send
 
         runtime = _runtime_for(rig)
         view = _mounted_view()
-        runtime.attach_view(view)
+        generation = runtime.attach_view(view)
         manual = await controller.submit_draft("a manual send", session_id=session.id)
         assert manual.accepted, "harness precondition: the manual send must run"
         assert len(gateway.selections) == 1
@@ -783,7 +734,7 @@ async def test_a_headless_wake_resolves_with_the_same_selection_as_a_manual_send
             "the comparison below is vacuous"
         )
 
-        assert await runtime.leave_console(view) is True
+        assert await runtime.leave_console(view, generation) is True
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         controller.fleet_wake.on_fleet_drained(
             _drain(session.id, _survivor(run_id, session_id=session.id))
@@ -820,14 +771,21 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
     """Wall clocks and token ceilings: the wake cannot vary them.
 
     On the agent path both a manual send and a headless wake go through the
-    single `ConsoleAgentBridge.run_reply` dispatch site, and that method has
-    no budget parameter at all -- `CONSOLE_RUN_BUDGET` (`max_wall_seconds`,
-    `max_total_tokens`) is applied inside it. So "same entry point, same
-    inputs, no budget knob" is what makes the two turns identically bounded,
-    and each half is asserted rather than assumed.
+    single `ConsoleAgentBridge.run_reply` dispatch site with the same frozen
+    `run_budget`. Automatic work also remains subject to its durable chain
+    allowance under ADR-134. The shared per-run ceiling is asserted here
+    rather than assumed.
     """
     chacha, app, runs_db, store, session, _gateway, _bridge, _controller = (
         _controller_rig(tmp_path)
+    )
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
+
+    # The recording bridge exercises dispatch, not project-binding setup.
+    store.set_session_project_instruction_state(
+        session.id, ProjectInstructionControlState.legacy_disabled()
     )
     try:
         gateway = _RecordingWakeGateway()
@@ -847,7 +805,7 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
         runtime.set_chat_store(store)
         runtime.set_chat_controller(controller)
         view = _mounted_view()
-        runtime.attach_view(view)
+        generation = runtime.attach_view(view)
 
         manual = await controller.submit_draft("a manual send", session_id=session.id)
         assert manual.accepted, "harness precondition: the manual send must run"
@@ -855,7 +813,7 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
             "harness precondition: the manual send must take the AGENT path"
         )
 
-        assert await runtime.leave_console(view) is True
+        assert await runtime.leave_console(view, generation) is True
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         controller.fleet_wake.on_fleet_drained(
             _drain(session.id, _survivor(run_id, session_id=session.id))
@@ -865,6 +823,10 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
         )
 
         manual_call, wake_call = bridge.calls[0], bridge.calls[-1]
+        from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+
+        assert manual_call["work_origin"] is WorkOrigin.MANUAL
+        assert wake_call["work_origin"] is WorkOrigin.AUTOMATIC
         assert wake_call["session_id"] == manual_call["session_id"]
         assert wake_call["model"] == manual_call["model"]
         assert wake_call["conversation_id"] == manual_call["conversation_id"]
@@ -875,17 +837,15 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
         # notice; the payload before it is the same conversation.
         assert WAKE_NOTICE_HEADER in str(wake_call["agent_messages"][-1]["content"])
 
-        # No caller -- wake or manual -- can vary the wall clock or the token
-        # ceiling: `run_reply` has no parameter for either.
+        # Admission freezes one run budget for every caller. A wake carries
+        # the same per-run ceiling while ADR-134 adds its automatic-chain cap.
         parameters = set(inspect.signature(ConsoleAgentBridge.run_reply).parameters)
-        assert not {
+        assert {
             name
             for name in parameters
             if "budget" in name or "wall" in name or "max_tokens" in name
-        }, (
-            "`run_reply` grew a budget parameter -- a wake turn could now be "
-            f"bounded differently from a manual send: {sorted(parameters)}"
-        )
+        } == {"run_budget"}
+        assert wake_call["run_budget"] == manual_call["run_budget"]
         assert set(wake_call) == set(manual_call), (
             "the wake dispatch passes a different set of arguments than a "
             f"manual send: {sorted(set(wake_call) ^ set(manual_call))}"

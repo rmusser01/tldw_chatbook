@@ -6,6 +6,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorState,
     ConsoleStagedContextState,
 )
+import tldw_chatbook.Chat.console_rail_state as console_rail_state_module
 from tldw_chatbook.Chat.console_rail_state import (
     CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
     CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
@@ -45,7 +46,7 @@ def test_console_rail_state_uses_first_start_defaults():
     assert state.right_open is False
     assert state.preferred_left_open is True
     assert state.preferred_right_open is False
-    assert state.persistence_key == "console_rail_state:workspace-1:layout"
+    assert state.persistence_key == "console_rail_state:global:shared-layout-v1"
 
 
 def test_console_rail_state_restores_stored_preferences():
@@ -94,7 +95,7 @@ def test_console_rail_state_coerces_integer_preferences():
     assert preferences.right_open is True
 
 
-def test_console_rail_preference_key_is_per_workspace_only():
+def test_console_rail_preference_key_workspace_scope_is_per_workspace_only():
     """TASK-718: layout preferences are keyed per workspace. Conversation and
     session ids are accepted for API compatibility but must not shape the key -
     per-conversation keys multiplied config entries and reset section layouts
@@ -103,8 +104,11 @@ def test_console_rail_preference_key_is_per_workspace_only():
         workspace_id="workspace 1",
         conversation_id="conv:1",
         session_id="session:1",
+        layout_scope="workspace",
     )
-    bare_key = build_console_rail_preference_key(workspace_id="workspace 1")
+    bare_key = build_console_rail_preference_key(
+        workspace_id="workspace 1", layout_scope="workspace"
+    )
 
     assert key.value == "console_rail_state:workspace_1:layout"
     assert bare_key.value == key.value
@@ -118,16 +122,50 @@ def test_console_rail_preference_key_scope_inputs_never_leak_into_key():
             workspace_id="workspace",
             conversation_id=conversation_id,
             session_id=session_id,
+            layout_scope="workspace",
         )
         assert key.value == "console_rail_state:workspace:layout"
         assert key.fallback_value == "console_rail_state:workspace:global"
 
 
-def test_console_rail_preference_key_global_workspace_fallback():
-    global_key = build_console_rail_preference_key()
+def test_console_rail_layout_scope_normalizes_to_global_by_default():
+    normalize = console_rail_state_module.normalize_console_rail_layout_scope
 
-    assert global_key.value == "console_rail_state:global:layout"
-    assert global_key.fallback_value == "console_rail_state:global:global"
+    class WorkspaceImpostor:
+        def __str__(self) -> str:
+            return "workspace"
+
+    assert normalize(None) == "global"
+    assert normalize("bogus") == "global"
+    assert normalize({"workspace": True}) == "global"
+    assert normalize(WorkspaceImpostor()) == "global"
+    assert normalize(["workspace"]) == "global"
+    assert normalize(1) == "global"
+    assert normalize(True) == "global"
+    assert normalize("  WoRkSpAcE  ") == "workspace"
+
+
+def test_console_rail_preference_key_global_scope_uses_reserved_shared_key():
+    global_key = build_console_rail_preference_key(
+        workspace_id="Research Lab", layout_scope="global"
+    )
+    default_key = build_console_rail_preference_key(workspace_id="Other Workspace")
+
+    assert global_key.value == "console_rail_state:global:shared-layout-v1"
+    assert global_key.workspace_id == "global"
+    assert global_key.scope_id == "shared-layout-v1"
+    assert global_key.fallback_value is None
+    assert default_key == global_key
+
+
+def test_console_rail_preference_key_workspace_scope_keeps_legacy_fallback():
+    workspace_key = build_console_rail_preference_key(
+        workspace_id="Research Lab", layout_scope="workspace"
+    )
+
+    assert workspace_key.value == "console_rail_state:Research_Lab:layout"
+    assert workspace_key.scope_id == "layout"
+    assert workspace_key.fallback_value == "console_rail_state:Research_Lab:global"
 
 
 def test_console_context_rail_badge_reflects_workspace_and_session_only():
@@ -429,13 +467,15 @@ def test_console_rail_preferences_serialize_to_public_dict_shape():
     ) == {
         "left_open": False,
         "right_open": True,
-        "session_open": True,
-        "workspace_open": True,
+        "workspace_open": False,
         "conversations_open": True,
-        "model_open": True,
+        "model_open": False,
         "details_open": False,
         "agent_open": False,
-        "character_open": True,
+        "character_open": False,
+        "inspector_more_open": False,
+        "environment_open": True,
+        "tasks_open": True,
     }
 
 
@@ -719,7 +759,6 @@ def test_console_rail_priority_resolves_two_open_rails(
         left_badge="workspace",
         right_badge="blocked",
         persistence_key="sentinel-key",
-        session_open=False,
         details_open=True,
     )
     snapshot = replace(state)
@@ -728,12 +767,17 @@ def test_console_rail_priority_resolves_two_open_rails(
 
     assert state == snapshot
     if 100 <= width < 150:
+        # TASK-23197 added two fields to the eviction: it now records that
+        # the rail was FORCED closed (not merely closed) and replaces the
+        # stub's badge with the reason, so the user is not left watching a
+        # panel vanish with no explanation.
         assert resolved == replace(
             snapshot,
             left_open=False,
             left_compact_override=False,
             right_compact_override=True,
             compact_override=True,
+            left_forced_collapsed=True,
         )
     else:
         assert resolved is state
@@ -835,13 +879,15 @@ def test_console_rail_state_explicit_right_open_at_threshold_renders_standard():
 
 
 def test_console_rail_section_defaults():
-    from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS
+    from tldw_chatbook.Chat.console_rail_state import (
+        CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
+        CONSOLE_RAIL_SECTION_IDS,
+    )
 
     prefs = ConsoleRailPreferences()
     # Task-400: "context" (staged sources) is no longer a left-rail section;
     # it renders in the Inspector rail instead. P3c added "character".
     assert CONSOLE_RAIL_SECTION_IDS == (
-        "session",
         "workspace",
         "conversations",
         "model",
@@ -849,12 +895,30 @@ def test_console_rail_section_defaults():
         "agent",
         "character",
     )
-    assert prefs.session_open is True
-    assert prefs.workspace_open is True
+    # TASK-23193: only the two sections a user navigates by ship open. A
+    # 2026-08-29 audit measured the previous five-open default at 51 rows
+    # against a 32-row viewport at 160x48 -- it overflowed at every one of
+    # ten terminal geometries, including 200x60, hiding three sections
+    # entirely on a fresh install.
+    # TASK-23199 retired the Sessions section; session_open survives only as
+    # a legacy migration seed inside coerce_console_rail_preferences.
+    assert not hasattr(prefs, "session_open")
+    assert prefs.workspace_open is False
     assert prefs.conversations_open is True
-    assert prefs.model_open is True
+    assert prefs.model_open is False
     assert prefs.details_open is False
-    assert prefs.character_open is True
+    assert prefs.character_open is False
+    assert prefs.inspector_more_open is False
+    # TASK-8: Environment and Tasks are Inspector-rail disclosures (not
+    # left-rail sections), and default open.
+    assert prefs.environment_open is True
+    assert prefs.tasks_open is True
+    assert CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS == (
+        *CONSOLE_RAIL_SECTION_IDS,
+        "inspector_more",
+        "environment",
+        "tasks",
+    )
 
 
 def test_coerce_console_rail_preferences_reads_section_fields():
@@ -869,17 +933,33 @@ def test_coerce_console_rail_preferences_reads_section_fields():
     )
     assert coerced.details_open is True
     assert coerced.model_open is False
-    assert coerced.session_open is True  # missing key -> default
     assert coerced.workspace_open is False
     assert coerced.conversations_open is True
 
 
 def test_coerce_console_rail_preferences_migrates_legacy_session_collapse():
-    coerced = coerce_console_rail_preferences({"session_open": False})
+    """A pre-TASK-14810 payload still seeds the sections that outlived it.
 
-    assert coerced.session_open is False
-    assert coerced.workspace_open is False
-    assert coerced.conversations_open is False
+    Before that split there was one mixed "Session" body, so an old payload
+    carries only ``session_open``. TASK-23199 then retired the Sessions
+    section itself -- but the seed must keep working, or users whose stored
+    layout predates the split silently lose their collapsed rail.
+    """
+    collapsed = coerce_console_rail_preferences({"session_open": False})
+    assert collapsed.workspace_open is False
+    assert collapsed.conversations_open is False
+    assert not hasattr(collapsed, "session_open")
+
+    expanded = coerce_console_rail_preferences({"session_open": True})
+    assert expanded.workspace_open is True
+    assert expanded.conversations_open is True
+
+    # A modern explicit flag still beats the legacy seed.
+    mixed = coerce_console_rail_preferences(
+        {"session_open": True, "workspace_open": False}
+    )
+    assert mixed.workspace_open is False
+    assert mixed.conversations_open is True
 
 
 def test_serialize_console_rail_preferences_round_trips_sections():
@@ -887,11 +967,13 @@ def test_serialize_console_rail_preferences_round_trips_sections():
         details_open=True,
         model_open=False,
         conversations_open=False,
+        inspector_more_open=True,
     )
     serialized = serialize_console_rail_preferences(prefs)
     assert serialized["details_open"] is True
     assert serialized["model_open"] is False
     assert serialized["conversations_open"] is False
+    assert serialized["inspector_more_open"] is True
     assert "context_open" not in serialized
     assert coerce_console_rail_preferences(serialized) == prefs
 
@@ -909,22 +991,69 @@ def test_coerce_console_rail_preferences_ignores_legacy_context_key():
     assert with_legacy_key == without_legacy_key
 
 
+def test_console_rail_preferences_ignore_transient_view_state():
+    transient = {
+        "left_open": False,
+        "inspector_more_open": "yes",
+        "left_scroll_offset": 19,
+        "right_scroll_offset": 23,
+        "focused_widget_id": "console-workspace-tree",
+        "workspace_search": "research",
+        "conversation_search": "draft",
+        "selected_workspace_id": "workspace-1",
+        "selected_conversation_id": "conversation-2",
+        "tooltip_text": "A long workspace label",
+        "tooltip_target_id": "workspace-1",
+    }
+
+    preferences = coerce_console_rail_preferences(transient)
+    serialized = serialize_console_rail_preferences(preferences)
+
+    assert preferences.inspector_more_open is True
+    assert serialized["inspector_more_open"] is True
+    assert not (
+        set(serialized)
+        & {
+            "left_scroll_offset",
+            "right_scroll_offset",
+            "focused_widget_id",
+            "workspace_search",
+            "conversation_search",
+            "selected_workspace_id",
+            "selected_conversation_id",
+            "tooltip_text",
+            "tooltip_target_id",
+        }
+    )
+
+
 def test_build_console_rail_state_carries_section_flags():
     key = build_console_rail_preference_key(workspace_id="ws", session_id="s")
     state = build_console_rail_state(
         preference_key=key,
         stored_preferences={
             "details_open": True,
-            "session_open": False,
             "workspace_open": False,
             "conversations_open": True,
         },
     )
     assert state.details_open is True
-    assert state.session_open is False
     assert state.workspace_open is False
     assert state.conversations_open is True
-    assert state.model_open is True
+    # Unlisted flags fall back to the shipped default rather than to True.
+    assert state.model_open is ConsoleRailPreferences().model_open
+    assert state.inspector_more_open is False
+
+
+def test_build_console_rail_state_carries_inspector_more_preference():
+    key = build_console_rail_preference_key(layout_scope="global")
+
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"inspector_more_open": True},
+    )
+
+    assert state.inspector_more_open is True
 
 
 # --- task-18911: width-budget rule (explicit toggles vs usable transcript) ---
@@ -994,3 +1123,154 @@ def test_phone_width_explicit_left_open_collapsed():
     assert state.single_pane is True
     assert state.left_open is False
     assert state.left_forced_collapsed is True
+
+
+# --- task-8: persisted Environment/Tasks section-collapse booleans ---
+
+
+def test_environment_and_tasks_open_default_true_and_round_trip():
+    defaults = ConsoleRailPreferences()
+    assert defaults.environment_open is True
+    assert defaults.tasks_open is True
+    serialized = serialize_console_rail_preferences(defaults)
+    assert serialized["environment_open"] is True and serialized["tasks_open"] is True
+    coerced = coerce_console_rail_preferences(
+        {"environment_open": False, "tasks_open": False}
+    )
+    assert coerced.environment_open is False and coerced.tasks_open is False
+
+
+def test_disclosure_ids_accept_environment_and_tasks():
+    from tldw_chatbook.Chat.console_rail_state import (
+        CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
+    )
+
+    assert "environment" in CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS
+    assert "tasks" in CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS
+
+
+def test_coerce_garbage_falls_back_to_defaults():
+    coerced = coerce_console_rail_preferences({"environment_open": "banana"})
+    assert coerced.environment_open is True
+
+
+# --- TASK-32328: the 118-128 auto-open band dies only on EXPLICIT toggles ------
+
+
+def test_explicit_right_toggle_writes_marker_and_kills_auto_open_distinguishability():
+    """TASK-32328: an explicit Inspector toggle writes right_open_explicit;
+    implicit writes leave the marker absent so the auto-open heuristic can
+    still tell "the user chose" from "some writer stored a preference"."""
+    from tldw_chatbook.Chat.console_rail_state import (
+        CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY,
+        coerce_console_rail_preferences,
+        console_rail_right_open_explicit,
+        serialize_console_rail_updated_preferences,
+    )
+
+    from dataclasses import replace
+
+    base = coerce_console_rail_preferences(None)
+    # A real explicit toggle: the caller replaces the value AND passes the
+    # gesture flag, exactly as _set_console_rail_preference does.
+    toggled = replace(base, right_open=True)
+    explicit = serialize_console_rail_updated_preferences(
+        toggled, None, left_open=None, right_open=True, character_toggled=False
+    )
+    assert explicit["right_open"] is True
+    assert console_rail_right_open_explicit(explicit) is True
+
+    # An implicit write (e.g. a first-ever section toggle) does NOT add
+    # the marker. It may still carry the right_open KEY (the base
+    # serializer always writes it) -- that is exactly the payload shape
+    # that used to kill the auto-open band by key presence; the heuristic
+    # now reads the marker, not the key.
+    implicit = serialize_console_rail_updated_preferences(
+        base, None, left_open=None, right_open=None, character_toggled=False
+    )
+    assert CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY not in implicit
+    assert console_rail_right_open_explicit(implicit) is False
+
+    # Against a seeded Mapping without right_open, the key is omitted
+    # outright (existing rule) and the marker stays absent.
+    seeded = serialize_console_rail_updated_preferences(
+        base, {}, left_open=None, right_open=None, character_toggled=False
+    )
+    assert "right_open" not in seeded
+    assert console_rail_right_open_explicit(seeded) is False
+
+    # And the marker survives a later write that did not touch the rail.
+    later = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(explicit),
+        explicit,
+        left_open=None,
+        right_open=None,
+        character_toggled=False,
+    )
+    assert console_rail_right_open_explicit(later) is True
+    # ...and the right_open key itself survives (it was explicitly chosen).
+    assert later["right_open"] is True
+
+
+# --- Qodo 2614 #2/#5: the explicit marker's write and persistence paths --------
+
+
+def test_stored_serializer_preserves_right_open_explicit():
+    """Qodo 2614 #5: the stored-preferences serializer (the config-file
+    persistence boundary) must retain the right_open_explicit marker the
+    updated-preferences serializer writes, or the explicit gesture is
+    dropped on save and auto-open resurrects a rail the user closed."""
+    from tldw_chatbook.Chat.console_rail_state import (
+        console_rail_right_open_explicit,
+        serialize_console_rail_stored_preferences,
+        serialize_console_rail_updated_preferences,
+        coerce_console_rail_preferences,
+    )
+
+    explicit = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(None),
+        None,
+        left_open=None,
+        right_open=False,
+        character_toggled=False,
+        explicit_right_toggle=True,
+    )
+    assert console_rail_right_open_explicit(explicit)
+    round_tripped = serialize_console_rail_stored_preferences(explicit)
+    assert console_rail_right_open_explicit(round_tripped), (
+        "persistence dropped the explicit right-rail marker"
+    )
+
+
+def test_reveal_derived_right_close_does_not_mark_explicit():
+    """Qodo 2614 #2: the Context reveal path derives right_open=False only
+    to resolve the compact-width conflict; persisting that derivation must
+    NOT record an explicit Inspector gesture (which would permanently kill
+    the 118-128 auto-open band for a user who only opened Context)."""
+    from tldw_chatbook.Chat.console_rail_state import (
+        coerce_console_rail_preferences,
+        console_rail_right_open_explicit,
+        serialize_console_rail_updated_preferences,
+    )
+
+    derived = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(None),
+        None,
+        left_open=True,
+        right_open=False,
+        character_toggled=False,
+        explicit_right_toggle=False,
+    )
+    assert derived["right_open"] is False  # the conflict IS resolved...
+    assert not console_rail_right_open_explicit(derived)  # ...but not explicit
+
+    # A direct Inspector toggle still marks.
+    direct = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(None),
+        None,
+        left_open=None,
+        right_open=False,
+        character_toggled=False,
+        explicit_right_toggle=True,
+    )
+    assert console_rail_right_open_explicit(direct)

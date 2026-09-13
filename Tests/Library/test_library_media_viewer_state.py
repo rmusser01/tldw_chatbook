@@ -60,6 +60,42 @@ def test_full_detail_builds_all_metadata_lines_in_order():
     assert state.read_later is True
 
 
+def test_viewer_state_exposes_truthful_local_provenance_and_representation():
+    """Info mode has display facts without reinterpreting stored content."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "media-7",
+            "title": "Source",
+            "type": "article",
+            "url": "https://example.test/original",
+            "content": "# Complete stored Markdown",
+        },
+        now=NOW,
+    )
+
+    assert state.backend == "local"
+    assert state.canonical_id == "local:media:7"
+    assert state.original_source == "https://example.test/original"
+    assert state.stored_representation == "Complete stored text"
+
+
+def test_viewer_state_preserves_explicit_server_provenance():
+    state = build_library_media_viewer_state(
+        {
+            "id": "42",
+            "title": "Server report",
+            "type": "plaintext",
+            "content": "Remote body",
+        },
+        backend="server",
+        canonical_id="server:media:42",
+        now=NOW,
+    )
+
+    assert state.backend == "server"
+    assert state.canonical_id == "server:media:42"
+
+
 def test_media_type_key_fallback():
     """Falls back to media_type when type is absent."""
     detail = {"media_id": "1", "title": "T", "media_type": "pdf"}
@@ -722,20 +758,47 @@ def test_build_state_obsidian_note_with_heading_is_markdown():
     assert state.is_markdown is True
 
 
-def test_build_state_non_markdown_type_never_flagged_even_with_heading_syntax():
-    """A video/pdf/audio item whose transcript happens to contain a line
-    starting with ``#`` (e.g. a hashtag) must never default to Rendered --
-    the media-type allowlist gates the content sniff."""
+def test_build_state_flags_markdown_by_content_whatever_the_type():
+    """task-32234: the content sniff decides alone, for every media type.
+
+    This pin used to assert the opposite -- that a type outside
+    ``_MARKDOWN_MEDIA_TYPES`` was never flagged even with heading syntax.
+    That allowlist ran BEFORE the sniff and was removed: it never proved
+    anything (ingestion maps .md, .txt, .csv and .log all onto
+    ``plaintext``) while every type it left out -- ``document``,
+    ``article``, ``pdf`` -- painted its real Markdown literally under a note
+    claiming there was none.
+
+    The accepted trade-off, unchanged in kind from what ``plaintext``
+    already carried: a body line that merely LOOKS like a heading (a
+    hashtag with a space after it, as below) now opens on Rendered. The
+    Raw toggle is one press away and nothing is hidden or altered, so a
+    wrong DEFAULT view is the cheaper error than a true heading painted as
+    literal hashes.
+    """
     state = build_library_media_viewer_state(
         {
             "id": "m1",
-            "title": "Interview",
-            "type": "audio",
-            "content": "# trending topic mentioned in the interview",
+            "title": "Quarterly Report",
+            "type": "pdf",
+            "content": "# trending topic mentioned in the report",
         }
     )
-    assert state.media_type == "audio"
-    assert state.is_markdown is False
+    assert state.media_type == "pdf"
+    assert state.is_markdown is True
+
+    # The negative control the old pin also carried: no marker, no
+    # Rendered default, whatever the type.
+    plain = build_library_media_viewer_state(
+        {
+            "id": "m2",
+            "title": "Quarterly Report",
+            "type": "pdf",
+            "content": "Revenue grew 4% against a flat cost base.",
+        }
+    )
+    assert plain.media_type == "pdf"
+    assert plain.is_markdown is False
 
 
 def test_build_state_missing_content_is_never_markdown():
@@ -749,3 +812,109 @@ def test_empty_state_is_markdown_false_and_media_type_empty():
     state = build_library_media_viewer_state(None)
     assert state.is_markdown is False
     assert state.media_type == ""
+
+
+def test_build_state_video_transcript_with_headings_is_markdown():
+    """task-31277 AC#5: a transcript sectioned with `## ...` headings must
+    default to Rendered -- painting the hashes literally is the bug."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Product Demo",
+            "type": "video",
+            "content": "## Section 1\n\nThe host opens the demo.",
+        }
+    )
+    assert state.media_type == "video"
+    assert state.is_markdown is True
+
+
+def test_build_state_audio_transcript_with_headings_is_markdown():
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Interview",
+            "type": "audio",
+            "content": "## Part one\n\nThe interview opens.",
+        }
+    )
+    assert state.is_markdown is True
+
+
+def test_build_state_video_transcript_without_markdown_syntax_stays_raw():
+    """The content sniff remains the second gate: an ordinary transcript
+    has no markdown syntax and must still default to Raw."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Product Demo",
+            "type": "video",
+            "content": "The host opens the demo.\nThe dashboard appears.",
+        }
+    )
+    assert state.is_markdown is False
+
+
+def test_info_keywords_line_drops_a_lone_half_flag_but_keeps_whole_pairs():
+    """task-32087 (critique #8 gap in 32044): the Info 'Keywords:' line must
+    not paint a lone half-flag.
+
+    A regional-indicator flag is a PAIR painted as one 2-cell glyph. task-32044
+    made the LIST-ROW keyword suffix drop a dangling half indicator (rich and
+    Textual measure it as 1 cell, a terminal paints it as a 2-cell box, drifting
+    the frame +2) but never touched the Reader Info line, which renders the raw
+    keyword. A keyword that is, or ends in, a lone indicator therefore still
+    drifted the Info frame. This asserts the Info line's trailing
+    regional-indicator run is always EVEN (measured width == painted width),
+    while whole flags survive and the edit form still prefills the raw value.
+    """
+    from rich.cells import cell_len
+
+    def _trailing_ri(text: str) -> int:
+        count = 0
+        for ch in reversed(text):
+            if 0x1F1E6 <= ord(ch) <= 0x1F1FF:
+                count += 1
+            else:
+                break
+        return count
+
+    jp = "\U0001F1EF\U0001F1F5"  # a whole JP flag: two indicators = one 2-cell glyph
+    half = "\U0001F1EF"  # a lone regional indicator = a half-flag
+
+    # (1) a keyword ending in a lone indicator: the Info line drops the half,
+    #     but the edit form keeps the stored value verbatim for a clean save.
+    state = build_library_media_viewer_state(
+        {"id": "m1", "title": "t", "type": "article", "keywords": ["crit8a", half]},
+        now=NOW,
+    )
+    kw_line = next(
+        line for line in state.metadata_lines if line.startswith("Keywords: ")
+    )
+    assert _trailing_ri(kw_line) % 2 == 0, kw_line
+    assert not kw_line.endswith(half), kw_line
+    assert state.edit_fields["keywords"] == "crit8a, \U0001F1EF"
+
+    # (2) a whole flag PAIR is measured as two cells by rich, matching the
+    #     terminal -- it survives untouched, so the line still names the flag.
+    paired = build_library_media_viewer_state(
+        {"id": "m2", "title": "t", "type": "article", "keywords": ["crit8a", jp]},
+        now=NOW,
+    )
+    paired_line = next(
+        line for line in paired.metadata_lines if line.startswith("Keywords: ")
+    )
+    assert jp in paired_line, paired_line
+    assert _trailing_ri(paired_line) % 2 == 0, paired_line
+    # rich measures the whole pair as two cells (what a terminal paints).
+    assert cell_len(jp) == 2
+
+    # (3) an odd run (pair + dangling half) keeps the whole pair, drops the half.
+    odd = build_library_media_viewer_state(
+        {"id": "m3", "title": "t", "type": "article", "keywords": [jp + half]},
+        now=NOW,
+    )
+    odd_line = next(
+        line for line in odd.metadata_lines if line.startswith("Keywords: ")
+    )
+    assert odd_line == "Keywords: " + jp, odd_line

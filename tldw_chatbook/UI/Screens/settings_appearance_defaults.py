@@ -7,14 +7,25 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from tldw_chatbook.Chat.character_expression_playback import normalize_expression_mode
 from tldw_chatbook.Chat.console_roleplay_identity import (
     DEFAULT_CONSOLE_TRANSCRIPT_STYLE,
     ConsoleTranscriptStyle,
     normalize_console_transcript_style,
 )
+from tldw_chatbook.Utils.adaptive_reader_state import (
+    ITEMS_MAX_WIDTH,
+    ITEMS_MIN_WIDTH,
+    ITEMS_TARGET_WIDTH,
+    normalize_adaptive_reader_preferences,
+)
+from tldw_chatbook.Utils.library_rail_width import (
+    LIBRARY_CUSTOM_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH,
+    LIBRARY_REFERENCE_WIDTH,
+)
 
 from .settings_config_models import SettingsValidationResult
-
 
 DEFAULT_THEME = "textual-dark"
 DEFAULT_PALETTE_THEME_LIMIT = 1
@@ -46,11 +57,29 @@ class SettingsAppearanceDefaults:
     palette_theme_limit: int = DEFAULT_PALETTE_THEME_LIMIT
     font_size: int = DEFAULT_FONT_SIZE
     density: str = DEFAULT_DENSITY
+    character_expression_mode: str = "dynamic"
     animations_enabled: bool = DEFAULT_ANIMATIONS_ENABLED
     smooth_scrolling: bool = DEFAULT_SMOOTH_SCROLLING
     reduce_motion: bool = DEFAULT_REDUCE_MOTION
     ascii_glyphs: bool = DEFAULT_ASCII_GLYPHS
     console_transcript_style: str = DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE
+    library_reader_library_open: bool = True
+    library_reader_custom_widths_enabled: bool = False
+    library_reader_library_width: int = LIBRARY_REFERENCE_WIDTH
+    library_media_items_open: bool = True
+    library_media_items_width: int = ITEMS_TARGET_WIDTH
+    library_collections_items_open: bool = True
+    library_collections_items_width: int = ITEMS_TARGET_WIDTH
+    library_conversations_items_open: bool = True
+    library_conversations_items_width: int = ITEMS_TARGET_WIDTH
+    library_notes_items_open: bool = True
+    library_notes_items_width: int = ITEMS_TARGET_WIDTH
+    library_notes_files_tree_open: bool = True
+    library_notes_files_tree_width: int = ITEMS_TARGET_WIDTH
+    library_prompts_items_open: bool = True
+    library_prompts_items_width: int = ITEMS_TARGET_WIDTH
+    library_skills_items_open: bool = True
+    library_skills_items_width: int = ITEMS_TARGET_WIDTH
 
 
 def _mapping_child(parent: Mapping[str, Any], key: str) -> Mapping[str, Any]:
@@ -132,8 +161,66 @@ def load_appearance_defaults(
     general = _mapping_child(app_config, "general")
     web_server = _mapping_child(app_config, "web_server")
     appearance = _mapping_child(app_config, "appearance")
+    library = _mapping_child(app_config, "library")
+    legacy_media_reader = _mapping_child(library, "media_reader")
+    raw_reader = _mapping_child(library, "reader")
+    shared_raw = {
+        key: raw_reader.get(key, legacy_media_reader.get(key))
+        for key in ("library_open", "custom_widths_enabled", "library_width")
+    }
+    shared_reader = normalize_adaptive_reader_preferences(shared_raw)
+    shared_width = normalize_adaptive_reader_preferences(
+        {**shared_raw, "custom_widths_enabled": True}
+    ).library_width
+
+    def destination_reader(section: str):
+        raw_destination = _mapping_child(library, section)
+        return normalize_adaptive_reader_preferences(
+            {
+                "custom_widths_enabled": True,
+                "items_open": raw_destination.get("items_open"),
+                "items_width": raw_destination.get("items_width"),
+            }
+        )
+
+    destination_readers = {
+        name: destination_reader(f"{name}_reader")
+        for name in (
+            "media",
+            "collections",
+            "conversations",
+            "notes",
+            "prompts",
+            "skills",
+        )
+    }
+    notes_reader = _mapping_child(library, "notes_reader")
+    files_tree_width = notes_reader.get("files_tree_width")
+    try:
+        parsed_files_tree_width = (
+            int(files_tree_width.strip())
+            if isinstance(files_tree_width, str)
+            else files_tree_width
+        )
+    except ValueError:
+        parsed_files_tree_width = ITEMS_TARGET_WIDTH
+    if (
+        type(parsed_files_tree_width) is not int
+        or not ITEMS_MIN_WIDTH <= parsed_files_tree_width <= ITEMS_MAX_WIDTH
+    ):
+        parsed_files_tree_width = ITEMS_TARGET_WIDTH
+    notes_files_tree = normalize_adaptive_reader_preferences(
+        {
+            "custom_widths_enabled": True,
+            "items_open": notes_reader.get("files_tree_open"),
+            "items_width": parsed_files_tree_width,
+        }
+    )
 
     return SettingsAppearanceDefaults(
+        character_expression_mode=normalize_expression_mode(
+            appearance.get("character_expression_mode")
+        ),
         default_theme=_normalise_theme(general.get("default_theme", DEFAULT_THEME)),
         palette_theme_limit=_coerce_int(
             general.get("palette_theme_limit", DEFAULT_PALETTE_THEME_LIMIT),
@@ -166,6 +253,27 @@ def load_appearance_defaults(
                 DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE,
             )
         ).value,
+        library_reader_library_open=shared_reader.library_open,
+        library_reader_custom_widths_enabled=(shared_reader.custom_widths_enabled),
+        library_reader_library_width=shared_width,
+        library_media_items_open=destination_readers["media"].items_open,
+        library_media_items_width=destination_readers["media"].items_width,
+        library_collections_items_open=destination_readers["collections"].items_open,
+        library_collections_items_width=destination_readers["collections"].items_width,
+        library_conversations_items_open=(
+            destination_readers["conversations"].items_open
+        ),
+        library_conversations_items_width=(
+            destination_readers["conversations"].items_width
+        ),
+        library_notes_items_open=destination_readers["notes"].items_open,
+        library_notes_items_width=destination_readers["notes"].items_width,
+        library_notes_files_tree_open=notes_files_tree.items_open,
+        library_notes_files_tree_width=notes_files_tree.items_width,
+        library_prompts_items_open=destination_readers["prompts"].items_open,
+        library_prompts_items_width=destination_readers["prompts"].items_width,
+        library_skills_items_open=destination_readers["skills"].items_open,
+        library_skills_items_width=destination_readers["skills"].items_width,
     )
 
 
@@ -209,6 +317,10 @@ def validate_appearance_defaults(
             False,
             "Density must be compact, normal, or comfortable.",
         )
+    if values.character_expression_mode not in {"dynamic", "static"}:
+        return SettingsValidationResult(
+            False, "Character expressions must be Dynamic or Static."
+        )
     if _strict_bool(values.animations_enabled) is None:
         return SettingsValidationResult(
             False,
@@ -234,6 +346,71 @@ def validate_appearance_defaults(
             False,
             "Transcript style must be neutral, role accents, or immersive RP.",
         )
+    if _strict_bool(values.library_reader_library_open) is None:
+        return SettingsValidationResult(
+            False, "Library pane preference must be open or collapsed."
+        )
+    if _strict_bool(values.library_reader_custom_widths_enabled) is None:
+        return SettingsValidationResult(
+            False, "Custom widths must be enabled or disabled."
+        )
+    library_width = _strict_int(values.library_reader_library_width)
+    if (
+        library_width is None
+        or not LIBRARY_MIN_WIDTH <= library_width <= LIBRARY_CUSTOM_MAX_WIDTH
+    ):
+        return SettingsValidationResult(
+            False,
+            "Library width must be between "
+            f"{LIBRARY_MIN_WIDTH} and {LIBRARY_CUSTOM_MAX_WIDTH}.",
+        )
+    for label, open_value, width_value in (
+        (
+            "Items",
+            values.library_media_items_open,
+            values.library_media_items_width,
+        ),
+        (
+            "Collections Items",
+            values.library_collections_items_open,
+            values.library_collections_items_width,
+        ),
+        (
+            "Conversations Items",
+            values.library_conversations_items_open,
+            values.library_conversations_items_width,
+        ),
+        (
+            "Notes Items",
+            values.library_notes_items_open,
+            values.library_notes_items_width,
+        ),
+        (
+            "Folder Files tree",
+            values.library_notes_files_tree_open,
+            values.library_notes_files_tree_width,
+        ),
+        (
+            "Prompts Items",
+            values.library_prompts_items_open,
+            values.library_prompts_items_width,
+        ),
+        (
+            "Skills Items",
+            values.library_skills_items_open,
+            values.library_skills_items_width,
+        ),
+    ):
+        if _strict_bool(open_value) is None:
+            return SettingsValidationResult(
+                False, f"{label} pane preference must be open or collapsed."
+            )
+        items_width = _strict_int(width_value)
+        if items_width is None or not ITEMS_MIN_WIDTH <= items_width <= ITEMS_MAX_WIDTH:
+            return SettingsValidationResult(
+                False,
+                f"{label} width must be between {ITEMS_MIN_WIDTH} and {ITEMS_MAX_WIDTH}.",
+            )
     return SettingsValidationResult(True, "Appearance defaults are valid.")
 
 
@@ -253,6 +430,8 @@ def build_appearance_save_sections(
     general = dict(deepcopy(_mapping_child(app_config, "general")))
     web_server = dict(deepcopy(_mapping_child(app_config, "web_server")))
     appearance = dict(deepcopy(_mapping_child(app_config, "appearance")))
+    library = dict(deepcopy(_mapping_child(app_config, "library")))
+    reader = dict(deepcopy(_mapping_child(library, "reader")))
 
     general.update(
         {
@@ -264,6 +443,7 @@ def build_appearance_save_sections(
     appearance.update(
         {
             "density": str(values.density).strip().lower(),
+            "character_expression_mode": values.character_expression_mode,
             "animations_enabled": bool(values.animations_enabled),
             "smooth_scrolling": bool(values.smooth_scrolling),
             "reduce_motion": bool(values.reduce_motion),
@@ -271,9 +451,46 @@ def build_appearance_save_sections(
             "console_transcript_style": str(values.console_transcript_style),
         }
     )
+    reader.update(
+        {
+            "library_open": bool(values.library_reader_library_open),
+            "custom_widths_enabled": bool(values.library_reader_custom_widths_enabled),
+            "library_width": int(values.library_reader_library_width),
+        }
+    )
+    library["reader"] = reader
+    for destination in (
+        "media",
+        "collections",
+        "conversations",
+        "notes",
+        "prompts",
+        "skills",
+    ):
+        section_name = f"{destination}_reader"
+        destination_reader = dict(deepcopy(_mapping_child(library, section_name)))
+        destination_reader.update(
+            {
+                "items_open": bool(
+                    getattr(values, f"library_{destination}_items_open")
+                ),
+                "items_width": int(
+                    getattr(values, f"library_{destination}_items_width")
+                ),
+            }
+        )
+        if destination == "notes":
+            destination_reader.update(
+                {
+                    "files_tree_open": bool(values.library_notes_files_tree_open),
+                    "files_tree_width": int(values.library_notes_files_tree_width),
+                }
+            )
+        library[section_name] = destination_reader
 
     return {
         "general": general,
         "web_server": web_server,
         "appearance": appearance,
+        "library": library,
     }

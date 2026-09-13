@@ -7,8 +7,8 @@ These two Library panels are where you browse what the app has collected:
 pages), and **Conversations** lists every chat you have had in Console. Both
 are read-mostly browsers — you come here to re-read content, search inside
 it, mark it up, and hand pieces of it to Console as context or package them
-into a bundle. Both panels share one interaction grammar, so learning one
-teaches you the other.
+into a bundle. Media uses a reading-first three-pane shell; Conversations
+keeps the existing list-and-preview browser.
 
 ## Getting there
 
@@ -19,41 +19,172 @@ fills the center of the screen.
 
 ## Layout tour
 
-![Media viewer](../images/library/media-viewer.svg)
+```text
+Wide (Media)
 
-Both list canvases follow the same shape, top to bottom:
++ Library ----+<---+ Items ------+<---+ Reader ---------------------------+
+| Browse       | Filter        | title · source · date              |
+| Media        | item rows     | Find · Read later · Use in Console |
+| ...          | ...           | Read · Analysis · Highlights · Info|
++--------------+---------------+ complete stored content            |
 
-- **Toolbar** — the panel heading with a count ("Media (3)" /
-  "Conversations (3)" — task-2859: Conversations previously had no
-  heading at all, so its top row read as bare "Export…"/"Select" with
-  nothing naming the canvas), plus "Export…" and "Select". Media adds a
-  "type: All types" chooser right after the heading (press it to open a
-  bounded list of every type — ✓ marks the active one — and pick directly) and a
-  "Trash" action (the browsable Trash view — see "Media Trash" below);
-  Conversations instead has a "Filter conversations… (Enter)" text box,
-  which now renders above the empty-state text (task-2859: it used to sit
-  below "No conversations yet.", reading as an afterthought).
-- **Row list** — one two-line row per item: the title with a **▸** marker,
-  then a dimmer second line (Media: type and age; Conversations:
-  "3 messages - 4h"). Hovering a row shows its full title as a tooltip.
-  Media rows scroll independently above a pinned 20-item pager, so paging
-  controls remain visible after moving through a full page.
-- **Preview block** — a few summary lines plus one action ("Open in
-  viewer" for media, "Open in Console" for conversations). On a wide
-  terminal the **Media** list shows it **beside** the row list — list on
-  the left, preview on the right, each half scrolling on its own — the
-  same split shape as the Collections workbench; below the Library's one
-  width breakpoint (the same crossing that compacts Notes) it returns to
-  the stacked under-the-list flow. Hidden in Media while Select mode is
-  active (see below) — it never shows an item outside the current
-  selection; in the wide split the right half then says "No preview in
-  Select mode." instead of sitting blank. Conversations keeps the stacked
-  shape at every width, and the Trash view and media viewer are single
-  surfaces that always use the full canvas width.
+Narrow (Media)
 
-Opening a media item swaps the list for the **media viewer** (pictured
-above): "‹ Back to list", the title, metadata lines, then the "Content",
-"Analysis", and "Highlights" sections, and an action row at the bottom.
++--->+ Items ----------------------------------+--->+ Reader -------------+
+| ‹ Library                                  | Select a media item  |
+| filter · type · sort · item rows           | to read it here.     |
+```
+
+Every Library reader uses two full-height, five-column collapse controls.
+The full width is clickable, including the space around the arrows.
+
+Media has three stable roles:
+
+- **Library** — the normal Library navigation rail.
+- **Items** — a local-only list with a filter over title, content and
+  keyword (its box is narrow, so it reads "Title/keyword…" and its tooltip
+  spells out "Filter by title, content or keyword"), type selection,
+  paging, bulk actions, and balanced two-line rows.
+- **Reader** — a permanent reading surface. Selecting another row updates
+  Reader in place; the Items list is not replaced.
+
+Library and Items each have a full-height, five-column grip. **`<---`**
+collapses the pane to its left and **`--->`** expands it. The grips support
+clicks, Enter, and Space. Reader has no grip and never collapses. Your manual
+pane choices are remembered.
+
+The default Library and Items columns prefer five and ten extra cells,
+respectively. At narrower widths those additions yield before the screen
+collapses Library, then Items. This preserves the earlier collapse boundaries
+with the five-column controls. Widening restores the preferred widths without
+rewriting your settings. Explicitly reopening a pane takes effect immediately.
+
+- **The Items column grows with the terminal.** Once the Reader is
+  comfortable the surplus is split between them, up to a 56-cell ceiling, so
+  a 98-character title paints 46 characters at 235 columns (it painted 31
+  before, in a fixed 40-cell column).
+- **With no item open, Items takes the empty Reader's width.** When the
+  Reader is only showing "Select a media item to read it here.", the columns
+  it would give a document go to the Items list instead — so on a wide
+  terminal a long title reads in full rather than truncating beside empty
+  space. Opening an item restores the Reader's width, and closing back to the
+  list widens Items again.
+- **Each item is two rows** — its title, then its type and age — with no
+  blank row between items, so a 52-row terminal lists 15 items rather than
+  11.
+- **The navigation rail joins Media at 112 columns.** Below that the screen
+  shows Items and the Reader only, and the Items pane itself collapses below
+  88 columns — except below **64 columns with nothing open in the Reader**,
+  where the list is all there is to show: Items stays, the Reader keeps what
+  is left for its placeholder, and a **‹ Library** (or **< Library** with
+  ASCII glyphs) control at the top of the Items pane returns to the rail.
+  It is the only width that shows that control; opening an item hands the
+  width back to the Reader as usual. Going back to the rail gives it the
+  width while you are there — selecting **Media** again returns to the list
+  and its **‹ Library** control, so the two are a round trip rather than a
+  one-way door.
+
+*Verified against fix/media-crit6-layout — 2026-09-07 (task-31979: the
+empty-reader widening. Pinned in tests at 235x52 and 100x30 — with no item
+open the Items list absorbs the empty Reader's columns and paints a
+98-character title's tail past column 56; opening an item restores the split;
+the 100x30 layout is unchanged. Confirmed against the resolver and the shell
+paint, not re-verified live.)*
+
+While another row is loading, Items distinguishes a **Loading ·** row
+prefix from the settled **Loaded ·** one. Reader may keep the prior item visible,
+but names both items until the new detail settles. Late or failed loads cannot
+replace a newer selection. Conversations retains its existing paged
+list-and-preview layout.
+
+**The Reader tracks the visible set.** When the item open in the Reader
+leaves the list — a filter that matches nothing, or deleting the loaded item
+(from the viewer or as the sole item in a bulk delete) — the Reader stops
+painting it and falls back to "Select a media item to read it here." rather
+than showing a now-absent item. A filter that still has matches moves the
+Reader to its first result instead. Undoing a delete re-adds the row, which
+opens normally again.
+
+*Verified against fix/media-crit8-gaps — 2026-09-08 (task-32086: a 0-result
+filter now repaints the MOUNTED Reader placeholder, not just the session —
+task-32043 cleared the state but the canvas-scoped Items sync left the sibling
+viewer painting the filtered-out document (critique #8 caps 07/65). App-test
+pin at 170x48 drives the live auto-follow path (a filter with a hit, then
+narrowing to zero) and asserts the Reader repaints its empty placeholder;
+the task-32043 session pins, bulk-delete, and filter-restore pins stay green.
+Live-verified in tmux at 235x52: filter to a hit, then narrow to zero — the
+Reader falls back to "Select a media item to read it here.".)*
+
+**Row markers.** An item's second row says what it is and when it last
+changed, and adds **· analysed** when that item already carries an analysis —
+so you can see what is worth generating without opening anything
+(`document · updated 5m · analysed`). The age is labelled, because a bare
+"10m" on an `audio` or `video` row reads as the item's *length*; under a
+minute it reads **updated just now**. The word is **updated**, not "added":
+the value is the item's last-modified time — the same one the Reader's
+preview line calls "Updated:" — so saving an analysis moves it. It shares the
+Trash list's grammar (`pdf · trashed 3m`), which is also why it is
+"updated 5m" and not "updated 5m ago": on this pane four cells are the
+difference between a keyword row showing its term and hiding it.
+
+The row that is open in the Reader ends **· loaded** (**· loading** while it
+is fetching) — the state is a fact about the row, so it sits with the other
+facts rather than in front of the title.
+
+The row re-reads its state from the database the moment an
+analysis is saved — from the Reader's Generate, or from a bulk Analyze run —
+without re-paging the list; until task-31942 lands (the save does not yet
+commit durably), the mark can lag the Reader on a real profile. Its title row
+starts with a single one-cell **state slot**. With
+no review set active it carries only the current-row pointer **▸** in the wide
+layout (blank otherwise); once a set is active (see "Review these" below),
+every item in the set carries **·** until you review it and **✓** afterwards,
+and items outside the set keep the pointer or stay blank — the current row is
+still highlighted, so nothing is lost when its **▸** gives way to a mark. The
+marks update the moment you mark an item reviewed in the Reader, without
+leaving it. Select mode
+reuses that same cell for its **☑/☐**, so a row never carries two markers.
+
+While a filter is active, a row it found only through one of its **keywords**
+adds **· keyword: \<term\>** — the filter searches titles, item text and
+keywords, so without it a hit whose title and body hold nothing you typed
+reads as a mistake (`article · updated 2m · keyword: notes`). A row whose
+title or text carries the term already shows you why it is there and says nothing
+extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
+wide CJK characters, or five flag emoji) to keep the line short — the cut
+counts a flag by the two columns it paints and never leaves half of one, so
+the row frame does not drift. It can still be too long for a narrow Items
+pane, and the labelled age made that tighter: at the pane's narrowest the row
+ends in an ellipsis a few characters into `keyword:` itself, before the term
+starts. A row that is both analysed and a keyword hit can run out of room at
+the default width too, and the row open in the Reader spends a further nine
+columns on its `· loaded`, so at the automatic narrow width (100 columns) that
+row is the first to clip.
+
+The Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
+full stored keyword but drops a dangling half-flag so that surface's frame
+does not drift either (the edit form still prefills the stored keyword
+verbatim).
+
+*Historical verification (grip sizes and thresholds superseded by the five-column restoration, TASK-32200). Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
+Skills and Collections opened live at 235x52. Each painted one-cell `‹` grips
+— the Library grip at columns 37 on two rows, the Items grip at column 78 on
+one — and no `<---`/`--->` run appeared anywhere on the three surfaces.
+Collapsing the Collections Library pane repainted its grip as a one-cell `›`
+at column 3, and expanding it restored the `‹`. The rail-open thresholds these
+grips move (110 on Conversations, 114 on Skills and Collections, from 118 and
+122) are the resolver's own answers, pinned at both edges of each moved band
+in `Tests/Library/test_library_adaptive_reader_state.py`.)*
+
+*Verified against fix/media-wave5-i @ c9838b5e4 — 2026-09-06 (tasks 28008/28009: four
+seeded `document` items, two of them analysed, live at 235x52 and 100x30.
+Both analysed rows painted `document · 5m · analysed` in full at the Items
+pane's 36-cell floor; "Review these" put `·` on every row, two `]` presses
+turned the first two into `✓`, and `s` replaced the slot with `☐` on every
+row rather than adding a second marker. task-28008 match reasons: three
+seeded `article` items filtered live at 235x52 on `quokka` — the two
+keyword-only rows painted `article · 1m · keyword: quokka` and `article · 1m ·
+keyword: quokkasand…`, the title hit painted `article · 1m`.)*
 
 ## Features & controls
 
@@ -65,15 +196,62 @@ above): "‹ Back to list", the title, metadata lines, then the "Content",
   below). The button relabels to **"Done"** to exit; entering or leaving
   select mode clears the selection, and leaving with items still checked
   shows a quiet "Selection discarded (N items)" notice so exiting is never a
-  silent no-op.
+  silent no-op. In Media, entering select mode this way (or with **s**, see
+  below) also puts keyboard focus on a row, so Down and Space work right
+  away, and clicking anywhere on a row — not just its checkbox — toggles it,
+  including a fast second click on the same row. "Done" renders on its own
+  row below the other select-mode actions rather than sharing a browse-mode
+  slot such as "sort:".
 - **Disabled actions announce themselves.** While nothing is checked,
   "Export selected"/"Delete selected" read **"○ Export selected"** /
   **"○ Delete selected"** — the leading **○** is the Library's disabled
-  marker (the same ✓/○ pair the ingest toggles use), so the state never
+  marker (the same marker every gated Library action carries — see
+  [State glyphs](../library.md#state-glyphs)), so the state never
   depends on colour alone — and their tooltips say what to do ("Select one
   or more items…"). The same goes for **"○ Select"** when the list is
   empty ("Nothing here to select yet."). Checking the first row flips the
-  labels back in place.
+  labels back in place — the word itself does not move: an enabled
+  select-mode action reserves the marker's own two cells, so "Export
+  selected" starts in the same column whether or not the "○" is showing.
+  You can see that on Media, Conversations and Prompts. Notes reserves the
+  same width, but its select-mode row overflows the notes pane at every
+  width today, so "Clear" and "Export selected" are off-screen there until
+  that row is reworked. Conversations now splits its select toolbar into
+  content-width rows the same way Media does — a summary row ("N selected",
+  "Select all N shown") above a bulk-action row ("Clear", "Export selected")
+  — so every label paints in full at every supported width (no more the old
+  "Selec"/"Exp" clipping), and the word still holds its column across the
+  disabled flip.
+
+**Media's "Analyze"** (Media only) generates an analysis for every checked
+item in one run, in list order, on its own row under Clear/Export/Review:
+
+- Pressing it leaves select mode and reports progress **in the list**:
+  "Analyzing 3 of 40 · 2 failed" while it runs, then "✓ analyzed · 38 of 40
+  · 2 failed" when it settles ("✗ analyzed · 0 of 3 · 3 failed" if nothing
+  succeeded). **Retry failed** re-runs only the items that failed;
+  **Dismiss** clears the receipt. A clean run says just "✓ analyzed · 40 of
+  40" with no failure count and no Retry.
+- **Items that already have an analysis are never overwritten silently.**
+  If any checked item has one, the first press runs nothing and offers
+  "N of M already analyzed" with **Skip them** (analyze only the rest) and
+  **Overwrite** (analyze everything, replacing what is there) — no
+  Dismiss on this row; "Skip them" already is the change-nothing outcome
+  and retires the card.
+- One run at a time: a second press while one is in flight says "Analysis
+  already running" rather than starting a second.
+- With no analysis provider configured the action reads **"○ Analyze"** and
+  an always-visible line beneath it states the reason and the next step
+  ("No analysis provider is configured · Set one in Settings ▸ Providers &
+  Models."), the same wording the Reader's Generate gives — so a
+  keyboard-first user reads why without hovering. The tooltip still carries
+  it too.
+- The run belongs to the Library screen: leaving Library stops it, and a
+  notice says where it got to ("Analysis stopped at 3 of 40 · reopen Select
+  ▸ Analyze to continue; finished items are skipped"). Items already
+  analyzed are skipped by a fresh run, so continuing is just re-selecting
+  them and pressing Analyze again.
+
 - **"Export…"** (hidden while selecting) exports the whole current scope —
   for Media that means the current type filter — and **"Export selected"**
   exports just the checked rows. Both open the same "Export bundle (.zip)"
@@ -99,100 +277,396 @@ another delete. The viewer's single-item "Delete" leaves the same receipt
 and bulk delete share one undo story. "Undo" restores every item the
 receipt names (or just the ones still outstanding, if a prior undo
 partially failed); "Dismiss" clears the receipt without restoring anything.
-"Undo" is the at-point convenience; the durable way back is the **Trash
-view** the receipt points at (see "Media Trash" below), which lists every
-deleted item — including ones from earlier sessions — and restores them
-per item. (Re-importing the same file from
+Focus moves straight to "Undo" the moment the receipt appears, so pressing
+**Enter** undoes immediately — the confirmation's "You can undo right
+away" is literally true at that instant. "Undo" stays live even if the
+list behind the receipt goes stale in the meantime (a later page change,
+say): it restores exactly the ids the receipt already names, not whatever
+the list happens to show now, so a stale page can never be the reason
+Undo is unavailable. If a restore itself fails, the receipt becomes
+"✗ undo failed · n of m · \<reason\>" and "Undo" becomes "Retry undo",
+retrying only the items still outstanding; a later full success clears
+the receipt as normal. A restore that comes back with nothing usable
+(not just one that errors) counts toward that "n of m" and stays in the
+retry set, so the receipt total never understates what still needs redoing. "Undo" is the at-point convenience; the durable way
+back is the **Trash view** the receipt points at (see "Media Trash"
+below), which lists every deleted item — including ones from earlier
+sessions — and restores them per item. (Re-importing the same file from
 [Import & export](import-and-export.md) also still restores a trashed
 match instead of refusing.)
 
 ### Media Trash
 
 Press **"Trash"** on the Media toolbar to swap the list for the Trash
-view: "‹ Media" (back), a "Trash (N)" heading, and one two-line row per
+view: "‹ Media" (back), a **"Local Trash · N items"** heading ("· 1 item"
+for one; "· N matching" while a Trash search is active; the bare "Local
+Trash" at widths too narrow for the suffix), and one two-line row per
 deleted item — the title, then a dim "type · trashed 2h" line saying when
 it was deleted, newest first. Press a row to select it (the **▸** marker
 moves), then **"Restore"** to put it back: the row leaves the Trash, the
 rail's "Media N" count goes up in place, a "Restored 'Title'." line
 confirms it, and the item is back in the media list (and in search
-results) exactly as it was — restore never rewrites the item. "‹ Media" or
+results) with its title, content and analysis untouched. Restore brings the
+item back and marks it changed now, so it returns at the top of a Newest
+sort — the same is true of "Undo" on a delete receipt. "‹ Media" or
 Escape returns to the list.
 
 Notes on the edges: with nothing deleted the view says "Trash is empty.
 Items you delete from Media land here." and "Restore" reads "○ Restore"
 with a reason tooltip; if the trash holds more items than one fetch page,
-a status line says "showing X of N" honestly. Entering Trash clears any
+a status line says "showing X of N" honestly. The pager under the list is
+drawn **only when a second page exists**: a trash that fits on one page keeps
+the item range ("1-1 of 1") and drops "Page 1 of 1" along with both
+**Previous** / **Next**, the same rule the rest of the Library follows (see
+[Library](../library.md)), so Restore sits directly under the last row. Entering Trash clears any
 "✓ deleted…" receipt still showing on the list — the Trash view is the
 durable path that receipt pointed at. Trashed items are **excluded from
 search** (Library search and RAG keyword retrieval both skip them) until
 restored.
-There is no permanent-delete or empty-trash action here yet — restoring is
-the only operation, and nothing is ever removed from the Trash except by
-restoring it.
+A selected row offers two actions and no others: **"Restore"** (key `r`),
+and **"Delete forever"** (key `x`), which arms an inline "Cancel | Delete
+permanently" confirmation and, once confirmed, removes that one item for
+good — there is no undo and no receipt afterwards. In that confirmation the
+committing **"Delete permanently"** is painted in the theme's readable error
+colour (not the ordinary body ink) and sits at least three cells clear of the
+focused **"Cancel"**, so the most destructive control is the most marked and
+never a mis-click away from the safe one. The two row actions sit two cells
+apart, the destructive one set apart in the quiet danger styling the
+select-mode "Delete" uses; both keys are advertised in the footer, and
+only while the actions they stand for are genuinely pressable. The
+confirmation names the item, its type and when it was trashed in the same
+words the row does ("trashed 6h"), with the exact timestamp on the
+tooltip. There is no empty-trash or bulk permanent delete; each item is
+deleted on its own.
+Whichever Trash action you take, "‹ Media" returns you to a
+current list: the app refreshes the page it fenced for its own write, so it
+never asks you to press "Retry" for a change you just made here.
+The Reader beside the Trash list keeps whatever live item you had open —
+your reading position is not thrown away — and says which list that item
+belongs to: **Showing a Media item · not in Trash**, above its title.
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31275: Trash ▸ Restore
+and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
+235x52 — the list came back with live rows and its exact "1-3 of 3" / "1-2 of
+2" range, no stale banner and no "Retry").*
+
+*Verified against fix/media-wave5-j — 2026-09-07 (task-31635: live in tmux at
+235x52 and 100x30 — the row read "article · trashed 6h" and the confirmation
+it opened read the same, "r" restored it ("Restored '…'." with the count
+going 4 → 3 items), and the footer carried "r restore | x delete" on the
+list and dropped both while the confirmation was armed).*
+
+*Verified against fix/media-crit6-deletemark — 2026-09-07 (task-31980: painted
+pins at 235x52 and 100x30 assert the confirmation's "Delete permanently" ink
+differs from "Cancel" and stands ≥3 cells clear of it, and that the More
+strip's "Move to trash" ink differs from the neutral "Edit metadata" with a
+left-margin gap).*
 
 ### Media list
 
 | Control | What it does |
 |---|---|
-| "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
-| "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. |
-| "Retry" | Repeats a failed page request. If retained rows may be out of date, unsafe row and bulk actions stay disabled until recovery succeeds. |
+| Scope line | The quiet line under the "Media (N)" header states the scope the rows in front of you actually came from: the count as **N of M**, the applied filter in quotes, the type ("all types" until you pick one), and the sort — for example `Media · 1 of 11 · filter “notes” · all types · sort: Newest`. The filter box keeps a *draft* until you press Enter, so the box and the list can legitimately disagree; this line always describes the applied scope and never echoes an unsubmitted draft. |
+| "Clear" (on the scope line) | Appears only while a filter or a type is applied. It drops the whole scope this line states — filter *and* type — and empties the filter box with it, so no draft is left behind. The toolbar's "Clear filter" still clears only the filter it names. |
+| "Title/keyword…" / "Clear filter" | Searches the complete local Media source before paging — titles, item text, and the keywords an item is tagged with, so a tag you filed items under finds them even when it appears in no title. It is separate from Find in item, and "Review these" pins exactly what it returned. Clearing restores the unfiltered selection when it is still available. |
+| "type: All types" | Opens one bounded keyboard list containing the complete type set. The row your arrow keys are on carries a leading `█` bar (the same cue the list rows use); ✓ marks the value currently in force, so the row you are on and the row that is active are told apart — on opening, both marks sit on the active row (`█ ✓ All types`). "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
+| "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible, the same leading `█` on the row you are on and ✓ on the active one. Escape cancels. |
+| "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
+| "Retry" | Repeats the failed load. When a load fails, the reason and this Retry sit together in one bordered callout above the rows ("Couldn't load page 1 · database is locked"; red for a hard failure, amber for a timeout) — that is the only Retry on screen, and it also reloads the type list when that is what failed. The reason is the failure's own words only for an operating-system or database error; anything else is named by the kind of failure it is ("the connection failed", "the database could not be read", or "an unexpected error" when it is none of those), so a private path — and the exception's own text — never reaches the screen. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. When the fault callout itself fails the same way on a consecutive Retry, the message stops repeating one sentence and names the recovery step — "Couldn't load page 1 · database is locked · reopen Chatbook to reconnect to the media database" — so a persistent fault points somewhere rather than looping. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
-| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
-| Row press | Selects the row and shows the preview (title, "Type: …", "Updated: …"). |
-| "Open in viewer" | Opens the selected item in the media viewer. |
+| "Review these" | Pins the whole filtered list as an ordered review set (see "Review sets" below). Like "Export…" — the other action that acts on the whole filtered list — it renders as "○ Review these" with the failure on its tooltip when the first load failed with nothing behind it, and stays live over rows a later failure retained. |
+| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". It is never disabled by a failed Media load — it is the route to your deleted items exactly when the list is unhappy — whereas "Export…" and "Review these" render as "○ Export…" / "○ Review these" with the reason on their tooltip when the list has nothing to select. |
+| Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
+| "Sets" (title row) | Opens the saved-set picker (see "Review sets" below). It stays put on an empty or filtered-to-zero list — it is navigation, not a result, and it is the way back to a saved set when the list itself has nothing to offer. Hidden only in Select mode, like the other list-level actions. |
+| Library / Items grip | Collapses or expands that pane and remembers the manual choice. Responsive collapses caused by terminal width are not saved. |
+
+A filter that narrows to exactly one row loads that row into the Reader for
+you, and the list says so: **1 result · Enter opens** under the toolbar.
+(Clearing the filter puts your previous selection back.) With several hits
+nothing is auto-loaded and the line does not appear.
 
 Empty states: with nothing imported, "No media in your Library yet. Import
-something to see it here."; with a filter that matches nothing, "No media
-of type 'pdf'."
+something to see it here."; with a type that matches nothing, "No media
+of type 'pdf'."; with a filter query that matches nothing, "No media matched
+“day2” in titles, content or keywords." beside a live "Clear filter"; with
+both — a query that misses inside a type — the sentence names both facets:
+"No media of type 'pdf' matched “day2” in titles, content or keywords."
+
+An empty page keeps the toolbar it was filtered with. `type:`, `sort:`,
+"Export…", "Trash", "Select" and "Review these" all stay where they were, so
+the facet that produced the empty page can be read and reset without leaving
+the canvas. "Select" and "Review these" carry the `○` marker and a reason
+there — with no rows, neither has anything to act on; "Export…" stays live,
+because it exports the type, not the query. One recovery action rides with
+the sentence: "Show all types" whenever a type is in force, and "Import
+media" only when the source itself is empty — a filter miss never suggests
+importing, because clearing the filter is the honest way back. Keyboard focus
+lands back in the filter box, which is where you retype.
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31274: three seeded
+articles tagged `day2` — a keyword in no title and no body — filtered live in
+tmux 235x52 to "Media (3)", "Review these" over that filter opened "Search:
+\"day2\" — 1 of 3", and "zz" produced the field-naming miss copy).*
+
+*Verified against fix/media-wave5-e @ d5355a37ca — 2026-09-05
+(task-31220 final review, doc-only round: corrected the "Retry" row above —
+rows open read-only under a stale page, only Select/Export/Delete/sort/Select
+all stay gated with a reason — and added the failed-undo receipt
+("✗ undo failed · n of m · \<reason\>" / "Retry undo"), the
+"Couldn't retry · \<reason\>" copy a failed page-request Retry now shows,
+and the Undo-gets-focus-so-Enter-undoes behavior to the receipt paragraph
+above. Confirmed against the product code and its tests, not re-verified
+live for this doc-only pass.)*
+
+*Verified against fix/media-riders-m — 2026-09-07 (tasks 31944/31960, live
+at 235x52 on a scratch profile whose media DB path is a directory: the Media
+callout read "Couldn't load media · an unexpected error" with Retry on the
+same row and the $error border, and it kept that border across a Retry press;
+"○ Export…" and "○ Review these" stood gated together over the failed list
+while "Trash" stayed live. This SUPERSEDES the class-name disclosure recorded
+in the 2026-09-05 stamp below — a non-OS/database failure now reads as the
+kind of failure it is, never as `ValueError`.)*
+
+*Verified against fix/media-crit6-faultscope — 2026-09-07 (task-31982: the
+undo receipt now counts a restore that returns an unexpected shape as a
+still-failed id — "1 of 2" with the id retryable, not a silent clean undo;
+the Media fault callout, on the same reason failing a consecutive Retry,
+appends "· reopen Chatbook to reconnect to the media database" instead of
+repeating; and the facet (media-types) read and the row read are confirmed
+independent — a facet-only failure leaves Export/Review/Select/Trash live
+over the rows that loaded. Confirmed against the product code and its tests.)*
+
+*Verified against fix/media-wave5-g @ c9b3f3a77 — 2026-09-05 (task-31632:
+launched with a scratch profile whose media DB path is a directory; Library ▸
+Media painted one red-bordered callout reading "Couldn't load media ·
+ValueError" with "Retry" on the same row — the only Retry on screen — and
+pressing it repainted the callout and left focus on that button. The same run
+is the evidence for the "Retry" row's class-name-only disclosure above:
+`ValueError`, not a raw path, is exactly what a non-OS/database reason
+renders as.)*
+
+*Verified against fix/media-wave5-f @ 1b1d8b8d84 — 2026-09-05 (tasks
+31631 / 31634 / 31567: select mode now focuses a row on entry so Down and
+Space work immediately, any click on a row toggles it in select mode,
+"Done" moved off the "sort:" slot to its own row, the Reader's focus cue is
+a heavy border rather than a colour tint, and focus survives a Reader
+recompose instead of falling to a pane grip).*
 
 The pager reports the exact visible range, total, and page. Changing page or
 type clears current-page selection with a visible "Selection cleared."
 notice. A failed request keeps the last applied page visible instead of
 silently replacing it with a partial or broad Library snapshot.
 
-### Media viewer
+### Media Reader
 
-- **Metadata** — lines for "Type:", and when present "Author:", "URL:",
-  "Keywords:", "Updated:".
-- **"Content"** — the stored text ("No stored content." when empty). For
-  markdown-flavored media (a `.md`/Obsidian-style item whose content has a
-  real heading, table, or fenced code block), a "Rendered (selected) |
+Reader stays mounted beside Items and keeps one mode visible at a time:
+**Read**, **Analysis**, **Highlights**, or **Info**. The chosen mode persists
+while you move through items. Missing analysis or highlights produces an
+item-specific empty state; it does not silently switch modes. Leaving **Read**
+for another mode and returning drops you back at the same place in the text —
+the reading position is restored even though the rendered body has to lay out
+again first.
+
+*Verified against fix/media-crit6-scroll — 2026-09-07 (task-31968: the
+Read → Analysis → Read reading-position restore. Pinned in tests at 235x52 —
+the offset is restored on the real, re-laid-out scroll container after the
+round-trip, and the restore lands synchronously against a laid-out body rather
+than racing the Markdown parse. Confirmed against the scroll container in the
+harness, not re-verified live.)*
+
+Its header is deliberately short: **‹ Back**, the title, the action row, and
+the mode row — five rows above the reading surface, border included. A byline
+row appears only when the item actually has an author or a URL — an author
+stored as the literal "Unknown", which is what most local imports write when
+a file names none, counts as no author and paints no byline — and an
+identity line ("Server item · not in local Media list") only for a server
+item a local Media list cannot show. The mode row is the only label for the
+open mode; no section header repeats it. Body text wraps at a reading measure
+of about 90 columns however wide the terminal is, while the box around it
+still spans the pane.
+
+- **Read** — the complete stored text ("No stored content." when empty).
+  Whenever the stored text itself has a real heading, table, or fenced code
+  block — whatever the item's media type, because the stored type does not
+  tell you what the text contains — a "Rendered (selected) |
   Raw" toggle appears above the box and defaults to **Rendered** — headings,
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
-  "Raw" to see the plain source instead. Below the toggle (or directly
+  "Raw" to see the plain source instead. A rendered heading starts in the
+  same column as the prose beneath it. Any item with content but no
+  markdown gets no toggle, whatever its media type; **Info** then carries the
+  one-line reason, "No Markdown formatting to render — showing the stored
+  text", so the reading surface is not banner-ed with it on every open — it
+  names what THIS item has, so a plain-prose transcript is not told that
+  rendering is "for transcripts". An item with no stored content shows no such
+  note anywhere — the box already says "No stored content." and there is no
+  rendered view to explain away. Below the toggle (or directly
   above Content for everything else) is a "Search content…" box — its
   placeholder reads "Search content (raw text)…" whenever the toggle is
   present, since search always matches the raw stored text regardless of
-  which view is showing. Typing a query shows "Match 1 of 4 matches" (or
+  which view is showing. Typing a query shows "Match 1 of 4" (or
   "No matches") and a "◀ Prev" / "Next ▶" pair that steps through matches
-  and wraps at either end — in both views. Only the visual highlighting of
+  and wraps at either end — in both views. With no matches both controls
+  are disabled and read "○ Prev" / "○ Next", the same marker the Media
+  pager uses, so there is nothing live to press. Only the visual highlighting of
   the current match is Raw-only; Rendered shows the same step count with
-  no on-screen mark. While a search is active, the search box, match
-  count, and "◀ Prev" / "Next ▶" pin to the top of the viewer pane so
-  they stay visible while you step through matches — even in a small
-  terminal, and no matter how far you scroll. Clearing the query
-  (submit an empty box) unpins them back into the Content section.
-- **"Analysis"** — a stored analysis text you can view and edit ("Edit
+  no on-screen mark. The search bar stays exactly where Find opened it,
+  directly under the Read/Analysis/Highlights/Info row: submitting a query
+  only reveals the match count and "◀ Prev" / "Next ▶" beneath the box, and
+  clearing the query (submit an empty box) hides them again. Nothing above
+  the bar moves. Eligible local PNG, JPEG, and WebP files can also show an
+  inline image above the complete text. **Hide preview** / **Show preview**
+  affects only that item for this session. An unavailable or failed preview reports the problem and leaves
+  every character of stored text readable; GIF, PDF, audio, video, remote URL,
+  and server-item previews are not fetched or rendered here.
+- **Analysis** — stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
-  This section only edits text — it never calls a model; analysis is
-  produced at import time (the "Analyze after import" option) or written by
-  hand here.
-- **"Highlights"** — saved quotes from this item ("No highlights yet." when
+  The actions sit directly beneath the analysis text, however short it is —
+  a two-line analysis puts them on the next line, not at the bottom of the
+  pane. A long analysis scrolls the tab, carrying its actions to the end of
+  the text rather than clipping them.
+  A Markdown analysis renders like the Read tab, with the same
+  Rendered/Raw toggle. While a Find query is active the analysis shows its
+  stored text instead — only that view can mark the matches — and the strip
+  says so ("Showing the stored text so matches can be marked · clear the
+  search to read it rendered."); clearing the search hands the rendered view
+  straight back.
+  Analysis is produced at import time (the "Analyze after import" option),
+  written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
+  once one exists) calls the configured analysis provider without leaving
+  the reading flow. With no provider configured it reads **"○ Generate"**
+  and an always-visible line beneath the button names the reason and the
+  next step ("No analysis provider is configured · Set one in Settings ▸
+  Providers & Models.") — the same wording the Select-mode bulk **Analyze**
+  gate and the Import "Analyze N skipped" gate use — so the gap is readable
+  before you click, without hovering. The tooltip still carries it too.
+- **Highlights** — saved quotes from this item ("No highlights yet." when
   empty). Expand the collapsed **"Add highlight"** section, fill "Quote"
   (required), optionally "Note (optional)" and "Color (optional)", and
   press "Add highlight". Each saved highlight shows the quote with a
   color swatch, its color/note details, and a "✕ Delete" button.
-- **Action row**:
+- **Info** — metadata and provenance: backend-qualified ID, original source,
+  stored representation, preview status, the representation **Use in
+  Console** will send, and — for an item with content that has no Markdown —
+  the "No Markdown formatting to render — showing the stored text" line that
+  explains why Read offers no Rendered|Raw toggle. The Items catalogue is local-only. A finished server
+  import may open one read-only compatibility detail labelled **Server item ·
+  not in local Media list**; it does not become a local Items row.
+- **Primary toolbar**:
 
 | Button | What it does |
 |---|---|
-| "Edit" | Opens an inline form (Title, Author, URL, Keywords) with "Save" / "Cancel". |
+| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. `Ctrl+F` opens it from the keyboard. When the tab you are on has nothing to search — Highlights and Info have no text — it reads "○ Find" and prints that tab's own reason on the line directly under the toolbar, not only in a tooltip (task-32362). |
 | "Use in Console" | Stages this item as context for your next Console message. |
-| "Read it later" ↔ "Remove from read-it-later" | Toggles the item on your read-it-later list. |
-| "Open in Library ▸ Media" | Returns to Library's own Media surface (the separate Media screen was retired). |
-| "Delete" | Two-step: shows "Delete this media? You can undo right away, or restore later from Trash." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". The list you land on shows the same receipt as a bulk delete — "✓ deleted · 1 item · in Trash" with "Undo" / "Dismiss" — "Undo" restores in place, and the Trash view holds the item for later either way. |
+| "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
+| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
+| "Move to trash" | Two-step, title-specific confirmation. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+
+*Verified against fix/media-riders-o — 2026-09-07 (tasks 31958/31959: live
+in tmux at 235x52 on a seeded scratch profile. A `plaintext` item with
+content painted the no-Markdown note above its text; an empty `article` painted "No stored content." with no note above
+it. In Conversations select mode, checking the first row moved the count
+0 → 1 and left the Export selected label's first painted glyph on column
+83 — "○" before, "Exp" (clipped) after.)*
+
+*Verified against fix/media-crit7-convselect — 2026-09-08 (task-32042,
+critique #7 P1: the Conversations select toolbar, once a single 1fr row that
+clipped every action to "Selec"/"Exp", now mirrors Media's multi-row
+content-width treatment. Painted-cell tests at both 235x52 and 100x30 assert
+"Select all N shown", "Clear", and "Export selected" render in full and the
+count reads on one line; the column-hold pin now measures the "Export" word,
+which stays put across the disabled flip.)*
+
+*Verified against fix/media-wave5-j — 2026-09-06 (task-31635 items 1, 5, 13,
+14: a seeded Markdown item and a seeded plain `article` opened live at 235x52.
+The rendered H1 "Quarterly budget review", the body line, and the H2 all begin
+at painted column 98. Find on the Markdown item shows "No matches" with
+"○ Prev" / "○ Next" for a query with no hits, and "Match 1 of 4" with
+"◀ Prev" / "Next ▶" for one with hits. The `article` paints "Rendered view is
+for Markdown and transcripts" in the row the Rendered|Raw strip occupies for a
+Markdown item. The failed-list placeholder (item 12) is pinned by test, not
+live: forcing it needs the Media page load to fail.)*
+
+*Verified against fix/media-crit6-blockedreason — 2026-09-07 (task-31981,
+critique #6 P1: with no analysis provider configured, the Reader's blocked
+"○ Generate" and the Select-mode bulk "○ Analyze" each paint their reason
+plus next step ("… · Set one in Settings ▸ Providers & Models.") on an
+always-visible line adjacent to the control — no hover needed. Pinned by
+painted-text tests at 235x52 and 100x30, matching the Export gate's inline
+"No destination chosen" grammar.)*
+
+*Verified against fix/media-wave5-h @ a4682f17e — 2026-09-06 (task-31633
+AC#3: More opened live at 235x52 and at 100x30 over a seeded document.
+At 235x52 the four actions paint on one row and the "Read" tab row moves
+down exactly one line; at 100x30 they wrap to two rows and the body moves
+two. Before this change the disclosure was a full-height Vertical that
+displaced the tab row and body by 19 rows behind ~16 blank ones. The
+button paints "More ▴" while open and "More" once closed, and focus stays
+on it across both toggles. AC#1/AC#2 layout numbers -- the 56-cell Items
+ceiling and its 46 painted title characters at 235x52, 15 items in a
+52-row terminal, the then-one-cell grips, and the then-112- and 88-column
+thresholds were cross-checked against that revision. Grip sizes and collapse
+thresholds are superseded by the five-column restoration (TASK-32200).)*
+
+### Review sets
+
+A review set pins an ordered snapshot of media items so you can work through
+them one by one, with your place and progress saved between visits.
+
+- **Create** — **Review these** on the media list pins the whole filtered
+  result (in the current sort order, capped at 500 items with a notice when
+  trimmed); in Select mode, **Review selected** pins just the checked items in
+  list order and leaves Select mode. Creating a set activates it and opens its
+  first item in the Reader. If another set was mid-walk, a notice names it and
+  its progress ("Paused 'Read later' at 1 of 2 · 0 reviewed. Resume from
+  Sets.") — creating never silently strands a walk. There is no separate
+  "Reviewing N items." notice: the banner the Reader opens with says the
+  same thing and more, and in a narrow terminal that notice landed on the
+  Reader's own border.
+- **Resume on entry** — opening the media area with a set active loads its
+  current item into the Reader automatically, on every entry, so the banner
+  and the open document always agree. Escape behaves here exactly as it does
+  everywhere else in the Reader — see [Keyboard & commands](#keyboard--commands)
+  for the one rule and the chip that states it.
+- **Walk** — while a set is active the Reader carries a banner naming the
+  set, your place, and the open item's own state ("Reviewing: All media — 2
+  of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place —
+  and the footer chip says what the key does: **`]` next (marks reviewed)**.
+  `]` advances and marks the item you leave as reviewed;
+  `[` goes back without marking; `m` toggles the loaded item's reviewed mark;
+  a final `]` on the last item marks it done in place. Clicking a row of the
+  set in the Items pane moves both readouts to that item (it does not commit
+  a new resume point — `]`/`[` walk from what the Reader is showing anyway). **Escape** steps out
+  of the Reader — to the loaded Items row, and to the list itself in
+  narrower layouts — and keeps the set active; re-entering resumes at your
+  cursor.
+  **R** (Exit review) deactivates the set without deleting it.
+- **Resume / switch / dismiss** — **Sets** on the media list title row opens
+  the saved-set picker: each row shows the set's name, live progress, and
+  created date (so two "2 selected items" sets stay distinguishable), with
+  the active set marked `✓`. Picking a set activates it (deactivating any
+  other) and lands at its saved cursor; picking a completed set reopens it.
+  **Dismiss** soft-deletes a set and leaves a "✓ dismissed · name" receipt on
+  the media list with **Undo** (restores the set — cursor, reviewed marks,
+  and active state intact) and **Dismiss** to clear the receipt. **Review
+  read-later** in the same picker builds a new set from your read-later
+  queue, newest saves first.
+- Deleted media items become skipped tombstones: progress counts only items
+  that still exist, and a set whose items were all removed reports "No items
+  to review" instead of completing.
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31276: Find opened, "item"
+submitted, "Next ▶" stepped and Escape closed, live in tmux 235x52 and 100x30 — the bar
+holds its row under the mode toolbar through every step and the pane join stays clean.)*
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31277: a local audio item with
+no author or URL and a `## `-sectioned video transcript, both opened live in tmux 235x52
+— chrome above the first content line went from 9 rows to 5, prose wraps at ~88 cells
+instead of ~136, and the transcript renders its headings instead of literal `##`.)*
+
+*Verified against fix/media-wave4-a — 2026-09-04 (task-31269: Analysis-mode [ ] walk over
+three items, Find on the Analysis tab, Escape, Find toggle, all live in tmux 235x52; the earlier
+task-31233/34/36/38 create-from-selection → every-entry resume → dismiss-undo pass still holds).*
 
 ### Conversations
 
@@ -201,7 +675,15 @@ while its pager stays visible underneath it. The pager always states the exact
 range, total, and page: with 45 conversations it reads **"1-20 of 45 · Page 1
 of 3"**, then **"21-40 of 45 · Page 2 of 3"**, and finally **"41-45 of 45 ·
 Page 3 of 3"**. Previous and Next show a visible reason when unavailable, such
-as "Already on the first page." or "No more results."
+as "Already on the first page." or "No more results." A list that fits one page
+shows only its range ("1-2 of 2") — the page counter, those reasons and the
+Previous/Next controls all return the moment a second page exists, exactly as
+on the Media list.
+
+The reader above names the open conversation by **title**, not by its stored
+id ("Loaded Design review notes · 30 of 30 messages · complete."), and each
+message is headed with its sender and the same compact age the list uses
+("user · 27m"), never a raw timestamp.
 
 Filtering searches the **full conversation source before paging**, so a match
 on the oldest page is still found; clearing the filter returns to unfiltered
@@ -215,9 +697,27 @@ requested load.
 |---|---|
 | "Filter conversations… (Enter)" | Type and press Enter to search conversation titles, stable IDs, and indexed message content before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
 | "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
-| Row press | Selects the row and shows the preview (title, "Messages: N", "Updated: age"). |
-| "Open in Console" | Stages the conversation as **source context** in Console — see below. |
+| Row press | Selects the row and loads it into the **Conversation reader** — not a preview. See below. |
+| "Resume conversation" / "Restore and resume" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Reopens the original conversation in Console — it does **not** stage it as source context, and it does not depend on workspace membership. |
+| "Use as source" | In the reader header. Stages the open conversation as **source context** in Console. If the conversation is not in the active workspace, the press **links it first**, then continues — see below. |
+| "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. Press it to take on the membership **without** handing anything to Console. |
+| "Undo link" | Appears under the **"✓ linked · \<workspace\>"** receipt after a link, and removes exactly the membership that press added. |
 | "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
+
+**The detail pane is a transcript reader.** Pressing a row loads the whole
+conversation into a pane headed **"Conversation reader"** with:
+
+- a **Read** / **Info** mode row (the same shape the media Reader uses);
+- a status line reading `Loaded <conversation id> · N of M messages ·
+  complete.`;
+- a **"Find in complete transcript…"** box; and
+- the transcript itself, one block per message, each headed
+  `user` / `assistant` and the message's timestamp.
+
+One rough edge is known and tracked separately: the status line shows the
+raw conversation UUID and each message shows a full ISO timestamp rather
+than an age string. ("Open in Console" moved into the reader header,
+beside Read/Info, in task-32056.)
 
 Empty state: "No conversations yet. Chat in Console and it appears here."
 There is no create, rename, or delete here — this panel treats your chats
@@ -229,35 +729,41 @@ as source context for my next question." — your next message continues in
 the *current* Console session, grounded by the old conversation. To switch
 back into a past session and keep chatting in it, use Console's own
 conversation rail instead; that one resumes sessions, this one quotes them.
+This explicit handoff **does not change the conversation's Auto or Assistant
+setting**; it supplies one bundle of **staged context** for the next send.
 
 ## Common tasks
 
 ### Filter media by type
 1. In **Media**, click "type: All types" — a bounded list of every stored
-   type appears in place of the toolbar, with ✓ on the active one.
+   type appears in place of the toolbar, with a leading `█` on the row your
+   arrow keys are on and ✓ on the active one.
 2. Click the type you want. The list narrows and the status line reads
    e.g. "2 of 5 · type: pdf". Pick "All types" to clear the filter, or
    press Escape to close the list without changing anything. A stored type
    literally named "All" is distinct from the unfiltered choice.
 
 ### Open a media item and search inside it
-1. Click a row, then "Open in viewer".
-2. Type into "Search content…" and press Enter. The status shows
-   "Match 1 of N matches", the matches are highlighted in the content, and
-   the whole search bar pins to the top of the viewer for as long as the
-   search is active.
-3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized
-   and the pinned bar keeps the count and both controls in view while you
-   navigate.
+1. Click a row; it loads into Reader without replacing Items.
+2. Press **Find**, type into "Search content…", and press Enter. The status shows
+   "Match 1 of N", the matches are highlighted in the content, and the
+   count plus "◀ Prev" / "Next ▶" appear directly beneath the box — the bar
+   itself does not move, and neither does the header above it.
+3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized and
+   the bar keeps the count and both controls in view while you navigate.
 
 ### Highlight a passage
-1. In the viewer, scroll to **Highlights** and expand "Add highlight".
+1. In Reader, choose **Highlights** and expand "Add highlight".
 2. Paste the passage into "Quote"; optionally add "Note (optional)" and a
    color name or hex value in "Color (optional)".
 3. Press "Add highlight" — it appears in the list with a ● swatch.
 
 ### Stage a conversation as Console context
-1. In **Conversations**, click a row, then "Open in Console" in the preview.
+1. In **Conversations**, click a row, then "Open in Console" in the reader
+   header (beside Read/Info, or press `c`). If the button reads "○ Open in
+   Console" with "This conversation is not in this workspace. Press 'Link to
+   workspace' to add it to the active workspace." beneath it, press "Link to
+   workspace" first.
 2. Console opens with the conversation staged and the prompt "Use this
    conversation as source context for my next question." ready to go — edit
    or replace it, then send.
@@ -270,15 +776,18 @@ conversation rail instead; that one resumes sessions, this one quotes them.
 
 ### Recover something you deleted last week
 1. In **Media**, click "Trash" on the toolbar.
-2. Find the item ("Trash (N)" lists everything deleted, newest first, each
-   row saying "type · trashed 3d"), press its row, then "Restore".
+2. Find the item ("Local Trash · N items" lists everything deleted, newest
+   first, each row saying "type · trashed 3d"), press its row, then
+   "Restore".
 3. "Restored 'Title'." confirms it; "‹ Media" (or Escape) takes you back to
    the list, where the item — and the rail's "Media N" count — are back.
 
 ### Delete selected media items
 1. In **Media**, click "Select", check the rows you want to remove.
-2. Click "Delete selected" — the strip becomes "Delete N selected items?
-   This moves them to trash." with "Delete" / "Cancel".
+2. Click "Delete selected" — the strip becomes "Delete N selected items? You
+   can undo right away, or restore later from Trash." with "Delete" /
+   "Cancel". The sentence wraps inside the Items pane at every width,
+   including its narrowest.
 3. Click "Delete" to confirm (or "Cancel" to back out without deleting
    anything). The rows disappear and the rail's "Media N" count drops
    immediately; the items are trashed, not permanently destroyed.
@@ -287,13 +796,70 @@ conversation rail instead; that one resumes sessions, this one quotes them.
 
 The Media type chooser supports **Up/Down**, **Home/End**, and **Enter**;
 **Escape** cancels without applying a choice and returns focus to its opener.
-The other panels are mouse/arrow-driven buttons and inputs. **Enter** submits
-the "Filter conversations… (Enter)" and "Search content…" boxes. Global
+The Media grips accept **Enter**; in Select mode **Space** is reserved for
+toggling the focused row, so the grips take Enter only there. Arrow-key
+traversal moves the Items selection with a short settle delay; **Enter**
+loads immediately.
+**Escape** closes transient Reader state first — the Find bar, then the More
+strip — and then steps out of the Reader to the Items list; the footer chip
+always names the next step it will take. The chip is the authority, and it
+has four readings: **`esc close`** over anything transient (the Find bar, the
+More strip, an open type/sort strip, an armed delete or edit),
+**`esc focus Items`** from the open document, **`esc focus Library`** from the
+Items row, and **`esc back`** wherever the next pane out is collapsed rather
+than on screen — the Items row at 100x30 and narrower, and the rail row in any
+layout the Reader still has a real exit from. In the three-pane layout the rail
+row is the last stop, and the footer drops the `esc` chip there rather than
+advertise a key that does nothing. No step lands in a text box.
+Stepping out of the Reader moves focus, not the document: in the three-pane
+layout (verified at 235x52) the Items pane is already showing the list, so
+the item keeps painting beside it and `]`/`[` keep working from the row.
+Where the Library pane is collapsed but the Items pane still shows the list
+(verified at 100x30) the "‹ Back" control returns you to the list, and so
+does Escape from the Items row. Between 64 and 88 columns both panes are
+collapsed: the control and the key still register the exit, but nothing on
+screen changes yet — the Reader keeps painting the item it had, and `]`/`[`
+stop working until you re-enter Media from the rail. Below 64 columns, with
+nothing open in the Reader, the Items pane is the stage instead (see the
+layout tour above).
+**F6** cycles Library → Items → the Reader's content box, which draws a
+heavy border while it holds focus, so the state is visible in a plain-text
+capture and not by colour alone (no overlay, so the text stays readable).
+From a focused Items row beside the Reader, the Reader's own keys stay
+live and are advertised with it: **]** / **[** walk items, **l** toggles
+read-later, **c** sends the item to Console, **t** arms Move to trash, and
+**s** enters Select mode — focus lands on the first (or first
+still-checked) row, so Down and Space work immediately, and Space toggles
+a row while **s** again is Done. On the last item of an active review set
+**]** reads "finish review" and marks it done in place. Focus survives a
+Reader recompose (loading a new item, a background refresh, an Undo
+receipt) and never lands on a pane's collapse/expand grip.
+While a review set is active, the Reader adds **]** (next in
+set, marking the item you leave), **[** (previous, never marks), **m**
+(toggle reviewed), and **R** (exit review, keeping the set resumable); the
+footer shows these alongside your "X of M · N reviewed" progress. **Enter** submits the "Filter conversations… (Enter)", **Filter
+media**, and "Search content…" boxes. Global
 navigation keys live in the [guide index](../index.md).
+
+*Verified against fix/media-wave4-b — 2026-09-04 (task-31272: the Escape
+ladder to the rail row, More closed by Escape from a focused rail input,
+and the F6 content-stop border tint all live in tmux 235x52; "‹ Back" and
+Escape's return to the list live at 100x30).*
 
 ## Related settings & docs
 
-- Neither panel owns any config.toml keys; media arrives via
+- Appearance settings remember the preferred Library/Items pane states.
+  Automatic Library-rail width follows 3:13 plus five cells, bounded to 29–39
+  cells when space allows. When
+  explicitly enabled, custom widths remain Library 24–48 and Items 32–72;
+  ordinary layouts may temporarily compress the rail to preserve 40 content
+  cells, while these adaptive readers may collapse or prioritize panes.
+  **Reset layout** restores both panes open, automatic width, a dormant
+  36-cell Library preference, and 50-cell Items preferences. Below 64 columns,
+  ordinary Library routes switch between full-width rail and canvas stages via
+  **‹ Library** (or **< Library** with ASCII glyphs). Responsive changes never
+  overwrite saved preferences.
+- Media arrives via
   [import & export](import-and-export.md) (Import media, including the
   "Analyze after import" and chunking options that shape what the viewer
   shows). Note that imported text is lightly sanitized on the way in (null
@@ -326,11 +892,33 @@ navigation keys live in the [guide index](../index.md).
   collection scopes apply before paging; selections retain captured versions
   across pages, and a failed refresh keeps the last applied rows read-only with
   an exact Retry action. See [Library prompts](prompts.md).
-- **"Open in Console" can refuse with "Copy or link blocked Library
-  sources into the active workspace before using them in Console."** The
-  handoff requires the conversation to be eligible for the active
-  workspace; until your sources are linked into it, staging is blocked
-  (the same gate guards the other "Use in Console" actions).
+- **A conversation outside the active workspace links itself on use.**
+  Workspace membership decides which items a Console turn may read, so a
+  conversation that is not in the active workspace cannot simply be handed
+  over in silence — but it is not refused either. **"Use as source" stays
+  pressable**, and one sentence beneath it says what the press will do:
+  "This conversation is not in this workspace. Pressing this adds it to the
+  active workspace first, and you can undo that." The press links it,
+  continues to Console, and leaves a receipt — **"✓ linked ·
+  \<workspace\> · this conversation can now be used in Console"** — with
+  **"Undo link"** beside it, which removes exactly that membership. The
+  separate **"Link to workspace"** button is still there for taking on the
+  membership without a hand-off. (The action name is painted once, on the
+  button; the line under it is the explanation, not a second control.)
+  A block that a link cannot resolve still refuses: the button dims to
+  "○ Use as source", states its own remedy (with no active workspace:
+  "Select an active workspace before using this item in Console.") and
+  offers no link, never naming a button that is not on screen. Pressing `c`
+  while the load fence blocks Resume says that same sentence as a message
+  rather than doing nothing. The rail's "Use in Console" keeps its own
+  pressable-with-reason grammar: it acts on a SET whose members can be
+  blocked for different reasons, so no single link would unblock it.
+- **The reader takes the width once a conversation is open.** With nothing
+  loaded the list absorbs the empty reader's columns (the density rule); as
+  soon as a row is open, the split is restored and the reader gets the
+  majority of a wide terminal — measured at 235x52: reader 132 columns,
+  list 49. At 100x30 the rail steps aside and the two panes share the stage
+  (reader 44, list 45); at 60x24 the reader is the single stage.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent
@@ -438,3 +1026,255 @@ in the import pipeline; details and verification pointers are on the
 database pages, pinned pager at 100x30 and 170x48, bounded complete facet
 chooser with an unambiguous "All types" choice, retained stale recovery,
 selection clearing, and metadata-only diagnostics).*
+
+*Verified against fix/media-wave4-d — 2026-09-04 (task-28007 AC#3/AC#4: the
+Select-mode **Analyze** bulk action, its in-list receipt with Retry failed /
+Dismiss, the "N of M already analysed" Skip/Overwrite choice, the disabled
+"○ Analyze" reason, and the stop-notice when a run's screen goes away.
+Verified live at 235x52 with no provider configured, and in real-screen
+tests for the receipt copy and the run itself.)*
+
+*Verified against fix/media-wave4-d @ 759947bb1d — 2026-09-04 (final fix
+round, task-28007: the Skip/Overwrite choice row no longer offers Dismiss
+at the 235x52 reference width — it clipped to "Dism" against the Items
+pane's 36-cell floor — and "Skip them" already is the change-nothing
+outcome; the choice is now also retired on every browse-scope change
+(filter/query, page, type) and on leaving select mode, not just left to
+outlive them. Copy unified on en-US "analyzed"/"analyze" throughout,
+including the receipt string above. Added the Analysis tab's
+**Generate**/**Regenerate** control to this page's Analysis-tab
+description (AC#5) — it was previously undocumented. Verified in
+real-screen tests for the choice row's painted text and its scope-change
+invalidation.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-08 (Library
+phase C, task 2: switching the rail between **Browse Media** and **Browse
+Notes** no longer rebuilds the whole Library screen — the rail, navigation
+bar, footer and both browse canvases stay put and are shown or hidden
+instead. **No on-screen copy, control, or layout changes**; this page is
+re-stamped rather than edited because the switch is now cheaper, not
+different. Measured: the whole-screen rebuild is gone and per-switch widget
+churn more than halves (179 -> 81 mounts on a switch back into Media). The
+switch's *perceived* pause is unchanged so far — what remains of it is the
+canvas repaint, tracked separately. (That "so far" was closed by task 2.5,
+the next stamp: the perceived pause is now roughly halved.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-08 (Library
+phase C, task 2.5: the rail switch between **Browse Media** and **Browse
+Notes** is now roughly twice as fast to settle — the main thread blocks for
+55–73 ms where it blocked for 97–148 ms, measured paired on one machine, six
+runs per side. **One visible change, and it is a removal**: the first time you
+open a route in a session, the Library and Items panes no longer collapse and
+snap back open a moment later. Nothing else on this page moves; the switch is
+cheaper and steadier, not different.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-09 (Library
+phase C, task 3: sixteen of the Media list's controls — the filter box and
+its Clear, Sort and its chooser, the pager's Previous/Next/Retry, select
+mode's All/None and **Review selected**, **Open in viewer**, **Export**,
+**Review these**, and the review-sets control — are now handled by the Media
+list itself rather than by the Library screen. **No on-screen copy, control,
+or layout changes**; this page is re-stamped rather than edited because
+nothing about how these controls look or behave moved. What changed is which
+part of the code answers the press, which also closes a phase-C hazard: a
+control on the Media list you have switched away from can no longer act on
+your behalf.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-09 (Library
+phase C, task 4 — graduation close: **no production or on-screen change; this
+is the net result.** Switching the rail between **Browse Media** and **Browse
+Notes** blocks the main thread for **51–78 ms** where the pre-phase-C screen
+blocked for the 139–380 ms freeze the redesign set out to remove — measured
+base-vs-current on one machine, six interleaved runs per side. Media has
+graduated to a resident canvas; nothing on this page moved.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8; live at 235x52 and 100x30 on a seeded
+profile):
+(1) the Trash heading is **"Local Trash · N items"**, not "Trash (N)" —
+corrected in both places it appeared;
+(2) the Conversations detail is a full **transcript reader** with a
+Read/Info mode row and a "Find in complete transcript…" box, not the
+"title / Messages: N / Updated: age" preview this page described;
+(3) the **F6 heavy-border** claim HOLDS and is unchanged — F6 onto the
+Reader's content box repainted its frame from `┌──┐` to `┏━━┓` in a
+plain-text capture, so critique #8's listing of it as contradicted was
+itself wrong;
+(4) the **select-strip labels** were re-measured at 235x52 and at 100x30
+with the Reader open — "0 selected", "Select all 11 shown", "Clear",
+"○ Export", "○ Review", "○ Analyze", "○ Delete" and "Done" all painted in
+full, with no clipping. Clipping of the bulk toolbar below 110 columns
+remains tracked as task-15140; this page makes no wider claim.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32060:
+**s** now enters Select mode from any focused Items row, in every layout
+that shows the list beside the Reader — it used to be inert (and drop its
+footer chip) wherever the Reader still had a real exit, e.g. the
+Library-collapsed layout at 100x30. The bulk-delete confirm sentence also
+wraps instead of clipping at the Items pane's narrowest, which is 32 cells,
+not the 36 the list canvas used to claim.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32065: at
+60x24 the Media stage now paints the Items list plus a **‹ Library** control
+instead of an empty Reader between two collapsed-pane grips; the control
+returns to the rail and comes back when the rail is collapsed again — all three
+live in tmux at 60x24. task-32067: the conversation reader says "Loaded 🚀
+Launch checklist · 5 of 5 messages · complete." and heads messages "user · 4h",
+and a 6-of-6 list's pager reads "1-6 of 6" with no page counter and no
+Previous/Next. task-32068: a plain PDF whose stored author is the literal
+"Unknown" paints no byline, and its "No Markdown formatting to render" line is
+in Info — both live at 100x30. task-32070: after a rail search at 235x52 the
+footer is one row, and select mode lists "space toggle selection | s done
+selecting" the moment it is entered.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32065,
+fix round 2: the below-64 reset above is bounded to that band. At an
+ordinary width (100 columns, say) Library and Items do not always both fit
+beside the Reader either, so opening Library with its own grip can close
+Items the same way — a deliberate choice, not the below-64 emergency. The
+round-1 fix cleared that choice too on the next "Browse Media" press; it now
+survives re-entry at ordinary widths, and only resets below 64 columns.)*
+
+*Verified against fix/library-crit8-recovery-copy — 2026-09-08 (task-32056:
+"Open in Console" moved from the bottom of the reader into its header beside
+Read/Info and gained the `c` accelerator; a conversation outside the active
+workspace now states that on the disabled action and offers "Link to
+workspace" right beside it, instead of raising a toast naming a workspace
+with nothing on screen to link into.)*
+
+*Verified against fix/library-crit8-recovery-copy — 2026-09-08, fix round 1
+(task-32056: the blocked reason moved out of the button label into a wrapping
+line beneath it, so it no longer truncates in a narrow reader pane; `c` now
+consults the workspace gate the button consults; a block linking cannot
+resolve says so and withholds the link.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32237:
+the Reader's More strip paints "Move to trash" in full at 235x52, 100x30 and
+60x24. The grid column now holds the longest label, the button's own
+auto-width, and the danger action's 2-cell separation together — at 16 cells
+that separation came out of the button's box and Textual wrapped the label to
+"Move to".)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32234:
+the Rendered|Raw decision is the content sniff alone now. The media-type
+allowlist that ran in front of it (plaintext/markdown/obsidian_note/video/
+audio) meant a `document` or `article` whose text started with a heading
+painted its literal `#` under a note saying there was no Markdown to render.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32222:
+one Escape rule, quoted from the footer chip itself. The page previously
+claimed two different targets in two places while the chip named a third;
+the chip is pinned by test and the guide was not, so the guide now quotes
+`esc focus Items` / `esc focus Library` / `esc close` and a test asserts the
+quotes are the strings the code produces.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32224:
+the page no longer claims a restore leaves the item's modified time alone.
+Measured against a real MediaDatabase: `mark_as_trash` ALREADY stamps `last_modified`
+with the current time, so the re-dating starts at the delete and dropping
+the stamp from `restore_from_trash` alone would change nothing the user
+sees. The behaviour is documented and pinned instead.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32217
+AC#2, media clause: the Analysis tab's actions now sit under the analysis
+text instead of at the pane floor. task-31237's `height: 1fr` fill is
+reversed for this tab only — Read keeps it, because nothing sits under its
+box there. Live at 235x52, 100x30 and 60x24 a 5-line analysis puts "Edit
+analysis" / "○ Regenerate" on the next line. A longer analysis keeps its own
+text scroll and the tab scrolls the last few rows on top of it, so reading to
+the end of the text and carrying on brings the actions on screen.)*
+
+*Verified against fix/library-crit9-media-list — 2026-09-10 (task-32210: the
+type and sort choosers now mark the row your arrow keys are on with the house
+`█` bar instead of a 1.09:1 background tint — live at 235x52 and 100x30, the
+bar moving with each Down and never on two rows at once. task-32213: a
+0-result filter keeps `type:`/`sort:`/Export…/Trash/Select/Review these, and
+a query that misses inside a type names both in the sentence. task-32227: one
+cell now separates the select-strip count from the first action, which used
+to paint "2 selected┃ Select all".)*
+
+*Verified against fix/library-crit9-media-list — 2026-09-10, fix round 1
+(task-32213 review: with the toolbar now surviving a 0-result page, "Review
+these" takes the same `○` marker and reason as "Select" rather than raising a
+toast when pressed, and keyboard focus on a filter miss lands back in the
+filter box instead of on the `type:` chooser.)*
+
+*Verified against fix/library-crit9-grammar — 2026-09-10, fix round 1
+(task-32235: the disabled marker's description no longer points at the
+"✓/○ pair the ingest toggles use" — those toggles are "☐/☑" now, and "○"
+means a blocked or disabled action and nothing else. The legend lives in
+[State glyphs](../library.md#state-glyphs).)*
+
+*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32101: the
+blocked hand-off paints the action name once — the disabled marker moved
+onto the button and the line beneath it carries the refusal sentence — and
+`c` now speaks that same sentence instead of doing nothing; the dead
+"Use as source" handler behind an uncomposed button is deleted.)*
+
+*Verified against fix/library-crit9-shell — 2026-09-10 (task-32228: the
+Conversations footer advertises `/ focus filter` whenever the Filter box is on
+screen — it previously offered only `F6 next pane`, because the chip was
+decided before the reader had resolved its panes; task-32217: with nothing
+loaded the conversation list takes the columns the empty Reader was holding).*
+
+*Verified against fix/library-crit9-shell — 2026-09-10, fix round 1
+(task-32228: the Conversations list takes entry focus on arrival like every
+other browse list, so Up/Down walks its rows and the Escape hop -- "focus
+Items", then "focus Library" -- is live and named from the first frame).*
+
+*Verified against fix/library-crit10-export — 2026-09-11 (task-32362: a
+blocked "○ Find" prints why on the line below the Reader toolbar, matching
+the blocked Generate action's own inline reason one pane over.)*
+
+*Verified against fix/library-crit10-viewer — 2026-09-11 (task-32348: Ctrl+F
+opens the Reader's Find bar and the footer names it, the Highlights and Info
+tabs refuse it with "This tab has no text to search · switch to Read or
+Analysis.", and "t" cannot arm the delete confirmation while Find is open;
+task-32365: a stored analysis beginning "## Key contributions" paints as a
+heading with a Rendered|Raw toggle above it, and a plain-prose analysis is
+offered no toggle).*
+
+*Verified against fix/library-crit10-viewer — 2026-09-11, fix round 1
+(task-32365 review finding 1: submitting a Find query over a rendered
+analysis now shows the stored text, where the matches are actually marked,
+with "○ Rendered" refused and its reason on the line beneath; clearing the
+query restores the rendered view).*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: a
+single-page Trash draws no "Page 1 of 1" and no Previous/Next, and its pager
+block is one row instead of two. Live at 235x52 on a seeded profile with one
+trashed item and with the list filtered to none.)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32347: a
+media row's age is labelled with the field it comes from — "audio · updated
+10m", "updated just now" under a minute — because a bare "10m" on an audio or
+video row read as the item's length, and the value is the item's last-modified
+time, not its ingest time. task-32350: a quiet scope line under the "Media (N)"
+header states the APPLIED scope ("Media · 1 of 11 · filter “notes” · all types ·
+sort: Newest"), drops its "of M" half when the screen's Media total is only a
+lower bound, and carries a "Clear" that drops filter and type and empties the
+filter box — so an unsubmitted draft can no longer be mistaken for what the rows
+came from. task-32364: the Reader's row ends "· loaded" instead of prefixing its
+title with "Loaded ·", and a conversation row reads "5 messages · 16m" with the
+same separator every other Library list uses.)*
+
+*Verified against fix/library-crit10-layout — 2026-09-11, fix round 1
+(task-32107: the refusal/promise sentence renders directly under the action it
+describes, and Undo removes the membership from the workspace its receipt
+names rather than whichever workspace is active when it is pressed; the
+Resume row above no longer claims to stage source context).*
+
+*Verified against fix/library-crit10-layout — 2026-09-11 (task-32107, user
+decision: "Use as source" links a conversation into the active workspace in
+one undoable step, with a receipt and an "Undo link" beside it, and the
+blocks a link cannot resolve keep refusing; task-32361: the reader wins the
+width once a conversation is open — measured live and in tests at 235x52,
+100x30 and 60x24).*
+
+*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
+(task-32302: entering Conversations from the rail lands on its first row and
+keeps its `esc focus Library` chip even while the list is briefly refreshing —
+the rows are painted un-actionable during a reload, and the entry focus now
+waits for them to come back instead of being spent on a row that cannot take
+it. A cold first visit to a large Library can still outlast the arrival window;
+that ceiling is tracked separately.)*

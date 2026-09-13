@@ -19,6 +19,10 @@ from typing import Any, Mapping, Sequence
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Library.ingest_analysis import (
+    NO_ANALYSIS_PROVIDER_NEXT_STEP,
+    NO_ANALYSIS_PROVIDER_REASON,
+)
 from tldw_chatbook.Library.library_rag_answer_service import LibraryRagAnswer
 from tldw_chatbook.Library.library_rag_score_kinds import (
     LIBRARY_RAG_SCORE_KIND_HYBRID_FUSION,
@@ -37,13 +41,21 @@ from tldw_chatbook.Utils.input_validation import (
 )
 
 
+#: task-32236: what a Library provider gate says when no analysis provider
+#: can be called -- resolved from `ingest_analysis`'s two constants so the
+#: Media reader's gate and this one can never grow two different remedies
+#: for one missing key. The panel shows the sentence alone; the env var and
+#: the `[api_settings.*]` table stay in the logged record.
+LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON = (
+    f"{NO_ANALYSIS_PROVIDER_REASON.capitalize()} · {NO_ANALYSIS_PROVIDER_NEXT_STEP}."
+)
+
 LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
     ("notes", "Notes"),
     ("media", "Media"),
     ("conversations", "Conversations"),
     ("prompts", "Prompts"),
     ("workspaces", "Workspaces"),
-    ("collections", "Collections"),
 )
 # The one display-label vocabulary for raw source-type identifiers, shared
 # by the Sources toggles (`scope_toggle_label`, "✓ Notes"/"✓ Media (1)"),
@@ -54,8 +66,8 @@ LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
 # one screen (controller amendment to Task 8, folded into RAG-32).
 _LIBRARY_RAG_SOURCE_TYPE_LABELS: Mapping[str, str] = dict(LIBRARY_RAG_SOURCE_TYPES)
 # The subset of LIBRARY_RAG_SOURCE_TYPES with a real per-source toggle in the
-# Search canvas scope region (B2): workspaces/collections have no retrieval
-# seam of their own yet, so they get no toggle row.
+# Search canvas scope region (B2): workspaces have no retrieval seam of their
+# own yet, so they get no toggle row. Capture search belongs inside Collections.
 LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = (
     "notes",
     "media",
@@ -207,7 +219,15 @@ _OPEN_SOURCE_TYPE_MAP = {
     # its docstring), distinct from the "prompts" scope-toggle/source key
     # used for search selection and the rail row.
     "prompt": "prompt",
+    "prompts": "prompt",
 }
+
+
+def canonical_library_open_source_type(value: Any) -> str:
+    """Return the canonical Library navigation target for a source type."""
+    return _OPEN_SOURCE_TYPE_MAP.get(str(value or "").strip().lower(), "")
+
+
 # Raw provenance `source_type`/`item_type`/`type` identifiers -> the
 # scope-toggle vocabulary `LibraryRagScopeState.selected_source_types`
 # speaks ("notes"/"media"/"conversations"/"prompts"). D4/task-5: a scope
@@ -224,7 +244,7 @@ _OPEN_SOURCE_TYPE_MAP = {
 # rows before they land). That map used to omit "prompt"/"prompts" because
 # nothing on the rag path could emit one; TASK-15020/B2's prompts keyword
 # sub-leg does, so the two maps now agree on prompts as well, and this one
-# keeps the extra "workspace"/"collection" entries no retrieval path emits.
+# keeps the extra "workspace" entries no retrieval path emits.
 # Prompts still have no SEMANTIC seam -- that fact moved to
 # `_SEMANTICALLY_COVERABLE_SOURCE_TYPES`, which is about the vector index
 # rather than about canonicalization.
@@ -240,8 +260,6 @@ _SCOPE_SOURCE_TYPE_MAP = {
     "prompts": "prompts",
     "workspace": "workspaces",
     "workspaces": "workspaces",
-    "collection": "collections",
-    "collections": "collections",
 }
 
 
@@ -865,7 +883,6 @@ class LibraryRagScopeState:
         conversations: Any = 0,
         prompts: Any = 0,
         workspaces: Any = 0,
-        collections: Any = 0,
         selected: Sequence[str] | None = None,
         heading: str = "Source Scope: All local sources",
     ) -> "LibraryRagScopeState":
@@ -877,7 +894,6 @@ class LibraryRagScopeState:
             conversations: Available conversation source count.
             prompts: Available prompt source count.
             workspaces: Available workspace source count.
-            collections: Available collection source count.
             selected: Selected source type IDs. `None` selects all available sources;
                 an empty sequence represents an explicit empty selection.
             heading: User-facing source-scope heading.
@@ -892,7 +908,6 @@ class LibraryRagScopeState:
             "conversations": _coerce_non_negative_int(conversations),
             "prompts": _coerce_non_negative_int(prompts),
             "workspaces": _coerce_non_negative_int(workspaces),
-            "collections": _coerce_non_negative_int(collections),
         }
         available_source_types = {
             source_type for source_type, count in counts.items() if count > 0
@@ -975,7 +990,7 @@ def library_rag_scope_summary(scope: LibraryRagScopeState) -> str:
 
     Only sources with a real toggle row
     (`LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES` -- notes/media/conversations/
-    prompts; workspaces/collections have no retrieval seam of their own
+    prompts; workspaces have no retrieval seam of their own
     yet and are never user-togglable) are considered "available" here, so
     the strip never mentions a source the user has no control over.
 
@@ -1179,6 +1194,22 @@ class LibraryRagQueryState:
         """
         return self.run_action.disabled_reason == _NO_SCOPE_DISABLED_REASON
 
+    @property
+    def blocked_is_no_provider(self) -> bool:
+        """True when the run gate's blocker is a missing analysis provider.
+
+        task-32236: the panel offers an "Open Settings ▸ Providers" action
+        for exactly this blocker. It asks the state, like its two siblings
+        above, rather than comparing the rendered callout text -- the copy
+        is free to change without the action following it around.
+
+        Returns:
+            `True` when the run action is blocked because no analysis
+            provider can be called, `False` for every other state --
+            including every other blocker and the ready state.
+        """
+        return self.run_action.disabled_reason == LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON
+
     @classmethod
     def from_values(
         cls,
@@ -1298,10 +1329,11 @@ class LibraryRagQueryState:
             # config table -- because telling that user to "select a
             # provider/model" names a step they already completed.
             if credential_recovery:
-                disabled_reason = (
-                    f"The configured provider has no usable API key. "
-                    f"{credential_recovery}"
-                )
+                # task-32236 (critique #9 row 5): the Media reader's identical
+                # condition already says this sentence; one missing key must not
+                # produce two remedies, one of them TOML. The structured record
+                # (owner, the config-table remedy) still reaches the log.
+                disabled_reason = LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON
                 owner = "LLM provider credential"
                 next_action = "Add the provider credential, then run again"
                 recovery_action = credential_recovery
@@ -1639,17 +1671,11 @@ class LibraryRagResultRow:
     @property
     def open_source_type(self) -> str:
         """Library canvas target this result can open, or empty string."""
-        raw = (
-            str(
-                self.provenance.get("source_type")
-                or self.provenance.get("item_type")
-                or self.provenance.get("type")
-                or ""
-            )
-            .strip()
-            .lower()
+        return canonical_library_open_source_type(
+            self.provenance.get("source_type")
+            or self.provenance.get("item_type")
+            or self.provenance.get("type")
         )
-        return _OPEN_SOURCE_TYPE_MAP.get(raw, "")
 
     @property
     def scope_source_type(self) -> str:
@@ -1717,9 +1743,8 @@ def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:
     Args:
         rows: Evidence rows to inspect. Read by duck typing (`.score`, and
             optionally `.score_kind`/`.vector_score`) rather than by type:
-            `mcp_inspector._ScoredRow` is a `__slots__ = ("score",)` shim
-            that feeds this same canonical check, so the two newer
-            attributes are read with `getattr` defaults.
+            `mcp_inspector._ScoredRow` carries all three fields and feeds
+            this same canonical check.
 
     Returns:
         Whether every similarity-bearing row among `rows` bands weak.
@@ -2198,7 +2223,6 @@ class LibraryRagPanelState:
             conversations=counts.get("conversations", 0),
             prompts=counts.get("prompts", 0),
             workspaces=counts.get("workspaces", 0),
-            collections=counts.get("collections", 0),
             selected=selected_source_types,
         )
         query_state = LibraryRagQueryState.from_values(

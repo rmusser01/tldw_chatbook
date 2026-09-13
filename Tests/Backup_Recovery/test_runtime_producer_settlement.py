@@ -2,7 +2,9 @@
 
 import pytest
 
+from Tests.Backup_Recovery.test_activation_mcp import _SCRIPT as _MCP_ORDINARY_SETUP
 from Tests.Backup_Recovery.test_activation_mcp import _TRANSPORT
+from Tests.Backup_Recovery.test_mcp_recovery_review import _APPROVED_SETUP
 from Tests.Backup_Recovery.test_activation_network_sync import _SCRIPT as _SYNC_SETUP
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
@@ -87,7 +89,7 @@ async def run():
     await _settle_stage([hook],closed,time.monotonic()+5)
     assert process.returncode is not None
     assert not client.sessions and not client._pending_connections
-    with authority.maintenance(('profile',),1): pass
+    with authority.maintenance(tuple(witness['namespaces']),1): pass
     await _resume_hooks(closed)
     assert len(processes)==1, 'resume replayed a saved executable definition'
     assert await client.connect_to_server('real',sys.executable,['-u','-c',server,'ok'])
@@ -170,13 +172,20 @@ def test_mcp_cancelled_or_uncertain_cleanup_keeps_capture_closed(tmp_path, route
     _run(tmp_path, route, "approved", script=_MCP_REFUSAL)
 
 
-def test_ordinary_idle_mcp_resume_requires_explicit_connect(tmp_path):
-    # Ordinary sources need no restored activation record. Process exit still
-    # must be proven independently of the native namespace assertion fixture.
-    script = _MCP.replace("    assert_held()\n", "    pass\n").replace(
-        "if payload.get('method') in ('initialize','tools/list','tools/call'): assert_held()",
-        "if payload.get('method') in ('initialize','tools/list','tools/call'): pass",
+def _ordinary_mcp_script(script):
+    """Keep transport probes on the actual ordinary lease's observed namespace."""
+    ordinary = _MCP_ORDINARY_SETUP.split("events=[]")[0]
+    ordinary += (
+        "\nwith storage.acquire_storage(selector) as lease:\n"
+        " witness={'namespaces':lease.execution_scope()[1]}\n"
     )
+    assert script.startswith(_APPROVED_SETUP)
+    return ordinary + script[len(_APPROVED_SETUP) :]
+
+
+def test_ordinary_idle_mcp_resume_requires_explicit_connect(tmp_path):
+    # Use actual ordinary sources while retaining the same native-hold probes.
+    script = _ordinary_mcp_script(_MCP)
     _run(tmp_path, "success", "ordinary", script=script)
 
 
@@ -248,7 +257,7 @@ for line in sys.stdin:
 
 
 _MONITOR_BUSY = r"""
-import asyncio,sys,time
+import asyncio,sys,threading,time
 from Tests.network_guard import install,blocked_attempts
 install()
 for name in ('sounddevice','pyaudio'): sys.modules[name]=None
@@ -279,10 +288,24 @@ async def main():
  requested=True
  original_request=storage._local_pause_requested
  storage._local_pause_requested=lambda:requested
- original_settle=maintenance.RuntimeMaintenance.settle_producers
- async def short_settle(self,deadline):
-  return await original_settle(self,time.monotonic()+.03)
- maintenance.RuntimeMaintenance.settle_producers=short_settle
+ native_entered,native_release=threading.Event(),threading.Event()
+ retrying=asyncio.Event()
+ original_readmit=maintenance._readmit_native_holds
+ def held_readmit(holds):
+  original_readmit(holds)
+  # Deliver cancellation during the real readmission wait, then retry the
+  # still-busy sync hook before releasing its accepted operation.
+  if sys.argv[2]=='cancel' and not native_entered.is_set():
+   native_entered.set()
+   assert native_release.wait(5)
+ maintenance._readmit_native_holds=held_readmit
+ manual_type=type(app.manual_sync_control_service)
+ original_drain=manual_type._maintenance_drain
+ async def short_drain(self,deadline):
+  if native_release.is_set(): retrying.set()
+  # Earlier app owners keep their normal deadline; this is the busy producer.
+  return await original_drain(self,min(deadline,time.monotonic()+.03))
+ manual_type._maintenance_drain=short_drain
  monitoring=asyncio.create_task(maintenance.monitor_app(app))
  try:
   for _ in range(500):
@@ -293,9 +316,12 @@ async def main():
   assert app.manual_sync_control_service._producer_lifetime.closed
   assert not accepted.done()
   if sys.argv[2]=='cancel':
+   assert await asyncio.to_thread(native_entered.wait,5)
    monitoring.cancel()
    await asyncio.sleep(.03)
    assert not monitoring.done()
+   native_release.set()
+   await asyncio.wait_for(retrying.wait(),5)
   requested=False
   release.set()
   assert (await accepted).status=='success'
@@ -305,12 +331,12 @@ async def main():
   assert not app.manual_sync_control_service._producer_lifetime.closed
   assert app._backup_runtime_maintenance is None
   if sys.argv[2]=='cancel':
-   try: await monitoring
+   try: await asyncio.wait_for(asyncio.shield(monitoring),3)
    except asyncio.CancelledError: pass
    else: raise AssertionError('monitor swallowed cancellation')
   else: assert not monitoring.done()
  finally:
-  requested=False; release.set()
+  requested=False; release.set(); native_release.set()
   await accepted
   monitoring.cancel()
   try: await monitoring
@@ -322,6 +348,8 @@ async def main():
    await app._shutdown_app_owned_lifecycles()
    await app.tts_service.close()
   storage._local_pause_requested=original_request
+  maintenance._readmit_native_holds=original_readmit
+  manual_type._maintenance_drain=original_drain
 asyncio.run(main())
 assert not blocked_attempts()
 print('retired and reopened')
@@ -334,12 +362,17 @@ def test_monitor_retries_failed_resume_until_accepted_sync_settles(tmp_path, sta
 
 
 def test_remote_upper_and_server_tail_finish_before_storage_pause(tmp_path):
-    from Tests.Backup_Recovery.test_activation_mcp_remote import _SCRIPT
-
     script = (
-        _SCRIPT.split("events = []")[0]
+        _APPROVED_SETUP
         + r"""
 import time
+from tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService
+from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget,SectionCapabilityFlags
+target_store=plane.target_store
+context_store=plane.context_store
+target_store.save_targets([ConfiguredServerTarget(
+ server_id='server-a',label='Server A',base_url='https://blocked.invalid/api',is_default=True,
+)])
 from tldw_chatbook.Backup_Recovery.runtime_maintenance import _bind,_settle_stage,_resume_hooks
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 entered,release=asyncio.Event(),asyncio.Event()
@@ -352,13 +385,16 @@ async def bootstrap_context(client):
 async def probe(**kwargs): return SectionCapabilityFlags(overview=True),{}
 server._bootstrap_access_context=bootstrap_context
 server._probe_section_capabilities=probe
-plane=UnifiedMCPControlPlaneService(target_store=target_store,context_store=context_store,
- local_service=SimpleNamespace(store=SimpleNamespace(path=local_path)),server_service=server)
-plane._permission_store=permission_store
+plane.server_service=server
 before=target_store.path.read_bytes(),context_store.path.read_bytes()
 async def run():
  accepted=asyncio.create_task(plane.select_server_target('server-a'))
- await entered.wait()
+ entering=asyncio.create_task(entered.wait())
+ done,_=await asyncio.wait((accepted,entering),timeout=5,return_when=asyncio.FIRST_COMPLETED)
+ if accepted in done:
+  await accepted
+  raise AssertionError('remote selection returned before the held native API')
+ assert entering in done,'remote selection never reached the native API'
  closed=[]
  upper=_bind(plane,'MCP.unified_control_plane_service','UnifiedMCPControlPlaneService')
  waiting=asyncio.create_task(_settle_stage([upper],closed,time.monotonic()+3))
@@ -372,7 +408,7 @@ async def run():
  assert target_store.path.read_bytes()!=before[0]
  assert context_store.path.read_bytes()!=before[1]
  await _settle_stage([_bind(server,'MCP.server_unified_service','ServerUnifiedMCPService')],closed,time.monotonic()+1)
- with authority.maintenance(('profile',),1): pass
+ with authority.maintenance(tuple(witness['namespaces']),1): pass
  await _resume_hooks(closed)
  await plane.select_server_target('server-a')
 asyncio.run(run())
@@ -411,7 +447,7 @@ async def run():
  await _settle_stage([_bind(local,'MCP.local_control_service','LocalMCPControlService')],closed,time.monotonic()+1)
  await _settle_stage([_bind(client,'MCP.client','MCPClient')],closed,time.monotonic()+5)
  assert session.process.returncode is not None
- with authority.maintenance(('profile',),1): pass
+ with authority.maintenance(tuple(witness['namespaces']),1): pass
  await _resume_hooks(closed)
  # Exercise the original user-facing connect route after reverse resume.
  await plane.connect_local_profile('real')
@@ -429,10 +465,7 @@ print('retired and reopened')
 def test_local_upper_route_records_native_result_before_child_pause(tmp_path, state):
     script = _MCP_UPPER
     if state == "ordinary":
-        script = script.replace("    assert_held()\n", "    pass\n").replace(
-            "if payload.get('method') in ('initialize','tools/list','tools/call'): assert_held()",
-            "if payload.get('method') in ('initialize','tools/list','tools/call'): pass",
-        )
+        script = _ordinary_mcp_script(script)
     _run(tmp_path, "upper", state, script=script)
 
 

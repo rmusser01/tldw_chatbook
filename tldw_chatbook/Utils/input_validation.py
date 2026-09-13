@@ -2,16 +2,856 @@
 Input validation utilities for secure user input handling.
 """
 
-import re
 import ipaddress
+import math
+import re
 import time
-from typing import Union, Optional
+import unicodedata
+from collections.abc import Mapping
+from itertools import islice
+from typing import Any, Literal, Optional, TypeVar, Union
 from urllib.parse import urlparse
 
-from ..Metrics.metrics_logger import log_counter, log_histogram
+import regex
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+)
+from pydantic import (
+    ValidationError as PydanticValidationError,
+)
 
+from ..Metrics.metrics_logger import log_counter, log_histogram
+from .reasoning_config import REASONING_HISTORY_MODES
 
 PROVIDER_API_KEY_MAX_LENGTH = 4096
+CONSOLE_DRAFT_MAX_LENGTH = 100_000
+CONSOLE_FORK_TITLE_MAX_LENGTH = 60
+CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
+CONSOLE_CHARACTER_QUERY_MAX_LENGTH = 200
+RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
+RAW_CLI_TIMEOUT_MAX_SECONDS = 300.0
+_VLLM_DRAFT_INPUT_LIMITS = {
+    "profile_name": 120,
+    "python_environment": 4096,
+    "hugging_face_model": 96,
+    "local_model_directory": 4096,
+    "bind_address": 255,
+    "existing_server_url": 2048,
+    "port": 5,
+    "tensor_parallel_size": 10,
+    "maximum_model_length": 10,
+    "gpu_memory_utilization": 32,
+}
+TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS = 1
+TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS = 64
+TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
+_EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
+
+
+def validate_tts_inference_device(value: object) -> str:
+    """Admit an exact device family for the opt-in TTS qualification runner.
+
+    Args:
+        value: Candidate device family, without coercion or ordinal expansion.
+
+    Returns:
+        The validated cpu, mps or cuda value.
+
+    Raises:
+        ValueError: The value is not a supported device family.
+    """
+    if not isinstance(value, str) or value not in ("cpu", "mps", "cuda"):
+        raise ValueError("device must be cpu, mps, or cuda")
+    return value
+
+
+class ReasoningHistorySelectorInput(BaseModel):
+    """Strict boundary for a Console reasoning-history selector event.
+
+    Attributes:
+        allow_inherit: Whether the per-target reset choice is accepted.
+        value: Exact selector value received from the UI event.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    allow_inherit: bool = False
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def _validate_value(cls, value: str, info: ValidationInfo) -> str:
+        allowed = set(REASONING_HISTORY_MODES)
+        if info.data.get("allow_inherit") is True:
+            allowed.add("inherit")
+        if value not in allowed:
+            raise ValueError("invalid reasoning history selector value")
+        return value
+
+
+def validate_reasoning_history_selector(
+    value: object,
+    *,
+    allow_inherit: bool = False,
+) -> str:
+    """Validate one reasoning-history selector value without coercion.
+
+    Args:
+        value: Candidate Textual selector value.
+        allow_inherit: Whether the per-target ``inherit`` choice is accepted.
+
+    Returns:
+        The exact validated selector value.
+
+    Raises:
+        ValueError: If the value has the wrong type or is not an allowed choice.
+    """
+
+    try:
+        return ReasoningHistorySelectorInput.model_validate(
+            {"value": value, "allow_inherit": allow_inherit}
+        ).value
+    except PydanticValidationError:
+        raise ValueError("reasoning history selector value is invalid") from None
+
+
+class ConversationResumeInput(BaseModel):
+    """Strict exact identity accepted by Console resume navigation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    conversation_id: str = Field(min_length=1, max_length=256)
+
+    @field_validator("conversation_id", mode="before")
+    @classmethod
+    def _exact_identity(cls, value: object) -> str:
+        if type(value) is not str or value != value.strip():
+            raise ValueError("Console conversation identity is invalid")
+        return value
+
+
+def validate_conversation_resume_id(value: object) -> str:
+    """Validate an exact persisted identity without normalizing its spelling.
+
+    Args:
+        value: Conversation identity received at a navigation boundary.
+
+    Returns:
+        The unchanged nonblank identity, at most 256 characters.
+
+    Raises:
+        ValueError: If the type, whitespace or length violates the contract.
+    """
+    try:
+        return ConversationResumeInput.model_validate(
+            {"conversation_id": value}
+        ).conversation_id
+    except PydanticValidationError:
+        raise ValueError("Console conversation identity is invalid") from None
+
+
+class ConversationArchiveScopeInput(BaseModel):
+    """Strict shared scope for local conversation lifecycle queries."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    scope: Literal["active", "archived", "all"]
+
+
+def validate_conversation_archive_scope(
+    value: object,
+) -> Literal["active", "archived", "all"]:
+    """Return an exact supported conversation archive scope without coercion.
+
+    Args:
+        value: Candidate scope from UI controls, saved navigation, or storage calls.
+
+    Returns:
+        The validated active, archived, or all scope.
+
+    Raises:
+        ValueError: If the value is not an exact supported scope string.
+    """
+    try:
+        return ConversationArchiveScopeInput.model_validate({"scope": value}).scope
+    except PydanticValidationError:
+        raise ValueError("archive_scope must be active, archived, or all.") from None
+
+
+class WorkspaceNameInput(BaseModel):
+    """WorkspaceRecord-compatible name: strict text, trimmed and nonblank.
+
+    Workspace names are display text, not filesystem paths. Existing workspace
+    policy does not impose a length limit or character blacklist.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, str_strip_whitespace=True
+    )
+
+    name: str = Field(min_length=1)
+
+
+def validate_workspace_name(value: object) -> str:
+    """Validate a workspace display name without changing existing naming policy.
+
+    Args:
+        value: Candidate user-facing workspace name.
+
+    Returns:
+        The trimmed, nonblank name.
+
+    Raises:
+        ValueError: If the name is blank or is not text.
+    """
+    try:
+        return WorkspaceNameInput.model_validate({"name": value}).name
+    except PydanticValidationError:
+        raise ValueError("Workspace name must be non-blank text.") from None
+
+
+class VllmDraftInputEvent(BaseModel):
+    """Strict lexical boundary for one editable vLLM setup control."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    control_id: Literal[
+        "profile_name",
+        "python_environment",
+        "hugging_face_model",
+        "local_model_directory",
+        "bind_address",
+        "existing_server_url",
+        "port",
+        "tensor_parallel_size",
+        "maximum_model_length",
+        "gpu_memory_utilization",
+    ]
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def _validate_value(cls, value: str, info: ValidationInfo) -> str:
+        control_id = info.data.get("control_id")
+        limit = _VLLM_DRAFT_INPUT_LIMITS.get(control_id)
+        if limit is None or len(value) > limit:
+            raise ValueError("invalid vLLM setup value")
+        if any(unicodedata.category(character) == "Cc" for character in value):
+            raise ValueError("invalid vLLM setup value")
+        return value
+
+
+def validate_vllm_draft_input(control_id: object, value: object) -> str:
+    """Return one exact, bounded vLLM draft edit without semantic coercion.
+
+    Args:
+        control_id: Stable identifier for the editable setup control.
+        value: Candidate Textual input value.
+
+    Returns:
+        The exact validated string, including syntactically partial edits.
+
+    Raises:
+        ValueError: If the identifier, type, length, or characters are invalid.
+    """
+
+    try:
+        return VllmDraftInputEvent.model_validate(
+            {"control_id": control_id, "value": value}
+        ).value
+    except PydanticValidationError:
+        raise ValueError("vLLM setup value is invalid") from None
+
+
+class ToolArgumentsInput(BaseModel):
+    """Strict shared boundary for an externally supplied tool argument object."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    arguments: dict[str, Any]
+
+    @field_validator("arguments", mode="before")
+    @classmethod
+    def _validate_arguments(cls, value: object) -> dict[str, Any]:
+        if type(value) is not dict:
+            raise ValueError("tool arguments must be a JSON object")
+        _validate_strict_json_value(value, path="$", active_containers=set())
+        return value
+
+
+def validate_tool_arguments(value: object) -> dict[str, Any]:
+    """Validate one strict JSON-object tool payload through the shared model.
+
+    Args:
+        value: Candidate externally supplied tool arguments.
+
+    Returns:
+        The validated JSON object without scalar coercion.
+
+    Raises:
+        ValueError: If the payload is not a strict finite JSON object.
+    """
+    try:
+        return ToolArgumentsInput.model_validate({"arguments": value}).arguments
+    except PydanticValidationError as exc:
+        first = exc.errors(include_url=False)[0]
+        context_error = first.get("ctx", {}).get("error")
+        message = str(context_error or first.get("msg") or "invalid tool arguments")
+        if message.startswith("Value error, "):
+            message = message.removeprefix("Value error, ")
+        raise ValueError(message) from None
+
+
+class CanvasGuideArgumentsInput(BaseModel):
+    """Strict, closed arguments for the model-visible Canvas guide tool.
+
+    Attributes:
+        topic: Exact packaged documentation topic, without coercion.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    topic: Literal["basics", "controls", "mermaid", "repair"]
+
+    @field_validator("topic", mode="before")
+    @classmethod
+    def _exact_topic(cls, value: object) -> str:
+        if type(value) is not str:
+            raise ValueError("invalid topic type")
+        return value
+
+
+def validate_canvas_guide_arguments(value: object) -> dict[str, str]:
+    """Validate guide arguments without normalizing or echoing raw input.
+
+    Args:
+        value: Untrusted model-issued tool arguments.
+
+    Returns:
+        A new dictionary containing only the validated topic.
+
+    Raises:
+        ValueError: If arguments are not an exact dictionary with one valid topic.
+    """
+    if type(value) is not dict:
+        raise ValueError("invalid Canvas guide arguments") from None
+    try:
+        return {"topic": CanvasGuideArgumentsInput.model_validate(value).topic}
+    except PydanticValidationError:
+        raise ValueError("invalid Canvas guide arguments") from None
+
+
+class CanvasBridgeWireInput(BaseModel):
+    """Strict source-private shape for one untrusted Canvas bridge envelope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    version: str = Field(repr=False)
+    request_id: str = Field(repr=False)
+    kind: str = Field(repr=False)
+    value: Any = Field(repr=False)
+
+
+def validate_canvas_bridge_wire(value: object) -> CanvasBridgeWireInput:
+    """Validate the closed Canvas bridge envelope without semantic coercion.
+
+    Args:
+        value: Candidate browser-to-shell request mapping.
+
+    Returns:
+        A frozen envelope containing the exact four supplied field values.
+
+    Raises:
+        ValueError: If the value is not a mapping or its closed field shape and
+            scalar types are invalid.
+    """
+
+    if not isinstance(value, Mapping):
+        # TRY004: this public wire adapter intentionally exposes ValueError to
+        # callers (including the Canvas gateway) for every rejected payload.
+        raise ValueError("Canvas bridge request must be an object")  # noqa: TRY004
+    if len(value) > len(CanvasBridgeWireInput.model_fields):
+        raise ValueError("Canvas bridge request contains unknown fields") from None
+    try:
+        return CanvasBridgeWireInput.model_validate(dict(value))
+    except PydanticValidationError as exc:
+        error_types = {
+            error["type"]
+            for error in exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            )
+        }
+        if "extra_forbidden" in error_types:
+            reason = "Canvas bridge request contains unknown fields"
+        elif "missing" in error_types:
+            reason = "Canvas bridge request is missing fields"
+        else:
+            reason = "Canvas bridge request fields are invalid"
+        raise ValueError(reason) from None
+
+
+def _validate_strict_json_value(
+    value: object,
+    *,
+    path: str,
+    active_containers: set[int],
+) -> None:
+    value_type = type(value)
+    if value is None or value_type in (str, bool, int):
+        return
+    if value_type is float:
+        if not math.isfinite(value):
+            raise ValueError(f"JSON number at {path} must be finite")
+        return
+    if value_type is list:
+        _validate_strict_json_container(
+            value,
+            path=path,
+            active_containers=active_containers,
+        )
+        try:
+            for index, item in enumerate(value):
+                _validate_strict_json_value(
+                    item,
+                    path=f"{path}[{index}]",
+                    active_containers=active_containers,
+                )
+        finally:
+            active_containers.remove(id(value))
+        return
+    if value_type is dict:
+        _validate_strict_json_container(
+            value,
+            path=path,
+            active_containers=active_containers,
+        )
+        try:
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise ValueError(f"JSON object key at {path} must be a string")
+                _validate_strict_json_value(
+                    item,
+                    path=f"{path}.{key}",
+                    active_containers=active_containers,
+                )
+        finally:
+            active_containers.remove(id(value))
+        return
+    raise ValueError(f"value at {path} is not a JSON value")
+
+
+def _validate_strict_json_container(
+    value: object,
+    *,
+    path: str,
+    active_containers: set[int],
+) -> None:
+    marker = id(value)
+    if marker in active_containers:
+        raise ValueError(f"JSON value at {path} contains a circular reference")
+    active_containers.add(marker)
+
+
+def derive_console_session_title(draft: str, *, max_length: int) -> str:
+    """Load the Console title helper lazily to keep validation imports acyclic."""
+    from tldw_chatbook.Chat.console_chat_models import (
+        derive_console_session_title as derive_title,
+    )
+
+    return derive_title(draft, max_length=max_length)
+
+
+def validate_console_fork_title(value: object) -> str:
+    """Return one normalized, bounded Console fork title.
+
+    Args:
+        value: Raw value received from the Console naming dialog.
+
+    Returns:
+        A nonblank title normalized by the shared Console title helper.
+
+    Raises:
+        ValueError: If ``value`` is not text or normalizes to blank.
+    """
+
+    if type(value) is not str:
+        raise ValueError("Fork title must be text.")
+    normalized = derive_console_session_title(
+        value,
+        max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
+    )
+    if not normalized:
+        raise ValueError("Fork title cannot be blank.")
+    return normalized
+
+
+class ConsoleForkTitleInput(BaseModel):
+    """Strict shared validation boundary for the Console fork naming dialog."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    title: str = Field(min_length=1, max_length=CONSOLE_FORK_TITLE_MAX_LENGTH)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _normalize_title(cls, value: object) -> str:
+        return validate_console_fork_title(value)
+
+
+class ConsoleSwitcherQueryInput(BaseModel):
+    """Strict shared boundary for the local Ctrl+K search query."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    query: str = Field(max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH)
+
+
+class ConsoleCharacterQueryInput(ConsoleSwitcherQueryInput):
+    """Character Keyword input constrained to the repository's raw query cap."""
+
+    query: str = Field(max_length=CONSOLE_CHARACTER_QUERY_MAX_LENGTH)
+
+    @field_validator("query")
+    @classmethod
+    def _reject_controls(cls, value: str) -> str:
+        if any(unicodedata.category(character) == "Cc" for character in value):
+            raise ValueError("Character search cannot contain control characters")
+        return value
+
+
+def validate_console_character_query(value: object) -> str:
+    """Validate raw Character Keyword text before trimming or reading storage."""
+    try:
+        return ConsoleCharacterQueryInput.model_validate({"query": value}).query
+    except PydanticValidationError:
+        raise ValueError(
+            "Character search: at most 200 characters, without control characters."
+        ) from None
+
+
+def validate_console_switcher_query(value: object) -> str:
+    """Return one bounded Console switcher query without normalization.
+
+    Args:
+        value: Raw value supplied by the Textual search field.
+
+    Returns:
+        The exact validated query string.
+
+    Raises:
+        ValueError: If the value is not text or exceeds the query limit.
+    """
+    try:
+        return ConsoleSwitcherQueryInput.model_validate({"query": value}).query
+    except PydanticValidationError:
+        raise ValueError(
+            "Switcher search must be text containing at most "
+            f"{CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters."
+        ) from None
+
+
+class TerminalSessionNameInput(BaseModel):
+    """Strict shared boundary for a persistent-terminal display name."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    name: str
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _normalize_name(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("terminal session name must be text")
+        if len(value) > TERMINAL_SESSION_NAME_MAX_CODEPOINTS:
+            raise ValueError(
+                "terminal session name must contain at most "
+                f"{TERMINAL_SESSION_NAME_MAX_CODEPOINTS} code points"
+            )
+        normalized = unicodedata.normalize("NFC", value.strip())
+        if len(normalized) > TERMINAL_SESSION_NAME_MAX_CODEPOINTS:
+            raise ValueError(
+                "terminal session name must contain at most "
+                f"{TERMINAL_SESSION_NAME_MAX_CODEPOINTS} code points"
+            )
+        grapheme_count = sum(
+            1
+            for _match in islice(
+                _EXTENDED_GRAPHEME_PATTERN.finditer(normalized),
+                TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS + 1,
+            )
+        )
+        if not (
+            TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS
+            <= grapheme_count
+            <= TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS
+        ):
+            raise ValueError(
+                "terminal session name must contain "
+                f"{TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS} to "
+                f"{TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS} characters"
+            )
+        if any(
+            unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+            for character in normalized
+        ):
+            raise ValueError("terminal session name must not contain controls")
+        if "[" in normalized or "]" in normalized:
+            raise ValueError("terminal session name must not contain markup")
+        return normalized
+
+
+TerminalPasteViolation = Literal["too_large", "prohibited_control"]
+
+
+class TerminalPasteInput(BaseModel):
+    """Strict shared boundary for one terminal paste offer."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    text: str = Field(repr=False)
+    bracketed: bool
+
+    def classify(self) -> tuple[TerminalPasteViolation | None, bytes]:
+        """Classify paste content and return its replacement-encoded payload.
+
+        Returns:
+            A content-free violation category and payload bytes. The payload is
+            empty when a violation is present.
+        """
+        from ..Terminal.contracts import MAX_PASTE_BYTES
+
+        if len(self.text) > MAX_PASTE_BYTES:
+            return "too_large", b""
+        for character in self.text:
+            codepoint = ord(character)
+            if codepoint < 0x20 and character not in "\t\n\r":
+                return "prohibited_control", b""
+            if 0x7F <= codepoint <= 0x9F:
+                return "prohibited_control", b""
+        payload = self.text.encode("utf-8", "replace")
+        if len(payload) > MAX_PASTE_BYTES:
+            return "too_large", b""
+        return None, payload
+
+
+class TerminalKeyInput(BaseModel):
+    """Strict shared boundary for encoded terminal key bytes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    data: bytes = Field(repr=False)
+
+
+class TerminalReplyInput(BaseModel):
+    """Strict shared boundary for code-owned terminal reply bytes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    data: bytes = Field(repr=False)
+
+
+class TerminalOutputInput(BaseModel):
+    """Strict shared boundary for terminal backend output bytes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    data: bytes = Field(repr=False)
+
+
+class TerminalResizeInput(BaseModel):
+    """Strict shared boundary for terminal resize dimensions."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    columns: int
+    rows: int
+
+    @field_validator("columns")
+    @classmethod
+    def _validate_columns(cls, value: int) -> int:
+        from ..Terminal.contracts import MAX_COLUMNS, MIN_COLUMNS
+
+        if not MIN_COLUMNS <= value <= MAX_COLUMNS:
+            raise ValueError("terminal columns are outside contract")
+        return value
+
+    @field_validator("rows")
+    @classmethod
+    def _validate_rows(cls, value: int) -> int:
+        from ..Terminal.contracts import MAX_ROWS, MIN_ROWS
+
+        if not MIN_ROWS <= value <= MAX_ROWS:
+            raise ValueError("terminal rows are outside contract")
+        return value
+
+
+_TerminalBytesInput = TypeVar(
+    "_TerminalBytesInput",
+    TerminalKeyInput,
+    TerminalReplyInput,
+    TerminalOutputInput,
+)
+
+
+def _validate_terminal_bytes_input(
+    model_type: type[_TerminalBytesInput],
+    data: object,
+    *,
+    label: str,
+) -> _TerminalBytesInput:
+    """Return one strict bytes model with a content-free type error."""
+    try:
+        return model_type.model_validate({"data": data})
+    except PydanticValidationError:
+        raise TypeError(f"terminal {label} data must be bytes") from None
+
+
+def validate_terminal_key_input(data: object) -> TerminalKeyInput:
+    """Validate encoded terminal key bytes through the shared model.
+
+    Args:
+        data: Candidate encoded key bytes.
+
+    Returns:
+        Strict validated key model.
+
+    Raises:
+        TypeError: If ``data`` is not immutable bytes.
+    """
+    return _validate_terminal_bytes_input(TerminalKeyInput, data, label="key")
+
+
+def validate_terminal_paste_input(
+    text: object, bracketed: object
+) -> TerminalPasteInput:
+    """Validate a terminal paste offer through the shared model.
+
+    Args:
+        text: Candidate paste text.
+        bracketed: Candidate bracketed-paste mode flag.
+
+    Returns:
+        Strict validated paste model.
+
+    Raises:
+        TypeError: If either value has the wrong type.
+    """
+    try:
+        return TerminalPasteInput.model_validate({"text": text, "bracketed": bracketed})
+    except PydanticValidationError:
+        raise TypeError("terminal paste values have invalid types") from None
+
+
+def validate_terminal_reply_input(data: object) -> TerminalReplyInput:
+    """Validate terminal reply bytes through the shared model.
+
+    Args:
+        data: Candidate terminal reply bytes.
+
+    Returns:
+        Strict validated reply model.
+
+    Raises:
+        TypeError: If ``data`` is not immutable bytes.
+    """
+    return _validate_terminal_bytes_input(TerminalReplyInput, data, label="reply")
+
+
+def validate_terminal_output_input(data: object) -> TerminalOutputInput:
+    """Validate terminal backend output through the shared model.
+
+    Args:
+        data: Candidate backend output bytes.
+
+    Returns:
+        Strict validated output model.
+
+    Raises:
+        TypeError: If ``data`` is not immutable bytes.
+    """
+    return _validate_terminal_bytes_input(TerminalOutputInput, data, label="output")
+
+
+def validate_terminal_resize_input(
+    columns: object, rows: object
+) -> TerminalResizeInput:
+    """Validate terminal dimensions through the shared model.
+
+    Args:
+        columns: Candidate terminal width.
+        rows: Candidate terminal height.
+
+    Returns:
+        Strict validated resize model.
+
+    Raises:
+        TypeError: If either dimension is not an integer.
+        ValueError: If either dimension is outside the terminal contract.
+    """
+    if type(columns) is not int or type(rows) is not int:
+        raise TypeError("terminal dimensions must be integers")
+    try:
+        return TerminalResizeInput.model_validate({"columns": columns, "rows": rows})
+    except PydanticValidationError:
+        raise ValueError("terminal dimensions are outside contract") from None
+
+
+class TerminalEnvironmentInput(BaseModel):
+    """Strict shared boundary for persistent-terminal environment sources."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    platform_name: Literal["posix", "nt"]
+    ambient: dict[str, str]
+    account: dict[str, str]
+    system: dict[str, str]
+
+
+class RawShellExecInput(BaseModel):
+    """Strict shared boundary for model-authored raw-shell arguments."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    command: str = Field(min_length=1)
+    shell: Literal["auto", "bash", "powershell", "cmd"] = "auto"
+    initial_directory: str | None = None
+    timeout_seconds: float = Field(
+        default=RAW_CLI_TIMEOUT_MAX_SECONDS,
+        gt=0,
+        le=RAW_CLI_TIMEOUT_MAX_SECONDS,
+    )
+
+    @field_validator("command")
+    @classmethod
+    def _validate_command(cls, value: str) -> str:
+        return validate_raw_cli_command(value)
+
+    @field_validator("initial_directory", mode="before")
+    @classmethod
+    def _reject_explicit_null_directory(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("initial_directory must be a string when provided")
+        return value
+
+
+class SkillsListInput(BaseModel):
+    """Strict shared boundary for exact local Skills-list requests."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    limit: int = Field(gt=0)
+    offset: int = Field(ge=0)
+    query: str = ""
+    sort: Literal["name", "status"] = "name"
+
+    @field_validator("sort", mode="before")
+    @classmethod
+    def _normalize_sort(cls, value: object) -> object:
+        return value.strip().lower() if type(value) is str else value
 
 
 def validate_email(email: str) -> bool:
@@ -62,6 +902,27 @@ def validate_username(username: str, min_length: int = 3, max_length: int = 50) 
     return result
 
 
+def validate_env_var_reference(name: str) -> bool:
+    """Validate an environment-variable reference name (credential lookup key).
+
+    Covers user-entered ``api_key_env``-style references: a portable
+    environment-variable name (POSIX ``[A-Za-z_][A-Za-z0-9_]*``) of at most
+    128 characters. The value is only ever used as an ``os.environ`` lookup
+    key, so shape validation exists to catch typos and stray punctuation,
+    not to defuse an injection surface.
+
+    Args:
+        name: Candidate variable name (already stripped by the caller).
+
+    Returns:
+        ``True`` when ``name`` is a well-formed environment-variable name;
+        ``False`` otherwise (never raises).
+    """
+    if not name or len(name) > 128:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
+
+
 def validate_ip_address(ip: str) -> bool:
     """Validate IP address (IPv4 or IPv6)."""
     start_time = time.time()
@@ -87,6 +948,107 @@ def validate_ip_address(ip: str) -> bool:
     except ValueError:
         log_counter("input_validation_ip_result", labels={"valid": "false"})
         return False
+
+
+def validate_bounded_integer(value: object, *, minimum: int, maximum: int) -> int:
+    """Normalize an integer form value within inclusive bounds.
+
+    Args:
+        value: Integer or integer text, allowing signs and surrounding whitespace.
+        minimum: Inclusive lower bound.
+        maximum: Inclusive upper bound.
+
+    Returns:
+        The validated integer value.
+
+    Raises:
+        ValueError: If the value is not integer text or an integer, is a boolean,
+            or falls outside the bounds.
+    """
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError("Value must be an integer")  # noqa: TRY004 - form validation uses ValueError
+    try:
+        number = int(value)
+    except ValueError:
+        raise ValueError("Value must be an integer") from None
+    if not minimum <= number <= maximum:
+        raise ValueError(f"Value must be between {minimum} and {maximum}")
+    return number
+
+
+class BuddyManagementInput(BaseModel):
+    """Bound raw Buddy form values before resolving selected application identities."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    enabled: bool
+    artwork: str = Field(max_length=256)
+    archive: str = Field(max_length=4096)
+    target: str = Field(max_length=512)
+    persona: str = Field(max_length=256)
+    motion: Literal["dynamic", "static"]
+    speak_responses: bool
+    width: int
+    height: int
+
+    @field_validator("width", "height", mode="before")
+    @classmethod
+    def _dimensions(cls, value: object, info: ValidationInfo) -> int:
+        minimum, maximum = (8, 120) if info.field_name == "width" else (4, 60)
+        return validate_bounded_integer(value, minimum=minimum, maximum=maximum)
+
+
+class BuddyImportPathInput(BaseModel):
+    """Strict raw input for a Buddy pack path before lexical normalization."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    path: str = Field(min_length=1, max_length=4096)
+
+
+def validate_buddy_import_path(value: object) -> str:
+    """Return a stable lexical pack path without probing files or resolving links.
+
+    Args:
+        value: Pasted absolute or current-home-relative path, optionally quoted.
+
+    Returns:
+        Validated absolute path text for both archive review and retry identity.
+
+    Raises:
+        ValueError: Input has an invalid type, length or unsafe path syntax, is a
+            URL, or remains relative after expanding the current home shorthand.
+    """
+    import os
+    from pathlib import Path
+
+    from .path_validation import validate_path_simple
+
+    invalid_path = "Check the path. Enter a local Buddy pack filename."
+    try:
+        entered = BuddyImportPathInput.model_validate({"path": value}).path
+    except PydanticValidationError:
+        raise ValueError(invalid_path) from None
+    entered = entered.strip()
+    if len(entered) >= 2 and entered[0] in {"'", '"'} and entered[-1] == entered[0]:
+        entered = entered[1:-1]
+    if entered.lower().startswith(("http://", "https://", "file://")):
+        raise ValueError(
+            "Download the pack first, then enter its local filesystem path."
+        )
+    # Concatenation preserves the home prefix even for ~// paths. Do not resolve
+    # links or collapse parent components: the native reader owns file authority.
+    if entered.startswith("~/") or (os.name == "nt" and entered.startswith("~\\")):
+        entered = str(Path.home()) + entered[1:]
+    try:
+        path = validate_path_simple(entered, probe_existing=False)
+    except ValueError:
+        raise ValueError(invalid_path) from None
+    if not path.is_absolute():
+        raise ValueError(
+            "Enter an absolute path or a path starting with ~/ to the downloaded pack."
+        )
+    return str(path)
 
 
 def validate_port(port: Union[str, int]) -> bool:
@@ -212,9 +1174,13 @@ def validate_git_repo_url(url: str) -> None:
     if url != url.strip() or any(c.isspace() for c in url):
         raise ValidationError("repo_url must not contain whitespace")
     if "\\" in url or any(ord(c) < 0x20 for c in url):
-        raise ValidationError("repo_url must not contain backslashes or control characters")
+        raise ValidationError(
+            "repo_url must not contain backslashes or control characters"
+        )
     if not url.isprintable():
-        raise ValidationError("repo_url must not contain non-printable/zero-width characters")
+        raise ValidationError(
+            "repo_url must not contain non-printable/zero-width characters"
+        )
     if url.startswith("-"):
         raise ValidationError("repo_url must not start with '-' (git-option injection)")
     try:
@@ -228,8 +1194,12 @@ def validate_git_repo_url(url: str) -> None:
         )
     if not parsed.hostname:
         raise ValidationError("repo_url must include a host")
-    if (parsed.hostname or "").startswith("-") or (parsed.username or "").startswith("-"):
-        raise ValidationError("repo_url host/user must not start with '-' (ssh option injection)")
+    if (parsed.hostname or "").startswith("-") or (parsed.username or "").startswith(
+        "-"
+    ):
+        raise ValidationError(
+            "repo_url host/user must not start with '-' (ssh option injection)"
+        )
 
 
 def validate_git_ref(ref: str) -> None:
@@ -368,6 +1338,72 @@ def validate_text_input(
     return True
 
 
+def validate_navigation_context_text(
+    value: object,
+    *,
+    name: str,
+    max_length: int,
+) -> str:
+    """Validate one bounded, single-line navigation-context string.
+
+    Args:
+        value: External navigation value to validate.
+        name: Safe field label used in validation errors.
+        max_length: Maximum accepted number of characters.
+
+    Returns:
+        The exact validated string without coercion or whitespace changes.
+
+    Raises:
+        ValueError: If the value is blank, unsafe, padded, or out of bounds.
+    """
+
+    if (
+        type(value) is not str
+        or not value
+        or value != value.strip()
+        or not value.isprintable()
+        or not validate_text_input(
+            value,
+            max_length=max_length,
+            allow_html=False,
+        )
+    ):
+        raise ValueError(f"{name} is invalid")
+    return value
+
+
+def validate_navigation_provider_key(value: object) -> str:
+    """Normalize and validate one provider key from navigation context.
+
+    Args:
+        value: External provider label or key.
+
+    Returns:
+        The normalized provider configuration key.
+
+    Raises:
+        ValueError: If the provider cannot be represented by the key contract.
+    """
+
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+    raw_provider = validate_navigation_context_text(
+        value,
+        name="provider",
+        max_length=128,
+    )
+    provider = provider_config_key(raw_provider)
+    allowed = "abcdefghijklmnopqrstuvwxyz0123456789_"
+    if (
+        not provider
+        or not provider[0].isalnum()
+        or any(character not in allowed for character in provider)
+    ):
+        raise ValueError("provider is invalid")
+    return provider
+
+
 def provider_api_key_validation_error(
     api_key: object,
     max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
@@ -448,7 +1484,10 @@ def validate_number_range(
 
         log_counter("input_validation_number_range_result", labels={"valid": "true"})
         return True
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
+        # OverflowError (PR #2624 review): float(10**400) is a valid int
+        # whose float conversion overflows -- a several-hundred-digit
+        # limit from a model caller must be "not numeric", not a crash.
         log_counter(
             "input_validation_number_range_invalid", labels={"reason": "not_numeric"}
         )
@@ -494,6 +1533,63 @@ def sanitize_string(text: str, max_length: int = 1000) -> str:
     )
 
     return sanitized
+
+
+def validate_console_draft(
+    draft: object, *, allow_empty: bool = False
+) -> tuple[str, str | None]:
+    """Validate and sanitize a Console message draft before use.
+
+    Args:
+        draft: Candidate draft value to normalize as text.
+        allow_empty: Whether a blank draft is valid.
+
+    Returns:
+        A pair containing the sanitized draft and an optional user-facing
+        validation error. The draft is empty when validation fails.
+    """
+    raw_draft = str(draft or "")
+    if not raw_draft.strip():
+        if allow_empty:
+            return "", None
+        return "", "Type a message before sending."
+    if not validate_text_input(
+        raw_draft,
+        max_length=CONSOLE_DRAFT_MAX_LENGTH,
+        allow_html=False,
+    ):
+        return "", "Message blocked: remove unsafe markup or shorten your message."
+    clean_draft = sanitize_string(raw_draft, max_length=CONSOLE_DRAFT_MAX_LENGTH)
+    if not clean_draft.strip():
+        if allow_empty:
+            return "", None
+        return "", "Type a message before sending."
+    return clean_draft, None
+
+
+def validate_raw_cli_command(
+    command: object,
+    *,
+    max_bytes: int = RAW_CLI_COMMAND_MAX_BYTES,
+) -> str:
+    """Validate an exact user-authored command without sanitizing it.
+
+    Raw CLI deliberately accepts shell syntax, so this boundary checks only
+    the invariants required before process execution and returns the original
+    text unchanged.
+    """
+    if type(command) is not str or not command.strip():
+        raise ValueError("raw CLI command must not be empty or whitespace")
+    if "\x00" in command:
+        raise ValueError("raw CLI command must not contain NUL")
+    try:
+        command_bytes = len(command.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ValueError("raw CLI command must be valid UTF-8") from exc
+    if command_bytes > max_bytes:
+        limit_kib = max_bytes // 1024
+        raise ValueError(f"raw CLI command exceeds the {limit_kib} KiB UTF-8 limit")
+    return command
 
 
 def validate_json_size(json_str: str, max_size: int = 1024 * 1024) -> bool:

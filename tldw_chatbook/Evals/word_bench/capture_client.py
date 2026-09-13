@@ -14,6 +14,7 @@ from typing import Any, Optional
 import httpx
 from loguru import logger
 
+from ...Utils.tls_trust import build_httpx_async_client
 from .models import CellCapture, CellError, PreflightResult, PromptMode, Target
 from .normalizer import CONTENT_TOKEN_WINDOW, NormalizerError, normalize_logprobs
 
@@ -202,7 +203,7 @@ class WordBenchCaptureClient:
             kwargs: dict[str, Any] = {"timeout": self._timeout}
             if self._transport is not None:
                 kwargs["transport"] = self._transport
-            self._client = httpx.AsyncClient(**kwargs)
+            self._client = build_httpx_async_client(**kwargs)
         return self._client
 
     async def aclose(self) -> None:

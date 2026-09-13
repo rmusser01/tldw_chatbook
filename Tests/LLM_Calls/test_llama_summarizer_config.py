@@ -48,7 +48,7 @@ def captured_post(monkeypatch):
             captured["json"] = json
             return _FakeResponse()
 
-    monkeypatch.setattr(lib.requests, "Session", lambda: _FakeSession())
+    monkeypatch.setattr(lib, "create_default_session", lambda: _FakeSession())
     return captured
 
 
@@ -162,7 +162,7 @@ def test_summarize_with_llama_parses_the_openai_response_shape(monkeypatch):
         def post(self, *_a, **_k):
             return _FakeResponse()
 
-    monkeypatch.setattr(lib.requests, "Session", lambda: _Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
 
     assert lib.summarize_with_llama("text", "Summarize.", api_key=None) == "SUMMARY"
 
@@ -179,7 +179,7 @@ def test_summarize_with_llama_still_parses_the_native_completion_shape(monkeypat
         def post(self, *_a, **_k):
             return _FakeResponse({"content": " NATIVE "})
 
-    monkeypatch.setattr(lib.requests, "Session", lambda: _Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
 
     assert lib.summarize_with_llama("text", "Summarize.", api_key=None) == "NATIVE"
 
@@ -196,7 +196,7 @@ def test_summarize_with_llama_reports_an_unusable_payload(monkeypatch):
         def post(self, *_a, **_k):
             return _FakeResponse({"unexpected": True})
 
-    monkeypatch.setattr(lib.requests, "Session", lambda: _Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
 
     result = lib.summarize_with_llama("text", "Summarize.", api_key=None)
 
@@ -262,7 +262,7 @@ def test_empty_content_failure_names_the_actual_cause(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(lib.requests, "Session", lambda: _Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
 
     result = lib.summarize_with_llama("text", "Summarize.", api_key=None)
 
@@ -309,7 +309,7 @@ def test_budget_and_diagnostic_reach_the_public_analyze_boundary(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(lib.requests, "Session", lambda: _Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
 
     result = analyze(
         input_data="a chunk of packed evidence",

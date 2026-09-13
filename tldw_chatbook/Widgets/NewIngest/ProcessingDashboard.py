@@ -13,7 +13,8 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, ProgressBar, Static
+from textual.widgets import Button, Static
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 
 class ImmediateButton(Button):
@@ -189,7 +190,7 @@ class JobStatusWidget(CaptureSafePostMixin, Widget):
                 yield ImmediateButton("Pause", id=f"pause-{self.job.job_id}")
                 yield ImmediateButton("Resume", id=f"resume-{self.job.job_id}")
                 yield ImmediateButton("Cancel", id=f"cancel-{self.job.job_id}")
-            yield ProgressBar(
+            yield PausableProgressBar(
                 total=100, id=f"progress-{self.job.job_id}", classes="job-progress"
             )
 
@@ -241,7 +242,7 @@ class ProcessingDashboard(CaptureSafePostMixin, Widget):
             with Horizontal(classes="dashboard-header"):
                 yield Static("Processing Dashboard", classes="dashboard-title")
                 yield Static("Idle", id="overall-message", classes="overall-status")
-            yield ProgressBar(total=100, id="overall-progress")
+            yield PausableProgressBar(total=100, id="overall-progress")
             yield Static("Jobs", classes="jobs-title")
             yield Vertical(id="jobs-container")
             yield Static("No active jobs", id="empty-state")

@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 import tldw_chatbook.Chat.local_server_discovery as local_discovery_module
+from tldw_chatbook.Chat.console_provider_endpoints import DEFAULT_LLAMACPP_BASE_URL
 from tldw_chatbook.Chat.local_server_discovery import (
     DEFAULT_LLAMACPP_DISCOVERY_URL,
     DEFAULT_OLLAMA_DISCOVERY_URL,
@@ -57,11 +58,7 @@ def _openai_models_payload(*model_ids: str) -> dict:
         ([" \t\x00"], None),
         ({"data": [{"id": "", "name": "fallback-name"}]}, ("fallback-name",)),
         (
-            {
-                "data": [
-                    {"id": "", "name": "\t", "model": "fallback-model"}
-                ]
-            },
+            {"data": [{"id": "", "name": "\t", "model": "fallback-model"}]},
             ("fallback-model",),
         ),
     ),
@@ -79,11 +76,15 @@ def test_model_ids_require_a_usable_sanitized_identifier(
 def test_candidates_include_wellknown_defaults_first() -> None:
     candidates = build_local_server_candidates({})
 
+    # Stock `llama-server` port (8080) first, then Chatbook's documented
+    # convention (9099), then the stock Ollama port.
     assert [candidate.base_url for candidate in candidates] == [
         DEFAULT_LLAMACPP_DISCOVERY_URL,
+        DEFAULT_LLAMACPP_BASE_URL,
         DEFAULT_OLLAMA_DISCOVERY_URL,
     ]
     assert [candidate.provider_key for candidate in candidates] == [
+        "llama_cpp",
         "llama_cpp",
         "ollama",
     ]
@@ -153,9 +154,7 @@ def test_normalize_and_localhost_helpers() -> None:
 
 def test_normalize_probe_base_url_uses_contract_persistence_shape() -> None:
     assert (
-        normalize_probe_base_url(
-            "http://127.0.0.1:8080/proxy/v1/chat/completions"
-        )
+        normalize_probe_base_url("http://127.0.0.1:8080/proxy/v1/chat/completions")
         == "http://127.0.0.1:8080/proxy"
     )
     assert (
@@ -352,9 +351,7 @@ async def test_probe_success_with_empty_model_list() -> None:
 async def test_probe_accepts_bare_list_string_model_entry() -> None:
     result = await probe_models_endpoint(
         "http://127.0.0.1:9099",
-        http_client=_client(
-            lambda request: httpx.Response(200, json=["model-a"])
-        ),
+        http_client=_client(lambda request: httpx.Response(200, json=["model-a"])),
     )
 
     assert result.ok is True
@@ -382,8 +379,7 @@ async def test_local_probe_rejects_listing_with_only_unusable_identifiers(
     assert result.ok is False
     assert result.model_ids == ()
     assert result.detail == (
-        "No models endpoint at http://127.0.0.1:9099 "
-        "(unrecognized API payload)."
+        "No models endpoint at http://127.0.0.1:9099 (unrecognized API payload)."
     )
 
 
@@ -428,16 +424,13 @@ async def test_probe_rejects_nonempty_listing_without_recognized_entries(
 ) -> None:
     result = await probe_models_endpoint(
         "http://127.0.0.1:9099",
-        http_client=_client(
-            lambda request: httpx.Response(200, json=payload)
-        ),
+        http_client=_client(lambda request: httpx.Response(200, json=payload)),
     )
 
     assert result.ok is False
     assert result.model_ids == ()
     assert result.detail == (
-        "No models endpoint at http://127.0.0.1:9099 "
-        "(unrecognized API payload)."
+        "No models endpoint at http://127.0.0.1:9099 (unrecognized API payload)."
     )
 
 
@@ -466,9 +459,7 @@ async def test_probe_handles_recursive_json_as_bounded_failure(monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_local_probe_accepts_json_body_at_exact_byte_limit() -> None:
     prefix = b'{"data":[]}'
-    body = prefix + b" " * (
-        _EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES - len(prefix)
-    )
+    body = prefix + b" " * (_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES - len(prefix))
 
     result = await probe_models_endpoint(
         "http://127.0.0.1:9099",
@@ -820,6 +811,5 @@ async def test_probe_rejects_non_chat_and_unrecognized_only_listing() -> None:
     assert result.ok is False
     assert result.model_ids == ()
     assert result.detail == (
-        "No models endpoint at http://127.0.0.1:9099 "
-        "(unrecognized API payload)."
+        "No models endpoint at http://127.0.0.1:9099 (unrecognized API payload)."
     )

@@ -18,6 +18,7 @@ real ``ChatScreen`` can break:
 4. **the composer-empty poke**: clearing the draft through the composer's
    own mutation path retries a deferred wake.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -31,6 +32,9 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Console_Modules.fleet import (
+    ConsoleFleetLifecycleController,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -41,6 +45,14 @@ def _attach_real_dbs(app, tmp_path):
     db = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="ui-test")
     app.conversation_local_marks_service = ConversationLocalMarksService(db)
     app.chachanotes_db = db
+    # ConsoleHarness bypasses application startup and mounts its ready screen.
+    app._ui_ready = True
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    app.local_chat_conversation_service = ChatConversationService(db)
+    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+    app.local_chat_dictionary_service = LocalChatDictionaryService(db)
+    if getattr(app, "chat_dictionary_scope_service", None) is not None:
+        app.chat_dictionary_scope_service.local_service = app.local_chat_dictionary_service
     return app.conversation_local_marks_service
 
 
@@ -53,7 +65,7 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
     app = _build_test_app()
     _attach_real_dbs(app, tmp_path)
     order: list[str] = []
-    real_claim = ChatScreen._claim_console_fleet_wake_marks
+    real_claim = ConsoleFleetLifecycleController._claim_console_fleet_wake_marks
     real_sync = ChatScreen._sync_console_native_session_tabs
 
     def recording_claim(self):
@@ -64,7 +76,7 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
         order.append("sync")
         return await real_sync(self)
 
-    ChatScreen._claim_console_fleet_wake_marks = recording_claim
+    ConsoleFleetLifecycleController._claim_console_fleet_wake_marks = recording_claim
     ChatScreen._sync_console_native_session_tabs = recording_sync
     try:
         host = ConsoleHarness(app)
@@ -75,7 +87,7 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
             await _wait_for_selector(console, pilot, "#console-session-surface")
             await pilot.pause()
     finally:
-        ChatScreen._claim_console_fleet_wake_marks = real_claim
+        ConsoleFleetLifecycleController._claim_console_fleet_wake_marks = real_claim
         ChatScreen._sync_console_native_session_tabs = real_sync
     assert "claim" in order, "the mount never ran the wake mark claim"
     assert "sync" in order, (
@@ -109,24 +121,26 @@ async def test_the_mount_claim_seeds_pending_from_mark_and_runs_db(tmp_path):
         )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
+        from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="Research", persist=True)
+        cid = session.persisted_conversation_id
+        assert cid
         runs_db = bridge.runs_db
-        parent_id = runs_db.create_run(
-            conversation_id=session.id, agent_kind="primary"
-        )
+        parent_id = runs_db.create_run(conversation_id=cid, agent_kind="primary")
         runs_db.set_status(parent_id, "done", "turn final")
         child_id = runs_db.create_run(
-            conversation_id=session.id,
+            conversation_id=cid,
             agent_kind="subagent",
             task="long job",
             parent_run_id=parent_id,
         )
-        marks.set_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN)
+        marks.set_mark(cid, ConversationLocalMarksService.FLEET_UNSEEN)
         runs_db.set_status(child_id, "done", "staged answer")
 
-        console._claim_console_fleet_wake_marks()
-        assert controller.fleet_wake.has_pending(session.id), (
-            "the mount-claim seam must turn mark + runs-DB state into a "
-            "pending wake"
+        console._fleet._claim_console_fleet_wake_marks()
+        from Tests.UI.test_console_fleet_wake_ui_freshness import _settle
+        assert await _settle(pilot, lambda: controller.fleet_wake.has_pending(cid)), (
+            "the mount-claim seam must turn mark + runs-DB state into a pending wake"
         )
 
 
@@ -146,16 +160,13 @@ async def test_user_priority_probe_reads_the_live_composer_draft(tmp_path):
         controller = console._ensure_console_chat_controller()
         probe = controller.wake_user_priority_probe
         assert callable(probe), "the screen must wire the user-wins-ties probe"
-        composer = console.query_one(
-            "#console-native-composer", ConsoleComposerBar
-        )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         session_id = console._ensure_console_chat_store().ensure_session().id
         assert probe(session_id) is False, "an empty composer holds no claim"
         composer.load_draft("half-typed message")
         await pilot.pause()
         assert probe(session_id) is True, (
-            "a non-empty draft is the user's sending claim; the wake must "
-            "see it"
+            "a non-empty draft is the user's sending claim; the wake must see it"
         )
         composer.load_draft("")
         await pilot.pause()
@@ -182,9 +193,7 @@ async def test_emptying_the_composer_pokes_the_wake_retry(tmp_path):
         controller = console._ensure_console_chat_controller()
         pokes: list[str] = []
         controller.fleet_wake.retry_soon = lambda: pokes.append("poke")
-        composer = console.query_one(
-            "#console-native-composer", ConsoleComposerBar
-        )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("about to change my mind")
         await pilot.pause()
         emptied_before = len(pokes)

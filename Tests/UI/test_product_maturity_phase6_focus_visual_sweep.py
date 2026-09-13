@@ -60,6 +60,7 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "acp": ("#acp-shell",),
     "lab": ("#lab-destination-header",),
     "logs": ("#logs-destination-header",),
+    "research": ("#research-workspace-shell",),
     "settings": ("#settings-shell",),
 }
 BROKEN_TEXT_PATTERNS = (

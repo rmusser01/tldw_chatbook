@@ -32,6 +32,7 @@ from Tests.UI.test_console_parallel_runs import (
     _assert_widget_and_ancestors_displayed,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -42,6 +43,24 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionRow,
 )
 
+
+@pytest.fixture(autouse=True)
+def _real_fleet_recovery_database(monkeypatch, tmp_path, request):
+    """Mount with the real recovery owner; a DB-less mount correctly pauses."""
+    from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+    from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
+
+    build = request.module._build_test_app
+
+    def build_with_db(*args, **kwargs):
+        app = build(*args, **kwargs)
+        _attach_real_dbs(app, tmp_path)
+        _configure_native_ready_console(app)
+        return app
+
+    monkeypatch.setattr(request.module, "_build_test_app", build_with_db)
+
+
 _AGENT_SECTION_SIZE = (180, 48)
 
 #: The fleet mini-section's own `section_id` (`CONSOLE_AGENT_FLEET_SECTION_
@@ -49,6 +68,12 @@ _AGENT_SECTION_SIZE = (180, 48)
 #: so this test file pins the DOM id contract independently of that
 #: constant ever changing silently.
 _SECTION_ID = "agent-fleet"
+
+
+def _ready_test_app():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    return app
 
 
 def _static_text(console, widget_id: str) -> str:
@@ -77,6 +102,7 @@ class _FleetBridge:
             return []
         return list(self._handles)
 
+
     def cancel_subagent(self, conversation_id: str, handle_id: str) -> bool:
         self.cancel_calls.append((conversation_id, handle_id))
         return conversation_id == self._conversation_id and any(
@@ -87,6 +113,11 @@ class _FleetBridge:
         if conversation_id != self._conversation_id:
             return AgentLiveSnapshot()
         return AgentLiveSnapshot(status="running", step=1)
+
+    def subagent_counts(self, conversation_ids: list[str]) -> dict[str, int]:
+        if not self._handles or self._conversation_id not in conversation_ids:
+            return {}
+        return {self._conversation_id: len(self._handles)}
 
     def subagent_run(self, run_id: str):
         handle = self._by_run_id.get(run_id)
@@ -114,15 +145,25 @@ async def _setup_console(pilot, host, bridge, *, conversation_id: str = "conv-A"
     `ConsoleRailState` than just `agent_open` (e.g. `_sync_console_rail_
     visibility` reads `left_label`/`left_badge`); a minimal fake namespace
     crashes there with an `AttributeError` the moment a test drills in.
+
+    task-10: the fleet mini-section itself now lives in the right
+    (Inspector) rail, closed by default (`CONSOLE_RAIL_RIGHT_DEFAULT_OPEN
+    = False`) -- unlike the left (Context) rail this file used to rely on,
+    which stays open by default. `right_open=True` is passed alongside the
+    existing `agent` section toggle (still real: the Agent status/steps
+    Statics and the drilldown controls stay in the left rail) so the fleet
+    section's own ancestor chain is genuinely displayed too.
     """
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
     console._console_agent_bridge = bridge
     console._console_agent_drilldown_run_id = None
-    console._current_console_rail_conversation_id = lambda: conversation_id
+    console._character._current_console_rail_conversation_id = lambda: conversation_id
     console._agent._console_agent_drilldown_conversation_id = conversation_id
     console._set_console_rail_preference(
-        section_updates={"agent": True}, notify_on_failure=False
+        right_open=True,
+        section_updates={"agent": True},
+        notify_on_failure=False,
     )
     console._sync_console_agent_section()
     await pilot.pause()
@@ -131,17 +172,17 @@ async def _setup_console(pilot, host, bridge, *, conversation_id: str = "conv-A"
 
 
 async def _scroll_into_view(pilot, console, selector: str) -> None:
-    """Scroll a widget inside the rail's `VerticalScroll` into view before
+    """Scroll a widget inside its rail's `VerticalScroll` into view before
     a geometry assertion or a real click.
 
-    `#console-left-rail-body` is a `VerticalScroll`; the Agent section (6th
-    of 7 peer sections: Sessions/Workspaces/Conversations/Model/Agent/
-    Details/Character) sits well past a 48-row terminal's fold, and
+    task-10: the fleet mini-section now lives in `#console-inspector-rail-
+    body` (the right/Inspector rail), not `#console-left-rail-body` as
+    before -- `Widget.scroll_visible()` walks whichever scrollable
+    ancestor actually contains it, so this helper needed no code change,
+    only this note. It can sit well past a short terminal's fold, and
     `Widget.region` is reported UNCLIPPED (a below-the-fold widget still
     has a non-empty region) -- `pilot.click` and the compositor hit-test
     both need the widget's OWN screen offset to be genuinely on-screen.
-    Mirrors `test_console_left_rail.py`'s own `_click_rail_toggle` helper
-    exactly (same rail, same scrollable ancestor, same reason).
     """
     widget = console.query_one(selector)
     widget.scroll_visible(animate=False)
@@ -188,7 +229,7 @@ async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts(
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -196,18 +237,19 @@ async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts(
         fleet_section = console.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
-        # State 1 is the default the user sees: collapsed (rows hidden),
-        # only the header + summary painted.
-        assert fleet_section.open is False
+        # The section MOUNTS collapsed, but task-13 (addition A) opens it
+        # once on first fleet activity: after the move into the Inspect rail
+        # a collapsed header with no body surfaced nothing at all. The
+        # summary line this test is really about is painted either way --
+        # the header stays visible in both states.
+        assert fleet_section.open is True
         assert fleet_section.summary == "●●✓ 2 working, 1 done"
 
         # Not just the widget's own state -- prove it actually RENDERS
         # (Task 3's own mutation-testing lesson: a structural assertion
         # alone can pass vacuously against a broken `.update()` call).
         assert (
-            _static_text(
-                console, f"#console-inspector-section-{_SECTION_ID}-summary"
-            )
+            _static_text(console, f"#console-inspector-section-{_SECTION_ID}-summary")
             == "●●✓ 2 working, 1 done"
         )
         summary_static = console.query_one(
@@ -219,43 +261,70 @@ async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts(
 
 @pytest.mark.asyncio
 async def test_state_1_summary_counts_every_terminal_status_as_done_not_just_literal_done():
-    """"Working" is `status == "running"`; every other status this
+    """ "Working" is `status == "running"`; every other status this
     codebase's fleet vocabulary uses (`done`/`error`/`stuck`/`cancelled` --
     see `SubAgentSummary.status`'s own docstring, and `TERMINAL_RUN_
     STATUSES`) is terminal, i.e. counted as "done" in the summary's second
     bucket -- not just a literal `status == "done"` check."""
     handles = (
         FleetHandle(
-            handle_id="h1", run_id="run-1", agent="a", task="t1", status="running",
+            handle_id="h1",
+            run_id="run-1",
+            agent="a",
+            task="t1",
+            status="running",
             started_at=1000.0,
         ),
         FleetHandle(
-            handle_id="h2", run_id="run-2", agent="a", task="t2", status="done",
-            started_at=1000.0, finished_at=1001.0,
+            handle_id="h2",
+            run_id="run-2",
+            agent="a",
+            task="t2",
+            status="done",
+            started_at=1000.0,
+            finished_at=1001.0,
         ),
         FleetHandle(
-            handle_id="h3", run_id="run-3", agent="a", task="t3", status="error",
-            error="boom", started_at=1000.0, finished_at=1001.0,
+            handle_id="h3",
+            run_id="run-3",
+            agent="a",
+            task="t3",
+            status="error",
+            error="boom",
+            started_at=1000.0,
+            finished_at=1001.0,
         ),
         FleetHandle(
-            handle_id="h4", run_id="run-4", agent="a", task="t4", status="cancelled",
-            started_at=1000.0, finished_at=1001.0,
+            handle_id="h4",
+            run_id="run-4",
+            agent="a",
+            task="t4",
+            status="cancelled",
+            started_at=1000.0,
+            finished_at=1001.0,
         ),
         FleetHandle(
-            handle_id="h5", run_id="run-5", agent="a", task="t5", status="stuck",
-            started_at=1000.0, finished_at=1001.0,
+            handle_id="h5",
+            run_id="run-5",
+            agent="a",
+            task="t5",
+            status="stuck",
+            started_at=1000.0,
+            finished_at=1001.0,
         ),
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
         fleet_section = console.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
-        assert fleet_section.summary == "●✓✗✗⚠ 1 working, 4 done"
+        # Large fleets keep full counts without an unbounded glyph cluster.
+        assert fleet_section.summary == "1 working, 4 done"
+        assert len(fleet_section.rows) == 5
 
 
 # -- State 2: expanded rows, two lines each (spec §7) --------------------
@@ -289,7 +358,7 @@ async def test_state_2_expanded_rows_render_two_painted_lines_per_child():
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -365,7 +434,7 @@ async def test_state_3_drilling_into_a_row_hides_the_fleet_section_and_shows_the
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -394,21 +463,33 @@ async def test_clicking_the_last_row_drills_into_that_child_directly_not_via_a_c
     happened to be "next" from wherever the cursor was) to reach it."""
     handles = (
         FleetHandle(
-            handle_id="h1", run_id="run-1", agent="researcher", task="t1",
-            status="running", started_at=1000.0,
+            handle_id="h1",
+            run_id="run-1",
+            agent="researcher",
+            task="t1",
+            status="running",
+            started_at=1000.0,
         ),
         FleetHandle(
-            handle_id="h2", run_id="run-2", agent="writer", task="t2",
-            status="running", started_at=1000.0,
+            handle_id="h2",
+            run_id="run-2",
+            agent="writer",
+            task="t2",
+            status="running",
+            started_at=1000.0,
         ),
         FleetHandle(
-            handle_id="h3", run_id="run-3", agent="reviewer", task="t3",
-            status="running", started_at=1000.0,
+            handle_id="h3",
+            run_id="run-3",
+            agent="reviewer",
+            task="t3",
+            status="running",
+            started_at=1000.0,
         ),
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -434,17 +515,25 @@ async def test_clicking_the_first_row_drills_into_that_child_directly():
     only the position a cycling cursor would land on next."""
     handles = (
         FleetHandle(
-            handle_id="h1", run_id="run-1", agent="researcher", task="t1",
-            status="running", started_at=1000.0,
+            handle_id="h1",
+            run_id="run-1",
+            agent="researcher",
+            task="t1",
+            status="running",
+            started_at=1000.0,
         ),
         FleetHandle(
-            handle_id="h2", run_id="run-2", agent="writer", task="t2",
-            status="running", started_at=1000.0,
+            handle_id="h2",
+            run_id="run-2",
+            agent="writer",
+            task="t2",
+            status="running",
+            started_at=1000.0,
         ),
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -487,7 +576,7 @@ async def test_state_2_secondary_line_shows_token_spend_for_a_finished_child():
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -507,7 +596,7 @@ async def test_state_2_secondary_line_shows_token_spend_for_a_finished_child():
         _assert_painted_at_own_region(host, secondary)
         text = str(secondary.renderable)
         assert "drafted the summary" in text
-        assert "1.2k tok" in text
+        assert "1.2k budget tok" in text
 
 
 @pytest.mark.asyncio
@@ -529,7 +618,7 @@ async def test_pressing_delete_on_a_running_row_cancels_the_child_through_the_br
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -574,7 +663,7 @@ async def test_pressing_delete_on_a_finished_row_does_nothing():
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)

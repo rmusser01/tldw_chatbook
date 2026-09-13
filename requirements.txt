@@ -14,10 +14,12 @@
 ################################################################################
 
 # Base/Core Dependencies (always installed)
-chardet
+chardet>=3.0.2,<6
 toml
 tomli
 rich
+pyte==0.8.2
+regex==2026.4.4
 wcwidth>=0.2.14,<1
 textual==8.2.8
 textual-diff-view==0.1.5

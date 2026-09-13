@@ -1403,8 +1403,11 @@ async def test_media_analysis_llm_failure_surfaces_error_not_sentinel():
 
     captured = {}
 
-    def _run_worker(coro, exclusive=True):
+    # TASK-19559: analysis generation now names its own group, so a
+    # sibling media worker cannot cancel it mid-flight.
+    def _run_worker(coro, exclusive=True, group=None):
         captured["coro"] = coro
+        captured["group"] = group
 
     window.run_worker = _run_worker
 
@@ -1474,8 +1477,11 @@ async def test_media_analysis_missing_response_text_clears_stale_analysis_state(
 
     captured = {}
 
-    def _run_worker(coro, exclusive=True):
+    # TASK-19559: analysis generation now names its own group, so a
+    # sibling media worker cannot cancel it mid-flight.
+    def _run_worker(coro, exclusive=True, group=None):
         captured["coro"] = coro
+        captured["group"] = group
 
     window.run_worker = _run_worker
 

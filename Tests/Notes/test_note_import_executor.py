@@ -160,7 +160,11 @@ def _execution_item(
             ImportAction.CREATE_NEW,
             ImportAction.UPDATE_EXISTING,
         )
-        default_action = ImportAction.CREATE_NEW
+        default_action = (
+            ImportAction.SKIP
+            if resolved_classification is ImportClassification.UNCHANGED_REPEAT
+            else ImportAction.CREATE_NEW
+        )
     return ImportPreviewItem(
         item_id=item_id,
         source=ImportSource(
@@ -302,6 +306,11 @@ def test_target_ensure_folder_is_deterministic_and_replay_safe(
 
     assert first.folder_id == _FOLDER_ID
     assert retry == first
+    folder_sync_id = _db.get_connection().execute(
+        "SELECT sync_id FROM note_folders WHERE id = ?", (_FOLDER_ID,)
+    ).fetchone()[0]
+    assert str(UUID(folder_sync_id)) == folder_sync_id
+    assert UUID(folder_sync_id).version == 4
 
 
 def test_target_folder_projection_is_frozen_usable_and_private_safe(
@@ -887,6 +896,18 @@ def test_target_keyword_sync_is_exact_canonical_and_idempotent(target_harness) -
     assert target.keywords_match(note_id=_NOTE_ID, keywords=("KEEP", "new"))
     assert first_links == second_links
     assert len(second_links) == 2
+    portable_ids = [
+        row[0]
+        for row in db.get_connection().execute(
+            "SELECT k.sync_id FROM keywords AS k "
+            "JOIN note_keywords AS nk ON nk.keyword_id = k.id "
+            "WHERE nk.note_id = ? ORDER BY k.id",
+            (_NOTE_ID,),
+        )
+    ]
+    assert len(portable_ids) == 2
+    assert all(str(UUID(sync_id)) == sync_id for sync_id in portable_ids)
+    assert all(UUID(sync_id).version == 4 for sync_id in portable_ids)
     stale = (
         db.get_connection()
         .execute("SELECT keyword, deleted FROM keywords WHERE id = ?", (stale_id,))
@@ -1033,6 +1054,106 @@ def test_executor_creates_multi_payload_notes_with_exact_keywords_and_membership
         )
     )
     assert durable.items[0].outcome is ImportItemOutcome.IMPORTED
+
+
+def test_executor_links_wikilink_targets_created_in_the_same_batch(
+    real_executor,
+) -> None:
+    """Obsidian links to batch mates become note links; the rest stay literal."""
+    executor, target, _receipts, _service, _folders, _db = real_executor
+    linking = _execution_item(
+        item_id="link-source",
+        payloads=(
+            ParsedNotePayload(
+                title="A",
+                content=(
+                    "See [[link-target]] and [[Reading/link-deep|see it]] "
+                    "and [[Missing]]."
+                ),
+                wikilinks=("link-target", "Reading/link-deep", "Missing"),
+            ),
+        ),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    linked = _execution_item(
+        item_id="link-target",
+        payloads=(_payload(title="B", content="B body"),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    deep = replace(
+        _execution_item(
+            item_id="link-deep",
+            payloads=(_payload(title="C", content="C body"),),
+            action=ImportAction.CREATE_NEW,
+            memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+            add_membership=True,
+        ),
+        source=ImportSource(
+            kind=ImportSourceKind.DIRECTORY_MEMBER,
+            display_path="Selected/Reading/link-deep.md",
+            source_path=Path("/private/import/Reading/link-deep.md"),
+        ),
+    )
+    approved = _approved_execution_plan(
+        linking,
+        linked,
+        deep,
+        proposed_folder_paths=(("Imported Root",),),
+    )
+
+    receipt = executor.execute(approved)
+
+    assert (receipt.state, receipt.imported, receipt.failed) == (
+        ImportSessionState.COMPLETED,
+        3,
+        0,
+    )
+    note = target.read_note(note_id=_expected_note_id("link-source", 0))
+    assert note is not None
+    # task-32263: the stored link keeps the readable wikilink, shows the
+    # linked note's own title, and carries the identifier behind it.
+    assert note.content == (
+        f"See [[link-target|B]](note://{_expected_note_id('link-target', 0)}) "
+        f"and [[Reading/link-deep|see it]]"
+        f"(note://{_expected_note_id('link-deep', 0)}) "
+        "and [[Missing]]."
+    )
+
+
+def test_executor_leaves_wikilink_text_alone_outside_obsidian_mode(
+    real_executor,
+) -> None:
+    """A payload with no recorded wikilinks is written exactly as parsed."""
+    executor, target, _receipts, _service, _folders, _db = real_executor
+    literal = _execution_item(
+        item_id="link-source",
+        payloads=(_payload(title="A", content="See [[link-target]]."),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    linked = _execution_item(
+        item_id="link-target",
+        payloads=(_payload(title="B", content="B body"),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    approved = _approved_execution_plan(
+        literal,
+        linked,
+        proposed_folder_paths=(("Imported Root",),),
+    )
+
+    executor.execute(approved)
+
+    note = target.read_note(note_id=_expected_note_id("link-source", 0))
+    assert note is not None
+    assert note.content == "See [[link-target]]."
 
 
 @pytest.mark.parametrize(
@@ -3410,28 +3531,52 @@ def test_target_internal_value_errors_are_fatal_and_baseexceptions_escape(
         target.read_note(note_id=_NOTE_ID)
 
 
+#: Leak canary for the fault-translation test below. It asserts against the
+#: FORMATTED TRACEBACK, which embeds absolute source paths, so the marker must
+#: be a token no filesystem path can contain. It used to be the word
+#: "private", and every checkout under a macOS scratch directory failed all
+#: seven cases: `/tmp` resolves to `/private/tmp`, so the test's own frame
+#: path carried the marker. CI passed (paths under `/home/runner/work`), which
+#: is what made it read as a real dev-side red for an hour. Same shape as the
+#: vacuous "console" path audit recorded in AGENTIC_SPLIT_PINNED_TOKENS: never
+#: search a path-bearing string for a word a path can hold.
+_FAULT_DETAIL_CANARY = "zqleakcanary"
+
+
 @pytest.mark.parametrize(
     ("fault", "expected_type"),
     [
         (
-            FolderValidationError("private folder validation detail"),
+            FolderValidationError(f"{_FAULT_DETAIL_CANARY} folder validation detail"),
             ImportTargetPermanentError,
         ),
         (
             FolderCapabilityError(
-                reason_code="private-reason",
-                user_message="private folder capability detail",
+                reason_code=f"{_FAULT_DETAIL_CANARY}-reason",
+                user_message=f"{_FAULT_DETAIL_CANARY} folder capability detail",
             ),
             ImportTargetPermanentError,
         ),
         (
-            CharactersRAGDBError("private database detail"),
+            CharactersRAGDBError(f"{_FAULT_DETAIL_CANARY} database detail"),
             ImportTargetPermanentError,
         ),
-        (sqlite3.OperationalError("private SQL detail"), ImportTargetPermanentError),
-        (sqlite3.IntegrityError("private integrity detail"), ImportTargetConflictError),
-        (FolderCollisionError("private collision detail"), ImportTargetConflictError),
-        (FolderConflictError("private conflict detail"), ImportTargetConflictError),
+        (
+            sqlite3.OperationalError(f"{_FAULT_DETAIL_CANARY} SQL detail"),
+            ImportTargetPermanentError,
+        ),
+        (
+            sqlite3.IntegrityError(f"{_FAULT_DETAIL_CANARY} integrity detail"),
+            ImportTargetConflictError,
+        ),
+        (
+            FolderCollisionError(f"{_FAULT_DETAIL_CANARY} collision detail"),
+            ImportTargetConflictError,
+        ),
+        (
+            FolderConflictError(f"{_FAULT_DETAIL_CANARY} conflict detail"),
+            ImportTargetConflictError,
+        ),
     ],
 )
 def test_target_expected_faults_keep_their_item_level_translation(
@@ -3452,9 +3597,9 @@ def test_target_expected_faults_keep_their_item_level_translation(
 
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
-    assert "private" not in str(caught.value)
-    assert "private" not in repr(caught.value)
-    assert "private" not in "".join(
+    assert _FAULT_DETAIL_CANARY not in str(caught.value)
+    assert _FAULT_DETAIL_CANARY not in repr(caught.value)
+    assert _FAULT_DETAIL_CANARY not in "".join(
         traceback.format_exception(
             type(caught.value), caught.value, caught.value.__traceback__
         )
@@ -4130,6 +4275,19 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
         == 1
     )
 
+    # task-19564: the v45 retention triggers drop superseded `sync_log`
+    # versions, so the `create` row no longer survives the replace -- a note's
+    # full text is not kept in the log once a newer version exists. Its
+    # payload shape is still asserted, by reading it while it is the frontier.
+    note_sync_on_create = connection.execute(
+        "SELECT operation, timestamp, client_id, version, payload FROM sync_log "
+        "WHERE entity = 'notes' AND entity_id = ? ORDER BY change_id",
+        (_NOTE_ID,),
+    ).fetchall()
+    assert [
+        (row["operation"], row["version"]) for row in note_sync_on_create
+    ] == [("create", 1)]
+
     target.replace_note(
         note_id=_NOTE_ID,
         expected_version=1,
@@ -4150,10 +4308,9 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
         (_NOTE_ID,),
     ).fetchall()
     assert [(row["operation"], row["version"]) for row in note_sync] == [
-        ("create", 1),
         ("update", 2),
     ]
-    for row in note_sync:
+    for row in [*note_sync_on_create, *note_sync]:
         payload = json.loads(row["payload"])
         assert set(payload) == {
             "id",
@@ -4238,3 +4395,81 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
         ).fetchone()[0]
         == 1
     )
+
+
+def test_update_existing_on_an_unchanged_repeat_updates_without_new_placement(
+    real_executor,
+) -> None:
+    """task-32176: the review lets an unchanged repeat be switched to Update
+    existing, which leaves folder placement alone. The plan still carries the
+    membership the parser proposed, but the receipt ledger only records a
+    membership effect when the plan approved one, so treating every proposed
+    membership as authorized aborted the whole run with no receipt."""
+    executor, target, receipts, _service, _folders, _db = real_executor
+    existing = target.create_note(
+        note_id="unchanged-repeat-update",
+        payload=_payload(content="Same body"),
+    )
+    item = _execution_item(
+        item_id="unchanged-repeat-update",
+        payloads=(_payload(content="Same body"),),
+        action=ImportAction.UPDATE_EXISTING,
+        classification=ImportClassification.UNCHANGED_REPEAT,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=existing.note_id,
+            note_version=existing.version,
+        ),
+        replace_content=True,
+        add_membership=False,
+    )
+    approved = _approved_execution_plan(item)
+
+    receipt = executor.execute(approved)
+
+    assert (receipt.state, receipt.updated, receipt.failed) == (
+        ImportSessionState.COMPLETED,
+        1,
+        0,
+    )
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.items[0].outcome is ImportItemOutcome.UPDATED
+    assert durable.membership_effects == ()
+
+
+def _note_link_rows(db: CharactersRAGDB) -> set[tuple[str, str]]:
+    return {
+        (str(row[0]), str(row[1]))
+        for row in db.get_connection().execute(
+            "SELECT source_note_id, target_note_id FROM note_links"
+        )
+    }
+
+
+def test_imported_bodies_maintain_the_note_link_relation(target_harness) -> None:
+    """Import writes notes with its own SQL, so it maintains links too.
+
+    task-32186: backlinks are answered from ``note_links``, not from a scan of
+    every body. The importer bypasses ``CharactersRAGDB.add_note`` /
+    ``update_note`` (it needs its own version and client-id semantics), so the
+    relation is maintained at its two write sites as well -- otherwise an
+    imported vault's ``[[wikilinks]]``, the exact links this feature exists
+    for, would never appear under "Linked from".
+    """
+    target, _service, _folders, db = target_harness
+    hub = "00000000-0000-5000-8000-0000000001aa"
+    other = "00000000-0000-5000-8000-0000000001bb"
+
+    created = target.create_note(
+        note_id=_NOTE_ID,
+        payload=_payload(content=f"See [[Hub|hub]](note://{hub}) for the method."),
+    )
+    assert _note_link_rows(db) == {(_NOTE_ID, hub)}
+
+    target.replace_note(
+        note_id=_NOTE_ID,
+        expected_version=created.version,
+        payload=_payload(content=f"Moved to [elsewhere](note://{other})."),
+    )
+    assert _note_link_rows(db) == {(_NOTE_ID, other)}

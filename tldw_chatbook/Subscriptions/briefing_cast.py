@@ -57,6 +57,10 @@ from typing import Any, Callable, Collection, Iterator, Mapping, Optional
 from loguru import logger
 
 from ..Chat.Chat_Functions import chat_api_call, extract_response_content
+from ..model_capabilities import (
+    deepseek_model_thinks_by_default,
+    resolve_deepseek_effective_model,
+)
 from .briefing_service import STATUS_COMPLETE as _BRIEFING_STATUS_COMPLETE
 from .briefing_service import GenerationInFlightError, default_briefing_provider
 
@@ -89,6 +93,11 @@ CHARACTER_TEXT_CHAR_CAP = 1000
 #: same material the briefing already condensed once, and multi-speaker
 #: back-and-forth reads longer than the equivalent prose.
 CAST_MAX_TOKENS = 3000
+
+#: Reasoning-typed models burn completion budget on thinking before any
+#: visible text (TASK-21515 -- same defect the briefing call hit): give
+#: them headroom so the same output length still fits.
+CAST_REASONING_MAX_TOKENS = 12000
 
 #: Dialogue benefits from a little more variation than a summarization
 #: pass, but this is still a *scripted* adaptation of given material, not
@@ -465,6 +474,25 @@ def _error_text(exc: BaseException) -> str:
     return message
 
 
+def _effective_max_tokens(endpoint: str, model: str | None) -> int:
+    """The completion budget for one cast call, reasoning-aware (TASK-21515).
+
+    Copies `briefing_service._effective_max_tokens`'s exact shape (not
+    imported: that function is private to its own module) against this
+    module's own constants: the DeepSeek handler's reasoning-inclusive
+    ``max_tokens`` means a reasoning-typed default model needs headroom, and
+    only the native ``deepseek`` endpoint is widened. Qodo #7/#8: the
+    predicate runs on the RESOLVED model, because a ``model=None`` cast
+    resolves the handler's own configured (reasoning-typed) default.
+    """
+    endpoint_normalized = str(endpoint or "").strip().lower()
+    if endpoint_normalized == "deepseek" and deepseek_model_thinks_by_default(
+        resolve_deepseek_effective_model(model)
+    ):
+        return CAST_REASONING_MAX_TOKENS
+    return CAST_MAX_TOKENS
+
+
 async def _invoke_chat(
     chat: Callable[..., Any],
     *,
@@ -486,7 +514,7 @@ async def _invoke_chat(
         "system_message": system,
         "model": model,
         "streaming": False,
-        "max_tokens": CAST_MAX_TOKENS,
+        "max_tokens": _effective_max_tokens(endpoint, model),
         "temp": CAST_TEMPERATURE,
     }
     if inspect.iscoroutinefunction(chat):
@@ -849,6 +877,7 @@ def fail_interrupted_scripts(
     *,
     exclude: Collection[int] = (),
     exclude_briefings: Collection[int] = (),
+    max_row_id: int | None = None,
 ) -> int:
     """Fail every `generating` script as `interrupted`; return the count.
 
@@ -896,6 +925,15 @@ def fail_interrupted_scripts(
             over-protection `exclude` was narrowed away from. Defaults to
             `()`, so every caller that predates this fix is unchanged.
 
+        max_row_id: The highest row id this sweep may touch. The startup
+            reconcile passes the boundary it captured before this process
+            could insert anything (``Subscriptions/startup_reconcile.py``),
+            which is what stops it failing rows this process's own scheduler
+            created moments earlier (Qodo, PR #1972). ``None`` -- every
+            pre-existing, UI-gated caller -- is unbounded as before; those
+            callers protect live rows with the claim-registry ``exclude``
+            arguments above instead.
+
     Returns:
         How many rows were failed.
     """
@@ -915,6 +953,9 @@ def fail_interrupted_scripts(
         placeholders = ",".join("?" for _ in exclude_briefings)
         sql += f" AND briefing_id NOT IN ({placeholders})"
         params.extend(exclude_briefings)
+    if max_row_id is not None:
+        sql += " AND id <= ?"
+        params.append(int(max_row_id))
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount

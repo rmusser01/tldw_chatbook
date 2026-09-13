@@ -1,11 +1,31 @@
 """Library destination widgets."""
 
-from .library_collections_panel import LibraryCollectionsPanel
+from .library_collections_capture_reader import (
+    CollectionsCaptureReaderPresentation,
+    CollectionsReaderMode,
+    LibraryCollectionsItemsPane,
+    LibraryCollectionsScopeRows,
+    LibraryCollectionsWorkPane,
+)
 from .library_conversations_canvas import LibraryConversationsCanvas
+from .library_conversation_reader import (
+    LibraryConversationReader,
+    library_conversation_block_sentence,
+    library_conversation_link_would_unblock,
+)
+from .library_adaptive_reader_shell import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
+    AdaptiveReaderShellResized,
+    LibraryAdaptiveReaderPaneGrip,
+    LibraryAdaptiveReaderShell,
+    LibraryPaneVisibilityChanged,
+)
 from .library_export_canvas import LibraryExportCanvas
 from .library_entry_canvases import (
+    LibraryLandingAttentionAction,
     LibraryLandingCanvas,
     LibraryLandingCanvasState,
+    LibraryLandingContinueAction,
     LibraryLandingRecentItem,
     LibraryStudyHandoffCanvas,
     LibraryStudyHandoffCanvasState,
@@ -16,15 +36,32 @@ from .library_ingest_canvas import (
     LibraryIngestQueuePanel,
 )
 from .library_media_canvas import LibraryMediaCanvas
+from .library_browse_reader_shell import (
+    LIBRARY_BROWSE_READER_SHELL_ID,
+    LIBRARY_BROWSE_ROUTE_MEDIA,
+    LIBRARY_BROWSE_ROUTE_NOTES,
+    LIBRARY_MEDIA_ROUTE_CLASS,
+    LIBRARY_MEDIA_ROUTE_SELECTOR,
+    LIBRARY_NOTES_ROUTE_CLASS,
+    LIBRARY_NOTES_ROUTE_SELECTOR,
+    LibraryBrowseReaderShell,
+    MediaShellResized,
+    PaneToggleRequested,
+)
 from .library_media_trash_canvas import LibraryMediaTrashCanvas
 from .library_media_viewer import LibraryMediaViewer
+from .library_note_import_canvas import LibraryNoteImportCanvas
+from .library_note_work_pane import LibraryNoteWorkPane
+from .library_notes_add_from_files_canvas import LibraryNotesAddFromFilesCanvas
 from .library_notes_canvas import LibraryNotesCanvas
+from .library_notes_sync_roots_canvas import LibraryNotesSyncRootsCanvas
 from .library_prompts_canvas import (
     PROMPT_DISCARD_TOOLTIP_BUSY,
     PROMPT_DISCARD_TOOLTIP_CLEAN,
     PROMPT_DISCARD_TOOLTIP_DIRTY,
     LibraryPromptsListCanvas,
 )
+from .library_prompt_work_pane import LibraryPromptWorkPane
 from .library_rail import (
     LIBRARY_RAIL_ROW_PREFIX,
     LibraryNavigationRailHandle,
@@ -48,6 +85,10 @@ from .library_search_rag_panel import (
     scope_toggle_label,
 )
 from .library_skills_canvas import (
+    LIBRARY_SKILLS_FILTER_ID,
+    LIBRARY_SKILLS_PAGE_NEXT_ID,
+    LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+    LIBRARY_SKILLS_RETRY_ID,
     SKILL_DISCARD_TOOLTIP_CLEAN,
     SKILL_DISCARD_TOOLTIP_DIRTY,
     LibrarySkillsListCanvas,
@@ -69,34 +110,69 @@ from .library_skills_canvas import (
     skill_trust_unlock_tooltip,
     skill_user_invocable_label,
 )
+from .library_skill_work_pane import LibrarySkillWorkPane
 
 __all__ = [
+    "LIBRARY_SKILLS_FILTER_ID",
+    "LIBRARY_SKILLS_PAGE_NEXT_ID",
+    "LIBRARY_SKILLS_PAGE_PREVIOUS_ID",
+    "LIBRARY_SKILLS_RETRY_ID",
     "LIBRARY_RAIL_ROW_PREFIX",
     "PROMPT_DISCARD_TOOLTIP_BUSY",
     "PROMPT_DISCARD_TOOLTIP_CLEAN",
     "PROMPT_DISCARD_TOOLTIP_DIRTY",
     "SKILL_DISCARD_TOOLTIP_CLEAN",
     "SKILL_DISCARD_TOOLTIP_DIRTY",
-    "LibraryCollectionsPanel",
+    "LIBRARY_ADAPTIVE_READER_GRIP_CLASS",
+    "AdaptiveReaderShellResized",
+    "LibraryAdaptiveReaderPaneGrip",
+    "LibraryAdaptiveReaderShell",
+    "CollectionsCaptureReaderPresentation",
+    "CollectionsReaderMode",
+    "LibraryCollectionsItemsPane",
+    "LibraryCollectionsScopeRows",
+    "LibraryCollectionsWorkPane",
     "LibraryConversationsCanvas",
+    "LibraryConversationReader",
+    "library_conversation_block_sentence",
+    "library_conversation_link_would_unblock",
     "LibraryExportCanvas",
+    "LibraryLandingAttentionAction",
     "LibraryLandingCanvas",
     "LibraryLandingCanvasState",
+    "LibraryLandingContinueAction",
     "LibraryLandingRecentItem",
     "LibraryIngestCanvas",
     "LibraryIngestPreflightSummary",
     "LibraryIngestQueuePanel",
     "LibraryMediaCanvas",
+    "LIBRARY_BROWSE_READER_SHELL_ID",
+    "LIBRARY_BROWSE_ROUTE_MEDIA",
+    "LIBRARY_BROWSE_ROUTE_NOTES",
+    "LIBRARY_MEDIA_ROUTE_CLASS",
+    "LIBRARY_MEDIA_ROUTE_SELECTOR",
+    "LIBRARY_NOTES_ROUTE_CLASS",
+    "LIBRARY_NOTES_ROUTE_SELECTOR",
+    "LibraryBrowseReaderShell",
+    "MediaShellResized",
     "LibraryMediaTrashCanvas",
     "LibraryMediaViewer",
+    "LibraryNoteImportCanvas",
+    "LibraryNoteWorkPane",
+    "LibraryNotesAddFromFilesCanvas",
     "LibraryNotesCanvas",
+    "LibraryNotesSyncRootsCanvas",
     "LibraryNavigationRailHandle",
+    "LibraryPaneVisibilityChanged",
+    "PaneToggleRequested",
     "LibraryPromptsListCanvas",
+    "LibraryPromptWorkPane",
     "LibraryRail",
     "LibrarySearchRagPanel",
     "LibraryStudyHandoffCanvas",
     "LibraryStudyHandoffCanvasState",
     "LibrarySkillsListCanvas",
+    "LibrarySkillWorkPane",
     "SKILL_MODEL_HINT_COPY",
     "next_skill_context",
     "skill_context_toggle_label",

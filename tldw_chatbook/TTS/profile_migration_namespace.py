@@ -18,6 +18,7 @@ from tldw_chatbook.TTS.profile_migration_native import (
 )
 from tldw_chatbook.Utils import private_paths
 from tldw_chatbook.Utils.platform_files import os
+from tldw_chatbook.DB.private_sqlite_protocol import FileIdentity
 
 _LIBC = None if sys.platform == "win32" else ctypes.CDLL(None, use_errno=True)
 _RENAME_NOREPLACE = 1 if sys.platform.startswith("linux") else 0x00000004
@@ -38,21 +39,71 @@ class MigrationTombstoneKey(Enum):
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class HelperNamespaceIdentity:
+    """Complete validated helper metadata at the stat-shaped namespace boundary."""
+
+    identity: FileIdentity
+
+    def __post_init__(self) -> None:
+        if type(self.identity) is not FileIdentity:
+            raise TypeError
+
+    @property
+    def st_dev(self) -> int:
+        return self.identity.dev
+
+    @property
+    def st_ino(self) -> int:
+        return self.identity.ino
+
+    @property
+    def st_mode(self) -> int:
+        return self.identity.mode
+
+    @property
+    def st_uid(self) -> int:
+        return self.identity.uid
+
+    @property
+    def st_gid(self) -> int:
+        return self.identity.gid
+
+    @property
+    def st_nlink(self) -> int:
+        return self.identity.nlink
+
+    @property
+    def st_size(self) -> int:
+        return self.identity.size
+
+    @property
+    def st_mtime_ns(self) -> int:
+        return self.identity.mtime_ns
+
+    @property
+    def st_ctime_ns(self) -> int:
+        return self.identity.ctime_ns
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class ParentAuthority:
     """Immutable exact parent metadata pinned before namespace mutation."""
 
-    identity: os.stat_result
+    identity: os.stat_result | HelperNamespaceIdentity
 
     def __repr__(self) -> str:
         return "ParentAuthority(<private>)"
 
 
-def _same_parent(current: os.stat_result, expected: os.stat_result) -> bool:
+def _same_parent(
+    current: os.stat_result, expected: os.stat_result | HelperNamespaceIdentity
+) -> bool:
     return (
         private_paths._same_identity(current, expected)
         and stat.S_IFMT(current.st_mode) == stat.S_IFMT(expected.st_mode)
         and stat.S_IMODE(current.st_mode) == stat.S_IMODE(expected.st_mode)
         and current.st_uid == expected.st_uid
+        and current.st_gid == expected.st_gid
         and current.st_nlink == expected.st_nlink
         and stat.S_ISDIR(current.st_mode)
         and current.st_uid == os.geteuid()
@@ -62,7 +113,7 @@ def _same_parent(current: os.stat_result, expected: os.stat_result) -> bool:
 
 def _same_parent_with_link_delta(
     current: os.stat_result,
-    expected: os.stat_result,
+    expected: os.stat_result | HelperNamespaceIdentity,
     *,
     link_delta: int,
 ) -> bool:
@@ -71,6 +122,7 @@ def _same_parent_with_link_delta(
         and stat.S_IFMT(current.st_mode) == stat.S_IFMT(expected.st_mode)
         and stat.S_IMODE(current.st_mode) == stat.S_IMODE(expected.st_mode)
         and current.st_uid == expected.st_uid
+        and current.st_gid == expected.st_gid
         and current.st_nlink == expected.st_nlink + link_delta
         and stat.S_ISDIR(current.st_mode)
         and current.st_uid == os.geteuid()

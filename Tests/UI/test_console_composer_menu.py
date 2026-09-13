@@ -44,6 +44,7 @@ def test_menu_lists_the_requested_actions_in_order():
         ACTION_GENERATE_IMAGE,
         ACTION_GENERATE_CAPTION,
         ACTION_IMPERSONATE,
+        "buddy",
     ]
 
 
@@ -76,14 +77,30 @@ def test_narrate_stays_out_of_the_menu_until_implemented():
 
 @pytest.mark.unit
 def test_prompts_entry_is_stable_visible_and_descriptive():
-    """Prompt discovery is a stable first-class composer-menu action."""
+    """Library discovery remains explicit when no draft can be improved."""
     entries = build_composer_menu_entries()
 
     prompts = entries[0]
     assert prompts.action_id == "prompts"
-    assert prompts.label == "Prompts"
+    assert prompts.label == "Browse Prompt Library…"
     assert prompts.enabled is True
-    assert prompts.description == "Browse, improve, or build reusable prompts"
+    assert prompts.description == "Browse saved Prompts and Recipes"
+
+
+@pytest.mark.unit
+def test_nonblank_draft_adds_a_direct_improve_destination_before_library():
+    """Draft improvement and Library browsing remain separate destinations."""
+    empty = build_composer_menu_entries(draft_available=False)
+    drafted = build_composer_menu_entries(draft_available=True)
+
+    assert "improve-current-draft" not in {entry.action_id for entry in empty}
+    assert [entry.action_id for entry in drafted[:2]] == [
+        "improve-current-draft",
+        "prompts",
+    ]
+    assert drafted[0].label == "Improve current draft…"
+    assert drafted[0].enabled is True
+    assert drafted[1].label == "Browse Prompt Library…"
 
 
 @pytest.mark.unit
@@ -466,9 +483,12 @@ def _fake_controller_with(messages):
         ConsoleMessageRole,
         ConsoleProviderSelection,
     )
-    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 
     class _Store:
+        def sessions(self):
+            return ()
+
         def messages_for_session(self, session_id):
             # The REAL transcript row type, not a three-attribute stand-in:
             # the hand-rolled one drifted twice (`metadata`, read by
@@ -491,7 +511,7 @@ def _fake_controller_with(messages):
     controller = ConsoleChatController.__new__(ConsoleChatController)
     controller.store = _Store()
     controller._turn_context_provider = lambda session_id: (
-        ConsoleTurnExecutionContext.capture(
+        ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
             provider_selection=ConsoleProviderSelection(provider="test-provider"),
         )
@@ -527,13 +547,17 @@ async def test_impersonate_payload_obeys_the_provider_contract():
     async def _resolve(_selection):
         return _Resolution()
 
-    async def _collect(_resolution, messages):
+    async def _capture(_session_id, _configuration):
+        return _Resolution(), object()
+
+    async def _collect(_resolution, messages, **_kwargs):
         captured["messages"] = messages
         return "drafted reply"
 
     controller.provider_gateway = type(
         "_G", (), {"resolve_for_send": staticmethod(_resolve)}
     )()
+    controller._capture_and_resolve_turn_execution_context = _capture
     controller._collect_summary_completion = _collect
     # `_seeded_greeting_text` used to be a @staticmethod(session_messages),
     # which is why it was re-bound onto the instance here; commit c2038dfe3
@@ -643,9 +667,28 @@ def test_console_active_session_is_ephemeral_reads_the_active_flag():
     """
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from Tests.UI.console_controller_stubs import (
+        NO_APP,
+        stub_fleet_controller,
+        stub_library_activity_controller,
+    )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
+    # The `_console_chat_store` setter below reaches
+    # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`, which
+    # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
+    # `self._library_activity.build_provider` (TASK-23144) unguarded.
+    stub_fleet_controller(screen, context="composer menu bare screen")
+    stub_library_activity_controller(
+        screen,
+        context="composer menu bare screen",
+        # This shell has no app at all; it reads the store through the
+        # session controller only.
+        app_instance=NO_APP,
+    )
+    # This store-only shell has no mounted decision/projection controls.
+    screen.console_view_hooks = lambda: {}
     screen._console_chat_store = None
     session = ConsoleSessionController.__new__(ConsoleSessionController)
     session._current_chat_store_accessor = lambda: screen._console_chat_store
@@ -765,11 +808,11 @@ async def test_character_picker_new_chat_clears_a_stale_temporary_chip():
 
         # Bypass the real character-card DB lookup (irrelevant to this
         # regression) while exercising the real create/switch/notify body.
-        console._fetch_character_card_for_avatar = lambda character_id: {
+        console._character._fetch_character_card_for_avatar = lambda character_id: {
             "name": "Nova",
             "first_message": "",
         }
-        await console._apply_console_character_choice_async(
+        await console._character._apply_console_character_choice_async(
             ConsoleCharacterChoice(character_id=1, name="Nova", placement="new")
         )
         await pilot.pause()
@@ -954,9 +997,29 @@ def _bare_promote_screen(store):
     runs against the same fakes as before.
     """
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from Tests.UI.console_controller_stubs import (
+        NO_APP,
+        stub_fleet_controller,
+        stub_library_activity_controller,
+    )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
+    # The `_console_chat_store` setter below reaches
+    # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`, which
+    # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
+    # `self._library_activity.build_provider` (TASK-23144) unguarded.
+    stub_fleet_controller(screen, context="composer menu bare screen")
+    stub_library_activity_controller(
+        screen,
+        context="composer menu bare screen",
+        # `app_instance` is assigned further down this fixture; the promote
+        # scenarios touch no library-activity seam.
+        app_instance=NO_APP,
+    )
+    # Promotion is tested through the real session controller below; this
+    # unmounted shell has no view callbacks to bind during store assignment.
+    screen.console_view_hooks = lambda: {}
     screen._console_chat_store = store
     screen._ensure_console_chat_store = lambda: store
 

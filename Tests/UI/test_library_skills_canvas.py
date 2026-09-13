@@ -36,19 +36,28 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_SKILLS,
     LIBRARY_ROW_CREATE_SKILL,
 )
+from tldw_chatbook.Library.library_pager_state import build_library_pager_display
 from tldw_chatbook.Library.library_skills_state import (
+    DEFAULT_SKILL_BROWSE_PAGE_SIZE,
+    SkillBrowseScope,
     SkillEditorState,
     SkillEditorSupportingFile,
     SkillListRow,
     SkillsListState,
+    build_skill_browse_result,
 )
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
+from tldw_chatbook.UI.Library_Modules.library_skill_import_controller import (
+    LibrarySkillImportCoordinator,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.Library.library_skills_canvas import (
     _TRUST_SETUP_EXPLANATION_COPY,
+    LIBRARY_SKILLS_PAGE_NEXT_ID,
+    LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
     LibrarySkillsListCanvas,
     skill_context_toggle_label,
     skill_disable_model_label,
@@ -56,6 +65,9 @@ from tldw_chatbook.Widgets.Library.library_skills_canvas import (
     skill_trust_needs_setup,
     skill_trust_state_line,
     skill_user_invocable_label,
+)
+from tldw_chatbook.Widgets.Library.library_skill_work_pane import (
+    LibrarySkillWorkPane,
 )
 
 from Tests.UI.test_destination_shells import (
@@ -68,6 +80,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _FakeSkillsScopeService,
     _active_library_screen,
+    _wait_for_condition,
     _wait_for_library_shell,
 )
 from Tests.UI.app_factory import _build_test_app as _build_shared_test_app
@@ -242,6 +255,123 @@ async def test_skills_canvas_sort_label_reflects_sort_mode():
 
 
 @pytest.mark.asyncio
+async def test_skills_canvas_suppresses_single_page_chrome_and_keeps_the_trust_count():
+    """One page of skills renders the range and nothing else (task-32354).
+
+    This REVERSES the pin that
+    ``test_skills_canvas_renders_exact_pager_and_source_wide_trust_count``
+    carried: this canvas composed its own pager and so never got the
+    single-page suppression task-28016/31237 gave every other Library list.
+    The source-wide trust count (``blocked_total``, which counts blocked
+    skills across the whole source and not just this page) stays asserted
+    here; the paged shape moved to the companion test below.
+    """
+    pager = build_library_pager_display(
+        applied_page=1,
+        requested_page=1,
+        page_size=DEFAULT_SKILL_BROWSE_PAGE_SIZE,
+        row_count=2,
+        total=2,
+        freshness="fresh",
+    )
+    state = dataclasses.replace(
+        _two_row_state(),
+        pager=pager,
+        blocked_total=7,
+        first_blocked_skill_name="blocked-off-page",
+    )
+    app = _CanvasHost(state, trust_posture="ready")
+    async with app.run_test() as pilot:
+        assert str(pilot.app.query_one("#library-skills-header").renderable) == (
+            "Skills (2)"
+        )
+        assert "7 skills" in str(
+            pilot.app.query_one("#library-skills-trust-header").renderable
+        )
+        assert str(pilot.app.query_one("#library-skills-range").renderable) == (
+            "1-2 of 2"
+        )
+        assert not pilot.app.query(
+            "#library-skills-page"
+        ), "Page 1 of 1 has nowhere to page to"
+        assert not pilot.app.query("#library-skills-pager-status")
+        assert not pilot.app.query(
+            f"#{LIBRARY_SKILLS_PAGE_PREVIOUS_ID}"
+        ), "no dead Previous/Next"
+        assert not pilot.app.query(f"#{LIBRARY_SKILLS_PAGE_NEXT_ID}")
+
+
+@pytest.mark.asyncio
+async def test_skills_canvas_renders_the_full_pager_when_a_second_page_exists():
+    """A second page brings back every part of the pager (task-32354).
+
+    One skill more than the browse page size (``21``) is what makes a
+    second page exist; the mounted row list stays the two-row fixture,
+    since the canvas renders ``state.rows`` and ``state.pager`` from
+    independent controller reads.
+    """
+    pager = build_library_pager_display(
+        applied_page=1,
+        requested_page=1,
+        page_size=DEFAULT_SKILL_BROWSE_PAGE_SIZE,
+        row_count=DEFAULT_SKILL_BROWSE_PAGE_SIZE,
+        total=DEFAULT_SKILL_BROWSE_PAGE_SIZE + 1,
+        freshness="fresh",
+    )
+    state = dataclasses.replace(_two_row_state(), pager=pager)
+    app = _CanvasHost(state, trust_posture="ready")
+    async with app.run_test() as pilot:
+        # The header counts the SOURCE (``state.pager.title_count``), not the
+        # rows mounted on this page -- 21 against 2 mounted rows is what makes
+        # the two distinguishable, and the single-page companion cannot say so.
+        assert str(pilot.app.query_one("#library-skills-header").renderable) == (
+            f"Skills ({DEFAULT_SKILL_BROWSE_PAGE_SIZE + 1})"
+        )
+        status = str(pilot.app.query_one("#library-skills-range").renderable)
+        assert status.endswith("· Page 1 of 2"), status
+        assert pilot.app.query(f"#{LIBRARY_SKILLS_PAGE_PREVIOUS_ID}")
+        assert (
+            str(pilot.app.query_one("#library-skills-pager-status").renderable)
+            == "Already on the first page."
+        )
+        assert not pilot.app.query_one(
+            f"#{LIBRARY_SKILLS_PAGE_NEXT_ID}", Button
+        ).disabled
+
+
+@pytest.mark.asyncio
+async def test_skills_canvas_stale_page_hides_totals_and_disables_actions():
+    pager = build_library_pager_display(
+        applied_page=2,
+        requested_page=2,
+        page_size=20,
+        row_count=2,
+        total=None,
+        freshness="stale",
+        stale_copy="Skills changed; refresh the page before acting.",
+    )
+    state = dataclasses.replace(
+        _two_row_state(),
+        pager=pager,
+        blocked_total=7,
+        first_blocked_skill_name="blocked-off-page",
+        actions_disabled=True,
+        source_summary_fresh=False,
+    )
+    app = _CanvasHost(state, trust_posture="ready")
+    async with app.run_test() as pilot:
+        assert str(pilot.app.query_one("#library-skills-header").renderable) == "Skills"
+        assert not pilot.app.query("#library-skills-trust-header")
+        assert pilot.app.query_one("#library-skill-row-code-review", Button).disabled
+        assert pilot.app.query_one("#library-skills-page-previous", Button).disabled
+        assert pilot.app.query_one("#library-skills-page-next", Button).disabled
+        assert pilot.app.query_one("#library-skills-retry", Button)
+        assert "refresh the page" in str(
+            pilot.app.query_one("#library-skills-pager-status").renderable
+        )
+
+
+@pytest.mark.asyncio
 async def test_skills_canvas_empty_state_renders_exact_copy_not_list():
     empty_state = SkillsListState(rows=(), count=0, sort="name")
     app = _CanvasHost(empty_state)
@@ -249,7 +379,7 @@ async def test_skills_canvas_empty_state_renders_exact_copy_not_list():
         empty = pilot.app.query_one("#library-skills-empty")
         assert (
             str(empty.renderable)
-            == "No skills yet — use Create ▸ New skill in the rail, or Import… above."
+            == "No skills yet — use Create ▸ New skill in the rail, or Import skill… above."
         )
         assert len(pilot.app.query(".library-skill-row")) == 0
 
@@ -275,7 +405,14 @@ async def test_skills_list_renders_trust_header_setup():
     app = _CanvasHost(_two_row_state(), trust_posture="needs_setup")
     async with app.run_test() as pilot:
         header = pilot.app.query_one("#library-skills-trust-header", Static)
-        assert "isn't set up" in str(header.renderable)
+        # task-32363: the whole sentence, at the UI boundary. A substring
+        # check on "isn't set up" survived reverting the explanation, so the
+        # thing the task added had no integration coverage at all (Qodo
+        # review of PR #2599, item 2).
+        assert str(header.renderable) == (
+            'Skill trust isn\'t set up, so every skill reads "needs review" — '
+            "set it up to review and use skills."
+        )
         action = pilot.app.query_one("#library-skills-trust-action", Button)
         assert action.trust_action == "setup"
 
@@ -397,9 +534,9 @@ async def test_skill_editor_basic_discloses_core_fields_and_hides_advanced_regio
         assert pilot.app.query_one("#library-skill-disable-model", Button).display
         assert pilot.app.query_one("#library-skill-basic-fields").display is True
         assert pilot.app.query_one("#library-skill-advanced-fields").display is False
-        assert pilot.app.query_one("#library-skill-editor-mode", Button).label.plain == (
-            "Show advanced"
-        )
+        assert pilot.app.query_one(
+            "#library-skill-editor-mode", Button
+        ).label.plain == ("Show advanced")
 
 
 @pytest.mark.asyncio
@@ -414,9 +551,9 @@ async def test_skill_editor_advanced_discloses_runtime_and_bundle_metadata():
         assert pilot.app.query_one("#library-skill-model", Input).value == (
             "imported-model"
         )
-        assert pilot.app.query_one("#library-skill-editor-mode", Button).label.plain == (
-            "Show basic"
-        )
+        assert pilot.app.query_one(
+            "#library-skill-editor-mode", Button
+        ).label.plain == ("Show basic")
 
 
 @pytest.mark.asyncio
@@ -455,9 +592,7 @@ async def test_skill_editor_advanced_tool_picker_is_bounded_unique_and_lossless(
         captured = pilot.app.query_one("#library-skill-tool-captured", Static)
         assert str(captured.renderable) == "tool-02, mystery-tool, tool-02"
         descendant_count = len(tuple(pilot.app.walk_children()))
-        canvas = pilot.app.query_one(
-            "#library-skills-canvas", LibrarySkillsListCanvas
-        )
+        canvas = pilot.app.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
         canvas.set_tool_filter("tool-5")
         await pilot.pause()
         assert len(tuple(pilot.app.walk_children())) == descendant_count
@@ -482,9 +617,7 @@ async def test_skill_editor_production_geometry_contains_basic_and_advanced_work
     )
     async with app.run_test(size=size) as pilot:
         assert app.CSS_PATH == TldwCli.CSS_PATH
-        canvas = app.query_one(
-            "#library-skills-canvas", LibrarySkillsListCanvas
-        )
+        canvas = app.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
         for selector in (
             "#library-skill-name",
             "#library-skill-description",
@@ -537,9 +670,12 @@ async def test_skill_editor_lifecycle_exposes_only_valid_primary_actions(
     app = _EditorHost(mode="editor", editor_state=_editor_state(), **kwargs)
     async with app.run_test() as pilot:
         actions = pilot.app.query_one("#library-skill-lifecycle-actions")
-        assert tuple(
-            button.label.plain for button in actions.query(Button) if button.display
-        ) == expected_labels
+        assert (
+            tuple(
+                button.label.plain for button in actions.query(Button) if button.display
+            )
+            == expected_labels
+        )
 
 
 @pytest.mark.asyncio
@@ -553,26 +689,32 @@ async def test_skill_editor_mutation_replaces_actions_with_progress_and_reason()
     async with app.run_test() as pilot:
         assert not tuple(
             button
-            for button in pilot.app.query_one(
-                "#library-skill-lifecycle-actions"
-            ).query(Button)
+            for button in pilot.app.query_one("#library-skill-lifecycle-actions").query(
+                Button
+            )
             if button.display
         )
-        assert str(
-            pilot.app.query_one("#library-skill-mutation-progress", Static).renderable
-        ) == "Saving changes…"
-        assert str(
-            pilot.app.query_one("#library-skill-mutation-reason", Static).renderable
-        ) == "Editor actions are unavailable until saving finishes."
+        assert (
+            str(
+                pilot.app.query_one(
+                    "#library-skill-mutation-progress", Static
+                ).renderable
+            )
+            == "Saving changes…"
+        )
+        assert (
+            str(
+                pilot.app.query_one("#library-skill-mutation-reason", Static).renderable
+            )
+            == "Editor actions are unavailable until saving finishes."
+        )
 
 
 @pytest.mark.asyncio
 async def test_skill_lifecycle_patching_preserves_live_draft_widget_identity():
     app = _EditorHost(mode="editor", editor_state=_editor_state())
     async with app.run_test() as pilot:
-        canvas = pilot.app.query_one(
-            "#library-skills-canvas", LibrarySkillsListCanvas
-        )
+        canvas = pilot.app.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
         body = canvas.query_one("#library-skill-body", TextArea)
         body.insert("Draft: ", (0, 0))
         canvas.sync_lifecycle_actions(dirty=True)
@@ -637,9 +779,7 @@ async def test_skill_editor_mode_switch_preserves_textarea_identity_edit_and_und
         editor_mode="basic",
     )
     async with app.run_test() as pilot:
-        canvas = pilot.app.query_one(
-            "#library-skills-canvas", LibrarySkillsListCanvas
-        )
+        canvas = pilot.app.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
         body = pilot.app.query_one("#library-skill-body", TextArea)
         original = body.text
         body.insert("Draft: ", (0, 0))
@@ -664,9 +804,7 @@ async def test_skill_editor_mode_focus_fallback_honors_newer_user_focus():
         tool_catalog=("calculator",),
     )
     async with app.run_test(size=(100, 30)) as pilot:
-        canvas = pilot.app.query_one(
-            "#library-skills-canvas", LibrarySkillsListCanvas
-        )
+        canvas = pilot.app.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
         basic_toggle = canvas.query_one("#library-skill-user-invocable", Button)
         body = canvas.query_one("#library-skill-body", TextArea)
         basic_toggle.focus()
@@ -715,8 +853,7 @@ async def test_skill_editor_renders_all_field_ids_populated():
             == "git.diff"
         )
         assert (
-            pilot.app.query_one("#library-skill-model", Input).value
-            == "imported-model"
+            pilot.app.query_one("#library-skill-model", Input).value == "imported-model"
         )
         assert pilot.app.query_one("#library-skill-model-hint", Static)
         model_hint = str(
@@ -806,9 +943,7 @@ async def test_skill_editor_clean_saved_mode_renders_navigation_actions_only():
         assert pilot.app.query_one("#library-skill-more-actions", Button).display
         assert not pilot.app.query_one("#library-skill-save", Button).display
         assert not pilot.app.query_one("#library-skill-delete", Button).display
-        assert not pilot.app.query_one(
-            "#library-skill-conflict-reload", Button
-        ).display
+        assert not pilot.app.query_one("#library-skill-conflict-reload", Button).display
         assert pilot.app.query_one("#library-skill-save-status", Static).display
 
 
@@ -817,9 +952,7 @@ async def test_skill_editor_conflict_mode_renders_reload_only():
     state = _editor_state()
     app = _EditorHost(mode="editor", editor_state=state, conflict=True)
     async with app.run_test() as pilot:
-        assert pilot.app.query_one(
-            "#library-skill-conflict-reload", Button
-        ).display
+        assert pilot.app.query_one("#library-skill-conflict-reload", Button).display
         assert pilot.app.query_one("#library-skill-conflict-copy", Static).display
         assert not pilot.app.query_one("#library-skill-save", Button).display
         assert not pilot.app.query_one("#library-skill-delete", Button).display
@@ -967,34 +1100,111 @@ def test_skill_editor_warning_lines_shadow_and_needs_review():
 # ---------------------------------------------------------------------------
 
 
-def test_build_library_skills_state_reads_local_source_records():
+def _skills_browse_controller_stub(
+    items: tuple[dict[str, Any], ...],
+) -> SimpleNamespace:
+    scope = SimpleNamespace(sort="name")
+    pager = build_library_pager_display(
+        applied_page=1,
+        requested_page=1,
+        page_size=20,
+        row_count=len(items),
+        total=len(items),
+        freshness="fresh",
+    )
+    return SimpleNamespace(
+        retained_items=items,
+        visible_result=SimpleNamespace(scope=scope),
+        pager=pager,
+        blocked_total=sum(bool(item.get("trust_blocked")) for item in items),
+        first_blocked_skill_name=next(
+            (item["name"] for item in items if item.get("trust_blocked")),
+            None,
+        ),
+        freshness="fresh",
+        result=SimpleNamespace(status="ready"),
+    )
+
+
+def test_build_library_skills_state_reads_only_controller_page():
     fake = SimpleNamespace(
         _local_source_records={
             "skills": (
-                2,
+                3,
                 {
-                    "available_skills": [{"name": "code-review"}],
-                    "blocked_skills": [{"name": "summarize"}],
+                    "available_skills": [{"name": "must-not-leak"}],
+                    "blocked_skills": [],
                 },
             )
         },
-        _library_skills_filter="",
-        _library_skills_sort="name",
+        _library_skills_browse_controller=_skills_browse_controller_stub(
+            (
+                {"name": "code-review", "trust_blocked": False},
+                {"name": "summarize", "trust_blocked": True},
+            )
+        ),
+        # Task 3 cleanup: the screen's flat `_selected_skill_name` shim is
+        # gone -- `_build_library_skills_state`'s body now reads
+        # `self._skills_state.selected_skill_name`, so this fake nests it
+        # under `_skills_state` (recipe §11's "unbound fake-self" retarget
+        # precedent).
+        _skills_state=SimpleNamespace(selected_skill_name=""),
     )
     state = LibraryScreen._build_library_skills_state(fake)
     assert state.count == 2
     assert [row.name for row in state.rows] == ["code-review", "summarize"]
+    assert "must-not-leak" not in {row.name for row in state.rows}
+    assert state.blocked_total == 1
 
 
-def test_build_library_skills_state_tolerates_missing_entry():
+def test_build_library_skills_state_tolerates_empty_controller_page():
     fake = SimpleNamespace(
-        _local_source_records={},
-        _library_skills_filter="",
-        _library_skills_sort="name",
+        _local_source_records={"skills": (99, {"available_skills": []})},
+        _library_skills_browse_controller=_skills_browse_controller_stub(()),
+        _skills_state=SimpleNamespace(selected_skill_name=""),
     )
     state = LibraryScreen._build_library_skills_state(fake)
     assert state.rows == ()
     assert state.count == 0
+
+
+def test_committed_mutation_marks_applied_page_stale_before_exact_refresh():
+    screen = LibraryScreen(_build_test_app())
+    scope = SkillBrowseScope(query="review", sort="status", page=2)
+    applied = build_skill_browse_result(
+        scope,
+        {
+            "skills": [{"name": "skill-020", "trust_blocked": False}],
+            "count": 1,
+            "total": 21,
+            "limit": 20,
+            "offset": 20,
+            "blocked_total": 1,
+            "first_blocked_skill_name": "blocked-off-page",
+        },
+    )
+    controller = screen._library_skills_browse_controller
+    controller.scope = scope
+    controller.result = applied
+    controller.applied_result = applied
+    controller.retained_items = applied.items
+    controller.freshness = "fresh"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+    screen._skills_state.view = "list"
+    requested: list[SkillBrowseScope] = []
+    screen._request_library_skills_browse = lambda requested_scope: requested.append(
+        requested_scope
+    )
+
+    screen._refresh_library_skills_after_committed_mutation()
+
+    assert requested == [scope]
+    assert controller.retained_items == applied.items
+    assert controller.freshness == "stale"
+    assert controller.pager.title_count is None
+    assert controller.pager.previous_disabled is True
+    assert controller.pager.next_disabled is True
+    assert controller.pager.retry_visible is True
 
 
 def test_handle_library_skills_sort_opens_the_choice_strip():
@@ -1002,8 +1212,12 @@ def test_handle_library_skills_sort_opens_the_choice_strip():
     direct-pick strip open (and closed on a second press)."""
     calls = []
     fake = SimpleNamespace(
-        _library_skills_sort="name",
-        _library_skills_sort_choices_visible=False,
+        # Task 3 cleanup: the screen's flat `_library_skills_<field>` shim
+        # is gone -- `handle_library_skills_sort`'s body now reads
+        # `self._skills_state.<field>`, so this fake nests its skills
+        # fields under `_skills_state` (recipe §11's "unbound fake-self"
+        # retarget precedent).
+        _skills_state=SimpleNamespace(sort="name", sort_choices_visible=False),
         refresh=lambda recompose=False: calls.append(recompose),
         call_after_refresh=lambda *args, **kwargs: None,
         _focus_library_control=lambda selector: None,
@@ -1011,17 +1225,23 @@ def test_handle_library_skills_sort_opens_the_choice_strip():
     )
     event = SimpleNamespace(stop=lambda: None)
     LibraryScreen.handle_library_skills_sort(fake, event)
-    assert fake._library_skills_sort == "name"
-    assert fake._library_skills_sort_choices_visible is True
+    assert fake._skills_state.sort == "name"
+    assert fake._skills_state.sort_choices_visible is True
     assert calls == [True]
     LibraryScreen.handle_library_skills_sort(fake, event)
-    assert fake._library_skills_sort_choices_visible is False
+    assert fake._skills_state.sort_choices_visible is False
 
 
 def test_handle_library_skills_sort_choice_applies_exact_value():
+    requested = []
     fake = SimpleNamespace(
-        _library_skills_sort="name",
-        _library_skills_sort_choices_visible=True,
+        _skills_state=SimpleNamespace(sort="name", sort_choices_visible=True),
+        _library_skills_browse_controller=SimpleNamespace(
+            mutation_refresh_scope=SkillBrowseScope(page=3)
+        ),
+        _request_library_skills_browse=lambda scope, focus_identity=None: (
+            requested.append((scope, focus_identity))
+        ),
         refresh=lambda recompose=False: None,
         call_after_refresh=lambda *args, **kwargs: None,
         _focus_library_control=lambda selector: None,
@@ -1031,31 +1251,41 @@ def test_handle_library_skills_sort_choice_applies_exact_value():
         button=SimpleNamespace(choice_value="status"),
     )
     LibraryScreen.handle_library_skills_sort_choice(fake, event)
-    assert fake._library_skills_sort == "status"
-    assert fake._library_skills_sort_choices_visible is False
+    assert fake._skills_state.sort == "status"
+    assert fake._skills_state.sort_choices_visible is False
+    assert requested == [
+        (SkillBrowseScope(sort="status", page=1), "library-skills-sort")
+    ]
     # An unknown payload closes the strip without mutating the sort.
-    fake._library_skills_sort_choices_visible = True
+    fake._skills_state.sort_choices_visible = True
     LibraryScreen.handle_library_skills_sort_choice(
         fake,
         SimpleNamespace(
             stop=lambda: None, button=SimpleNamespace(choice_value="bogus")
         ),
     )
-    assert fake._library_skills_sort == "status"
-    assert fake._library_skills_sort_choices_visible is False
+    assert fake._skills_state.sort == "status"
+    assert fake._skills_state.sort_choices_visible is False
 
 
 def test_handle_library_skills_filter_submitted_sets_filter():
-    calls = []
+    requested = []
     fake = SimpleNamespace(
-        _library_skills_filter="",
+        _skills_state=SimpleNamespace(filter=""),
+        _library_skills_browse_controller=SimpleNamespace(
+            mutation_refresh_scope=SkillBrowseScope(page=3)
+        ),
+        _request_library_skills_browse=lambda scope, focus_identity=None: (
+            requested.append((scope, focus_identity))
+        ),
         _safe_text=LibraryScreen._safe_text,
-        refresh=lambda recompose=False: calls.append(recompose),
     )
     event = SimpleNamespace(value="review", stop=lambda: None)
     LibraryScreen.handle_library_skills_filter(fake, event)
-    assert fake._library_skills_filter == "review"
-    assert calls == [True]
+    assert fake._skills_state.filter == "review"
+    assert requested == [
+        (SkillBrowseScope(query="review", page=1), "library-skills-filter")
+    ]
 
 
 @pytest.mark.asyncio
@@ -1070,9 +1300,14 @@ async def test_handle_library_skill_row_opens_editor_and_records_selected_name()
     reset_calls = []
     refresh_calls = []
     fake = SimpleNamespace(
-        _selected_skill_name="",
+        # Task 3 cleanup: the screen's flat `_selected_skill_name`/
+        # `_library_skills_<field>` shims are gone --
+        # `handle_library_skill_row`'s body now reads/writes
+        # `self._skills_state.<field>`, so this fake nests them under
+        # `_skills_state` (recipe §11's "unbound fake-self" retarget
+        # precedent).
+        _skills_state=SimpleNamespace(selected_skill_name="", view="list"),
         _library_selected_row_id="",
-        _library_skills_view="list",
         _flush_library_skill_save=AsyncMock(return_value=True),
         _reset_library_skill_editor_state=lambda: reset_calls.append(True),
         # ``run_worker``'s first positional arg is evaluated eagerly (it's
@@ -1086,9 +1321,9 @@ async def test_handle_library_skill_row_opens_editor_and_records_selected_name()
     button = SimpleNamespace(skill_name="code-review")
     event = SimpleNamespace(stop=lambda: None, button=button)
     await LibraryScreen.handle_library_skill_row(fake, event)
-    assert fake._selected_skill_name == "code-review"
+    assert fake._skills_state.selected_skill_name == "code-review"
     assert fake._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-    assert fake._library_skills_view == "editor"
+    assert fake._skills_state.view == "editor"
     assert reset_calls == [True]
     assert worker_calls and worker_calls[0]["group"] == "library_skill_detail"
     assert refresh_calls == [True]
@@ -1101,9 +1336,8 @@ async def test_handle_library_skill_row_vetoed_while_dirty():
     new fetch."""
     veto_notices: list[bool] = []
     fake = SimpleNamespace(
-        _selected_skill_name="already-open",
+        _skills_state=SimpleNamespace(selected_skill_name="already-open", view="editor"),
         _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
-        _library_skills_view="editor",
         _flush_library_skill_save=AsyncMock(return_value=False),
         # task-449: the veto is no longer silent -- the handler reports it.
         _notify_skill_dirty_veto=lambda: veto_notices.append(True),
@@ -1111,7 +1345,7 @@ async def test_handle_library_skill_row_vetoed_while_dirty():
     button = SimpleNamespace(skill_name="code-review")
     event = SimpleNamespace(stop=lambda: None, button=button)
     await LibraryScreen.handle_library_skill_row(fake, event)
-    assert fake._selected_skill_name == "already-open"
+    assert fake._skills_state.selected_skill_name == "already-open"
     assert veto_notices == [True]
 
 
@@ -1175,7 +1409,7 @@ async def test_library_shell_skills_row_press_selects_row():
         screen.query_one("#library-skill-row-code-review", Button).press()
         await pilot.pause()
 
-        assert screen._selected_skill_name == "code-review"
+        assert screen._skills_state.selected_skill_name == "code-review"
 
 
 @pytest.mark.asyncio
@@ -1199,17 +1433,17 @@ async def test_library_shell_skills_sort_strip_picks_and_recomposes():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_skills_sort == "name"
+        assert screen._skills_state.sort == "name"
         screen.query_one("#library-skills-sort", Button).press()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_skills_sort == "name"
+        assert screen._skills_state.sort == "name"
         screen.query_one("#library-skills-sort-status", Button).press()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_skills_sort == "status"
+        assert screen._skills_state.sort == "status"
         sort_button = screen.query_one("#library-skills-sort", Button)
         assert "Status" in str(sort_button.label)
 
@@ -1240,9 +1474,484 @@ async def test_library_shell_skills_filter_submitted_rebuilds_state():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_skills_filter == "review"
+        assert screen._skills_state.filter == "review"
+
+
+@pytest.mark.parametrize("size", ((100, 30), (170, 48)))
+@pytest.mark.asyncio
+async def test_library_skills_45_item_pager_is_visible_and_reaches_middle_page(
+    size,
+):
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[
+            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
+            for index in range(45)
+        ]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        for _ in range(12):
+            await pilot.pause()
+            if len(screen.query(".library-skill-row")) == 20:
+                break
+
+        pager = screen.query_one("#library-skills-pager")
+        assert len(screen.query(".library-skill-row")) == 20
+        assert pager.region.height > 0
+        assert pager.region.bottom <= screen.region.bottom
+        assert "1-20 of 45" in str(
+            screen.query_one("#library-skills-range", Static).renderable
+        )
+
+        screen.query_one("#library-skills-page-next", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+            if "Page 2 of 3" in str(
+                screen.query_one("#library-skills-range", Static).renderable
+            ):
+                break
+        assert screen.query_one("#library-skill-row-skill-020", Button)
+        assert not screen.query("#library-skill-row-skill-000")
+        assert "21-40 of 45" in str(
+            screen.query_one("#library-skills-range", Static).renderable
+        )
+
+        screen.query_one("#library-skills-page-next", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+            if "Page 3 of 3" in str(
+                screen.query_one("#library-skills-range", Static).renderable
+            ):
+                break
+        assert screen.query_one("#library-skill-row-skill-040", Button)
+        assert len(screen.query(".library-skill-row")) == 5
+        assert "41-45 of 45" in str(
+            screen.query_one("#library-skills-range", Static).renderable
+        )
+        assert screen.query_one("#library-skills-page-next", Button).disabled
+
+
+# ---------------------------------------------------------------------------
+# Library decomposition wave-4 task 1 (skills state PR): characterization
+# spot-check pins. `handle_library_skills_page_previous` had NO `.press()`
+# coverage anywhere across Tests/UI, Tests/Library, Tests/Live, and
+# Tests/Skills before this pin -- the two existing widget-only references to
+# `#library-skills-page-previous` (above, `test_skills_canvas_page_two_of_two...`
+# and `test_skills_canvas_stale_page_hides_totals_and_disables_actions`) only
+# ever assert its `disabled` state on a hand-built `SkillsListState`, never
+# press it against a real, fully-mounted `LibraryScreen`. This pin reuses
+# the 45-item real-service setup immediately above (already exercises
+# `handle_library_skills_page_next` genuinely) one page further back.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_skills_page_previous_returns_to_the_prior_exact_page():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[
+            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
+            for index in range(45)
+        ]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        for _ in range(12):
+            await pilot.pause()
+            if len(screen.query(".library-skill-row")) == 20:
+                break
+
+        screen.query_one("#library-skills-page-next", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+            if "Page 2 of 3" in str(
+                screen.query_one("#library-skills-range", Static).renderable
+            ):
+                break
+        assert "21-40 of 45" in str(
+            screen.query_one("#library-skills-range", Static).renderable
+        )
+
+        screen.query_one("#library-skills-page-previous", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+            if "Page 1 of 3" in str(
+                screen.query_one("#library-skills-range", Static).renderable
+            ):
+                break
+        assert screen.query_one("#library-skill-row-skill-000", Button)
+        assert not screen.query("#library-skill-row-skill-020")
+        assert "1-20 of 45" in str(
+            screen.query_one("#library-skills-range", Static).renderable
+        )
+        assert screen.query_one("#library-skills-page-previous", Button).disabled
+
+
+class _DelayedSkillsScopeService(_FakeSkillsScopeService):
+    """Every `list_skills` call sleeps `delay` seconds before delegating.
+
+    A bounded delay (never an indefinite wait -- avoids any risk of
+    deadlocking the harness) that separates the SYNCHRONOUS "loading"-round
+    settlement (and its own `queue_after_recompose`-scheduled focus
+    restore) from the async "ready" round's own near-simultaneous resync.
+    Against a near-instant fake service the two rounds' own focus-restore
+    callbacks race -- confirmed directly: `_sync_library_skills_browse_
+    result` runs FOUR times for one `focus_identity=None` refresh (an
+    initial pair from earlier route-navigation settling, then a "loading"
+    round that correctly derives `focus_identity="library-skills-filter"`
+    from the live read, immediately followed -- same event-loop turn, no
+    real service latency -- by a "ready" round that observes NOTHING
+    focused yet, since the loading round's own queued restore hasn't run,
+    and so re-derives `focus_identity=None`). `_sync_library_canvas`'s
+    `queue_after_recompose` holds only one pending callback per host;
+    the ready round's own resync overwrites the loading round's
+    still-pending, CORRECT restore before it ever fires -- a genuine,
+    pre-existing race in the production code, unrelated to whether
+    `focused` is bound, that a delay-free test flakily/deterministically
+    trips on regardless of which side of this pin's own fix it runs
+    against.
+    """
+
+    def __init__(self, *, available, blocked=(), delay: float = 0.2):
+        super().__init__(available=available, blocked=blocked)
+        self._delay = delay
+
+    async def list_skills(self, **kwargs):
+        await asyncio.sleep(self._delay)
+        return await super().list_skills(**kwargs)
+
+
+class _FailOnceSkillsScopeService(_FakeSkillsScopeService):
+    """Raises on the FIRST `list_skills` call, then delegates to the real
+    fake for every call after -- mirrors `_RecoveringLibraryNoteDetailService`
+    in `Tests/UI/test_library_shell.py` (same "fail once, then recover"
+    shape for a retry pin)."""
+
+    def __init__(self, *, available, blocked=()):
+        super().__init__(available=available, blocked=blocked)
+        self.failures_remaining = 1
+
+    async def list_skills(self, **kwargs):
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            raise RuntimeError("temporary skills list outage")
+        return await super().list_skills(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_library_skills_retry_recovers_transient_list_failure():
+    """`handle_library_skills_retry` had ZERO coverage anywhere in the four
+    test roots before this pin -- the one existing widget-only reference to
+    `#library-skills-retry` (`test_skills_canvas_stale_page_hides_totals_
+    and_disables_actions` above) only asserts the button exists on a
+    hand-built `SkillsListState`, never presses it against a real screen."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FailOnceSkillsScopeService(
+        available=[{"name": "code-review", "description": "Reviews a diff"}]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        retry_button = None
+        for _ in range(30):
+            await pilot.pause()
+            matches = list(screen.query("#library-skills-retry"))
+            if matches:
+                retry_button = matches[0]
+                break
+        assert isinstance(retry_button, Button)
+
+        retry_button.press()
+        for _ in range(30):
+            await pilot.pause()
+            if screen.query("#library-skill-row-code-review"):
+                break
         assert screen.query_one("#library-skill-row-code-review", Button)
-        assert len(screen.query("#library-skill-row-translate")) == 0
+        assert not screen.query("#library-skills-retry")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("width", "items_open", "items_width"),
+    # task-31951/31952: `_sync_library_skills_reader_layout_from_shell` gives
+    # the Items pane priority once the shell can hold both grips, the list's
+    # 32-cell floor and the 48-cell work minimum. That floor reads the
+    # profile's `grip_width`, so it moved with the one-cell grip: 2*5+32+48 =
+    # 90 before, 2*1+32+48 = 82 now. The band 82-89 is the difference -- the
+    # list paints there instead of collapsing -- so both edges are pinned.
+    [(81, False, 0), (82, True, 32)],
+)
+async def test_library_skills_items_priority_floor_moves_with_the_grip_width(
+    width: int,
+    items_open: bool,
+    items_width: int,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[
+            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
+            for index in range(45)
+        ]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(width, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        monkeypatch.setattr(
+            screen,
+            "_persist_library_reader_preference",
+            AsyncMock(),
+        )
+        screen.query_one("#library-row-browse-skills").press()
+
+        def _painted() -> bool:
+            # task-31953: anchor on the PAINTED Items width, not on
+            # `effective_layout.reader_width` alone -- the layout field lands
+            # a frame before the shell re-lays out its panes, so breaking on
+            # it read `items.region.width == 0` about one run in nine.
+            found = screen.query("#library-skills-reader-shell")
+            if not found:
+                return False
+            candidate = found.first()
+            return bool(
+                candidate.effective_layout.reader_width
+                and candidate.items.region.width == items_width
+            )
+
+        await _wait_for_condition(
+            pilot,
+            _painted,
+            message="Skills reader shell never painted the expected Items width.",
+        )
+        shell = screen.query_one("#library-skills-reader-shell")
+
+        assert shell.region.width == width
+        assert shell.effective_layout.items_open is items_open
+        assert shell.effective_layout.items_width == items_width
+        assert shell.items.region.width == items_width
+        assert shell.effective_layout.reader_width >= 48
+
+
+@pytest.mark.asyncio
+async def test_library_skills_manual_items_priority_survives_compact_layout_sync(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An explicit 80-column Items expansion must outlive ordinary refreshes."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[
+            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
+            for index in range(45)
+        ]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        monkeypatch.setattr(
+            screen,
+            "_persist_library_reader_preference",
+            AsyncMock(),
+        )
+        screen.query_one("#library-row-browse-skills").press()
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if len(screen.query(".library-skill-row")) == 20:
+                break
+
+        shell = screen.query_one("#library-skills-reader-shell")
+        assert not shell.effective_layout.items_open
+        screen.query_one("#library-skills-items-grip", Button).press()
+        await pilot.pause()
+        assert shell.effective_layout.items_open
+        assert screen.query_one("#library-skills-pager").region.height > 0
+
+        screen._sync_library_skills_reader_layout_from_shell()
+        await pilot.pause()
+
+        assert shell.effective_layout.items_open
+        assert screen.query_one("#library-skills-pager").region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_library_skills_filter_focus_survives_loading_ready_recompose():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[
+            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
+            for index in range(45)
+        ]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if len(screen.query(".library-skill-row")) == 20:
+                break
+
+        filter_input = screen.query_one("#library-skills-filter", Input)
+        for _ in range(100):
+            filter_input = screen.query_one("#library-skills-filter", Input)
+            filter_input.value = "Skill 4"
+            filter_input.focus()
+            await pilot.pause(0.01)
+            if filter_input.is_mounted and filter_input.has_focus:
+                break
+        assert filter_input.has_focus
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if "1-6 of 6" in str(
+                screen.query_one("#library-skills-range", Static).renderable
+            ):
+                break
+
+        for _ in range(100):
+            current_filter = screen.query_one("#library-skills-filter", Input)
+            if current_filter.has_focus:
+                break
+            await pilot.pause(0.01)
+        assert current_filter.has_focus
+
+
+@pytest.mark.asyncio
+async def test_committed_mutation_refresh_with_no_focus_identity_restores_live_focus():
+    """`_refresh_library_skills_after_committed_mutation` never passes an
+    explicit `focus_identity` -- unlike `test_library_skills_filter_focus_
+    survives_loading_ready_recompose` above (which exercises `handle_
+    library_skills_filter`'s EXPLICIT `focus_identity=LIBRARY_SKILLS_
+    FILTER_ID`, immune to this pin's own finding regardless of whether the
+    live read works), this path can only recover focus through `_sync_
+    library_skills_browse_result`'s own LIVE read of the currently-focused
+    widget (`focused = getattr(self, "focused", None)`). `LibrarySkills
+    Controller` had no `focused` property bound -- the `getattr` default
+    silently returned `None` on every call, so a committed-mutation
+    refresh (the delete/save/trust-reset completion path, and the
+    rail-switch/`restore_state` call sites on the screen) permanently
+    dropped whatever the user was focused on.
+
+    NOT a bare `.has_focus` check: Textual mounts the rebuilt canvas's
+    OWN first focusable descendant (this same filter Input, positionally)
+    on its own -- confirmed empirically, `.has_focus` alone stayed True
+    regardless of whether `focused` was bound, an unrelated, generic
+    Textual behaviour this pin must not accidentally ride. The
+    discriminating signal is instead a spy on `screen.query_one`: `_sync_
+    library_skills_browse_result`'s own `restore_focus()` closure only
+    ever calls `self.query_one(f"#{focus_identity}", Widget)` when
+    `focus_identity` is truthy -- i.e. only when the live read resolved a
+    focused `library-skills-*` control -- so observing that exact call is
+    a direct trace of the CODE PATH, immune to Textual's own independent
+    default-focus fallback landing on the same widget by coincidence.
+
+    Uses `_DelayedSkillsScopeService` (see its own docstring) so the
+    "loading" round's own queued restore is checked in isolation from the
+    "ready" round's own near-simultaneous, callback-clobbering resync.
+    """
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _DelayedSkillsScopeService(
+        available=[
+            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
+            for index in range(45)
+        ],
+        delay=0.2,
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        for _ in range(200):
+            await pilot.pause(0.01)
+            if len(screen.query(".library-skill-row")) == 20:
+                break
+
+        # Focus a `library-skills-*` control WITHOUT going through any
+        # handler that would set an explicit `focus_identity` (typing or
+        # submitting the filter would route through `handle_library_
+        # skills_filter`, defeating the point of this pin).
+        filter_input = None
+        for _ in range(100):
+            filter_input = screen.query_one("#library-skills-filter", Input)
+            filter_input.focus()
+            await pilot.pause(0.01)
+            if filter_input.is_mounted and filter_input.has_focus:
+                break
+        assert filter_input.has_focus
+
+        real_query_one = type(screen).query_one
+        queried_selectors: list[str] = []
+
+        def spying_query_one(self_screen, selector, *args, **kwargs):
+            if isinstance(selector, str):
+                queried_selectors.append(selector)
+            return real_query_one(self_screen, selector, *args, **kwargs)
+
+        screen.query_one = spying_query_one.__get__(screen, type(screen))
+
+        # The committed-mutation refresh path itself: no `focus_identity`
+        # anywhere in this call chain (mirrors this controller's own
+        # delete/save/trust-reset completion callers, and the screen's
+        # `restore_state`/`_select_library_rail_row_after_source_
+        # admission` call sites). The "ready" round's own `list_skills`
+        # call is held open by the delay, so only the "loading" round's
+        # own synchronous settlement + queued restore is observed here.
+        screen._refresh_library_skills_after_committed_mutation()
+
+        for _ in range(10):
+            await pilot.pause(0.01)
+            if "#library-skills-filter" in queried_selectors:
+                break
+
+        del screen.query_one
+
+        assert "#library-skills-filter" in queried_selectors, (
+            "restore_focus() never queried '#library-skills-filter' after "
+            "a focus_identity=None committed-mutation refresh -- the live "
+            "read of the currently-focused widget did not resolve it, "
+            "meaning `focused` is likely unbound on LibrarySkillsController "
+            "again"
+        )
 
 
 _TAB_BAR_CLICK_BUG_SKILL_CONTENT = (
@@ -1320,11 +2029,13 @@ async def test_opening_skill_editor_does_not_break_tab_bar_click_activation(tmp_
 
         screen.query_one("#library-skill-row-summarize-notes", Button).press()
         for _ in range(150):
-            if screen._library_skill_detail is not None:
+            if screen._skills_state.detail is not None:
                 break
             await pilot.pause(0.02)
         await pilot.pause()
-        assert screen._library_skills_view == "editor"
+        assert screen._skills_state.view == "editor"
+        screen.query_one("#library-skill-mode-edit", Button).press()
+        await pilot.pause()
 
         # Simulate a user starting a click/selection gesture in the
         # Description Input -- MouseDown captures the mouse -- whose
@@ -1342,7 +2053,7 @@ async def test_opening_skill_editor_does_not_break_tab_bar_click_activation(tmp_
         screen.query_one("#library-skill-back", Button).press()
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_skills_view == "list"
+        assert screen._skills_state.view == "list"
 
         # THE FIX: mouse capture must have been released before that
         # recompose, not left dangling on the now-removed Input.
@@ -1435,12 +2146,79 @@ async def _open_real_skill_editor(host, pilot, skill_name: str) -> LibraryScreen
     await pilot.pause()
     screen.query_one(f"#library-skill-row-{skill_name}", Button).press()
     for _ in range(150):
-        if screen._library_skill_detail is not None:
+        if screen._skills_state.detail is not None:
             break
         await pilot.pause(0.02)
     await pilot.pause()
-    assert screen._library_skills_view == "editor"
+    assert screen._skills_state.view == "editor"
+    screen.query_one("#library-skill-mode-edit", Button).press()
+    await pilot.pause()
     return screen
+
+
+@pytest.mark.asyncio
+async def test_missing_trust_service_snapshot_preserves_open_skill_draft(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing posture service must not rebuild live editor fields."""
+    local_service = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=True,
+        policy_enforcer=None,
+    )
+    await local_service.create_skill(
+        name="draft-demo",
+        content=("---\nname: draft-demo\ndescription: Saved copy\n---\nDo the work."),
+    )
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.prompt_scope_service = object()
+    app.study_scope_service = object()
+    app.study_quiz_scope_service = object()
+    app.skills_scope_service = SkillsScopeService(
+        local_service=local_service,
+        server_service=None,
+        policy_enforcer=None,
+    )
+    # TldwCli lazily constructs this service when the attribute is None;
+    # a non-service sentinel represents an unavailable posture seam.
+    app.local_skill_trust_service = object()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _open_real_skill_editor(host, pilot, "draft-demo")
+        await screen.workers.wait_for_complete()
+        canvas = screen.query_one("#library-skill-work-pane", LibrarySkillWorkPane)
+        description = canvas.query_one("#library-skill-description", Input)
+        description.value = "Unsaved draft"
+        description.focus()
+        await pilot.pause()
+        assert screen._skills_state.dirty is True
+        assert screen._skills_state.editor_state is not None
+        assert screen._skills_state.editor_state.description == "Saved copy"
+        screen._skills_state.trust_posture = "ready"
+        sync_calls: list[None] = []
+        original_sync_state = canvas.sync_state
+
+        def recorded_sync_state(*args, **kwargs):
+            sync_calls.append(None)
+            return original_sync_state(*args, **kwargs)
+
+        monkeypatch.setattr(canvas, "sync_state", recorded_sync_state)
+
+        screen._refresh_local_source_snapshot()
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen._skills_state.trust_posture == ""
+        assert sync_calls == []
+        assert screen.query_one("#library-skill-description", Input) is description
+        assert description.value == "Unsaved draft"
+        assert description.has_focus
 
 
 @pytest.mark.asyncio
@@ -1479,9 +2257,7 @@ async def test_library_skill_mode_switch_is_targeted_and_remembered(
     host = LibraryHarness(app)
     async with host.run_test(size=(100, 30)) as pilot:
         screen = await _open_real_skill_editor(host, pilot, "mode-demo")
-        canvas = screen.query_one(
-            "#library-skills-canvas", LibrarySkillsListCanvas
-        )
+        canvas = screen.query_one("#library-skill-work-pane", LibrarySkillWorkPane)
         body = canvas.query_one("#library-skill-body", TextArea)
         assert canvas.query_one("#library-skill-basic-fields").display is True
 
@@ -1493,11 +2269,11 @@ async def test_library_skill_mode_switch_is_targeted_and_remembered(
 
         assert canvas.query_one("#library-skill-body") is body
         assert canvas.query_one("#library-skill-advanced-fields").display is True
-        assert screen._library_skill_editor_mode == "advanced"
+        assert screen._skills_state.editor_mode == "advanced"
         assert app.app_config["library"]["skill_editor_mode"] == "advanced"
         assert writes == [(writes[0][0], "advanced")]
         assert writes[0][0] != threading.get_ident()
-        assert screen._library_skill_dirty is False
+        assert screen._skills_state.dirty is False
 
 
 @pytest.mark.asyncio
@@ -1531,17 +2307,17 @@ async def test_library_skill_tool_filter_is_read_only_until_keyboard_selection(
     host = LibraryHarness(app)
     async with host.run_test(size=(100, 30)) as pilot:
         screen = await _open_real_skill_editor(host, pilot, "tool-demo")
-        assert screen._library_skill_editor_state.allowed_tools_csv == (
+        assert screen._skills_state.editor_state.allowed_tools_csv == (
             "calculator, mystery-tool, calculator"
         )
 
         tool_filter = screen.query_one("#library-skill-tool-filter", Input)
         tool_filter.value = "date"
         await pilot.pause()
-        assert screen._library_skill_editor_state.allowed_tools_csv == (
+        assert screen._skills_state.editor_state.allowed_tools_csv == (
             "calculator, mystery-tool, calculator"
         )
-        assert screen._library_skill_dirty is False
+        assert screen._skills_state.dirty is False
 
         tool_filter.value = ""
         await pilot.pause()
@@ -1555,7 +2331,7 @@ async def test_library_skill_tool_filter_is_read_only_until_keyboard_selection(
         picker.focus()
         await pilot.press("space")
         await pilot.pause()
-        assert screen._library_skill_editor_state.allowed_tools_csv == "mystery-tool"
+        assert screen._skills_state.editor_state.allowed_tools_csv == "mystery-tool"
 
         datetime_index = next(
             index
@@ -1565,10 +2341,159 @@ async def test_library_skill_tool_filter_is_read_only_until_keyboard_selection(
         picker.highlighted = datetime_index
         await pilot.press("space")
         await pilot.pause()
-        assert screen._library_skill_editor_state.allowed_tools_csv == (
+        assert screen._skills_state.editor_state.allowed_tools_csv == (
             "mystery-tool, get_current_datetime"
         )
-        assert screen._library_skill_dirty is True
+        assert screen._skills_state.dirty is True
+
+
+# ---------------------------------------------------------------------------
+# Library decomposition wave-4 task 1 (skills state PR): characterization
+# spot-check pins. `handle_library_skill_tool_filter`, `handle_library_skill_
+# user_invocable_toggle`, `handle_library_skill_disable_model_toggle`, and
+# `handle_library_skill_discard` had ZERO `.press()`/keystroke-dispatch
+# coverage anywhere across Tests/UI, Tests/Library, Tests/Live, and
+# Tests/Skills before this pin -- every existing reference to their
+# selectors only asserted a WIDGET-only host's structure (`_EditorHost`, no
+# real `LibraryScreen` behind it) or a hand-built `SkillsListState`'s
+# display, never pressed/typed against a real, fully-mounted screen. All
+# four are exercised together in one continuous editor session (this
+# file's own established walkthrough-style pattern, same shape as
+# `test_library_skill_tool_filter_is_read_only_until_keyboard_selection`
+# immediately above).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_tool_filter_toggles_and_discard_are_genuinely_pressed(
+    tmp_path,
+):
+    local_service = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=True,
+        policy_enforcer=None,
+    )
+    await local_service.create_skill(
+        name="demo",
+        content=(
+            "---\nname: demo\ndescription: Demo\nallowed_tools:\n"
+            "  - calculator\n---\nDo the work."
+        ),
+    )
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = SkillsScopeService(
+        local_service=local_service,
+        server_service=None,
+        policy_enforcer=None,
+    )
+    app.app_config.setdefault("library", {})["skill_editor_mode"] = "advanced"
+    host = LibraryHarness(app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = await _open_real_skill_editor(host, pilot, "demo")
+
+        # handle_library_skill_tool_filter: typing into the filter Input
+        # never touches the allowlist content itself, only the picker's
+        # own visible-row filtering.
+        tool_filter = screen.query_one("#library-skill-tool-filter", Input)
+        tool_filter.value = "calc"
+        await pilot.pause()
+        assert screen._skills_state.tool_filter == "calc"
+        assert screen._skills_state.dirty is False
+        picker = screen.query_one("#library-skill-tool-picker", SelectionList)
+        assert picker.options
+        assert all("calc" in str(option.value).lower() for option in picker.options)
+        tool_filter.value = ""
+        await pilot.pause()
+
+        # handle_library_skill_user_invocable_toggle
+        user_invocable_button = screen.query_one(
+            "#library-skill-user-invocable", Button
+        )
+        before = screen._skills_state.editor_state.user_invocable
+        user_invocable_button.press()
+        await pilot.pause()
+        assert screen._skills_state.editor_state.user_invocable is not before
+        assert screen._skills_state.dirty is True
+
+        # handle_library_skill_disable_model_toggle
+        disable_model_button = screen.query_one(
+            "#library-skill-disable-model", Button
+        )
+        before = screen._skills_state.editor_state.disable_model_invocation
+        disable_model_button.press()
+        await pilot.pause()
+        assert (
+            screen._skills_state.editor_state.disable_model_invocation
+            is not before
+        )
+        assert screen._skills_state.dirty is True
+
+        # handle_library_skill_discard: the dirty edit from the two toggles
+        # above is dropped and the screen returns to the skills list.
+        discard_button = screen.query_one("#library-skill-discard", Button)
+        assert discard_button.disabled is False
+        discard_button.press()
+        for _ in range(150):
+            if screen._skills_state.view == "list":
+                break
+            await pilot.pause(0.02)
+        assert screen._skills_state.view == "list"
+        assert screen._skills_state.dirty is False
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_conflict_reload_clears_conflict_and_refetches(tmp_path):
+    """`handle_library_skill_conflict_reload` had ZERO `.press()` coverage
+    anywhere in the four test roots -- every existing reference to
+    `#library-skill-conflict-reload` only asserts a WIDGET-only host's
+    display, never presses it against a real screen. Driving the real
+    update-conflict path (a genuine `expected_version` mismatch from the
+    service) is out of this pin's scope -- the conflict flag is set
+    directly on a real, fully-mounted screen instance instead (the same
+    flag `_enter_library_skill_conflict` sets, whatever produced it), which
+    is enough to characterize the BUTTON's own current behavior: clear the
+    flag and re-fetch the open skill's detail."""
+    local_service = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=True,
+        policy_enforcer=None,
+    )
+    await local_service.create_skill(
+        name="demo", content="---\nname: demo\ndescription: Demo\n---\nBody."
+    )
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = SkillsScopeService(
+        local_service=local_service,
+        server_service=None,
+        policy_enforcer=None,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = await _open_real_skill_editor(host, pilot, "demo")
+        screen._skills_state.conflict = True
+        screen._sync_library_skill_lifecycle_actions()
+        await pilot.pause()
+        reload_button = screen.query_one("#library-skill-conflict-reload", Button)
+        assert reload_button.display is True
+
+        reload_button.press()
+        for _ in range(150):
+            if screen._skills_state.conflict is False:
+                break
+            await pilot.pause(0.02)
+        assert screen._skills_state.conflict is False
+        assert screen._skills_state.detail is not None
+        assert screen._skills_state.detail.get("name") == "demo"
 
 
 async def _wait_for_revoke_button_disabled(screen, pilot, *, expected: bool) -> Button:
@@ -1632,6 +2557,8 @@ async def test_revoke_button_enabled_for_a_granted_skill_and_pressing_it_revokes
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _open_real_skill_editor(host, pilot, "demo-skill")
+        screen.query_one("#library-skill-mode-trust", Button).press()
+        await pilot.pause()
         revoke_button = await _wait_for_revoke_button_disabled(
             screen, pilot, expected=False
         )
@@ -1691,6 +2618,8 @@ async def test_revoke_button_disabled_when_the_skill_has_no_grant(tmp_path):
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _open_real_skill_editor(host, pilot, "demo-skill")
+        screen.query_one("#library-skill-mode-trust", Button).press()
+        await pilot.pause()
         for _ in range(150):
             if trust_service.granted_calls:
                 break
@@ -1924,13 +2853,13 @@ async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty():
         screen.query_one("#library-row-create-skill").press()
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_skills_view == "editor"
+        assert screen._skills_state.view == "editor"
         assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_SKILL
 
         # Real user edit: the armed Name Input marks the editor dirty.
         screen.query_one("#library-skill-name", Input).value = "dirty-demo"
         await pilot.pause()
-        assert screen._library_skill_dirty is True
+        assert screen._skills_state.dirty is True
 
         screen.query_one("#library-row-browse-media").press()
         await pilot.pause()
@@ -1938,7 +2867,7 @@ async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty():
 
         # Vetoed: still in the skill editor with the unsaved edit intact.
         assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_SKILL
-        assert screen._library_skills_view == "editor"
+        assert screen._skills_state.view == "editor"
         assert screen.query_one("#library-skill-name", Input).value == "dirty-demo"
 
 
@@ -1965,13 +2894,13 @@ async def test_library_skill_back_veto_notifies_unsaved_changes():
         await pilot.pause()
         screen.query_one("#library-skill-name", Input).value = "dirty-demo"
         await pilot.pause()
-        assert screen._library_skill_dirty is True
+        assert screen._skills_state.dirty is True
 
         await pilot.press("escape")
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_skills_view == "editor"
+        assert screen._skills_state.view == "editor"
         assert notifications, "Vetoed Back gave no visible feedback."
         assert "Unsaved skill changes" in notifications[-1][0]
 
@@ -2028,14 +2957,14 @@ async def test_library_skill_new_cancel_leaves_without_saving():
 
         screen.query_one("#library-skill-name", Input).value = "dirty-demo"
         await pilot.pause()
-        assert screen._library_skill_dirty is True
+        assert screen._skills_state.dirty is True
         cancel = screen.query_one("#library-skill-cancel", Button)
         cancel.press()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_skills_view == "list"
-        assert screen._library_skill_dirty is False
+        assert screen._skills_state.view == "list"
+        assert screen._skills_state.dirty is False
 
 
 @pytest.mark.asyncio
@@ -2173,9 +3102,9 @@ async def test_render_trust_panel_patches_review_content_in_place():
         await pilot.pause()
         # task-416: create mode renders no trust panel, so patch-test the
         # existing-skill shape (selected name set -> is_create False).
-        screen._selected_skill_name = "code-review"
-        screen._library_skill_editor_state = dataclasses.replace(
-            screen._library_skill_editor_state,
+        screen._skills_state.selected_skill_name = "code-review"
+        screen._skills_state.editor_state = dataclasses.replace(
+            screen._skills_state.editor_state,
             trust_status="quarantined_modified",
             trust_blocked=True,
             trust_changed_files=("SKILL.md",),
@@ -2183,8 +3112,10 @@ async def test_render_trust_panel_patches_review_content_in_place():
         screen.refresh(recompose=True)
         await pilot.pause()
         await pilot.pause()
+        screen.query_one("#library-skill-mode-trust", Button).press()
+        await pilot.pause()
 
-        screen._library_skill_active_review = {
+        screen._skills_state.active_review = {
             "review_id": "r1",
             "changed_files": ["SKILL.md"],
             "current_files": {"SKILL.md": "patched preview content"},
@@ -2239,16 +3170,19 @@ async def test_approve_failure_discards_stale_review():
         refresh_calls.append(True)
 
     fake = SimpleNamespace(
-        _library_skills_view="editor",
-        _library_skill_active_review={"review_id": "r1"},
-        _selected_skill_name="code-review",
+        _skills_state=SimpleNamespace(view="editor", active_review={"review_id": "r1"}, selected_skill_name="code-review", detail_generation=3),
+        _library_skill_detail_request_is_current=(
+            lambda *, skill_name, generation: (
+                skill_name == "code-review" and generation == 3
+            )
+        ),
         _request_library_skill_trust_passphrase=AsyncMock(return_value="pw"),
         _call_library_skill_trust_service=_call,
         _render_library_skill_trust_panel=lambda: render_calls.append(True),
         _refresh_library_skill_trust_status=_refresh_status,
     )
     await LibraryScreen._approve_library_skill_trust(fake)
-    assert fake._library_skill_active_review is None
+    assert fake._skills_state.active_review is None
     assert render_calls == [True]
     assert refresh_calls == [True]
 
@@ -2305,11 +3239,7 @@ async def test_handle_library_skill_delete_enters_confirm_state():
     worker_calls: list[dict] = []
     sync_calls: list[bool] = []
     fake = SimpleNamespace(
-        _library_skills_view="editor",
-        _selected_skill_name="code-review",
-        _library_skill_confirming_delete=False,
-        _library_skill_editor_state=_editor_state(),
-        _library_skill_editor_armed=True,
+        _skills_state=SimpleNamespace(view="editor", selected_skill_name="code-review", confirming_delete=False, editor_state=_editor_state(), editor_armed=True),
         _snapshot_library_skill_live_fields=lambda: None,
         _sync_library_skill_lifecycle_actions=lambda: sync_calls.append(True),
         query_one=lambda selector: SimpleNamespace(scroll_visible=lambda: None),
@@ -2318,7 +3248,7 @@ async def test_handle_library_skill_delete_enters_confirm_state():
     )
     event = SimpleNamespace(stop=lambda: None)
     LibraryScreen.handle_library_skill_delete(fake, event)
-    assert fake._library_skill_confirming_delete is True
+    assert fake._skills_state.confirming_delete is True
     assert worker_calls == []
     assert sync_calls == [True]
 
@@ -2327,12 +3257,9 @@ async def test_handle_library_skill_delete_enters_confirm_state():
 async def test_handle_library_skill_delete_confirm_kicks_delete_worker():
     worker_calls: list[dict] = []
     fake = SimpleNamespace(
-        _library_skills_view="editor",
-        _selected_skill_name="code-review",
-        _library_skill_confirming_delete=True,
-        _library_skill_mutation_in_flight=False,
+        _skills_state=SimpleNamespace(view="editor", selected_skill_name="code-review", confirming_delete=True, mutation_in_flight=False, detail_generation=3),
         _delete_library_skill=lambda name: None,
-        _run_library_skill_delete=lambda name: None,
+        _run_library_skill_delete=lambda name, generation: None,
         _sync_library_skill_lifecycle_actions=lambda: None,
         run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
         refresh=lambda recompose=False: None,
@@ -2346,10 +3273,7 @@ async def test_handle_library_skill_delete_confirm_kicks_delete_worker():
 async def test_handle_library_skill_delete_cancel_leaves_confirm_state():
     sync_calls: list[bool] = []
     fake = SimpleNamespace(
-        _library_skills_view="editor",
-        _library_skill_confirming_delete=True,
-        _library_skill_scroll_pending=False,
-        _library_skill_editor_armed=True,
+        _skills_state=SimpleNamespace(view="editor", confirming_delete=True, scroll_pending=False, editor_armed=True),
         # Cancel now re-snapshots live fields (review finding) so an edit
         # typed during the confirmation survives.
         _snapshot_library_skill_live_fields=lambda: None,
@@ -2359,7 +3283,7 @@ async def test_handle_library_skill_delete_cancel_leaves_confirm_state():
     )
     event = SimpleNamespace(stop=lambda: None)
     LibraryScreen.handle_library_skill_delete_cancel(fake, event)
-    assert fake._library_skill_confirming_delete is False
+    assert fake._skills_state.confirming_delete is False
     assert sync_calls == [True]
 
 
@@ -2432,10 +3356,13 @@ async def test_create_save_success_consumes_scroll_receipt_after_recompose():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_skill_scroll_pending is False
-        assert screen.query_one("#library-skill-trust-panel")
+        assert screen._skills_state.scroll_pending is False
+        assert screen.query_one("#library-skill-work-pane")
         assert screen.query_one("#library-skill-back").display is True
         assert screen.query_one("#library-skill-more-actions").display is True
+        screen.query_one("#library-skill-mode-trust", Button).press()
+        await pilot.pause()
+        assert screen.query_one("#library-skill-trust-panel")
 
 
 @pytest.mark.asyncio
@@ -2461,7 +3388,7 @@ async def test_mark_dirty_clears_stale_saved_status():
         screen.query_one("#library-skill-name", Input).value = "editing-again"
         await pilot.pause()
 
-        assert screen._library_skill_status == ""
+        assert screen._skills_state.status == ""
         status = screen.query_one("#library-skill-save-status", Static)
         assert str(status.renderable) == ""
 
@@ -2510,9 +3437,7 @@ def test_skill_toggle_labels_read_as_plain_statements():
         skill_context_toggle_label("inline")
         == "Runs in: ✓ inline (this conversation) ⇄ fork"
     )
-    assert (
-        skill_context_toggle_label("fork") == "Runs in: inline ⇄ ✓ fork (sub-agent)"
-    )
+    assert skill_context_toggle_label("fork") == "Runs in: inline ⇄ ✓ fork (sub-agent)"
 
 
 @pytest.mark.asyncio
@@ -2625,9 +3550,9 @@ async def test_skill_trust_library_modal_contract_positive_is_str(kind: str) -> 
         await pilot.pause()
         modal.query_one(f"#skill-trust-{kind}-input", Input).value = "secret"
         if kind == "bootstrap":
-            modal.query_one("#skill-trust-bootstrap-confirm-input", Input).value = (
-                "secret"
-            )
+            modal.query_one(
+                "#skill-trust-bootstrap-confirm-input", Input
+            ).value = "secret"
         await pilot.click(f"#skill-trust-{kind}-submit")
         await pilot.pause()
 
@@ -2768,9 +3693,7 @@ async def test_skill_editor_trust_panel_renders_remediation_for_manifest_error()
     drives the actual recovery, reusing the same
     ``#library-skills-trust-reset`` id the list header's standalone Reset
     action uses (only one view is ever mounted at a time)."""
-    state = _editor_state(
-        trust_status="quarantined_manifest_error", trust_blocked=True
-    )
+    state = _editor_state(trust_status="quarantined_manifest_error", trust_blocked=True)
     app = _EditorHost(
         mode="editor", editor_state=state, skill_path="/tmp/store/skills/demo"
     )
@@ -2796,65 +3719,42 @@ async def test_skills_import_row_renders_folder_browse_button():
         assert pilot.app.query_one("#library-skills-import-browse-folder", Button)
 
 
-def test_reset_skill_editor_state_clears_import_row():
-    """task-422: the import row and its last error persisted across editor
-    round-trips and resurfaced stale minutes later (verified live)."""
+def test_reset_skill_editor_state_preserves_import_receipt():
+    """Ordinary editor cleanup cannot dismiss an import receipt."""
     fake = SimpleNamespace(
-        _library_skills_view="editor",
-        _library_skill_detail={},
-        _library_skill_original_name="",
-        _library_skill_editor_state=None,
-        _library_skill_dirty=True,
-        _library_skill_status="x",
-        _library_skill_conflict=False,
-        _library_skill_active_review=None,
-        _library_skill_confirming_delete=False,
-        _library_skill_scroll_pending=False,
-        _library_skill_editor_armed=True,
+        _skills_state=SimpleNamespace(view="editor", detail={}, original_name="", editor_state=None, dirty=True, status="x", conflict=False, active_review=None, confirming_delete=False, scroll_pending=False, editor_armed=True),
         _library_skills_import_open=True,
         _library_skills_import_path="/stale",
         _library_skills_import_status="Please enter a file or folder path.",
         _library_skills_import_review_name="stale-skill",
-    )
-    fake._reset_library_skills_import_state = (
-        lambda: LibraryScreen._reset_library_skills_import_state(fake)
+        _invalidate_library_skill_detail_generation=lambda: None,
     )
     LibraryScreen._reset_library_skill_editor_state(fake)
-    assert fake._library_skills_import_open is False
-    assert fake._library_skills_import_path == ""
-    assert fake._library_skills_import_status == ""
-    assert fake._library_skills_import_review_name == ""
+    assert fake._library_skills_import_open is True
+    assert fake._library_skills_import_path == "/stale"
+    assert (
+        fake._library_skills_import_status
+        == "Please enter a file or folder path."
+    )
+    assert fake._library_skills_import_review_name == "stale-skill"
 
 
 def test_reset_skill_editor_state_clears_trust_reset_confirm_flag():
     """Review finding (Spec 1 T5): arming the trust-reset confirm (from the
     editor's manifest_error panel or the list header) and then leaving the
-    editor left ``_library_skill_trust_confirming_reset`` armed -- the
+    editor left ``_skills_state.trust_confirming_reset`` armed -- the
     confirm-gated Reset row could then reappear unprompted in another view.
-    Mirrors ``test_reset_skill_editor_state_clears_import_row`` above."""
+    Mirrors ``test_reset_skill_editor_state_preserves_import_receipt`` above."""
     fake = SimpleNamespace(
-        _library_skills_view="editor",
-        _library_skill_detail={},
-        _library_skill_original_name="",
-        _library_skill_editor_state=None,
-        _library_skill_dirty=True,
-        _library_skill_status="x",
-        _library_skill_conflict=False,
-        _library_skill_active_review=None,
-        _library_skill_confirming_delete=False,
-        _library_skill_scroll_pending=False,
-        _library_skill_editor_armed=True,
-        _library_skill_trust_confirming_reset=True,
+        _skills_state=SimpleNamespace(view="editor", detail={}, original_name="", editor_state=None, dirty=True, status="x", conflict=False, active_review=None, confirming_delete=False, scroll_pending=False, editor_armed=True, trust_confirming_reset=True),
         _library_skills_import_open=False,
         _library_skills_import_path="",
         _library_skills_import_status="",
         _library_skills_import_review_name="",
-    )
-    fake._reset_library_skills_import_state = (
-        lambda: LibraryScreen._reset_library_skills_import_state(fake)
+        _invalidate_library_skill_detail_generation=lambda: None,
     )
     LibraryScreen._reset_library_skill_editor_state(fake)
-    assert fake._library_skill_trust_confirming_reset is False
+    assert fake._skills_state.trust_confirming_reset is False
 
 
 @pytest.mark.asyncio
@@ -2874,9 +3774,11 @@ async def test_skills_import_success_offers_review_button():
 async def test_handle_library_skills_import_review_opens_editor():
     worker_calls: list[dict] = []
     fake = SimpleNamespace(
-        _library_skills_view="list",
+        _skills_state=SimpleNamespace(view="list", selected_skill_name=""),
+        _library_skill_import_coordinator=LibrarySkillImportCoordinator(
+            SimpleNamespace()
+        ),
         _library_skills_import_review_name="demo",
-        _selected_skill_name="",
         _library_selected_row_id="",
         _flush_library_skill_save=AsyncMock(return_value=True),
         _reset_library_skill_editor_state=lambda: None,
@@ -2886,8 +3788,8 @@ async def test_handle_library_skills_import_review_opens_editor():
     )
     event = SimpleNamespace(stop=lambda: None)
     await LibraryScreen.handle_library_skills_import_review(fake, event)
-    assert fake._selected_skill_name == "demo"
-    assert fake._library_skills_view == "editor"
+    assert fake._skills_state.selected_skill_name == "demo"
+    assert fake._skills_state.view == "editor"
     assert worker_calls and worker_calls[0]["group"] == "library_skill_detail"
 
 
@@ -2921,11 +3823,11 @@ def test_library_screen_binds_skill_editor_keys():
 
 def _bind_editor_active(fake):
     """Bind the real editor-active predicate onto a SimpleNamespace fake."""
-    fake._library_skill_editor_active = (
-        lambda: LibraryScreen._library_skill_editor_active(fake)
+    fake._library_skill_editor_active = lambda: (
+        LibraryScreen._library_skill_editor_active(fake)
     )
-    fake._library_skill_save_available = (
-        lambda: LibraryScreen._library_skill_save_available(fake)
+    fake._library_skill_save_available = lambda: (
+        LibraryScreen._library_skill_save_available(fake)
     )
     return fake
 
@@ -2933,61 +3835,43 @@ def _bind_editor_active(fake):
 def test_check_action_gates_skill_editor_keys_to_editor():
     fake = _bind_editor_active(
         SimpleNamespace(
+            _skills_state=SimpleNamespace(view="editor"),
             _library_selected_row_id="browse-media",
-            _library_skills_view="editor",
         )
     )
-    assert (
-        LibraryScreen.check_action(fake, "library_skill_save", ()) is False
-    )
+    assert LibraryScreen.check_action(fake, "library_skill_save", ()) is False
     fake_editor = _bind_editor_active(
         SimpleNamespace(
+            _skills_state=SimpleNamespace(view="editor", dirty=True, selected_skill_name="demo", conflict=False, confirming_delete=False, mutation_in_flight=False),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
-            _library_skills_view="editor",
-            _library_skill_dirty=True,
-            _selected_skill_name="demo",
-            _library_skill_conflict=False,
-            _library_skill_confirming_delete=False,
-            _library_skill_mutation_in_flight=False,
         )
     )
-    assert (
-        LibraryScreen.check_action(fake_editor, "library_skill_save", ()) is True
-    )
-    fake_editor._library_skill_dirty = False
-    assert (
-        LibraryScreen.check_action(fake_editor, "library_skill_save", ()) is False
-    )
+    assert LibraryScreen.check_action(fake_editor, "library_skill_save", ()) is True
+    fake_editor._skills_state.dirty = False
+    assert LibraryScreen.check_action(fake_editor, "library_skill_save", ()) is False
     fake_list = _bind_editor_active(
         SimpleNamespace(
+            _skills_state=SimpleNamespace(view="list"),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
-            _library_skills_view="list",
         )
     )
-    assert (
-        LibraryScreen.check_action(fake_list, "library_skill_back", ()) is False
-    )
+    assert LibraryScreen.check_action(fake_list, "library_skill_back", ()) is False
 
 
 def test_action_library_skill_save_kicks_save_worker():
     worker_calls: list[dict] = []
     fake = _bind_editor_active(
         SimpleNamespace(
+            _skills_state=SimpleNamespace(view="editor", conflict=False, confirming_delete=False, mutation_in_flight=False, dirty=True, selected_skill_name="demo"),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
-            _library_skills_view="editor",
-            _library_skill_conflict=False,
-            _library_skill_confirming_delete=False,
-            _library_skill_mutation_in_flight=False,
-            _library_skill_dirty=True,
-            _selected_skill_name="demo",
             _snapshot_library_skill_live_fields=lambda: None,
             _sync_library_skill_lifecycle_actions=lambda: None,
             _run_library_skill_save=lambda: None,
             run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
         )
     )
-    fake._begin_library_skill_save = (
-        lambda: LibraryScreen._begin_library_skill_save(fake)
+    fake._begin_library_skill_save = lambda: LibraryScreen._begin_library_skill_save(
+        fake
     )
     LibraryScreen.action_library_skill_save(fake)
     LibraryScreen.action_library_skill_save(fake)
@@ -3000,15 +3884,14 @@ async def test_action_library_skill_back_honors_dirty_guard():
     vetoes: list[bool] = []
     fake = _bind_editor_active(
         SimpleNamespace(
+            _skills_state=SimpleNamespace(view="editor", more_actions_open=False),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
-            _library_skills_view="editor",
-            _library_skill_more_actions_open=False,
             _flush_library_skill_save=AsyncMock(return_value=False),
             _notify_skill_dirty_veto=lambda: vetoes.append(True),
         )
     )
-    fake._exit_library_skill_editor_guarded = (
-        lambda: LibraryScreen._exit_library_skill_editor_guarded(fake)
+    fake._exit_library_skill_editor_guarded = lambda: (
+        LibraryScreen._exit_library_skill_editor_guarded(fake)
     )
     await LibraryScreen.action_library_skill_back(fake)
     assert vetoes == [True]
@@ -3016,14 +3899,18 @@ async def test_action_library_skill_back_honors_dirty_guard():
     resets: list[bool] = []
     refreshes: list[bool] = []
     focus_calls: list[object] = []
+    page_requests: list[SkillBrowseScope] = []
     clean = _bind_editor_active(
         SimpleNamespace(
+            _skills_state=SimpleNamespace(view="editor", more_actions_open=False),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
-            _library_skills_view="editor",
-            _library_skill_more_actions_open=False,
             _flush_library_skill_save=AsyncMock(return_value=True),
             _reset_library_skill_editor_state=lambda: resets.append(True),
             _refresh_local_source_snapshot=lambda: None,
+            _library_skills_browse_controller=SimpleNamespace(
+                mutation_refresh_scope=SkillBrowseScope()
+            ),
+            _request_library_skills_browse=lambda scope: page_requests.append(scope),
             refresh=lambda recompose=False: refreshes.append(recompose),
             # task-2856: the guarded exit now also arms the entry-focus
             # follow-up (``_arm_library_list_entry_focus`` -- sets the
@@ -3032,6 +3919,8 @@ async def test_action_library_skill_back_honors_dirty_guard():
             # completing later can re-request the focus after ITS OWN
             # recompose too; see ``_apply_local_source_snapshot``).
             _library_pending_list_entry_focus=False,
+            _library_pending_list_entry_media_return=None,
+            _library_list_entry_focus_generation=0,
             _focus_library_list_entry=lambda: None,
             call_after_refresh=lambda callback: focus_calls.append(callback),
             # ``_arm_library_list_entry_focus`` also arms a settle-window
@@ -3049,18 +3938,28 @@ async def test_action_library_skill_back_honors_dirty_guard():
             # supplied here explicitly -- this one was missing, raising
             # ``AttributeError`` instead of exercising the guard.
             _library_list_entry_focus_timer=None,
+            # wave-7 (media series): the same seam now writes
+            # ``self._media_state.successful_focus_ownership``, so this
+            # bypassed-construction fake needs the nested state object to
+            # EXIST. Before the media state PR that write landed as a plain
+            # attribute creation on this ``SimpleNamespace`` and passed
+            # silently -- the recipe's seventh bypass shape, reaching a fake
+            # that names no media field at all because a SHARED shell seam
+            # reads one.
+            _media_state=SimpleNamespace(successful_focus_ownership=None),
         )
     )
     timer_calls: list[object] = []
-    clean._exit_library_skill_editor_guarded = (
-        lambda: LibraryScreen._exit_library_skill_editor_guarded(clean)
+    clean._exit_library_skill_editor_guarded = lambda: (
+        LibraryScreen._exit_library_skill_editor_guarded(clean)
     )
-    clean._arm_library_list_entry_focus = (
-        lambda: LibraryScreen._arm_library_list_entry_focus(clean)
+    clean._arm_library_list_entry_focus = lambda: (
+        LibraryScreen._arm_library_list_entry_focus(clean)
     )
     await LibraryScreen.action_library_skill_back(clean)
     assert resets == [True]
-    assert refreshes == [True]
+    assert page_requests == [SkillBrowseScope()]
+    assert refreshes == []
     assert len(focus_calls) == 1
     assert clean._library_pending_list_entry_focus is True
     assert len(timer_calls) == 1
@@ -3072,9 +3971,8 @@ async def test_action_library_skill_back_closes_more_actions_before_exit():
     syncs: list[bool] = []
     fake = _bind_editor_active(
         SimpleNamespace(
+            _skills_state=SimpleNamespace(view="editor", more_actions_open=True),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
-            _library_skills_view="editor",
-            _library_skill_more_actions_open=True,
             _sync_library_skill_lifecycle_actions=lambda: syncs.append(True),
             query_one=lambda selector, kind=None: SimpleNamespace(
                 focus=lambda: focused.append(True)
@@ -3084,7 +3982,7 @@ async def test_action_library_skill_back_closes_more_actions_before_exit():
 
     await LibraryScreen.action_library_skill_back(fake)
 
-    assert fake._library_skill_more_actions_open is False
+    assert fake._skills_state.more_actions_open is False
     assert syncs == [True]
     assert focused == [True]
 
@@ -3128,11 +4026,8 @@ def test_delete_arm_patches_actions_and_scrolls_confirm_copy():
     scrolls: list[bool] = []
     syncs: list[bool] = []
     fake = SimpleNamespace(
-        _library_skills_view="editor",
-        _selected_skill_name="x",
+        _skills_state=SimpleNamespace(view="editor", selected_skill_name="x", confirming_delete=False, editor_armed=True),
         _snapshot_library_skill_live_fields=lambda: None,
-        _library_skill_confirming_delete=False,
-        _library_skill_editor_armed=True,
         _sync_library_skill_lifecycle_actions=lambda: syncs.append(True),
         query_one=lambda selector: SimpleNamespace(
             scroll_visible=lambda: scrolls.append(True)
@@ -3140,7 +4035,7 @@ def test_delete_arm_patches_actions_and_scrolls_confirm_copy():
         is_mounted=True,
     )
     LibraryScreen.handle_library_skill_delete(fake, SimpleNamespace(stop=lambda: None))
-    assert fake._library_skill_confirming_delete is True
+    assert fake._skills_state.confirming_delete is True
     assert syncs == [True]
     assert scrolls == [True]
 
@@ -3150,8 +4045,7 @@ def test_delete_cancel_snapshots_and_patches_without_recompose():
     snapshots: list[bool] = []
     syncs: list[bool] = []
     fake = SimpleNamespace(
-        _library_skill_confirming_delete=True,
-        _library_skill_editor_armed=True,
+        _skills_state=SimpleNamespace(confirming_delete=True, editor_armed=True),
         _snapshot_library_skill_live_fields=lambda: snapshots.append(True),
         _sync_library_skill_lifecycle_actions=lambda: syncs.append(True),
         query_one=lambda selector, kind=None: SimpleNamespace(focus=lambda: None),
@@ -3160,7 +4054,7 @@ def test_delete_cancel_snapshots_and_patches_without_recompose():
     LibraryScreen.handle_library_skill_delete_cancel(
         fake, SimpleNamespace(stop=lambda: None)
     )
-    assert fake._library_skill_confirming_delete is False
+    assert fake._skills_state.confirming_delete is False
     assert snapshots == [True]
     assert syncs == [True]
 
@@ -3191,10 +4085,8 @@ def test_ctrl_s_does_not_save_during_delete_confirm():
     worker_calls: list[dict] = []
     fake = _bind_editor_active(
         SimpleNamespace(
+            _skills_state=SimpleNamespace(view="editor", conflict=False, confirming_delete=True),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
-            _library_skills_view="editor",
-            _library_skill_conflict=False,
-            _library_skill_confirming_delete=True,
             _save_library_skill=lambda: None,
             run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
         )
@@ -3208,7 +4100,18 @@ async def test_import_browse_folder_clears_stale_status_and_review():
     """Review finding: picking a new folder left the previous import's
     success status and 'Review …' button showing against the new path."""
     pushed: dict = {}
+    coordinator = LibrarySkillImportCoordinator(SimpleNamespace())
+    coordinator.open_draft()
+    coordinator.update(
+        status='Imported "old" · re-review it in the trust panel',
+        review_name="old",
+    )
     fake = SimpleNamespace(
+        _library_skill_import_coordinator=coordinator,
+        _library_skills_import_generation=0,
+        _library_skills_import_in_flight=False,
+        _library_skills_import_open=True,
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
         _library_skills_import_path="",
         _library_skills_import_status='Imported "old" · re-review it in the trust panel',
         _library_skills_import_review_name="old",
@@ -3221,16 +4124,27 @@ async def test_import_browse_folder_clears_stale_status_and_review():
         fake, SimpleNamespace(stop=lambda: None)
     )
     await pushed["cb"](Path("/new/folder"))
-    assert fake._library_skills_import_path == "/new/folder"
-    assert fake._library_skills_import_status == ""
-    assert fake._library_skills_import_review_name == ""
+    assert coordinator.snapshot.path == "/new/folder"
+    assert coordinator.snapshot.status == ""
+    assert coordinator.snapshot.review_name == ""
 
 
 @pytest.mark.asyncio
 async def test_import_browse_file_clears_stale_status_and_review():
     """Same stranding via the file 'Browse…' variant."""
     pushed: dict = {}
+    coordinator = LibrarySkillImportCoordinator(SimpleNamespace())
+    coordinator.open_draft()
+    coordinator.update(
+        status='Imported "old" · re-review it in the trust panel',
+        review_name="old",
+    )
     fake = SimpleNamespace(
+        _library_skill_import_coordinator=coordinator,
+        _library_skills_import_generation=0,
+        _library_skills_import_in_flight=False,
+        _library_skills_import_open=True,
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
         _library_skills_import_path="",
         _library_skills_import_status='Imported "old" · re-review it in the trust panel',
         _library_skills_import_review_name="old",
@@ -3243,8 +4157,76 @@ async def test_import_browse_file_clears_stale_status_and_review():
         fake, SimpleNamespace(stop=lambda: None)
     )
     await pushed["cb"](Path("/new/file/SKILL.md"))
-    assert fake._library_skills_import_status == ""
-    assert fake._library_skills_import_review_name == ""
+    assert coordinator.snapshot.path == "/new/file/SKILL.md"
+    assert coordinator.snapshot.status == ""
+    assert coordinator.snapshot.review_name == ""
+
+
+@pytest.mark.asyncio
+async def test_late_skill_browse_callback_cannot_replace_accepted_import_outcome():
+    """A picker opened before admission cannot write after that generation ran."""
+    pushed: dict = {}
+    fake = SimpleNamespace(
+        _library_skills_import_generation=4,
+        _library_skills_import_in_flight=False,
+        _library_skills_import_path="/accepted",
+        _library_skills_import_status='Imported "accepted" · re-review it in the trust panel',
+        _library_skills_import_review_name="accepted",
+        refresh=lambda recompose=False: None,
+        app=SimpleNamespace(
+            push_screen=lambda dialog, cb=None: pushed.update(dialog=dialog, cb=cb)
+        ),
+    )
+    LibraryScreen.handle_library_skills_import_browse(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    fake._library_skills_import_generation += 1
+
+    await pushed["cb"](Path("/stale/picker/SKILL.md"))
+
+    assert fake._library_skills_import_path == "/accepted"
+    assert (
+        fake._library_skills_import_status
+        == 'Imported "accepted" · re-review it in the trust panel'
+    )
+    assert fake._library_skills_import_review_name == "accepted"
+
+
+def test_skill_import_cancel_handler_fails_closed_while_operation_runs():
+    """The handler preserves accepted state even if a disabled event is forced."""
+    statuses: list[str] = []
+    fake = SimpleNamespace(
+        _library_skills_import_in_flight=True,
+        _library_skills_import_open=True,
+        _library_skills_import_path="/accepted",
+        _library_skills_import_status="Inspecting/importing…",
+        _library_skills_import_review_name="",
+        _apply_library_skills_import_status=statuses.append,
+    )
+
+    LibraryScreen.handle_library_skills_import_cancel(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_skills_import_open is True
+    assert fake._library_skills_import_path == "/accepted"
+    assert statuses == ["An import is already in progress."]
+
+
+@pytest.mark.asyncio
+async def test_skill_import_unexpected_failure_releases_admission_with_outcome():
+    """An unclassified worker failure cannot strand the running state."""
+    coordinator = LibrarySkillImportCoordinator(SimpleNamespace())
+    coordinator.open_draft()
+    assert coordinator.claim("/skill") is True
+    coordinator._import = AsyncMock(side_effect=RuntimeError("boom"))
+
+    await coordinator.run(
+        "/skill", runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+
+    assert coordinator.snapshot.in_flight is False
+    assert coordinator.snapshot.status == "Could not import that skill."
 
 
 # ---------------------------------------------------------------------------
@@ -3288,9 +4270,7 @@ def test_trust_review_preview_caps_total_size():
     }
     preview = skill_trust_review_preview(review)
     assert len(preview) <= (
-        _TRUST_REVIEW_PREVIEW_TOTAL_CHAR_CAP
-        + _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP
-        + 500
+        _TRUST_REVIEW_PREVIEW_TOTAL_CHAR_CAP + _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP + 500
     )
     assert "omitted" in preview
     assert preview.count("── big") < 10
@@ -3335,16 +4315,37 @@ async def test_trust_action_setup_dispatches_bootstrap():
     assert calls == ["setup"]
 
 
+def test_open_first_blocked_skill_uses_source_wide_off_page_target():
+    worker_calls = []
+    fake = SimpleNamespace(
+        _library_skills_browse_controller=SimpleNamespace(
+            first_blocked_skill_name="blocked-off-page",
+            retained_items=[{"name": "visible-safe", "trust_blocked": False}],
+        ),
+        _open_library_skill_editor_for_review=lambda name: ("open", name),
+        run_worker=lambda work, **kwargs: worker_calls.append((work, kwargs)),
+    )
+
+    LibraryScreen._open_first_blocked_skill(fake)
+
+    assert worker_calls == [
+        (
+            ("open", "blocked-off-page"),
+            {"exclusive": True, "group": "library_skill_review_open"},
+        )
+    ]
+
+
 def test_reset_requires_confirmation():
     fake = SimpleNamespace(
-        _library_skill_trust_confirming_reset=False,
+        _skills_state=SimpleNamespace(trust_confirming_reset=False),
         refresh=lambda recompose=False: None,
         is_mounted=True,
     )
     LibraryScreen.handle_library_skills_trust_reset_request(
         fake, SimpleNamespace(stop=lambda: None)
     )
-    assert fake._library_skill_trust_confirming_reset is True
+    assert fake._skills_state.trust_confirming_reset is True
 
 
 # -- F-019: the skill editor's accelerators advertise themselves ---------
@@ -3370,7 +4371,9 @@ async def test_skill_editor_hints_hidden_where_ctrl_s_is_gated_off():
     confirmation (the Save button is gone in both), so the hint line must
     not advertise it there -- an advertised-but-dead key is the F-018/F-019
     defect class."""
-    conflict_app = _EditorHost(mode="editor", editor_state=_editor_state(), conflict=True)
+    conflict_app = _EditorHost(
+        mode="editor", editor_state=_editor_state(), conflict=True
+    )
     async with conflict_app.run_test() as pilot:
         assert len(pilot.app.query("#library-skill-editor-hints")) == 0
 

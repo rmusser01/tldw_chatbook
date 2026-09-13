@@ -27,6 +27,7 @@ Full-path tests drive a real ``ConsoleAgentBridge`` + gated fleet child
 (the Task 1/3 harness); matrix tests deliver synthetic ``FleetDrained``
 events to the consumer directly (the Task 3 pattern).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -94,9 +95,7 @@ class _AppStub:
             return 1
 
     def notify(self, message, *, severity="information", **_kwargs):
-        self.notifications.append(
-            (threading.current_thread().name, message, severity)
-        )
+        self.notifications.append((threading.current_thread().name, message, severity))
 
 
 def _drain(conversation_id="conv-att", children=()):
@@ -166,9 +165,7 @@ async def test_a_survivor_settle_writes_the_durable_mark_and_toasts_once(
         register_fleet_attention(bridge, app)  # captures this test's loop
         conversation_id = "conv-att"
         try:
-            outcome = _run(
-                bridge, store, session, aid, conversation_id=conversation_id
-            )
+            outcome = _run(bridge, store, session, aid, conversation_id=conversation_id)
             assert outcome.status == "done"
             assert gateway.entered_event.wait(5), "the child never started"
             # The turn is over, the child is not: nothing may be marked or
@@ -265,9 +262,9 @@ async def test_a_child_that_finishes_inside_its_turn_marks_and_toasts_nothing(
         assert outcome.status == "done"
         _join_fleet_threads()
         assert drain_fired.is_set(), "precondition: the drain fired mid-turn"
-        assert [c.settled_after_turn for e in events for c in e.children] == [
-            False
-        ], "a child settling while its turn still runs is within-turn"
+        assert [c.settled_after_turn for e in events for c in e.children] == [False], (
+            "a child settling while its turn still runs is within-turn"
+        )
 
         await asyncio.sleep(0.2)  # give a wrong hop time to land
         assert app.notifications == [], (
@@ -409,7 +406,9 @@ def test_a_drain_with_no_after_turn_children_is_a_strict_no_op(tmp_path):
         app = _AppStub(chacha)
         consumer = ConsoleFleetAttentionConsumer(app, loop=None)
         consumer(
-            _drain(children=[_child(after_turn=False), _child("error", after_turn=False)])
+            _drain(
+                children=[_child(after_turn=False), _child("error", after_turn=False)]
+            )
         )
         assert app.notifications == []
         assert app.staged == []
@@ -428,6 +427,36 @@ def test_run_id_none_children_still_count(tmp_path):
         consumer(_drain(children=[_child("error", run_id=None)]))
         assert len(app.notifications) == 1
         assert fleet_unseen_conversation_ids(app) == frozenset({"conv-att"})
+    finally:
+        chacha.close()
+
+
+def test_incomplete_receipt_publication_falls_back_to_coarse_mark(tmp_path):
+    """A partial durable publish cannot erase the compatibility signal."""
+    chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
+    try:
+        app = _AppStub(chacha)
+
+        class _IncompleteReceipts:
+            def publish_fleet_drain(self, _event):
+                return type(
+                    "Publication", (), {"activity_ids": (), "complete": False}
+                )()
+
+            def ensure_fleet_mark(self, conversation_id):
+                app.conversation_local_marks_service.set_mark(
+                    conversation_id,
+                    ConversationLocalMarksService.FLEET_UNSEEN,
+                )
+                return True
+
+        consumer = ConsoleFleetAttentionConsumer(
+            app, loop=None, receipt_service=_IncompleteReceipts()
+        )
+        consumer(_drain(children=[_child("error")]))
+
+        assert fleet_unseen_conversation_ids(app) == frozenset({"conv-att"})
+        assert getattr(app, FLEET_UNSEEN_REVISION_ATTR) == 1
     finally:
         chacha.close()
 

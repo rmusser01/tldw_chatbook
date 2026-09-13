@@ -18,7 +18,7 @@ class ModelCatalogConsentModal(ModalScreen[bool]):
     """
 
     BINDINGS = [("escape", "dismiss(False)", "Don't check")]
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ModelCatalogConsentModal {
         align: center middle;
         background: $background 75%;

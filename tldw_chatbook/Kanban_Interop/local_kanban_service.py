@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import uuid
 import json
 from contextlib import contextmanager
@@ -54,15 +55,44 @@ class LocalKanbanService:
         self.is_memory_db = str(db_path) == ":memory:"
         self.db_path = ":memory:" if self.is_memory_db else lexical_path(db_path)
         self.policy_enforcer = policy_enforcer
-        with self.connection() as conn:
+        # TASK-21105: file-backed schema creation (24 DDL statements + FTS5
+        # probe) is deferred to the first connect(). Construction resolves
+        # the path only; no file is created until first feature use.
+        # ``:memory:`` keeps the previous eager behavior (each
+        # open_connection(":memory:") is a fresh database either way).
+        self._schema_ready = False
+        self._schema_lock = threading.Lock()
+        if not isinstance(self.db_path, Path):
+            conn = open_connection(self.db_path, _source=self)
             try:
                 initialize_schema(conn)
             finally:
                 conn.close()
+            self._schema_ready = True
+
+    def _ensure_schema(self) -> None:
+        """Create the schema exactly once, on first connection (TASK-21105).
+
+        Single-flight under a lock so concurrent first operations cannot
+        race the executescript. A failed attempt leaves ``_schema_ready``
+        False so the next operation retries.
+        """
+        if self._schema_ready:
+            return
+        with self._schema_lock:
+            if self._schema_ready:
+                return
+            conn = open_connection(self.db_path, _source=self)
+            try:
+                initialize_schema(conn)
+            finally:
+                conn.close()
+            self._schema_ready = True
 
     @_core_getter
     def connect(self):
         _core_access(self)
+        self._ensure_schema()
         conn = open_connection(self.db_path, _source=self)
         try:
             _core_access(self)

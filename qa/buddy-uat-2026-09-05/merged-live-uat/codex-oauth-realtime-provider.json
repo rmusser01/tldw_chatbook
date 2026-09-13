@@ -1,0 +1,16 @@
+{
+  "tested_at": "2026-09-05T22:20:43.351057+00:00",
+  "revision": "14cd81b2247acde771180c3af95a8d6cd5f03ecb",
+  "harness_sha256": "57c8658b3361664a4d77f0ec2dc0025ffcf83fc100b124adef2f42ae930b0ca9",
+  "credential_source": "existing Codex OAuth login",
+  "model": "gpt-realtime",
+  "microphone_opened": false,
+  "input": "synthetic text only",
+  "audio_played": false,
+  "session_ready": true,
+  "reply_complete": true,
+  "output_audio_bytes": 105600,
+  "transcript": "The blue notebook is ready.",
+  "error_types": [],
+  "session_closed": true
+}

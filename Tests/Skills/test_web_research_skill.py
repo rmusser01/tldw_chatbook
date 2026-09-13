@@ -19,6 +19,11 @@ SKILL_DIR = (
 SKILL_PATH = SKILL_DIR / "SKILL.md"
 
 
+class _NoopWorkspaceExecutor:
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        raise AssertionError(f"unexpected workspace operation: {operation}")
+
+
 def _compat_service(store_dir: Path) -> LocalSkillsService:
     return LocalSkillsService(
         store_dir=store_dir,
@@ -54,7 +59,12 @@ async def test_web_research_allowed_tools_are_registered_local_tools(tmp_path):
 
     imported = await service.import_skill(name="web-research", content=content)
 
-    registered_names = {spec.name for spec in _default_specs(tmp_path)}
+    registered_names = {
+        spec.name
+        for spec in _default_specs(
+            tmp_path, workspace_executor=_NoopWorkspaceExecutor()
+        )
+    }
     assert {"web_search", "web_fetch"} <= registered_names
     for tool_name in imported["allowed_tools"]:
         assert tool_name in registered_names

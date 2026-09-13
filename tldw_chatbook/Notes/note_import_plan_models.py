@@ -1,17 +1,23 @@
 """Immutable domain vocabulary for one-time Database Notes import plans.
 
 The records in this module describe a read-only preview. They deliberately carry
-no receipt fingerprints, persistence services, or execution behavior. Generic
-dataclass serialization such as :func:`dataclasses.asdict` is not safe for logs;
-use :meth:`NoteImportPlan.to_diagnostic` for the supported redacted projection.
+no receipt fingerprints and no persistence services. The one piece of behavior
+here is :func:`rewrite_wikilinks`, a pure text transform over one payload that
+both the parser and the executor need and that therefore cannot live in either.
+Generic dataclass serialization such as :func:`dataclasses.asdict` is not safe
+for logs; use :meth:`NoteImportPlan.to_diagnostic` for the supported redacted
+projection.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import TypeVar
+from unicodedata import normalize
 
 
 class ImportClassification(str, Enum):
@@ -22,7 +28,41 @@ class ImportClassification(str, Enum):
     CHANGED_REPEAT = "changed_repeat"
     UNCERTAIN_MATCH = "uncertain_match"
     UNSUPPORTED = "unsupported"
+    # task-32130 / task-32129: an empty file, an application config file and an
+    # Obsidian vault's own config, trash or templates are neither unsafe nor
+    # unsupported; reporting them as FAILED was dishonest.
+    SKIPPED = "skipped"
+    EMPTY = "empty"
     FAILED = "failed"
+
+
+NON_IMPORTABLE_CLASSIFICATIONS = frozenset(
+    {
+        ImportClassification.UNSUPPORTED,
+        ImportClassification.SKIPPED,
+        ImportClassification.EMPTY,
+        ImportClassification.FAILED,
+    }
+)
+"""Classifications that carry no payload and may only be skipped."""
+
+REVIEW_CLASSIFICATION_ORDER = (
+    ImportClassification.NEW,
+    ImportClassification.UNCHANGED_REPEAT,
+    ImportClassification.CHANGED_REPEAT,
+    ImportClassification.UNCERTAIN_MATCH,
+    ImportClassification.UNSUPPORTED,
+    ImportClassification.SKIPPED,
+    ImportClassification.EMPTY,
+    ImportClassification.FAILED,
+)
+"""The order the review groups its rows in.
+
+Paging follows this order (task-32250), so a group's rows are contiguous and
+a page shows at most one group's boundary instead of a different slice of
+three groups per page. The canvas renders in the same order, from the same
+sequence, because two orders would put a heading over the wrong rows.
+"""
 
 
 class ImportAction(str, Enum):
@@ -77,6 +117,177 @@ MAX_IMPORT_KEYWORD_LENGTH = 512
 
 MAX_IMPORT_ITEM_ID_LENGTH = 256
 """Absolute length ceiling for opaque preview item identifiers."""
+
+#: A fence with no closer runs to end of file (CommonMark), so its
+#: alternative ends at ``\Z``; an unpaired inline backtick is literal text and
+#: still needs its closer (PR #2549 review, finding 8).
+_CODE_SPAN = r"```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|``[\s\S]*?``|`[^`\n]*`"
+
+_NOTE_LINK_TAIL = r"(?P<link>\(note://[^()\s]*\))?"
+"""The stored note-link target that follows a rewritten wikilink.
+
+Matching it as part of the link is what keeps a re-import from stacking a
+second `(note://…)` onto a body this importer already wrote (task-32263).
+"""
+
+WIKILINK_SCAN = re.compile(
+    rf"(?P<code>{_CODE_SPAN})"
+    r"|(?<!!)\[\[(?P<target>[^\[\]|#^]+)(?:[#^][^\[\]|]*)?"
+    rf"(?:\|(?P<alias>[^\[\]]*))?\]\]{_NOTE_LINK_TAIL}"
+)
+"""One code span, or one non-embedded `[[target]]`/`[[target|alias]]`.
+
+The single definition of the Obsidian link grammar: the parser records targets
+with it and the executor rewrites the same spans with it. Code spans are matched
+FIRST and on purpose -- a `[[Target]]` inside a fenced block or backticks is
+sample text, and rewriting it would corrupt the note.
+"""
+
+NOTE_LINK_SCAN = re.compile(
+    rf"(?P<code>{_CODE_SPAN})"
+    r"|\[\[(?P<target>[^\[\]|#^]+)(?:[#^][^\[\]|]*)?"
+    r"(?:\|(?P<alias>[^\[\]]*))?\]\]\((?P<uri>note://[^()\s]*)\)"
+)
+"""One stored note link, as :func:`rewrite_wikilinks` writes it."""
+
+
+def wikilink_target(match: re.Match[str]) -> str | None:
+    """Return the link target of one scan match, or None for a code span.
+
+    Args:
+        match: One ``WIKILINK_SCAN`` match, which is either a code span or a
+            non-embedded ``[[target]]``.
+
+    Returns:
+        The trimmed link target, or ``None`` when the match is a code span or
+        the target is blank.
+    """
+    if match.group("code") is not None:
+        return None
+    return (match.group("target") or "").strip() or None
+
+
+def wikilink_key(target: str) -> str:
+    """Return the comparable form of one link target or vault-relative path.
+
+    Args:
+        target: A link target as the author wrote it, or a vault-relative
+            path to compare one against.
+
+    Returns:
+        The NFC-normalized, case-folded key, without surrounding whitespace
+        or leading/trailing ``/``.
+    """
+    return normalize("NFC", target).strip().strip("/").casefold()
+
+
+def rewrite_wikilinks(
+    payload: ParsedNotePayload,
+    note_ids: Mapping[str, str],
+    *,
+    titles: Mapping[str, str] | None = None,
+) -> ParsedNotePayload:
+    """Return `payload` with resolvable `[[links]]` rewritten as note links.
+
+    A target with no entry in `note_ids` — a note outside the batch, an
+    attachment, a heading-only link — is left exactly as the author wrote it, and
+    so is anything inside a code span.
+
+    task-32263 (display-text links, decided by the user): the link stays a
+    `[[wikilink]]` and carries its `(note://<id>)` target behind it. That one
+    form does four jobs at once — the reader sees the linked note's TITLE, the
+    stored body round-trips through this module's own parser, an exported file
+    is still a working Obsidian link, and ``get_notes_linking_to``'s
+    ``%(note://<id>)%`` probe still finds it. The `[[target|title]]` alias
+    spelling is used rather than replacing the target, because the target is
+    what resolves the link in Obsidian and two notes can share a title.
+
+    Args:
+        payload: One parsed note, whose `wikilinks` licence the rewrite.
+        note_ids: Comparable link keys mapped to the note id each will get.
+        titles: Optional link keys mapped to the title the created note will
+            carry. A title that differs from the text the author wrote becomes
+            the link's display alias; the author's own alias always wins.
+
+    Returns:
+        The same payload when nothing resolves, else a copy with linked content.
+    """
+    if not payload.wikilinks or not note_ids:
+        return payload
+
+    # The grammar already excludes `[` and `]` from a target and an alias, so
+    # neither can close the link early -- except through a trailing backslash,
+    # which would escape the `]` and let the link swallow the text after it.
+    # An escaped backslash renders the same.
+    def _safe(value: str) -> str:
+        return value.replace("\\", "\\\\")
+
+    def _link(match: re.Match[str]) -> str:
+        target = wikilink_target(match)
+        if target is None:
+            return match.group(0)
+        key = wikilink_key(target)
+        note_id = note_ids.get(key)
+        if note_id is None:
+            return match.group(0)
+        alias = (match.group("alias") or "").strip()
+        title = ((titles or {}).get(key) or "").strip()
+        label = alias or (title if title and title != target else "")
+        inner = f"{_safe(target)}|{_safe(label)}" if label else _safe(target)
+        return f"[[{inner}]](note://{note_id})"
+
+    content = WIKILINK_SCAN.sub(_link, payload.content)
+    return payload if content == payload.content else replace(payload, content=content)
+
+
+def wikilink_only(text: str) -> str:
+    """Return `text` with every link reduced to the bare `[[target]]` spelling.
+
+    The importer stores a resolved link as `[[target|title]](note://<id>)`
+    while the file on disk still says `[[target]]`, so comparing a stored note
+    to its own source reports every line carrying a link as changed. Reducing
+    BOTH sides to one spelling first is what gives that comparison a single
+    basis (task-32262 AC#2). Code spans are left exactly as written, the same
+    way the rewrite leaves them.
+
+    Args:
+        text: A stored note body or a raw source body.
+
+    Returns:
+        The same text with `[[t|a]](note://id)`, `[[t|a]]` and `[[t]]` alike
+        written as `[[t]]`.
+    """
+
+    def _bare(match: re.Match[str]) -> str:
+        target = wikilink_target(match)
+        return match.group(0) if target is None else f"[[{target}]]"
+
+    return WIKILINK_SCAN.sub(_bare, text)
+
+
+def render_note_links(text: str) -> str:
+    """Return `text` with stored note links shown as their display text.
+
+    Preview renders Markdown, and the stored `[[Title]](note://<id>)` form is
+    not Markdown link syntax -- without this it would print verbatim, machine
+    identifier and all. Code spans keep whatever they contain (task-32263).
+
+    Args:
+        text: One note body as it is stored.
+
+    Returns:
+        The body with each note link reduced to `[display text](note://<id>)`.
+    """
+    if "note://" not in text:
+        return text
+
+    def _render(match: re.Match[str]) -> str:
+        if match.group("code") is not None:
+            return match.group(0)
+        label = (match.group("alias") or "").strip() or match.group("target").strip()
+        return f"[{label}]({match.group('uri')})"
+
+    return NOTE_LINK_SCAN.sub(_render, text)
 
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
@@ -139,6 +350,21 @@ class ParsedNotePayload:
     content: str = field(repr=False)
     keywords: tuple[str, ...] = field(default=(), repr=False)
     template_name: str | None = field(default=None, repr=False)
+    wikilinks: tuple[str, ...] = field(default=(), repr=False)
+    """Obsidian ``[[target]]`` names found in ``content``, in first-use order.
+
+    Only an Obsidian-mode parse fills this; it is the executor's sole licence to
+    rewrite links, so an ordinary import that happens to contain ``[[…]]`` text
+    keeps it literal.
+    """
+    unimported_frontmatter_keys: tuple[str, ...] = field(default=(), repr=False)
+    """Frontmatter property names this import reads but does not keep.
+
+    Obsidian-mode strips the leading YAML block and takes ``title``, ``tags``
+    and ``aliases`` from it; every other property is dropped. task-32262: the
+    review has to say so, because the note's own file no longer carries them
+    once it lives in the Library database.
+    """
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not isinstance(self.content, str):
@@ -159,7 +385,26 @@ class ParsedNotePayload:
             and len(self.template_name) > MAX_IMPORT_TEMPLATE_NAME_LENGTH
         ):
             raise ValueError("template_name exceeds its absolute safety ceiling.")
+        wikilinks = _as_tuple(self.wikilinks, field_name="wikilinks")
+        if not all(
+            isinstance(link, str) and link.strip() and len(link) <= MAX_IMPORT_TITLE_LENGTH
+            for link in wikilinks
+        ):
+            raise ValueError("wikilinks must contain bounded non-blank text values.")
+        dropped = _as_tuple(
+            self.unimported_frontmatter_keys,
+            field_name="unimported_frontmatter_keys",
+        )
+        if not all(
+            isinstance(key, str) and key.strip() and len(key) <= MAX_IMPORT_KEYWORD_LENGTH
+            for key in dropped
+        ):
+            raise ValueError(
+                "unimported_frontmatter_keys must contain bounded non-blank text."
+            )
         object.__setattr__(self, "keywords", keywords)
+        object.__setattr__(self, "wikilinks", wikilinks)
+        object.__setattr__(self, "unimported_frontmatter_keys", dropped)
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,6 +574,8 @@ _DEFAULT_ACTIONS = {
     ImportClassification.CHANGED_REPEAT: ImportAction.CREATE_NEW,
     ImportClassification.UNCERTAIN_MATCH: ImportAction.CREATE_NEW,
     ImportClassification.UNSUPPORTED: ImportAction.SKIP,
+    ImportClassification.SKIPPED: ImportAction.SKIP,
+    ImportClassification.EMPTY: ImportAction.SKIP,
     ImportClassification.FAILED: ImportAction.SKIP,
 }
 
@@ -419,10 +666,7 @@ class ImportPreviewItem:
             raise ValueError("selected_action must be present in allowed_actions.")
         if self.default_action is not _DEFAULT_ACTIONS[self.classification]:
             raise ValueError("default_action does not match the classification.")
-        importable = self.classification not in {
-            ImportClassification.UNSUPPORTED,
-            ImportClassification.FAILED,
-        }
+        importable = self.classification not in NON_IMPORTABLE_CLASSIFICATIONS
         if importable and not payloads:
             raise ValueError("Importable items require at least one payload.")
 
@@ -462,14 +706,15 @@ class ImportPreviewItem:
         allowed_actions: tuple[ImportAction, ...],
     ) -> None:
         """Reject classification, match, and action combinations that cannot run."""
-        if self.classification in {
-            ImportClassification.UNSUPPORTED,
-            ImportClassification.FAILED,
-        }:
+        if self.classification in NON_IMPORTABLE_CLASSIFICATIONS:
             if allowed_actions != (ImportAction.SKIP,):
-                raise ValueError("Unsupported and failed items must only allow Skip.")
+                raise ValueError(
+                    "Unsupported, skipped, empty and failed items must only allow Skip."
+                )
             if self.match is not None:
-                raise ValueError("Unsupported and failed items cannot carry a match.")
+                raise ValueError(
+                    "Unsupported, skipped, empty and failed items cannot carry a match."
+                )
             return
 
         if self.classification is ImportClassification.NEW:
@@ -596,3 +841,91 @@ class NoteImportPlan:
             proposed_folder_count=len(self.proposed_folder_paths),
             items=diagnostic_items,
         )
+
+
+def creatable_wikilink_keys(plan: NoteImportPlan) -> dict[str, str]:
+    """Map every link key this plan can resolve to the item that will own it.
+
+    Each single-note source the plan creates is addressable the two ways
+    Obsidian addresses it: by its vault-relative path without the extension and
+    by its bare file name. A name two sources share resolves to neither, so an
+    ambiguous link stays literal rather than pointing at a guess.
+
+    Args:
+        plan: The reviewed plan whose selected actions decide what exists.
+
+    Returns:
+        Comparable link keys mapped to the ``item_id`` that will create them.
+    """
+    item_ids: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for item in plan.items:
+        if item.selected_action is not ImportAction.CREATE_NEW or len(
+            item.payloads
+        ) != 1:
+            continue
+        parts = PurePosixPath(item.source.display_path).parts
+        if item.source.kind is ImportSourceKind.DIRECTORY_MEMBER:
+            parts = parts[1:]
+        if not parts:
+            continue
+        path = PurePosixPath(*parts)
+        for target in (path.with_suffix("").as_posix(), path.stem):
+            key = wikilink_key(target)
+            if not key or key in ambiguous:
+                continue
+            if item_ids.setdefault(key, item.item_id) != item.item_id:
+                ambiguous.add(key)
+                del item_ids[key]
+    return item_ids
+
+
+def planned_change_count(action: ImportAction, payload_count: int) -> int:
+    """Return how many separate changes one reviewed source settles.
+
+    A source that creates notes settles one change per note; every other
+    action settles exactly one. This is the receipt ledger's own unit, and it
+    is defined once (task-32258) because the review counts SOURCES and the
+    two numbers were being read as one -- "Review 66 items" over a progress
+    line that said "67 of 67".
+
+    Args:
+        action: The action the review settled on for the source.
+        payload_count: How many notes the source parsed into.
+
+    Returns:
+        The number of durable outcome rows the source is worth.
+    """
+    return payload_count if action is ImportAction.CREATE_NEW else 1
+
+
+def planned_plan_change_count(plan: NoteImportPlan) -> int:
+    """Return the planned-change total for one reviewed plan."""
+    return sum(
+        planned_change_count(item.selected_action, len(item.payloads))
+        for item in plan.items
+    )
+
+
+def resolved_wikilink_count(plan: NoteImportPlan) -> int:
+    """Count the `[[links]]` this plan will rewrite as note links.
+
+    A link to a note outside the batch, an attachment or a heading is left as
+    the author wrote it, so it is not counted (task-32178).
+
+    Args:
+        plan: The reviewed plan the receipt is about to report on.
+
+    Returns:
+        How many recorded links resolve to a note the same plan creates.
+    """
+    keys = creatable_wikilink_keys(plan)
+    if not keys:
+        return 0
+    return sum(
+        wikilink_key(link) in keys
+        for item in plan.items
+        if item.selected_action is ImportAction.CREATE_NEW
+        for payload in item.payloads
+        for link in payload.wikilinks
+    )

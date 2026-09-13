@@ -145,6 +145,11 @@ git commit -m "feat: define Conversation settings return handoff"
 **Files:**
 - Modify: `tldw_chatbook/Widgets/Console/console_settings_modal.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `tldw_chatbook/UI/Navigation/main_navigation.py`
+- Modify: `tldw_chatbook/app.py`
+- Test: `Tests/UI/test_console_session_settings.py`
+- Test: `Tests/State/test_screen_state_store.py`
+- Test: `Tests/UI/test_screen_navigation.py`
 - Test: `Tests/UI/test_console_session_settings.py`
 - Test: `Tests/State/test_screen_state_store.py`
 
@@ -175,6 +180,8 @@ Expected: FAIL because the snapshot and credential-request result do not exist.
 
 Add an explicit allowlist of modal widget IDs and primitive value types; serialize `ConsoleSessionSettings` fields, context overrides via `to_dict()`, provider draft maps, disclosure flags, and logical focus. `from_mapping()` must return `None` on malformed structure and copy every nested mapping/sequence it retains.
 
+Preserve both the origin system prompt and pinned prefill when a restored draft is subsequently saved; neither field may be dropped merely because it is not edited by this modal.
+
 ```python
 @dataclass(frozen=True, slots=True)
 class ConsoleSettingsCredentialRequest:
@@ -183,6 +190,13 @@ class ConsoleSettingsCredentialRequest:
     model: str | None
 ```
 
+- [ ] **Step 4: Route credential requests through ChatScreen with guarded settlement**
+
+Handle the modal result variant in `_open_console_settings`: retain the suspended snapshot on `ChatScreen`, stage the typed return handoff, and post the typed Settings context. Extend the existing `NavigateToScreen` path with one optional, single-settlement completion callback so the source can discard the exact pending handoff and reopen/retain its draft when flush, confirmation, transition admission, startup, overlay dismissal, or target construction rejects the route. The app handler owns settlement on every terminal path; ordinary navigation remains unchanged. Add the snapshot key to `_serialize_native_console_state()` / `_restore_native_console_state()` with absent-key backward compatibility. Do not apply the draft as session settings during suspension or bypass any leave-Console guard.
+
+- [ ] **Step 5: Verify screen snapshot and modal suites**
+
+Run: `pytest Tests/State/test_screen_state_store.py Tests/UI/test_console_session_settings.py Tests/UI/test_screen_navigation.py -k 'snapshot or credential or return or settings or navigation_completion' -q`
 - [ ] **Step 4: Route credential requests through ChatScreen**
 
 Handle the modal result variant in `_open_console_settings`: retain the suspended snapshot on `ChatScreen`, stage the typed return handoff, and post the typed Settings context. Add the snapshot key to `_serialize_native_console_state()` / `_restore_native_console_state()` with absent-key backward compatibility. Do not apply the draft as session settings during suspension.
@@ -196,12 +210,43 @@ Expected: PASS.
 - [ ] **Step 6: Commit exact draft suspension**
 
 ```bash
+git add tldw_chatbook/Widgets/Console/console_settings_modal.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Navigation/main_navigation.py tldw_chatbook/app.py Tests/UI/test_console_session_settings.py Tests/State/test_screen_state_store.py Tests/UI/test_screen_navigation.py
 git add tldw_chatbook/Widgets/Console/console_settings_modal.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_session_settings.py Tests/State/test_screen_state_store.py
 git commit -m "feat: suspend Conversation settings across credential setup"
 ```
 
 ### Task 4: Guard Settings drafts and complete the return
 
+**Round-1 review scope amendment:** The exact return retry needs a value-free
+`PendingHandoffStore.exact_revision_status()` query to distinguish an exact
+claim still held in flight by an outgoing Console screen from a consumed or
+superseded revision. This adds
+`tldw_chatbook/UI/Navigation/pending_handoff_store.py` and its existing focused
+store test file to Task 4 scope. It exposes no handoff payload, changes no
+persistence schema or owner, and requires no new ADR; ADR-033 remains the
+governing application-session ownership decision.
+
+**Round-9 review scope amendment:** Replace the screen-lifetime terminal-cleanup
+obligation with one store-owned atomic transfer settlement. The exact operation
+settles in-flight A or its exact requeued pending form, treats an already
+settled/superseded A as terminal, and never mutates pending or claimed B. A
+modal transfer commits only after that operation succeeds; failure revokes the
+tentative modal draft and retains the source snapshot/target for retry. A
+distinct B is not queued while A's terminal status is unknown. This is a narrow
+extension of ADR-033's application-owned typed handoff interface: it adds no
+schema, persistence, payload exposure, or state owner, so no new ADR is needed.
+
+**Files:**
+- Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `tldw_chatbook/UI/Navigation/pending_handoff_store.py`
+- Test: `Tests/UI/test_settings_configuration_hub.py`
+- Test: `Tests/UI/test_console_native_chat_flow.py`
+- Test: `Tests/State/test_pending_handoff_store.py`
+
+**Interfaces:**
+- Consumes: `ProviderSettingsNavigationTarget`, `ConsoleSettingsReturnTarget`, `ConversationSettingsReturnOutcome`
+- Produces: `PendingHandoffStore.settle_transferred_claim(claim) -> bool`
 **Files:**
 - Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`

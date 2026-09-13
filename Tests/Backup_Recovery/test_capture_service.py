@@ -4,6 +4,7 @@ from threading import Event
 
 import pytest
 
+from Tests.Backup_Recovery.test_operational_owners import STORES
 from tldw_chatbook.Backup_Recovery import bootstrap, owner_registry
 from tldw_chatbook.Backup_Recovery.capture_service import capture, preview_capture
 
@@ -14,13 +15,18 @@ def _populate_required_dependencies(preview):
     from contextlib import closing
     from importlib import import_module
 
-    from Tests.Backup_Recovery.test_operational_owners import STORES
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
     from tldw_chatbook.TTS.profile_schema import open_profile_store
 
-    paths = {item.owner: item.path for item in preview.items if item.path is not None}
+    # An owner may also declare sidecars (the TTS lease lock, for example).
+    # Populate its primary logical record instead of the last path encountered.
+    paths = {
+        item.owner: item.path
+        for item in preview.items
+        if item.path is not None and item.logical_id.endswith(":" + item.owner)
+    }
     for owner, cls in (
         ("db.chachanotes.primary", CharactersRAGDB),
         ("db.media.primary", MediaDatabase),

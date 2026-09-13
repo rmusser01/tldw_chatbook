@@ -1,5 +1,11 @@
+import sqlite3
+import threading
+import time
+from contextlib import contextmanager
+
 import pytest
 
+from tldw_chatbook.Writing_Interop import local_writing_service
 from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
 
 
@@ -468,3 +474,210 @@ def test_local_writing_service_runs_local_research_and_persists_analyses(tmp_pat
     assert consistency[0]["analysis_type"] == "consistency"
     assert listed["total"] == 1
     assert listed["analyses"][0]["id"] == scene_analyses[0]["id"]
+
+
+# --- TASK-21125: held thread-local connection + lifecycle ------------------
+
+
+class _RollbackFailingConnection:
+    """Proxy that makes ROLLBACK fail so masking can be observed."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, *args, **kwargs):
+        if str(sql).strip().upper().startswith("ROLLBACK"):
+            raise sqlite3.OperationalError("rollback failed")
+        return self._conn.execute(sql, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+class _RollbackFailingService(LocalWritingService):
+    def _open_connection(self):
+        return _RollbackFailingConnection(super()._open_connection())
+
+
+class _GatedWritingService(LocalWritingService):
+    """Parks the first transaction after BEGIN so close() must wait for it."""
+
+    def __init__(self, db_path, entered, release):
+        super().__init__(db_path)
+        self._entered = entered
+        self._release = release
+        self._gate_armed = False
+
+    def arm(self):
+        self._gate_armed = True
+
+    @contextmanager
+    def _transaction(self):
+        with LocalWritingService._transaction(self) as conn:
+            if self._gate_armed:
+                self._gate_armed = False
+                self._entered.set()
+                assert self._release.wait(10), "gate was never released"
+            yield conn
+
+
+def test_local_writing_service_reuses_one_held_connection_per_thread(
+    tmp_path, monkeypatch
+):
+    opens = []
+    real_connect = local_writing_service.connect_private_sqlite
+
+    def _counting_connect(*args, **kwargs):
+        opens.append(threading.current_thread().name)
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(
+        local_writing_service, "connect_private_sqlite", _counting_connect
+    )
+    service = LocalWritingService(tmp_path / "writing.db")
+    try:
+        project = service.create_project(title="Novel")
+        opens_after_first_operation = len(opens)
+
+        for _ in range(10):
+            service.get_project(project["id"])
+            service.list_projects()
+            service.update_project(project["id"], expected_version=None, synopsis="s")
+
+        # One schema connection plus one held connection for this thread; the
+        # 30 follow-up operations open nothing at all.
+        assert opens_after_first_operation <= 2
+        assert len(opens) == opens_after_first_operation
+    finally:
+        service.close()
+
+
+def test_local_writing_service_held_connection_pragmas_read_back(tmp_path):
+    service = LocalWritingService(tmp_path / "writing.db")
+    try:
+        service.create_project(title="Novel")
+        conn = service._connect()
+
+        assert service._connect() is conn
+        assert conn.isolation_level is None
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        assert int(conn.execute("PRAGMA synchronous").fetchone()[0]) == 1
+
+        probe = sqlite3.connect(tmp_path / "writing.db")
+        try:
+            assert probe.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        finally:
+            probe.close()
+    finally:
+        service.close()
+
+
+def test_local_writing_service_gives_each_thread_its_own_connection(tmp_path):
+    service = LocalWritingService(tmp_path / "writing.db")
+    try:
+        main_conn = service._connect()
+        seen = {}
+
+        def _worker():
+            seen["conn"] = service._connect()
+            seen["project"] = service.create_project(title="From worker")
+
+        thread = threading.Thread(target=_worker)
+        thread.start()
+        thread.join(10)
+
+        assert seen["conn"] is not main_conn
+        # Cross-thread visibility: the main thread's own connection sees it.
+        assert service.get_project(seen["project"]["id"])["title"] == "From worker"
+    finally:
+        service.close()
+
+
+def test_local_writing_service_close_releases_connections_and_rearms(tmp_path):
+    service = LocalWritingService(tmp_path / "writing.db")
+    project = service.create_project(title="Novel")
+    conn = service._connect()
+
+    service.close()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute("SELECT 1")
+    # The store re-arms: the next operation transparently reopens.
+    assert service.get_project(project["id"])["title"] == "Novel"
+    assert service._connect() is not conn
+    service.close()
+
+
+def test_local_writing_service_close_waits_for_an_in_flight_operation(tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+    service = _GatedWritingService(tmp_path / "writing.db", entered, release)
+    project = service.create_project(title="Novel")
+    failures = []
+
+    def _worker():
+        try:
+            service.update_project(
+                project["id"], expected_version=None, synopsis="in flight"
+            )
+        except BaseException as exc:  # pragma: no cover - failure path
+            failures.append(exc)
+
+    service.arm()
+    worker = threading.Thread(target=_worker)
+    worker.start()
+    assert entered.wait(10), "the gated transaction never started"
+
+    releaser = threading.Timer(0.25, release.set)
+    releaser.start()
+    started = time.perf_counter()
+    service.close()
+    waited = time.perf_counter() - started
+    releaser.join(10)
+    worker.join(10)
+
+    assert not failures, f"in-flight operation was broken by close(): {failures}"
+    assert waited >= 0.2, (
+        "close() did not wait for the in-flight operation "
+        f"(returned after {waited:.3f}s)"
+    )
+    assert service.get_project(project["id"])["synopsis"] == "in flight"
+    service.close()
+
+
+def test_local_writing_service_transaction_error_is_not_masked_by_rollback(tmp_path):
+    service = _RollbackFailingService(tmp_path / "writing.db")
+    try:
+        service.create_project(title="Novel")
+
+        with pytest.raises(ValueError, match="original failure"):
+            with service._transaction() as conn:
+                conn.execute("UPDATE writing_projects SET title = 'x'")
+                raise ValueError("original failure")
+    finally:
+        service.close()
+
+
+def test_local_writing_service_memory_mode_serves_multiple_threads(tmp_path):
+    service = LocalWritingService(":memory:")
+    try:
+        errors = []
+        created = []
+
+        def _worker(index):
+            try:
+                created.append(service.create_project(title=f"Novel {index}"))
+            except BaseException as exc:  # pragma: no cover - failure path
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_worker, args=(i,)) for i in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+
+        assert not errors, f"memory-mode service broke under threads: {errors}"
+        assert len(created) == 4
+        assert len(service.list_projects()) == 4
+    finally:
+        service.close()

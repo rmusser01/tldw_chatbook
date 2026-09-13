@@ -59,8 +59,8 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleSetupModal,
     ConsoleStagedContextTray,
 )
-from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
-    ConsoleRagSettingsModal,
+from tldw_chatbook.Widgets.Console.console_library_search_modal import (
+    ConsoleLibrarySearchModal,
 )
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
@@ -197,6 +197,18 @@ async def _wait_for_console_library_rag_button_state(
     )
 
 
+async def _run_manual_library_search(console, pilot, query: str) -> None:
+    """Run the one-shot Library search through the user-visible modal."""
+    console.query_one("#console-run-library-rag", Button).press()
+    await pilot.pause()
+    modal = console.app.screen
+    assert isinstance(modal, ConsoleLibrarySearchModal)
+    modal.query_one("#console-rag-settings-query", Input).value = query
+    await pilot.pause()
+    modal.query_one("#console-rag-settings-run", Button).press()
+    await pilot.pause()
+
+
 async def _wait_for_production_chat_screen(
     app, pilot, *, timeout: float = 10.0
 ) -> ChatScreen:
@@ -234,7 +246,8 @@ async def _open_console_inspector(console, pilot) -> None:
         return
 
     await _wait_for_selector(console, pilot, "#console-inspector-rail-open")
-    await pilot.click("#console-inspector-rail-open")
+    console.query_one("#console-inspector-rail-open", Button).press()
+    await pilot.pause()
 
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
@@ -308,8 +321,8 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
         assert (
             "#console-staged-context-tray {\n"
             "    height: auto;\n"
-            "    min-height: 3;\n"
-            "    max-height: 6;"
+            "    min-height: 0;\n"
+            "}"
         ) in css
         assert (
             "#console-workspace-context {\n    height: auto;\n    min-height: 0;"
@@ -857,7 +870,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         assert disabled_reason.styles.display == "block"
         assert (
             disabled_reason.renderable.plain
-            == "Send blocked — choose a model to continue"
+            == "Send blocked — choose a model to continue ›"
         )
         assert send_button.disabled is True
         assert (
@@ -2593,7 +2606,7 @@ async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeyp
         assert "Get started" in text
         assert "Send your first message" in text
         assert "Choose model" in text
-        assert "Attach context" in text
+        assert "Context rail" in text
         assert "Search Library" in text
 
 
@@ -2693,7 +2706,11 @@ async def test_console_transcript_header_sits_at_top_of_center_panel():
             tab_strip.region.y
             == transcript_title.region.y + transcript_title.region.height
         )
-        assert transcript.region.y == tab_strip.region.y + tab_strip.region.height
+        assert transcript.region.y == (
+            tab_strip.region.y
+            + tab_strip.region.height
+            + tab_strip.styles.margin.bottom
+        )
 
 
 @pytest.mark.asyncio
@@ -2728,7 +2745,9 @@ async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
         assert transcript_title.styles.height.value == 1
         assert tab_strip.styles.height.value == 1
         assert tab_strip.region.y == transcript_title.region.y + 1
-        assert transcript.region.y == tab_strip.region.y + 1
+        assert transcript.region.y == (
+            tab_strip.region.y + 1 + tab_strip.styles.margin.bottom
+        )
         assert transcript_title.styles.color != active_tab.styles.color
         assert active_tab.styles.background != tab_strip.styles.background
         assert active_tab.has_class("console-session-tab-active")
@@ -2784,7 +2803,11 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         assert "No messages yet. Send a prompt or attach context." not in _visible_text(
             empty_panel
         )
-        assert empty_panel.region.y == tab_strip.region.y + tab_strip.region.height
+        assert empty_panel.region.y == (
+            tab_strip.region.y
+            + tab_strip.region.height
+            + tab_strip.styles.margin.bottom
+        )
 
 
 @pytest.mark.asyncio
@@ -2863,12 +2886,18 @@ async def test_console_inspector_live_work_sources_stay_near_top():
         console.query_one("#console-run-inspector-state")
         body = console.query_one("#console-inspector-rail-body")
         source_readiness = console.query_one("#console-live-work-source-readiness")
+        live_work_viewport = source_readiness.parent
+        live_work_section = live_work_viewport.parent
+        live_work_root = live_work_section.parent
 
         assert inspector.parent is body
-        assert source_readiness.parent is body
+        assert live_work_viewport.id == "console-bounded-section-live-work-viewport"
+        assert live_work_section.id == "console-bounded-section-live-work"
+        assert live_work_root.id == "console-live-work-section"
+        assert live_work_root.parent is body
+        assert body.children.index(live_work_root) == body.children.index(inspector) + 1
         assert source_readiness.region.y >= inspector.region.y
-        assert source_readiness.region.y <= body.region.y + body.region.height
-        assert source_readiness.region.height <= 18
+        assert live_work_viewport.region.height <= 20
 
 
 @pytest.mark.asyncio
@@ -2885,7 +2914,7 @@ async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overl
         scope = console.query_one("#console-library-rag-scope", Static)
         rows = list(console.query(".console-live-work-source-row"))
 
-        assert run_rag.disabled is True
+        assert run_rag.disabled is False
         assert str(run_rag.tooltip or "") == ""
         # RAG-44: the source line now carries Library's summary grammar
         # ("Sources: Notes, Media, Conversations (Prompts off)"), which is
@@ -2943,16 +2972,14 @@ async def test_console_run_inspector_orders_state_source_tools_and_approvals():
         await _wait_for_selector(console, pilot, "#console-inspector-tools-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-artifacts-heading")
+        console.query_one("#console-inspector-more-toggle", Button).press()
+        await pilot.pause()
 
-        assert (
-            getattr(
-                console.query_one(
-                    "#console-inspector-run-status-summary", Static
-                ).render(),
-                "plain",
-                "",
-            )
-            == "Status: Ready"
+        assert not list(console.query("#console-inspector-run-status-summary"))
+        assert "Run recipe:" in getattr(
+            console.query_one("#console-inspector-run-recipe", Static).render(),
+            "plain",
+            "",
         )
         assert not list(console.query("#console-run-inspector-title"))
         assert (
@@ -3076,7 +3103,11 @@ async def test_console_left_rail_sections_use_available_space():
 
         body_content_width = body.scrollable_content_region.width
         assert 0 <= body.region.width - body_content_width <= 2
-        assert workspace_context.region.width == body_content_width
+        # The section body owns the rail's single-cell content indent; the
+        # tray fills that body's content box rather than the outer scroll
+        # viewport.  Comparing against the viewport incorrectly counts the
+        # indent (and the stable scrollbar gutter) as usable tray width.
+        assert workspace_context.region.width == conversations_body.content_region.width
 
 
 @pytest.mark.asyncio
@@ -3090,18 +3121,18 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
 
         workbench_border = console.query_one("#console-workspace-grid").styles.border
         assert workbench_border.top[0] == "solid"
-        assert workbench_border.right[0] == "solid"
+        assert workbench_border.right[0] in {"", "none"}
         assert workbench_border.bottom[0] == "solid"
-        assert workbench_border.left[0] == "solid"
+        assert workbench_border.left[0] in {"", "none"}
 
         transcript_border = console.query_one(
             "#console-transcript-region"
         ).styles.border
         assert transcript_border.top[0] in {"", "none"}
-        assert transcript_border.right[0] == "solid"
-        # task-17651: the grid's bottom border is the single separator.
+        assert transcript_border.right[0] in {"", "none"}
+        # TASK-20937.3: transcript owns no frame edge.
         assert transcript_border.bottom[0] in {"", "none"}
-        assert transcript_border.left[0] == "solid"
+        assert transcript_border.left[0] in {"", "none"}
 
         staged_context_border = console.query_one(
             "#console-staged-context-tray"
@@ -3120,9 +3151,8 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
         assert workspace_context_border.left[0] in {"", "none"}
 
         composer_border = console.query_one("#console-native-composer").styles.border
-        # task-17651: no inline frame at all (this harness sees no CSS; the
-        # dense-form left edge is a stylesheet rule pinned elsewhere).
-        assert composer_border.left[0] in {"", "none"}
+        # task-17651: the dense composer owns only its semantic left edge.
+        assert composer_border.left[0] == "solid"
         assert composer_border.top[0] in {"", "none"}
         assert composer_border.right[0] in {"", "none"}
         assert composer_border.bottom[0] in {"", "none"}
@@ -3175,30 +3205,25 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-grid")
 
-        # task-17651: the workbench frame closes at the grid — the grid
-        # keeps its full border, its children suppress their bottom edge,
-        # and the composer left the frame grammar entirely (dense-form
-        # left edge only).
+        # TASK-20937.3: the grid closes only the top/bottom. Each rail owns
+        # its one interior divider; transcript and composer own no shell box.
         grid_border = console.query_one("#console-workspace-grid").styles.border
         assert grid_border.top[0] == "solid"
-        assert grid_border.right[0] == "solid"
+        assert grid_border.right[0] in {"", "none"}
         assert grid_border.bottom[0] == "solid"
-        assert grid_border.left[0] == "solid"
+        assert grid_border.left[0] in {"", "none"}
 
         rail_border = console.query_one("#console-left-rail").styles.border
-        assert rail_border.top[0] == "solid"
+        assert rail_border.top[0] in {"", "none"}
         assert rail_border.right[0] == "solid"
         assert rail_border.bottom[0] in {"", "none"}
-        assert rail_border.left[0] == "solid"
+        assert rail_border.left[0] in {"", "none"}
 
-        # This harness loads no app CSS, so only INLINE styles are visible
-        # here: the meaningful pin is that frame.py no longer frames the
-        # composer at all. Its CSS dense-form left edge is pinned by the
-        # bundled-harness tests in test_console_composer_collapse.py.
+        # The composer owns one semantic dense-form edge, not a shell box.
         composer = console.query_one("#console-native-composer")
         assert not composer.has_class("console-frame-solid")
         composer_border = composer.styles.border
-        assert composer_border.left[0] in {"", "none"}
+        assert composer_border.left[0] == "solid"
         assert composer_border.top[0] in {"", "none"}
         assert composer_border.right[0] in {"", "none"}
         assert composer_border.bottom[0] in {"", "none"}
@@ -3206,10 +3231,10 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         right_handle = console.query_one("#console-inspector-rail-handle")
         assert right_handle.has_class("console-frame-solid")
         assert right_handle.region.width == 11
-        assert right_handle.content_region.width == 9
+        assert right_handle.content_region.width == 10
         handle_border = right_handle.styles.border
-        assert handle_border.top[0] == "solid"
-        assert handle_border.right[0] == "solid"
+        assert handle_border.top[0] in {"", "none"}
+        assert handle_border.right[0] in {"", "none"}
         assert handle_border.bottom[0] in {"", "none"}
         assert handle_border.left[0] == "solid"
 
@@ -3217,9 +3242,9 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
             "#console-transcript-region"
         ).styles.border
         assert transcript_border.top[0] in {"", "none"}
-        assert transcript_border.right[0] == "solid"
+        assert transcript_border.right[0] in {"", "none"}
         assert transcript_border.bottom[0] in {"", "none"}
-        assert transcript_border.left[0] == "solid"
+        assert transcript_border.left[0] in {"", "none"}
 
         for selector in (
             "#console-staged-context-tray",
@@ -3240,10 +3265,8 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         right_rail = console.query_one("#console-right-rail")
         inspector_state = console.query_one("#console-run-inspector-state")
         border = right_rail.styles.border
-        assert border.top[0] == "solid", "#console-right-rail missing top frame"
-        assert border.right[0] == "solid", "#console-right-rail missing right frame"
-        # task-17651: grid children suppress their bottom edge — the grid's
-        # own bottom border closes the workbench frame.
+        assert border.top[0] in {"", "none"}, "#console-right-rail top edge"
+        assert border.right[0] in {"", "none"}, "#console-right-rail right edge"
         assert border.bottom[0] in {"", "none"}, "#console-right-rail bottom edge"
         assert border.left[0] == "solid", "#console-right-rail missing left frame"
         assert inspector_state.region.width > 0
@@ -3336,7 +3359,7 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
             "value",
             staged_context.styles.max_height,
         )
-        assert max_height >= 10
+        assert max_height is None
         staged_text = _visible_text(staged_context)
         assert "Incident Review" in staged_text
         assert "ready" in staged_text
@@ -3357,7 +3380,7 @@ async def test_console_control_bar_renders_readable_summary_line():
         assert "Provider:" in plain
         assert " | Model:" in plain
         assert " | Assistant:" in plain
-        assert " | Library search:" in plain
+        assert " | Library · Auto " in plain
         assert " | Sources:" in plain
 
 
@@ -3426,7 +3449,7 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
         assert "Provider:" in text
         assert "Model:" in text
         assert "Assistant: General" in text
-        assert "Library search: on" in text
+        assert "Library · Auto off · Agent blocked" in text
         assert "Sources: 1" in text
         assert "Transformer notes" in text
         assert "ready" in text
@@ -3509,8 +3532,8 @@ def test_console_control_state_tolerates_missing_config_and_precise_rag_source()
         ConsoleLiveWorkLaunch(source="Library Search/RAG", title="RAG result"),
     )
 
-    assert non_rag_state.rag_label == "Library search: off"
-    assert rag_state.rag_label == "Library search: on"
+    assert non_rag_state.rag_label == "Library · Auto off · Agent blocked"
+    assert rag_state.rag_label == non_rag_state.rag_label
 
 
 def test_console_control_state_tolerates_missing_launch_source():
@@ -3521,7 +3544,7 @@ def test_console_control_state_tolerates_missing_launch_source():
         ConsoleLiveWorkLaunch(source=None, title="Unknown source"),
     )
 
-    assert state.rag_label == "Library search: off"
+    assert state.rag_label == "Library · Auto off · Agent blocked"
 
 
 def test_console_control_and_inspector_share_effective_provider_model_sources():
@@ -3587,7 +3610,8 @@ def test_console_rag_source_status_genuinely_empty_reads_not_staged():
 
 
 def test_console_inspector_sources_row_remembers_the_last_send():
-    """D1b end-to-end: the Inspector's "Sources" row (and the run recipe
+    """D1b end-to-end: the Inspector's "Retrieval" row (TASK-24610 renamed
+    it from "Sources"; and the run recipe
     line built from the same value) read the one-send memory instead of
     the literal "not staged" a send just superseded."""
     app = _build_test_app()
@@ -3598,7 +3622,7 @@ def test_console_inspector_sources_row_remembers_the_last_send():
     inspector_state = screen._build_console_inspector_state(None)
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
-    assert rows_by_label["Sources"].value == "sent with the last message · 5 sources"
+    assert rows_by_label["Retrieval"].value == "sent with the last message · 5 sources"
     assert "sent with the last message · 5 sources" in rows_by_label["Run recipe"].value
 
 
@@ -3620,7 +3644,7 @@ def test_console_strip_and_inspector_sent_counts_provably_agree():
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
     assert strip_state.notice == "Evidence sent with this message · 5 sources"
-    assert rows_by_label["Sources"].value == "sent with the last message · 5 sources"
+    assert rows_by_label["Retrieval"].value == "sent with the last message · 5 sources"
     # Change the ONE shared field and both surfaces move together -- proof
     # they read the same number, not two counts that merely match today.
     screen._console_evidence_sent_notice = 2
@@ -3628,7 +3652,7 @@ def test_console_strip_and_inspector_sent_counts_provably_agree():
     inspector_state_2 = screen._build_console_inspector_state(None)
     rows_by_label_2 = {row.label: row for row in inspector_state_2.rows}
     assert strip_state_2.notice == "Evidence sent with this message · 2 sources"
-    assert rows_by_label_2["Sources"].value == "sent with the last message · 2 sources"
+    assert rows_by_label_2["Retrieval"].value == "sent with the last message · 2 sources"
 
 
 def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():
@@ -3716,8 +3740,10 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
         assert "Select a provider and model before sending." in str(
             console.query_one("#console-inspector-provider", Static).renderable
         )
-        assert "Sources: missing source" in str(
-            console.query_one("#console-inspector-sources", Static).renderable
+        # TASK-24610: the run inspector's retrieval-status row is "Retrieval",
+        # so "Sources" means only staged context anywhere in the rail.
+        assert "Retrieval: missing source" in str(
+            console.query_one("#console-inspector-retrieval", Static).renderable
         )
         assert not list(console.query("#console-inspector-rag-source"))
         # TASK-1843: the permanently-disabled review-tool-call action is gone,
@@ -3969,13 +3995,7 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result(
             "Sources: Notes, Media, Conversations (Prompts off)"
             in _visible_text(console)
         )
-        query_input = console.query_one("#console-library-rag-query-input", Input)
-        query_input.value = query
-        await pilot.pause(0.1)
-
-        run_button = console.query_one("#console-run-library-rag", Button)
-        assert run_button.disabled is False
-        run_button.press()
+        await _run_manual_library_search(console, pilot, query)
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
 
         assert service.calls == [
@@ -3988,7 +4008,9 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result(
             }
         ]
         text = _visible_text(console)
-        assert "Sources: staged from Library Search/RAG" in text
+        # TASK-24610: the run inspector's retrieval-status row is "Retrieval";
+        # "Sources" now means staged context only.
+        assert "Retrieval: staged from Library Search/RAG" in text
         assert "RAG/source:" not in text
         assert "Title: Incident Review" in text
         assert "source_id: note-42" in text
@@ -4039,13 +4061,7 @@ async def test_console_rag_action_inherits_active_profile_top_k(monkeypatch):
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        query_input = console.query_one("#console-library-rag-query-input", Input)
-        query_input.value = query
-        await pilot.pause(0.1)
-
-        run_button = console.query_one("#console-run-library-rag", Button)
-        assert run_button.disabled is False
-        run_button.press()
+        await _run_manual_library_search(console, pilot, query)
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
 
         assert service.calls == [
@@ -4110,13 +4126,7 @@ async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unava
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        query_input = console.query_one("#console-library-rag-query-input", Input)
-        query_input.value = query
-        await pilot.pause(0.1)
-
-        run_button = console.query_one("#console-run-library-rag", Button)
-        assert run_button.disabled is False
-        run_button.press()
+        await _run_manual_library_search(console, pilot, query)
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
 
         assert service.calls == [
@@ -4241,15 +4251,9 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one(
-            "#console-library-rag-query-input", Input
-        ).value = "Why did the incident happen?"
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=False,
+        await _run_manual_library_search(
+            console, pilot, "Why did the incident happen?"
         )
-        console.query_one("#console-run-library-rag", Button).press()
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
@@ -4299,15 +4303,7 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one(
-            "#console-library-rag-query-input", Input
-        ).value = "Summarize this source"
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=False,
-        )
-        console.query_one("#console-run-library-rag", Button).press()
+        await _run_manual_library_search(console, pilot, "Summarize this source")
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
@@ -4343,21 +4339,20 @@ async def test_console_rag_query_validation_blocks_unsafe_markup():
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one(
-            "#console-library-rag-query-input", Input
+        console.query_one("#console-run-library-rag", Button).press()
+        await pilot.pause()
+        modal = console.app.screen
+        assert isinstance(modal, ConsoleLibrarySearchModal)
+        modal.query_one(
+            "#console-rag-settings-query", Input
         ).value = "<script>alert('bad')</script>"
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=True,
-        )
-        assert (
-            str(console.query_one("#console-run-library-rag", Button).tooltip or "")
-            == ""
-        )
+        await pilot.pause()
+        assert modal.query_one("#console-rag-settings-run", Button).disabled is True
 
         assert console._console_library_rag_query == ""
         assert service.calls == []
+        modal.query_one("#console-rag-settings-cancel", Button).press()
+        await pilot.pause()
 
 
 @pytest.mark.asyncio
@@ -4384,20 +4379,12 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker(
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one(
-            "#console-library-rag-query-input", Input
-        ).value = "What changed?"
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=False,
-        )
-        console.query_one("#console-run-library-rag", Button).press()
+        await _run_manual_library_search(console, pilot, "What changed?")
         await _wait_for_visible_text(console, pilot, "Status: blocked")
 
         text = _visible_text(console)
         assert "Status: blocked" in text
-        assert "Sources: unavailable" in text
+        assert "Retrieval: unavailable" in text
         assert "RAG/source:" not in text
         assert "Unavailable: Library Search/RAG retrieval." in text
         assert "Owner: Library retrieval service." in text
@@ -4424,11 +4411,11 @@ async def test_console_control_bar_run_library_rag_opens_settings_modal_when_bla
         assert console._console_library_rag_query == ""
         console.app_instance.notify = Mock()
 
-        await pilot.click("#console-control-run-library-rag")
+        console.query_one("#console-control-run-library-rag", Button).press()
         await pilot.pause()
 
         modal = host.screen
-        assert isinstance(modal, ConsoleRagSettingsModal)
+        assert isinstance(modal, ConsoleLibrarySearchModal)
         console.app_instance.notify.assert_not_called()
         assert service.calls == []
 
@@ -4444,19 +4431,8 @@ async def test_console_control_bar_run_library_rag_opens_settings_modal_when_bla
 
 
 @pytest.mark.asyncio
-async def test_console_control_bar_run_library_rag_guards_a_path_shaped_draft():
-    """RAG-43 end to end: the mock-level guard tests in
-    `test_console_rag_settings_modal.py` pin `_console_draft_looks_like_rag_query`
-    against a `Mock()` screen, never a real composer or a real control-bar
-    click -- so a wiring mistake at either call site (e.g. reading the wrong
-    composer, or the control-bar action not routing through the guarded
-    fallback at all) would pass every mock-level test while still leaking a
-    path straight into retrieval live. This drives the real thing: a real
-    `ConsoleComposerBar` holding a path-shaped draft, a real control-bar
-    click, and confirms both halves of the guard hold together -- no query
-    gets stored anywhere AND the settings modal (not a toast, not silent
-    retrieval) is what actually opens, exactly like the blank-draft case
-    above."""
+async def test_console_control_bar_run_library_search_preserves_path_shaped_draft():
+    """The one-shot search modal preserves the exact composer draft as its query."""
     app = _build_test_app()
     service = StaticConsoleLibraryRagSearchService({"results": []})
     app.library_rag_search_service = service
@@ -4473,17 +4449,16 @@ async def test_console_control_bar_run_library_rag_guards_a_path_shaped_draft():
         assert console._console_library_rag_query == ""
         console.app_instance.notify = Mock()
 
-        await pilot.click("#console-control-run-library-rag")
+        console.query_one("#console-control-run-library-rag", Button).press()
         await pilot.pause()
 
         modal = host.screen
-        assert isinstance(modal, ConsoleRagSettingsModal)
-        assert modal._query == ""
+        assert isinstance(modal, ConsoleLibrarySearchModal)
+        assert modal._query == "/Users/x/notes.md"
         assert console._console_library_rag_query == ""
         console.app_instance.notify.assert_not_called()
         assert service.calls == []
-        # The guarded draft is left exactly where the user typed it -- the
-        # guard drops the prefill, it does not touch the composer.
+        # Opening the modal does not mutate the composer.
         assert composer.draft_text() == "/Users/x/notes.md"
 
 
@@ -4513,16 +4488,16 @@ async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
         await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
 
         # Queryless control-bar action opens the settings modal (task-2).
-        await pilot.click("#console-control-run-library-rag")
+        console.query_one("#console-control-run-library-rag", Button).press()
         await pilot.pause()
         modal = host.screen
-        assert isinstance(modal, ConsoleRagSettingsModal)
+        assert isinstance(modal, ConsoleLibrarySearchModal)
 
         modal.query_one("#console-rag-settings-query", Input).value = "why did it fail"
         await pilot.pause()
-        await pilot.click("#console-rag-settings-source-media")
+        modal.query_one("#console-rag-settings-source-media", Button).press()
         await pilot.pause()
-        await pilot.click("#console-rag-settings-run")
+        modal.query_one("#console-rag-settings-run", Button).press()
         for _ in range(10):
             await pilot.pause()
 
@@ -4546,13 +4521,8 @@ async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
 
 
 @pytest.mark.asyncio
-async def test_console_inspector_run_library_rag_gating_unaffected_by_modal_seam():
-    """The Inspector's own Run button stays disabled while its query input
-    is blank -- unaffected by the control-bar action now opening the
-    settings modal instead of toasting (this task changes the empty-query
-    path of the SAME `_run_console_library_rag_from_visible_action` method
-    the control-bar and Inspector button both call, so the two entry
-    points' gating must not cross-contaminate)."""
+async def test_console_inspector_search_library_opens_modal_when_query_is_blank():
+    """Inspector Search remains reachable without a previously stored query."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -4562,16 +4532,16 @@ async def test_console_inspector_run_library_rag_gating_unaffected_by_modal_seam
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
         run_rag = console.query_one("#console-run-library-rag", Button)
-        assert run_rag.disabled is True
+        assert run_rag.disabled is False
 
-        await pilot.click("#console-control-run-library-rag")
+        run_rag.press()
         await pilot.pause()
-        assert isinstance(host.screen, ConsoleRagSettingsModal)
-        await pilot.click("#console-rag-settings-cancel")
+        assert isinstance(host.screen, ConsoleLibrarySearchModal)
+        host.screen.query_one("#console-rag-settings-cancel", Button).press()
         await pilot.pause()
 
         run_rag = console.query_one("#console-run-library-rag", Button)
-        assert run_rag.disabled is True
+        assert run_rag.disabled is False
 
 
 @pytest.mark.asyncio
@@ -4719,6 +4689,26 @@ async def test_console_command_provider_session_settings_targets_guarded_action(
 
 
 @pytest.mark.asyncio
+async def test_console_command_provider_terminal_targets_guarded_action():
+    """The palette and pinned rail must share the screen's guarded action."""
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        assert hasattr(console, "action_open_console_terminal")
+
+        provider = ConsoleCommandProvider(screen=console, match_style=None)
+        hits = [hit async for hit in provider.search("open terminal")]
+        matching = [hit for hit in hits if "Open Terminal" in str(hit.text)]
+        assert matching, "expected a 'Console: Open Terminal' hit"
+        assert matching[0].command == console.action_open_console_terminal
+
+
+@pytest.mark.asyncio
 async def test_console_session_settings_action_noop_while_setup_modal_blocking():
     # With the first-run setup modal blocking, invoking the guarded action
     # (as the palette command now does) must not open the settings modal.
@@ -4827,16 +4817,14 @@ def test_console_f1_help_documents_the_macos_alt_caveat():
 
 @pytest.mark.asyncio
 async def test_console_left_rail_section_headers_all_visible_without_scrolling():
-    """task-15110 (owner ruling: cap sections, scroll inside).
+    """Keep default headers visible while enforcing the 20-row section ceiling.
 
     With every section expanded, the rail's virtual height used to run ~3x
     its viewport and Conversations started ~20 rows below the fold with no
-    scroll cue -- and after the OutOfBounds test repairs scrolled first,
-    NOTHING failed if the rail grew further. This is that missing
-    reachability guard: every default-open section HEADER must sit inside
-    the rail body's visible viewport with no scrolling, at the size the
-    defect was measured at (160x48), and each expanded body must respect
-    its height budget so the section after it stays on-screen.
+    scroll cue. The current contract gives each expanded section its own
+    bounded 20-row viewport and leaves ordinary outer scrolling available
+    when populated sections need more room. This guard keeps the compact
+    default headers visible at 160x48 and pins the local section ceiling.
 
     Runs on the REAL app CSS stack (screen css + bundle), not the
     bundle-less ConsoleHarness: the rail's vertical geometry -- header
@@ -4866,12 +4854,21 @@ async def test_console_left_rail_section_headers_all_visible_without_scrolling()
         await _wait_for_selector(console, pilot, "#console-workspace-context")
         body = console.query_one("#console-left-rail-body")
 
-        default_open = ("session", "workspace", "conversations", "model")
+        section_names = (
+            "workspace",
+            "conversations",
+            "model",
+            "agent",
+            "details",
+            "character",
+        )
+        terminal = console.query_one("#console-terminal-open")
+        assert terminal.parent is not body
         previous: tuple[tuple[int, int], ...] | None = None
         for _ in range(40):
             current = tuple(
                 (header.region.y, header.region.height)
-                for name in default_open
+                for name in section_names
                 for header in (
                     console.query_one(f"#console-rail-section-header-{name}"),
                 )
@@ -4883,7 +4880,7 @@ async def test_console_left_rail_section_headers_all_visible_without_scrolling()
 
         assert body.scroll_offset.y == 0
         viewport_bottom = body.region.y + body.region.height
-        for name in default_open:
+        for name in section_names:
             header = console.query_one(f"#console-rail-section-header-{name}")
             assert header.region.height >= 1, f"{name} header not rendered"
             assert body.region.y <= header.region.y < viewport_bottom, (
@@ -4893,9 +4890,9 @@ async def test_console_left_rail_section_headers_all_visible_without_scrolling()
                 "outgrown its budget again (task-15110)"
             )
 
-        # The budget itself: no expanded section body may exceed its share
-        # (20% + 1 row of tolerance for rounding) of the rail viewport.
-        budget = body.region.height // 5 + 1
+        # Each expanded section owns up to 20 content rows before local
+        # scrolling, independent of how many peer sections are expanded.
+        budget = 20
         for section_body in console.query(".console-rail-section-body"):
             if not section_body.display:
                 continue

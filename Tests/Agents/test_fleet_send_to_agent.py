@@ -49,6 +49,7 @@ from Tests.Agents.test_fleet_runtime import (
     make_fleet_service,
     make_inline_service,
 )
+from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     FENCE_TOOL_RESULT_PREFIX,
     MAX_STEERING_CHARS,
@@ -64,11 +65,13 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+from tldw_chatbook.Agents.run_log_search import load_records
 from tldw_chatbook.Agents.tool_catalog import (
     SEND_TO_AGENT_SCHEMA,
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
+from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 #: How long a parked approval card waits for the test to answer it.
@@ -189,14 +192,19 @@ def test_schema_is_primary_only_and_a_childs_call_is_refused(db):
 # -- the supervisor path, end to end --------------------------------------
 
 
-def test_supervisor_steers_a_live_child_end_to_end(db):
+def test_supervisor_steers_a_live_child_end_to_end(db, tmp_path, monkeypatch):
     """The whole seam: the supervisor calls the tool, the ok copy states
     queued-plus-latency honestly, and the child's next model-turn payload
     ends with the ``[Steering from supervisor]``-labeled user message,
     after the batch's tool result -- Task 1's coherent boundary."""
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
     entered = threading.Event()
     steered = threading.Event()
     holder: dict = {}
+    steering_message = (
+        "reasoning_content: wrap up using /Users/alice/secret.txt and "
+        "api_key=sk-private-steering"
+    )
 
     def steer():
         assert entered.wait(_JOIN_TIMEOUT), "the child never reached its model call"
@@ -204,7 +212,7 @@ def test_supervisor_steers_a_live_child_end_to_end(db):
         holder["handle_id"] = handle.handle_id
         return fence(
             SEND_TO_AGENT_TOOL_NAME,
-            {"id": handle.handle_id, "message": "wrap up quickly"},
+            {"id": handle.handle_id, "message": steering_message},
         )
 
     def release_then_wait():
@@ -235,12 +243,12 @@ def test_supervisor_steers_a_live_child_end_to_end(db):
     )
     assert outcome.status == RUN_DONE
 
-    labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "wrap up quickly")
+    labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, steering_message)
     assert labeled.startswith("[Steering from supervisor] ")
     child_turns = chat.child_calls["steer target"]
     assert len(child_turns) == 2
     second_payload = child_turns[1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled}
+    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
     assert str(second_payload[-2]["content"]).startswith(
         f"{FENCE_TOOL_RESULT_PREFIX}calculator:"
     )
@@ -256,6 +264,62 @@ def test_supervisor_steers_a_live_child_end_to_end(db):
         assert not any(
             labeled in str(m.get("content", "")) for m in call["messages_payload"]
         )
+
+    parent = db.get_run(run_id)
+    send_step = next(
+        step
+        for step in parent["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    send_event_id = f"agent-step:{run_id}:{send_step['index']}"
+    child = next(row for row in db.list_runs("c") if row["agent_kind"] == "subagent")
+    steering = next(step for step in child["steps"] if step["kind"] == "steering")
+    assert steering["parent_event_id"] == send_event_id
+    assert steering["source_event_id"] == send_event_id
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="handoff-reload")
+    runs = reopened.list_runs("c", include_superseded=True)
+    steps = [
+        {**step, "run_id": row["id"], "conversation_id": "c"}
+        for row in runs
+        for step in row["steps"]
+    ]
+    snapshot = derive_trajectory(
+        messages=[],
+        usage_by_id={},
+        traj_rows=[],
+        variant_sets=[],
+        compaction_records=[],
+        agent_runs=runs,
+        agent_steps=steps,
+    )
+    records = [record for turn in snapshot.turns for record in turn.records]
+    projected = next(
+        record
+        for record in records
+        if record.run_id == child["id"] and record.kind == "steering"
+    )
+    assert projected.parent_event_id == send_event_id
+    assert projected.source_event_id == send_event_id
+    assert [record.event_id for record in records].index(send_event_id) < [
+        record.event_id for record in records
+    ].index(projected.event_id)
+    logged = "\n".join(
+        record.content for record in load_records(service.run_log_writer.log_dir)
+    )
+    durable = str(runs)
+    for forbidden in (
+        "reasoning_content",
+        "/Users/alice/secret.txt",
+        "sk-private-steering",
+        holder["handle_id"],
+    ):
+        assert forbidden not in logged
+        assert forbidden not in durable
+    reopened.close()
 
 
 # -- refusal shapes: the producer validates (Task 1 pinned that the
@@ -420,7 +484,10 @@ def test_an_unknown_id_is_refused_naming_the_live_ids(db):
     assert "'nope'" in sends[0]
     # The error NAMES the known live ids, so the supervisor can correct
     # itself without a check_agents round trip.
-    assert holder["handle_id"] in sends[0]
+    handle = coordinator.get(holder["handle_id"])
+    assert handle.run_id
+    assert holder["handle_id"] not in sends[0]
+    assert f"run:{handle.run_id}" in sends[0]
     # Nothing landed anywhere.
     assert coordinator.get(holder["handle_id"]).queued_steering == 0
 
@@ -543,12 +610,15 @@ def test_a_run_id_reaches_the_same_mailbox_as_the_handle_id(db):
         STEERING_SOURCE_SUPERVISOR, "addressed by run id"
     )
     second_payload = chat.child_calls["run id target"][1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled}
+    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
     # The ok copy names the HANDLE the run id resolved to -- proof the two
     # vocabularies land on one mailbox, not two.
     sends = _sends(db, run_id)
     assert sends and "ERROR" not in sends[0]
-    assert holder["handle_id"] in sends[0]
+    handle = coordinator.get(holder["handle_id"])
+    assert handle.run_id
+    assert holder["handle_id"] not in sends[0]
+    assert f"run:{handle.run_id}" in sends[0]
     assert coordinator.get(holder["handle_id"]).queued_steering == 0
 
 
@@ -619,7 +689,11 @@ def test_a_live_handle_id_beats_a_colliding_run_id(db):
     # The message landed in B's mailbox and only B's.
     assert holder["queued"] == (0, 1)
     sends = _sends(db, run_id)
-    assert sends and "ERROR" not in sends[0] and holder["b"] in sends[0]
+    target = coordinator.get(holder["b"])
+    assert target.run_id
+    assert sends and "ERROR" not in sends[0]
+    assert holder["b"] not in sends[0]
+    assert f"run:{target.run_id}" in sends[0]
     # Neither child took another model turn, so B never DRAINED the entry
     # -- and A's mailbox stayed empty throughout. PR3b Task 4: at finish
     # time retention CLAIMED B's undelivered remnant (Task 1's pinned
@@ -755,7 +829,7 @@ def test_steering_never_cancels_the_child(db):
     assert _child_row(db)["status"] == RUN_DONE
     labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "keep going")
     second_payload = chat.child_calls["steady task"][1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled}
+    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
 
 
 # -- steering never satisfies an approval ---------------------------------
@@ -850,7 +924,7 @@ def test_steering_never_satisfies_a_pending_approval(db):
     assert len(child_turns) == 2
     payload = child_turns[1]["messages_payload"]
     labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "steer at the card")
-    assert payload[-1] == {"role": "user", "content": labeled}
+    assert payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
     assert str(payload[-2]["content"]).startswith(
         f"{FENCE_TOOL_RESULT_PREFIX}calculator:"
     )
@@ -929,7 +1003,11 @@ def test_a_foreign_live_survivor_is_steerable(db):
         assert outcome_2.status == RUN_DONE
         sends = _sends(db, run_id_2)
         assert sends and "ERROR" not in sends[0] and "queued" in sends[0]
-        assert coordinator.get(holder["handle_id"]).queued_steering == 1
+        survivor = coordinator.get(holder["handle_id"])
+        assert survivor.run_id
+        assert holder["handle_id"] not in sends[0]
+        assert f"run:{survivor.run_id}" in sends[0]
+        assert survivor.queued_steering == 1
         # And the post cancelled nothing: the survivor is still running.
         assert coordinator.get(holder["handle_id"]).status == RUN_RUNNING
     finally:
@@ -941,4 +1019,95 @@ def test_a_foreign_live_survivor_is_steerable(db):
         STEERING_SOURCE_SUPERVISOR, "focus on the tests"
     )
     second_payload = chat.child_calls["survivor"][1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled}
+    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
+
+
+# -- SubagentStop at the settle seam (console run hooks Task 8) ---------------
+
+
+@pytest.mark.parametrize("notify_raises", [False, True])
+def test_subagent_stop_fires_on_child_settle(tmp_path, notify_raises):
+    """A fleet child settling through a real bridge turn fires SubagentStop
+    exactly once -- ``run_id`` naming the CHILD run, ``data`` carrying
+    ``child_run_id`` and the child's terminal status -- and the wrapped
+    settle partial still runs afterwards (the drain fan-out still delivers
+    the same child record; the wrapper fires the hook BEFORE the settle)."""
+    from Tests.Chat.test_console_agent_bridge import (
+        _FleetTwoChildGateway,
+        _fence as fence_chunk,
+        _join_fleet_threads,
+        _run,
+    )
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    notifications: list[tuple[str, dict]] = []
+
+    class _RecordingEngine:
+        """Records every notify() fire; runs nothing. ``post_tool_dep``
+        satisfies the one other engine surface run_reply consumes (the
+        PostToolUse dep) with a no-op, so this test observes ONLY the
+        settle seam."""
+
+        def notify(self, event, **kwargs):
+            notifications.append((event, kwargs))
+            if notify_raises:
+                raise RuntimeError("observer failed")
+
+        def wrap_review(self, inner, **kwargs):
+            return inner
+
+        def post_tool_dep(self, *, session_id):
+            return lambda *args, **kwargs: None
+
+    engine = _RecordingEngine()
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [fence_chunk("spawn_subagent", {"task": "long job"})],
+            ["turn final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+        ensure_run_hooks=lambda: engine,
+    )
+    drains: list = []
+    bridge.on_fleet_drained("settle-test", drains.append)
+
+    outcome = _run(bridge, store, session, assistant.id, conversation_id=session.id)
+    assert outcome.status == RUN_DONE
+    assert gateway.entered_event.wait(5), "the child never started"
+    gate.set()
+    _join_fleet_threads()
+
+    settle_fires = [
+        kwargs for event, kwargs in notifications if event == "SubagentStop"
+    ]
+    assert len(settle_fires) == 1, notifications
+    child_rows = [
+        row for row in db.list_runs(session.id) if row["agent_kind"] == "subagent"
+    ]
+    child_run_id = child_rows[0]["id"]
+    assert settle_fires[0]["session_id"] == session.id
+    assert settle_fires[0]["run_id"] == child_run_id
+    assert settle_fires[0]["data"]["child_run_id"] == child_run_id
+    assert settle_fires[0]["data"]["status"] == RUN_DONE
+    # The wrapped partial still ran AFTER the hook: the last-child settle
+    # reached the drain fan-out with this child's record intact.
+    assert drains, "the original settle partial never ran"
+    assert [child.run_id for child in drains[0].children] == [child_run_id]
+    assert drains[0].children[0].status == RUN_DONE

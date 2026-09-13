@@ -25,15 +25,11 @@ from tldw_chatbook.Backup_Recovery.plan_records import load_plan
 from tldw_chatbook.Persona_Visual.recovery import recovery_adapters
 
 
-def _current(tmp_path):
+def _current(tmp_path, owner_id="persona.visual_identity_builtin"):
     selector = tmp_path / "live/config.toml"
     config = tomllib.loads(selector.read_text())
     config[DISCOVERY_CONTEXT_KEY] = DiscoveryContext(selector, "profile")
-    owner = next(
-        a
-        for a in recovery_adapters()
-        if a.owner_id == "persona.visual_identity_builtin"
-    )
+    owner = next(a for a in recovery_adapters() if a.owner_id == owner_id)
     from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
 
     declarations = install_adapters()
@@ -67,7 +63,7 @@ def _current(tmp_path):
 
 
 @pytest.fixture
-def complete_builtin_case(tmp_path, monkeypatch, helper_resource_root):
+def complete_builtin_case(tmp_path, monkeypatch, helper_resource_root, request):
     # The earlier finite-source fixture used only a primary SQLite role. This
     # later-operation fixture must capture the actual full coupled core footprint.
     from contextlib import contextmanager
@@ -99,7 +95,9 @@ def complete_builtin_case(tmp_path, monkeypatch, helper_resource_root):
             yield case
 
     monkeypatch.setattr(native_fixture, "replacement_case", coupled_case)
-    yield from _builtin_fixture.__wrapped__(tmp_path, monkeypatch, helper_resource_root)
+    yield from _builtin_fixture.__wrapped__(
+        tmp_path, monkeypatch, helper_resource_root, request
+    )
 
 
 @pytest.fixture
@@ -140,10 +138,18 @@ def test_later_preview_retains_actual_unreferenced_builtin_members(
     assert not set(reviewed.safety_scope).intersection(dict(reviewed.restore))
 
 
-def _execute_current(operation, current, tmp_path, reviewed=None):
+def _execute_current(
+    operation,
+    current,
+    tmp_path,
+    reviewed=None,
+    *,
+    selected=None,
+    owner_id="persona.visual_identity_builtin",
+):
     from tldw_chatbook.Backup_Recovery.later_rollback import execute_rollback
 
-    selected = tmp_path / "live/package-assets/characters/selected.png"
+    selected = selected or tmp_path / "live/package-assets/characters/selected.png"
     before = selected.read_bytes(), selected.stat().st_ino
     if reviewed is None:
         reviewed = preview_rollback(
@@ -181,7 +187,7 @@ def _execute_current(operation, current, tmp_path, reviewed=None):
             operation,
             control_root=tmp_path / "control",
             old_password=b"test-only",
-            target=_current(tmp_path),
+            target=_current(tmp_path, owner_id),
             cancel=Event(),
             acknowledged_credential_issues=review.issues,
         )
@@ -593,3 +599,87 @@ def test_stage_hold_rechecks_actual_paired_generation(
         )
     assert reached
     assert not bootstrap._records(root)[0]
+
+
+@pytest.mark.parametrize("complete_builtin_case", ["persona.assets"], indirect=True)
+@pytest.mark.parametrize("damage", [None, "bytes", "extra_member", "foreign_owner"])
+def test_legacy_persona_safety_later_rollback_preserves_exact_owned_tree(
+    complete_builtin_case, tmp_path, monkeypatch, damage
+):
+    import sqlite3
+    from contextlib import closing
+    from dataclasses import replace
+
+    _complete_original(complete_builtin_case, tmp_path, monkeypatch, False)
+    _archive, _plan_for, members, selected = complete_builtin_case
+    selector = tmp_path / "live/config.toml"
+    profile = next(
+        row
+        for row in bootstrap._records(tmp_path / "bootstrap")[1]
+        if row["selector"] == str(selector)
+    )
+    operation = profile["activation"]["operation_id"]
+    original = load_plan(Journal(tmp_path / "control", operation))
+    current = _current(tmp_path, "persona.assets")
+    core = tmp_path / "live/core.db"
+    with closing(sqlite3.connect(core)) as db:
+        assert (
+            db.execute("SELECT count(*) FROM persona_visual_assets").fetchone()[0] == 0
+        )
+    if damage == "bytes":
+        selected.write_bytes(b"changed preserved asset")
+    elif damage == "extra_member":
+        (selected.parent / "unreviewed.png").write_bytes(b"unreviewed")
+    elif damage == "foreign_owner":
+        current = replace(
+            current,
+            items=tuple(
+                replace(item, owner="persona.visual_identity")
+                if item.owner == "persona.assets"
+                else item
+                for item in current.items
+            ),
+        )
+    before = {
+        item.path: (item.path.read_bytes(), item.path.stat().st_ino)
+        for item in members
+        if item.status == "included"
+    }
+
+    def run():
+        reviewed = preview_rollback(
+            operation,
+            control_root=tmp_path / "control",
+            old_password=b"test-only",
+            target=current,
+            cancel=Event(),
+        )
+        assert set(reviewed.safety_scope) == set(original.safety_scope)
+        assert not set(reviewed.safety_scope).intersection(dict(reviewed.restore))
+        return _execute_current(
+            operation,
+            current,
+            tmp_path,
+            reviewed,
+            selected=selected,
+            owner_id="persona.assets",
+        )
+
+    if damage is None:
+        assert run() != operation
+        with closing(sqlite3.connect(core)) as db:
+            assert (
+                db.execute("SELECT count(*) FROM persona_visual_assets").fetchone()[0]
+                == 1
+            )
+    else:
+        with pytest.raises(
+            ValueError, match="local_snapshot_builtin_|asset_digest_mismatch"
+        ):
+            run()
+        with closing(sqlite3.connect(core)) as db:
+            assert (
+                db.execute("SELECT count(*) FROM persona_visual_assets").fetchone()[0]
+                == 0
+            )
+    assert {path: (path.read_bytes(), path.stat().st_ino) for path in before} == before

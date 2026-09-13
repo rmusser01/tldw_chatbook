@@ -46,6 +46,10 @@ def _resolution(**overrides: object) -> MoonshotResolution:
     return MoonshotResolution(**values)  # type: ignore[arg-type]
 
 
+def test_moonshot_declares_reasoning_as_proprietary() -> None:
+    assert MoonshotFinishPolicy().reasoning_disposition == "proprietary"
+
+
 def _tool(name: str = "calculator") -> dict[str, object]:
     return {
         "type": "function",

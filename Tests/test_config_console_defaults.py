@@ -76,13 +76,91 @@ def test_console_large_paste_collapse_defaults_enabled():
     )
 
 
+def test_console_assistant_library_access_default_is_false():
+    """Fresh Console settings default assistant Library access to blocked."""
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+
+    assert template["console"]["assistant_library_access_default"] is False
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"][
+            "assistant_library_access_default"
+        ]
+        is False
+    )
+
+
+def test_console_rag_auto_retrieve_future_default_is_false():
+    """Fresh Console chats default automatic retrieval to Never."""
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+
+    assert template["chat_defaults"]["rag_auto_retrieve_on_send"] is False
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["chat_defaults"][
+            "rag_auto_retrieve_on_send"
+        ]
+        is False
+    )
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_console_rag_auto_retrieve_future_default_round_trips_as_a_strict_bool(
+    tmp_path, monkeypatch, value
+):
+    """A valid saved boolean remains available to policy-default readers."""
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    assert config_module.save_setting_to_cli_config(
+        "chat_defaults", "rag_auto_retrieve_on_send", value
+    )
+
+    settings = config_module.load_settings(force_reload=True)
+    seed = config_module.load_console_library_migration_seed(settings)
+
+    assert settings["chat_defaults"]["rag_auto_retrieve_on_send"] is value
+    assert seed.auto_retrieve_on_send is value
+
+
+@pytest.mark.parametrize("raw_value", ['"sideways"', "42", '"true"'])
+def test_malformed_legacy_console_rag_auto_retrieve_value_falls_back_safely(
+    tmp_path, monkeypatch, raw_value
+):
+    """Invalid config cannot make new sessions automatic by accident."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f"[chat_defaults]\\nrag_auto_retrieve_on_send = {raw_value}\\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+    seed = config_module.load_console_library_migration_seed(settings)
+
+    assert seed.auto_retrieve_on_send is False
+
+
+def test_migration_seed_rejects_string_boolean_from_an_already_loaded_config():
+    """Config-looking strings cannot bypass the strict migration boundary."""
+    seed = config_module.load_console_library_migration_seed(
+        {"chat_defaults": {"rag_auto_retrieve_on_send": "true"}}
+    )
+
+    assert seed.auto_retrieve_on_send is False
+
+
 def test_console_rail_labels_ship_horizontal_by_default():
     """The generated config keeps the established horizontal rail handles."""
     assert (
-        config_module.DEFAULT_CONFIG_FROM_TOML["console"][
-            "stack_collapsed_rail_labels"
-        ]
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["stack_collapsed_rail_labels"]
         is False
+    )
+
+
+def test_console_rail_layout_scope_ships_global_by_default():
+    """One shared arrangement is the continuity-first generated default."""
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["rail_layout_scope"]
+        == "global"
     )
 
 
@@ -106,6 +184,7 @@ def test_load_settings_exposes_console_defaults(tmp_path, monkeypatch):
     assert settings["console"]["collapse_large_pastes"] is True
     assert settings["console"]["paste_collapse_threshold"] == 50
     assert settings["console"]["stack_collapsed_rail_labels"] is False
+    assert settings["console"]["rail_layout_scope"] == "global"
     assert settings["console"]["conversation_budget_mode"] == "automatic"
     assert settings["console"]["compaction_mode"] == "ask"
 
@@ -136,6 +215,32 @@ def test_load_settings_normalizes_console_rail_label_style(
     assert settings["console"]["stack_collapsed_rail_labels"] is expected
 
 
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ('"workspace"', "workspace"),
+        ('"  WoRkSpAcE  "', "workspace"),
+        ('"global"', "global"),
+        ('"session"', "global"),
+        ("123", "global"),
+        ("true", "global"),
+    ],
+)
+def test_load_settings_normalizes_console_rail_layout_scope(
+    tmp_path, monkeypatch, raw_value, expected
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f"[console]\nrail_layout_scope = {raw_value}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["console"]["rail_layout_scope"] == expected
+
+
 def test_console_sidechat_model_default_is_empty_string():
     from tldw_chatbook.config import get_cli_setting
 
@@ -147,9 +252,7 @@ def test_console_sidechat_prompt_template_default():
     from tldw_chatbook.config import get_cli_setting
 
     assert (
-        config_module.DEFAULT_CONFIG_FROM_TOML["console"][
-            "sidechat_prompt_template"
-        ]
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["sidechat_prompt_template"]
         == "Give me more details about: {selection}"
     )
     assert (
@@ -292,6 +395,45 @@ def test_console_local_tools_defaults(tmp_path, monkeypatch):
     assert console["workspace_root"] == ""
 
 
+def test_console_raw_cli_permitted_defaults_false(tmp_path, monkeypatch):
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+    assert template["console"]["raw_cli_permitted"] is False
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["raw_cli_permitted"] is False
+    )
+
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+    console = config_module.load_settings(force_reload=True)["console"]
+
+    assert console["raw_cli_permitted"] is False
+    assert "raw_cli_armed" not in console
+    assert "armed" not in console
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("true", True),
+        ("false", False),
+        ('"yes"', True),
+        ('"sideways"', False),
+    ],
+)
+def test_console_raw_cli_permitted_uses_bool_coercion(
+    tmp_path, monkeypatch, raw_value, expected
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f"[console]\nraw_cli_permitted = {raw_value}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    console = config_module.load_settings(force_reload=True)["console"]
+
+    assert console["raw_cli_permitted"] is expected
+
+
 def test_config_template_enables_local_and_standard_web_tools():
     """Fresh profiles persist the same default the missing-key loader uses."""
     template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
@@ -310,10 +452,7 @@ def test_config_template_exposes_conversation_memory_defaults():
     assert console["compaction_target_ratio"] == 0.55
     assert console["compaction_summary_max_tokens"] == 1024
     assert console["compaction_failure_behavior"] == "stop_and_ask"
-    assert (
-        console["compaction_carry_forward_mode"]
-        == "memory_with_recent_turns"
-    )
+    assert console["compaction_carry_forward_mode"] == "memory_with_recent_turns"
 
 
 def test_console_project_instruction_byte_limits_default_to_32_kib(
@@ -524,9 +663,7 @@ def test_blank_chat_display_name_falls_back_to_user(monkeypatch, tmp_path):
     assert config_module.get_chat_defaults_user_display_name() == "User"
 
 
-def test_invalid_chat_display_name_warns_without_echoing_value(
-    monkeypatch, tmp_path
-):
+def test_invalid_chat_display_name_warns_without_echoing_value(monkeypatch, tmp_path):
     config_path = tmp_path / "config.toml"
     invalid_value = "unsafe-secret\u202e"
     config_path.write_text(

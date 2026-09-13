@@ -14,8 +14,9 @@ engine's hierarchical output.
 ``EnhancedChunkingService`` is retained as a thin delegating class (same
 class name and method signatures) so existing consumers —
 ``RAG_Search/simplified/enhanced_indexing_helpers.py``,
-``RAG_Search/simplified/enhanced_rag_service.py`` and
-``Widgets/chunk_preview_modal.py`` — keep importing it unchanged.
+``RAG_Search/simplified/enhanced_rag_service.py`` and the §7.3 pins in
+``Tests/Chunking/test_callsite_characterization.py`` — keep importing it
+unchanged.
 ``StructuredChunk``/``ChunkType`` are re-exported from the adapter for any
 straggler imports; ``create_enhanced_chunking_service()`` keeps returning
 the service.
@@ -58,7 +59,6 @@ class EnhancedChunkingService(ChunkingService):
         method: str = "hierarchical",
         preserve_structure: bool = True,
         clean_artifacts: bool = True,
-        serialize_tables: bool = True,
     ) -> List[StructuredChunk]:
         """
         Enhanced chunking with structure preservation (legacy signature).
@@ -73,8 +73,6 @@ class EnhancedChunkingService(ChunkingService):
                 implementation
             preserve_structure: Ignored (always structure-preserving)
             clean_artifacts: Ignored (the engine sanitizes input internally)
-            serialize_tables: Ignored (tables are chunked as structural
-                blocks by the engine)
 
         Returns:
             List of StructuredChunk objects
@@ -87,7 +85,6 @@ class EnhancedChunkingService(ChunkingService):
             parent_size_multiplier=3,
             preserve_structure=preserve_structure,
             clean_artifacts=clean_artifacts,
-            serialize_tables=serialize_tables,
         )
 
     def chunk_with_parent_retrieval(

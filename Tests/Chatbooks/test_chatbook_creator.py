@@ -277,6 +277,64 @@ class TestChatbookCreator:
 
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_a_write_failure_names_the_destination_not_the_partial(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
+        """task-32251 AC#4: a live export reported the raw errno of a temp file.
+
+        The message was ``Error creating chatbook: [Errno 2] No such file
+        or directory: '.../notes-bundle.zip.partial'`` -- an internal noun
+        the user never chose, for a folder that did not exist.
+        """
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "gone" / "notes-bundle.zip"
+
+        success, message, _ = chatbook_creator.create_chatbook(
+            name="Test Chatbook",
+            description="A test chatbook",
+            content_selections={ContentType.CONVERSATION: []},
+            output_path=output_path,
+        )
+
+        assert success is False
+        assert ".partial" not in message
+        assert "Errno" not in message
+        assert str(output_path) in message
+        assert message.startswith("Could not write the bundle to ")
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_an_oserror_outside_packaging_is_not_called_a_write_failure(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path, monkeypatch
+    ):
+        """Review F6: only the packaging step may claim the bundle failed.
+
+        An OSError raised while READING a source (or the DB) reporting
+        "Could not write the bundle to <destination>" is a confident wrong
+        answer about a destination that is perfectly writable.
+        """
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+
+        def unreadable(*args, **kwargs):
+            raise OSError(5, "Input/output error")
+
+        monkeypatch.setattr(chatbook_creator, "_create_readme", unreadable)
+        output_path = tmp_path / "bundle.zip"
+
+        success, message, _ = chatbook_creator.create_chatbook(
+            name="Test Chatbook",
+            description="A test chatbook",
+            content_selections={ContentType.CONVERSATION: []},
+            output_path=output_path,
+        )
+
+        assert success is False
+        assert "Could not write the bundle" not in message
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
     def test_create_chatbook_reports_packaging_progress(
         self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
     ):
@@ -594,10 +652,40 @@ class TestChatbookCreator:
             output_path=output_path,
         )
 
-        # Should still succeed but with no conversations
-        assert success is True
-        assert output_path.exists()
+        # task-32232: a selection that collects NOTHING must fail. This
+        # used to assert "still succeeds but with no conversations" -- that
+        # is the data-loss shape (a README-only bundle reported as a
+        # success), so the archive is now refused outright and the caller
+        # is told how many items it had selected.
+        assert success is False
+        assert "none of the 1 selected items" in message
+        assert dependency_info["empty_export_requested"] == 1
+        assert not output_path.exists()
         assert dependency_info["missing_dependencies"] == []
+
+    def test_media_only_selection_with_media_disabled_is_not_a_success(
+        self, chatbook_creator, tmp_path
+    ):
+        """PR #2568 review: ``ChatbookCreationWindow`` lets a user select only
+        media while leaving "Include media files" unchecked. The creator then
+        skips the media collector entirely, so the archive would hold README +
+        an empty manifest -- the exact empty-bundle-reported-as-success shape
+        task-32232 closes. The selection counts as requested regardless of the
+        flag."""
+        output_path = tmp_path / "media_only_flag_off.zip"
+
+        success, message, dependency_info = chatbook_creator.create_chatbook(
+            name="Media Only",
+            description="Media selected, media collection disabled",
+            content_selections={ContentType.MEDIA: ["1", "2"]},
+            output_path=output_path,
+            include_media=False,
+        )
+
+        assert success is False
+        assert "none of the 2 selected items" in message
+        assert dependency_info["empty_export_requested"] == 2
+        assert not output_path.exists()
 
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     def test_create_chatbook_preserves_conversation_citation_artifacts(

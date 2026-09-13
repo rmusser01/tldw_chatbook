@@ -11,6 +11,57 @@ def test_core_owner_set_is_declared():
 from pathlib import Path
 import pytest
 
+# Load the actual migration conversion before the shared per-test HOME fixture
+# retargets config. Chunking's module defaults are bound on their first import.
+import tldw_chatbook.Chunking._template_conversion
+
+
+class _LegacyCollectionsFixture:
+    """Seed retained historical rows; the shipped legacy writer is read-only."""
+
+    def __init__(self, db):
+        self.db = db
+
+    def create_collection(self, name):
+        from types import SimpleNamespace
+        from uuid import uuid4
+
+        identity = uuid4().hex
+        with self.db.transaction() as connection:
+            connection.execute(
+                "INSERT INTO library_collections "
+                "(collection_id,name,created_at,updated_at) VALUES (?,?,?,?)",
+                (identity, name, "2026-09-12", "2026-09-12"),
+            )
+        return SimpleNamespace(collection_id=identity)
+
+    def add_item_to_collection(
+        self, collection_id, *, source_type, source_id, title=""
+    ):
+        from uuid import uuid4
+
+        with self.db.transaction() as connection:
+            connection.execute(
+                "INSERT INTO library_collection_items "
+                "(membership_id,collection_id,source_type,source_id,title,created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (
+                    uuid4().hex,
+                    collection_id,
+                    source_type,
+                    source_id,
+                    title,
+                    "2026-09-12",
+                ),
+            )
+
+    def delete_collection(self, collection_id):
+        with self.db.transaction() as connection:
+            connection.execute(
+                "UPDATE library_collections SET deleted_at=? WHERE collection_id=?",
+                ("2026-09-12", collection_id),
+            )
+
 
 @pytest.fixture(
     params=[
@@ -125,6 +176,14 @@ def test_capture_roundtrip_and_validation(core_store, tmp_path, monkeypatch):
         with session.capture_scope((source,), stage):
             adapter.capture(item, destination, Event())
             assert adapter.validate(destination) == ()
+            from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+                validated_schema_version,
+            )
+
+            assert (
+                validated_schema_version(adapter, destination, Event())
+                == adapter.schema_policy().versions[0]
+            )
     assert source.read_bytes() == before
     with sqlite3.connect(destination) as captured:
         assert tuple(captured.iterdump()) == expected
@@ -197,11 +256,7 @@ def seed_domain(name, owner):
         assert kept and deleted
         owner.soft_delete_prompt(deleted)
     elif name == "library_collections":
-        from tldw_chatbook.Library.library_collections_service import (
-            LocalLibraryCollectionsService,
-        )
-
-        service = LocalLibraryCollectionsService(owner)
+        service = _LegacyCollectionsFixture(owner)
         collection = service.create_collection("nebula collection")
         service.add_item_to_collection(
             collection.collection_id,
@@ -461,7 +516,13 @@ def test_schema_variants_never_blessed_by_current_version(core_store, damage, ex
     name, source, owner, conn = core_store
     if damage == "version":
         table = "db_schema_version" if name == "chachanotes" else "schema_version"
-        conn.execute("UPDATE " + table + " SET version=999")
+        conn.execute(
+            "UPDATE "
+            + table
+            + " SET version=999 WHERE version=(SELECT MAX(version) FROM "
+            + table
+            + ")"
+        )
     elif damage == "trigger":
         table = "db_schema_version" if name == "chachanotes" else "schema_version"
         conn.execute(
@@ -716,7 +777,9 @@ config = {DISCOVERY_CONTEXT_KEY: DiscoveryContext(home / "config.toml", "pure")}
 for adapter in core_adapters():
     assert adapter.schema_policy().versions
     item, = adapter.discover(config)
-    assert item.status == "missing_required"
+    # The absent HOME also makes private ancestor proof unavailable. Either
+    # explicit absence or refusal is valid; no store may be included or created.
+    assert item.status in {"missing_required", "unused", "unavailable"}, (adapter.owner_id, item.status)
 assert "tldw_chatbook.config" not in sys.modules
 assert "tldw_chatbook.DB.private_sqlite" not in sys.modules
 assert "tldw_chatbook.DB.ChaChaNotes_DB" not in sys.modules
@@ -757,6 +820,11 @@ def test_schema_valid_but_orphaned_domain_reference_is_rejected(tmp_path):
     owner = CharactersRAGDB(source, "fixture")
     owner.close()
     with sqlite3.connect(source) as connection:
+        # Deliberately corrupt the fixture through the guarded semantic trigger.
+        # The normal application never creates an orphan this way.
+        connection.create_function(
+            "console_semantic_mutation_authorized", 2, lambda *_: 1
+        )
         connection.execute(
             "INSERT INTO message_attachments VALUES ('missing-message', 1, ?, 'image/png', 'orphan')",
             (b"orphan-bytes",),
@@ -966,9 +1034,6 @@ def test_dependency_validation_scans_each_real_peer_once_per_invocation(tmp_path
     from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-    from tldw_chatbook.Library.library_collections_service import (
-        LocalLibraryCollectionsService,
-    )
     from tldw_chatbook.Backup_Recovery.models import StorageItem
     from tldw_chatbook.DB import private_sqlite
 
@@ -979,7 +1044,7 @@ def test_dependency_validation_scans_each_real_peer_once_per_invocation(tmp_path
     }
     paths = {owner: Path(store.db_path) for owner, store in stores.items()}
     try:
-        service = LocalLibraryCollectionsService(stores["db.library_collections"])
+        service = _LegacyCollectionsFixture(stores["db.library_collections"])
         collection = service.create_collection("References")
         other = service.create_collection("Other")
         for index in range(4):

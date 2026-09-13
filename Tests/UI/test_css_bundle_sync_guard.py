@@ -5,7 +5,9 @@ reproduce from its sources (ignoring the `Generated:` timestamp), naming the
 drifted module. Also asserts the repo's own committed bundle is currently in sync.
 """
 
-from tldw_chatbook.css import check_bundle_sync as guard
+from pathlib import Path
+
+from tldw_chatbook.css import build_css, check_bundle_sync as guard
 
 
 def _bundle(overrides_body: str, timestamp: str = "2026-01-01 00:00:00") -> str:
@@ -33,3 +35,33 @@ def test_drifted_modules_names_the_changed_module():
 def test_committed_bundle_reproduces_from_sources():
     """The repo's committed bundle is in sync (and the guard passes end-to-end)."""
     assert guard.main() == 0
+
+
+def test_generated_widget_and_screen_sheets_have_no_trailing_whitespace():
+    """Python class indentation never leaks onto generated blank CSS lines."""
+
+    css_dir = Path(build_css.__file__).parent
+    paths = (
+        css_dir / build_css.WIDGET_DEFAULTS_SELF_FILENAME,
+        css_dir / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
+        css_dir / build_css.SCREEN_CSS_SELF_FILENAME,
+        css_dir / build_css.SCREEN_CSS_SCOPED_FILENAME,
+    )
+    for path in paths:
+        assert all(line == line.rstrip() for line in path.read_text().splitlines())
+
+
+def test_generated_widget_and_screen_sheets_end_with_one_newline():
+    """Selector filtering cannot leave generated blank lines at EOF."""
+
+    css_dir = Path(build_css.__file__).parent
+    paths = (
+        css_dir / build_css.WIDGET_DEFAULTS_SELF_FILENAME,
+        css_dir / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
+        css_dir / build_css.SCREEN_CSS_SELF_FILENAME,
+        css_dir / build_css.SCREEN_CSS_SCOPED_FILENAME,
+    )
+    for path in paths:
+        content = path.read_text()
+        assert content.endswith("\n"), path
+        assert not content.endswith("\n\n"), path

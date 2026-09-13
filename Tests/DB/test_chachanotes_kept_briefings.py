@@ -17,6 +17,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
@@ -866,7 +870,9 @@ def test_v28_database_migrates_to_v29_and_gains_kept_tables(
     path = tmp_path / "migrated.sqlite"
     _seed_v28_database(path, monkeypatch)
 
-    db = CharactersRAGDB(path, client_id="kept-migrated")
+    db = open_current_chachanotes_from_legacy(
+        path, client_id="kept-migrated"
+    )
     try:
         connection = db.get_connection()
         # See the dynamic-assertion note above: cost ticker PR1 bumped the
@@ -885,7 +891,9 @@ def test_fresh_and_migrated_databases_reach_identical_kept_table_schema(
     _seed_v28_database(migrated_path, monkeypatch)
 
     fresh_db = CharactersRAGDB(fresh_path, client_id="kept-fresh-cols")
-    migrated_db = CharactersRAGDB(migrated_path, client_id="kept-migrated-cols")
+    migrated_db = open_current_chachanotes_from_legacy(
+        migrated_path, client_id="kept-migrated-cols"
+    )
     try:
         for table in ("kept_briefings", "kept_scripts"):
             fresh_shape = [

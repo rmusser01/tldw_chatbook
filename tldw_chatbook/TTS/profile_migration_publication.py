@@ -23,7 +23,12 @@ from typing import Final
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite_descriptor
 from tldw_chatbook.TTS import profile_schema
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileRepositoryError,
+    _migration_cleanup_owner,
+    _ProfileMigrationValidationOwner,
+    _raise_migration_cleanup_failure,
+)
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
     MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
@@ -45,6 +50,8 @@ from tldw_chatbook.TTS.profile_migration_namespace import (
     ParentAuthority,
     move_exact_noreplace,
     open_new_or_reused_private_file,
+)
+from tldw_chatbook.TTS.profile_migration_namespace import (
     remove_exact as remove_exact_namespace,
 )
 from tldw_chatbook.Utils import private_paths
@@ -53,7 +60,6 @@ from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     secure_private_directory,
 )
-
 
 _SLOT_VERSION: Final = {
     ProfileMigrationPublicationSlot.ACTIVE: 4,
@@ -251,6 +257,7 @@ def _open_exact(identity: _OpaqueIdentity, *, _native=None) -> tuple[int, int, s
 
 def _immutable_validate(identity: _OpaqueIdentity, *, _native=None) -> None:
     parent_fd, file_fd, _leaf = _open_exact(identity, _native=_native)
+    owner = _ProfileMigrationValidationOwner(file_fd, parent_fd, native=_native)
     try:
         os.fsync(file_fd)
         os.fsync(parent_fd)
@@ -261,6 +268,9 @@ def _immutable_validate(identity: _OpaqueIdentity, *, _native=None) -> None:
                 isolation_level=None,
                 _native_outcome=_reader_outcome,
             )
+        owner.connection = connection
+        owner.reader_outcome = _reader_outcome
+        body_error = None
         try:
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
@@ -278,8 +288,15 @@ def _immutable_validate(identity: _OpaqueIdentity, *, _native=None) -> None:
                 schema_version = row[0]
                 identity._schema_version = schema_version
             profile_schema.validate_profile_store_version(connection, schema_version)
-        finally:
+        except BaseException as error:
+            body_error = error
+        try:
             _close_reader(_native, connection, _reader_outcome)
+        except BaseException as error:
+            _raise_migration_cleanup_failure(owner, body_error, error)
+        owner.connection = None
+        if body_error is not None:
+            raise body_error
         if identity._content_evidence is not None:
             _pin = _content_evidence(file_fd)
             if _pin != identity._content_evidence:
@@ -288,8 +305,9 @@ def _immutable_validate(identity: _OpaqueIdentity, *, _native=None) -> None:
         _native_close(_native, os, reopened_fd)
         _native_close(_native, os, _parent_fd)
     finally:
-        _native_close(_native, os, file_fd)
-        _native_close(_native, os, parent_fd)
+        if owner.connection is None:
+            _native_close(_native, os, file_fd)
+            _native_close(_native, os, parent_fd)
 
 
 def _pin_content(identity: _OpaqueIdentity, *, _native=None) -> None:
@@ -348,7 +366,7 @@ def prepare_profile_migration_artifact(
             _immutable_validate(artifact, _native=_native)
             return artifact
         except BaseException as error:
-            if not isinstance(error, Exception):
+            if _migration_cleanup_owner(error) is not None or not isinstance(error, Exception):
                 raise
             raise _safe_failure() from None
 
@@ -406,7 +424,7 @@ def retain_profile_migration_destination(
                     _native_close(_native, os, parent_fd)
             return destination
         except BaseException as error:
-            if not isinstance(error, Exception):
+            if _migration_cleanup_owner(error) is not None or not isinstance(error, Exception):
                 raise
             raise _safe_failure() from None
 
@@ -750,6 +768,8 @@ def _restore_all(
             _restore_slot(state, _native=_native)
         except BaseException as error:
             errors.append(error)
+            if _migration_cleanup_owner(error) is not None:
+                break
     return errors
 
 
@@ -1000,6 +1020,11 @@ def publish_profile_migration(
         except BaseException as error:
             body_error = error
 
+        cleanup_owner = _migration_cleanup_owner(body_error)
+        if cleanup_owner is not None:
+            _finish_claim(artifacts, destinations, key)
+            _raise_migration_cleanup_failure(cleanup_owner, *deferred, body_error)
+
         if completed:
             complete_cleanup_errors: list[BaseException] = []
             for state in states:
@@ -1054,6 +1079,16 @@ def publish_profile_migration(
                 except BaseException as caught:
                     journal_update_errors.append(caught)
             restore_errors = _restore_all(states, _native=_native)
+            cleanup_owner = next(
+                (owner for error in restore_errors
+                 if (owner := _migration_cleanup_owner(error)) is not None), None
+            )
+            if cleanup_owner is not None:
+                _finish_claim(artifacts, destinations, key)
+                _raise_migration_cleanup_failure(
+                    cleanup_owner, *deferred, body_error,
+                    *journal_update_errors, *restore_errors,
+                )
             if restore_errors:
                 if (
                     journal_path is not None

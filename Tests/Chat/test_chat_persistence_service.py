@@ -4,12 +4,19 @@ import json
 import pytest
 
 from Tests.Chat.test_citation_trace_repository import (
-    _TrackingKeyProvider,
     _exact_governed_payload_write,
-    _identity as citation_identity,
-    _repository as citation_repository,
     _sealed_write,
+    _TrackingKeyProvider,
 )
+from Tests.Chat.test_citation_trace_repository import (
+    _identity as citation_identity,
+)
+from Tests.Chat.test_citation_trace_repository import (
+    _repository as citation_repository,
+)
+from tldw_chatbook.Canvas.staging import CanvasStagingStore
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.console_appearance import ConsoleConversationAppearance
 from tldw_chatbook.Chat.chat_persistence_service import (
     ChatPersistenceService,
     CitationPersistenceUnavailable,
@@ -27,9 +34,20 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyCandidate,
+)
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
+)
+from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleExactNativeIdTransactionContribution,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
@@ -56,13 +74,343 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
+    def test_generation_contribution_metadata_distinguishes_omitted_from_empty(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console"
+        )
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="failed",
+            metadata_json=MessageMetadata(engine="pipeline").to_json(),
+        )
+        initial = db_instance.get_message_by_id(message_id)
+
+        service.replace_assistant_generation_projection_with_contributions(
+            native_message_id="native-assistant",
+            message_id=message_id,
+            content="ordinary replacement",
+            thinking_blocks_json=None,
+            provider_continuation_json=None,
+            assistant_generation_state="complete",
+            usage_json=None,
+            metadata_json=None,
+            update_metadata=False,
+            contributions=(),
+            expected_version=initial["version"],
+        )
+        preserved = db_instance.get_message_by_id(message_id)
+        assert MessageMetadata.from_json(preserved["metadata_json"]) == (
+            MessageMetadata(engine="pipeline")
+        )
+
+        service.replace_assistant_generation_projection_with_contributions(
+            native_message_id="native-assistant",
+            message_id=message_id,
+            content="explicit empty replacement",
+            thinking_blocks_json=None,
+            provider_continuation_json=None,
+            assistant_generation_state="complete",
+            usage_json=None,
+            metadata_json=MessageMetadata().to_json(),
+            update_metadata=True,
+            contributions=(),
+            expected_version=preserved["version"],
+        )
+        cleared = db_instance.get_message_by_id(message_id)
+        assert MessageMetadata.from_json(cleared["metadata_json"]).is_empty is True
+
+    def test_canvas_origin_uses_exact_native_id_when_id_matches_legacy_role_alias(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        """Legacy role aliases must not overwrite Canvas's exact native mapping."""
+
+        class LegacyAliasProbe:
+            def __init__(self) -> None:
+                self.assistant_id = None
+
+            def write(self, *, writer, conversation_id, message_ids) -> None:
+                self.assistant_id = message_ids["assistant"]
+
+        staging = CanvasStagingStore()
+        owner = staging.activate_session("temporary-session")
+        created = staging.create_canvas(
+            owner=owner,
+            run_id="turn-1",
+            tool_call_id="call-1",
+            title="Temporary",
+            source="<!doctype html><html><body>one</body></html>",
+            origin_message_id="assistant",
+        )
+        contribution = staging.promotion_contribution("temporary-session")
+        assert contribution is not None
+        legacy_probe = LegacyAliasProbe()
+        first_id = "00000000-0000-4000-8000-000000000002"
+        second_id = "00000000-0000-4000-8000-000000000003"
+
+        ChatPersistenceService(db_instance).promote_console_conversation_bundle(
+            conversation_id="00000000-0000-4000-8000-000000000001",
+            policy_candidate=ConsoleLibraryPolicyCandidate(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            ),
+            conversation_kwargs={"conversation_title": "Promoted"},
+            messages=(
+                {
+                    "native_id": "assistant",
+                    "create_kwargs": {
+                        "message_id": first_id,
+                        "sender": "assistant",
+                        "content": "First assistant",
+                        "parent_message_id": None,
+                        "feedback": None,
+                    },
+                },
+                {
+                    "native_id": "later-assistant",
+                    "create_kwargs": {
+                        "message_id": second_id,
+                        "sender": "assistant",
+                        "content": "Second assistant",
+                        "parent_message_id": first_id,
+                        "feedback": None,
+                    },
+                },
+            ),
+            active_leaf_message_id=second_id,
+            contributions=(contribution, legacy_probe),
+        )
+
+        row = (
+            db_instance.get_connection()
+            .execute(
+                "SELECT origin_message_id FROM canvas_revisions WHERE id = ?",
+                (created.revision.revision_id,),
+            )
+            .fetchone()
+        )
+        assert row is not None
+        assert row[0] == first_id
+        assert legacy_probe.assistant_id == second_id
+
+    def test_exact_native_message_ids_are_immutable_between_contributions(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        """One exact contribution must not redirect a later Canvas origin."""
+
+        class PoisoningExactContribution(ConsoleExactNativeIdTransactionContribution):
+            def __init__(self) -> None:
+                self.mutation_blocked = False
+
+            def write_exact(
+                self, *, writer, conversation_id, native_message_ids
+            ) -> None:
+                try:
+                    native_message_ids["assistant"] = (
+                        "00000000-0000-4000-8000-000000000003"
+                    )
+                except TypeError:
+                    self.mutation_blocked = True
+
+        staging = CanvasStagingStore()
+        owner = staging.activate_session("temporary-session")
+        created = staging.create_canvas(
+            owner=owner,
+            run_id="turn-1",
+            tool_call_id="call-1",
+            title="Temporary",
+            source="<!doctype html><html><body>one</body></html>",
+            origin_message_id="assistant",
+        )
+        canvas_contribution = staging.promotion_contribution("temporary-session")
+        assert canvas_contribution is not None
+        poison = PoisoningExactContribution()
+        first_id = "00000000-0000-4000-8000-000000000002"
+        second_id = "00000000-0000-4000-8000-000000000003"
+
+        ChatPersistenceService(db_instance).promote_console_conversation_bundle(
+            conversation_id="00000000-0000-4000-8000-000000000001",
+            policy_candidate=ConsoleLibraryPolicyCandidate(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            ),
+            conversation_kwargs={"conversation_title": "Promoted"},
+            messages=(
+                {
+                    "native_id": "assistant",
+                    "create_kwargs": {
+                        "message_id": first_id,
+                        "sender": "assistant",
+                        "content": "First assistant",
+                        "parent_message_id": None,
+                        "feedback": None,
+                    },
+                },
+                {
+                    "native_id": "later-assistant",
+                    "create_kwargs": {
+                        "message_id": second_id,
+                        "sender": "assistant",
+                        "content": "Second assistant",
+                        "parent_message_id": first_id,
+                        "feedback": None,
+                    },
+                },
+            ),
+            active_leaf_message_id=second_id,
+            contributions=(poison, canvas_contribution),
+        )
+
+        origin_id = (
+            db_instance.get_connection()
+            .execute(
+                "SELECT origin_message_id FROM canvas_revisions WHERE id = ?",
+                (created.revision.revision_id,),
+            )
+            .fetchone()[0]
+        )
+        assert poison.mutation_blocked is True
+        assert origin_id == first_id
+
+    def test_legacy_contribution_with_unrelated_write_exact_property_is_not_probed(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        """Structural probing can execute an unrelated legacy property."""
+
+        class LegacyContribution:
+            def __init__(self) -> None:
+                self.assistant_id = None
+
+            @property
+            def write_exact(self):
+                raise AssertionError("unrelated property was probed")
+
+            def write(self, *, writer, conversation_id, message_ids) -> None:
+                self.assistant_id = message_ids["assistant"]
+
+        contribution = LegacyContribution()
+        assistant_id = "00000000-0000-4000-8000-000000000002"
+
+        ChatPersistenceService(db_instance).promote_console_conversation_bundle(
+            conversation_id="00000000-0000-4000-8000-000000000001",
+            policy_candidate=ConsoleLibraryPolicyCandidate(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            ),
+            conversation_kwargs={"conversation_title": "Promoted"},
+            messages=(
+                {
+                    "native_id": "native-assistant",
+                    "create_kwargs": {
+                        "message_id": assistant_id,
+                        "sender": "assistant",
+                        "content": "Assistant",
+                        "parent_message_id": None,
+                        "feedback": None,
+                    },
+                },
+            ),
+            active_leaf_message_id=assistant_id,
+            contributions=(contribution,),
+        )
+
+        assert contribution.assistant_id == assistant_id
+
+    @pytest.mark.parametrize("fail_after_write", [1, 2, 3, 4])
+    def test_canvas_promotion_rolls_back_every_canvas_write_prefix(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+        fail_after_write: int,
+    ) -> None:
+        """Any Canvas INSERT escaping the bundle rollback leaves an orphan graph."""
+
+        from tldw_chatbook.Chat import console_transaction_contribution as seam
+
+        staging = CanvasStagingStore()
+        owner = staging.activate_session("temporary-session")
+        created = staging.create_canvas(
+            owner=owner,
+            run_id="turn-1",
+            tool_call_id="call-1",
+            title="Temporary",
+            source="<!doctype html><html><body>one</body></html>",
+            origin_message_id="native-assistant",
+        )
+        staging.update_canvas(
+            owner=owner,
+            run_id="turn-2",
+            tool_call_id="call-2",
+            canvas_id=created.revision.canvas_id,
+            expected_parent_revision_id=created.revision.revision_id,
+            source="<!doctype html><html><body>two</body></html>",
+            origin_message_id="native-assistant",
+        )
+        contribution = staging.promotion_contribution("temporary-session")
+        assert contribution is not None
+        original_execute = seam._CursorConsoleTransactionWriter.execute
+        write_count = 0
+
+        def fail_at_prefix(self, statement, parameters):
+            nonlocal write_count
+            original_execute(self, statement, parameters)
+            if statement.startswith("INSERT INTO canvas_"):
+                write_count += 1
+                if write_count == fail_after_write:
+                    raise RuntimeError("private source must not escape")
+
+        monkeypatch.setattr(
+            seam._CursorConsoleTransactionWriter, "execute", fail_at_prefix
+        )
+        service = ChatPersistenceService(db_instance)
+        with pytest.raises(RuntimeError) as captured:
+            service.promote_console_conversation_bundle(
+                conversation_id="00000000-0000-4000-8000-000000000001",
+                policy_candidate=ConsoleLibraryPolicyCandidate(
+                    auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                    assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                ),
+                conversation_kwargs={"conversation_title": "Promoted"},
+                messages=(
+                    {
+                        "native_id": "native-assistant",
+                        "create_kwargs": {
+                            "message_id": "00000000-0000-4000-8000-000000000002",
+                            "sender": "assistant",
+                            "content": "Canvas origin",
+                            "parent_message_id": None,
+                            "feedback": None,
+                        },
+                    },
+                ),
+                active_leaf_message_id="00000000-0000-4000-8000-000000000002",
+                contributions=(contribution,),
+            )
+
+        assert "one" not in str(captured.value)
+        assert "two" not in str(captured.value)
+        connection = db_instance.get_connection()
+        for table in (
+            "conversations",
+            "messages",
+            "canvas_documents",
+            "canvas_revisions",
+            "canvas_conversation_hints",
+        ):
+            assert (
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            )
+
     def test_roleplay_version_readers_reject_boolean_versions(
         self, db_instance: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
     ):
         service = ChatPersistenceService(db_instance)
         monkeypatch.setattr(
             db_instance,
-            "get_message_by_id",
+            "get_message_by_id_without_blob",
             lambda _message_id: {"version": True, "deleted": False},
         )
         monkeypatch.setattr(
@@ -86,7 +434,7 @@ class TestChatPersistenceService:
         assert "Omitting" in doc
         assert "``None`` explicitly" in doc
         assert "explicit normalized" in doc
-        assert "best-effort" in doc
+        assert "post-commit projection" in doc
         assert "Returns:" in doc
         assert "Raises:" in doc
 
@@ -138,6 +486,40 @@ class TestChatPersistenceService:
             db_instance.get_local_authority_id()
         )
         assert unproven["assistant_authority_id"] is None
+
+    def test_console_identity_validation_uses_destination_canonical_rules(
+        self,
+        db_instance: CharactersRAGDB,
+    ) -> None:
+        service = ChatPersistenceService(db_instance)
+        character_id = db_instance.add_character_card({"name": "Local character"})
+        authority_id = db_instance.get_local_authority_id()
+
+        assert service.validate_console_conversation_identity(
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            assistant_authority_id=authority_id,
+            persona_memory_mode=None,
+            character_id=character_id,
+        ) == (
+            "local",
+            "character",
+            str(character_id),
+            character_id,
+            None,
+            authority_id,
+        )
+
+        with pytest.raises(ValueError, match="authority"):
+            service.validate_console_conversation_identity(
+                runtime_backend="local",
+                assistant_kind="character",
+                assistant_id=str(character_id),
+                assistant_authority_id=f"{authority_id}-mismatch",
+                persona_memory_mode=None,
+                character_id=character_id,
+            )
 
     def test_canonical_citation_writes_ready_requires_matching_ready_repository(
         self,
@@ -662,6 +1044,46 @@ class TestChatPersistenceService:
         )
         assert (
             connection.execute("SELECT count(*) FROM rag_citation_traces").fetchone()[0]
+            == 0
+        )
+
+    def test_initial_feedback_failure_rolls_back_message_revision_and_epoch(
+        self, db_instance: CharactersRAGDB, monkeypatch
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Feedback rollback", "character_id": None}
+        )
+        service = ChatPersistenceService(db_instance)
+
+        def fail_feedback(*_args, **_kwargs):
+            raise RuntimeError("feedback write failed")
+
+        monkeypatch.setattr(
+            db_instance, "_set_message_feedback_uncoordinated", fail_feedback
+        )
+        with pytest.raises(RuntimeError, match="feedback write failed"):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="user",
+                content="never committed",
+                message_id="feedback-rollback",
+                feedback="positive",
+            )
+
+        connection = db_instance.get_connection()
+        assert db_instance.get_message_by_id("feedback-rollback") is None
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM console_trace_semantic_revisions "
+                "WHERE source_message_id = ?",
+                ("feedback-rollback",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+            ).fetchone()[0]
             == 0
         )
 
@@ -1569,6 +1991,20 @@ class TestChatPersistenceService:
         assert conversation["assistant_kind"] == assistant_kind
         assert conversation["assistant_id"] == assistant_id
 
+    def test_create_conversation_persists_persona_memory_mode(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+
+        conversation_id = service.create_conversation(
+            assistant_kind="persona",
+            assistant_id="persona-1",
+            persona_memory_mode="read_write",
+        )
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["persona_memory_mode"] == "read_write"
+
     def test_create_conversation_persists_system_prompt(
         self, db_instance: CharactersRAGDB
     ):
@@ -1667,13 +2103,16 @@ class TestChatPersistenceService:
             expected_version=record["version"],
         )
 
-        assert service.update_conversation_system_prompt(
-            conversation_id=conversation_id,
-            system_prompt="Speak with Bravo.",
-            expected_roleplay_context=context,
-            expected_system_prompts=("Speak with Alpha.",),
-            allow_source_owned_repair=True,
-        ) is False
+        assert (
+            service.update_conversation_system_prompt(
+                conversation_id=conversation_id,
+                system_prompt="Speak with Bravo.",
+                expected_roleplay_context=context,
+                expected_system_prompts=("Speak with Alpha.",),
+                allow_source_owned_repair=True,
+            )
+            is False
+        )
         durable = db_instance.get_conversation_by_id(conversation_id)
         assert durable["system_prompt"] == "User-authored prompt."
         assert "console_roleplay_context" not in json.loads(durable["metadata"])
@@ -1704,18 +2143,21 @@ class TestChatPersistenceService:
             expected_version=current["version"],
         )
 
-        assert service.update_message_content(
-            message_id=message_id,
-            content="Hello Bravo.",
-            image_data=None,
-            image_mime_type=None,
-            metadata_json=MessageMetadata(
-                template_kind="character_greeting", template_source=source
-            ).to_json(),
-            expected_roleplay_template_source=source,
-            expected_message_contents=("Hello Alpha.",),
-            allow_source_owned_repair=True,
-        ) is False
+        assert (
+            service.update_message_content(
+                message_id=message_id,
+                content="Hello Bravo.",
+                image_data=None,
+                image_mime_type=None,
+                metadata_json=MessageMetadata(
+                    template_kind="character_greeting", template_source=source
+                ).to_json(),
+                expected_roleplay_template_source=source,
+                expected_message_contents=("Hello Alpha.",),
+                allow_source_owned_repair=True,
+            )
+            is False
+        )
         durable = db_instance.get_message_by_id(message_id)
         assert durable["content"] == "User-edited greeting."
         assert MessageMetadata.from_json(durable["metadata_json"]).template_kind == ""
@@ -1737,7 +2179,7 @@ class TestChatPersistenceService:
                 conversation_title="Missing workspace chat",
             )
 
-    def test_workspace_conversation_links_membership(
+    def test_workspace_conversation_projects_membership_after_chat_commit(
         self,
         db_instance: CharactersRAGDB,
         tmp_path,
@@ -1753,6 +2195,9 @@ class TestChatPersistenceService:
             workspace_id="ws-a",
             conversation_title="Workspace planning",
         )
+        assert registry.list_workspace_conversations("ws-a") == ()
+
+        service.project_workspace_membership(conversation_id)
 
         conversations = registry.list_workspace_conversations("ws-a")
         assert [conversation.item_id for conversation in conversations] == [
@@ -1760,7 +2205,7 @@ class TestChatPersistenceService:
         ]
         assert conversations[0].title == "Workspace planning"
 
-    def test_workspace_conversation_link_failure_soft_deletes_created_conversation(
+    def test_workspace_projection_failure_keeps_durable_authority_for_retry(
         self,
         db_instance: CharactersRAGDB,
         tmp_path,
@@ -1782,20 +2227,23 @@ class TestChatPersistenceService:
             workspace_registry=FailingMembershipRegistry(),
         )
 
+        conversation_id = service.create_conversation(
+            scope_type="workspace",
+            workspace_id="ws-a",
+            conversation_title="Partially linked workspace chat",
+        )
         with pytest.raises(RuntimeError, match="membership write failed"):
-            service.create_conversation(
-                scope_type="workspace",
-                workspace_id="ws-a",
-                conversation_title="Partially linked workspace chat",
-            )
+            service.project_workspace_membership(conversation_id)
 
         rows = db_instance.execute_query(
             "SELECT id, deleted FROM conversations WHERE title = ?",
             ("Partially linked workspace chat",),
         ).fetchall()
         assert len(rows) == 1
-        assert rows[0]["deleted"] == 1
-        assert db_instance.get_conversation_by_id(rows[0]["id"]) is None
+        assert rows[0]["deleted"] == 0
+        assert (
+            db_instance.get_conversation_by_id(rows[0]["id"])["workspace_id"] == "ws-a"
+        )
 
     def test_fork_conversation_rejects_unresolved_workspace_scope_without_assert(
         self,
@@ -1928,9 +2376,7 @@ class TestChatPersistenceService:
         def _boom(message_id, rows):
             raise RuntimeError("metadata write failed")
 
-        monkeypatch.setattr(
-            db_instance, "set_message_generation_metadata", _boom
-        )
+        monkeypatch.setattr(db_instance, "set_message_generation_metadata", _boom)
         with pytest.raises(RuntimeError, match="metadata write failed"):
             service.create_message(
                 conversation_id=conv_id,
@@ -2125,10 +2571,12 @@ class TestChatPersistenceService:
             scope_type="global",
         )
 
-        def _boom(message_id, rows):
+        def _boom(_cursor, message_id, rows):
             raise RuntimeError("attachment write failed")
 
-        monkeypatch.setattr(db_instance, "set_message_attachments", _boom)
+        monkeypatch.setattr(
+            db_instance, "_set_message_attachments_uncoordinated", _boom
+        )
         with pytest.raises(RuntimeError, match="attachment write failed"):
             service.create_message(
                 conversation_id=conv_id,
@@ -2178,10 +2626,12 @@ class TestChatPersistenceService:
             image_mime_type="image/png",
         )
 
-        def _boom(message_id, rows):
+        def _boom(_cursor, message_id, rows):
             raise RuntimeError("attachment write failed")
 
-        monkeypatch.setattr(db_instance, "set_message_attachments", _boom)
+        monkeypatch.setattr(
+            db_instance, "_set_message_attachments_uncoordinated", _boom
+        )
         with pytest.raises(RuntimeError, match="attachment write failed"):
             service.update_message_content(
                 message_id=msg_id,
@@ -2211,7 +2661,7 @@ class TestChatPersistenceService:
     def test_update_skips_attachment_write_when_row_update_returns_false(
         self, db_instance: CharactersRAGDB, monkeypatch
     ):
-        """``update_message`` returning a falsy result (optimistic-lock miss
+        """The public composite update returning a falsy result
         reported without an exception, e.g. from a future/alternate db
         implementation) must short-circuit before ``set_message_attachments``
         runs. Without the guard, attachments would be rewritten even though
@@ -2258,7 +2708,9 @@ class TestChatPersistenceService:
             db_instance, "set_message_attachments", _tracking_set_attachments
         )
         monkeypatch.setattr(
-            db_instance, "update_message", lambda *args, **kwargs: False
+            db_instance,
+            "update_message_with_attachments",
+            lambda *args, **kwargs: False,
         )
 
         result = service.update_message_content(
@@ -2414,6 +2866,40 @@ class TestChatPersistenceService:
         assert extra[0]["data"] == b"img-1"
         assert extra[0]["display_name"] == "b.jpg"
 
+    def test_create_conversation_records_fork_lineage(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        parent_id = service.create_conversation(conversation_title="Source")
+        # ``forked_from_message_id`` carries a real FK to messages(id) (the
+        # pool runs with PRAGMA foreign_keys = ON), so the referenced fork
+        # point must exist as a persisted message row.
+        service.create_message(
+            conversation_id=parent_id,
+            sender="user",
+            content="Fork point",
+            message_id="msg-abc",
+        )
+        child_id = service.create_conversation(
+            conversation_title="Fork of Source",
+            parent_conversation_id=parent_id,
+            forked_from_message_id="msg-abc",
+        )
+        row = db_instance.get_conversation_by_id(child_id)
+        assert row is not None
+        assert row["parent_conversation_id"] == parent_id
+        assert row["forked_from_message_id"] == "msg-abc"
+        assert row["title"] == "Fork of Source"
+
+    def test_create_conversation_without_lineage_unchanged(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conv_id = service.create_conversation(conversation_title="Plain")
+        row = db_instance.get_conversation_by_id(conv_id)
+        assert row["parent_conversation_id"] is None
+        assert row["forked_from_message_id"] is None
+
 
 class _RoleplayConflictDB:
     """Small optimistic-lock seam whose first write preserves a sibling."""
@@ -2454,16 +2940,22 @@ def test_update_roleplay_context_retries_once_and_preserves_concurrent_sibling()
     db = _RoleplayConflictDB(conflicts=1)
     service = ChatPersistenceService(db)
 
-    assert service.update_conversation_roleplay_context(
-        conversation_id="conv-1",
-        user_name_override="Rowan",
-        character_system_template="Speak to {{user}}.",
-    ) is True
+    assert (
+        service.update_conversation_roleplay_context(
+            conversation_id="conv-1",
+            user_name_override="Rowan",
+            character_system_template="Speak to {{user}}.",
+            character_name_snapshot="Alraune",
+        )
+        is True
+    )
 
     assert db.update_attempts == 2
     saved = json.loads(db.row["metadata"])
     assert saved["concurrent_sibling"] == {"kept": True}
+    assert saved["console_roleplay_context"]["version"] == 2
     assert saved["console_roleplay_context"]["user_name_override"] == "Rowan"
+    assert saved["console_roleplay_context"]["character_name_snapshot"] == "Alraune"
 
 
 def test_update_roleplay_context_propagates_second_conflict():
@@ -2475,6 +2967,420 @@ def test_update_roleplay_context_propagates_second_conflict():
             conversation_id="conv-1",
             user_name_override="Rowan",
             character_system_template="Speak to {{user}}.",
+            character_name_snapshot="Alraune",
         )
 
     assert db.update_attempts == 2
+
+
+_TERMINAL_RECEIPT = "33333333-3333-4333-8333-333333333333"
+_OTHER_TERMINAL_RECEIPT = "44444444-4444-4444-8444-444444444444"
+
+
+@pytest.mark.parametrize("metadata_receipt", [None, _OTHER_TERMINAL_RECEIPT])
+def test_terminal_create_rejects_missing_or_mismatched_receipt_metadata(
+    db_instance, metadata_receipt
+):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal validation", "character_id": None}
+    )
+    metadata_json = (
+        None
+        if metadata_receipt is None
+        else MessageMetadata(terminal_receipt_id=metadata_receipt).to_json()
+    )
+
+    with pytest.raises(ValueError, match="must match metadata_json"):
+        service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="finished",
+            message_id="terminal-validation-row",
+            metadata_json=metadata_json,
+            terminal_receipt_id=_TERMINAL_RECEIPT,
+            terminal_outcome="complete",
+        )
+
+    assert db_instance.get_message_by_id("terminal-validation-row") is None
+    assert ConversationLocalMarksService(db_instance).list_console_unseen_marks() == ()
+
+
+def test_create_message_commits_terminal_row_and_exact_mark_together(db_instance):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal create", "character_id": None}
+    )
+    metadata = MessageMetadata(terminal_receipt_id=_TERMINAL_RECEIPT)
+
+    message_id = service.create_message(
+        conversation_id=conversation_id,
+        sender="assistant",
+        content="finished",
+        metadata_json=metadata.to_json(),
+        terminal_receipt_id=_TERMINAL_RECEIPT,
+        terminal_outcome="complete",
+    )
+
+    durable = db_instance.get_message_by_id(message_id)
+    assert MessageMetadata.from_json(durable["metadata_json"]) == metadata
+    assert durable["assistant_generation_state"] == "complete"
+    marks = ConversationLocalMarksService(db_instance)
+    assert marks.list_console_unseen_marks() == (
+        (conversation_id, _TERMINAL_RECEIPT),
+    )
+
+
+def test_update_message_commits_terminal_row_and_exact_mark_together(db_instance):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal update", "character_id": None}
+    )
+    message_id = service.create_message(
+        conversation_id=conversation_id,
+        sender="assistant",
+        content="partial",
+    )
+    metadata = MessageMetadata(terminal_receipt_id=_TERMINAL_RECEIPT)
+
+    assert service.update_message_content(
+        message_id=message_id,
+        content="finished",
+        image_data=None,
+        image_mime_type=None,
+        metadata_json=metadata.to_json(),
+        terminal_receipt_id=_TERMINAL_RECEIPT,
+        terminal_outcome="failed",
+    )
+
+    durable = db_instance.get_message_by_id(message_id)
+    assert durable["content"] == "finished"
+    assert MessageMetadata.from_json(durable["metadata_json"]) == metadata
+    assert durable["assistant_generation_state"] == "failed"
+    assert ConversationLocalMarksService(db_instance).list_console_unseen_marks() == (
+        (conversation_id, _TERMINAL_RECEIPT),
+    )
+
+
+def test_terminal_update_produces_one_current_sync_intent_with_lifecycle_state(
+    db_instance,
+):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = service.create_conversation(conversation_title="Terminal sync")
+    message_id = service.create_message(
+        conversation_id=conversation_id,
+        sender="assistant",
+        content="streaming",
+    )
+    metadata = MessageMetadata(terminal_receipt_id=_TERMINAL_RECEIPT)
+
+    assert service.update_message_content(
+        message_id=message_id,
+        content="finished",
+        image_data=None,
+        image_mime_type=None,
+        metadata_json=metadata.to_json(),
+        terminal_receipt_id=_TERMINAL_RECEIPT,
+        terminal_outcome="complete",
+        assistant_generation_state="complete",
+    )
+
+    durable = db_instance.get_message_by_id(message_id)
+    assert durable is not None
+    assert durable["version"] == 2
+    assert durable["assistant_generation_state"] == "complete"
+    current_entries = [
+        entry
+        for entry in db_instance.get_sync_log_entries(entity_type="messages")
+        if entry["entity_id"] == message_id and entry["version"] == 2
+    ]
+    assert len(current_entries) == 1
+    assert current_entries[0]["payload"]["assistant_generation_state"] == "complete"
+    intents = db_instance.list_current_committed_chat_sync_intents(conversation_id)
+    assert len(intents) == 1
+    assert intents[0]["message_id"] == message_id
+    assert intents[0]["message_version"] == 2
+
+
+def test_terminal_update_rolls_back_row_when_mark_insert_fails(db_instance):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal rollback", "character_id": None}
+    )
+    message_id = service.create_message(
+        conversation_id=conversation_id,
+        sender="assistant",
+        content="partial",
+    )
+    before = dict(db_instance.get_message_by_id(message_id))
+    db_instance.get_connection().execute(
+        "CREATE TRIGGER fail_terminal_mark BEFORE INSERT ON "
+        "conversation_local_marks BEGIN SELECT RAISE(ABORT, 'mark failure'); END"
+    )
+    db_instance.get_connection().commit()
+
+    with pytest.raises(Exception, match="mark failure"):
+        service.update_message_content(
+            message_id=message_id,
+            content="finished",
+            image_data=None,
+            image_mime_type=None,
+            metadata_json=MessageMetadata(
+                terminal_receipt_id=_TERMINAL_RECEIPT
+            ).to_json(),
+            terminal_receipt_id=_TERMINAL_RECEIPT,
+            terminal_outcome="failed",
+        )
+
+    assert dict(db_instance.get_message_by_id(message_id)) == before
+    assert ConversationLocalMarksService(db_instance).list_console_unseen_marks() == ()
+
+
+def test_terminal_create_rolls_back_row_when_post_mark_work_fails(
+    db_instance, monkeypatch
+):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal create rollback", "character_id": None}
+    )
+    original = service.local_marks.set_mark_with_cursor
+
+    def insert_then_fail(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("after mark insertion")
+
+    monkeypatch.setattr(service.local_marks, "set_mark_with_cursor", insert_then_fail)
+
+    with pytest.raises(RuntimeError, match="after mark insertion"):
+        service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="finished",
+            message_id="terminal-create-rollback",
+            metadata_json=MessageMetadata(
+                terminal_receipt_id=_TERMINAL_RECEIPT
+            ).to_json(),
+            terminal_receipt_id=_TERMINAL_RECEIPT,
+            terminal_outcome="complete",
+        )
+
+    assert db_instance.get_message_by_id("terminal-create-rollback") is None
+    assert ConversationLocalMarksService(db_instance).list_console_unseen_marks() == ()
+
+
+@pytest.mark.parametrize(
+    ("sender", "terminal_receipt_id", "terminal_outcome", "match"),
+    [
+        ("assistant", _TERMINAL_RECEIPT, None, "terminal outcome"),
+        ("assistant", None, "complete", "terminal receipt"),
+        ("user", _TERMINAL_RECEIPT, "complete", "assistant"),
+        ("assistant", _TERMINAL_RECEIPT, "stopped", "terminal outcome"),
+    ],
+)
+def test_terminal_create_requires_one_valid_assistant_receipt_outcome_pair(
+    db_instance,
+    sender,
+    terminal_receipt_id,
+    terminal_outcome,
+    match,
+):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal pair validation", "character_id": None}
+    )
+    metadata_json = (
+        MessageMetadata(terminal_receipt_id=_TERMINAL_RECEIPT).to_json()
+        if terminal_receipt_id is not None
+        else None
+    )
+
+    with pytest.raises(ValueError, match=match):
+        service.create_message(
+            conversation_id=conversation_id,
+            sender=sender,
+            content="finished",
+            metadata_json=metadata_json,
+            terminal_receipt_id=terminal_receipt_id,
+            terminal_outcome=terminal_outcome,
+        )
+
+    assert ConversationLocalMarksService(db_instance).list_console_unseen_marks() == ()
+
+
+@pytest.mark.integration
+class TestConsoleConversationAppearance:
+    """task-31207: appearance rides conversations.metadata like console_speech."""
+
+    _created = 0
+
+    def _create_conversation(self, db_instance) -> str:
+        TestConsoleConversationAppearance._created += 1
+        character_id = db_instance.add_character_card(
+            {"name": f"Ivy {TestConsoleConversationAppearance._created}"}
+        )
+        return ChatPersistenceService(db_instance).create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            runtime_backend="local",
+        )
+
+    @staticmethod
+    def _appearance_service(db_instance) -> ChatConversationService:
+        return ChatConversationService(db_instance)
+
+    @staticmethod
+    def _version(db_instance, conversation_id: str) -> int:
+        record = db_instance.get_conversation_by_id(conversation_id)
+        assert record is not None
+        return int(record["version"])
+
+    def test_round_trip_through_versioned_update(self, db_instance):
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+
+        assert service.get_conversation_appearance(conversation_id) == (
+            ConsoleConversationAppearance()
+        )
+
+        version = self._version(db_instance, conversation_id)
+        assert version is not None
+        assert service.update_conversation_appearance(
+            conversation_id=conversation_id,
+            appearance=ConsoleConversationAppearance(icon="🧪", color="#f87171"),
+            expected_version=version,
+        )
+
+        # The write bumped the version; reads see the new values.
+        assert self._version(db_instance, conversation_id) == version + 1
+        assert service.get_conversation_appearance(conversation_id) == (
+            ConsoleConversationAppearance(icon="🧪", color="#f87171")
+        )
+
+    def test_update_preserves_metadata_siblings(self, db_instance):
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+        version = self._version(db_instance, conversation_id)
+        db_instance.update_conversation(
+            conversation_id,
+            {"metadata": json.dumps({"console_speech": {"paused": True}})},
+            version,
+        )
+
+        version = self._version(db_instance, conversation_id)
+        assert service.update_conversation_appearance(
+            conversation_id=conversation_id,
+            appearance=ConsoleConversationAppearance(icon="🎨"),
+            expected_version=version,
+        )
+        stored = json.loads(
+            db_instance.get_conversation_by_id(conversation_id)["metadata"]
+        )
+        assert stored["console_speech"] == {"paused": True}
+        assert stored["console_appearance"] == {"icon": "🎨", "color": None}
+
+    def test_update_rejects_stale_version(self, db_instance):
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+        version = self._version(db_instance, conversation_id)
+
+        assert not service.update_conversation_appearance(
+            conversation_id=conversation_id,
+            appearance=ConsoleConversationAppearance(icon="🧪"),
+            expected_version=version + 5,
+        )
+        assert service.get_conversation_appearance(conversation_id) == (
+            ConsoleConversationAppearance()
+        )
+
+    def test_missing_conversation_fails_closed(self, db_instance):
+        service = self._appearance_service(db_instance)
+        assert service.get_conversation_appearance("") == (
+            ConsoleConversationAppearance()
+        )
+        assert service.get_conversation_appearance("no-such-id") == (
+            ConsoleConversationAppearance()
+        )
+        assert not service.update_conversation_appearance(
+            conversation_id="no-such-id",
+            appearance=ConsoleConversationAppearance(icon="🧪"),
+            expected_version=1,
+        )
+
+    def test_batched_read_returns_sanitized_appearances(self, db_instance):
+        service = self._appearance_service(db_instance)
+        kept = self._create_conversation(db_instance)
+        plain = self._create_conversation(db_instance)
+        version = self._version(db_instance, kept)
+        assert service.update_conversation_appearance(
+            conversation_id=kept,
+            appearance=ConsoleConversationAppearance(icon="🧪", color="#22d3ee"),
+            expected_version=version,
+        )
+        db_instance.soft_delete_conversation(plain, self._version(db_instance, plain))
+
+        appearances = service.get_conversation_appearances(
+            [kept, plain, "no-such-id"]
+        )
+        assert appearances[kept] == ConsoleConversationAppearance(
+            icon="🧪", color="#22d3ee"
+        )
+        # Soft-deleted and unknown ids contribute nothing.
+        assert plain not in appearances
+        assert "no-such-id" not in appearances
+
+    def test_batched_read_sanitizes_malformed_metadata(self, db_instance):
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+        version = self._version(db_instance, conversation_id)
+        db_instance.update_conversation(
+            conversation_id,
+            {"metadata": json.dumps({"console_appearance": {"icon": "ab"}})},
+            version,
+        )
+
+        appearances = service.get_conversation_appearances([conversation_id])
+        assert appearances[conversation_id] == ConsoleConversationAppearance()
+
+    def test_set_conversation_appearance_retries_version_conflicts(self, db_instance):
+        """task-31207: a streaming reply bumping the version mid-write must
+        not fail the cosmetic click; the wrapper re-reads and retries."""
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+
+        real_update = service.update_conversation_appearance
+        calls = {"n": 0}
+
+        def _conflict_once(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # Simulate a concurrent write: bump the row's version so the
+                # versioned update fails, exactly like a real conflict.
+                db_instance.update_conversation(
+                    conversation_id, {"title": "moved underneath"}, kwargs["expected_version"]
+                )
+                return False
+            return real_update(**kwargs)
+
+        service.update_conversation_appearance = _conflict_once  # type: ignore[method-assign]
+        try:
+            assert service.set_conversation_appearance(
+                conversation_id=conversation_id,
+                appearance=ConsoleConversationAppearance(icon="🧪", color="#22d3ee"),
+            )
+        finally:
+            service.update_conversation_appearance = real_update  # type: ignore[method-assign]
+        assert calls["n"] == 2
+        assert service.get_conversation_appearance(conversation_id) == (
+            ConsoleConversationAppearance(icon="🧪", color="#22d3ee")
+        )
+
+    def test_set_conversation_appearance_gives_up_after_max_attempts(self, db_instance):
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+        service.update_conversation_appearance = lambda **kwargs: False  # type: ignore[method-assign]
+        assert not service.set_conversation_appearance(
+            conversation_id=conversation_id,
+            appearance=ConsoleConversationAppearance(icon="🧪"),
+            max_attempts=2,
+        )

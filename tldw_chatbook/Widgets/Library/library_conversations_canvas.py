@@ -1,4 +1,4 @@
-"""Library Browse ▸ Conversations canvas: saved-chat list and preview."""
+"""Library Browse ▸ Conversations canvas: saved-chat list and bulk actions."""
 
 from __future__ import annotations
 
@@ -9,24 +9,31 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Library.library_conversations_state import (
+    LibraryConversationsCanvasState,
+)
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    library_pager_layout,
+)
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
-from tldw_chatbook.Library.library_conversations_state import (
-    LibraryConversationsCanvasState,
-)
-from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
+from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
-    """Render the saved-conversation list with a preview + Console handoff.
+class LibraryConversationsCanvas(
+    PostRecomposeCallback, RecomposeCaptureGuard, Vertical
+):
+    """Render the saved-conversation list, paging, filtering, and bulk actions.
 
     Attributes:
         canvas: Current conversations canvas display state.
@@ -54,7 +61,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         self.refresh(recompose=True)
 
     def compose(self) -> ComposeResult:
-        """Render the status line, conversation rows, and selection preview.
+        """Render the status line, conversation rows, and list-owned controls.
 
         Returns:
             ComposeResult for the conversations canvas.
@@ -64,7 +71,9 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         pager = self.canvas.pager
         title_count = pager.title_count if pager is not None else None
         title = (
-            "Conversations"
+            self.canvas.title
+            if self.canvas.title != "Conversations"
+            else "Conversations"
             if title_count is None
             else f"Conversations ({title_count})"
         )
@@ -74,6 +83,34 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
             classes="destination-section",
             markup=False,
         )
+        if self.canvas.archive_scope:
+            with Horizontal(classes="ds-toolbar"):
+                for scope in ("active", "archived", "all"):
+                    yield Button(
+                        ("✓ " if scope == self.canvas.archive_scope else "")
+                        + scope.title(),
+                        id=f"library-conversations-scope-{scope}",
+                        compact=True,
+                        classes="library-conversation-scope",
+                    )
+        if self.canvas.receipt_copy:
+            yield Static(
+                self.canvas.receipt_copy,
+                markup=False,
+                id="library-conversations-receipt",
+            )
+            with Horizontal(classes="ds-toolbar"):
+                yield Button(
+                    "Undo",
+                    id="library-conversations-undo",
+                    compact=True,
+                    disabled=not self.canvas.undo_available,
+                )
+                yield Button(
+                    "View archived",
+                    id="library-conversations-view-archived",
+                    compact=True,
+                )
         if (
             pager is not None
             and title_count == 0
@@ -124,9 +161,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         # Disable only when nothing to select AND not already in select mode --
         # in select mode "Done" must stay pressable so the user can always exit,
         # even if the rows dropped to zero (e.g. a background snapshot refresh).
-        select_disabled = actions_disabled or (
-            rendered_count == 0 and not select_mode
-        )
+        select_disabled = actions_disabled or (rendered_count == 0 and not select_mode)
         select_btn = Button(
             # task-4023 AC#1 (RC-07): disabled carries the non-colour "○"
             # marker; the F-018 reason tooltip below says why.
@@ -146,9 +181,19 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
             )
         yield select_btn
         if select_mode:
-            action_row = Horizontal(classes="ds-toolbar")
-            action_row.styles.height = "auto"
-            with action_row:
+            # task-32042 (critique #7 P1): parity with the Media canvas's
+            # select toolbar (task-30043). A single ds-toolbar row of four
+            # actions -- forced to ``width: 1fr`` by the shared CSS -- split
+            # the narrow conversations list pane evenly, so every label
+            # truncated ("Selec"/"Exp") and "0 selected" wrapped. Media keeps
+            # each action at its CONTENT width across a multi-row toolbar; this
+            # mirrors that: summary row (count + Select all), then a bulk-action
+            # row (Clear + Export selected), each row's label sum fitting the
+            # pane's narrow floor. The ``> .ds-toolbar > .library-canvas-action``
+            # width switches to ``auto`` alongside (_agentic_terminal.tcss).
+            summary_row = Horizontal(classes="ds-toolbar")
+            summary_row.styles.height = "auto"
+            with summary_row:
                 # task-2853 review round 2: the SAME unbounded-width defect
                 # proved live in the Media canvas's identical counter --
                 # see library_media_canvas.py's compose() for the live
@@ -159,7 +204,9 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 yield Static(
                     f"{self.canvas.selected_count} selected",
                     id="library-conversations-selected-count",
-                    classes="library-toolbar-count",
+                    classes=(
+                        "library-toolbar-count library-conversations-selection-count"
+                    ),
                     markup=False,
                 )
                 select_all = Button(
@@ -174,6 +221,11 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 if actions_disabled:
                     select_all.tooltip = stale_action_reason
                 yield select_all
+            actions_row = Horizontal(
+                id="library-conversations-select-actions", classes="ds-toolbar"
+            )
+            actions_row.styles.height = "auto"
+            with actions_row:
                 clear = Button(
                     library_disabled_action_label("Clear", actions_disabled),
                     id="library-conversations-select-clear",
@@ -190,13 +242,14 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                     # label stashed for `_apply_library_row_toggle`'s
                     # in-place patch.
                     library_disabled_action_label(
-                        "Export selected", export_disabled
+                        "Export selected", export_disabled, align=True
                     ),
                     id="library-conversations-export-selected",
                     classes="library-canvas-action",
                     compact=True,
                 )
                 export_selected._library_disabled_marker_base = "Export selected"
+                export_selected._library_disabled_marker_align = True
                 export_selected.disabled = export_disabled
                 # F-018: a disabled action says why.
                 export_selected.tooltip = (
@@ -207,6 +260,20 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                     else LIBRARY_EXPORT_SELECTED_TOOLTIP
                 )
                 yield export_selected
+
+            with Horizontal(classes="ds-toolbar"):
+                yield Button(
+                    "Archive selected",
+                    id="library-conversations-archive-selected",
+                    compact=True,
+                    disabled=export_disabled,
+                )
+                yield Button(
+                    "Restore selected",
+                    id="library-conversations-restore-selected",
+                    compact=True,
+                    disabled=export_disabled,
+                )
 
         # task-2859 item 1: the filter box now renders ABOVE the empty-state/
         # status text, matching Notes/Prompts (title -> filter -> toolbar ->
@@ -248,7 +315,10 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 # rendered text), so the raw remainder is stashed here at
                 # the single point of truth.
                 label_rest = f" {_visible_row_title(row.title)}\n    {row.secondary}"
-                button = Button(
+                # task-31945: a row is one full-width Button and gets
+                # clicked twice in a row (☐ then the title); the shared
+                # helper drops the press flash that swallowed the second.
+                button = library_row_button(
                     f"{marker}{label_rest}",
                     id=f"library-conversation-row-{index}",
                     classes="library-conversation-row",
@@ -260,7 +330,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 button.tooltip = (
                     stale_action_reason
                     if actions_disabled
-                    else escape_markup(row.title)
+                    else escape_markup(f"{row.title} · {row.secondary}")
                 )
                 button.set_class(row.selected, "library-conversation-row-selected")
                 button.disabled = actions_disabled
@@ -280,14 +350,25 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         page_copy = pager.page_copy if pager is not None else self.canvas.page_copy
         previous_reason = pager.previous_reason if pager is not None else ""
         next_reason = pager.next_reason if pager is not None else ""
-        disabled_reasons = tuple(
-            dict.fromkeys(
-                reason
-                for disabled, reason in (
-                    (previous_disabled, previous_reason),
-                    (next_disabled, next_reason),
-                )
-                if disabled and reason
+        # task-32067: Media's one-page rule (task-28016 + task-31237), applied
+        # here -- from the ONE helper that states it (task-32104).
+        layout = library_pager_layout(
+            pager
+            if pager is not None
+            # A state built without a pager projection (hand-built, tests)
+            # carries the same fields flattened onto the canvas and knows
+            # nothing about one-page-ness, so it renders the full pager --
+            # the rule itself still has exactly one implementation.
+            else LibraryPagerDisplay(
+                title_count=None,
+                range_copy=range_copy,
+                page_copy=page_copy,
+                status_copy="",
+                previous_disabled=previous_disabled,
+                next_disabled=next_disabled,
+                previous_reason=previous_reason,
+                next_reason=next_reason,
+                retry_visible=False,
             )
         )
         with Vertical(
@@ -295,18 +376,20 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
             classes="library-source-pager",
         ):
             yield Static(
-                " · ".join(copy for copy in (range_copy, page_copy) if copy),
+                " · ".join(layout.status_parts),
                 id="library-conversations-page-status",
                 classes="library-source-pager-status",
                 markup=False,
             )
-            if disabled_reasons:
+            if layout.boundary_reasons:
                 yield Static(
-                    " · ".join(disabled_reasons),
+                    " · ".join(layout.boundary_reasons),
                     id="library-conversations-disabled-reason",
                     classes="library-source-pager-status",
                     markup=False,
                 )
+            if layout.controls_hidden:
+                return
             with Horizontal(classes="library-source-pager-controls"):
                 previous = Button(
                     library_disabled_action_label("Previous", previous_disabled),
@@ -335,29 +418,3 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 if next_disabled:
                     next_page.tooltip = next_reason
                 yield next_page
-
-        preview = Vertical(id="library-conversation-preview")
-        preview.styles.height = "auto"
-        has_preview = bool(self.canvas.selected_id and self.canvas.preview_lines)
-        preview.display = has_preview
-        with preview:
-            yield Static(
-                "\n".join(self.canvas.preview_lines),
-                id="library-conversation-preview-lines",
-                markup=False,
-            )
-            toolbar = Horizontal(classes="ds-toolbar")
-            toolbar.styles.height = "auto"
-            with toolbar:
-                open_console = Button(
-                    library_disabled_action_label(
-                        "Open in Console", actions_disabled
-                    ),
-                    id="library-conversation-open-console",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=actions_disabled,
-                )
-                if actions_disabled:
-                    open_console.tooltip = stale_action_reason
-                yield open_console

@@ -387,7 +387,8 @@ class AppFooterStatus(Widget):
         width = self.size.width
         if width <= 0:
             # Pre-layout: show the full text; on_resize will refine.
-            self._shortcut_display.update(self._shortcut_text)
+            if self._shortcut_display.content != self._shortcut_text:
+                self._shortcut_display.update(self._shortcut_text)
             return
 
         hard_token = width >= self._TOKEN_MIN_WIDTH and self._show_token_count
@@ -484,7 +485,8 @@ class AppFooterStatus(Widget):
                 self._token_count_display.display = token_vis
                 self._word_count_display.display = word_vis
                 self._db_status_display.display = db_vis
-                self._shortcut_display.update(text)
+                if self._shortcut_display.content != text:
+                    self._shortcut_display.update(text)
                 return
 
     # ------------------------------------------------------------------

@@ -212,12 +212,18 @@ class LocalMCPRuntimeDelegate:
         *,
         manifest_provider: Callable[[], dict[str, Any]] | None = None,
         library_service: Any | None = None,
+        policy_enforcer: Any | None = None,
     ) -> None:
         self._manifest_provider = manifest_provider or describe_local_mcp_capabilities
         # task-1337 (plan Task 9): shared synchronous LocalLibraryToolService
         # (duck-typed ``invoke``). Injected by tests/hosts; lazily composed
         # from the process-local databases on first Library dispatch.
         self._library_service = library_service
+        # chunking-agent-tools (Task 5, spec §6): threaded into the lazily
+        # composed shared Library service so the WRITING chunk tools are
+        # service-level gated on the local MCP surface (the Console
+        # construction site passes the same app handle).
+        self._policy_enforcer = policy_enforcer
         self._tools: Any | None = None
         self._resources: Any | None = None
         self._prompts: Any | None = None
@@ -575,10 +581,16 @@ class LocalMCPRuntimeDelegate:
         )
 
     async def _tool_search_rag(self, arguments: dict[str, Any]) -> Any:
+        # Raw pass-through (PR #2624 review): coercing here hid the
+        # caller's original types from the tool's boundary validation --
+        # a list query became "['a']", "1.5" crashed int(), a huge int
+        # overflowed. perform_rag_search returns its documented error
+        # item for every malformed value; missing keys fall back to the
+        # tool's own defaults.
         media_types = arguments.get("media_types")
         return await self._get_tools().perform_rag_search(
-            query=str(arguments.get("query") or ""),
-            limit=int(arguments.get("limit", 10)),
+            query=arguments.get("query"),
+            limit=arguments.get("limit", 10),
             media_types=list(media_types) if isinstance(media_types, list) else None,
             use_semantic=bool(arguments.get("use_semantic", True)),
         )
@@ -721,6 +733,7 @@ class LocalMCPRuntimeDelegate:
             self._library_service = build_local_library_tool_service(
                 chachanotes_db=self._require_chachanotes_db(),
                 media_db=self._require_media_db(),
+                policy_enforcer=self._policy_enforcer,
             )
         return self._library_service
 

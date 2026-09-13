@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -86,3 +87,50 @@ def test_atomic_private_write_reports_unverified_windows_posture(
     assert result.status is PrivatePathStatus.UNVERIFIED_PLATFORM
     assert result.verified_private is False
     assert target.read_bytes() == b"private"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX append branch")
+def test_private_append_writes_one_lf_byte_per_line(tmp_path):
+    """The file's SIZE must equal the bytes the caller wrote.
+
+    ``MCPExecutionLog`` caches a generation's sanitized bytes keyed on
+    ``st_size`` (TASK-21134), so any newline translation between "what the
+    caller encoded" and "what landed on disk" silently evicts that cache on
+    every append and re-parses the whole log.
+    """
+    target = tmp_path / "events.jsonl"
+    encoded = b'{"a":1}\n{"b":2}\n'
+
+    with open_private_text_append(target) as stream:
+        stream.write(encoded.decode("utf-8"))
+
+    assert target.read_bytes() == encoded
+    assert target.stat().st_size == len(encoded)
+
+
+def test_private_append_stream_pins_lf_on_the_windows_branch(tmp_path, monkeypatch):
+    """The unverified-platform branch must not inherit ``os.linesep``.
+
+    ``Path.open("a")`` defaults to ``newline=None``, which translates every
+    ``\\n`` written into ``os.linesep`` -- ``\\r\\n`` on Windows. That cannot be
+    reproduced on POSIX (the translation target is a build-time constant, not
+    ``os.linesep`` at runtime), so this pins the one thing that decides it:
+    the keyword the branch passes.
+    """
+    recorded = {}
+    real_open = Path.open
+
+    def _recording_open(self, *args, **kwargs):
+        recorded.update(kwargs)
+        recorded["mode"] = args[0] if args else kwargs.get("mode")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(private_paths, "_posix_guards_available", lambda: False)
+    monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", True)
+    monkeypatch.setattr(Path, "open", _recording_open)
+
+    stream = private_paths.open_private_text_append_stream(tmp_path / "events.jsonl")
+    stream.close()
+
+    assert recorded["mode"] == "a"
+    assert recorded["newline"] == "\n"

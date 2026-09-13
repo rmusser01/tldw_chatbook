@@ -1,6 +1,14 @@
 """Console-native widgets."""
 
+from .console_assistant_turn import (
+    ConsoleActivityActivated,
+    ConsoleActivityDisclosure,
+    ConsoleActivityHeader,
+    ConsoleAssistantTurnWidget,
+)
 from .console_control_bar import ConsoleControlBar
+from .console_character_context import ConsoleCharacterContext
+from .console_speech_controls import ConsoleSpeechControls
 from .console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -12,16 +20,32 @@ from .console_composer_bar import (
 )
 from .console_command_popup import ConsoleCommandPopup
 from .console_background_effect import ConsoleBackgroundEffect, ConsoleTranscriptSurface
-from .console_changed_files_section import (
-    ConsoleChangedFilesSection,
-    ConsoleChangedFilesState,
+from .console_bounded_section import ConsoleBoundedSection
+from .console_inspector_ownership import (
+    InspectorOwnershipPolicy,
+    UnownedInspectorContentError,
 )
 from .console_citation_sources_modal import (
     ConsoleCitationSourceRow,
     ConsoleCitationSourcesModal,
     build_console_citation_source_rows,
 )
-from .console_edit_message_modal import ConsoleEditMessageModal, ConsoleEditResult
+from .console_edit_message_modal import (
+    ConsoleEditMessageModal,
+    ConsoleEditResult,
+    ConsoleEditThinkingModal,
+    ConsoleThinkingEditResult,
+)
+from .console_fork_chat_modal import (
+    ConsoleForkChatModal,
+    ConsoleForkDialogSummary,
+    ConsoleForkSubmitResult,
+)
+from .console_message_more_menu import (
+    ConsoleMessageMoreMenu,
+    dismiss_message_more_menus,
+    message_more_menus_on_screen,
+)
 from .console_rail_handle import ConsoleRailHandle
 from .console_prompts_modal import ConsolePromptsModal
 from .console_prompts_state import ConsolePromptsState, PromptBrowseResult
@@ -36,36 +60,104 @@ from .console_project_instructions import (
 from .console_rename_session_modal import ConsoleRenameSessionModal
 from .console_retrieval_scope_row import ConsoleRetrievalScopeRow
 from .console_run_inspector import ConsoleRunInspector
+from .console_send_authority_summary import ConsoleSendAuthoritySummary
 from .console_save_as_modal import ConsoleSaveAsModal
 from .console_session_surface import ConsoleSessionSurface
-from .console_settings_modal import ConsoleSettingsModal
 from .console_setup_modal import ConsoleSetupModal
 from .console_settings_summary import ConsoleSettingsSummary
-from .console_staged_context import ConsoleStagedContextTray
+from .console_staged_context import (
+    ConsoleStagedContextTray,
+    ConsoleStagedSourceOpenRequested,
+)
 from .console_staged_evidence_strip import ConsoleStagedEvidenceStrip
-from .console_transcript import ConsoleTranscript
+from .console_terminal_messages import (
+    ConsoleTerminalActionRequested,
+    ConsoleTerminalInputRequested,
+)
+from .console_transcript import ConsoleThinkingEditRequested, ConsoleTranscript
 from .console_workbench_state import build_console_workbench_state
 from .console_workspace_context import ConsoleWorkspaceContextTray
+from .console_workspace_tree import (
+    ConsoleWorkspaceTree,
+    WorkspaceTreeConversationSelected,
+    WorkspaceTreeContextChanged,
+    WorkspaceTreeExpansionChanged,
+    WorkspaceTreeFocusRecoveryRequested,
+    WorkspaceTreeLoadMoreRequested,
+    WorkspaceTreeNodeData,
+    WorkspaceTreeRetryRequested,
+    WorkspaceTreeStarRequested,
+    WorkspaceTreeWorkspaceSelected,
+)
 from .console_workspace_switcher_modal import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
 
+
+def __getattr__(name: str):
+    """Load deferred Console widgets when their public export is first used."""
+    if name in {
+        "ConsoleVoicePreview",
+        "VoicePreviewProjection",
+        "VoiceStatusAnnouncementThrottle",
+        "voice_status_label",
+    }:
+        from . import console_voice_preview
+
+        return getattr(console_voice_preview, name)
+    if name == "ConsoleSettingsModal":
+        from . import console_settings_modal
+
+        return console_settings_modal.ConsoleSettingsModal
+    if name in {
+        "ConsoleTerminalSessionModal",
+        "TerminalSessionFormResult",
+        "build_default_terminal_name",
+    }:
+        from . import console_terminal_session_modal as terminal_modal
+
+        return getattr(terminal_modal, name)
+    if name in {
+        "ConsoleTerminalWorkspace",
+        "TerminalViewport",
+        "terminal_key_bytes",
+    }:
+        from . import console_terminal_workspace as terminal_workspace
+
+        return getattr(terminal_workspace, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "build_console_workbench_state",
+    "ConsoleActivityActivated",
+    "ConsoleActivityDisclosure",
+    "ConsoleActivityHeader",
+    "ConsoleAssistantTurnWidget",
     "ConsoleComposerBar",
     "ConsoleComposerUndoHistory",
     "ConsoleDraftStash",
     "ConsoleCommandPopup",
     "ConsoleBackgroundEffect",
-    "ConsoleChangedFilesSection",
-    "ConsoleChangedFilesState",
+    "ConsoleBoundedSection",
     "ConsoleCitationSourceRow",
     "ConsoleCitationSourcesModal",
     "ConsoleControlBar",
+    "ConsoleCharacterContext",
+    "ConsoleSpeechControls",
     "ConsoleContextControlState",
     "ConsoleEditMessageModal",
     "ConsoleEditResult",
+    "ConsoleEditThinkingModal",
+    "ConsoleThinkingEditResult",
+    "ConsoleForkChatModal",
+    "ConsoleForkDialogSummary",
+    "ConsoleForkSubmitResult",
+    "ConsoleMessageMoreMenu",
+    "dismiss_message_more_menus",
+    "message_more_menus_on_screen",
+    "InspectorOwnershipPolicy",
     "ConsoleRailHandle",
     "ConsolePromptsModal",
     "ConsolePromptsState",
@@ -74,16 +166,30 @@ __all__ = [
     "ConsoleRenameSessionModal",
     "ConsoleRetrievalScopeRow",
     "ConsoleRunInspector",
+    "ConsoleSendAuthoritySummary",
     "ConsoleSaveAsModal",
     "ConsoleSessionSurface",
     "ConsoleSettingsModal",
     "ConsoleSettingsSummary",
     "ConsoleSetupModal",
     "ConsoleStagedContextTray",
+    "ConsoleStagedSourceOpenRequested",
     "ConsoleStagedEvidenceStrip",
+    "ConsoleTerminalActionRequested",
+    "ConsoleTerminalInputRequested",
+    "ConsoleTerminalSessionModal",
+    "ConsoleTerminalWorkspace",
+    "TerminalSessionFormResult",
+    "TerminalViewport",
+    "ConsoleThinkingEditRequested",
     "ConsoleTranscript",
     "ConsoleTranscriptSurface",
+    "ConsoleVoicePreview",
+    "VoicePreviewProjection",
+    "VoiceStatusAnnouncementThrottle",
+    "voice_status_label",
     "ConsoleWorkspaceContextTray",
+    "ConsoleWorkspaceTree",
     "ConsoleWorkspaceRenameModal",
     "ConsoleWorkspaceSwitcherModal",
     "PromptBrowseResult",
@@ -91,6 +197,18 @@ __all__ = [
     "ProjectInstructionNoticeModal",
     "ProjectInstructionSetupModal",
     "ProjectInstructionSetupResult",
+    "UnownedInspectorContentError",
+    "WorkspaceTreeConversationSelected",
+    "WorkspaceTreeContextChanged",
+    "WorkspaceTreeFocusRecoveryRequested",
+    "WorkspaceTreeExpansionChanged",
+    "WorkspaceTreeLoadMoreRequested",
+    "WorkspaceTreeNodeData",
+    "WorkspaceTreeRetryRequested",
+    "WorkspaceTreeStarRequested",
+    "WorkspaceTreeWorkspaceSelected",
     "build_console_citation_source_rows",
     "build_console_context_control_state",
+    "build_default_terminal_name",
+    "terminal_key_bytes",
 ]

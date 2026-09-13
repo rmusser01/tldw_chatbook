@@ -5,7 +5,6 @@ This record retains exclusion. It never authorizes IO, callbacks or capture.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -14,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from tldw_chatbook.Utils import private_paths
+from tldw_chatbook.Utils.platform_files import os
 
 
 @dataclass(eq=False)
@@ -100,10 +100,39 @@ class _MigrationNativeState:
         return fd
 
     def open_parent(self, module: Any, *args: Any, **kwargs: Any):
+        """Hold one traversal admission while checking each component's authority."""
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
         self.check_paths((args[0],))
+        first_lease = len(self.leases)
+        self.admit()
+        leases = tuple(self.leases[first_lease:])
+
+        def source_identity(source):
+            try:
+                info = os.stat(source, follow_symlinks=False)
+            except FileNotFoundError:
+                return None
+            return (
+                info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+                info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+            )
+
+        admission = storage._Acquisition()
+        identities = None
 
         def opening(*a: Any, **kw: Any) -> int:
-            self.admit()
+            self.check()
+            if self.uncertain or self.pending:
+                raise ValueError("migration_native_outcome_unresolved")
+            for source, lease, identity in zip(
+                self.sources, leases, identities, strict=True
+            ):
+                with storage._lock:
+                    admission.check(source)
+                    lease.execution_context(source)
+                if source_identity(source) != identity:
+                    raise ValueError("migration_native_source_changed")
             attempt = object()
             self.pending.add(attempt)
             outcome = private_paths._NativeOpenOutcome()
@@ -116,12 +145,16 @@ class _MigrationNativeState:
                 elif outcome.rejected:
                     self.pending.discard(attempt)
 
-        result = module._open_verified_parent(
-            *args,
-            _open=opening,
-            _close=lambda fd: self.close(module._native_close, fd),
-            **kwargs,
-        )
+        try:
+            identities = tuple(source_identity(source) for source in self.sources)
+            result = module._open_verified_parent(
+                *args,
+                _open=opening,
+                _close=lambda fd: self.close(module._native_close, fd),
+                **kwargs,
+            )
+        finally:
+            admission.close()
         self.parent_paths[result[0]] = Path(args[0]).parent
         return result
 
@@ -165,6 +198,31 @@ class _MigrationNativeState:
             raise
         outcome.connection_closed = True
 
+    def retry_close_reader(self, connection, outcome) -> None:
+        """Retry a retained SQLite object while its complete descriptor cohort is held."""
+        self.check()
+        if outcome not in self.readers or outcome.connection_closed:
+            if outcome.connection_closed:
+                return
+            raise ValueError("migration_reader_not_retained")
+        previous = tuple(outcome.errors)
+        try:
+            connection.close()
+            if outcome.connection is not None:
+                sqlite3.Connection.close(outcome.connection)
+        except BaseException as error:
+            outcome.errors.append(error)
+            self.errors.append(error)
+            self.uncertain = True
+            raise
+        outcome.connection_closed = True
+        outcome.errors.clear()
+        self.errors[:] = [
+            error for error in self.errors
+            if all(error is not old for old in previous)
+        ]
+        self.uncertain = bool(self.errors or self.failed_closes or self.pending)
+
     def close_source(self, connection):
         self.check()
         outcome = next(
@@ -207,6 +265,17 @@ class _MigrationNativeState:
                 or (outcome.connection is not None and not outcome.connection_closed)
             ):
                 self.uncertain = True
+        if any(
+            outcome.pending or (outcome.connection is not None and not outcome.closed)
+            for outcome in self.source_connections
+        ) or any(
+            outcome.connection_pending or outcome.connector_pending
+            or (outcome.connection is not None and not outcome.connection_closed)
+            for outcome in self.readers
+        ):
+            # A live SQLite view keeps all original pins. Only a successful
+            # object-close retry may allow the descriptor retirement below.
+            return
         # Close independently retained parents skipped by an earlier finally
         # failure. Never replay an uncertain close or infer retirement from EBADF.
         for fd, close in tuple(self.descriptors.items()):

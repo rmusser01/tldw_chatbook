@@ -9,7 +9,7 @@ import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
@@ -42,6 +42,8 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ParsedNotePayload,
     ProposedFolderMembership,
     RootCollisionChoice,
+    creatable_wikilink_keys,
+    rewrite_wikilinks,
 )
 from tldw_chatbook.Notes.note_import_receipts import (
     EffectTransition,
@@ -495,6 +497,12 @@ class LocalNoteImportTarget:
                 self._user_id,
             ),
         )
+        # task-32186: backlinks are answered from `note_links`, not from a
+        # scan of every body, and this writer does not go through
+        # `CharactersRAGDB.add_note` (it needs its own version and client-id
+        # semantics). Imported `[[wikilinks]]` are the links the feature
+        # exists for, so the relation is maintained here too.
+        CharactersRAGDB.replace_note_links(cursor, note_id, payload.content)
 
     def _update_note(
         self,
@@ -520,7 +528,14 @@ class LocalNoteImportTarget:
                 expected_version,
             ),
         )
-        return result.rowcount == 1
+        # Read the count BEFORE anything else runs on this cursor:
+        # `cursor.execute` returns the cursor ITSELF, so the link writes below
+        # overwrite `result.rowcount` and the return value would report them
+        # instead of the note update (18 tests in this file caught it).
+        updated = result.rowcount == 1
+        if updated:
+            CharactersRAGDB.replace_note_links(cursor, note_id, payload.content)
+        return updated
 
     def _sync_keywords(
         self,
@@ -580,11 +595,12 @@ class LocalNoteImportTarget:
             result = cursor.execute(
                 """
                 INSERT INTO keywords (
-                    keyword, created_at, last_modified, deleted, client_id, version
+                    keyword, created_at, last_modified, deleted, client_id, version,
+                    sync_id
                 )
-                VALUES (?, ?, ?, 0, ?, 1)
+                VALUES (?, ?, ?, 0, ?, 1, ?)
                 """,
-                (keyword_text, timestamp, timestamp, self._user_id),
+                (keyword_text, timestamp, timestamp, self._user_id, str(uuid4())),
             )
             keyword_id = result.lastrowid
             if isinstance(keyword_id, bool) or not isinstance(keyword_id, int):
@@ -613,7 +629,7 @@ class LocalNoteImportTarget:
             """
             UPDATE keywords
             SET keyword = ?, last_modified = ?, deleted = 0,
-                client_id = ?, version = ?
+                client_id = ?, version = ?, sync_id = COALESCE(sync_id, ?)
             WHERE id = ? AND version = ? AND deleted = 1
             """,
             (
@@ -621,6 +637,7 @@ class LocalNoteImportTarget:
                 _utc_timestamp(),
                 self._user_id,
                 version + 1,
+                str(uuid4()),
                 keyword_id,
                 version,
             ),
@@ -993,6 +1010,8 @@ class NoteImportExecutor:
                 )
             membership_effects_by_item.setdefault(effect.item_id, []).append(effect)
         items_by_id = {item.item_id: item for item in snapshot.items}
+        note_ids_by_wikilink = _wikilink_note_ids(approved)
+        note_titles_by_wikilink = _wikilink_note_titles(approved)
         items = approved.plan.items
         for batch_start in range(0, len(items), self._batch_size):
             if cancel_event is not None and cancel_event.is_set():
@@ -1008,6 +1027,8 @@ class NoteImportExecutor:
                 self._execute_item(
                     approved,
                     item=item,
+                    note_ids_by_wikilink=note_ids_by_wikilink,
+                    note_titles_by_wikilink=note_titles_by_wikilink,
                     payload_effects=payload_effects_by_item.get(item.item_id, {}),
                     membership_effects=tuple(
                         membership_effects_by_item.get(item.item_id, ())
@@ -1251,6 +1272,8 @@ class NoteImportExecutor:
         folder_bindings: dict[str, str],
         folder_failures: dict[tuple[str, ...], _ExecutionFailure],
         recovering_interruption: bool,
+        note_ids_by_wikilink: dict[str, str] | None = None,
+        note_titles_by_wikilink: dict[str, str] | None = None,
     ) -> None:
         if item.selected_action is ImportAction.SKIP:
             self._receipts.transition_item(
@@ -1260,11 +1283,17 @@ class NoteImportExecutor:
             )
             return
 
-        if len(membership_effects) != len(item.memberships):
+        # task-32176: only an approved membership has a durable effect row
+        # (note_import_receipts records one per membership when, and only when,
+        # item.add_membership is set). An Update existing that leaves folder
+        # placement alone still carries the memberships the parser proposed, so
+        # comparing against those aborted the whole run with no receipt.
+        authorized_memberships = item.memberships if item.add_membership else ()
+        if len(membership_effects) != len(authorized_memberships):
             raise ImportReceiptTransitionError(
                 "Membership receipt authority does not match the approved plan."
             )
-        memberships = tuple(zip(item.memberships, membership_effects, strict=True))
+        memberships = tuple(zip(authorized_memberships, membership_effects, strict=True))
         memberships_by_payload: dict[
             int, list[tuple[ProposedFolderMembership, ImportEffectRecord]]
         ] = {}
@@ -1278,6 +1307,13 @@ class NoteImportExecutor:
 
         if item.selected_action is ImportAction.CREATE_NEW:
             for payload_index, payload in enumerate(item.payloads):
+                # Obsidian links resolve to the ids this same batch will mint, so
+                # the note is written linked once instead of rewritten later.
+                payload = rewrite_wikilinks(
+                    payload,
+                    note_ids_by_wikilink or {},
+                    titles=note_titles_by_wikilink,
+                )
                 effect = payload_effects.get(payload_index)
                 if effect is None:
                     raise ImportReceiptTransitionError(
@@ -1744,6 +1780,35 @@ def _deterministic_note_id(
     payload_index: int,
 ) -> str:
     return str(uuid5(UUID(approval_id), f"note:{item_id}:{payload_index}"))
+
+
+def _wikilink_note_ids(approved: ApprovedNoteImportPlan) -> dict[str, str]:
+    """Map the batch's link keys to the note ids its new notes will be given.
+
+    The key grammar lives in `creatable_wikilink_keys` so the receipt's
+    "N links resolved" count and this rewrite map cannot drift apart
+    (task-32178); note ids are deterministic, so the map exists before
+    anything is written.
+    """
+    return {
+        key: _deterministic_note_id(approved.approval_id, item_id, 0)
+        for key, item_id in creatable_wikilink_keys(approved.plan).items()
+    }
+
+
+def _wikilink_note_titles(approved: ApprovedNoteImportPlan) -> dict[str, str]:
+    """Map the batch's link keys to the title each created note will carry.
+
+    task-32263: the stored link shows the linked note's title, so the title
+    has to travel with the id the same key resolves to.
+    """
+    items = {item.item_id: item for item in approved.plan.items}
+    titles: dict[str, str] = {}
+    for key, item_id in creatable_wikilink_keys(approved.plan).items():
+        item = items.get(item_id)
+        if item is not None and item.payloads:
+            titles[key] = item.payloads[0].title
+    return titles
 
 
 def _allows_existing_root(

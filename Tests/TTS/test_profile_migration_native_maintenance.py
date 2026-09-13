@@ -523,6 +523,9 @@ def _descriptor_fault_child(root, role, after, recovery_mode=False):
     observed = []
     calls = []
     private.os = types.SimpleNamespace(**vars(os))
+    # POSIX borrows the source fd to preserve process-owned SQLite locks.
+    # Exercise the Windows duplicate/snapshot outcomes through this local facade.
+    private.os.name = "nt"
     original_dup, original_close = os.dup, os.close
     original_connect = private._SQLITE_CONNECT
     original_registered = private._connect_registered_sqlite
@@ -550,13 +553,15 @@ def _descriptor_fault_child(root, role, after, recovery_mode=False):
     native_connections = []
     if role == "constructor":
 
-        class Constructor(sqlite3.Connection):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                native_connections.append(self)
-                raise OSError("native custom constructor allocated then failed")
-
         def connect(*args, **kwargs):
+            factory = kwargs.pop("factory", sqlite3.Connection)
+
+            class Constructor(factory):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    native_connections.append(self)
+                    raise OSError("native custom constructor allocated then failed")
+
             return original_connect(*args, factory=Constructor, **kwargs)
 
         private._SQLITE_CONNECT = connect
@@ -571,7 +576,9 @@ def _descriptor_fault_child(root, role, after, recovery_mode=False):
     elif role == "reader":
 
         def connect(*args, **kwargs):
-            class Reader(sqlite3.Connection):
+            factory = kwargs.pop("factory", sqlite3.Connection)
+
+            class Reader(factory):
                 def close(self):
                     calls.append(self)
                     if after:
@@ -597,7 +604,8 @@ def _descriptor_fault_child(root, role, after, recovery_mode=False):
         else:
             assert os.fstat(allocated[0]).st_ino == active.stat().st_ino
     if role == "constructor":
-        assert native_connections[0].execute("PRAGMA user_version").fetchone()[0] == 4
+        # Windows allocates memory before deserializing the pinned snapshot.
+        assert native_connections[0].execute("PRAGMA user_version").fetchone()[0] == 0
     if role == "registered_return":
         with pytest.raises(sqlite3.ProgrammingError, match="closed"):
             native_connections[0].execute("SELECT 1")
@@ -836,7 +844,9 @@ def _partial_nonwal_child(root, foreign, fault=""):
         else schema.ExactProfileStoreNotCurrentError
     )
     with pytest.raises(expected):
-        schema.open_exact_current_profile_store(active)
+        # Native Windows retains this local proof owner; POSIX public startup
+        # now validates through a helper process instead of this injectable path.
+        schema._open_native_exact_current_profile_store(active)
     assert natives
     if foreign:
         assert not closes
@@ -1315,8 +1325,13 @@ async def _repeated_revalidation_child(root):
     repo = TTSProfileRepository(root / "profiles.sqlite")
     await repo.open()
     owner = repo._connection
-    retained = set(owner.native_descriptors)
-    original = owner._observe_revalidation_parent_descriptor
+    descriptors = "native_descriptors" if os.name == "nt" else "_directory_fds"
+    opener = (
+        "_observe_revalidation_parent_descriptor" if os.name == "nt"
+        else "_open_directory_component"
+    )
+    retained = set(getattr(owner, descriptors))
+    original = getattr(owner, opener)
     observed = []
 
     def opening(*args, **kwargs):
@@ -1324,11 +1339,14 @@ async def _repeated_revalidation_child(root):
         observed.append(fd)
         return fd
 
-    owner._observe_revalidation_parent_descriptor = opening
+    setattr(owner, opener, opening)
     for _ in range(10):
         await repo.list_profiles()
-        assert set(owner.native_descriptors) == retained
-        assert not owner.pending and not owner.attempted_descriptors
+        assert set(getattr(owner, descriptors)) == retained
+        if os.name == "nt":
+            assert not owner.pending and not owner.attempted_descriptors
+        else:
+            assert not owner._directory_pending and not owner._directory_failed_closes
     assert len(observed) > len(set(observed)), (
         "actual OS descriptor reuse not exercised"
     )
@@ -1385,4 +1403,68 @@ try:
 finally:
     os.close(parent)
 """,
+    )
+
+
+def _parent_traversal_child(root, mode):
+    import types
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.TTS.profile_migration_native import _migration_native
+    from tldw_chatbook.Utils import private_paths
+
+    directory = root / "nested" / "leaf"
+    directory.mkdir(parents=True, mode=0o700)
+    source = directory / "source.sqlite"
+    source.write_bytes(b"original")
+    source.chmod(0o600)
+    actual_acquire = storage.acquire_storage
+    actual_open = private_paths._native_open
+    acquisitions, entered, pauses = [], [], []
+    module = types.SimpleNamespace(**vars(private_paths))
+
+    def acquire(path=None):
+        acquisitions.append(path)
+        return actual_acquire(path)
+
+    def opening(*args, **kwargs):
+        result = actual_open(*args, **kwargs)
+        entered.append(result)
+        if len(entered) == 1:
+            if mode == "pause":
+                pauses.append(storage._begin_local_pause())
+            elif mode == "replacement":
+                source.rename(source.with_suffix(".owned"))
+                source.write_bytes(b"replacement")
+                source.chmod(0o600)
+        return result
+
+    storage.acquire_storage = acquire
+    module._native_open = opening
+    try:
+        with _migration_native((source,)) as native:
+            if mode == "ordinary":
+                parent, _leaf = native.open_parent(module, source, missing_leaf_allowed=False)
+                native.close(module._native_close, parent)
+            else:
+                with pytest.raises((storage.bootstrap.RecoveryRequired, ValueError)):
+                    native.open_parent(module, source, missing_leaf_allowed=False)
+                assert len(entered) == 1, "opened another component after source/pause changed"
+        assert not native.active and not native.descriptors and not native.pending
+        assert len(acquisitions) == 3, "reacquired registry authority per path component"
+    finally:
+        for pause in pauses:
+            pause.resume()
+
+
+@pytest.mark.parametrize("mode", ["ordinary", "pause", "replacement"])
+def test_parent_traversal_admission_is_bounded_and_rechecks_changes(tmp_path, mode):
+    _run_private_child(
+        tmp_path,
+        """
+import sys
+from pathlib import Path
+from Tests.TTS.test_profile_migration_native_maintenance import _parent_traversal_child
+_parent_traversal_child(Path(sys.argv[1]), sys.argv[2])
+""",
+        mode,
     )

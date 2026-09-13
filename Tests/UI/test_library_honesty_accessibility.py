@@ -26,11 +26,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.Widgets.Library.library_emergency_return import (
+    LibraryEmergencyReturn,
+)
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_shell_state import (
@@ -42,15 +44,17 @@ from tldw_chatbook.Library.library_shell_state import (
 )
 from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Library.library_notes_state import (
+    DatabaseNoteDraft,
+    LibraryNoteSessionSnapshot,
+    NormalizedDatabaseNote,
+)
+from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+    LibraryNotePresentationState,
+    LibraryNotesCanvas,
+)
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 from tldw_chatbook.Widgets.Library.library_export_canvas import LibraryExportCanvas
-from tldw_chatbook.Widgets.Library.library_collections_panel import (
-    LibraryCollectionsPanel,
-)
-from tldw_chatbook.Library.library_collections_state import (
-    LibraryCollectionActionState,
-    LibraryCollectionsPanelState,
-)
 from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_export_state import (
     LibraryExportFormState,
@@ -58,6 +62,51 @@ from tldw_chatbook.Library.library_export_state import (
 )
 
 _CSS_DIR = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+
+
+class _EmergencyReturnApp(ConsolidatedCSSApp):
+    def __init__(self) -> None:
+        super().__init__()
+        self.return_requests = 0
+
+    def compose(self):
+        yield LibraryEmergencyReturn(id="library-emergency-return")
+
+    def on_library_emergency_return_return_requested(
+        self, _message: LibraryEmergencyReturn.ReturnRequested
+    ) -> None:
+        self.return_requests += 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ascii_mode", "label"), ((False, "‹ Library"), (True, "< Library"))
+)
+async def test_library_emergency_return_is_focusable_and_one_message_per_activation(
+    ascii_mode: bool, label: str
+) -> None:
+    from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+
+    set_ascii_glyph_mode(ascii_mode)
+    try:
+        app = _EmergencyReturnApp()
+        async with app.run_test() as pilot:
+            control = app.query_one(LibraryEmergencyReturn)
+            assert str(control.label) == label
+            assert control.can_focus is True
+            assert control.disabled is False
+            assert app.get_widget_at(*control.region.center)[0] is control
+
+            await pilot.click("#library-emergency-return")
+            await pilot.pause(0.2)
+            assert app.return_requests == 1
+            control.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.return_requests == 2
+    finally:
+        set_ascii_glyph_mode(False)
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +197,22 @@ class _SelectModeApp(ConsolidatedCSSApp):
             id="library-media-canvas",
         )
 
+    @staticmethod
+    def _library_media_analyze_reason() -> str:
+        """Screen method the media row-toggle patcher calls (task-28007 AC#4).
+
+        TASK-31880: this app is a duck-typed SCREEN stand-in for
+        ``_apply_library_row_toggle``, whose media leg grew an in-place
+        "Analyze" flip on 2026-09-04 -- and that leg reads a screen method
+        this harness did not have. The dispatcher's own ``except Exception``
+        swallowed the ``AttributeError`` and silently rerouted every toggle
+        here onto the full-recompose fallback, so the in-place patch path
+        the test below exists to cover stopped being exercised. Same stub
+        (empty reason = provider ready) the screen/controller double in
+        ``test_library_selection_updates.py`` uses.
+        """
+        return ""
+
 
 @pytest.mark.asyncio
 async def test_select_mode_bulk_buttons_carry_marker_at_zero_selection():
@@ -205,74 +270,6 @@ async def test_export_submit_disabled_carries_marker_and_keeps_reason():
         submit = pilot.app.query_one("#library-export-submit", Button)
         assert submit.disabled is False
         assert not str(submit.label).startswith(LIBRARY_DISABLED_ACTION_MARKER)
-
-
-def _collections_state(*, create_enabled: bool) -> LibraryCollectionsPanelState:
-    def action(widget_id: str, label: str, enabled: bool, reason: str):
-        return LibraryCollectionActionState(
-            widget_id=widget_id,
-            label=label,
-            enabled=enabled,
-            disabled_reason="" if enabled else reason,
-        )
-
-    return LibraryCollectionsPanelState(
-        status="empty",
-        collections=(),
-        selected_collection_id=None,
-        selected_collection=None,
-        empty_copy="No stored collection items are available locally yet.",
-        create_action=action(
-            "library-create-collection",
-            "Create Collection",
-            create_enabled,
-            "Enter a Collection name.",
-        ),
-        rename_action=action(
-            "library-rename-collection",
-            "Rename Collection",
-            False,
-            "Select a Collection before renaming it.",
-        ),
-        delete_action=action(
-            "library-delete-collection",
-            "Delete Collection",
-            False,
-            "Select a Collection before deleting it.",
-        ),
-    )
-
-
-class _CollectionsPanelApp(ConsolidatedCSSApp):
-    def __init__(self, state: LibraryCollectionsPanelState):
-        super().__init__()
-        self._state = state
-
-    def compose(self):
-        yield LibraryCollectionsPanel(self._state, id="library-collections-panel")
-
-
-@pytest.mark.asyncio
-async def test_collections_disabled_actions_carry_marker_enabled_do_not():
-    """RC-07: Collections' three form buttons measured 2.30:1 disabled with
-    colour as the only state carrier."""
-    async with _CollectionsPanelApp(_collections_state(create_enabled=False)).run_test() as pilot:
-        for widget_id in (
-            "library-create-collection",
-            "library-rename-collection",
-            "library-delete-collection",
-        ):
-            button = pilot.app.query_one(f"#{widget_id}", Button)
-            assert button.disabled is True
-            assert str(button.label).startswith(
-                f"{LIBRARY_DISABLED_ACTION_MARKER} "
-            ), widget_id
-            assert str(button.tooltip), widget_id  # reason at the control
-
-    async with _CollectionsPanelApp(_collections_state(create_enabled=True)).run_test() as pilot:
-        create = pilot.app.query_one("#library-create-collection", Button)
-        assert create.disabled is False
-        assert not str(create.label).startswith(LIBRARY_DISABLED_ACTION_MARKER)
 
 
 def test_library_disabled_contrast_rules_live_in_source_and_bundle():
@@ -363,7 +360,14 @@ async def test_details_open_recomputes_db_sizes_and_patches_line():
                 f"(manager calls={app.db_status_manager.calls})."
             )
         assert app.db_status_manager.calls >= 1
-        rendered = str(screen.query_one("#library-details-db-sizes", Static).render())
+        # task-32230: the three sizes now take a row each (they wrapped
+        # mid-value when they shared one), so the refreshed reading is read
+        # across the rows the patcher owns, not out of a single line.
+        rendered = " ".join(
+            str(widget.render())
+            for widget in screen.query(".library-details-row")
+            if str(widget.id or "").startswith("library-details-db-sizes")
+        )
         assert "180.0KB" in rendered and "508.0KB" in rendered
 
 
@@ -461,7 +465,7 @@ def test_f1_lists_each_key_once_even_across_repeated_binding_extras():
         binding_extras=(
             ("escape", "Back"),
             ("escape", "Focus rail"),
-            ("ctrl+s", "Save note"),
+            ("ctrl+s", "Save skill"),
         ),
     )
     LibraryScreen.action_show_workbench_help(fake)
@@ -532,9 +536,9 @@ def test_library_footer_sets_share_one_grammar():
     for name, shortcuts in sets.items():
         for key, label in shortcuts:
             assert "·" not in label, f"{name} embeds a run-on separator: {label!r}"
-            assert (
-                key == key.lower() or re.fullmatch(r"F\d+", key)
-            ), f"{name} spells a key off-grammar: {key!r}"
+            assert key == key.lower() or re.fullmatch(r"F\d+", key), (
+                f"{name} spells a key off-grammar: {key!r}"
+            )
 
 
 def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys():
@@ -542,30 +546,51 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     create, sync) follow the same grammar, and a state whose keys are all
     locked advertises NOTHING instead of a dead 'Esc Locked' entry."""
     fake = SimpleNamespace(
-        _library_notes_compact=False,
-        _library_notes_stage="notes",
+        # (wave-8 task 3) The seven `LibraryNotesState` fields are nested
+        # below; the three entries here are NOT state fields and stay flat --
+        # two are method stand-ins and `_library_note_session` is one of the
+        # three WIRING attributes the state PR deliberately left on the
+        # screen. They were moved above the run so the field run is
+        # contiguous and its nesting stayed mechanical.
         _library_notes_workflow_active=lambda: True,
         _library_note_session=SimpleNamespace(
             snapshot=None, conflict_resolution_running=False
         ),
-        _library_note_confirming_delete=True,
-        _library_notes_select_mode=False,
-        _library_notes_sort_choices_visible=False,
-        _library_note_create_running=False,
-        _library_notes_sync_active_token=None,
         _library_notes_focus_region=lambda: "navigator",
+        _notes_state=SimpleNamespace(
+            compact=False,
+            stage="notes",
+            confirming_delete=True,
+            select_mode=False,
+            sort_choices_visible=False,
+            create_running=False,
+            sync_active_token=None,
+        ),
+        # task-32132 AC#2: the confirming_delete footer branch now names
+        # whichever button is FOCUSED (via _library_focus_enter_label),
+        # not a static "confirm delete" string. No widget has focus in
+        # this fake, so the label falls back to "cancel" -- entry focus
+        # for the real confirmation lands on Cancel too.
+        focused=None,
     )
     from types import MethodType
 
     fake._notes_footer_tier = MethodType(LibraryScreen._notes_footer_tier, fake)
+    fake._library_focus_enter_label = MethodType(
+        LibraryScreen._library_focus_enter_label, fake
+    )
     for name in vars(LibraryScreen):
         if name.startswith("LIBRARY_NOTES_"):
             setattr(fake, name, getattr(LibraryScreen, name))
     shortcuts = LibraryScreen._library_notes_footer_shortcuts(fake)
-    assert shortcuts == (("enter", "confirm delete"), ("esc", "cancel delete"))
+    assert shortcuts == (
+        ("enter", "cancel"),
+        ("tab", "switch button"),
+        ("esc", "cancel"),
+    )
 
     # A running conflict resolution locks every key -> nothing advertised.
-    fake._library_note_confirming_delete = False
+    fake._notes_state.confirming_delete = False
     fake._library_note_session = SimpleNamespace(
         snapshot=SimpleNamespace(in_conflict=True),
         conflict_resolution_running=True,
@@ -577,13 +602,107 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     fake._library_note_session = SimpleNamespace(
         snapshot=None, conflict_resolution_running=False
     )
-    fake._library_notes_compact = True
+    fake._notes_state.compact = True
     fake._library_notes_focus_region = lambda: "editor"
     compact = LibraryScreen._library_notes_footer_shortcuts(fake)
     assert compact == LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT
     assert [key for key, _ in compact] == [
         key for key, _ in LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS
     ]
+
+
+def _binding_parts(entry) -> tuple[str, str, str]:
+    """Normalize Textual Binding objects and legacy binding tuples."""
+    if hasattr(entry, "key"):
+        return entry.key, entry.action, entry.description
+    return str(entry[0]), str(entry[1]), str(entry[2])
+
+
+def test_notes_ctrl_s_is_absent_from_binding_footer_and_f1_while_skill_keeps_it():
+    """Notes uses visible Save/autosave; only the Skill editor owns Ctrl+S."""
+    bindings = tuple(_binding_parts(entry) for entry in LibraryScreen.BINDINGS)
+    assert not any(action == "library_notes_save" for _key, action, _label in bindings)
+    assert any(
+        key == "ctrl+s" and action == "library_skill_save"
+        for key, action, _label in bindings
+    )
+    assert ("ctrl+s", "save skill") in LibraryScreen.LIBRARY_SKILL_EDITOR_SHORTCUTS
+    for shortcuts in (
+        LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+        LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
+    ):
+        assert all(key != "ctrl+s" for key, _label in shortcuts)
+
+    fake = _f1_fake(
+        footer_shortcuts=LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+        binding_extras=tuple(
+            (key, label)
+            for key, action, label in bindings
+            if action == "library_notes_save"
+        ),
+        row_id="browse-notes",
+    )
+    LibraryScreen.action_show_workbench_help(fake)
+    (panel,) = fake._pushed
+    assert all(key != "ctrl+s" for key, _label in panel.state.shortcuts)
+
+
+class _DatabaseNoteEditorApp(ConsolidatedCSSApp):
+    """Mount one Database Note editor without the Library service layer."""
+
+    def compose(self):
+        baseline = NormalizedDatabaseNote(
+            note_id="note-1",
+            title="Visible Save",
+            body="Body",
+            keywords=(),
+            version=1,
+            created_at="2026-08-27T00:00:00Z",
+            modified_at="2026-08-27T00:00:00Z",
+        )
+        snapshot = LibraryNoteSessionSnapshot(
+            baseline=baseline,
+            draft=DatabaseNoteDraft(
+                note_id="note-1",
+                title="Visible Save",
+                body="Body",
+                keywords_text="",
+                revision=1,
+            ),
+            session_generation=1,
+            saved_revision=1,
+            dirty=False,
+            saving=False,
+            in_conflict=False,
+            conflict_generation=0,
+            status_message="Saved",
+        )
+        yield LibraryNotesCanvas(
+            mode="editor",
+            presentation_state=LibraryNotePresentationState(
+                snapshot=snapshot,
+                metadata_line="",
+                status_line="Saved",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_database_save_remains_visible_focusable_and_in_normal_pane_order():
+    """Removing the accelerator never removes the ordinary Save affordance."""
+    async with _DatabaseNoteEditorApp().run_test(size=(120, 40)) as pilot:
+        save = pilot.app.query_one("#library-note-save", Button)
+        assert save.display and not save.disabled and save.can_focus
+        save.focus()
+        await pilot.pause()
+        assert save.has_focus
+
+    (work_pane,) = tuple(
+        target
+        for target in LibraryScreen._WORKBENCH_FOCUS_TARGETS
+        if target.pane_id == "library-note-work-pane"
+    )
+    assert work_pane.preferred_focus_ids[0] == "library-note-save"
 
 
 @pytest.mark.asyncio
@@ -616,7 +735,7 @@ async def test_compact_notes_editor_footer_context_actually_displays_at_60_cols(
         footer = screen.query_one(AppFooterStatus)
         for _ in range(300):
             displayed = str(footer._shortcut_display.renderable)
-            if displayed.startswith("ctrl+s save | esc notes"):
+            if displayed.startswith("esc notes"):
                 break
             await pilot.pause(0.01)
         else:
@@ -682,8 +801,10 @@ def test_no_widget_module_still_builds_a_cycler_with_the_disclosure_glyph():
     ]
     for path in sources:
         for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-            if ' ▸"' in line and "marker" not in line and not line.lstrip().startswith(
-                "#"
+            if (
+                ' ▸"' in line
+                and "marker" not in line
+                and not line.lstrip().startswith("#")
             ):
                 offenders.append(f"{path.name}:{lineno}: {line.strip()}")
     assert not offenders, "\n".join(offenders)
@@ -711,42 +832,6 @@ async def test_media_canvas_actions_share_one_toolbar_row():
         (parent,) = parents
         assert isinstance(parent, Horizontal)
         assert parent.has_class("ds-toolbar")
-
-
-@pytest.mark.asyncio
-async def test_selected_collection_row_carries_the_selected_marker():
-    """AC#5: the selected Collections row was colour-only (`is-active`);
-    every other Library list marks its selected row with a leading '▸ '."""
-    import dataclasses
-
-    from tldw_chatbook.Library.library_collections_state import (
-        LibraryCollectionSummary,
-    )
-
-    def summary(collection_id: str, name: str, selected: bool):
-        return LibraryCollectionSummary(
-            collection_id=collection_id,
-            name=name,
-            description="",
-            item_count=2,
-            source_authority="local",
-            sync_status="local-only",
-            sync_status_detail="",
-            sync_status_label_override="",
-            created_at="",
-            updated_at="",
-            selected=selected,
-        )
-
-    rows = (summary("c-1", "Research", True), summary("c-2", "Queue", False))
-    state = dataclasses.replace(
-        _collections_state(create_enabled=True), status="ready", collections=rows
-    )
-    async with _CollectionsPanelApp(state).run_test() as pilot:
-        selected = pilot.app.query_one("#library-collection-select-0", Button)
-        unselected = pilot.app.query_one("#library-collection-select-1", Button)
-        assert str(selected.label).startswith("▸ ")
-        assert not str(unselected.label).startswith("▸")
 
 
 # ---------------------------------------------------------------------------
@@ -906,7 +991,7 @@ async def test_blocked_run_records_nothing_in_recent_searches():
 
         await screen._start_library_rag_query()  # blank query -> gate blocked
         await pilot.pause()
-        assert screen._library_search_history == ()
+        assert screen._rag_search_state.history == ()
         assert not list(screen.query(".library-rag-history-row"))
 
 
@@ -981,17 +1066,14 @@ def test_viewer_type_line_names_rendered_markdown_honestly():
 
 
 @pytest.mark.asyncio
-async def test_escape_works_on_export_collections_and_staging_canvases():
-    """AC#7: Escape was inert on Export, Collections, and the Study
+async def test_escape_works_on_export_and_staging_canvases():
+    """AC#7: Escape was inert on Export and the Study
     staging canvas (and 'Export…' from within Media navigated away with
     no return path). Escape now: Export -> back to the canvas that opened
-    it (or the hub from the rail), Collections -> focus rail, staging ->
+    it (or the hub from the rail), while staging returns to the
     hub. The footer advertises each via the shared seam."""
-    from textual.widgets import Input as _Input
-
     from Tests.UI.test_product_maturity_phase39_library_collections import (
         DestinationHarness,
-        FakeLibraryCollectionsService,
         _active_destination_screen,
         _seed_library_sources,
         _wait_for_library_snapshot,
@@ -1005,7 +1087,6 @@ async def test_escape_works_on_export_collections_and_staging_canvases():
 
     app = _build_test_app()
     _seed_library_sources(app)
-    app.library_collections_service = FakeLibraryCollectionsService()
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(170, 50)) as pilot:
@@ -1039,19 +1120,6 @@ async def test_escape_works_on_export_collections_and_staging_canvases():
             await pilot.pause(0.01)
         assert screen._library_selected_row_id == ""
 
-        # --- Collections: Escape is the list-canvas focus hop to the rail.
-        screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
-        shortcuts = dict(screen._library_footer_shortcuts_for_current_state())
-        assert shortcuts.get("esc") == "focus rail"
-        await pilot.press("escape")
-        for _ in range(300):
-            focused = screen.focused
-            if isinstance(focused, _Input) and focused.id == "library-search-input":
-                break
-            await pilot.pause(0.01)
-        assert getattr(screen.focused, "id", None) == "library-search-input"
-
         # --- Study staging canvas: Escape returns to the hub.
         screen.query_one("#library-row-create-study", Button).press()
         await _wait_for_selector(screen, pilot, "#library-study-handoff-actions")
@@ -1079,91 +1147,62 @@ async def test_row_toggle_patcher_rebuilds_marker_label_both_directions():
     """Mutation C's survival: `_apply_library_row_toggle` flips `.disabled`
     on the bulk buttons in place, so it must rebuild the "○" marker label
     too. Crossing 0->1 must strip the marker AND enable; 1->0 must restore
-    both. The host app recomposes to the 0-selected state, so the
-    patcher's full-recompose fallback cannot mask a missing label patch."""
+    both.
+
+    TASK-31880: the spellings below are media's SHORT bulk-action words
+    ("Export"/"Delete"), which task-30043 (2026-09-03) adopted for the
+    ~40-col items pane -- the full "Export selected" this test used to
+    expect collapsed to a bare "○" at that width. The enabled spelling
+    keeps the marker's own two cells reserved (`LIBRARY_ACTION_LABEL_PAD`,
+    task-31635/task-31959) so the word holds its column across the flip.
+    The identity checks pin that each direction really ran the in-place
+    patch: the dispatcher's `except Exception` fallback recomposes the
+    host app, which would swap in FRESH buttons at the 0-selected state
+    and leave these references stale.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ACTION_LABEL_PAD
     from tldw_chatbook.Library.row_selection import RowSelection
     from tldw_chatbook.UI.Screens.library_screen import _apply_library_row_toggle
 
     app = _SelectModeApp(0)
     async with app.run_test() as pilot:
-        app._library_media_row_selection = RowSelection("media")
+        # wave-7 task 3: `row_selection` is a `LibraryMediaState` field now,
+        # and `_apply_library_row_toggle` resolves media through the DOTTED
+        # `_media_state.row_selection` path (the conversations precedent), so
+        # this duck-typed screen stand-in carries the nested object.
+        app._media_state = SimpleNamespace(row_selection=RowSelection("media"))
         row_button = pilot.app.query_one("#library-media-row-0", Button)
         export_btn = pilot.app.query_one("#library-media-export-selected", Button)
         delete_btn = pilot.app.query_one("#library-media-delete-selected", Button)
-        assert str(export_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
+        assert str(export_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Export"
 
         # 0 -> 1 selected through the real patch path.
-        app._library_media_row_selection.toggle("m0")
+        app._media_state.row_selection.toggle("m0")
         _apply_library_row_toggle(app, "media", row_button, "m0")
         await pilot.pause()
+        assert (
+            pilot.app.query_one("#library-media-export-selected", Button)
+            is export_btn
+        )
         assert export_btn.disabled is False
-        assert str(export_btn.label) == "Export selected"
+        assert str(export_btn.label) == f"{LIBRARY_ACTION_LABEL_PAD}Export"
         assert delete_btn.disabled is False
-        assert str(delete_btn.label) == "Delete selected"
+        assert str(delete_btn.label) == f"{LIBRARY_ACTION_LABEL_PAD}Delete"
         assert str(row_button.label).startswith("☑")
 
         # 1 -> 0: the marker must come back with `disabled`.
-        app._library_media_row_selection.toggle("m0")
+        app._media_state.row_selection.toggle("m0")
         _apply_library_row_toggle(app, "media", row_button, "m0")
         await pilot.pause()
+        assert (
+            pilot.app.query_one("#library-media-export-selected", Button)
+            is export_btn
+        )
         assert export_btn.disabled is True
-        assert str(export_btn.label) == (
-            f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
-        )
+        assert str(export_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Export"
         assert delete_btn.disabled is True
-        assert str(delete_btn.label) == (
-            f"{LIBRARY_DISABLED_ACTION_MARKER} Delete selected"
-        )
+        assert str(delete_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Delete"
         assert str(row_button.label).startswith("☐")
-
-
-@pytest.mark.asyncio
-async def test_collections_patcher_rebuilds_marker_label_both_directions():
-    """Mutation D's survival: `_refresh_collections_panel_action_state_widgets`
-    flips `.disabled` on the three form actions in place (no recompose), so
-    it must rebuild the "○" marker label alongside. Driven through the real
-    Input.Changed path on the mounted Library screen."""
-    from textual.widgets import Input
-
-    from Tests.UI.test_product_maturity_phase39_library_collections import (
-        DestinationHarness,
-        FakeLibraryCollectionsService,
-        _active_destination_screen,
-        _seed_library_sources,
-        _wait_for_library_snapshot,
-        _wait_for_selector,
-    )
-    from Tests.UI.app_factory import _build_test_app
-
-    app = _build_test_app()
-    _seed_library_sources(app)
-    app.library_collections_service = FakeLibraryCollectionsService()
-    host = DestinationHarness(app, "library")
-
-    async with host.run_test(size=(170, 50)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
-        screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
-
-        create_btn = screen.query_one("#library-create-collection", Button)
-        assert create_btn.disabled is True
-        assert str(create_btn.label).startswith(
-            f"{LIBRARY_DISABLED_ACTION_MARKER} "
-        )
-
-        name_input = screen.query_one("#library-collection-name-input", Input)
-        name_input.value = "Research"
-        await pilot.pause()
-        assert create_btn.disabled is False
-        assert str(create_btn.label) == "Create Collection"
-
-        name_input.value = ""
-        await pilot.pause()
-        assert create_btn.disabled is True
-        assert str(create_btn.label) == (
-            f"{LIBRARY_DISABLED_ACTION_MARKER} Create Collection"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1187,6 +1226,7 @@ async def test_compact_presentation_keeps_marker_and_retiers_the_stash():
     """
     from tldw_chatbook.Library.library_notes_state import LibraryNotesListState
     from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ACTION_LABEL_PAD,
         LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     )
     from tldw_chatbook.UI.Screens.library_screen import (
@@ -1225,14 +1265,17 @@ async def test_compact_presentation_keeps_marker_and_retiers_the_stash():
 
         # Enable while compact through the shared patcher: the re-tiered
         # stash must yield the COMPACT spelling, not "Export selected".
+        # task-31959: the enabled spelling reserves the marker's own width
+        # (``align=True``) so the word holds its column across the flip --
+        # in BOTH the patcher and the compact rewrite below.
         export_btn.disabled = False
         _patch_library_disabled_marker_label(export_btn)
-        assert str(export_btn.label) == "Export"
+        assert str(export_btn.label) == f"{LIBRARY_ACTION_LABEL_PAD}Export"
 
         # Compact -> wide while enabled: wide spelling, still no marker,
         # stash re-tiers back.
         canvas.apply_compact_presentation(False)
-        assert str(export_btn.label) == "Export selected"
+        assert str(export_btn.label) == f"{LIBRARY_ACTION_LABEL_PAD}Export selected"
         assert export_btn._library_disabled_marker_base == "Export selected"
 
         # Disable while wide through the shared patcher: the marker returns
@@ -1246,8 +1289,9 @@ async def test_compact_presentation_keeps_marker_and_retiers_the_stash():
 
 # ---------------------------------------------------------------------------
 # AC#7 follow-up (whole-branch review M-A): the rail-switch export-origin
-# clear (`_select_library_rail_row`'s `_library_export_origin_row_id = ""`)
-# had zero coverage -- mutating it to a no-op left the full honesty file
+# clear (`_select_library_rail_row`'s `_export_state.origin_row_id = ""`,
+# `_library_export_origin_row_id` pre-Task-4-cleanup) had zero coverage --
+# mutating it to a no-op left the full honesty file
 # green. The escape pin's rail-entry leg only reaches the rail AFTER
 # `action_library_export_back` already cleared the origin, so the guarded
 # path (Export-from-Media -> rail-switch AWAY -> rail-enter Export fresh)
@@ -1264,7 +1308,6 @@ async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
     Escape lands on the hub, never Media."""
     from Tests.UI.test_product_maturity_phase39_library_collections import (
         DestinationHarness,
-        FakeLibraryCollectionsService,
         _active_destination_screen,
         _seed_library_sources,
         _wait_for_library_snapshot,
@@ -1278,7 +1321,6 @@ async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
 
     app = _build_test_app()
     _seed_library_sources(app)
-    app.library_collections_service = FakeLibraryCollectionsService()
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(170, 50)) as pilot:
@@ -1290,16 +1332,14 @@ async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
         await _wait_for_selector(screen, pilot, "#library-media-export")
         screen.query_one("#library-media-export", Button).press()
         await _wait_for_selector(screen, pilot, "#library-export-submit")
-        assert screen._library_export_origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert screen._export_state.origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
         # Rail-switch AWAY (a plain route boundary, not Export's own back).
-        screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-canvas")
 
         # Fresh rail entry into Export: the stale Media origin must be gone.
-        screen.query_one(
-            f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}", Button
-        ).press()
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}", Button).press()
         await _wait_for_selector(screen, pilot, "#library-export-submit")
         shortcuts = dict(screen._library_footer_shortcuts_for_current_state())
         assert shortcuts.get("esc") == "back to hub"

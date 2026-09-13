@@ -12,9 +12,9 @@ Button {
 
 /* Shared hover state with readable, non-obscuring cues */
 Button:hover {
-    background: $surface-lighten-1;
-    color: $text;
-    text-style: bold;
+    background: $ds-hover-bg;
+    color: $ds-hover-fg;
+    text-style: $ds-text-strong;
 }
 
 /* Enhanced focus state with visible, non-obscuring cues */
@@ -33,35 +33,33 @@ Button:hover:focus {
     outline: none;
 }
 
-/* Disabled state */
-Button:disabled {
-    opacity: 50%;
-    background: $surface-darken-1;
-    color: $text-disabled;
-}
-
-Button:disabled:hover {
-    background: $surface-darken-1;
-    text-style: none;
-}
-
-/* Local GGUF import must remain readable while a prior import owns the lane.
-   This app-tier selector deliberately beats the generic disabled dimmer without
-   affecting other disabled actions. */
-Button.model-import:disabled {
+/* Disabled state.
+   TASK-25822: the darkened surface plus muted-but-readable text IS the cue --
+   an additional `opacity: 50%` composited the label down to 1.34:1 and made
+   the control look absent. Two non-colour cues remain (surface + weight). */
+Button:disabled,
+Button.-style-default:disabled,
+Button.-style-flat:disabled {
     opacity: 100%;
     text-opacity: 100%;
     text-style: none;
-    background: $surface-darken-1;
-    color: $text-muted;
+    background: $ds-disabled-bg;
+    color: $ds-text-disabled-readable;
+}
+
+Button:disabled:hover {
+    background: $ds-disabled-bg;
+    text-style: none;
 }
 
 .sidebar-toggle {
     width: 1fr;              /* Equal flexible width */
-    height: 3;
+    height: $ds-control-height;
     /* margin-right: 1; Removed default margin, apply specific below */
     border: none;
-    background: $surface-darken-1;
-    color: $text;
+    /* Enabled but recessed chrome: sunken resting surface, not the
+       disabled token (PR #2632 review follow-up). */
+    background: $ds-surface-sunken;
+    color: $ds-text-primary;
 }
-.sidebar-toggle:hover { background: $surface; }
+.sidebar-toggle:hover { background: $ds-surface-raised; }

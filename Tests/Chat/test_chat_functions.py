@@ -99,6 +99,36 @@ def test_chat_api_handler_matrix_strips_or_preserves_ephemeral_marker(
     assert messages[0][EPHEMERAL_ORIGIN_KEY] == "project_instructions"
 
 
+@pytest.mark.parametrize("endpoint", sorted(API_CALL_HANDLERS))
+def test_handler_projection_matches_actual_dispatch_for_every_registered_endpoint(
+    monkeypatch, endpoint
+):
+    captured = {}
+
+    def handler(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setitem(chat_functions_module.API_CALL_HANDLERS, endpoint, handler)
+    generic = {
+        "messages_payload": [
+            {
+                "role": "user",
+                "content": "context",
+                EPHEMERAL_ORIGIN_KEY: "project_instructions",
+            }
+        ],
+        "model": "model",
+        "streaming": False,
+        "api_base_url": "https://example.invalid/v1",
+    }
+
+    projected = chat_functions_module.project_chat_handler_kwargs(endpoint, generic)
+    chat_functions_module.chat_api_call(api_endpoint=endpoint, **generic)
+
+    assert projected == captured
+
+
 def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
     captured_kwargs = {}
 
@@ -245,8 +275,8 @@ def test_chat_with_llama_posts_to_v1_chat_completions_regardless_of_suffix(
         ),
     )
     monkeypatch.setattr(
-        LLM_API_Calls_Local.requests,
-        "Session",
+        LLM_API_Calls_Local,
+        "create_default_session",
         lambda: _CapturedSession(captured, response_data),
     )
 
@@ -289,7 +319,16 @@ class _CapturedSession:
         self.closed = True
         return None
 
-    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+    def post(
+        self,
+        url,
+        *,
+        headers=None,
+        json=None,
+        stream=False,
+        timeout=None,
+        allow_redirects=None,
+    ):
         self._captured.update(
             {
                 "url": url,
@@ -595,8 +634,8 @@ class TestProviderRequestPayloads:
             ),
         )
         monkeypatch.setattr(
-            llm_api_calls_module.requests,
-            "Session",
+            llm_api_calls_module,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ),
@@ -634,8 +673,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ),
@@ -673,8 +712,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ),
@@ -712,8 +751,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ),
@@ -739,8 +778,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ),
@@ -799,8 +838,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
             ),
@@ -837,8 +876,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, {"output_text": "OK"}),
         )
 
@@ -866,8 +905,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, {"output_text": "OK"}),
         )
 
@@ -901,8 +940,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, {"output_text": "OK"}),
         )
 
@@ -946,8 +985,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, response_data),
         )
 
@@ -994,8 +1033,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, response_events),
         )
 
@@ -1037,8 +1076,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, response_data),
         )
 
@@ -1077,8 +1116,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, response_data),
         )
         monkeypatch.setattr(
@@ -1111,8 +1150,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1160,8 +1199,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1212,8 +1251,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1250,8 +1289,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1293,8 +1332,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1332,8 +1371,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1383,8 +1422,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1435,8 +1474,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1483,8 +1522,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1529,8 +1568,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1573,8 +1612,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1614,8 +1653,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1656,8 +1695,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {

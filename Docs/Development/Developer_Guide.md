@@ -7,6 +7,8 @@ This document provides a comprehensive overview of the `tldw_chatbook` architect
 > [!TIP]
 > New to the project? Check out the [Onboarding Guide](Onboarding_Guide.md) for a quick start.
 
+For Personal Context internals and extension work, see [Personal Context Profile](personal-context-profile.md).
+
 ## Table of Contents
 
 ## Project Architecture

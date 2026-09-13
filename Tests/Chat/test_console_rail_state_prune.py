@@ -41,6 +41,14 @@ def test_keeps_global_scope_key_even_with_no_live_scopes():
     assert prunable == []
 
 
+def test_keeps_reserved_shared_layout_scope_even_with_no_live_scopes():
+    stored_keys = ["console_rail_state:global:shared-layout-v1"]
+
+    prunable = collect_prunable_console_rail_keys(stored_keys, live_scope_ids=[])
+
+    assert prunable == []
+
+
 def test_keeps_malformed_and_foreign_keys():
     stored_keys = [
         "other_prefix:ws:scope",  # wrong prefix
@@ -67,13 +75,14 @@ def test_sanitized_conversation_keys_are_prunable():
     assert prunable == ["console_rail_state:ws:conv_1"]
 
 
-def test_mixed_stored_keys_keeps_only_layout_and_global():
+def test_mixed_stored_keys_keeps_only_layout_legacy_and_shared_scopes():
     """TASK-718: per-workspace scheme - every conversation/session-scoped key
     is prunable; ``:layout`` (current) and ``:global`` (migration source) and
     foreign shapes are kept."""
     stored_keys = [
         "console_rail_state:ws:global",
         "console_rail_state:ws:layout",
+        "console_rail_state:global:shared-layout-v1",
         "console_rail_state:ws:live-conv",
         "console_rail_state:ws:orphan-1",
         "console_rail_state:ws:orphan-2",

@@ -3,11 +3,14 @@ from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
 from pathlib import Path
+import sqlite3
+import threading
 import zipfile
 
 import pytest
 from loguru import logger
 
+from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError as MediaDatabaseError
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 
@@ -158,12 +161,72 @@ class LibrarySummaryRecordingDb:
                 "title": "Summary title",
                 "type": "article",
                 "last_modified": "2026-08-16T12:00:00Z",
+                # Projected by the real DB as SQLite's 1/0, passed straight
+                # through by this service (task-28008).
+                "has_analysis": 1,
             }
         ], 45
 
     def get_distinct_media_types(self):
         self.type_calls += 1
         return [f"private-type-{index:02}" for index in range(61)]
+
+
+class LibraryTrashRecordingDb:
+    def __init__(self):
+        self.calls = []
+
+    def list_library_media_trash_page(
+        self, *, query="", media_type=None, limit=20, offset=0
+    ):
+        self.calls.append(
+            {
+                "query": query,
+                "media_type": media_type,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+        return {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "",
+                    "type": "",
+                    "trash_date": "2026-08-30T12:00:00Z",
+                }
+            ],
+            "total": 45,
+            "limit": limit,
+            "offset": offset,
+            "types": ["pdf", "article"],
+        }
+
+
+def test_local_service_forwards_library_media_trash_page_without_repair():
+    db = LibraryTrashRecordingDb()
+
+    payload = LocalMediaReadingService(db).list_library_media_trash(
+        query="doc", media_type="pdf", limit=20, offset=40
+    )
+
+    assert db.calls == [
+        {"query": "doc", "media_type": "pdf", "limit": 20, "offset": 40}
+    ]
+    assert payload == {
+        "items": [
+            {
+                "id": 41,
+                "title": "",
+                "type": "",
+                "trash_date": "2026-08-30T12:00:00Z",
+            }
+        ],
+        "total": 45,
+        "limit": 20,
+        "offset": 40,
+        "types": ["pdf", "article"],
+    }
 
 
 def test_local_service_library_media_summary_uses_exact_db_offset_and_projection():
@@ -187,6 +250,7 @@ def test_local_service_library_media_summary_uses_exact_db_offset_and_projection
                 "title": "Summary title",
                 "type": "article",
                 "last_modified": "2026-08-16T12:00:00Z",
+                "has_analysis": 1,
             }
         ],
         "total": 45,
@@ -425,6 +489,140 @@ def test_local_service_direct_media_management_round_trips(memory_db_factory):
     assert deleted_again == {"ok": True, "media_id": media_id}
     assert permanent == {"ok": True, "media_id": media_id}
     assert after_permanent["items"] == []
+
+
+def test_media_trash_permanent_delete_cascades_fts_without_sync_log(
+    memory_db_factory,
+):
+    """The one-item Trash seam preserves the existing irreversible DB contract."""
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Cascade target",
+        content="unique permanent deletion sentinel",
+        media_type="document",
+        keywords=["cascade-keyword"],
+        chunks=[
+            {"text": "first child chunk", "chunk_type": "text"},
+            {"text": "second child chunk", "chunk_type": "text"},
+        ],
+    )
+    db.save_media_to_read_it_later(media_id)
+    assert db.mark_as_trash(media_id) is True
+    connection = db.get_connection()
+    child_tables = (
+        "MediaKeywords",
+        "UnvectorizedMediaChunks",
+        "MediaReadItLaterState",
+    )
+    assert all(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE media_id = ?", (media_id,)
+        ).fetchone()[0]
+        > 0
+        for table in child_tables
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM media_fts WHERE rowid = ?", (media_id,)
+        ).fetchone()[0]
+        == 1
+    )
+    sync_count_before = connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[
+        0
+    ]
+
+    result = LocalMediaReadingService(db).permanently_delete_media_item(media_id)
+
+    assert result == {"ok": True, "media_id": media_id}
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM Media WHERE id = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+    )
+    assert all(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE media_id = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+        for table in child_tables
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM media_fts WHERE rowid = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0]
+        == sync_count_before
+    )
+
+
+def test_media_trash_permanent_delete_rechecks_trash_in_delete_transaction(
+    tmp_path, monkeypatch
+):
+    """A concurrent restore must win before the irreversible delete begins."""
+    from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
+
+    db_path = tmp_path / "trash-delete-race.sqlite"
+    deleting_db = Database(db_path=db_path, client_id="delete-race")
+    restoring_db = Database(db_path=db_path, client_id="restore-race")
+    entered_delete = threading.Event()
+    resume_delete = threading.Event()
+    outcome: dict[str, object] = {}
+    worker: threading.Thread | None = None
+    try:
+        media_id, _, _ = deleting_db.add_media_with_keywords(
+            title="Concurrent restore target",
+            content="private race content",
+            media_type="document",
+            keywords=[],
+        )
+        assert deleting_db.mark_as_trash(media_id)
+        original_delete = media_db_module.permanently_delete_item
+
+        def coordinated_delete(db_instance, target_id):
+            entered_delete.set()
+            assert resume_delete.wait(5)
+            return original_delete(db_instance, target_id)
+
+        monkeypatch.setattr(
+            media_db_module, "permanently_delete_item", coordinated_delete
+        )
+
+        def delete_in_worker() -> None:
+            try:
+                outcome["result"] = LocalMediaReadingService(
+                    deleting_db
+                ).permanently_delete_media_item(media_id)
+            except Exception as exc:  # surfaced in the test thread below
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=delete_in_worker)
+        worker.start()
+        assert entered_delete.wait(5)
+
+        assert restoring_db.restore_from_trash(media_id)
+        restored = restoring_db.get_media_by_id(media_id)
+        assert restored is not None
+        assert restored["is_trash"] in {0, False}
+
+        resume_delete.set()
+        worker.join(5)
+
+        assert not worker.is_alive()
+        assert "result" not in outcome
+        assert isinstance(outcome.get("error"), ValueError)
+        still_active = restoring_db.get_media_by_id(media_id)
+        assert still_active is not None
+        assert still_active["is_trash"] in {0, False}
+    finally:
+        resume_delete.set()
+        if worker is not None:
+            worker.join(5)
+        restoring_db.close_connection()
+        deleting_db.close_connection()
 
 
 def test_local_service_list_media_items_carries_last_modified_for_list_card_age(
@@ -801,6 +999,145 @@ def test_local_service_get_media_item_surfaces_latest_document_version_analysis(
     )
 
 
+@pytest.fixture
+def file_db_factory(tmp_path):
+    """File-backed MediaDatabase plus a raw second connection to the same file.
+
+    A commit bug is invisible to the app's own connection (it reads its own
+    uncommitted writes), so every pin here checks persistence through a
+    separate ``sqlite3.connect``.
+    """
+    created = []
+
+    def _create(name="analysis-commit.sqlite", client_id="commit_client"):
+        db_path = tmp_path / name
+        db = Database(db_path=db_path, client_id=client_id)
+        created.append(db)
+        return db, db_path
+
+    yield _create
+
+    for db in created:
+        try:
+            db.close_connection()
+        except Exception:
+            pass
+
+
+def _versions_from_second_connection(db_path):
+    connection = sqlite3.connect(str(db_path))
+    try:
+        connection.row_factory = sqlite3.Row
+        return [
+            dict(row)
+            for row in connection.execute(
+                "SELECT uuid, version_number, analysis_content, deleted "
+                "FROM DocumentVersions ORDER BY version_number"
+            )
+        ]
+    finally:
+        connection.close()
+
+
+def test_local_service_save_analysis_version_commits_for_other_connections(
+    file_db_factory,
+):
+    """TASK-31942: a saved analysis must survive the process that wrote it.
+
+    ``create_document_version`` documents that it assumes an open
+    transaction and never commits; the service called it bare, so the row
+    sat on the app's thread-local connection and was lost on exit.
+    """
+    db, db_path = file_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Report", content="Body text", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+
+    saved = service.save_analysis_version(
+        media_id, content="Body text", analysis_content="Committed analysis"
+    )
+    assert saved["media_id"] == media_id
+
+    assert db.get_connection().in_transaction is False
+    rows = _versions_from_second_connection(db_path)
+    assert [row["analysis_content"] for row in rows] == [None, "Committed analysis"]
+
+
+def test_local_service_overwrite_analysis_version_commits_for_other_connections(
+    file_db_factory,
+):
+    """TASK-31942: the overwrite path (same seam) must commit too."""
+    db, db_path = file_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Report", content="Body text", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+
+    service.overwrite_analysis_version(
+        media_id, content="Body text", analysis_content="Overwritten analysis"
+    )
+
+    assert db.get_connection().in_transaction is False
+    rows = _versions_from_second_connection(db_path)
+    assert rows[-1]["analysis_content"] == "Overwritten analysis"
+
+
+def test_local_service_delete_analysis_version_commits_for_other_connections(
+    file_db_factory,
+):
+    """TASK-31942: the soft delete must be visible to a second connection."""
+    db, db_path = file_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Report", content="Body text", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+    saved = service.save_analysis_version(
+        media_id, content="Body text", analysis_content="Doomed analysis"
+    )
+
+    assert service.delete_analysis_version(saved["uuid"]) is True
+
+    assert db.get_connection().in_transaction is False
+    rows = _versions_from_second_connection(db_path)
+    deleted_row = next(row for row in rows if row["uuid"] == saved["uuid"])
+    assert deleted_row["deleted"] == 1
+
+
+def test_local_service_failed_analysis_save_rolls_back_and_raises(
+    file_db_factory, monkeypatch
+):
+    """TASK-31942 AC#3: a mid-write failure leaves no partial version row.
+
+    The Reader's ``_save_library_media_analysis`` only warns the user when
+    the call *raises*, so the failure must propagate rather than return a
+    half-written version.
+    """
+    db, db_path = file_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Report", content="Body text", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+    before = _versions_from_second_connection(db_path)
+
+    original_log_sync_event = type(db)._log_sync_event
+
+    def exploding_log_sync_event(self, conn, entity, *args, **kwargs):
+        if entity == "DocumentVersions":
+            raise RuntimeError("sync log write failed")
+        return original_log_sync_event(self, conn, entity, *args, **kwargs)
+
+    monkeypatch.setattr(type(db), "_log_sync_event", exploding_log_sync_event)
+
+    with pytest.raises(MediaDatabaseError, match="sync log write failed"):
+        service.save_analysis_version(
+            media_id, content="Body text", analysis_content="Never persisted"
+        )
+
+    assert db.get_connection().in_transaction is False
+    assert _versions_from_second_connection(db_path) == before
+
+
 def test_local_service_saves_direct_reading_item_with_content(memory_db_factory):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
@@ -923,9 +1260,11 @@ def test_local_service_persists_reading_highlights(memory_db_factory):
 def test_scope_service_local_highlight_seam_persists_against_real_db(memory_db_factory):
     """Real-backend regression for the Library media viewer's highlights seam.
 
-    The Library viewer (``LibraryScreen._add_library_media_highlight`` /
-    ``_fetch_library_media_highlights`` / ``_delete_library_media_highlight``)
-    calls ``media_reading_scope_service.create_highlight``/``list_highlights``/
+    The Library viewer (``LibraryMediaController._add_library_media_highlight``
+    / ``_fetch_library_media_highlights`` /
+    ``_delete_library_media_highlight``; wave-7 moved all three off
+    ``LibraryScreen``) calls
+    ``media_reading_scope_service.create_highlight``/``list_highlights``/
     ``delete_highlight`` with ``mode="local"`` -- the unprefixed scope
     methods, distinct from the ``reading_``-prefixed scope methods the Media
     hub uses (those historically dispatched leaf names only

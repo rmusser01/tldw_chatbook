@@ -17,6 +17,8 @@ from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactPreflightEntry,
@@ -503,6 +505,20 @@ ENHANCED_PICKER_COMPATIBILITY_TYPES = (EnhancedFileOpen, EnhancedFileSave)
 
 _LIBRARY_SCREEN_FILE = "tldw_chatbook/UI/Screens/library_screen.py"
 _COLLECTIONS_FILE = "tldw_chatbook/UI/Library_Modules/prompt_collections.py"
+#: Wave-6 task 2 moved 139 prompt-cluster methods off `LibraryScreen` into
+#: `LibraryPromptsController`; four of the edges below launch their modal
+#: from a body that now lives there, so discovery has to parse that file
+#: too or a repointed edge is simply never found (and the bidirectional
+#: assertion fails the other way).
+_PROMPTS_CONTROLLER_FILE = (
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py"
+)
+#: Wave-8 task 2 moved 185 notes-cluster methods off `LibraryScreen` into
+#: `LibraryNotesController`; two of the edges below launch their modal from a
+#: body that now lives there, so discovery has to parse that file too or a
+#: repointed edge is simply never found (and the bidirectional assertion fails
+#: the other way) -- the same repoint the prompts controller needed at wave 6.
+_NOTES_CONTROLLER_FILE = "tldw_chatbook/UI/Library_Modules/library_notes_controller.py"
 _FILE_NOTES_WORKSPACE_FILE = (
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py"
 )
@@ -518,6 +534,8 @@ class _OwnerScope:
 _SUPPORTED_OWNER_SCOPES = (
     _OwnerScope(_LIBRARY_SCREEN_FILE, "LibraryScreen"),
     _OwnerScope(_COLLECTIONS_FILE, "LibraryPromptCollectionsController"),
+    _OwnerScope(_PROMPTS_CONTROLLER_FILE, "LibraryPromptsController"),
+    _OwnerScope(_NOTES_CONTROLLER_FILE, "LibraryNotesController"),
     _OwnerScope(_FILE_NOTES_WORKSPACE_FILE, "LibraryFileNotesWorkspace"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "LibraryFileNotesGitPanel"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "PushDestinationAuthorizationDialog"),
@@ -542,7 +560,12 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         "create_local_workspace",
         WorkspaceCreateModal,
     ),
-    _edge(_LIBRARY_SCREEN_FILE, "LibraryScreen", "_export_library_note", FileSave),
+    _edge(
+        _NOTES_CONTROLLER_FILE,
+        "LibraryNotesController",
+        "_export_library_note",
+        FileSave,
+    ),
     _edge(
         _LIBRARY_SCREEN_FILE,
         "LibraryScreen",
@@ -574,14 +597,14 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         SkillTrustBootstrapModal,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _PROMPTS_CONTROLLER_FILE,
+        "LibraryPromptsController",
         "handle_library_prompts_import_browse",
         FileOpen,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _PROMPTS_CONTROLLER_FILE,
+        "LibraryPromptsController",
         "handle_library_prompt_history_restore",
         ConfirmationDialog,
     ),
@@ -592,28 +615,28 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         PromptVariablesDialog,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _PROMPTS_CONTROLLER_FILE,
+        "LibraryPromptsController",
         "_export_library_prompt",
         FileSave,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _PROMPTS_CONTROLLER_FILE,
+        "LibraryPromptsController",
         "_open_library_prompt_delete_confirmation",
         PromptDeleteConfirmationModal,
     ),
     _edge(
         _LIBRARY_SCREEN_FILE,
         "LibraryScreen",
-        "handle_library_notes_import",
+        "_push_library_note_import_picker",
         FileOpen,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
-        "handle_library_notes_sync_browse",
-        SelectDirectory,
+        _NOTES_CONTROLLER_FILE,
+        "LibraryNotesController",
+        "handle_library_notes_lasting_folder_requested",
+        FileOpen,
     ),
     _edge(
         _LIBRARY_SCREEN_FILE,
@@ -926,7 +949,7 @@ FILE_NOTES_MODAL_CONTRACTS = (
 )
 
 
-class _FileNotesModalHarness(App[None]):
+class _FileNotesModalHarness(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.results: list[object] = []

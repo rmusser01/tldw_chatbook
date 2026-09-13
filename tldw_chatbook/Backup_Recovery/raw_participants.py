@@ -163,13 +163,11 @@ def _types():
     from ..Chat_Grammars_Interop.local_chat_grammars_service import (
         LocalChatGrammarsService,
     )
-    from ..Chunking.chunking_templates import ChunkingTemplateManager
     from ..Feedback_Interop.local_feedback_service import LocalFeedbackService
 
     return {
         LocalFeedbackService: "feedback",
         LocalChatGrammarsService: "chat.grammars",
-        ChunkingTemplateManager: "chunking.templates",
     }
 
 
@@ -256,19 +254,10 @@ def _raw_participant(source):
             owner, selected = "ui.emoji_recents", emoji_picker._recent_emojis_path()
         elif type(source) in types:
             owner = types[type(source)]
-            selected = (
-                source.user_templates_dir
-                if owner == "chunking.templates"
-                else source.store_path
-            )
+            selected = source.store_path
         else:
             raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     selected = lexical_path(selected)
-    if owner == "chunking.templates":
-        from ..config import get_cli_data_dir
-
-        if selected != lexical_path(get_cli_data_dir() / "chunking_templates"):
-            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     with storage._lock:
         participant = _source_participants.get(source)
         if participant is None:
@@ -360,7 +349,7 @@ def _check(operation, path=None, *, writing=False):
                 raise bootstrap.RecoveryRequired("raw_native_scope_changed")
             if storage._pause is not None and hold is None:
                 raise bootstrap.RecoveryRequired("raw_native_scope_unqualified")
-    if state.route in {"config_data", "config_chat_dicts", "config_models"}:
+    if state.route in {"config_data", "config_default_root", "config_chat_dicts", "config_models"}:
         config_files.selection(state.source, state.route, state.selected)
         if state.source._CONFIG_GENERATION != state.config_generation:
             raise bootstrap.RecoveryRequired("config_directory_generation_changed")
@@ -437,35 +426,6 @@ def _selection(source, route, template, user_template, selected_read):
         ):
             raise bootstrap.RecoveryRequired("raw_source_not_supported")
         return lexical_path(source.store_path), installed, False
-    if route in {"template_directory", "template_save", "template_read"}:
-        from ..Chunking.chunking_templates import ChunkingTemplateManager
-
-        if not isinstance(source, ChunkingTemplateManager):
-            raise bootstrap.RecoveryRequired("raw_source_not_supported")
-        if route == "template_directory":
-            from ..config import get_cli_data_dir
-
-            return (
-                lexical_path(get_cli_data_dir() / "chunking_templates"),
-                installed,
-                True,
-            )
-        from ..config import get_cli_data_dir
-
-        owned_directory = lexical_path(get_cli_data_dir() / "chunking_templates")
-        directory = source.user_templates_dir if user_template else source.templates_dir
-        if route == "template_read":
-            selected = lexical_path(selected_read)
-            allowed = selected.parent == owned_directory
-            return selected, installed and allowed, False
-        name = template.name
-        if not name or Path(name).name != name or name in {".", ".."}:
-            raise ValueError("invalid_template_name")
-        return (
-            lexical_path(directory / f"{name}.json"),
-            installed and user_template and lexical_path(directory) == owned_directory,
-            False,
-        )
     from ..Widgets import emoji_picker
 
     if route != "emoji" or source is not emoji_picker:
@@ -601,12 +561,12 @@ def _scope(
                 if owned is not None
                 else ()
             )
-        if route in {"config_data", "config_chat_dicts", "config_models"}:
+        if route in {"config_data", "config_default_root", "config_chat_dicts", "config_models"}:
             directories += (selected,) if selected not in directories else ()
             if route == "config_data":
                 base = selected.parent
                 if (
-                    base == lexical_path(source._default_base_data_dir())
+                    base == lexical_path(source._selected_default_base_data_dir())
                     and base not in directories
                 ):
                     directories += (base,)
@@ -702,7 +662,7 @@ def _scope(
             temporaries=temporaries,
             config_generation=(
                 source._CONFIG_GENERATION
-                if route in {"config_data", "config_chat_dicts", "config_models"}
+                if route in {"config_data", "config_default_root", "config_chat_dicts", "config_models"}
                 else None
             ),
         )

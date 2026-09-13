@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
@@ -90,11 +90,15 @@ class ConsoleHarness(ConsolidatedCSSApp):
     # Hosts the real ChatScreen, so it needs the consolidated widget CSS the
     # real app loads (TASK-15450) -- otherwise every widget whose DEFAULT_CSS
     # moved into the generated sheets mounts unstyled here.
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        # This harness bypasses startup and directly mounts the ready Console.
+        self.app_instance._ui_ready = True
         await self.push_screen(ChatScreen(self.app_instance))
 
 
@@ -236,10 +240,10 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
             or CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in text
         )
         context_button = console.query_one("#console-context-rail-open", Button)
-        assert context_button.label == "Context->"
+        assert context_button.label == "Context ▸"
         assert context_button.tooltip == "Open Context rail"
         inspector_button = console.query_one("#console-inspector-rail-open", Button)
-        assert inspector_button.label == "<-Inspect"
+        assert inspector_button.label == "◂ Inspect"
         assert inspector_button.tooltip == "Open Inspector rail"
 
 
@@ -282,14 +286,14 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         await _wait_for_library_snapshot(screen, pilot)
 
         screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
 
         # Same screen instance, same rail + canvas shell -- the mode row
         # recomposed the canvas body in place rather than pushing a screen.
         assert _active_destination_screen(host) is screen
         assert (
             screen.query_one("#library-canvas")
-            in screen.query_one("#library-collections-panel").ancestors
+            in screen.query_one("#library-collections-reader-shell").ancestors
         )
         assert screen._library_selected_row_id == "browse-collections"
         assert screen.query_one("#library-row-browse-collections").has_class(

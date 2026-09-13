@@ -2,6 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-23
+- **Last amended:** 2026-08-24 (private Local Quick Note recovery proof)
+- **Status:** Proposed
+- **Date:** 2026-08-23
 - **Last amended:** 2026-08-23 (unsent draft recovery and extended-output owners)
 - **Task:** [TASK-21505](../tasks/task-21505%20-%20Design-Local-Server-Research-Workspace-and-Research-Runs-navigation.md)
 - **Design:** [Research Workspace design](../../Docs/superpowers/specs/2026-08-23-research-workspace-design.md)
@@ -12,6 +15,8 @@
   ownership), ADR-029 (local private data), ADR-031 (TUI keybindings), ADR-043
   (explicit rail preferences versus responsive collapse), ADR-068 (local
   research engine), ADR-070 (research run durability)
+  ownership), ADR-029 (local private data), ADR-031 (TUI keybindings), ADR-068
+  (local research engine), ADR-070 (research run durability)
 
 ## Context
 
@@ -97,6 +102,8 @@ payloads:
 - stable Local TTS history owns Audio Summary when available;
 - Local Mind Map, Timeline, Slides, and Data Table remain unavailable until a
   working canonical owner/editor exists;
+- specialist stores own future audio, slides, mind-map, timeline, and data-table
+  artifacts when implemented;
 - Research Interop owns Research Runs.
 
 The UI may normalize these as `WorkspaceOutputRef` values in memory. It does
@@ -110,6 +117,123 @@ server table/presentation/stable-audio owner first and a payload-free workspace
 artifact reference second; if no stable inspectable native owner is returned,
 the action is unavailable. Client-downloaded bytes are never a persistence
 receipt.
+
+Research ingestion first creates or reuses an item in the selected authority's
+general catalog and then associates its stable identity with the captured
+workspace. Local uses a Library item plus `WorkspaceMembership(role=source)`;
+Server uses a server Media item plus a server workspace-source row. The
+qualified association intent is durable across navigation and restart. It may
+never attach to the other authority or to the workspace visible when a late
+completion happens to arrive.
+
+The Library ingest-job store's schema v7 persists a `dispatch_held` eligibility
+barrier for this two-owner transaction. Research preparation writes a held,
+qualified queue row before returning; ordinary Library submissions remain
+unheld. Queue selectors, runner top-up, and restart restore cannot dispatch or
+prune a held row. Only after the matching source operation durably records its
+exact ingest job in the catalog `in_progress` stage may the app durably release
+the hold and dispatch through the selected Local or Server owner. Startup reads
+one bounded page of held rows and reconciles each independently. Ambiguous or
+transient operation-store answers retain both the hold and managed paste
+staging; missing, terminal, or authority-incompatible receipts settle the job
+durably before staging cleanup. This is an implementation of the existing
+qualified-intent owner decision, not a new content owner or sync boundary.
+
+A name-derived workspace keyword may be projected for search/display parity,
+but it is not the association or authority boundary: names and tags are
+editable and can drift. Removing a workspace association does not delete the
+canonical item. If catalog ingestion succeeds and association or indexing
+fails, the item remains in the general catalog and the failed stage is
+independently retryable.
+
+Local Quick Note creation is the narrow exception to create-then-associate
+ordering because Notes and the workspace registry are independent SQLite
+owners with no shared transaction. Before the canonical Notes write, WorkspaceDB
+claims a row in the dedicated `research_quick_note_receipts` ledger. The
+payload-free row binds every qualified authority axis, the Local workspace ID,
+canonical Notes user/client, a strictly validated app-minted UUID-v4 operation
+token, operation kind, deterministic owner-qualified Note UUID, random
+owner-minted proof, lease/claim token and expiry, a separate durable abandonment
+deadline, expected delete version, monotonic revision/timestamps, and bounded
+sanitized retry state. Every holder mutation compares the exact claim token,
+revision, and receipt identity; reclaim rotates the token before inspecting an
+owner, so an expired or recreated same-ID claim cannot be advanced by an older
+holder. Identity axes use an unambiguous length-prefixed encoding rather than
+delimiter joining. The row never enters `workspace_memberships`, Console
+context, or RAG scope, and it stores no title, body, tags, provenance, path, or
+URL. Consequently, identical tokens or delimiter-shaped identities cannot
+associate one user's or workspace's Note with another owner.
+
+The canonical Notes row, user keywords/provenance, and a private hashed recovery
+proof commit in one Notes-owner transaction. Notes schema v43 stores that proof
+only in `research_quick_note_owner_proofs`, keyed by canonical Note ID with an
+owner-bound foreign-key cascade and no sync, keyword, FTS, export, graph, or RAG
+trigger. The narrow recovery seam can only add, verify, or remove an exact
+Note/proof pair; it never lists or returns proof payloads. Create retry verifies
+the exact canonical title, body, tags, provenance, qualified identity, and
+private proof before advancing `pending` to `owner_committed`. One WorkspaceDB
+transaction then adds the authoritative `WorkspaceMembership(role="note")` and
+records `projection_committed`. Recovery next atomically removes the private
+proof from the Notes owner, verifies its absence, and only then consumes the
+exact receipt. Crashes at each boundary resume from the durable state.
+Deterministic UUID existence or a caller token alone is never proof of owner
+commit. Restart promotion requires the exact qualified receipt plus its private
+proof and canonical owner invariants, except that a `projection_committed`
+receipt may resume after its proof has already been removed.
+
+The genuine Notes v42→v43 migration recognizes only the exact historical marker
+shape: the case-sensitive `research-receipt-proof:` prefix followed by exactly
+64 lowercase hexadecimal characters. It backfills those linked proofs into the
+private table and removes only their keyword and note-keyword sync payloads and
+rows in the same version-guarded transaction. Prefix-adjacent user tags,
+including uppercase, non-hexadecimal, shorter, and longer values, retain their
+rows, links, sync history, and ordinary Library visibility. New writes never
+create an internal proof keyword, so Notes bodies, sync/export, list/search,
+graphs, RAG, Research tags, and logs cannot observe an owner proof.
+
+A pending create carries a short durable work lease and revision fence.
+Reconciliation does not inspect or clear it while the lease is live. Lease
+expiry makes the receipt eligible for a newly token-fenced recovery holder; it
+does not prove abandonment. A missing owner records sanitized backoff and is
+retained until the independently durable seven-day abandonment deadline, when
+the current holder may remove it by token/revision CAS. A writer delayed beyond
+the work lease may finish its Notes transaction; if another holder reclaimed
+the receipt, the stale transition fails and the durable owner remains
+recoverable rather than orphaned. Each receipt is isolated. Transient failures
+record only a bounded reason code, failure count, and exponential retry time;
+missing-owner retries do not become poison-blocked. Blocked/backoff rows are
+filtered before the bounded SQL limit so one poison row cannot starve later
+work. Startup processes one bounded owner-filtered global page, and workspace
+listing also reconciles one bounded page. The proof, lease token, note payload,
+tags, and provenance never enter logs, overlay state, or recovery copy.
+
+Local Quick Note deletion records a durable receipt before the optimistic Notes
+soft delete and binds its expected owner version. Reconciliation inspects the
+canonical owner before projection cleanup: an active row at the exact expected
+version is deleted again through the versioned owner; a changed or restored
+active row blocks as a conflict and retains every projection; only an absent or
+tombstoned owner permits cleanup. One WorkspaceDB transaction then removes
+every membership role for that Note across all workspaces, removes matching
+Note items from every stored RAG scope, and consumes the exact token-fenced
+delete receipt. Other independently claimed receipts settle through their own
+token/revision fences. This ABA-safe rule preserves the existing canonical-delete
+semantics: a Local Note is one shared general-Library record, so deleting it
+invalidates every workspace projection rather than pretending one workspace
+owns a private copy. An interrupted cleanup resumes at startup even when the
+Note no longer appears in the UI.
+
+WorkspaceDB schema v6 keeps migration decisions fail-closed without inferring
+ownership from a Note ID or title. Genuine v3→v4 history removes only the
+explicit legacy `role="note_pending"` representation. V4→v5 replaces the
+unreleased proof-less receipt ledger but preserves every membership, including
+blank `research-note-*` rows, because WorkspaceDB cannot consult the independent
+Notes owner to classify them safely. V5→v6 preserves those memberships and all
+safe v5 receipt rows while adding abandonment and proof-cleanup recovery state.
+Runtime abandonment compares parsed SQLite Julian instants rather than raw
+timestamp text, so historical space-separated UTC values and runtime ISO/offset
+values share the same exact seven-day boundary. No migration heuristic promotes
+or deletes an ordinary membership.
+sharing, and operation APIs.
 
 Research ingestion first creates or reuses an item in the selected authority's
 general catalog and then associates its stable identity with the captured
@@ -135,6 +259,8 @@ qualified workspace, and payload-free append-stage recovery receipts in one
 private atomic device overlay keyed by data source, server/profile, principal,
 and workspace ID. A successful canonical chat append clears the draft; sent
 transcript bodies are never mirrored into the overlay.
+Deep-Research launch context, in one private atomic device overlay keyed by
+data source, server/profile, principal, and workspace ID.
 
 The overlay does not create remote workspace records in the local registry and
 is never represented as uploaded, shared, or cross-device state. UI copy says
@@ -283,6 +409,10 @@ preserves control and provenance.
 - Ingested sources remain discoverable in the selected authority's general
   catalog while stable workspace associations provide eligibility and
   provenance.
+- Complete server parity remains discoverable without overwhelming the primary
+  flow.
+- Side-pane controls share the app's tested preference, responsive-collapse,
+  and focus behavior while using the requested compact ASCII labels.
 - Complete server parity remains discoverable without overwhelming the primary
   flow.
 - Side-pane controls share the app's tested preference, responsive-collapse,

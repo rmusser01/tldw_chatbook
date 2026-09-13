@@ -1,7 +1,13 @@
 """Serializable native Console task-resume state."""
 
 from dataclasses import dataclass
+import re
 from typing import Any
+
+
+_WATCHLISTS_OPERATION_ID = re.compile(
+    r"^local:(?:watchlist_run|briefing):[1-9][0-9]*$"
+)
 
 
 @dataclass
@@ -27,8 +33,20 @@ class TaskResumeState:
     # (also dropped below, as of TASK-1130) goes through the identical
     # architecture and is no longer an asymmetric exception.
     pending_skill_script: dict[str, Any] | None = None
+    # PRD Feature A: the live ask_user round's card payload. Same
+    # architecture as the two skill-confirm fields above -- fully live
+    # within one screen instance, never repopulated by `from_dict` (the
+    # round is a worker thread blocked on the OLD controller's Event).
+    pending_question: dict[str, Any] | None = None
+    # agent-chat-fork-spawn task-6: same live-only architecture as the two
+    # skill-confirm fields above -- `ConsoleSkillController.
+    # _set_console_pending_chat_create` mutates it while a
+    # `ConsoleChatController` round is armed, and `from_dict` below never
+    # repopulates it for the same dead-card reason.
+    pending_chat_create: dict[str, Any] | None = None
     diff_summary: str = ""
     next_action: str = ""
+    followed_watchlists_operations: tuple[str, ...] = ()
 
     def has_resume_content(self) -> bool:
         """Return whether the resume panel should be visible.
@@ -59,6 +77,17 @@ class TaskResumeState:
         """Return whether a skill-script confirmation should be shown."""
         return bool(self.pending_skill_script)
 
+    def has_pending_question(self) -> bool:
+        """Return whether an ask_user question card should be shown.
+
+        Returns:
+            ``True`` when a live question payload is set.
+        """
+        return bool(self.pending_question)
+    def has_pending_chat_create(self) -> bool:
+        """Return whether a chat-creation confirmation should be shown."""
+        return bool(self.pending_chat_create)
+
     def to_dict(self) -> dict[str, Any]:
         """Return the serializable task-resume payload."""
         return {
@@ -67,8 +96,13 @@ class TaskResumeState:
             "pending_approval": self.pending_approval,
             "pending_skill_install": self.pending_skill_install,
             "pending_skill_script": self.pending_skill_script,
+            "pending_question": self.pending_question,
+            "pending_chat_create": self.pending_chat_create,
             "diff_summary": self.diff_summary,
             "next_action": self.next_action,
+            "followed_watchlists_operations": list(
+                self.followed_watchlists_operations
+            ),
         }
 
     @classmethod
@@ -109,6 +143,12 @@ class TaskResumeState:
         ``Tests/UI/test_console_skill_install_confirm.py::
         test_restored_state_drops_the_pending_install_so_no_dead_card_appears``,
         which pin this exact contract for each field).
+        agent-chat-fork-spawn task-6 added ``pending_chat_create`` to the
+        same drop for the same reason: its round lives in the controller's
+        ``_pending_chat_create_rounds`` and is strict-matched by
+        ``resolve_pending_chat_create`` (pinned by
+        ``Tests/Chat/test_chat_create_confirm_card.py::
+        test_restored_state_drops_the_pending_chat_create_so_no_dead_card_appears``).
 
         TASK-1130 also re-verified TASK-1051's premise still held before
         applying it to ``pending_skill_install``: no reconnection seam has
@@ -146,17 +186,31 @@ class TaskResumeState:
             value = data.get(key)
             return dict(value) if isinstance(value, dict) else None
 
+        followed = data.get("followed_watchlists_operations")
+        followed_ids = tuple(
+            dict.fromkeys(
+                value
+                for value in followed
+                if isinstance(value, str)
+                and _WATCHLISTS_OPERATION_ID.fullmatch(value) is not None
+            )
+        ) if isinstance(followed, list) else ()
+
         return cls(
             summary=_text("summary"),
             last_step=_text("last_step"),
             pending_approval=_payload("pending_approval"),
             # Deliberately NOT `_payload("pending_skill_install")` (as of
             # TASK-1130) / NOT `_payload("pending_skill_script")` (as of
-            # TASK-1051) -- see the docstring above for why restoring
-            # either would only ever produce a dead card, never a
-            # functional one.
+            # TASK-1051) / NOT `_payload("pending_chat_create")`
+            # (agent-chat-fork-spawn task-6) -- see the docstring above
+            # for why restoring any of them would only ever produce a
+            # dead card, never a functional one.
             pending_skill_install=None,
             pending_skill_script=None,
+            pending_question=None,
+            pending_chat_create=None,
             diff_summary=_text("diff_summary"),
             next_action=_text("next_action"),
+            followed_watchlists_operations=followed_ids,
         )

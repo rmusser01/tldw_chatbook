@@ -52,9 +52,7 @@ def _enable_write_file(monkeypatch):
         config_module,
         "get_cli_setting",
         lambda section, key=None, default=None: (
-            True
-            if section == "tools" and key == "write_file_enabled"
-            else default
+            True if section == "tools" and key == "write_file_enabled" else default
         ),
     )
 
@@ -117,6 +115,8 @@ def _tool_rows(store, session):
         m
         for m in store.messages_for_session(session.id)
         if m.role is ConsoleMessageRole.TOOL
+        and m.activity_presentation is not None
+        and m.activity_presentation.kind == "tool"
     ]
 
 
@@ -176,9 +176,7 @@ def test_non_diff_tool_marker_has_no_diff(tmp_path, monkeypatch, diff_execute):
     assert "calculator" in tool_rows[0].content
 
 
-def test_plain_write_result_without_capture_has_no_diff(
-    tmp_path, monkeypatch
-):
+def test_plain_write_result_without_capture_has_no_diff(tmp_path, monkeypatch):
     """A write result that did not capture contents yields no diff row data."""
     _enable_write_file(monkeypatch)
 

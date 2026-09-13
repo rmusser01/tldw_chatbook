@@ -47,7 +47,10 @@ from tldw_chatbook.TTS.audio_cpp_contract import validate_pcm16_wav
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
     project_audio_cpp_settings_config,
 )
-from tldw_chatbook.TTS.effective_settings import TTSSelectionSource
+from tldw_chatbook.TTS.effective_settings import (
+    TTSEffectiveResolutionError,
+    TTSSelectionSource,
+)
 from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_config,
     openai_internal_model_id,
@@ -420,6 +423,7 @@ class STTSSettingsSaveEvent(Message):
         reply_to: object | None = None,
         commit_defaults_after_handoff: bool = False,
         publication_lease: TTSSettingsPublicationLease | None = None,
+        notify_outcome: bool = True,
     ) -> None:
         super().__init__()
         if request_id is not None:
@@ -429,6 +433,8 @@ class STTSSettingsSaveEvent(Message):
                 raise ValueError("TTS settings request ID must be nonnegative")
         if type(commit_defaults_after_handoff) is not bool:
             raise TypeError("TTS default activation intent must be boolean")
+        if type(notify_outcome) is not bool:
+            raise TypeError("TTS settings outcome announcement must be boolean")
         if commit_defaults_after_handoff and preferences is None:
             raise ValueError("TTS default activation requires preferences")
         copied_deletes = tuple(delete_setting_keys)
@@ -443,6 +449,13 @@ class STTSSettingsSaveEvent(Message):
         self.reply_to = reply_to
         self.commit_defaults_after_handoff = commit_defaults_after_handoff
         self.publication_lease = publication_lease
+        # task-32266: a requester that renders the publication outcome in its
+        # own surface (the first-run wizard's Voice step) opts out of the
+        # app-level toast. Textual docks toasts bottom-right of the CURRENT
+        # screen, so a save the user never explicitly asked for lands over
+        # whatever the wizard has advanced to -- including the Summary's
+        # docked exit actions.
+        self.notify_outcome = notify_outcome
 
     def _publication_started(self) -> None:
         """Drop event ownership after the service returns a retained ticket."""
@@ -1688,6 +1701,14 @@ class STTSEventHandler:
                     error.code,
                     error.retryable,
                 )
+            elif isinstance(error, TTSEffectiveResolutionError):
+                logger.error(
+                    "TTS generation failed (resolution_code={}, "
+                    "resolution_axis={}, resolution_source={})",
+                    error.code,
+                    error.axis,
+                    error.source.value if error.source is not None else "provider",
+                )
             else:
                 logger.error(
                     "TTS generation failed ({})",
@@ -1887,6 +1908,8 @@ class STTSEventHandler:
 
     @staticmethod
     def _generation_error_copy(error: Exception) -> str:
+        if isinstance(error, TTSEffectiveResolutionError):
+            return error.recovery_message()
         if isinstance(error, TTSOperationError):
             parts = [str(error)]
             recovery_copy = _RECOVERY_ACTION_COPY.get(error.recovery_action or "")
@@ -2124,10 +2147,11 @@ class STTSEventHandler:
                     event,
                     activation_intent=activation_intent,
                 )
-            self._notify_settings_publication(
-                publication,
-                activation_outcome=activation_outcome,
-            )
+            if event.notify_outcome:
+                self._notify_settings_publication(
+                    publication,
+                    activation_outcome=activation_outcome,
+                )
             self._reply_settings_save(
                 event,
                 persisted=publication.persistence.file_replaced,

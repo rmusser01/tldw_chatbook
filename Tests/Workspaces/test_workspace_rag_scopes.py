@@ -147,31 +147,36 @@ class TestCorruptPayloadGuard:
                 (workspace_id, payload, "t1"),
             )
 
-    def test_malformed_json_payload_reads_as_none(self, registry, workspace_id):
+    def _assert_explicit_empty(self, registry, workspace_id):
+        assert registry.get_workspace_scope(workspace_id) == RagScope(
+            items=(), updated_at="t1", empty_is_scoped=True
+        )
+
+    def test_malformed_json_payload_fails_closed(self, registry, workspace_id):
         self._write_raw_payload(registry, workspace_id, "{not valid json")
 
-        assert registry.get_workspace_scope(workspace_id) is None
+        self._assert_explicit_empty(registry, workspace_id)
 
-    def test_non_dict_json_payload_reads_as_none(self, registry, workspace_id):
+    def test_non_dict_json_payload_fails_closed(self, registry, workspace_id):
         self._write_raw_payload(registry, workspace_id, '["not", "a", "dict"]')
 
-        assert registry.get_workspace_scope(workspace_id) is None
+        self._assert_explicit_empty(registry, workspace_id)
 
-    def test_wrong_version_payload_reads_as_none(self, registry, workspace_id):
+    def test_wrong_version_payload_fails_closed(self, registry, workspace_id):
         self._write_raw_payload(
             registry,
             workspace_id,
             json.dumps({"version": 99, "items": [], "updated_at": "t1"}),
         )
 
-        assert registry.get_workspace_scope(workspace_id) is None
+        self._assert_explicit_empty(registry, workspace_id)
 
-    def test_missing_items_key_reads_as_none(self, registry, workspace_id):
+    def test_missing_items_key_fails_closed(self, registry, workspace_id):
         self._write_raw_payload(
             registry, workspace_id, json.dumps({"version": 1, "updated_at": "t1"})
         )
 
-        assert registry.get_workspace_scope(workspace_id) is None
+        self._assert_explicit_empty(registry, workspace_id)
 
 
 class TestWorkspaceDeletionCascades:

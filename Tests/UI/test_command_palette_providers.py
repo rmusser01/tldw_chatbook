@@ -8,6 +8,8 @@
 # - All command palette provider classes must be defined in app.py
 #
 # Imports
+import time
+
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 from typing import List
@@ -222,6 +224,15 @@ class TestThemeProvider:
             assert len(theme_specific_hits) >= 1
 
     @pytest.mark.asyncio
+    async def test_search_bare_theme_name_shows_switch_command(self, theme_provider):
+        """A registered theme is discoverable by typing just its name (PR #2374)."""
+        hits = []
+        async for hit in theme_provider.search("camono"):
+            hits.append(hit)
+
+        assert any("Switch to Camono" in str(h.text) for h in hits)
+
+    @pytest.mark.asyncio
     async def test_search_filters_themes_correctly(self, theme_provider):
         """Test that theme search filters work correctly."""
         test_keywords = ["dark", "light", "gruvbox", "solarized", "dracula"]
@@ -318,12 +329,12 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
 
-        # task-423: 13 destination commands plus the labeled Library
+        # One command per current destination plus the labeled Library
         # sub-route deep links (currently just Skills).
         expected = len(TabNavigationProvider.command_palette_tab_ids()) + len(
             TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
         )
-        assert len(hits) == expected == 14
+        assert len(hits) == expected
         tab_texts = [hit.text for hit in hits]
         assert any("Console" in text for text in tab_texts)
         assert any("Library" in text for text in tab_texts)
@@ -350,13 +361,22 @@ class TestTabNavigationProvider:
         )
         from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-        app = _build_test_app()
+        # task-31263: the app boots the real splash screen (7s wall-clock)
+        # in this factory, and a bare pause loop can spin through all its
+        # iterations in less wall time than that under host load -- the
+        # setup then flakes with "did not finish initial navigation".
+        # Disable the splash for this test and bound the waits by time.
+        app = _build_test_app(
+            config_overrides={"splash_screen": {"enabled": False}},
+        )
         app.app_config["_first_run"] = False
+        app.app_config.setdefault("splash_screen", {})["enabled"] = False
         app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
             "lifecycle"
         ] = "starter"
         async with app.run_test(size=(170, 48)) as pilot:
-            for _ in range(200):
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
                 await pilot.pause()
                 if getattr(app, "_initial_screen_pushed", False):
                     break
@@ -377,7 +397,8 @@ class TestTabNavigationProvider:
             )
 
             command.command()
-            for _ in range(200):
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
                 await pilot.pause()
                 if isinstance(app.screen, LibraryScreen) and app.screen.query(
                     "#library-skills-canvas"

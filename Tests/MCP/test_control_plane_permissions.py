@@ -12,7 +12,9 @@ the Test Tool button, no audit emission, kill switch deliberately ignored).
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -22,15 +24,30 @@ from tldw_chatbook.Agents.local_tool_provider import (
 )
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.MCP.execution_log import MCPExecutionLog
+from tldw_chatbook.MCP.hub_test_execution import (
+    ToolTestAdmissionBlocked,
+    ToolTestAdmissionPreview,
+    ToolTestAdmissionStale,
+    ToolTestPreviewRegistry,
+    authority_fingerprint,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_store import LocalMCPStore
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_TOOL_SERVER_KEY,
+    EffectiveToolState,
     MCPPermissionStore,
     definition_hash,
+    profile_policy_digest,
 )
+from tldw_chatbook.Tool_Packs.binding import ProfileMutationError
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
+)
+from tldw_chatbook.Utils.filesystem_identity import (
+    DirectoryChain,
+    DirectoryIdentity,
+    capture_directory_chain,
 )
 
 
@@ -53,6 +70,28 @@ def _tool(
         stale=False,
         executable=True,
     )
+
+
+def _imported_profile() -> dict:
+    profile = {
+        "global_default": "ask",
+        "servers": {},
+        "profile_kind": "tool_pack_imported",
+        "tool_pack_lifecycle": {
+            "schema": "tldw.tool-pack-lifecycle/v1",
+            "origin": "imported",
+            "pack_digest": "b" * 64,
+            "imported_at": "2026-08-31T00:00:00Z",
+            "first_bind_confirmation_required": True,
+            "receipt_id": "tp-" + "c" * 32,
+            "receipt_digest": "d" * 64,
+            "counts": {"matched": 0, "omitted": 0, "pending_deny": 0},
+            "policy_digest": "0" * 64,
+            "revision": 1,
+        },
+    }
+    profile["tool_pack_lifecycle"]["policy_digest"] = profile_policy_digest(profile)
+    return profile
 
 
 def _service(tmp_path: Path) -> tuple[UnifiedMCPControlPlaneService, LocalMCPStore]:
@@ -119,6 +158,182 @@ def test_permission_store_is_none_when_local_service_has_no_store():
     service = _service_without_store()
 
     assert service.permission_store is None
+
+
+# -- profile-scoped session approvals ---------------------------------------
+
+
+def test_session_approvals_are_isolated_by_exact_profile_id(tmp_path):
+    service, _store = _service(tmp_path)
+
+    service.approve_for_session("local:docs", "search", profile_id="research")
+
+    assert service.is_session_approved("local:docs", "search", profile_id="research")
+    assert not service.is_session_approved("local:docs", "search", profile_id="default")
+    assert not service.is_session_approved("local:docs", "search", profile_id="other")
+
+
+def test_profile_scoped_session_clear_preserves_other_profiles(tmp_path):
+    service, _store = _service(tmp_path)
+    service.approve_for_session("local:docs", "search", profile_id="research")
+    service.approve_for_session("local:docs", "search", profile_id="other")
+
+    service.clear_session_approvals(profile_id="research")
+
+    assert not service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+    assert service.is_session_approved("local:docs", "search", profile_id="other")
+
+
+def test_no_argument_session_clear_remains_clear_all(tmp_path):
+    service, _store = _service(tmp_path)
+    service.approve_for_session("local:docs", "search")
+    service.approve_for_session("local:docs", "search", profile_id="research")
+
+    service.clear_session_approvals()
+
+    assert not service.is_session_approved("local:docs", "search")
+    assert not service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+
+
+# -- task-32291: session approvals are reviewable and revocable --------------
+
+
+def test_session_approvals_can_be_listed(tmp_path):
+    """AC#1: the in-memory grants are enumerable -- the review surface has
+    something to render. Sorted, and scoped to the asked-for profile."""
+    service, _store = _service(tmp_path)
+    service.approve_for_session("local:docs", "search")
+    service.approve_for_session(BUILTIN_TOOL_SERVER_KEY, "calculator")
+    service.approve_for_session("local:docs", "write", profile_id="research")
+
+    assert service.list_session_approvals() == [
+        (BUILTIN_TOOL_SERVER_KEY, "calculator"),
+        ("local:docs", "search"),
+    ]
+    assert service.list_session_approvals(profile_id="research") == [
+        ("local:docs", "write")
+    ]
+
+
+def test_revoking_a_session_approval_makes_the_next_call_ask_again(tmp_path):
+    """AC#2: revoke drops exactly that grant -- `is_session_approved()` (the
+    read every provider's short-circuit uses) goes False, so the next call
+    falls through to the approval card again."""
+    service, _store = _service(tmp_path)
+    service.approve_for_session("local:docs", "search")
+    service.approve_for_session("local:docs", "write")
+
+    assert service.revoke_session_approval("local:docs", "search") is True
+
+    assert service.is_session_approved("local:docs", "search") is False
+    assert service.is_session_approved("local:docs", "write") is True
+    assert service.list_session_approvals() == [("local:docs", "write")]
+
+
+def test_revoking_an_unheld_session_approval_reports_false(tmp_path):
+    service, _store = _service(tmp_path)
+    service.approve_for_session("local:docs", "search", profile_id="research")
+
+    # Never granted at all, and granted under a DIFFERENT profile: both are
+    # "nothing to revoke here", not a silent success.
+    assert service.revoke_session_approval("local:docs", "fetch") is False
+    assert service.revoke_session_approval("local:docs", "search") is False
+    assert service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+
+
+def test_session_approval_revalidates_profile_digest_under_fence(tmp_path):
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("research")
+    profile = store.read_snapshot_strict().payload["profiles"]["research"]
+    digest = profile_policy_digest(profile)
+
+    service.approve_for_session(
+        "local:docs",
+        "search",
+        profile_id="research",
+        expected_profile_digest=digest,
+    )
+    assert service.is_session_approved("local:docs", "search", profile_id="research")
+
+    store.set_global_default("deny", profile_id="research")
+    with pytest.raises(ProfileMutationError, match="stale_profile"):
+        service.approve_for_session(
+            "local:docs",
+            "write",
+            profile_id="research",
+            expected_profile_digest=digest,
+        )
+    assert not service.is_session_approved("local:docs", "write", profile_id="research")
+
+
+def test_profile_setters_forward_digest_cas_without_touching_default(tmp_path):
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("research")
+    digest = profile_policy_digest(
+        store.read_snapshot_strict().payload["profiles"]["research"]
+    )
+
+    service.set_server_default(
+        "local:docs",
+        "deny",
+        profile_id="research",
+        expected_profile_digest=digest,
+    )
+
+    payload = store.load()
+    assert payload["profiles"]["research"]["servers"]["local:docs"]["default"] == "deny"
+    assert "local:docs" not in payload["profiles"]["default"]["servers"]
+
+
+def test_session_and_persistent_boundaries_reject_stale_imported_revision(tmp_path):
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    snapshot = store.read_snapshot_strict()
+    store.install_profile_if_absent(
+        "research",
+        _imported_profile(),
+        expected_generation=snapshot.generation,
+        max_profiles=128,
+        max_store_bytes=8 * 1024 * 1024,
+    )
+    initial = store.read_snapshot_strict().payload["profiles"]["research"]
+    store.set_global_default(
+        "deny",
+        profile_id="research",
+        expected_profile_digest=profile_policy_digest(initial),
+        expected_revision=1,
+    )
+    current = store.read_snapshot_strict().payload["profiles"]["research"]
+    current_digest = profile_policy_digest(current)
+    assert current["tool_pack_lifecycle"]["revision"] == 2
+
+    with pytest.raises(ProfileMutationError, match="stale_revision"):
+        service.approve_for_session(
+            "local:docs",
+            "search",
+            profile_id="research",
+            expected_profile_digest=current_digest,
+            expected_revision=1,
+        )
+    with pytest.raises(ProfileMutationError, match="stale_revision"):
+        service.set_server_default(
+            "local:docs",
+            "allow",
+            profile_id="research",
+            expected_profile_digest=current_digest,
+            expected_revision=1,
+        )
+    assert not service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
 
 
 # -- effective_tool_states: no-store fallback --------------------------------
@@ -273,7 +488,7 @@ def test_effective_tool_states_downgrade_audit_survives_execution_log_failure(
     tool = _tool(name="search")
     permission_store = service.permission_store
     permission_store.set_tool_state(
-        "local:demo", "search", "allow", definition_hash="stale-hash"
+        "local:demo", "search", "allow", definition_hash="a" * 64
     )
 
     result = service.effective_tool_states([tool])
@@ -291,7 +506,7 @@ def test_set_tool_state_allow_computes_and_stores_definition_hash_and_clears_mar
     service, _store = _service(tmp_path)
     permission_store = service.permission_store
     permission_store.set_tool_state(
-        "local:demo", "search", "allow", definition_hash="stale-hash"
+        "local:demo", "search", "allow", definition_hash="a" * 64
     )
     permission_store.mark_config_changed("local:demo", "search")
     tool = _tool(name="search", description="Search docs")
@@ -456,7 +671,7 @@ def test_gate_tool_test_does_not_emit_audit_record_on_fresh_mismatch(tmp_path):
     service, store = _service(tmp_path)
     tool = _tool(name="search")
     service.permission_store.set_tool_state(
-        "local:demo", "search", "allow", definition_hash="stale-hash"
+        "local:demo", "search", "allow", definition_hash="a" * 64
     )
 
     result = service.gate_tool_test(tool)
@@ -504,6 +719,20 @@ def test_gate_tool_test_by_key_ask_passes_through(tmp_path):
     assert result.state == "ask"
 
 
+def test_gate_tool_test_by_key_resolves_only_the_selected_profile(tmp_path):
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("research")
+    store.set_tool_state("local:demo", "search", "deny", profile_id="research")
+    store.set_tool_state("local:demo", "search", "ask")
+
+    named = service.gate_tool_test_by_key("local:demo", "search", profile_id="research")
+    default = service.gate_tool_test_by_key("local:demo", "search")
+
+    assert named.state == "deny"
+    assert default.state == "ask"
+
+
 def test_gate_tool_test_by_key_allow_downgrades_to_ask_without_live_tool(tmp_path):
     """The core I1 fix: an explicit "allow" resolved WITHOUT a live
     `HubTool` to hash-check must never be trusted as-is -- this is what
@@ -527,7 +756,7 @@ def test_gate_tool_test_by_key_allow_downgrades_to_ask_without_live_tool(tmp_pat
 def test_gate_tool_test_by_key_does_not_emit_audit_record(tmp_path):
     service, store = _service(tmp_path)
     service.permission_store.set_tool_state(
-        "local:demo", "search", "allow", definition_hash="stale-hash"
+        "local:demo", "search", "allow", definition_hash="a" * 64
     )
 
     service.gate_tool_test_by_key("local:demo", "search")
@@ -694,3 +923,687 @@ def test_todo_replacement_tool_allow_requires_current_definition_hash(
     assert fresh.origin == "tool_override"
     assert fresh.config_changed is False
     assert fresh.risk_floored is False
+
+
+# -- workspace assistant defaults (Task 6): named-profile resolution ---------
+#
+# Task 5 gave the store named permission profiles (profile-major chains:
+# the named profile's tool/server/global levels settle before the default
+# profile's). Task 6 threads `profile_id` through this service funnel and
+# adds the `gate_tool_test_for_profile` alias Task 7's Console closure
+# consumes. Every keyword defaults to `"default"` -- byte-identical to the
+# single-profile behavior the tests above pin.
+
+
+def test_gate_tool_test_for_profile_respects_named_profile(tmp_path):
+    """The Console's per-workspace gate seam: a deny recorded only in the
+    named profile is visible through `gate_tool_test_for_profile` while
+    the default-profile `gate_tool_test` call is unchanged."""
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("ws-w-1")
+    store.set_tool_state("local:__local__", "fs_write", "deny", profile_id="ws-w-1")
+    hub = _tool(server_key="local:__local__", name="fs_write")
+
+    assert service.gate_tool_test_for_profile(hub, "ws-w-1").state == "deny"
+    assert service.gate_tool_test(hub).state != "deny"
+
+
+def test_effective_tool_states_named_profile_shadows_and_inherits(tmp_path):
+    """Batch resolution threads `profile_id`: the named profile's tool
+    override shadows the default profile's, and tools the named profile
+    leaves unset inherit from the default profile (profile-major chain)."""
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    shadowed = _tool(name="search", server_key="local:demo")
+    inherited = _tool(name="fetch", server_key="local:other")
+    store.ensure_profile("ws-w-1")
+    store.set_tool_state("local:demo", "search", "deny", profile_id="ws-w-1")
+    store.set_tool_state(
+        "local:demo",
+        "search",
+        "allow",
+        definition_hash=definition_hash(shadowed.description, shadowed.input_schema),
+    )
+
+    named = service.effective_tool_states([shadowed, inherited], profile_id="ws-w-1")
+    assert named[("local:demo", "search")].state == "deny"
+    assert named[("local:demo", "search")].origin == "tool_override"
+    # Nothing in the named profile for this tool: inherit from default.
+    assert named[("local:other", "fetch")].state == "ask"
+    assert named[("local:other", "fetch")].origin == "global_default"
+
+    # The default-profile call is untouched by the named profile's data.
+    default = service.effective_tool_states([shadowed, inherited])
+    assert default[("local:demo", "search")].state == "allow"
+
+
+def test_effective_tool_states_named_profile_rug_pull_marks_named_entry(tmp_path):
+    """The downgrade audit writes its `config_changed` marker into the
+    profile the resolution ran under, not the default profile."""
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("ws-w-1")
+    store.set_tool_state(
+        "local:demo",
+        "search",
+        "allow",
+        profile_id="ws-w-1",
+        definition_hash="a" * 64,
+    )
+    changed_tool = _tool(name="search", description="Search docs AND delete them")
+
+    result = service.effective_tool_states([changed_tool], profile_id="ws-w-1")
+
+    assert result[("local:demo", "search")].state == "ask"
+    assert result[("local:demo", "search")].config_changed is True
+    payload = store.load()
+    named_entry = payload["profiles"]["ws-w-1"]["servers"]["local:demo"]["tools"][
+        "search"
+    ]
+    assert named_entry.get("config_changed") is True
+    assert "local:demo" not in payload["profiles"]["default"]["servers"]
+
+
+def test_set_tool_state_allow_hashes_under_named_profile(tmp_path):
+    """The service's own hash computation (for `allow` writes) follows the
+    `profile_id` too: the named profile's entry carries the definition
+    hash and resolves fresh-allow without a rug-pull downgrade."""
+    service, _store = _service(tmp_path)
+    service.permission_store.ensure_profile("ws-w-1")
+    tool = _tool(name="search")
+
+    service.set_tool_state(
+        "local:demo", "search", "allow", tool=tool, profile_id="ws-w-1"
+    )
+
+    entry = service.permission_store.load()["profiles"]["ws-w-1"]["servers"][
+        "local:demo"
+    ]["tools"]["search"]
+    assert entry == {
+        "state": "allow",
+        "definition_hash": definition_hash(tool.description, tool.input_schema),
+    }
+    assert service.gate_tool_test(tool, profile_id="ws-w-1").state == "allow"
+
+
+def test_set_server_and_global_defaults_write_to_named_profile(tmp_path):
+    """`set_server_default`/`set_global_default` thread `profile_id` to the
+    store: the named profile receives the write, the default profile does
+    not."""
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("ws-w-1")
+
+    service.set_server_default("local:other", "deny", profile_id="ws-w-1")
+    service.set_global_default("ask", profile_id="ws-w-1")
+
+    payload = store.load()
+    named = payload["profiles"]["ws-w-1"]
+    assert named["servers"]["local:other"]["default"] == "deny"
+    assert named["global_default"] == "ask"
+    assert payload["profiles"]["default"]["servers"] == {}
+
+
+# -- immutable Hub Test Tool admission --------------------------------------
+
+
+def _install_external_tool(service, tool: HubTool, state: dict) -> None:
+    def _catalog():
+        if not state.get("present", True):
+            return []
+        profile_id = state.get("profile_id", tool.server_key.split(":", 1)[1])
+        return [
+            {
+                "profile_id": profile_id,
+                "is_connected": True,
+                "discovery_snapshot": {
+                    "tools": [
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "inputSchema": tool.input_schema,
+                        }
+                    ]
+                },
+            }
+        ]
+
+    service.local_service.get_external_servers = _catalog
+
+
+async def _assert_consumed_without_second_audit(
+    service: UnifiedMCPControlPlaneService,
+    store: LocalMCPStore,
+    nonce: str,
+) -> None:
+    records_before_reuse = _permission_log_records(store)
+    reused = await service.execute_prepared_hub_test(nonce, "run", {})
+    assert isinstance(reused, ToolTestAdmissionStale)
+    assert reused.reason == "preview_unavailable"
+    assert reused.refreshed_preview is None
+    assert _permission_log_records(store) == records_before_reuse
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rendered_gate", "fresh_mode", "intent", "expected_refreshed_gate"),
+    [
+        ("allow", "off", "run", "deny"),
+        ("ask", "off", "approve_once", "deny"),
+        ("ask", "unresolved", "approve_once", "unresolved"),
+        ("ask", "error", "approve_once", "unresolved"),
+    ],
+)
+async def test_prepared_hub_gate_races_consume_and_refresh_without_dispatch(
+    tmp_path,
+    rendered_gate,
+    fresh_mode,
+    intent,
+    expected_refreshed_gate,
+):
+    service, store = _service(tmp_path)
+    tool = _tool()
+    state = {"gate": rendered_gate}
+    _install_external_tool(service, tool, state)
+
+    def _gate(_tool):
+        mode = state["gate"]
+        if mode == "error":
+            raise RuntimeError("permission store unavailable")
+        if mode == "unresolved":
+            return EffectiveToolState(state="ask", origin="gate_error")
+        return EffectiveToolState(
+            state="deny" if mode == "off" else mode,
+            origin="tool_override",
+        )
+
+    service.gate_tool_test = _gate
+    nonlocal_handler = AsyncMock(return_value={"should": "not run"})
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service.test_hub_tool = nonlocal_handler
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+    state["gate"] = fresh_mode
+
+    result = await service.execute_prepared_hub_test(preview.nonce, intent, {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "gate_changed"
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == expected_refreshed_gate
+    nonlocal_handler.assert_not_awaited()
+    local_handler.assert_not_awaited()
+    records = _permission_log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == "gate_changed"
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_rendered_ask_run_is_blocked_consumed_and_refreshed(
+    tmp_path,
+):
+    service, store = _service(tmp_path)
+    tool = _tool()
+    _install_external_tool(service, tool, {})
+    handler = AsyncMock(return_value={"should": "not run"})
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service.test_hub_tool = handler
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionBlocked)
+    assert result.reason == "intent_mismatch"
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == "ask"
+    handler.assert_not_awaited()
+    local_handler.assert_not_awaited()
+    records = _permission_log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == "intent_mismatch"
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
+async def test_prepared_nonlocal_invalid_intent_refreshes_off_the_ui_loop(
+    tmp_path, monkeypatch
+):
+    service, _store = _service(tmp_path)
+    tool = _tool()
+    _install_external_tool(service, tool, {})
+    preview = service.prepare_hub_test(tool)
+    ui_thread = threading.get_ident()
+    refresh_threads = []
+    original_refresh = service._refresh_hub_test_preview
+
+    def refresh(public):
+        refresh_threads.append(threading.get_ident())
+        return original_refresh(public)
+
+    monkeypatch.setattr(service, "_refresh_hub_test_preview", refresh)
+
+    result = await service.execute_prepared_hub_test(
+        preview.nonce,
+        "invalid",  # type: ignore[arg-type]
+        {},
+    )
+
+    assert isinstance(result, ToolTestAdmissionBlocked)
+    assert result.reason == "intent_invalid"
+    assert refresh_threads
+    assert all(thread_id != ui_thread for thread_id in refresh_threads)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rendered_mode", "expected_reason"),
+    [
+        ("unresolved", "permission_unresolved"),
+        ("off", "permission_denied"),
+    ],
+)
+async def test_prepared_hub_non_actionable_render_stays_blocked_when_fresh_allow(
+    tmp_path,
+    rendered_mode,
+    expected_reason,
+):
+    service, store = _service(tmp_path)
+    tool = _tool()
+    state = {"gate": rendered_mode}
+    _install_external_tool(service, tool, state)
+
+    def _gate(_tool):
+        if state["gate"] == "unresolved":
+            return EffectiveToolState(state="ask", origin="gate_error")
+        return EffectiveToolState(
+            state="deny" if state["gate"] == "off" else "allow",
+            origin="tool_override",
+        )
+
+    service.gate_tool_test = _gate
+    nonlocal_handler = AsyncMock(return_value={"should": "not run"})
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service.test_hub_tool = nonlocal_handler
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+    state["gate"] = "allow"
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionBlocked)
+    assert result.reason == expected_reason
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == "allow"
+    nonlocal_handler.assert_not_awaited()
+    local_handler.assert_not_awaited()
+    records = _permission_log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == expected_reason
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_exact_live_identity_change_is_stale_without_dispatch(
+    tmp_path,
+):
+    service, store = _service(tmp_path)
+    tool = _tool(server_key="local:demo")
+    state = {"profile_id": "demo"}
+    _install_external_tool(service, tool, state)
+    handler = AsyncMock(return_value={"should": "not run"})
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service.test_hub_tool = handler
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+    state["profile_id"] = "replacement"
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "approve_once", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "identity_changed"
+    assert result.refreshed_preview is None
+    handler.assert_not_awaited()
+    local_handler.assert_not_awaited()
+    records = _permission_log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == "identity_changed"
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity_index", [0, 1], ids=["root", "ancestor"])
+async def test_prepared_local_directory_chain_identity_change_is_stale(
+    tmp_path, monkeypatch, identity_index
+):
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+    import tldw_chatbook.MCP.unified_control_plane_service as service_module
+
+    service, store = _service(tmp_path)
+    tool = _tool(server_key=LOCAL_SERVER_KEY, name="fs_read")
+    original = capture_directory_chain(tmp_path)
+    changed_identities = list(original.identities)
+    changed_identity = changed_identities[identity_index]
+    changed_identities[identity_index] = DirectoryIdentity(
+        device=changed_identity.device,
+        inode=changed_identity.inode + 1,
+        mode=changed_identity.mode,
+        reparse=changed_identity.reparse,
+    )
+    changed_authority = DirectoryChain(
+        canonical_root=original.canonical_root,
+        identities=tuple(changed_identities),
+    )
+    authority = {"value": original}
+
+    class _Provider:
+        def hub_tools(self):
+            return [tool]
+
+    class _Handle:
+        provider = _Provider()
+
+        @property
+        def authority(self):
+            return authority["value"]
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "build_hub_local_inspection_provider",
+        lambda *a, **k: _Handle(),
+    )
+    monkeypatch.setattr(
+        local_server_tools, "build_hub_local_provider", lambda *a, **k: _Handle()
+    )
+    monkeypatch.setattr(
+        local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(service_module, "get_cli_setting", lambda *a, **k: True)
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    nonlocal_handler = AsyncMock(return_value={"should": "not run"})
+    service._execute_prepared_local_hub_test = local_handler
+    service.test_hub_tool = nonlocal_handler
+    preview = service.prepare_hub_test(tool)
+    authority["value"] = changed_authority
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "authority_changed"
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.authority_fingerprint == authority_fingerprint(
+        changed_authority
+    )
+    local_handler.assert_not_awaited()
+    nonlocal_handler.assert_not_awaited()
+    records = _permission_log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == "authority_changed"
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_preview_expiry_uses_injected_registry_clock(tmp_path):
+    service, store = _service(tmp_path)
+    tool = _tool()
+    _install_external_tool(service, tool, {})
+    now = {"value": 10.0}
+    service._hub_test_previews = ToolTestPreviewRegistry(
+        ttl_seconds=5.0,
+        clock=lambda: now["value"],
+    )
+    handler = AsyncMock(return_value={"should": "not run"})
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service.test_hub_tool = handler
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+    now["value"] = 15.0
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "approve_once", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "preview_unavailable"
+    assert result.refreshed_preview is None
+    handler.assert_not_awaited()
+    local_handler.assert_not_awaited()
+    assert _permission_log_records(store) == []
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+def test_admission_preview_resolves_live_exact_definition_gate_and_authority(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+    import tldw_chatbook.MCP.unified_control_plane_service as service_module
+
+    service, _store = _service(tmp_path)
+    rendered = _tool(
+        server_key=LOCAL_SERVER_KEY,
+        name="fs_read",
+        description="stale panel definition",
+    )
+    live = _tool(
+        server_key=LOCAL_SERVER_KEY,
+        name="fs_read",
+        description="current provider definition",
+    )
+    authority = capture_directory_chain(tmp_path)
+
+    class _Provider:
+        def hub_tools(self):
+            return [live]
+
+    class _Handle:
+        provider = _Provider()
+
+        def __init__(self):
+            self.authority = authority
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "build_hub_local_inspection_provider",
+        lambda *a, **k: _Handle(),
+    )
+    monkeypatch.setattr(
+        local_server_tools, "build_hub_local_provider", lambda *a, **k: _Handle()
+    )
+    monkeypatch.setattr(
+        local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        service_module,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            True if (section, key) == ("console", "local_tools_enabled") else default
+        ),
+    )
+    service.set_tool_state(LOCAL_SERVER_KEY, "fs_read", "allow", tool=live)
+
+    preview = service.prepare_hub_test(rendered)
+
+    assert isinstance(preview, ToolTestAdmissionPreview)
+    assert (preview.server_key, preview.tool_name) == (LOCAL_SERVER_KEY, "fs_read")
+    assert preview.definition_hash == definition_hash(
+        live.description, live.input_schema
+    )
+    assert preview.rendered_gate == "allow"
+    assert preview.authority_fingerprint == authority_fingerprint(authority)
+    assert preview.safe_authority_label == "Selected workspace"
+    assert str(tmp_path) not in repr(preview)
+
+
+@pytest.mark.asyncio
+async def test_preview_nonce_revoke_and_reuse_return_typed_stale_outcomes(tmp_path):
+    service, _store = _service(tmp_path)
+    tool = _tool()
+    service.local_service.get_external_servers = lambda: [
+        {
+            "profile_id": "demo",
+            "is_connected": True,
+            "discovery_snapshot": {
+                "tools": [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "inputSchema": tool.input_schema,
+                    }
+                ]
+            },
+        }
+    ]
+    preview = service.prepare_hub_test(tool)
+    service.revoke_hub_test_preview(preview.nonce)
+
+    revoked = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+    reused = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(revoked, ToolTestAdmissionStale)
+    assert revoked.reason == "preview_unavailable"
+    assert isinstance(reused, ToolTestAdmissionStale)
+    assert service.local_service.get_external_servers()  # low-level seams untouched
+
+
+@pytest.mark.asyncio
+async def test_rendered_allow_requires_run_and_unchanged_profile(tmp_path):
+    service, _store = _service(tmp_path)
+    tool = _tool()
+    service.local_service.get_external_servers = lambda: [
+        {
+            "profile_id": "demo",
+            "is_connected": True,
+            "discovery_snapshot": {
+                "tools": [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "inputSchema": tool.input_schema,
+                    }
+                ]
+            },
+        }
+    ]
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    service.test_hub_tool = AsyncMock(return_value={"ok": True})
+
+    wrong_intent_preview = service.prepare_hub_test(tool)
+    wrong_intent = await service.execute_prepared_hub_test(
+        wrong_intent_preview.nonce, "approve_once", {}
+    )
+    assert isinstance(wrong_intent, ToolTestAdmissionBlocked)
+    assert wrong_intent.reason == "intent_mismatch"
+    service.test_hub_tool.assert_not_awaited()
+
+    changed_preview = service.prepare_hub_test(tool)
+    service.set_tool_state(tool.server_key, tool.name, "ask")
+    changed = await service.execute_prepared_hub_test(changed_preview.nonce, "run", {})
+    assert isinstance(changed, ToolTestAdmissionStale)
+    assert changed.reason == "profile_changed"
+    assert changed.refreshed_preview is not None
+    assert changed.refreshed_preview.rendered_gate == "ask"
+    service.test_hub_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rendered_ask_approve_once_rejects_profile_edit_before_dispatch(
+    tmp_path,
+):
+    service, _store = _service(tmp_path)
+    tool = _tool()
+    service.local_service.get_external_servers = lambda: [
+        {
+            "profile_id": "demo",
+            "is_connected": True,
+            "discovery_snapshot": {
+                "tools": [{"name": tool.name, "description": tool.description}]
+            },
+        }
+    ]
+    service.test_hub_tool = AsyncMock(return_value={"ask": True})
+
+    ask_preview = service.prepare_hub_test(tool)
+    ask_result = await service.execute_prepared_hub_test(
+        ask_preview.nonce, "approve_once", {"b": 2, "a": 1}
+    )
+    assert ask_result == {"ask": True}
+    assert service.permission_store.get_tool_entry(tool.server_key, tool.name) is None
+
+    allow_preview = service.prepare_hub_test(tool)
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    allow_result = await service.execute_prepared_hub_test(
+        allow_preview.nonce, "approve_once", {"x": True}
+    )
+    assert isinstance(allow_result, ToolTestAdmissionStale)
+    assert allow_result.reason == "profile_changed"
+    assert service.test_hub_tool.await_count == 1
+    assert service.test_hub_tool.await_args.kwargs["decision"] == "approved"
+
+
+def test_prepared_preview_rejects_imported_profile_with_mismatched_lifecycle_digest(
+    tmp_path,
+):
+    service, _store = _service(tmp_path)
+    tool = _tool()
+    service.local_service.get_external_servers = lambda: [
+        {
+            "profile_id": "demo",
+            "is_connected": True,
+            "discovery_snapshot": {
+                "tools": [{"name": tool.name, "description": tool.description}]
+            },
+        }
+    ]
+    permission_store = service.permission_store
+    payload = permission_store.load()
+    profile = _imported_profile()
+    profile["tool_pack_lifecycle"]["policy_digest"] = "f" * 64
+    payload["profiles"]["research"] = profile
+    permission_store.save(payload)
+
+    with pytest.raises(ProfileMutationError, match="lifecycle_invalid"):
+        service.prepare_hub_test(
+            tool,
+            profile_id="research",
+            expected_profile_digest=profile_policy_digest(profile),
+            expected_revision=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_definition_change_downgrades_stored_allow_without_dispatch(tmp_path):
+    service, _store = _service(tmp_path)
+    live = {"description": "original"}
+    tool = _tool(description=live["description"])
+
+    def _catalog():
+        return [
+            {
+                "profile_id": "demo",
+                "is_connected": True,
+                "discovery_snapshot": {
+                    "tools": [{"name": tool.name, "description": live["description"]}]
+                },
+            }
+        ]
+
+    service.local_service.get_external_servers = _catalog
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    service.test_hub_tool = AsyncMock(return_value={"should": "not run"})
+    preview = service.prepare_hub_test(tool)
+    live["description"] = "changed after render"
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "definition_changed"
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == "ask"
+    service.test_hub_tool.assert_not_awaited()

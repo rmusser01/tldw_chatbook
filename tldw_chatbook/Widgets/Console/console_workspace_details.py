@@ -5,16 +5,18 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.message import Message
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceStatusPair,
 )
-from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
-
+from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
+from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 
 _AUTHORITY_LABELS = {
     "local registry ready": "local",
@@ -31,6 +33,18 @@ _AUTHORITY_LABELS = {
 
 class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
     """Render workspace plumbing status, readiness, and handoff rows."""
+
+    class DefaultPersonaRequested(Message):
+        """Open default controls for this explicit workspace, without activating it."""
+
+        def __init__(self, workspace_id: str) -> None:
+            super().__init__()
+            self.workspace_id = workspace_id
+
+    @on(Button.Pressed, "#console-workspace-default-persona")
+    def _edit_default_persona(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.DefaultPersonaRequested(self.state.workspace_id))
 
     def __init__(self, state: ConsoleWorkspaceContextState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -108,11 +122,20 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
             ComposeResult yielding the status-pair widget.
         """
         label, value = self._split_status_row(text, fallback_label)
+        # The Console rail is intentionally narrow. The former 16-cell
+        # "Local file tools" label left too little room for the authority
+        # value and painted "Private scratch" as "Priva…" in live UAT.
+        # Keep the full underlying status copy while using a concise visible
+        # label so the security-relevant value remains readable.
+        compact_runtime_label = label == "Local file tools"
+        if compact_runtime_label:
+            label = "Local files"
         yield ConsoleWorkspaceStatusPair(
             label,
             value,
             label_id=label_id,
             value_id=value_id,
+            label_width_floor=12 if compact_runtime_label else 13,
         )
 
     def _server_features_unconfigured(self) -> bool:
@@ -137,6 +160,15 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
 
         collapse_server_features = self._server_features_unconfigured()
 
+        if self.state.workspace_id and self.state.workspace_id != DEFAULT_WORKSPACE_ID:
+            yield Button(
+                "Default Persona…", id="console-workspace-default-persona", compact=True
+            )
+            yield self._static(
+                "Applies to future new conversations.",
+                id="console-workspace-default-persona-scope",
+            )
+
         yield from self._status_pair(
             self._friendly_status_label(self.state.authority_label),
             label_id="console-workspace-authority-label",
@@ -154,7 +186,7 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
             self._friendly_status_label(self.state.runtime_label),
             label_id="console-workspace-runtime-label",
             value_id="console-workspace-runtime-value",
-            fallback_label="File tools",
+            fallback_label="Local file tools",
         )
         if collapse_server_features:
             yield self._static(
@@ -226,20 +258,20 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
             return f"Storage: {readable or 'unavailable'}"
         if normalized == "sync: not configured":
             return "Sync: Off"
+        if normalized.startswith("local file tools:"):
+            return f"Local file tools: {raw.partition(':')[2].strip()}"
         if normalized.startswith("runtime: none, file tools disabled"):
-            # TASK-715: "Off in Default workspace" ellipsized in the rail's
-            # ~23-cell value column even in its own default state.
-            return "File tools: Off in Default"
+            return "Local file tools: Private scratch"
         if normalized.startswith("runtime: none"):
-            return "File tools: Off"
+            return "Local file tools: Private scratch"
         if normalized.startswith("runtime:"):
             readiness = re.search(r"(\d+) ready(?:,\s+(\d+) missing)?", normalized)
             if readiness:
-                label = f"File tools: {readiness.group(1)} ready"
+                label = f"Local file tools: {readiness.group(1)} ready"
                 if readiness.group(2):
                     label = f"{label}, {readiness.group(2)} missing"
                 return label
-            return raw.replace("Runtime:", "File tools:", 1)
+            return raw.replace("Runtime:", "Local file tools:", 1)
         # TASK-715: "Server handoff" (14 cells) wrapped in the 12-cell label
         # column, leaving an orphaned lowercase "handoff" line; and mapping
         # ACP rows to "ACP handoff:" made two different rows share a label

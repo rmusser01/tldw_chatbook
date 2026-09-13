@@ -19,9 +19,22 @@ from tldw_chatbook.Backup_Recovery.rag_definition_participant import definition_
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from .config import RAGConfig, _normalized_type_setting, validate_chroma_persist_directory
-from ..config_profiles import get_profile_manager, ProfileConfig, _slugify
+# task-21160: config_profiles imported at use-sites (and TYPE_CHECKING for the
+# annotation) -- the module-level import was one edge of the
+# config_profiles<->simplified circular-import cycle (see
+# enhanced_rag_service_v2.py for the full account).
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..config_profiles import ProfileConfig
 from ..ingestion_indexing import reset_shared_rag_service
 from ..reranker import RerankingConfig
+# TASK-21731: the mode vocabulary + its normalizer live in the stdlib-only
+# `RAG_Search/search_modes.py` so `Library/library_local_rag_search_service`
+# (on the app's import path) can read them without executing this module's
+# service tree. Re-imported here so both names stay single-sourced.
+from ..search_modes import RAG_SEARCH_MODES as _RAG_SEARCH_MODES
+from ..search_modes import normalize_rag_search_mode
 
 DEFAULT_PROFILE = "hybrid_basic"
 _IMPORTED_ID = "imported_settings"
@@ -40,6 +53,8 @@ _LEGACY_PROCESSOR_KEYS = ("enable_reranking", "reranker_model", "reranker_top_k"
 
 
 def _manager():
+    from ..config_profiles import get_profile_manager
+
     return get_profile_manager()
 
 
@@ -188,6 +203,21 @@ def resolve_active_rag_top_k() -> int:
     return _env_top_k(int(base))
 
 
+def resolve_active_rag_search_mode() -> str:
+    """Resolve the active profile's search mode without building a full config.
+
+    Returns:
+        The normalized active search mode after applying ``RAG_SEARCH_MODE``.
+    """
+    profile = _resolved_active_profile()
+    base = (
+        profile.rag_config.search.default_search_mode
+        if profile
+        else RAGConfig().search.default_search_mode
+    )
+    return normalize_rag_search_mode(os.getenv("RAG_SEARCH_MODE") or base)
+
+
 def _apply_env_overrides(config: RAGConfig,
                          override_embedding_model: Optional[str] = None,
                          override_persist_dir: Optional[Union[str, Path]] = None) -> RAGConfig:
@@ -255,7 +285,9 @@ def _apply_env_overrides(config: RAGConfig,
 
     # Search overrides
     config.search.default_top_k = _env_top_k(config.search.default_top_k)
-    config.search.default_search_mode = os.getenv("RAG_SEARCH_MODE") or config.search.default_search_mode
+    config.search.default_search_mode = normalize_rag_search_mode(
+        os.getenv("RAG_SEARCH_MODE") or config.search.default_search_mode
+    )
 
     # Pipeline overrides
     config.pipeline.default_pipeline = os.getenv("RAG_DEFAULT_PIPELINE") or config.pipeline.default_pipeline
@@ -323,6 +355,8 @@ def set_active_profile(profile_id: str) -> None:
             safe slug (e.g. empty, ``None``, or containing path-traversal /
             non-slug characters like ``"../x"``).
     """
+    from ..config_profiles import _slugify
+
     if not isinstance(profile_id, str) or not profile_id or profile_id != _slugify(profile_id):
         raise ValueError(
             f"set_active_profile: invalid profile_id {profile_id!r}; must be a "
@@ -588,6 +622,8 @@ def ensure_imported_profile() -> Optional[str]:
         # query-time legacy keys instead of silently discarding them --
         # never affects the fingerprint (see _LEGACY_SEARCH_KEYS docstring).
         legacy = _merge_legacy_query_time_keys(snapshot)
+        from ..config_profiles import ProfileConfig
+
         profile = ProfileConfig(id=_IMPORTED_ID, name="Imported settings",
                                 description="Snapshot of your active RAG profile (plus any RAG_* env "
                                             "overrides) captured on first run; edit freely.",

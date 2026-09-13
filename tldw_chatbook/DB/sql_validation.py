@@ -5,9 +5,20 @@ This module provides validation for table names, column names, and other SQL ide
 to ensure they match expected patterns and are safe to use in dynamic SQL construction.
 """
 
-import re
 from typing import Optional
+
 from loguru import logger
+
+from tldw_chatbook.DB import sql_identifier_core as _identifier_core
+from tldw_chatbook.DB.sql_identifier_core import (
+    escape_identifier as _escape_identifier,
+)
+from tldw_chatbook.DB.sql_identifier_core import (
+    identifier_error,
+)
+
+SQL_IDENTIFIER_PATTERN = _identifier_core.SQL_IDENTIFIER_PATTERN
+SQL_RESERVED_KEYWORDS = _identifier_core.SQL_RESERVED_KEYWORDS
 
 # Define valid table names for each database
 #
@@ -34,9 +45,41 @@ from loguru import logger
 # removes a table fails the test immediately instead of surfacing as a user
 # hitting an unconditional ``ValueError`` the next time they touch the new
 # table through a generic CRUD helper.
+#
+# IF YOU ARE ADDING A TABLE IN A MIGRATION, ADD IT HERE IN THE SAME COMMIT.
+# NOTE (TASK-20971): that runtime test is correct and it *has* been repaired
+# twice. It is not enough on its own, because it only reports after someone
+# runs it, and the full suite has produced no CI verdict since 2026-06-26.
+# Timeline: TASK-864 found 9 of ~47 tables listed. TASK-19568 repaired the
+# entry at 2026-08-22 00:16 -0700. TASK-19057 added two Actor Pack tables and
+# broke it again at 14:51 the same day -- fourteen and a half hours. The
+# authoring-time guard is therefore
+# ``scripts/check_schema_table_allowlist.py``, run by ``scripts/preflight.sh``
+# and by the required ``derived-artifacts`` CI job: it statically scans the
+# ``CREATE TABLE`` statements in ``DB/migrations/chachanotes_*.sql`` and in the
+# SQL string literals of ``ChaChaNotes_DB.py``, and prints the exact lines to
+# paste below. It needs no database, no install, and ~milliseconds. Its
+# expectation comes from the migration SQL, never from this set (TASK-19045's
+# rule: a census that re-derives its expectation from what it guards is the
+# identity function on the defect it exists to catch).
 VALID_TABLES = {
     "chachanotes": {
+        # TASK-19057 (v44->v45): the two Actor Pack tables. Their absence here
+        # is what TASK-20971 was filed for.
+        "actor_pack_persona_intents",
+        "actor_portable_identities",
+        "agent_lessons_seed_state",
+        "buddy_profiles",
+        "buddy_visual_bindings",
+        "canvas_conversation_hints",
+        "canvas_documents",
+        "canvas_revisions",
         "character_cards",
+        "character_conversation_search_dirty",
+        "character_conversation_search_documents",
+        "character_conversation_search_generations",
+        "character_conversation_search_revision",
+        "character_conversation_search_state",
         "character_expression_images",
         "chat_dictionaries",
         "collection_keywords",
@@ -48,8 +91,35 @@ VALID_TABLES = {
         "conversation_world_books",
         "conversations",
         "console_auxiliary_attempts",
+        "console_conversation_capture_policy",
         "console_conversation_context_policy",
+        "console_conversation_library_policy",
         "console_conversation_memories",
+        "console_conversation_memory_scopes",
+        "console_conversation_memory_selections",
+        "console_dispatch_checkpoints",
+        "console_trace_artifacts",
+        "console_trace_calls",
+        "console_trace_compaction_state",
+        "console_trace_events",
+        "console_trace_graph_epoch",
+        "console_trace_gc_marks",
+        "console_trace_gc_runs",
+        "console_trace_gc_segment_scopes",
+        "console_trace_header_components",
+        "console_trace_maintenance_state",
+        "console_trace_migration_state",
+        "console_trace_owners",
+        "console_trace_policies",
+        "console_trace_redaction_spans",
+        "console_trace_request_headers",
+        "console_trace_response_links",
+        "console_trace_retention_roots",
+        "console_trace_revision_bindings",
+        "console_trace_segments",
+        "console_trace_semantic_revisions",
+        "console_trace_surface_nodes",
+        "console_trace_surface_replacements",
         "db_schema_version",
         "decks",
         "flashcard_assets",
@@ -61,6 +131,7 @@ VALID_TABLES = {
         "keywords",
         "learning_paths",
         "message_attachments",
+        "message_exchanges",
         "message_generation_metadata",
         "message_trajectory_metadata",
         "transcript_annotations",
@@ -72,9 +143,21 @@ VALID_TABLES = {
         "mindmap_nodes",
         "mindmaps",
         "note_folder_memberships",
+        "note_folder_sync_suppressions",
         "note_folders",
         "note_keywords",
+        "note_links",
+        "note_organization_receipts",
+        "note_sync_publication_intents",
         "notes",
+        "notes_organization_adoption_reviews",
+        "notes_organization_heads",
+        "notes_organization_sync_checkpoints",
+        "notes_organization_sync_intents",
+        "persona_visual_assets",
+        "persona_visual_bindings",
+        "persona_visual_pack_versions",
+        "persona_visual_packs",
         "quiz_attempts",
         "quiz_questions",
         "quizzes",
@@ -90,6 +173,7 @@ VALID_TABLES = {
         "rag_payload_tombstones",
         "rag_source_observations",
         "rag_trace_evidence_refs",
+        "research_quick_note_owner_proofs",
         "review_history",
         "study_sessions",
         "sync_conflicts",
@@ -114,6 +198,10 @@ VALID_TABLES = {
         "MediaChunks",
         "MediaChunks_fts",
         "Transcripts",
+        # task-8 (spec §5.2.1/AC 27): without this row, any use of a
+        # generic helper for the new v7 columns would raise
+        # ``InputError: Invalid table name``.
+        "ChunkingTemplates",
     },
     "prompts": {
         "Prompts",
@@ -240,6 +328,64 @@ VALID_COLUMNS = {
         "client_id",
         "version",
     },
+    # task-19564: registered so ``CharactersRAGDB.prune_sync_log()`` can route
+    # its retention-scope identifiers through ``validate_column_name`` for the
+    # three ``sync_log`` writers v46 covers with the latest-only rule. Without
+    # an entry here that call fails CLOSED (see this function's TASK-864 note),
+    # so these three sets are load-bearing, not decorative. Columns verified
+    # against ``PRAGMA table_info`` on a live fully-migrated database and
+    # pinned there by
+    # ``Tests/DB/test_sql_validation.py::test_sync_log_latest_only_table_columns_are_live``.
+    "chat_dictionaries": {
+        "id",
+        "name",
+        "description",
+        "file_path",
+        "content",
+        "entries_json",
+        "strategy",
+        "max_tokens",
+        "enabled",
+        "created_at",
+        "last_modified",
+        "deleted",
+        "client_id",
+        "version",
+    },
+    "world_books": {
+        "id",
+        "name",
+        "description",
+        "scan_depth",
+        "token_budget",
+        "recursive_scanning",
+        "enabled",
+        "created_at",
+        "last_modified",
+        "deleted",
+        "client_id",
+        "version",
+    },
+    # Note there is deliberately no ``deleted``/``version``/``client_id`` here:
+    # ``world_book_entries`` is hard-delete-only and unversioned, which is why
+    # its retention rule cannot key on either (see the v45 migration header).
+    "world_book_entries": {
+        "id",
+        "world_book_id",
+        "keys",
+        "content",
+        "enabled",
+        "position",
+        "insertion_order",
+        "priority",
+        "selective",
+        "secondary_keys",
+        "case_sensitive",
+        "regex",
+        "extensions",
+        "created_at",
+        "last_modified",
+    },
     # Media DB
     "Media": {
         "id",
@@ -344,6 +490,23 @@ VALID_COLUMNS = {
         "prev_version",
         "merge_parent_uuid",
     },
+    # task-8 (spec §5.2.1/AC 27): the Media DB's v7 ChunkingTemplates column
+    # set (Client_Media_DB_v2 ``_CHUNKING_TEMPLATES_V7_CREATE_SQL``). Pinned
+    # against a live fresh database by
+    # ``Tests/DB/test_sql_validation.py::test_chunking_templates_columns_accepted_and_live``.
+    "ChunkingTemplates": {
+        "id",
+        "uuid",
+        "name",
+        "description",
+        "template_json",
+        "tags",
+        "is_builtin",
+        "version",
+        "deleted",
+        "created_at",
+        "updated_at",
+    },
     # Prompts DB
     "Prompts": {
         "id",
@@ -390,59 +553,8 @@ LINK_TABLE_COLUMNS = {
     "PromptKeywords": {"prompt_id", "keyword_id"},
 }
 
+
 # SQL identifier pattern - allows alphanumeric, underscore, and supports Unicode
-# This pattern is designed to be safe while supporting non-English identifiers
-SQL_IDENTIFIER_PATTERN = re.compile(r"^[\w\u0080-\uFFFF]+$", re.UNICODE)
-
-# Reserved SQL keywords that should not be used as identifiers
-SQL_RESERVED_KEYWORDS = {
-    "SELECT",
-    "FROM",
-    "WHERE",
-    "INSERT",
-    "UPDATE",
-    "DELETE",
-    "DROP",
-    "CREATE",
-    "TABLE",
-    "INDEX",
-    "VIEW",
-    "UNION",
-    "JOIN",
-    "LEFT",
-    "RIGHT",
-    "INNER",
-    "OUTER",
-    "ORDER",
-    "BY",
-    "GROUP",
-    "HAVING",
-    "LIMIT",
-    "OFFSET",
-    "AS",
-    "ON",
-    "AND",
-    "OR",
-    "NOT",
-    "NULL",
-    "PRIMARY",
-    "KEY",
-    "FOREIGN",
-    "REFERENCES",
-    "CASCADE",
-    "SET",
-    "VALUES",
-    "INTO",
-    "EXISTS",
-    "BETWEEN",
-    "LIKE",
-    "IN",
-    "IS",
-    "DISTINCT",
-    "ALL",
-}
-
-
 def validate_identifier(identifier: str, identifier_type: str = "identifier") -> bool:
     """
     Validates a SQL identifier (table name, column name, etc.) for safety.
@@ -454,26 +566,66 @@ def validate_identifier(identifier: str, identifier_type: str = "identifier") ->
     Returns:
         bool: True if valid, False otherwise
     """
-    if not identifier:
+    reason = identifier_error(identifier)
+    if reason == "empty":
         logger.warning(f"Empty {identifier_type} provided")
         return False
 
     # Check length limits
-    if len(identifier) > 64:  # Common SQL identifier length limit
+    if reason == "length":
         logger.warning(f"{identifier_type} '{identifier}' exceeds maximum length")
         return False
 
     # Check against pattern
-    if not SQL_IDENTIFIER_PATTERN.match(identifier):
+    if reason == "characters":
         logger.warning(f"{identifier_type} '{identifier}' contains invalid characters")
         return False
 
     # Check against reserved keywords
-    if identifier.upper() in SQL_RESERVED_KEYWORDS:
+    if reason == "reserved":
         logger.warning(f"{identifier_type} '{identifier}' is a reserved SQL keyword")
         return False
 
     return True
+
+
+_SAFE_ORDER_BY_PROFILES = {
+    "subscription_items_agent": (
+        ("i", "effective_date", "DESC"),
+        ("i", "id", "ASC"),
+    ),
+    "subscription_items_reader": (
+        ("i", "effective_date", "DESC"),
+        ("i", "id", "DESC"),
+    ),
+}
+
+
+def get_safe_order_by_clause(profile: str) -> str:
+    """Return a centrally allow-listed and identifier-validated ORDER BY body.
+
+    Args:
+        profile: Stable name of a registered ordering profile.
+
+    Returns:
+        A validated SQL fragment containing only identifier and direction terms.
+
+    Raises:
+        ValueError: If the profile or any registered term is invalid.
+    """
+    terms = _SAFE_ORDER_BY_PROFILES.get(profile)
+    if terms is None:
+        raise ValueError("Unsupported SQL ordering profile")
+    rendered = []
+    for qualifier, column, direction in terms:
+        if (
+            not validate_identifier(qualifier, "ORDER BY qualifier")
+            or not validate_identifier(column, "ORDER BY column")
+            or direction not in {"ASC", "DESC"}
+        ):
+            raise ValueError("Invalid registered SQL ordering profile")
+        rendered.append(f"{qualifier}.{column} {direction}")
+    return ", ".join(rendered)
 
 
 def validate_table_name(table_name: str, db_type: str) -> bool:
@@ -637,6 +789,4 @@ def escape_identifier(identifier: str) -> str:
     Returns:
         str: The escaped identifier
     """
-    # Replace any existing double quotes with two double quotes (SQL escaping)
-    escaped = identifier.replace('"', '""')
-    return f'"{escaped}"'
+    return _escape_identifier(identifier)

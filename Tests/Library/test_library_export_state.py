@@ -68,7 +68,7 @@ def test_counts_landed_renders_scope_label():
     )
     assert state.counts_loading is False
     assert state.scope_line == (
-        "Everything: 128 media · 542 conversations · 87 notes · 13 prompts"
+        "Everything: 128 media items · 542 conversations · 87 notes · 13 prompts"
     )
 
 
@@ -272,7 +272,13 @@ def test_running_status_and_error_lines_pass_through_unchanged():
 
 def test_media_quality_options_are_the_three_known_values_in_order():
     assert MEDIA_QUALITY_OPTIONS == ("thumbnail", "compressed", "original")
-    assert DEFAULT_MEDIA_QUALITY == "thumbnail"
+
+
+def test_export_defaults_to_full_fidelity():
+    """task-32353 AC#1 (critique #10): the default used to be "thumbnail" --
+    a silent data reduction chosen for someone whose reason for exporting is
+    usually to keep the files. A lossy bundle is now something you ask for."""
+    assert DEFAULT_MEDIA_QUALITY == "original"
 
 
 def test_export_form_state_carries_quality_choices_visible_flag():
@@ -323,9 +329,16 @@ def test_normalize_destination_replaces_a_different_suffix():
     )
 
 
-def test_normalize_destination_leaves_zip_suffix_untouched_case_insensitive():
+def test_normalize_destination_canonicalizes_zip_suffix_case():
+    """PR #2634 review: the writer compares suffixes case-sensitively, so
+    an uppercase pick must normalize to the lowercase file actually written
+    (previously ``foo.ZIP`` was preserved verbatim and the form's overwrite
+    check examined a different file than the writer replaced)."""
     assert normalize_export_destination(PurePath("/tmp/foo.ZIP")) == PurePath(
-        "/tmp/foo.ZIP"
+        "/tmp/foo.zip"
+    )
+    assert normalize_export_destination(PurePath("/tmp/foo.Zip")) == PurePath(
+        "/tmp/foo.zip"
     )
     assert normalize_export_destination(PurePath("/tmp/foo.zip")) == PurePath(
         "/tmp/foo.zip"
@@ -413,3 +426,68 @@ def test_build_library_export_form_state_passes_last_export_line_through():
 def test_build_library_export_form_state_defaults_last_export_line_empty():
     state = _state()
     assert state.last_export_line == ""
+
+
+# --- task-32251 AC#3/AC#4: the destination is judged when it is chosen -------
+
+
+def test_a_usable_destination_has_nothing_to_report(tmp_path):
+    from tldw_chatbook.Library.library_export_state import (
+        describe_unusable_destination,
+    )
+
+    assert describe_unusable_destination(tmp_path / "bundle.zip") == ""
+
+
+def test_a_destination_under_a_missing_folder_is_refused(tmp_path):
+    """The shape a pre-filled path field produced live:
+    ``.../Library export.zip/private/tmp/.../notes-bundle.zip``."""
+    from tldw_chatbook.Library.library_export_state import (
+        describe_unusable_destination,
+    )
+
+    reason = describe_unusable_destination(
+        tmp_path / "Library export.zip" / "private" / "notes-bundle.zip"
+    )
+    assert "does not exist" in reason
+
+
+def test_a_destination_under_a_file_says_so(tmp_path):
+    from tldw_chatbook.Library.library_export_state import (
+        describe_unusable_destination,
+    )
+
+    (tmp_path / "report.zip").write_bytes(b"PK")
+    reason = describe_unusable_destination(
+        tmp_path / "report.zip" / "notes-bundle.zip"
+    )
+    assert "is a file, not a folder" in reason
+
+
+def test_a_destination_that_is_itself_a_folder_is_refused(tmp_path):
+    from tldw_chatbook.Library.library_export_state import (
+        describe_unusable_destination,
+    )
+
+    (tmp_path / "bundle.zip").mkdir()
+    assert describe_unusable_destination(tmp_path / "bundle.zip") == (
+        "That name is a folder."
+    )
+
+
+def test_the_destination_line_carries_the_refusal_reason():
+    """AC#3: the reason renders at the control, not as a passing toast."""
+    state = build_library_export_form_state(
+        scope=ExportScope("everything"),
+        counts={"notes": 2},
+        name="Bundle",
+        description="",
+        media_quality=DEFAULT_MEDIA_QUALITY,
+        destination="",
+        destination_error="Can't save there: The folder /nope does not exist.",
+        running=False,
+        status_line="",
+        error_line="",
+    )
+    assert state.destination_error.startswith("Can't save there:")
+    assert not state.export_enabled

@@ -13,10 +13,330 @@ from tldw_chatbook.Notes.note_folder_models import (
     FolderValidationError,
     NormalizedFolderName,
     NoteFolder,
+    NoteFolderChildPage,
     NoteFolderMembership,
+    NoteFolderManagedStatus,
+    NotePlacementPage,
+    NotePlacementRecord,
+    NoteTreeLocation,
+    NoteTreeMutationContext,
+    NoteTreePathStep,
     join_normalized_folder_path,
     normalize_folder_name,
 )
+
+
+@pytest.mark.parametrize("state", ["normal", "protected", "inactive_managed"])
+def test_managed_folder_status_is_frozen_and_explicit(state: str) -> None:
+    status = NoteFolderManagedStatus("folder-1", state)  # type: ignore[arg-type]
+
+    assert status.state == state
+    with pytest.raises(FrozenInstanceError):
+        status.state = "normal"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("folder_id", "state"),
+    [("", "normal"), ("folder-1", "unknown")],
+)
+def test_managed_folder_status_rejects_ambiguous_values(
+    folder_id: str, state: str
+) -> None:
+    with pytest.raises(ValueError):
+        NoteFolderManagedStatus(folder_id, state)  # type: ignore[arg-type]
+
+
+def test_page_status_tuple_is_immutable() -> None:
+    statuses = [NoteFolderManagedStatus("f1", "normal")]
+    page = NoteFolderChildPage((_folder("f1"),), 1, 0, None, None, statuses)
+    statuses.clear()
+
+    assert page.folder_statuses == (NoteFolderManagedStatus("f1", "normal"),)
+    with pytest.raises(TypeError):
+        page.folder_statuses[0] = NoteFolderManagedStatus("f1", "protected")  # type: ignore[index]
+
+
+def _folder(folder_id: str, parent_id: str | None = None) -> NoteFolder:
+    return NoteFolder(
+        folder_id=folder_id,
+        parent_id=parent_id,
+        name=folder_id,
+        path=f"/{folder_id}",
+        normalized_path=f"/{folder_id}",
+        version=1,
+        deleted=False,
+    )
+
+
+def _membership(
+    membership_id: str, folder_id: str, note_id: str
+) -> NoteFolderMembership:
+    return NoteFolderMembership(
+        membership_id=membership_id,
+        folder_id=folder_id,
+        note_id=note_id,
+        ownership="manual",
+        owner_id="user-1",
+        owner_active=True,
+        version=1,
+    )
+
+
+def test_child_page_preserves_exact_paging_metadata() -> None:
+    page = NoteFolderChildPage(
+        folders=(_folder("f1"),),
+        total_folders=41,
+        start_offset=20,
+        previous_offset=0,
+        next_offset=40,
+    )
+
+    assert page.total_folders == 41
+    assert page.start_offset == 20
+    assert page.previous_offset == 0
+    assert page.next_offset == 40
+
+
+def test_placement_page_preserves_duplicate_membership_identity_and_ancestors() -> None:
+    page = NotePlacementPage(
+        placements=(
+            NotePlacementRecord(
+                note={"id": "n1", "title": "One"},
+                folder_id="f1",
+                membership=_membership("m1", "f1", "n1"),
+            ),
+            NotePlacementRecord(
+                note={"id": "n1", "title": "One"},
+                folder_id="f1",
+                membership=_membership("m2", "f1", "n1"),
+            ),
+        ),
+        total_placements=41,
+        start_offset=20,
+        previous_offset=0,
+        next_offset=40,
+        ancestor_folders=(_folder("parent"), _folder("f1", "parent")),
+    )
+
+    assert [row.membership.membership_id for row in page.placements] == ["m1", "m2"]
+    assert [folder.folder_id for folder in page.ancestor_folders] == ["parent", "f1"]
+
+
+def test_placement_record_owns_an_immutable_note_mapping_snapshot() -> None:
+    source = {"id": "n1", "title": "Original"}
+    record = NotePlacementRecord(source, None, None)
+
+    source["id"] = "changed"
+
+    assert record.note["id"] == "n1"
+    with pytest.raises(TypeError):
+        record.note["id"] = "also-changed"  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("page_type", "kwargs"),
+    [
+        (
+            NoteFolderChildPage,
+            {
+                "folders": (),
+                "total_folders": -1,
+                "start_offset": 0,
+                "previous_offset": None,
+                "next_offset": None,
+            },
+        ),
+        (
+            NotePlacementPage,
+            {
+                "placements": (),
+                "total_placements": 0,
+                "start_offset": -1,
+                "previous_offset": None,
+                "next_offset": None,
+            },
+        ),
+        (
+            NotePlacementPage,
+            {
+                "placements": (),
+                "total_placements": 0,
+                "start_offset": 0,
+                "previous_offset": -1,
+                "next_offset": None,
+            },
+        ),
+    ],
+)
+def test_page_envelopes_reject_negative_metadata(page_type: type, kwargs: dict) -> None:
+    with pytest.raises(ValueError):
+        page_type(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "page_factory",
+    [
+        lambda: NoteFolderChildPage((), 3, 20, 0, None),
+        lambda: NotePlacementPage((), 3, 20, 0, None),
+    ],
+)
+def test_page_envelopes_allow_empty_out_of_range_responses(page_factory) -> None:
+    page = page_factory()
+    assert page.start_offset == 20  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("page_type", "items_field", "items"),
+    [
+        (NoteFolderChildPage, "folders", (_folder("f1"),)),
+        (
+            NotePlacementPage,
+            "placements",
+            (NotePlacementRecord({"id": "n1"}, None, None),),
+        ),
+    ],
+)
+def test_page_envelopes_reject_nonempty_out_of_range_responses(
+    page_type: type, items_field: str, items: tuple[object, ...]
+) -> None:
+    with pytest.raises(ValueError):
+        page_type(
+            **{
+                items_field: items,
+                "total_folders" if items_field == "folders" else "total_placements": 3,
+                "start_offset": 20,
+                "previous_offset": 0,
+                "next_offset": None,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        lambda: NoteFolderChildPage((_folder("f1"),), 3, 0, None, 4),
+        lambda: NotePlacementPage(
+            (NotePlacementRecord({"id": "n1"}, None, None),), 3, 0, None, 4
+        ),
+        lambda: NoteFolderChildPage((), 3, 1, 0, 2),
+        lambda: NotePlacementPage((), 3, 1, 0, 2),
+    ],
+)
+def test_page_envelopes_reject_impossible_cursor_and_empty_page_states(page) -> None:
+    with pytest.raises(ValueError):
+        page()
+
+
+def test_tree_location_records_target_folder_path() -> None:
+    location = NoteTreeLocation(
+        placement_id=FolderPlacementId.folder("f2"),
+        note_id=None,
+        membership_id=None,
+        path=(
+            NoteTreePathStep(folder_id="f1", parent_id=None, containing_offset=3),
+            NoteTreePathStep(folder_id="f2", parent_id="f1", containing_offset=7),
+        ),
+        placement_offset=None,
+    )
+
+    assert location.path[-1] == NoteTreePathStep("f2", "f1", 7)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        (NoteTreePathStep("f1", "not-root", 0),),
+        (
+            NoteTreePathStep("f1", None, 0),
+            NoteTreePathStep("f2", "disconnected", 0),
+        ),
+        (
+            NoteTreePathStep("f1", None, 0),
+            NoteTreePathStep("f1", "f1", 0),
+        ),
+    ],
+)
+def test_tree_location_rejects_nonroot_disconnected_or_repeated_paths(
+    path: tuple[NoteTreePathStep, ...],
+) -> None:
+    with pytest.raises(ValueError):
+        NoteTreeLocation(
+            placement_id=FolderPlacementId.folder(path[-1].folder_id),
+            note_id=None,
+            membership_id=None,
+            path=path,
+            placement_offset=None,
+        )
+
+
+def test_unfiled_tree_location_rejects_a_folder_path() -> None:
+    with pytest.raises(ValueError):
+        NoteTreeLocation(
+            placement_id=FolderPlacementId.unfiled("n1"),
+            note_id="n1",
+            membership_id=None,
+            path=(NoteTreePathStep("f1", None, 0),),
+            placement_offset=0,
+        )
+
+
+def test_tree_location_enforces_folder_and_note_optional_field_contracts() -> None:
+    with pytest.raises(ValueError):
+        NoteTreeLocation(
+            placement_id=FolderPlacementId.folder("f1"),
+            note_id=None,
+            membership_id="m1",
+            path=(NoteTreePathStep("f1", None, 0),),
+            placement_offset=None,
+        )
+    with pytest.raises(ValueError):
+        NoteTreeLocation(
+            placement_id=FolderPlacementId.unfiled("n1"),
+            note_id="n1",
+            membership_id="m1",
+            path=(),
+            placement_offset=0,
+        )
+    with pytest.raises(ValueError):
+        NoteTreeLocation(
+            placement_id=FolderPlacementId.note("f1", "n1", "m1"),
+            note_id="n1",
+            membership_id="m1",
+            path=(NoteTreePathStep("f1", None, 0),),
+            placement_offset=None,
+        )
+
+
+def test_tree_location_accepts_unfiled_and_exact_membership_note_placements() -> None:
+    unfiled = NoteTreeLocation(
+        placement_id=FolderPlacementId.unfiled("n1"),
+        note_id="n1",
+        membership_id=None,
+        path=(),
+        placement_offset=4,
+    )
+    filed = NoteTreeLocation(
+        placement_id=FolderPlacementId.note("f1", "n1", "m1"),
+        note_id="n1",
+        membership_id="m1",
+        path=(NoteTreePathStep("f1", None, 2),),
+        placement_offset=4,
+    )
+
+    assert unfiled.membership_id is None
+    assert filed.membership_id == "m1"
+
+
+def test_tree_mutation_context_is_an_immutable_tuple_snapshot() -> None:
+    context = NoteTreeMutationContext(
+        folder_ids=("f1",),
+        parent_ids=(None,),
+        ancestor_ids=("root",),
+        placement_parent_ids=("f1",),
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        context.folder_ids = ()  # type: ignore[misc]
 
 
 @pytest.mark.parametrize(
@@ -192,7 +512,9 @@ def test_normalize_folder_name_is_idempotent_for_valid_display(raw_name: str) ->
 def test_normalize_folder_name_key_is_nfkc_casefold(raw_name: str) -> None:
     """The collision key follows the specified Unicode normalization contract."""
     normalized = normalize_folder_name(raw_name)
-    assert normalized.key == unicodedata.normalize("NFKC", normalized.display).casefold()
+    assert (
+        normalized.key == unicodedata.normalize("NFKC", normalized.display).casefold()
+    )
 
 
 @given(st.lists(_VALID_NORMALIZED_SEGMENT, min_size=1, max_size=8))

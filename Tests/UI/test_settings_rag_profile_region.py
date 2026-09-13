@@ -40,6 +40,12 @@ from Tests.UI.test_settings_configuration_hub import (
     _wait_for_settings_text,
     _wire_rag_profile_adapter,
 )
+from tldw_chatbook.Library.library_rechunk_service import (
+    BACKFILL_SLOT,
+    acquire_bulk_rag_slot,
+    bulk_rag_slot_in_flight,
+    reset_bulk_rag_slots_for_tests,
+)
 from tldw_chatbook.RAG_Search.config_profiles import reset_profile_manager_cache
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.settings_config_models import (
@@ -59,6 +65,9 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 def _reset_profile_manager_cache_after_test():
     yield
     reset_profile_manager_cache()
+    # task-13: the backfill's in-flight state is the SHARED bulk-RAG slot
+    # guard now -- never let one test's slot leak into the next.
+    reset_bulk_rag_slots_for_tests()
 
 
 class _FakeApp:
@@ -80,6 +89,45 @@ class _FakeApp:
         callback immediately (same idiom as test_console_mcp_approval.py),
         since these sync-constructed tests never span a real thread."""
         return fn(*args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_library_rag_renders_future_console_policy_defaults_separately(
+    monkeypatch, tmp_path
+):
+    """The canonical F4 surface keeps both policy axes distinct from mode."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        auto = screen.query_one(
+            "#settings-library-rag-auto-retrieve-default", Select
+        )
+        access = screen.query_one(
+            "#settings-library-rag-assistant-access-default", Select
+        )
+        direct = screen.query_one(
+            "#settings-library-rag-direct-library-tools", Checkbox
+        )
+
+        assert auto.value == "never"
+        assert access.value == "blocked"
+        assert auto.parent.parent.id == "settings-library-rag-console-defaults-card"
+        assert access.parent.parent.id == "settings-library-rag-console-defaults-card"
+        assert direct.parent.id == "settings-library-rag-provider-mode-card"
+        defaults_card = screen.query_one("#settings-library-rag-console-defaults-card")
+        assert defaults_card.border_title == "New Console conversations"
+        assert "Existing conversations keep their own local policy" in " ".join(
+            str(item.renderable) for item in defaults_card.query(Static)
+        )
+        provider_card = screen.query_one("#settings-library-rag-provider-mode-card")
+        assert "does not grant access" in " ".join(
+            str(item.renderable) for item in provider_card.query(Static)
+        )
 
 
 @pytest.fixture
@@ -1214,7 +1262,7 @@ def test_backfill_button_click_starts_a_worker_and_notifies(
     button = Button(id="settings-library-rag-index-backfill")
     screen.handle_library_rag_index_backfill(Button.Pressed(button))
 
-    assert screen._library_rag_backfill_in_flight is True
+    assert bulk_rag_slot_in_flight(BACKFILL_SLOT) is True
     assert worker_calls == [True]
     assert fake_app.notifications[-1][1] == "information"
 
@@ -1226,7 +1274,7 @@ def test_backfill_button_click_while_in_flight_does_not_start_a_second_worker(
     app = _build_test_app()
     screen = SettingsScreen(app)
     screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
-    screen._library_rag_backfill_in_flight = True
+    assert acquire_bulk_rag_slot(BACKFILL_SLOT) is None
     worker_calls: list[bool] = []
     screen._rag_backfill_worker = lambda: worker_calls.append(True)
 
@@ -1407,17 +1455,69 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
         app_config={}, media_db=object(), chachanotes_db=None
     )
     screen = SettingsScreen(app_instance)
-    screen._library_rag_backfill_in_flight = True
+    assert acquire_bulk_rag_slot(BACKFILL_SLOT) is None
 
     worker = SettingsScreen.__dict__["_rag_backfill_worker"]
     wrapped = getattr(worker, "__wrapped__", worker)
     wrapped(screen)  # invoke the thread-body directly, bypassing @work dispatch
 
-    assert screen._library_rag_backfill_in_flight is False
+    assert bulk_rag_slot_in_flight(BACKFILL_SLOT) is False
     message, severity = fake_app.notifications[-1]
     assert severity == "error"
+    # TASK-23108: the toast is plain language with a next step; the raw
+    # exception text stays in the log, only the type name reaches the user.
     assert "Backfill failed" in message
-    assert "kaboom" in message
+    assert "kaboom" not in message
+    assert "RuntimeError" in message
+    assert "Run Backfill again" in message
+
+
+def test_rag_backfill_partial_failure_toast_is_plain_language(
+    monkeypatch, tmp_path, fake_app
+):
+    """TASK-23108 review round (finding 4): the partial-failure toast used to
+    embed raw str(errors[-1]) verbatim -- it now reports counts and points at
+    the log, where the engine already records each failure's traceback."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "semantic_indexing_available", lambda: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module, "get_shared_rag_service", lambda: object()
+    )
+
+    async def _partial(
+        *, media_db, chachanotes_db, rag_service=None, progress_callback=None
+    ):
+        return {
+            "status": "error",
+            "indexed": 3,
+            "failed": 2,
+            "errors": [
+                "HTTPStatusError: 401 for url https://emb.example/v1?key=sk-raw",
+                "boom two",
+            ],
+        }
+
+    monkeypatch.setattr(settings_screen_module, "backfill_semantic_index", _partial)
+
+    app_instance = SimpleNamespace(
+        app_config={}, media_db=object(), chachanotes_db=None
+    )
+    screen = SettingsScreen(app_instance)
+    assert acquire_bulk_rag_slot(BACKFILL_SLOT) is None
+
+    worker = SettingsScreen.__dict__["_rag_backfill_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen)
+
+    message, severity = fake_app.notifications[-1]
+    assert severity == "error"
+    assert "Backfill finished with problems: 3 indexed, 2 failed." in message
+    assert "2 error(s) recorded" in message
+    assert "Logs (F8)" in message
+    assert "sk-raw" not in message
+    assert "boom two" not in message
 
 
 # --- M5 (SP3 final review): the shared RAG service must be resolved OUTSIDE
@@ -1505,7 +1605,7 @@ def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
         app_config={}, media_db=object(), chachanotes_db=None
     )
     screen = SettingsScreen(app_instance)
-    screen._library_rag_backfill_in_flight = True
+    assert acquire_bulk_rag_slot(BACKFILL_SLOT) is None
 
     worker = SettingsScreen.__dict__["_rag_backfill_worker"]
     wrapped = getattr(worker, "__wrapped__", worker)
@@ -1516,7 +1616,7 @@ def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
     # run inside it.
     assert backfill_calls == []
     # The in-flight flag must still be cleared (finally-block contract).
-    assert screen._library_rag_backfill_in_flight is False
+    assert bulk_rag_slot_in_flight(BACKFILL_SLOT) is False
     message, severity = fake_app.notifications[-1]
     assert severity == "error"
     assert "backfill" in message.lower()
@@ -3380,7 +3480,7 @@ def test_starter_panel_backfill_button_starts_the_same_backfill_worker(
     button = Button(id="settings-library-rag-starter-backfill")
     screen.handle_library_rag_starter_backfill(Button.Pressed(button))
 
-    assert screen._library_rag_backfill_in_flight is True
+    assert bulk_rag_slot_in_flight(BACKFILL_SLOT) is True
     assert worker_calls == [True]
     assert fake_app.notifications[-1][1] == "information"
 

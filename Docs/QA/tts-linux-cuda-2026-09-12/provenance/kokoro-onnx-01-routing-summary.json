@@ -1,0 +1,55 @@
+{
+  "sink_name": "alsa_output.usb-Logitech_Logi_USB_Headset_000000000000-00.analog-stereo",
+  "sink_id": 55,
+  "streams": {
+    "398": {
+      "sink": 55,
+      "application": "ffplay",
+      "pid": "961234",
+      "first_observed": 123782.056893999,
+      "last_observed": 123790.203192505,
+      "observations": 33
+    },
+    "443": {
+      "sink": 55,
+      "application": "ffplay",
+      "pid": "961440",
+      "first_observed": 123792.003984604,
+      "last_observed": 123800.149949516,
+      "observations": 33
+    },
+    "499": {
+      "sink": 55,
+      "application": "ffplay",
+      "pid": "961681",
+      "first_observed": 123804.802204874,
+      "last_observed": 123812.944488331,
+      "observations": 33
+    },
+    "544": {
+      "sink": 55,
+      "application": "ffplay",
+      "pid": "961884",
+      "first_observed": 123814.762746201,
+      "last_observed": 123822.903823402,
+      "observations": 33
+    },
+    "589": {
+      "sink": 55,
+      "application": "ffplay",
+      "pid": "962083",
+      "first_observed": 123824.713106453,
+      "last_observed": 123832.854640563,
+      "observations": 33
+    },
+    "634": {
+      "sink": 55,
+      "application": "ffplay",
+      "pid": "962280",
+      "first_observed": 123834.655369126,
+      "last_observed": 123842.801950312,
+      "observations": 33
+    }
+  },
+  "all_observed_streams_routed_to_headset": true
+}

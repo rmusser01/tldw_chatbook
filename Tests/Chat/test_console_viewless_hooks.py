@@ -22,12 +22,11 @@ CONSEQUENCE (never by asserting on the callable):
   deferred behind one.
 
 The remaining slots are covered by consequence too: a full viewless turn
-runs end to end, a terminal run state reaches nobody, a skill confirm
-fails closed immediately instead of blocking for its timeout, and an MCP
-approval round armed with no view is still registered and still carries
-its payload, so the next mount can claim it (plan Task 5 owns the
-surfacing policy; what must hold HERE is that the viewless default does
-not LOSE the round).
+runs end to end, a terminal run state reaches nobody, skill and MCP
+decision rounds armed with no view remain registered with their payloads,
+and the next mount can claim them (plan Task 5 owns notification and the
+active-time clock; what must hold HERE is that detach does not resolve or
+LOSE a round).
 
 Rig note: the viewless state is produced through the production
 ``ConsoleRuntime.detach_view`` seam. ``leave_console`` (the unmount path)
@@ -45,7 +44,6 @@ import threading
 import pytest
 
 from Tests.Chat.test_console_fleet_wake import (
-    _RecordingWakeGateway,
     _controller_rig,
     _drain,
     _quiet,
@@ -105,9 +103,7 @@ async def _deliver_one(runs_db, app, session, gateway, controller):
         session.id, ConversationLocalMarksService.FLEET_UNSEEN
     )
     wake = controller.fleet_wake
-    wake.on_fleet_drained(
-        _drain(session.id, _survivor(run_id, session_id=session.id))
-    )
+    wake.on_fleet_drained(_drain(session.id, _survivor(run_id, session_id=session.id)))
     assert await _settle(lambda: gateway.payloads), "the wake never delivered"
     assert await _settle(lambda: not wake.has_pending(session.id))
     assert runs_db.get_run(run_id).get("wake_delivered_at"), (
@@ -137,8 +133,10 @@ async def test_a_wake_delivered_with_no_view_keeps_the_unseen_mark(tmp_path):
     try:
         runtime = _runtime_for(rig)
         view = _mounted_view()
-        runtime.attach_view(view)
-        assert runtime.detach_view(view) is True, "the rig never went viewless"
+        generation = runtime.attach_view(view)
+        assert runtime.detach_view(view, generation) is True, (
+            "the rig never went viewless"
+        )
 
         await _deliver_one(runs_db, app, session, gateway, controller)
 
@@ -196,7 +194,7 @@ async def test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone(
     try:
         runtime = _runtime_for(rig)
         view = _mounted_view(wake_user_priority_probe=lambda session_id: True)
-        runtime.attach_view(view)
+        generation = runtime.attach_view(view)
 
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         wake = controller.fleet_wake
@@ -208,7 +206,7 @@ async def test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone(
             "the wake, or this test cannot say anything about removing it"
         )
 
-        assert runtime.detach_view(view) is True
+        assert runtime.detach_view(view, generation) is True
         wake.retry_soon()
 
         assert await _settle(lambda: gateway.payloads), (
@@ -220,7 +218,7 @@ async def test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone(
 
 
 # ---------------------------------------------------------------------------
-# delivery_ui_hook -- inert while detached, RE-ARMED by the next attach.
+# delivery_ui_hook -- inert detached, re-armed after successful reconciliation.
 # ---------------------------------------------------------------------------
 
 
@@ -233,9 +231,8 @@ async def test_a_delivery_started_with_no_view_re_arms_at_the_next_attach(
     A wake that starts while nothing is attached has no repaint target --
     correct, and inert. But the user who opens Console DURING that turn
     gets a live delivery and (before this) no transcript poll: PR 3a-2
-    Task 7 measured that live as a 4+ minute frozen Console. ``attach_view``
-    must therefore fire the newly-bound hook when a wake is still
-    delivering.
+    Task 7 measured that live as a 4+ minute frozen Console. The successful
+    full-reconciliation boundary must then fire the newly-bound hook.
     """
     rig = _controller_rig(tmp_path)
     chacha, app, runs_db, _store, session, gateway, _bridge, controller = rig
@@ -244,8 +241,8 @@ async def test_a_delivery_started_with_no_view_re_arms_at_the_next_attach(
         runtime = _runtime_for(rig)
         stale: list[str] = []
         view_one = _mounted_view(delivery_ui_hook=stale.append)
-        runtime.attach_view(view_one)
-        assert runtime.detach_view(view_one) is True
+        generation = runtime.attach_view(view_one)
+        assert runtime.detach_view(view_one, generation) is True
 
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         wake = controller.fleet_wake
@@ -262,7 +259,11 @@ async def test_a_delivery_started_with_no_view_re_arms_at_the_next_attach(
         )
 
         armed: list[str] = []
-        runtime.attach_view(_mounted_view(delivery_ui_hook=armed.append))
+        successor = _mounted_view(delivery_ui_hook=armed.append)
+        successor_generation = runtime.attach_view(successor)
+        assert runtime.finish_view_reconciliation(
+            successor, successor_generation
+        )
 
         assert armed == [session.id], (
             "opening Console during a wake delivery left the transcript "
@@ -317,8 +318,8 @@ async def test_a_whole_turn_runs_with_no_view_attached(tmp_path):
     try:
         runtime = _runtime_for(rig)
         view = _mounted_view()
-        runtime.attach_view(view)
-        assert runtime.detach_view(view) is True
+        generation = runtime.attach_view(view)
+        assert runtime.detach_view(view, generation) is True
 
         result = await controller.submit_draft("hello", session_id=session.id)
 
@@ -352,36 +353,38 @@ async def test_a_viewless_turn_calls_none_of_the_departed_views_hooks(tmp_path):
     rig = _controller_rig(tmp_path)
     chacha, _app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
-        calls: list[str] = []
+        view_calls: list[str] = []
+        history_calls: list[str] = []
 
         class _RecordingHistory:
             async def append(self, text: str) -> None:
-                calls.append(f"prompt_history:{text}")
+                history_calls.append(text)
 
         runtime = _runtime_for(rig)
+        controller.prompt_history = _RecordingHistory()
         view = _mounted_view(
-            on_submission_accepted=lambda: calls.append("on_submission_accepted"),
-            prompt_history=_RecordingHistory(),
+            on_submission_accepted=lambda: view_calls.append(
+                "on_submission_accepted"
+            ),
+            prompt_history=object(),
         )
-        runtime.attach_view(view)
+        generation = runtime.attach_view(view)
 
         first = await controller.submit_draft("attached", session_id=session.id)
         assert getattr(first, "accepted", False), first
-        assert calls, (
-            "harness precondition: an ATTACHED view's hooks must fire, or "
-            "the detached assertion below proves nothing"
-        )
+        assert history_calls == ["attached"]
+        assert view_calls == []
 
-        assert runtime.detach_view(view) is True
-        calls.clear()
+        assert runtime.detach_view(view, generation) is True
 
         second = await controller.submit_draft("detached", session_id=session.id)
         assert getattr(second, "accepted", False), second
 
-        assert calls == [], (
+        assert view_calls == [], (
             "a turn running with no view attached called into the view that "
-            f"is gone: {calls}"
+            f"is gone: {view_calls}"
         )
+        assert history_calls == ["attached", "detached"]
     finally:
         chacha.close()
 
@@ -402,64 +405,113 @@ async def test_the_display_name_slot_is_never_cleared_to_none(tmp_path):
     chacha, _app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
         runtime = _runtime_for(rig)
+        app_owned_display_name = controller._global_user_display_name
         view = _mounted_view(_global_user_display_name=lambda: "Ada")
-        runtime.attach_view(view)
-        assert controller._presentation_context_for(session.id).user_name == "Ada"
+        generation = runtime.attach_view(view)
+        assert controller._global_user_display_name is app_owned_display_name
 
-        assert runtime.detach_view(view) is True
+        assert runtime.detach_view(view, generation) is True
 
-        assert callable(controller._global_user_display_name), (
-            "the display-name slot was cleared to a non-callable"
-        )
+        assert controller._global_user_display_name is app_owned_display_name
         assert controller._presentation_context_for(session.id).user_name == "User"
     finally:
         chacha.close()
 
 
 @pytest.mark.asyncio
-async def test_a_skill_install_confirm_with_no_view_fails_closed_at_once(
+async def test_skill_confirms_armed_viewless_wait_and_remount_without_denial(
     tmp_path,
 ):
-    """The two skill-confirm slots: deny immediately, never hang.
-
-    ``None`` is the CORRECT viewless value here and the read site says so:
-    "no UI bridge wired means the marshal below is a no-op and nothing can
-    ever set the Event -- fail closed immediately instead of blocking for
-    the full timeout". Pinned by consequence: denied, and denied fast.
-    """
+    """Detach cannot remove a tool or manufacture a skill denial."""
     rig = _controller_rig(tmp_path)
     chacha, app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
         controller.app = app
+        app.call_from_thread = lambda callback, *args: callback(*args)
         runtime = _runtime_for(rig)
+        old_projection_calls: list[tuple[str, object]] = []
         view = _mounted_view(
-            set_pending_skill_install=lambda payload: None,
-            set_pending_skill_script=lambda payload: None,
+            set_pending_skill_install=lambda payload: old_projection_calls.append(
+                ("install", payload)
+            ),
+            set_pending_skill_script=lambda payload: old_projection_calls.append(
+                ("script", payload)
+            ),
         )
-        runtime.attach_view(view)
-        assert runtime.detach_view(view) is True
-        controller.mcp_approval_timeout_seconds = lambda: 60.0
+        generation = runtime.attach_view(view)
+        old_projection_calls.clear()
+        assert runtime.detach_view(view, generation) is True
+        assert callable(controller.set_pending_skill_install)
+        assert callable(controller.set_pending_skill_script), (
+            "detaching removed the gate used to advertise run_skill_script"
+        )
+        controller.skill_install_confirm_timeout_seconds = lambda: 0.0
+        controller.skill_script_confirm_timeout_seconds = lambda: 0.0
 
         verdicts: dict[str, object] = {}
 
-        def _ask() -> None:
+        def _ask_install() -> None:
             verdicts["install"] = controller.request_skill_install_confirm(
                 "https://example.invalid/skill.zip", session_id=session.id
             )
+
+        def _ask_script() -> None:
             verdicts["script"] = controller.request_skill_script_confirm(
                 {"skill": "demo", "mechanism": "shell", "args": []},
                 session_id=session.id,
             )
 
-        worker = threading.Thread(target=_ask, daemon=True)
-        worker.start()
-        worker.join(timeout=5)
-
-        assert not worker.is_alive(), (
-            "a viewless skill confirm blocked instead of failing closed"
+        install_worker = threading.Thread(target=_ask_install, daemon=True)
+        script_worker = threading.Thread(target=_ask_script, daemon=True)
+        install_worker.start()
+        assert await _settle(lambda: bool(controller._pending_skill_install_rounds))
+        script_worker.start()
+        assert await _settle(lambda: bool(controller._pending_skill_script_rounds))
+        assert install_worker.is_alive() and script_worker.is_alive(), (
+            "viewless registration manufactured an immediate skill denial"
         )
-        assert verdicts["install"] is False
-        assert verdicts["script"] == {"allow": False, "remember": False}
+        assert verdicts == {}
+        assert old_projection_calls == []
+
+        mounted: dict[str, dict] = {}
+        successor = _mounted_view(
+            set_pending_skill_install=lambda payload: (
+                mounted.__setitem__("install", payload) or True
+            ),
+            set_pending_skill_script=lambda payload: (
+                mounted.__setitem__("script", payload) or True
+            ),
+        )
+        successor_generation = runtime.attach_view(successor)
+        assert runtime.finish_view_reconciliation(
+            successor, successor_generation
+        )
+        assert mounted["install"]["request_id"] in (
+            controller._pending_skill_install_rounds
+        )
+        assert mounted["script"] is None, "two mixed decision cards mounted"
+
+        controller.resolve_pending_skill_install(
+            True, request_id=mounted["install"]["request_id"]
+        )
+        install_worker.join(timeout=5)
+        assert await _settle(
+            lambda: mounted.get("script") is not None
+        ), "the script round was not promoted after the install head"
+        assert mounted["script"]["request_id"] in (
+            controller._pending_skill_script_rounds
+        )
+        controller.resolve_pending_skill_script(
+            True, False, request_id=mounted["script"]["request_id"]
+        )
+        script_worker.join(timeout=5)
+
+        assert not install_worker.is_alive()
+        assert not script_worker.is_alive()
+        assert verdicts == {
+            "install": True,
+            "script": {"allow": True, "remember": False},
+        }
     finally:
         chacha.close()
 
@@ -479,13 +531,14 @@ async def test_an_approval_round_armed_with_no_view_is_not_lost(tmp_path):
     chacha, app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
         controller.app = app
+        app.call_from_thread = lambda callback, *args: callback(*args)
         runtime = _runtime_for(rig)
         view = _mounted_view(
             set_pending_approval=lambda payload: None,
             park_pending_approval=lambda session_id: None,
         )
-        runtime.attach_view(view)
-        assert runtime.detach_view(view) is True
+        generation = runtime.attach_view(view)
+        assert runtime.detach_view(view, generation) is True
         controller.mcp_approval_timeout_seconds = lambda: 60.0
 
         decisions: dict[str, str] = {}
@@ -518,9 +571,12 @@ async def test_an_approval_round_armed_with_no_view_is_not_lost(tmp_path):
             "re-derive the card even knowing the round exists"
         )
 
-        # Unblock: ending the visit is the shipped resolution for an
-        # undecided round (AC#2), and it must still deny.
+        round_id = next(iter(controller._pending_approval_rounds))
         await asyncio.wait_for(runtime.leave_console(), timeout=5)
+        assert worker.is_alive()
+        controller.resolve_pending_approval(
+            {"write_file": "deny"}, round_id=round_id
+        )
         worker.join(timeout=10)
         assert decisions == {"write_file": "deny"}, decisions
     finally:
@@ -550,9 +606,9 @@ async def test_a_runtime_that_never_had_a_view_answers_viewless(tmp_path):
             agent_runtime_enabled=False,
             global_user_display_name=lambda: "Ada",
         )
-        assert controller.fleet_wake._conversation_in_view(
-            session.id, session.id
-        ) is False, (
+        assert (
+            controller.fleet_wake._conversation_in_view(session.id, session.id) is False
+        ), (
             "a runtime built with no view reported the conversation as "
             "watched -- the ◈ mark would be cleared for a delivery nobody "
             "could have seen"
@@ -596,11 +652,175 @@ async def test_every_slot_names_a_real_attribute_on_the_target_it_declares():
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
     view = _View({})
-    runtime.attach_view(view)
+    generation = runtime.attach_view(view)
 
-    assert runtime.detach_view(view) is True
+    assert runtime.detach_view(view, generation) is True
 
     for slot in CONSOLE_VIEW_HOOK_SLOTS:
         assert getattr(targets[slot.target], slot.name) == slot.viewless_default, (
             slot.name
         )
+
+
+# ---------------------------------------------------------------------------
+# Run-hooks engine ownership (spec 2026-09-11, Task 4): one app-owned
+# engine, reachable headless -- nothing below needs a view attached.
+# ---------------------------------------------------------------------------
+
+
+class _HooksApp:
+    """The whole app surface `ensure_run_hooks` reads: the config mapping.
+
+    `TldwCli.app_config` is a plain attribute the app REASSIGNS on a
+    settings reload (it does not mutate the old dict), so a settable
+    attribute is the faithful double: the engine's config provider must
+    see the new mapping, never a dict captured at build time.
+    """
+
+    def __init__(self, hooks_section: dict | None) -> None:
+        self.app_config: dict = {}
+        if hooks_section is not None:
+            self.app_config["hooks"] = hooks_section
+
+
+def _pre_tool_use_hook() -> dict:
+    import sys
+
+    return {"event": "PreToolUse", "command": [sys.executable, "-c", "pass"]}
+
+
+def test_ensure_run_hooks_is_none_without_config_until_hooks_appear():
+    """No ``[hooks]`` configured -> ``None``, and that answer is LIVE.
+
+    ``None`` is the contract every later fire site skips on -- but it is
+    NOT latched (Ruling R17): while unconfigured, every call re-runs the
+    same cheap parse the engine itself runs per fire, so the first-ever
+    ``[hooks]`` entry a mid-session settings reload delivers takes effect
+    without an app restart. Once an ENGINE is built it latches for the
+    app lifetime (spec section 4 singleton) -- that half lives in the
+    next test.
+    """
+    runtime = ConsoleRuntime(app=None)
+    assert runtime.ensure_run_hooks() is None
+    assert runtime.ensure_run_hooks() is None  # still no config to find
+
+    app = _HooksApp(hooks_section=None)
+    runtime = ConsoleRuntime(app=app)
+    assert runtime.ensure_run_hooks() is None
+    assert runtime.ensure_run_hooks() is None
+
+    app.app_config["hooks"] = {"enabled": True, "hook": [_pre_tool_use_hook()]}
+    engine = runtime.ensure_run_hooks()
+    assert engine is not None, (
+        "the first-ever [hooks] entry arrived mid-session and stayed "
+        "inert -- presence must re-detect while unconfigured (R17)"
+    )
+    assert runtime.ensure_run_hooks() is engine  # built now: identity latches
+
+
+@pytest.mark.asyncio
+async def test_ensure_run_hooks_builds_nothing_after_dispose():
+    """The dispose path is unchanged by R17: quit latches, builds nothing.
+
+    Even a configured app double must get `None` (never a fresh engine,
+    never the sentinel) once the runtime is disposed -- the same
+    build-nothing contract every other ensure_* here keeps at app exit.
+    """
+    runtime = ConsoleRuntime(
+        app=_HooksApp({"enabled": True, "hook": [_pre_tool_use_hook()]})
+    )
+    await runtime.dispose()
+    assert runtime.ensure_run_hooks() is None
+    assert runtime.ensure_run_hooks() is None
+
+
+def test_ensure_run_hooks_builds_one_engine_when_hooks_are_configured():
+    """A parsable hook configured -> exactly ONE engine, forever.
+
+    Idempotence is identity: the second call returns the first engine
+    even after the config that justified building it is gone (one engine
+    per app lifetime, spec section 4) -- config changes travel through
+    the engine's live config provider (next test), never a rebuild.
+    """
+    from tldw_chatbook.Agents.run_hooks import RunHooksEngine
+
+    app = _HooksApp({"enabled": True, "hook": [_pre_tool_use_hook()]})
+    runtime = ConsoleRuntime(app=app)
+    assert runtime.run_hooks_engine is None, "the peek must not build an engine"
+
+    engine = runtime.ensure_run_hooks()
+    assert isinstance(engine, RunHooksEngine)
+    assert runtime.ensure_run_hooks() is engine
+    assert runtime.run_hooks_engine is engine
+
+    app.app_config = {}  # a settings reload that drops [hooks]
+    assert runtime.ensure_run_hooks() is engine, (
+        "the engine was rebuilt after a config change -- one engine per "
+        "app lifetime means the existing instance must keep coming back"
+    )
+
+
+def test_the_engine_reads_the_app_config_live_on_every_fire():
+    """The same running guard sees hook removal on a settings reload."""
+    import sys
+    from tldw_chatbook.Agents.agent_models import ToolCall
+
+    app = _HooksApp({"hook": [{
+        "event": "PreToolUse", "command": [sys.executable, "-c", "raise SystemExit(2)"],
+    }]})
+    runtime = ConsoleRuntime(app=app)
+    engine = runtime.ensure_run_hooks()
+    assert engine is not None
+    wrapped = engine.wrap_review(lambda calls, run_id: {}, session_id="s")
+    call = ToolCall("calculator", {}, "c1")
+    assert wrapped([call], "run")["c1"].startswith("hook: ")
+    app.app_config = {}
+    assert wrapped([call], "run") == {}
+    engine.close()
+
+
+def test_concurrent_first_hook_access_shares_one_engine(monkeypatch):
+    """Worker and event-loop startup must not publish two executor owners."""
+    from concurrent.futures import ThreadPoolExecutor
+    from tldw_chatbook.Agents import run_hooks
+
+    real_engine = run_hooks.RunHooksEngine
+    entered = threading.Event()
+    release = threading.Event()
+    engines = []
+
+    def slow_constructor(*args, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        engine = real_engine(*args, **kwargs)
+        engines.append(engine)
+        return engine
+
+    monkeypatch.setattr(run_hooks, "RunHooksEngine", slow_constructor)
+    runtime = ConsoleRuntime(app=_HooksApp({"hook": [_pre_tool_use_hook()]}))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(runtime.ensure_run_hooks)
+        assert entered.wait(3)
+        second_started = threading.Event()
+
+        def second_access():
+            second_started.set()
+            return runtime.ensure_run_hooks()
+
+        second = pool.submit(second_access)
+        assert second_started.wait(3)
+        release.set()
+        assert first.result() is second.result()
+
+
+@pytest.mark.asyncio
+async def test_dispose_closes_previously_built_hooks():
+    """An existing engine must stop accepting commands when its app exits."""
+    runtime = ConsoleRuntime(app=_HooksApp({"hook": [_pre_tool_use_hook()]}))
+    engine = runtime.ensure_run_hooks()
+    assert engine is not None
+    assert not (await engine.fire_async("PreToolUse", session_id="s")).blocked
+    await runtime.dispose()
+    assert runtime.ensure_run_hooks() is None
+    # Existing per-run closures can retain the engine after runtime disposal.
+    assert (await engine.fire_async("PreToolUse", session_id="s")).blocked

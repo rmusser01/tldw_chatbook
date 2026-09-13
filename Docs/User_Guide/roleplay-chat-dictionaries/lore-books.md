@@ -12,9 +12,10 @@ is too big for one card, or when several conversations share a world.
 
 ## Getting there
 
-Press **Ctrl+5** to open Roleplay & Chat Dictionaries, then click the **Lore**
-chip in the mode strip (or press **Ctrl+4** — on this screen Ctrl+1 to Ctrl+4
-pick the four modes instead of switching screens). The line above the rail
+Press **Ctrl+4** to open Roleplay & Chat Dictionaries, then click the **Lore**
+chip in the mode strip (or press **l** — the mode keys on this screen are the
+single letters **c / p / d / l**, active when focus is outside a text box).
+The line above the rail
 confirms it: "Lore — world facts injected on keywords." With no books saved
 yet, the rail reads "No lore books yet - use New or Import to add one."
 
@@ -178,8 +179,8 @@ character card that ships with a lorebook attaches one automatically
 **Ctrl+S does not save here.** It only reaches the character and persona
 editors; in Lore mode it does nothing, so use **Save settings** on the
 Settings tab and **Add** / **Update** on the Entries tab. Global navigation
-keys live in the [guide index](../index.md), with the Ctrl+1–Ctrl+4 caveat
-noted on [Roleplay & Chat Dictionaries](../roleplay-chat-dictionaries.md).
+keys live in the [guide index](../index.md); the mode letters are covered on
+[Roleplay & Chat Dictionaries](../roleplay-chat-dictionaries.md).
 
 ## Related settings & docs
 

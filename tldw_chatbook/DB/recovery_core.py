@@ -223,12 +223,17 @@ class _CoreAdapter:
 
     def validate(self, candidate: Path) -> tuple[str, ...]:
         from .private_sqlite import connect_private_sqlite
+        from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+            _canvas_payload_issues,
+            _canvas_schema_access,
+            _restrict_connection,
+        )
 
         try:
             with closing(
                 connect_private_sqlite(self.backup_owner_id, candidate, read_only=True)
             ) as connection:
-                connection.execute("PRAGMA trusted_schema = OFF")
+                restrictions = _restrict_connection(connection)
                 actual = tuple(
                     row[0]
                     for row in connection.execute(
@@ -241,21 +246,27 @@ class _CoreAdapter:
                 version_sql = (
                     "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
                     if self.owner_id == "db.chachanotes.primary"
-                    else "SELECT version FROM schema_version"
+                    # Collections retains migration-history rows. Its installed
+                    # owner reads the latest stamp after validating the schema.
+                    else "SELECT MAX(version) FROM schema_version"
                 )
                 if (
                     tuple(row[0] for row in connection.execute(version_sql))
                     != policy.versions
                 ):
                     return ("unsupported_schema_version",)
-                if (
-                    connection.execute("PRAGMA foreign_key_check").fetchone()
-                    is not None
-                ):
-                    return ("invalid_domain_reference",)
-                if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-                    return ("invalid_sqlite_integrity",)
-                return ()
+                with _canvas_schema_access(connection, actual, restrictions):
+                    if (
+                        connection.execute("PRAGMA foreign_key_check").fetchone()
+                        is not None
+                    ):
+                        return ("invalid_domain_reference",)
+                    payload_issues = _canvas_payload_issues(connection, restrictions)
+                    if payload_issues:
+                        return payload_issues
+                    if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                        return ("invalid_sqlite_integrity",)
+                    return ()
         except (OSError, ValueError, sqlite3.Error):
             return ("core_validation_unavailable",)
 

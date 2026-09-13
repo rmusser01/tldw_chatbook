@@ -691,14 +691,17 @@ def _safety_source_matches(source):
 
 
 def _builtin_safety_scope(plan, artifacts, directory_metadata):
-    """Require every declared member of each explicitly preserved builtin root."""
+    """Require whole declared trees for the two installed persona safety owners."""
     if not plan.safety_scope:
         return
-    owner = "persona.visual_identity_builtin"
     selected = {
         i.logical_id: i for i in plan.target.items if i.logical_id in plan.safety_scope
     }
-    builtin = [i for i in selected.values() if i.owner == owner]
+    builtin = [
+        i
+        for i in selected.values()
+        if i.owner in {"persona.visual_identity_builtin", "persona.assets"}
+    ]
     if not builtin:
         return
     available = set(selected)
@@ -718,6 +721,7 @@ def _builtin_safety_scope(plan, artifacts, directory_metadata):
         ):
             available.add(item.logical_id)
     for item in builtin:
+        owner = item.owner
         meta = item.metadata
         root = selected.get(meta.root_id) if meta else None
         parent = selected.get(meta.parent_id) if meta and meta.parent_id else None
@@ -1344,7 +1348,8 @@ def _prepare(
             if (
                 item.status not in {"included", "included_directory"}
                 or item.status == "included_directory"
-                and item.owner != "persona.visual_identity_builtin"
+                and item.owner
+                not in {"persona.visual_identity_builtin", "persona.assets"}
                 or adapter is None
                 or policy is None
                 or policy.schema_sql

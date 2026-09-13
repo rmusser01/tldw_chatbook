@@ -6,6 +6,7 @@ import asyncio
 from enum import Enum
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
+from functools import partial
 from typing import Any, Hashable, Optional
 
 from loguru import logger
@@ -25,13 +26,21 @@ from tldw_chatbook.Library.library_fts_query import (
     build_fts_match_query,
     build_prefix_match_query,
 )
-from tldw_chatbook.Library.library_notes_sync_state import count_noun
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchOutcome
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_QUERY_MAX_LENGTH,
     LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
+)
+# TASK-21731: read the mode vocabulary from the stdlib-only `search_modes`
+# module, NOT from `simplified.active_config` -- this module is on the app's
+# import path, and active_config drags the whole simplified service tree
+# (-> chunking_service -> the Chunking engine -> Internal_Prompts) with it.
+# active_config re-imports the same objects, so normalization stays single-
+# sourced. Guarded by `Tests/Packaging/test_rag_boot_import_closure.py`.
+from tldw_chatbook.RAG_Search.search_modes import (
+    normalize_rag_search_mode,
 )
 
 #: Diagnostics slot for per-seam keyword outcomes (TASK-18903). Mirrors
@@ -88,7 +97,6 @@ from tldw_chatbook.RAG_Search.ingestion_indexing import (
     get_shared_rag_service,
     shared_rag_service_generation,
 )
-
 # One staleness rule for the `app._rag_service` cache, shared with the chat/
 # Search resolver (`resolve_semantic_rag_service`): a profile switch resets
 # the shared singleton, and both app-level caches must notice.
@@ -113,7 +121,6 @@ _KNOWN_KEYWORD_SOURCE_TYPES = ("notes", "media", "conversations", "prompts")
 # (`RAG_Search/simplified/config.py::SearchConfig`). Anything else -- a
 # hand-edited TOML, a future mode this build does not know -- resolves to
 # "semantic", the historical behavior.
-_PROFILE_SEARCH_MODES = ("plain", "semantic", "hybrid")
 # Routing disclosures (spec Workstream A: "each handled by disclosure
 # rather than silence"). Lowercase fragments; `library_rag_state`'s
 # `_route_note_sentence` renders them as sentences on the Evidence
@@ -743,14 +750,27 @@ class LibraryLocalRagSearchService:
             return SeamState.UNAVAILABLE, []
 
         async def run_match(fts_query: str) -> list[dict[str, Any]]:
+            # Pre-built MATCH string, same as the notes/media/prompts seams.
+            # TASK-19558: this used to arrive through the plain-text
+            # `search_query` parameter and work only because that argument
+            # was bound to MATCH raw. It now goes through the explicit
+            # `fts_match_query` seam the siblings already used, so the
+            # plain-text parameter can quote what it is given.
             if getattr(db, "is_memory_db", False):
                 # In-memory SQLite connections are thread-local and only the
                 # thread that created the database has the migrated schema;
                 # offloading to a worker thread would hit a blank connection.
-                raw_results = db.search_conversations_by_content(fts_query, top_k)
+                raw_results = db.search_conversations_by_content(
+                    query, top_k, fts_match_query=fts_query
+                )
             else:
                 raw_results = await asyncio.to_thread(
-                    db.search_conversations_by_content, fts_query, top_k
+                    partial(
+                        db.search_conversations_by_content,
+                        query,
+                        top_k,
+                        fts_match_query=fts_query,
+                    )
                 )
             return [
                 _conversation_row(item)
@@ -1131,14 +1151,14 @@ def _resolve_profile_search_mode(rag_service: Any) -> str:
         rag_service: The resolved RAG runtime.
 
     Returns:
-        One of `_PROFILE_SEARCH_MODES`.
+        ``plain``, ``semantic``, or ``hybrid``.
     """
     mode = getattr(
         getattr(getattr(rag_service, "config", None), "search", None),
         "default_search_mode",
         "semantic",
     )
-    return mode if mode in _PROFILE_SEARCH_MODES else "semantic"
+    return normalize_rag_search_mode(mode)
 
 
 def _profile_disclosure_label(rag_service: Any) -> str:
@@ -1408,7 +1428,10 @@ def _conversation_row(item: Mapping[str, Any]) -> dict[str, Any]:
         "source_id": str(item.get("id", "")),
         "chunk_id": "",
         "title": item.get("title") or "",
-        "snippet": f"Matched conversation · {count_noun(message_count, 'message')}",
+        "snippet": (
+            f"Matched conversation · {message_count} "
+            f"{'message' if message_count == 1 else 'messages'}"
+        ),
         # C1: keyword-mode rows show no score, uniformly with notes/media --
         # `relevance_score`/`best_rank` are an FTS ranking artifact, not a
         # retrieval similarity score, so surfacing it here was misleading.

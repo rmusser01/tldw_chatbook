@@ -41,7 +41,6 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestFormState,
     build_library_ingest_state,
 )
-from tldw_chatbook.Library.library_notes_sync_state import auto_sync_label
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -117,7 +116,7 @@ async def test_loading_surfaces_keep_unicode_copy_and_notes_sync_hook() -> None:
 
 @pytest.mark.asyncio
 async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None:
-    """Notes toggle/select/sort interactions never remount the Library shell."""
+    """Notes toggle/select/open interactions never remount the Library shell."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -138,44 +137,22 @@ async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None
             await _wait_for_widget_text(
                 screen, pilot, "#library-notes-selected-count", "2 selected"
             )
-            assert screen._library_notes_row_selection.count == 2
+            assert screen._notes_state.row_selection.count == 2
             screen.query_one("#library-notes-select-toggle").press()
-            await _wait_for_selector(screen, pilot, "#library-notes-sort")
-            screen.query_one("#library-notes-sort").press()
-            await _wait_for_selector(screen, pilot, "#library-notes-sort-oldest")
-            screen.query_one("#library-notes-sort-oldest").press()
-            await _wait_for_widget_text(
-                screen, pilot, "#library-notes-sort", "Oldest"
-            )
-            screen.query_one("#library-notes-sync-open").press()
-            await _wait_for_selector(screen, pilot, "#library-notes-sync-folder")
-            screen.query_one(
-                "#library-notes-sync-direction-disk_to_db"
-            ).press()
-            await _wait_for_widget_text(
-                screen,
-                pilot,
-                "#library-notes-sync-direction-disk_to_db",
-                "✓",
-            )
-            screen.query_one("#library-notes-sync-conflict-disk_wins").press()
-            await _wait_for_widget_text(
-                screen,
-                pilot,
-                "#library-notes-sync-conflict-disk_wins",
-                "✓",
-            )
-            screen.query_one("#library-notes-sync-auto").press()
-            await _wait_for_widget_text(
-                screen, pilot, "#library-notes-sync-auto", auto_sync_label(True)
-            )
-            screen.query_one("#library-notes-sync-auto").press()
-            await _wait_for_widget_text(
-                screen, pilot, "#library-notes-sync-auto", auto_sync_label(False)
-            )
-            screen.query_one("#library-notes-sync-back").press()
-            await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
-            screen.query_one("#library-notes-row-0").press()
+            # task-32128: this app seeds the folder tree, where Sort is not
+            # composed; "New" is the browse toolbar's stable marker there. The
+            # Sort press -> apply round-trip is pinned on the flat list by
+            # Tests/UI/test_library_notes_wave_list.py.
+            await _wait_for_selector(screen, pilot, "#library-notes-new")
+            screen.query_one("#library-notes-add-from-files").press()
+            await _wait_for_selector(screen, pilot, "#notes-add-import-once")
+            screen.query_one("#notes-sync-back").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+            # Same reason: the seeded app renders the folder tree, whose note
+            # rows are indexed across folder rows too, so the first note is
+            # not "#library-notes-row-0" (that line was already red at the
+            # wave base f054f35ae1, which never got this far).
+            screen.query(".library-notes-tree-note-row").first(Button).press()
             await _wait_for_selector(screen, pilot, "#library-note-title")
 
         assert calls == []
@@ -184,7 +161,6 @@ async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None
             screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
             is canvas_before
         )
-        assert screen._library_notes_sort == "oldest"
 
 
 @pytest.mark.asyncio
@@ -244,28 +220,33 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         return True
 
     skill_screen = SimpleNamespace(
+        _skills_state=SimpleNamespace(selected_skill_name="", view="list"),
         _flush_library_skill_save=permitted,
         _notify_skill_dirty_veto=Mock(),
         _reset_library_skill_editor_state=Mock(),
-        _selected_skill_name="",
         _library_selected_row_id="",
-        _library_skills_view="list",
         run_worker=Mock(),
     )
     skill_event = SimpleNamespace(
         stop=Mock(), button=SimpleNamespace(skill_name=None)
     )
     prompt_screen = SimpleNamespace(
-        _library_prompts_mutation_in_flight=False,
+        _prompts_state=SimpleNamespace(
+            mutation_in_flight=False,
+            detail=None,
+            detail_selected_name="",
+            selected_prompt_id=None,
+            select_mode=False,
+            view="list",
+        ),
+        _library_prompt_browse_controller=SimpleNamespace(freshness="fresh"),
         _flush_library_prompt_save=permitted,
+        _acknowledge_library_destination_change=Mock(),
         _invalidate_library_prompts_browse=Mock(),
         _clear_library_prompt_selection=Mock(),
         _reset_library_prompt_editor_state=Mock(),
         _refresh_library_prompt_detail=Mock(return_value=object()),
-        _selected_prompt_id=None,
-        _library_prompt_select_mode=False,
         _library_selected_row_id="",
-        _library_prompts_view="list",
         run_worker=Mock(),
     )
     prompt_event = SimpleNamespace(
@@ -281,13 +262,13 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         await LibraryScreen.handle_library_prompt_row(prompt_screen, prompt_event)
 
     assert kinds == ["skills", "prompts"]
-    assert skill_screen._library_skills_view == "editor"
-    assert prompt_screen._library_prompts_view == "editor"
+    assert skill_screen._skills_state.view == "editor"
+    assert prompt_screen._prompts_state.view == "editor"
 
 
 @pytest.mark.asyncio
 async def test_real_prompt_and_skill_rows_keep_their_canvas_identity(tmp_path) -> None:
-    """Real service-backed list-to-editor loads avoid the screen fallback."""
+    """Real service-backed list-to-work-pane loads avoid screen fallback."""
     prompt_path = tmp_path / "prompts"
     prompt_path.mkdir()
     prompt_db, prompt_service = _real_prompt_scope_service(prompt_path)
@@ -343,7 +324,7 @@ async def test_real_prompt_and_skill_rows_keep_their_canvas_identity(tmp_path) -
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
             row.press()
-            await _wait_for_selector(screen, pilot, "#library-skill-name")
+            await _wait_for_selector(screen, pilot, "#library-skill-overview-region")
         assert calls == []
         assert screen.query_one("#library-skills-canvas") is canvas
 
@@ -353,7 +334,7 @@ def test_ingest_checkbox_routes_to_ingest_canvas_sync() -> None:
     kinds: list[str] = []
     form = LibraryIngestFormState()
     screen = SimpleNamespace(
-        _library_ingest_form=form,
+        _ingest_state=SimpleNamespace(form=form),
         _invalidate_library_external_submission=Mock(),
         _disarm_library_ingest_start_confirm=Mock(),
         _disarm_library_ingest_retry_confirm=Mock(),
@@ -385,7 +366,7 @@ async def test_ingest_backend_switch_recomposes_only_the_ingest_canvas(
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
     screen._build_library_ingest_state = lambda: build_library_ingest_state(
-        (), form=screen._library_ingest_form, ingest_backend=backend["value"],
+        (), form=screen._ingest_state.form, ingest_backend=backend["value"],
         runtime_source="server", server_ingest_available=True,
     )
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
@@ -423,8 +404,10 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
     prompt_screen = SimpleNamespace(
         is_mounted=True,
         _library_selected_row_id=library_screen_module.LIBRARY_ROW_BROWSE_PROMPTS,
-        _library_prompts_mutation_in_flight=False,
-        _library_prompts_import_status="",
+        _prompts_state=SimpleNamespace(
+            mutation_in_flight=False,
+            import_status="",
+        ),
         query_one=Mock(return_value=prompt_line),
     )
     prompt_screen.app = SimpleNamespace(screen=prompt_screen)
@@ -461,7 +444,7 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
 
     prompt_line.update.assert_called_once_with("2 imported")
     skill_line.update.assert_called_once_with("Imported")
-    assert prompt_screen._library_prompts_import_status == "2 imported"
+    assert prompt_screen._prompts_state.import_status == "2 imported"
     assert skill_screen._library_skills_import_status == "Imported after navigation"
 
 
@@ -491,7 +474,9 @@ async def test_notes_select_toggle_latency_probe() -> None:
             expected = (
                 "#library-notes-select-all"
                 if index % 2 == 0
-                else "#library-notes-sort"
+                # task-32128: "New" is the browse toolbar's stable marker now
+                # that Sort is composed only for the flat list.
+                else "#library-notes-new"
             )
             await _wait_for_selector(screen, pilot, expected)
             samples.append((perf_counter() - started) * 1000.0)

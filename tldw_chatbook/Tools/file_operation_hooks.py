@@ -1,6 +1,21 @@
 # file_operation_hooks.py
-"""
-File Operation Hooks for Claude Code Audit System
+"""RETIRED -- do not build on this module (TASK-26010 AC#6).
+
+Zero production callers: `Tests/Tools/test_system_a_is_retired.py` pins that
+`install_claude_code_hooks` lost its only caller when the old registration was
+deleted (TASK-545 P3 era). It predates the agent runtime and never observed
+agent tool calls at all.
+
+The live post-completion seam is `AgentService(post_tool_dispatch=...)`
+(`Agents/agent_service.py`): (call, result, duration_seconds, run_id) after
+every tool call completes -- success, failure, gate denial, review denial
+(outcome "review_denied") and timeout -- for the primary run and sub-agents
+alike, and strictly observational.
+
+Kept on disk rather than deleted only because deletion is a separate cleanup
+with its own import-audit; nothing here should be extended.
+
+Original description follows.
 
 This module provides integration hooks that can be injected into Claude Code's
 file operation functions to automatically monitor and audit all file changes.

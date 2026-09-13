@@ -17,11 +17,8 @@ route, state = sys.argv[1:]
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 data = selector.parent.parent / 'data'
 selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(data) + '"\n')
-selector.chmod(0o600)
+selector.chmod(384)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Notes.Notes_Library import NotesInteropService
-from tldw_chatbook.Notes.sync_service import NotesSyncService
-from tldw_chatbook.Notes.sync_engine import SyncDirection, ConflictResolution
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Notes.file_notes_service import FileNotesService
 folder = data / 'external-notes'
@@ -29,28 +26,18 @@ folder.mkdir()
 note = folder / 'one.md'
 note.write_bytes(b'# Preserved\nordinary local content\n')
 db = CharactersRAGDB(data / 'notes.db', 'fixture')
-notes = NotesInteropService(data, 'fixture', global_db_to_use=db)
-sync = NotesSyncService(notes, db)
 replica = FileNotesReplica(data / 'replica.db')
 files = FileNotesService(folder, replica)
-old_callback = lambda progress: None
-sync.sync_engine.progress_callback = old_callback
-if route == 'resolve':
-    session = sync.sync_engine._create_sync_session(folder, SyncDirection.DISK_TO_DB,
-        ConflictResolution.ASK, 'test')
-    with db.transaction() as connection:
-        conflict_id = connection.execute(
-            'INSERT INTO sync_conflicts(session_id, file_path, conflict_type) VALUES(?,?,?)',
-            (session, str(note), 'both_changed')).lastrowid
 db.close_connection()
 replica.close()
 root = bootstrap.default_bootstrap_root()
 startup = storage._startups.pop((os.getpid(), str(root)), None)
-if startup is not None: startup.close()
+if startup is not None:
+    startup.close()
 authority = admission_authority(root)
 authority.register('profile', (selector.parent, data))
 control = selector.parent.parent / 'operation'
-control.mkdir(mode=0o700)
+control.mkdir(mode=448)
 owners = ('config', 'notes.sync_bindings', 'db.chachanotes.primary', 'notes.file_notes')
 if state not in ('ordinary', 'unqualified'):
     register_pending(root, 'restore', ('profile',), control, (selector,))
@@ -68,38 +55,19 @@ if state == 'unqualified':
     storage.qualified_for = lambda *args: (False, 'native_unqualified')
 denied = state not in ('ordinary', 'unqualified')
 events = []
+from tldw_chatbook.DB import private_sqlite_process
+helper = str(Path(private_sqlite_process.__file__).with_name('private_sqlite_helper_entry.py').resolve())
+
 def process_sentry(event, args):
+    if event == 'subprocess.Popen' and args[1] == [sys.executable, '-I', '-S', helper]:
+        assert args[3]['_TLDW_PRIVATE_SQLITE_PARENT_PID'] == str(os.getpid())
+        return
     if event in ('subprocess.Popen', 'os.posix_spawn', 'os.system'):
         events.append(event)
         raise AssertionError('unexpected Notes process')
 sys.addaudithook(process_sentry)
 before = note.read_bytes()
-if route in ('sync', 'engine'):
-    async def call():
-        if route == 'sync':
-            return await sync.sync_folder(folder, 'test', SyncDirection.DISK_TO_DB,
-                ConflictResolution.ASK, progress_callback=lambda progress: None)
-        return await sync.sync_engine.sync(folder, 'test', SyncDirection.DISK_TO_DB)
-    try:
-        result = asyncio.run(call())
-    except PermissionError:
-        assert denied
-    else:
-        assert not denied, 'inactive sync ran'
-        assert result[1].created_notes
-    if denied:
-        assert sync.sync_engine.progress_callback is old_callback
-        assert not sync.sync_engine._active_sessions
-    with db.transaction() as connection:
-        assert connection.execute('SELECT count(*) FROM sync_sessions').fetchone()[0] == (0 if denied else 1)
-elif route == 'resolve':
-    result = sync.resolve_conflict(conflict_id, 'use_disk', 'test')
-    assert result is (not denied)
-    with db.transaction() as connection:
-        value = connection.execute('SELECT resolution FROM sync_conflicts WHERE id=?', (conflict_id,)).fetchone()[0]
-        assert value == (None if denied else 'use_disk')
-    assert sync.get_sync_history(), 'history must remain inspectable'
-elif route in ('scan', 'open', 'reconcile'):
+if route in ('scan', 'open', 'reconcile'):
     result = files.open_file('one.md') if route == 'open' else getattr(files, route)()
     if route == 'open':
         assert result.body == before.decode()
@@ -109,20 +77,18 @@ elif route in ('scan', 'open', 'reconcile'):
         assert result.replica_warning and 'activation' in result.replica_warning.lower()
         assert not replica.list_active_files(files.root_key), 'inspection refreshed replica'
         if route == 'reconcile':
-            assert not result.created and not result.modified and not result.deleted
+            assert not result.created and (not result.modified) and (not result.deleted)
     else:
         assert len(replica.list_active_files(files.root_key)) == 1
 assert note.read_bytes() == before
-assert not events and not blocked_attempts()
+assert not events and (not blocked_attempts())
 db.close_connection()
 replica.close()
 print('retired and reopened')
 """
 
 
-@pytest.mark.parametrize(
-    "route", ["sync", "engine", "scan", "open", "reconcile", "resolve"]
-)
+@pytest.mark.parametrize("route", ["scan", "open", "reconcile"])
 @pytest.mark.parametrize(
     "state",
     ["inactive", "ordinary", "owner_flag_only", "config_only", "shared", "unqualified"],
@@ -131,38 +97,11 @@ def test_notes_execution_and_safe_inspection(tmp_path, route, state):
     _run(tmp_path, route, state, script=_SCRIPT)
 
 
-@pytest.mark.parametrize("route", ["engine", "scan"])
+@pytest.mark.parametrize("route", ["scan"])
 def test_ordinary_folder_does_not_authorize_another_restored_database(tmp_path, route):
     script = _SCRIPT.replace(
         "folder = data / 'external-notes'",
         "folder = selector.parent.parent / 'ordinary-notes'",
-    )
-    _run(tmp_path, route, "shared", script=script)
-
-
-@pytest.mark.parametrize("target", ["template", "cache"])
-@pytest.mark.parametrize("route", ["sync", "engine"])
-def test_notes_content_database_is_checked_independently_of_session_database(
-    tmp_path, target, route
-):
-    setup = """
-session_db = CharactersRAGDB(selector.parent.parent / 'ordinary-session.db', 'session')
-sync.db = session_db
-sync.sync_engine.db = session_db
-if TARGET == 'cache':
-    notes.unified_db_template = session_db
-    notes._db_instances['test'] = db
-session_db.close_connection()
-""".replace("TARGET", repr(target))
-    script = _SCRIPT.replace(
-        "folder = data / 'external-notes'",
-        "folder = selector.parent.parent / 'ordinary-notes'",
-    ).replace("old_callback =", setup + "\nold_callback =")
-    script = script.replace(
-        "assert note.read_bytes() == before",
-        "with db.transaction() as connection:\n"
-        "    assert connection.execute('SELECT count(*) FROM notes').fetchone()[0] == 0\n"
-        "assert note.read_bytes() == before",
     )
     _run(tmp_path, route, "shared", script=script)
 

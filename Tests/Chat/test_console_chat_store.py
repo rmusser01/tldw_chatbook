@@ -1,21 +1,62 @@
+import asyncio
 import json
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
+from threading import Event, Thread, current_thread, get_ident
+from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Canvas.staging import CanvasStagingError, CanvasStagingStore
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleWorkspaceContext,
+    GenerationVariantMeta,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatSession,
+    ConsoleChatStore,
+    ConsoleGenerationProjectionQuarantined,
+)
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    console_messages_from_conversation_tree,
+)
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicyDefaults,
+    ConsoleLibraryPolicySnapshot,
+)
+from tldw_chatbook.Chat.console_library_policy_coordinator import (
+    ConsoleLibraryPolicyCoordinator,
+)
+from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
+from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
 from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
+from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_speech import (
+    ConsoleSpeechSnapshotRejected,
+    ConsoleSpeechSnapshotRejectionCode,
+)
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
@@ -27,11 +68,111 @@ from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.tldw_api import SyncV2Envelope
 from tldw_chatbook.TTS.profile_types import CharacterRef
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+from tldw_chatbook.Video_Generation.video_store import video_content_marker
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
 
 
 def _pristine_defaults(*, model: str = "default-model") -> ConsoleSessionSettings:
     return ConsoleSessionSettings(provider="openai", model=model)
+
+
+def test_session_mru_order_tracks_activation_and_excludes_closed_sessions():
+    """Removing activation bookkeeping must lose Ctrl+K's last-tab target."""
+    store = ConsoleChatStore()
+    first = store.create_session(settings=_pristine_defaults())
+    second = store.create_session(settings=_pristine_defaults())
+    third = store.create_session(settings=_pristine_defaults())
+
+    store.switch_session(first.id)
+    store.switch_session(second.id)
+
+    assert store.session_mru_ids() == (second.id, first.id, third.id)
+    assert store.most_recent_other_session_id() == first.id
+
+    store.close_session(first.id)
+
+    assert store.session_mru_ids() == (second.id, third.id)
+    assert store.most_recent_other_session_id() == third.id
+
+
+def test_most_recent_other_session_falls_back_when_no_activation_history_exists():
+    store = ConsoleChatStore()
+    current = store.create_session(title="Current")
+    fallback = store.create_session(title="Restored peer", activate=False)
+
+    assert store.active_session_id == current.id
+    assert store.session_mru_ids() == (current.id,)
+    assert store.most_recent_other_session_id() == fallback.id
+
+
+def _library_authority(
+    attempt_id: str,
+    *,
+    auto_retrieve: ConsoleAutoRetrieve = ConsoleAutoRetrieve.AUTOMATIC,
+    assistant_access: ConsoleAssistantLibraryAccess = (
+        ConsoleAssistantLibraryAccess.BLOCKED
+    ),
+) -> ConsoleTurnLibraryAuthority:
+    return ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=auto_retrieve,
+            assistant_access=assistant_access,
+            policy_revision=1,
+            source="durable",
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), True),
+        provider_intent=ConsoleProviderIntent("openai", "model-a", None),
+        attempt_id=attempt_id,
+    )
+
+
+def _begin_disclosed_library_attempt(
+    store: ConsoleChatStore,
+    session_id: str,
+    *,
+    attempt_id: str = "attempt-active",
+    content: str = "",
+) -> tuple[ConsoleChatMessage, ConsoleResolvedDestination]:
+    local = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="model-a",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    external = ConsoleResolvedDestination(
+        provider="openai",
+        model="model-a",
+        endpoint_identity="https://api.openai.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    )
+    baseline = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.begin_session_library_destination_attempt(
+        session_id,
+        _library_authority("attempt-baseline"),
+        local,
+        baseline.id,
+    )
+    store.append_stream_chunk(baseline.id, "baseline")
+    store.mark_message_complete(baseline.id)
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content=content,
+    )
+    store.begin_session_library_destination_attempt(
+        session_id,
+        _library_authority(attempt_id),
+        external,
+        assistant.id,
+    )
+    return assistant, external
 
 
 def _pristine_session(
@@ -69,6 +210,80 @@ def test_initial_chat_one_is_pristine_until_the_user_types():
 
     store.set_session_draft(session.id, "typed work")
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_default_library_policy_does_not_dirty_pristine_tab_but_explicit_edit_does():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore(
+        library_policy_defaults=ConsoleLibraryPolicyDefaults(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        )
+    )
+    session = _pristine_session(store, defaults)
+
+    assert store.is_pristine_session(session.id, expected_settings=defaults)
+
+    store.stage_session_library_policy(
+        session.id,
+        ConsoleLibraryPolicyCandidate(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        ),
+    )
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_console_settings_revision_tracks_only_settings_owned_changes():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    assert session.settings_revision == 0
+    assert store.session_settings_revision(session.id) == 0
+
+    store.replace_session_settings(session.id, replace(defaults, temperature=0.2))
+    assert store.session_settings_revision(session.id) == 1
+    payload_revision = store.payload_revision(session.id)
+    store.replace_session_settings(session.id, replace(defaults, temperature=0.2))
+    assert store.session_settings_revision(session.id) == 1
+    assert store.payload_revision(session.id) == payload_revision + 1
+
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    store.append_stream_chunk(message.id, "hello")
+    assert store.session_settings_revision(session.id) == 1
+
+    overrides = ConsoleContextPolicyOverrides(summary_max_tokens=256)
+    store.set_session_context_policy_overrides(session.id, overrides)
+    assert store.session_settings_revision(session.id) == 2
+    payload_revision = store.payload_revision(session.id)
+    store.set_session_context_policy_overrides(session.id, overrides)
+    assert store.session_settings_revision(session.id) == 2
+    assert store.payload_revision(session.id) == payload_revision + 1
+
+    store.set_session_user_display_name_override(
+        session.id, "Ada", global_default="User"
+    )
+    assert store.session_settings_revision(session.id) == 3
+    store.set_session_user_display_name_override(
+        session.id, "Ada", global_default="User"
+    )
+    assert store.session_settings_revision(session.id) == 3
+
+    store.set_session_system_prompt(session.id, "Be concise.")
+    assert store.session_settings_revision(session.id) == 4
+    store.set_session_system_prompt(session.id, "Be concise.")
+    assert store.session_settings_revision(session.id) == 4
+
+    store.set_session_pinned_prefill(session.id, "Voice:")
+    assert store.session_settings_revision(session.id) == 5
+    payload_revision = store.payload_revision(session.id)
+    store.set_session_pinned_prefill(session.id, "Voice:")
+    assert store.session_settings_revision(session.id) == 5
+    assert store.payload_revision(session.id) == payload_revision + 1
 
 
 def test_message_completed_subscription_emits_first_live_completion_once():
@@ -161,6 +376,170 @@ def test_message_completed_subscription_emits_each_successful_regeneration() -> 
     ]
 
 
+@pytest.mark.parametrize(
+    "terminal",
+    ["complete", "failed", "stopped", "variant_complete"],
+)
+def test_assistant_terminal_settlement_clears_runtime_library_disclosure(
+    terminal: str,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message, external = _begin_disclosed_library_attempt(
+        store,
+        session.id,
+        content="original" if terminal == "variant_complete" else "",
+    )
+    assert session.library_destination_runtime.disclosure is not None
+    assert session.library_destination_runtime.owner_attempt_id == "attempt-active"
+    assert session.library_destination_runtime.owner_message_id == message.id
+
+    if terminal == "variant_complete":
+        store.begin_variant_stream(message.id)
+        store.append_stream_chunk(message.id, "replacement")
+        store.finalize_variant_stream(message.id)
+    else:
+        store.append_stream_chunk(message.id, "response")
+        getattr(store, f"mark_message_{terminal}")(message.id)
+
+    assert session.library_destination_runtime.disclosure is None
+    assert session.library_destination_runtime.owner_attempt_id is None
+    assert session.library_destination_runtime.owner_message_id is None
+    assert session.library_destination_runtime.resolved_destination == external
+    assert session.library_destination_runtime.last_resolved_identity == (
+        external.identity_key
+    )
+
+
+def test_completion_subscribers_observe_disclosure_already_settled() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message, _external = _begin_disclosed_library_attempt(store, session.id)
+    observed = []
+    store.subscribe_message_completed(
+        lambda _token: observed.append(session.library_destination_runtime.disclosure)
+    )
+    store.append_stream_chunk(message.id, "response")
+
+    store.mark_message_complete(message.id)
+
+    assert observed == [None]
+
+
+def test_older_completed_variant_cannot_settle_a_newer_attempt_disclosure() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    older = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="older answer",
+    )
+    active, _external = _begin_disclosed_library_attempt(store, session.id)
+    disclosure = session.library_destination_runtime.disclosure
+    assert disclosure is not None
+
+    store.add_variant(older.id, "older alternate")
+
+    assert session.library_destination_runtime.disclosure == disclosure
+    assert session.library_destination_runtime.owner_attempt_id == "attempt-active"
+    assert session.library_destination_runtime.owner_message_id == active.id
+
+
+def test_library_destination_settlement_requires_exact_attempt_and_message_owner() -> (
+    None
+):
+    store = ConsoleChatStore()
+    session = store.create_session()
+    active, _external = _begin_disclosed_library_attempt(store, session.id)
+    disclosure = session.library_destination_runtime.disclosure
+
+    wrong_attempt = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-older",
+        expected_message_id=active.id,
+    )
+    wrong_message = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id="older-message",
+    )
+
+    assert wrong_attempt.disclosure == disclosure
+    assert wrong_message.disclosure == disclosure
+    settled = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id=active.id,
+    )
+    assert settled.disclosure is None
+    assert settled.owner_attempt_id is None
+    assert settled.owner_message_id is None
+
+
+def test_older_attempt_cleanup_cannot_clear_replacement_destination_owner() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    older, _external = _begin_disclosed_library_attempt(store, session.id)
+    replacement = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    private = ConsoleResolvedDestination(
+        provider="custom",
+        model="model-b",
+        endpoint_identity="http://10.0.0.9:8080",
+        egress_class=ConsoleEgressClass.PRIVATE_NETWORK,
+    )
+    store.begin_session_library_destination_attempt(
+        session.id,
+        _library_authority("attempt-replacement"),
+        private,
+        replacement.id,
+    )
+
+    store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id=older.id,
+    )
+
+    runtime = session.library_destination_runtime
+    assert runtime.disclosure is not None
+    assert runtime.disclosure.resolved_destination == private
+    assert runtime.owner_attempt_id == "attempt-replacement"
+    assert runtime.owner_message_id == replacement.id
+
+
+def test_runtime_library_disclosure_is_isolated_across_session_navigation() -> None:
+    store = ConsoleChatStore()
+    session_a = store.create_session(title="Session A")
+    session_b = store.create_session(title="Session B")
+    message_a, _external_a = _begin_disclosed_library_attempt(
+        store,
+        session_a.id,
+        attempt_id="attempt-a",
+    )
+    message_b, _external_b = _begin_disclosed_library_attempt(
+        store,
+        session_b.id,
+        attempt_id="attempt-b",
+    )
+
+    store.switch_session(session_b.id)
+    store.switch_session(session_a.id)
+    assert session_a.library_destination_runtime.disclosure is not None
+    assert session_b.library_destination_runtime.disclosure is not None
+
+    store.append_stream_chunk(message_b.id, "response")
+    store.mark_message_complete(message_b.id)
+
+    assert store.active_session_id == session_a.id
+    assert session_a.library_destination_runtime.disclosure is not None
+    assert session_a.library_destination_runtime.owner_message_id == message_a.id
+    assert session_b.library_destination_runtime.disclosure is None
+
+
 def test_completion_generation_remains_monotonic_across_same_id_restore() -> None:
     store = ConsoleChatStore()
     session = store.create_session()
@@ -187,7 +566,9 @@ def test_completion_generation_remains_monotonic_across_same_id_restore() -> Non
     assert store.message_completion_generation(message.id) > before_restore
 
 
-def test_message_completed_subscription_add_variant_emits_but_selection_does_not() -> None:
+def test_message_completed_subscription_add_variant_emits_but_selection_does_not() -> (
+    None
+):
     store = ConsoleChatStore()
     session = store.create_session()
     observed: list[tuple[str, str]] = []
@@ -204,7 +585,9 @@ def test_message_completed_subscription_add_variant_emits_but_selection_does_not
     assert observed == [(session.id, message.id)]
 
 
-def test_message_completed_subscription_duplicate_variant_finalize_fails_closed() -> None:
+def test_message_completed_subscription_duplicate_variant_finalize_fails_closed() -> (
+    None
+):
     store = ConsoleChatStore()
     session = store.create_session()
     observed: list[tuple[str, str]] = []
@@ -936,6 +1319,67 @@ def test_store_records_message_feedback():
     assert store.get_message(message.id).feedback == "up"
 
 
+@pytest.mark.parametrize("failure", ["false", "exception"])
+def test_store_feedback_publishes_only_after_durable_success(failure: str) -> None:
+    class FeedbackPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            if kwargs.get("update_feedback"):
+                if failure == "exception":
+                    raise RuntimeError("feedback write failed")
+                return False
+            return super().update_message_content(**kwargs)
+
+    persistence = FeedbackPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        persist=True,
+    )
+    before = deepcopy(store._message_or_raise(message.id))
+
+    if failure == "exception":
+        with pytest.raises(RuntimeError, match="feedback write failed"):
+            store.set_message_feedback(message.id, "up")
+    else:
+        returned = store.set_message_feedback(message.id, "up")
+        assert returned == before
+
+    assert store._message_or_raise(message.id) == before
+    assert message.feedback is None
+    assert all(not call["update_feedback"] for call in persistence.updated_messages)
+
+
+def test_store_feedback_success_is_presentation_only_in_semantic_ledger(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "feedback.sqlite", "feedback")
+    try:
+        service = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=service)
+        session = store.create_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+            persist=True,
+        )
+        persisted_id = message.persisted_message_id
+        assert persisted_id is not None
+        before_stats = _message_semantic_stats(db, persisted_id)
+
+        updated = store.set_message_feedback(message.id, "up")
+
+        assert updated.feedback == "up"
+        assert store.get_message(message.id).feedback == "up"
+        assert db.get_message_by_id(persisted_id)["feedback"] == "up"
+        assert _message_semantic_stats(db, persisted_id) == before_stats
+    finally:
+        db.close_connection()
+
+
 def test_store_deletes_message_from_transcript():
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -1033,6 +1477,112 @@ def test_store_updates_message_content():
 
     assert updated.content == "edited answer"
     assert store.get_message(message.id).content == "edited answer"
+
+
+def test_successful_edit_publishes_one_coherent_node_to_every_transcript_view():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
+    marker = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.TOOL,
+        content="tool result",
+    )
+
+    updated = store.update_message_content(message.id, "edited answer")
+
+    node = store._nodes_by_session[session.id][message.id]
+    transcript = store._messages_by_session[session.id]
+    assert updated.content == "edited answer"
+    assert store.get_message(message.id).content == "edited answer"
+    assert [item.content for item in store.messages_for_session(session.id)] == [
+        "edited answer",
+        "tool result",
+    ]
+    assert [item.id for item in transcript] == [message.id, marker.id]
+    assert transcript[0] is node
+    assert store.active_path_message_ids(session.id) == [message.id]
+
+
+def test_canvas_scope_inputs_map_only_the_selected_native_branch_to_persisted_ids():
+    """Durable Canvas scope assembly must follow the in-memory selected branch."""
+
+    store = ConsoleChatStore()
+    root = ConsoleChatMessage(
+        id="native-root",
+        role=ConsoleMessageRole.USER,
+        content="root",
+        persisted_message_id="persisted-root",
+    )
+    left = ConsoleChatMessage(
+        id="native-left",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="left",
+        persisted_message_id="persisted-left",
+        parent_message_id="persisted-root",
+    )
+    right = ConsoleChatMessage(
+        id="native-right",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="right",
+        persisted_message_id="persisted-right",
+        parent_message_id="persisted-root",
+    )
+    session = store.restore_persisted_session(
+        title="Canvas branches",
+        workspace_id=None,
+        persisted_conversation_id="persisted-conversation",
+        all_nodes=[root, left, right],
+        active_leaf_persisted_id="persisted-left",
+    )
+
+    def persisted_active_path() -> tuple[str | None, ...]:
+        return tuple(
+            store.persisted_message_id_for_session_node(session.id, native_id)
+            for native_id in store.active_path_message_ids(session.id)
+        )
+
+    assert store.active_path_message_ids(session.id) == [root.id, left.id]
+    assert persisted_active_path() == ("persisted-root", "persisted-left")
+    assert "persisted-right" not in persisted_active_path()
+
+    store.set_active_leaf(session.id, right.id)
+
+    assert store.active_path_message_ids(session.id) == [root.id, right.id]
+    assert persisted_active_path() == ("persisted-root", "persisted-right")
+    assert "persisted-left" not in persisted_active_path()
+
+
+def test_store_restores_exact_message_state_when_durable_edit_is_rejected():
+    class RejectingPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            self.updated_messages.append(kwargs)
+            return False
+
+    persistence = RejectingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="durable original",
+        persist=True,
+    )
+    before = store.get_message(message.id)
+    before_payload_revision = store.payload_revision(session.id)
+    before_context_epoch = store.conversation_context_epoch(session.id)
+    before_speech_revision = store._message_speech_revisions.get(message.id)
+
+    returned = store.update_message_content(message.id, "rejected edit")
+
+    assert returned == before
+    assert store.get_message(message.id) == before
+    assert store.payload_revision(session.id) == before_payload_revision
+    assert store.conversation_context_epoch(session.id) == before_context_epoch
+    assert store._message_speech_revisions.get(message.id) == before_speech_revision
+    assert persistence.updated_messages[-1]["content"] == "rejected edit"
 
 
 def test_store_updates_current_variant_content():
@@ -1315,6 +1865,313 @@ def test_store_closes_last_session_returns_none():
     assert store.sessions() == []
 
 
+def _populate_native_owned_cleanup_state(
+    store: ConsoleChatStore,
+    session: ConsoleChatSession,
+    message_ids: set[str],
+) -> None:
+    """Populate every native-owned cleanup bucket exercised by Task 3."""
+    for message_id in message_ids:
+        store._terminal_citation_finalizers[message_id] = lambda: None
+        store._provisional_terminal_selection_ids.add(message_id)
+        store._terminal_persistence_deferred_ids.add(message_id)
+        store._stream_chunks_by_message[message_id] = ["chunk"]
+        store._stream_materialized_counts[message_id] = 1
+        store._pending_persistence_message_ids.add(message_id)
+        store._variant_stream_bases[message_id] = object()
+        store._variant_restored_message_ids.add(message_id)
+        store._failed_retry_message_ids.add(message_id)
+        store._message_speech_revisions[message_id] = 3
+        store._message_completion_generations[message_id] = 4
+        store._roleplay_message_projection_candidates[message_id] = ("projection",)
+        store._exchange_blob_cache[message_id] = {("run", 1, "ok"): b"blob"}
+        store._abandoned_exchange_run_tags[message_id] = {"run"}
+        store._character_emote_captures[message_id] = object()
+        store._trajectory_timing[message_id] = {"step_started_at": 1.0}
+        store._trajectory_written_ids.add(message_id)
+        store._pending_trajectory_tool_rows[message_id] = [{"session_id": session.id}]
+        store._pending_trajectory_event_rows[message_id] = [{"event_kind": "test"}]
+
+    preparation = SimpleNamespace(
+        preparation_id=f"prep-{session.id}",
+        session_id=session.id,
+        state="settled",
+    )
+    store._preparations_by_session[session.id] = preparation
+    store._preparations_by_id[preparation.preparation_id] = preparation
+    store._dispatch_recoveries_by_session[session.id] = SimpleNamespace(
+        recovery_needed=False,
+        kind=None,
+    )
+    store._dispatch_recovery_message_baselines[session.id] = object()
+    store._dispatch_recovery_queue_hydration_pending.add(session.id)
+    store._character_emote_feed_by_session[session.id] = object()
+    store._unresolved_promotion_operations[session.id] = "promotion"
+    store._pending_workspace_projections[session.id] = "conv-restored"
+    store._deferred_project_instruction_state_session_ids.add(session.id)
+    store._session_turn_ids[session.id] = "turn-restored"
+    store._payload_revisions[session.id] = 11
+
+
+def _assert_native_owned_cleanup_state_absent(
+    store: ConsoleChatStore,
+    session_id: str,
+    message_ids: set[str],
+) -> None:
+    message_maps = (
+        store._terminal_citation_finalizers,
+        store._stream_chunks_by_message,
+        store._stream_materialized_counts,
+        store._variant_stream_bases,
+        store._message_speech_revisions,
+        store._message_completion_generations,
+        store._native_parent_by_message,
+        store._roleplay_message_projection_candidates,
+        store._exchange_blob_cache,
+        store._abandoned_exchange_run_tags,
+        store._character_emote_captures,
+        store._trajectory_timing,
+        store._pending_trajectory_tool_rows,
+        store._pending_trajectory_event_rows,
+    )
+    message_sets = (
+        store._provisional_terminal_selection_ids,
+        store._terminal_persistence_deferred_ids,
+        store._pending_persistence_message_ids,
+        store._variant_restored_message_ids,
+        store._failed_retry_message_ids,
+        store._trajectory_written_ids,
+    )
+    assert all(
+        message_id not in owner
+        for message_id in message_ids
+        for owner in (*message_maps, *message_sets)
+    )
+    session_maps = (
+        store._sessions,
+        store._messages_by_session,
+        store._tool_markers_by_session,
+        store._nodes_by_session,
+        store._children_by_parent,
+        store._active_leaf_by_session,
+        store._context_summary_by_session,
+        store._roleplay_system_projection_candidates,
+        store._conversation_context_epochs,
+        store._speech_preference_epochs,
+        store._character_emote_feed_by_session,
+        store._unresolved_promotion_operations,
+        store._dispatch_recoveries_by_session,
+        store._dispatch_recovery_message_baselines,
+        store._pending_workspace_projections,
+        store._preparations_by_session,
+        store._session_turn_ids,
+        store._payload_revisions,
+    )
+    session_sets = (
+        store._dispatch_recovery_queue_hydration_pending,
+        store._deferred_project_instruction_state_session_ids,
+    )
+    assert all(session_id not in owner for owner in (*session_maps, *session_sets))
+    assert all(owner != session_id for owner in store._message_session_index.values())
+    assert all(
+        preparation.session_id != session_id
+        for preparation in store._preparations_by_id.values()
+    )
+
+
+def test_rollback_restored_session_purges_exact_native_state_without_durable_mutation():
+    class DurableObserver:
+        def __init__(self) -> None:
+            self.mutations: list[tuple[str, str]] = []
+
+        def delete_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("delete", conversation_id))
+
+        def update_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("update", conversation_id))
+
+    persistence = DurableObserver()
+    coordinator = ConsoleLibraryPolicyCoordinator(object())
+    store = ConsoleChatStore(
+        persistence=persistence,
+        library_policy_coordinator=coordinator,
+    )
+    prior_settings = ConsoleSessionSettings(provider="openai", model="prior")
+    prior = store.create_session(title="Prior", settings=prior_settings)
+    store.set_session_draft(prior.id, "keep this draft")
+    root = ConsoleChatMessage(
+        id="restored-root",
+        role=ConsoleMessageRole.USER,
+        content="root",
+        persisted_message_id="persisted-root",
+    )
+    off_path = ConsoleChatMessage(
+        id="restored-off-path",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="old branch",
+        persisted_message_id="persisted-off-path",
+        parent_message_id="persisted-root",
+    )
+    active = ConsoleChatMessage(
+        id="restored-active",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="active branch",
+        persisted_message_id="persisted-active",
+        parent_message_id="persisted-root",
+    )
+    restored = store.restore_persisted_session(
+        title="Restored",
+        workspace_id="workspace-restored",
+        persisted_conversation_id="conv-restored",
+        all_nodes=[root, off_path, active],
+        active_leaf_persisted_id="persisted-active",
+    )
+    marker = store.append_message(
+        restored.id,
+        role=ConsoleMessageRole.TOOL,
+        content="display-only marker",
+    )
+    owned_message_ids = {root.id, off_path.id, active.id, marker.id}
+    _populate_native_owned_cleanup_state(store, restored, owned_message_ids)
+    store._pending_trajectory_tool_rows["__unanchored__"] = [
+        {"session_id": restored.id, "payload_json": "remove"},
+        {"session_id": prior.id, "payload_json": "keep"},
+    ]
+    store._sync_v2_message_versions["conv-restored:persisted-active"] = "shared"
+    store._trajectory_capture_failure_keys.add("shared-event")
+    store._trajectory_capture_failure_hydrated.add("conv-restored")
+    store._payload_revisions["conv-restored"] = 29
+    assert restored.id in coordinator._holders
+
+    rolled_back = store.rollback_restored_session(
+        restored.id,
+        expected_session=restored,
+        prior_active_session_id=prior.id,
+    )
+
+    assert rolled_back is True
+    assert store.active_session_id == prior.id
+    assert store.switch_session(prior.id) is prior
+    assert prior.settings is prior_settings
+    assert prior.draft == "keep this draft"
+    _assert_native_owned_cleanup_state_absent(store, restored.id, owned_message_ids)
+    assert restored.id not in coordinator._holders
+    assert store._pending_trajectory_tool_rows["__unanchored__"] == [
+        {"session_id": prior.id, "payload_json": "keep"}
+    ]
+    assert store._sync_v2_message_versions == {
+        "conv-restored:persisted-active": "shared"
+    }
+    assert store._trajectory_capture_failure_keys == {"shared-event"}
+    assert store._trajectory_capture_failure_hydrated == {"conv-restored"}
+    assert store._payload_revisions["conv-restored"] == 29
+    assert persistence.mutations == []
+
+
+def test_rollback_restored_session_refuses_reused_session_id():
+    store = ConsoleChatStore()
+    prior = store.create_session(title="Prior")
+    restored = store.restore_persisted_session(
+        title="Restored",
+        workspace_id=None,
+        persisted_conversation_id="conv-restored",
+        all_nodes=[],
+        activate=False,
+    )
+    replacement = ConsoleChatSession(id=restored.id, title="Different live owner")
+    store._sessions[restored.id] = replacement
+
+    rolled_back = store.rollback_restored_session(
+        restored.id,
+        expected_session=restored,
+        prior_active_session_id=prior.id,
+    )
+
+    assert rolled_back is False
+    assert store._sessions[restored.id] is replacement
+    assert store.active_session_id == prior.id
+
+
+@pytest.mark.parametrize(
+    ("failure_boundary", "cancelled"),
+    (
+        ("_restore_speech_preferences", False),
+        ("_hydrate_generation_metadata_from_persistence", True),
+    ),
+    ids=("ordinary-exception", "cancellation"),
+)
+def test_restore_persisted_session_is_atomic_after_create(
+    failure_boundary,
+    cancelled,
+    monkeypatch,
+):
+    """Every post-create failure purges only the new runtime session."""
+
+    class DurableObserver:
+        def __init__(self) -> None:
+            self.mutations: list[tuple[str, str]] = []
+
+        def delete_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("delete", conversation_id))
+
+        def update_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("update", conversation_id))
+
+    persistence = DurableObserver()
+    coordinator = ConsoleLibraryPolicyCoordinator(object())
+    store = ConsoleChatStore(
+        persistence=persistence,
+        library_policy_coordinator=coordinator,
+    )
+    prior = store.create_session(title="Prior")
+    store.set_session_draft(prior.id, "prior draft")
+
+    def fail_post_create(*_args, **_kwargs):
+        if cancelled:
+            raise asyncio.CancelledError
+        raise RuntimeError("post-create restore failed")
+
+    monkeypatch.setattr(store, failure_boundary, fail_post_create)
+    expected_error = asyncio.CancelledError if cancelled else RuntimeError
+
+    with pytest.raises(expected_error):
+        store.restore_persisted_session(
+            title="Failed restore",
+            workspace_id="workspace-restored",
+            persisted_conversation_id="failed-conversation",
+            all_nodes=[],
+        )
+
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.draft == "prior draft"
+    assert set(coordinator._holders) == {prior.id}
+    assert persistence.mutations == []
+
+
+def test_close_session_keeps_neighbor_policy_and_uses_exact_runtime_purge():
+    store = ConsoleChatStore()
+    first = store.create_session(title="First")
+    closing = store.create_session(title="Closing")
+    expected_neighbor = store.create_session(title="Next")
+    store.switch_session(closing.id)
+    message = store.append_message(
+        closing.id,
+        role=ConsoleMessageRole.USER,
+        content="owned",
+    )
+    _populate_native_owned_cleanup_state(store, closing, {message.id})
+    store._sync_v2_message_versions["shared:persisted"] = "keep"
+
+    activated = store.close_session(closing.id)
+
+    assert activated is expected_neighbor
+    assert store.active_session_id == expected_neighbor.id
+    assert store.sessions() == [first, expected_neighbor]
+    _assert_native_owned_cleanup_state_absent(store, closing.id, {message.id})
+    assert store._sync_v2_message_versions == {"shared:persisted": "keep"}
+
+
 def test_store_adds_regenerated_variant_and_selects_it():
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -1344,11 +2201,44 @@ class FakePersistence:
         self.speech_update_result = True
         self.restored_speech_preferences = None
         self.last_create_kwargs = None
+        self.promotion_trace_boundaries = []
+        self._message_versions = {}
 
     def create_conversation(self, **kwargs):
         self.created_conversations.append(kwargs)
         self.last_create_kwargs = kwargs
         return "conv-1"
+
+    def promote_console_conversation_bundle(
+        self,
+        *,
+        conversation_id,
+        policy_candidate,
+        conversation_kwargs,
+        messages,
+        active_leaf_message_id,
+        context_summary=None,
+        context_summary_boundary_message_id=None,
+        project_context_json=None,
+        context_policy_overrides=None,
+        contributions=(),
+        trace_boundary=None,
+    ):
+        if contributions:
+            raise RuntimeError("FakePersistence does not execute contributions")
+        self.promotion_trace_boundaries.append(trace_boundary)
+        self.created_conversations.append(
+            {"conversation_id": conversation_id, **dict(conversation_kwargs)}
+        )
+        self.last_create_kwargs = dict(conversation_kwargs)
+        for prepared in messages:
+            self.created_messages.append(dict(prepared["create_kwargs"]))
+        return ConsoleLibraryPolicySnapshot(
+            auto_retrieve=policy_candidate.auto_retrieve,
+            assistant_access=policy_candidate.assistant_access,
+            policy_revision=1,
+            source="durable",
+        )
 
     def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
         self.updated_system_prompts.append(
@@ -1366,12 +2256,14 @@ class FakePersistence:
         conversation_id,
         user_name_override,
         character_system_template,
+        character_name_snapshot,
     ):
         self.roleplay_updates.append(
             {
                 "conversation_id": conversation_id,
                 "user_name_override": user_name_override,
                 "character_system_template": character_system_template,
+                "character_name_snapshot": character_name_snapshot,
             }
         )
         return True
@@ -1419,7 +2311,9 @@ class FakePersistence:
             "metadata_json": metadata_json,
         }
         self.created_messages.append(kwargs)
-        return f"msg-{len(self.created_messages)}"
+        message_id = f"msg-{len(self.created_messages)}"
+        self._message_versions[message_id] = 1
+        return message_id
 
     def update_message_content(
         self,
@@ -1433,7 +2327,11 @@ class FakePersistence:
         update_parent=False,
         update_feedback=False,
         metadata_json=None,
+        expected_version=None,
     ):
+        current_version = self._message_versions.get(message_id, 1)
+        if expected_version is not None and expected_version != current_version:
+            return False
         self.updated_messages.append(
             {
                 "message_id": message_id,
@@ -1445,9 +2343,41 @@ class FakePersistence:
                 "update_parent": update_parent,
                 "update_feedback": update_feedback,
                 "metadata_json": metadata_json,
+                "expected_version": expected_version,
             }
         )
+        self._message_versions[message_id] = current_version + 1
         return True
+
+    def replace_assistant_generation_projection(
+        self,
+        *,
+        message_id,
+        content,
+        thinking_blocks_json,
+        provider_continuation_json,
+        assistant_generation_state,
+        usage_json,
+        expected_version=None,
+    ):
+        current_version = self._message_versions.get(message_id, 1)
+        if expected_version is not None and expected_version != current_version:
+            raise RuntimeError("fake generation version mismatch")
+        self.updated_messages.append(
+            {
+                "message_id": message_id,
+                "content": content,
+                "image_data": None,
+                "image_mime_type": None,
+                "thinking_blocks_json": thinking_blocks_json,
+                "provider_continuation_json": provider_continuation_json,
+                "assistant_generation_state": assistant_generation_state,
+                "usage_json": usage_json,
+            }
+        )
+        committed_version = current_version + 1
+        self._message_versions[message_id] = committed_version
+        return committed_version
 
 
 class FakeChatSyncProducer:
@@ -1502,7 +2432,9 @@ def test_unsaved_session_stages_all_reply_speech_preferences():
     assert session.speech_preferences.paused is False
 
 
-def test_reply_speech_preference_epoch_advances_only_after_successful_mutation() -> None:
+def test_reply_speech_preference_epoch_advances_only_after_successful_mutation() -> (
+    None
+):
     store = ConsoleChatStore()
     session = store.ensure_session()
 
@@ -1653,9 +2585,10 @@ def test_persisted_reply_speech_noop_reconciles_external_durable_change(tmp_path
         assert updated is session
         assert persisted is True
         assert session.speech_preferences == ConsoleSpeechPreferences()
-        assert service.get_conversation_speech_preferences(
-            conversation_id
-        ) == ConsoleSpeechPreferences()
+        assert (
+            service.get_conversation_speech_preferences(conversation_id)
+            == ConsoleSpeechPreferences()
+        )
         assert db.get_conversation_by_id(conversation_id)["version"] == 3
     finally:
         db.close_connection()
@@ -1674,6 +2607,36 @@ def test_first_persist_includes_staged_reply_speech_preferences():
     assert persistence.created_conversations[0]["speech_preferences"] == (
         ConsoleSpeechPreferences(auto_speak=True)
     )
+
+
+def test_first_persist_includes_persona_memory_mode():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        assistant_kind="persona",
+        assistant_id="persona-1",
+        persona_memory_mode="read_write",
+    )
+
+    store.persist_session_if_needed(session.id)
+
+    assert persistence.created_conversations[0]["persona_memory_mode"] == "read_write"
+
+
+def test_restore_persisted_session_accepts_persona_memory_mode():
+    store = ConsoleChatStore(persistence=FakePersistence())
+
+    session = store.restore_persisted_session(
+        title="Persona chat",
+        workspace_id=None,
+        persisted_conversation_id="conv-1",
+        all_nodes=[],
+        assistant_kind="persona",
+        assistant_id="persona-1",
+        persona_memory_mode="read_only",
+    )
+
+    assert session.persona_memory_mode == "read_only"
 
 
 def test_restore_persisted_session_round_trips_reply_speech_preferences():
@@ -1721,11 +2684,144 @@ def test_real_persistence_round_trips_roleplay_and_reply_speech_metadata(tmp_pat
         )
 
         assert restored.speech_preferences == session.speech_preferences
-        assert parse_console_roleplay_context(record["metadata"]).user_name_override == (
-            "Rowan"
-        )
+        assert parse_console_roleplay_context(
+            record["metadata"]
+        ).user_name_override == ("Rowan")
     finally:
         db.close_connection()
+
+
+@pytest.fixture
+def real_db_store(tmp_path):
+    """Store over a real SQLite DB for agent-handoff restore tests.
+
+    Construction mirrors the real-DB restore tests above (same class,
+    same file-per-test pattern, no workspace_registry).
+    """
+    db = CharactersRAGDB(tmp_path / "console-agent-handoff.db", "console-handoff-test")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        yield store, db
+    finally:
+        db.close_connection()
+
+
+def test_restore_persisted_session_activate_false_keeps_current(real_db_store):
+    store, db = real_db_store
+    first = store.create_session(title="A")
+    conv = store.persistence.create_conversation(conversation_title="B")
+    restored = store.restore_persisted_session(
+        title="B", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert store.active_session_id == first.id  # NOT switched
+    assert restored.persisted_conversation_id == conv
+
+
+def test_restore_rehydrates_handoff_draft_once(real_db_store):
+    """Final-review fix wave (Finding 2), consume-on-first-ACTIVATION: the
+    draft rehydrates at RESTORE, the persisted key is cleared at the
+    session's FIRST activation (verified via durable metadata), and a
+    second restore after that first open never re-fills the composer."""
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(
+        conversation_title="C",
+        metadata={"console_agent_handoff": {"draft": "please plan the migration",
+                                            "created_via": "fork_chat", "source_run_id": "r9"}},
+    )
+    restored = store.restore_persisted_session(
+        title="C", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert restored.draft == "please plan the migration"
+    # restore alone does NOT clear the key (never-opened drafts survive
+    # restarts)
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" in (row.get("metadata") or "{}")
+    # first activation -- same run -- clears the key exactly once
+    store.switch_session(restored.id)
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" not in (row.get("metadata") or "{}")
+    # and a later restore (post-restart reopen) no longer re-fills the draft
+    again = store.restore_persisted_session(
+        title="C", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=True,
+    )
+    assert again.draft == ""
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" not in (row.get("metadata") or "{}")
+
+
+def test_never_opened_handoff_keeps_key_across_activity(real_db_store):
+    """Semantics (a): restore with activate=False records the pending clear
+    but the durable key survives other sessions' activity -- only THIS
+    session's first activation may consume it."""
+    store, db = real_db_store
+    store.create_session(title="owner")
+    conv = store.persistence.create_conversation(
+        conversation_title="Keep",
+        metadata={"console_agent_handoff": {"draft": "unopened",
+                                            "created_via": "new_chat", "source_run_id": "r1"}},
+    )
+    restored = store.restore_persisted_session(
+        title="Keep", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert restored.draft == "unopened"
+    # other sessions come and go; the handoff session is never activated
+    store.create_session(title="other-1")
+    other2 = store.create_session(title="other-2")
+    store.switch_session(other2.id)
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" in (row.get("metadata") or "{}")
+
+
+def test_activating_restore_clears_handoff_key_immediately(real_db_store):
+    """Semantics (b), post-restart leg: the normal open path restores with
+    activate=True -- the draft rehydrates and the key clears in the same
+    restore (create_session activates before the pending clear is
+    registered, so restore re-consumes directly)."""
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(
+        conversation_title="Open",
+        metadata={"console_agent_handoff": {"draft": "hello",
+                                            "created_via": "fork_chat", "source_run_id": "r2"}},
+    )
+    restored = store.restore_persisted_session(
+        title="Open", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=True,
+    )
+    assert restored.draft == "hello"
+    assert store.active_session_id == restored.id
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" not in (row.get("metadata") or "{}")
+
+
+def test_handoff_read_failure_never_fails_restore(real_db_store, monkeypatch):
+    """Semantics (d): a raising metadata read degrades to no draft and never
+    fails the restore."""
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(conversation_title="Boom")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("metadata read exploded")
+
+    monkeypatch.setattr(db, "get_conversation_by_id", _boom)
+    restored = store.restore_persisted_session(
+        title="Boom", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=True,
+    )
+    assert restored.draft == ""
+
+
+def test_restore_without_handoff_leaves_draft_alone(real_db_store):
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(conversation_title="D")
+    restored = store.restore_persisted_session(
+        title="D", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert restored.draft == ""
 
 
 def test_initial_reply_speech_is_inserted_at_version_one_with_sibling_metadata(
@@ -1805,9 +2901,9 @@ def test_create_conversation_rejects_non_object_metadata_before_db_add(
             return original_add(conversation_data)
 
         monkeypatch.setattr(db, "add_conversation", recording_add)
-        before_rows = db.execute_query(
-            "SELECT COUNT(*) FROM conversations"
-        ).fetchone()[0]
+        before_rows = db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[
+            0
+        ]
         before_events = db.execute_query(
             "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
         ).fetchone()[0]
@@ -1860,12 +2956,16 @@ def test_service_metadata_rejection_is_nonmutating_in_caller_transaction(tmp_pat
             )
 
         connection.commit()
-        assert connection.execute(
-            "SELECT COUNT(*) FROM conversations"
-        ).fetchone()[0] == before_rows
-        assert connection.execute(
-            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
-        ).fetchone()[0] == before_events
+        assert (
+            connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == before_rows
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+            ).fetchone()[0]
+            == before_events
+        )
     finally:
         db.close_connection()
 
@@ -1889,9 +2989,9 @@ def test_add_conversation_rejects_non_object_metadata_without_writes(
 ):
     db = CharactersRAGDB(tmp_path / "speech-invalid-db.db", "speech-test")
     try:
-        before_rows = db.execute_query(
-            "SELECT COUNT(*) FROM conversations"
-        ).fetchone()[0]
+        before_rows = db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[
+            0
+        ]
         before_events = db.execute_query(
             "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
         ).fetchone()[0]
@@ -1929,12 +3029,16 @@ def test_direct_metadata_rejection_is_nonmutating_in_caller_transaction(tmp_path
             db.add_conversation({"title": "Invalid metadata", "metadata": "[]"})
 
         connection.commit()
-        assert connection.execute(
-            "SELECT COUNT(*) FROM conversations"
-        ).fetchone()[0] == before_rows
-        assert connection.execute(
-            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
-        ).fetchone()[0] == before_events
+        assert (
+            connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == before_rows
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+            ).fetchone()[0]
+            == before_events
+        )
     finally:
         db.close_connection()
 
@@ -2045,9 +3149,10 @@ def test_future_speech_metadata_blocks_store_mutation_without_state_change(tmp_p
         assert session.speech_preferences is before_preferences
         assert after_record["version"] == before_record["version"]
         assert json.loads(after_record["metadata"]) == future_metadata
-        assert service.get_conversation_speech_preferences(
-            conversation_id
-        ) == ConsoleSpeechPreferences()
+        assert (
+            service.get_conversation_speech_preferences(conversation_id)
+            == ConsoleSpeechPreferences()
+        )
     finally:
         db.close_connection()
 
@@ -2644,6 +3749,7 @@ def test_store_enqueues_streaming_assistant_only_after_completion():
     assert sync_producer.enqueued[-1]["message_id"] == "msg-2"
     assert sync_producer.enqueued[-1]["role"] == "assistant"
     assert sync_producer.enqueued[-1]["content"] == "hello"
+    assert sync_producer.enqueued[-1]["assistant_generation_state"] == "complete"
     assert sync_producer.enqueued[-1]["parent_message_id"] == "msg-1"
     assert sync_producer.enqueued[-1]["sequence"] == 2
 
@@ -2752,6 +3858,38 @@ def test_mark_message_send_blocked_rejects_non_user_rows():
         store.mark_message_send_blocked(system.id)
 
 
+@pytest.mark.parametrize("writer_outcome", ("false", "raise"))
+def test_mark_message_send_blocked_rejects_persisted_user_without_mutation(
+    writer_outcome: str,
+) -> None:
+    class OutcomePersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            if writer_outcome == "raise":
+                raise RuntimeError("injected update failure")
+            return False
+
+    persistence = OutcomePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    user = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="already durable",
+        persist=True,
+    )
+    before_message = store.get_message(user.id)
+    before_payload = store.payload_revision(session.id)
+    before_speech = store._message_speech_revisions[user.id]
+
+    with pytest.raises(ValueError, match="never-persisted"):
+        store.mark_message_send_blocked(user.id)
+
+    assert store.get_message(user.id) == before_message
+    assert store.payload_revision(session.id) == before_payload
+    assert store._message_speech_revisions[user.id] == before_speech
+    assert persistence.updated_messages == []
+
+
 def test_persist_message_if_needed_flushes_a_deferred_message():
     """TASK-485: a message appended with persist=False stays out of the durable
     store until persist_message_if_needed flushes it (used on send-accept so a
@@ -2812,6 +3950,7 @@ def test_store_enqueues_selected_variant_with_restore_metadata():
         content="first",
         persist=True,
     )
+    store._message_or_raise(message.id).assistant_generation_state = "complete"
     sync_producer.enqueued.clear()
 
     updated = store.add_variant(message.id, "second")
@@ -2982,9 +4121,8 @@ def test_invalid_runtime_source_never_reaches_real_chat_persistence(
                 persist=True,
             )
 
-        message = store.messages_for_session(session.id)[-1]
         assert session.persisted_conversation_id is None
-        assert message.persisted_message_id is None
+        assert store.messages_for_session(session.id) == []
         assert create_calls == []
         assert db.get_all_conversation_ids() == []
         assert db.count_character_cards() == character_count
@@ -3258,6 +4396,7 @@ class RecordingPersistence:
         self.created = []
         self.updated = []
         self._counter = 0
+        self._versions = {}
 
     def create_conversation(self, **kwargs):
         return "conv-1"
@@ -3265,11 +4404,1771 @@ class RecordingPersistence:
     def create_message(self, **kwargs):
         self.created.append(kwargs)
         self._counter += 1
-        return f"msg-{self._counter}"
+        message_id = f"msg-{self._counter}"
+        self._versions[message_id] = 1
+        return message_id
 
     def update_message_content(self, **kwargs):
+        message_id = kwargs["message_id"]
+        version = self._versions.get(message_id, 1)
+        expected_version = kwargs.get("expected_version")
+        if expected_version is not None and expected_version != version:
+            return False
         self.updated.append(kwargs)
+        self._versions[message_id] = version + 1
         return True
+
+    def replace_assistant_generation_projection(self, **kwargs):
+        message_id = kwargs["message_id"]
+        version = self._versions.get(message_id, 1)
+        expected_version = kwargs.get("expected_version")
+        if expected_version is not None and expected_version != version:
+            raise RuntimeError("fake generation version mismatch")
+        if not self.update_message_content(
+            message_id=message_id,
+            content=kwargs["content"],
+            image_data=None,
+            image_mime_type=None,
+            usage_json=kwargs.get("usage_json"),
+            expected_version=expected_version,
+        ):
+            raise RuntimeError("fake generation update failed")
+        return self._versions[message_id]
+
+
+class ExplodingMessagePersistence(RecordingPersistence):
+    def create_message(self, **kwargs):
+        raise RuntimeError("durable create failed")
+
+
+class ExplodingAttachmentPersistence(RecordingPersistence):
+    def append_message_attachment(self, *args, **kwargs):
+        raise RuntimeError("durable attachment append failed")
+
+    def keep_message_attachment(self, *args, **kwargs):
+        raise RuntimeError("durable attachment keep failed")
+
+
+class ExplodingGenerationPersistence(RecordingPersistence):
+    def replace_assistant_generation_projection(self, **kwargs):
+        raise RuntimeError("durable generation failed")
+
+
+class FaultInjectingSemanticPersistence(RecordingPersistence):
+    def __init__(self):
+        super().__init__()
+        self.fail = False
+        self.version = 1
+
+    def replace_assistant_generation_projection(self, **kwargs):
+        if self.fail:
+            raise RuntimeError("durable semantic mutation failed")
+        self.version += 1
+        return self.version
+
+    def delete_message_subtree(self, **kwargs):
+        if self.fail:
+            raise RuntimeError("durable semantic mutation failed")
+        return []
+
+
+def _generation_meta(prompt="image", seed=1):
+    return GenerationVariantMeta(
+        prompt=prompt,
+        negative_prompt=None,
+        backend="test",
+        model="test",
+        seed=seed,
+        style=None,
+        params={},
+    )
+
+
+def _store_route_state(store, session_id):
+    session = store._sessions[session_id]
+    return {
+        "node_ids": tuple(store._nodes_by_session[session_id]),
+        "children": {
+            parent: tuple(children)
+            for parent, children in store._children_by_parent[session_id].items()
+        },
+        "path": tuple(message.id for message in store._messages_by_session[session_id]),
+        "leaf": store._active_leaf_by_session[session_id],
+        "updated_at": session.updated_at,
+        "payload": store.payload_revision(session_id),
+        "context": store.conversation_context_epoch(session_id),
+        "pending": frozenset(store._pending_persistence_message_ids),
+    }
+
+
+@pytest.mark.parametrize("route", ["append", "sibling", "generation"])
+def test_failed_durable_create_does_not_publish_ghost_store_state(route):
+    persistence = ExplodingMessagePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Atomic create")
+    anchor = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="anchor",
+    )
+    before = _store_route_state(store, session.id)
+
+    with pytest.raises(RuntimeError, match="durable create failed"):
+        if route == "append":
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="ghost",
+                persist=True,
+            )
+        elif route == "sibling":
+            store.create_sibling(
+                anchor.id,
+                role=ConsoleMessageRole.USER,
+                content="ghost",
+                persist=True,
+            )
+        else:
+            store.append_generation_message(
+                session.id,
+                content="[image] ghost",
+                variants=(
+                    (
+                        b"png",
+                        "image/png",
+                        _generation_meta("ghost"),
+                    ),
+                ),
+                persist=True,
+            )
+
+    assert _store_route_state(store, session.id) == before
+
+
+@pytest.mark.parametrize("route", ["append", "keep"])
+def test_failed_generation_attachment_write_does_not_mutate_memory(route):
+    persistence = ExplodingAttachmentPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Atomic attachments")
+    message = store.append_generation_message(
+        session.id,
+        content="[image] original",
+        variants=(
+            (b"zero", "image/png", _generation_meta("zero", 1)),
+            (b"one", "image/png", _generation_meta("one", 2)),
+        ),
+        persist=True,
+    )
+    before_message = store.get_message(message.id)
+    before_store = _store_route_state(store, session.id)
+
+    with pytest.raises(RuntimeError, match=f"durable attachment {route} failed"):
+        if route == "append":
+            store.append_generation_variant(
+                session.id,
+                message.id,
+                data=b"two",
+                mime_type="image/png",
+                meta=_generation_meta("two", 3),
+            )
+        else:
+            store.keep_generation_variant(session.id, message.id, position=1)
+
+    assert store.get_message(message.id) == before_message
+    assert _store_route_state(store, session.id) == before_store
+
+
+@pytest.mark.parametrize(
+    "terminal_method",
+    ["finalize_variant_stream", "mark_message_complete", "mark_message_failed"],
+)
+def test_failed_variant_finalization_restores_exact_streaming_state(terminal_method):
+    persistence = ExplodingGenerationPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Atomic regeneration")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="original",
+        persist=True,
+    )
+    token = store.begin_generation_attempt(message.id)
+    store.begin_variant_stream(message.id, generation_token=token)
+    store.append_stream_chunk(message.id, "replacement")
+    before_message = deepcopy(store._message_or_raise(message.id))
+    before_store = _store_route_state(store, session.id)
+    before_chunks = deepcopy(store._stream_chunks_by_message)
+    before_counts = dict(store._stream_materialized_counts)
+    before_bases = deepcopy(store._variant_stream_bases)
+    before_speech = dict(store._message_speech_revisions)
+    before_identity = session.identity_revision
+    before_tokens = dict(store._generation_attempt_tokens)
+
+    with pytest.raises(RuntimeError, match="durable generation failed"):
+        getattr(store, terminal_method)(message.id)
+
+    assert store._message_or_raise(message.id) == before_message
+    assert _store_route_state(store, session.id) == before_store
+    assert store._stream_chunks_by_message == before_chunks
+    assert store._stream_materialized_counts == before_counts
+    assert store._variant_stream_bases == before_bases
+    assert store._message_speech_revisions == before_speech
+    assert session.identity_revision == before_identity
+    assert store._generation_attempt_tokens == before_tokens
+
+
+def test_failed_variant_restore_preserves_concurrent_identity_increment(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed owner removes none of another message's identity publication."""
+
+    db = CharactersRAGDB(tmp_path / "variant-identity-race.sqlite", "identity-race")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Identity race")
+        failing = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+            persist=True,
+        )
+        greeting = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Hello User.",
+            persist=True,
+            metadata=MessageMetadata(
+                template_kind="character_greeting",
+                template_source="Hello {{user}}.",
+            ),
+        )
+        token = store.begin_generation_attempt(failing.id)
+        store.begin_variant_stream(failing.id, generation_token=token)
+        store.append_stream_chunk(failing.id, "replacement")
+        baseline_identity = session.identity_revision
+        entered = Event()
+        release = Event()
+        original_writer = (
+            persistence.replace_assistant_generation_projection_with_contributions
+        )
+
+        def controlled_writer(**kwargs):
+            if kwargs["message_id"] == failing.persisted_message_id:
+                entered.set()
+                assert release.wait(5)
+                return 0
+            return original_writer(**kwargs)
+
+        monkeypatch.setattr(
+            persistence,
+            "replace_assistant_generation_projection_with_contributions",
+            controlled_writer,
+        )
+        failure: list[BaseException] = []
+
+        def fail_variant() -> None:
+            try:
+                store.finalize_variant_stream(failing.id)
+            except BaseException as exc:
+                failure.append(exc)
+
+        thread = Thread(target=fail_variant)
+        thread.start()
+        assert entered.wait(5)
+        updated = store.update_message_content(greeting.id, "Manual greeting.")
+        assert updated.metadata == MessageMetadata()
+        assert session.identity_revision == baseline_identity + 1
+        release.set()
+        thread.join(5)
+
+        assert not thread.is_alive()
+        assert failure and "did not commit" in str(failure[0])
+        assert session.identity_revision == baseline_identity + 1
+        assert store.get_message(greeting.id).content == "Manual greeting."
+        assert db.get_message_by_id(greeting.persisted_message_id)["content"] == (
+            "Manual greeting."
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("sidecar", "route"),
+    [
+        ("metadata", "add"),
+        ("metadata", "select"),
+        ("sync", "finalize"),
+        ("sync", "add"),
+        ("sync", "select"),
+    ],
+)
+def test_committed_variant_sidecar_failure_reconciles_live_owner_without_second_revision(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, route: str, sidecar: str
+) -> None:
+    """A post-commit sidecar failure cannot resurrect the pre-commit variant."""
+
+    db = CharactersRAGDB(tmp_path / f"variant-{route}-{sidecar}.sqlite", "variant")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Committed variant")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+            metadata=MessageMetadata(engine="original"),
+            persist=True,
+        )
+        initial_live = store._message_or_raise(assistant.id)
+        initial_live.status = "streaming"
+        initial_live.assistant_generation_state = "streaming"
+        store.mark_message_complete(assistant.id)
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+            store._message_or_raise(assistant.id).metadata = MessageMetadata(
+                engine="replacement"
+            )
+        elif route == "select":
+            store.add_variant(assistant.id, "replacement")
+
+        def semantic_stats() -> tuple[int, int]:
+            revision_count = (
+                db.get_connection()
+                .execute(
+                    "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+                    "WHERE source_message_id = ?",
+                    (assistant.persisted_message_id,),
+                )
+                .fetchone()[0]
+            )
+            epoch = (
+                db.get_connection()
+                .execute(
+                    "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+                )
+                .fetchone()[0]
+            )
+            return int(revision_count), int(epoch)
+
+        before_revisions, before_epoch = semantic_stats()
+        if sidecar == "metadata":
+            original_sidecar = persistence.update_message_metadata
+
+            def fail_metadata(**_kwargs):
+                raise RuntimeError("variant metadata sidecar failed")
+
+            monkeypatch.setattr(persistence, "update_message_metadata", fail_metadata)
+        else:
+            original_sidecar = store._enqueue_sync_v2_message_if_ready
+
+            def fail_sync(*_args, **_kwargs):
+                raise RuntimeError("variant sync sidecar failed")
+
+            monkeypatch.setattr(store, "_enqueue_sync_v2_message_if_ready", fail_sync)
+
+        with pytest.raises(RuntimeError, match=f"variant {sidecar} sidecar failed"):
+            if route == "finalize":
+                store.finalize_variant_stream(assistant.id)
+            elif route == "add":
+                store.add_variant(assistant.id, "replacement")
+            else:
+                store.select_variant(assistant.id, 0)
+
+        row = db.get_message_by_id(assistant.persisted_message_id)
+        live = store.get_message(assistant.id)
+        expected_content = "original" if route == "select" else "replacement"
+        assert row["content"] == live.content == expected_content
+        assert row["assistant_generation_state"] == "complete"
+        assert live.status == live.assistant_generation_state == "complete"
+        assert live.provider_continuation_message_version == row["version"]
+        assert live.variants is not None
+        assert live.variants.current.content == expected_content
+        assert [variant.content for variant in live.variants.variants] == [
+            "original",
+            "replacement",
+        ]
+        assert (live.metadata.to_json() if live.metadata is not None else None) == row[
+            "metadata_json"
+        ]
+        assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+
+        if sidecar == "metadata":
+            monkeypatch.setattr(
+                persistence, "update_message_metadata", original_sidecar
+            )
+        else:
+            monkeypatch.setattr(
+                store, "_enqueue_sync_v2_message_if_ready", original_sidecar
+            )
+        assert store.persist_selected_generation(assistant.id)
+        assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+    finally:
+        db.close_connection()
+
+
+def test_variant_atomic_metadata_failure_restores_receipt_and_generation(tmp_path):
+    """Finalization metadata is transactional, unlike add/select sidecars."""
+    db = CharactersRAGDB(tmp_path / "variant-metadata-atomic.sqlite", "variant")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Atomic metadata")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+            metadata=MessageMetadata(engine="original"),
+            persist=True,
+        )
+        store.begin_variant_stream(assistant.id)
+        store.append_stream_chunk(assistant.id, "replacement")
+        before_live = deepcopy(store._message_or_raise(assistant.id))
+        before_route = _store_route_state(store, session.id)
+        before_row = db.get_message_by_id(assistant.persisted_message_id)
+        before_identity = session.identity_revision
+        before_marks = persistence.local_marks.list_console_unseen_marks()
+        with db.transaction() as cursor:
+            cursor.execute(
+                "CREATE TEMP TRIGGER fail_variant_metadata "
+                "BEFORE UPDATE OF metadata_json ON messages "
+                "BEGIN SELECT RAISE(ABORT, 'variant atomic metadata failed'); END"
+            )
+        with pytest.raises(
+            Exception, match="Database error replacing assistant generation projection"
+        ) as failure:
+            store.finalize_variant_stream(assistant.id)
+        assert "variant atomic metadata failed" in str(failure.value.__cause__)
+        assert store._message_or_raise(assistant.id) == before_live
+        assert _store_route_state(store, session.id) == before_route
+        assert session.identity_revision == before_identity
+        assert db.get_message_by_id(assistant.persisted_message_id) == before_row
+        assert persistence.local_marks.list_console_unseen_marks() == before_marks
+        receipt = store._pending_terminal_receipts[assistant.id]
+        with db.transaction() as cursor:
+            cursor.execute("DROP TRIGGER fail_variant_metadata")
+        finished = store.finalize_variant_stream(assistant.id)
+        row = db.get_message_by_id(assistant.persisted_message_id)
+        assert row["version"] == before_row["version"] + 1
+        assert row["content"] == finished.content == "replacement"
+        assert row["assistant_generation_state"] == finished.status == "complete"
+        assert finished.metadata.terminal_receipt_id == receipt
+        assert MessageMetadata.from_json(row["metadata_json"]) == finished.metadata
+        assert set(persistence.local_marks.list_console_unseen_marks()) == {
+            *before_marks,
+            (session.persisted_conversation_id, receipt),
+        }
+        assert assistant.id not in store._pending_terminal_receipts
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+@pytest.mark.parametrize("sidecar", ["metadata", "sync"])
+def test_legacy_generation_writer_sidecar_failure_reconciles_committed_owner(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, route: str, sidecar: str
+) -> None:
+    """The content-only adapter fallback records its commit before sidecars."""
+
+    db = CharactersRAGDB(tmp_path / f"legacy-{route}-{sidecar}.sqlite", "legacy")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Legacy variant")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+            metadata=MessageMetadata(engine="original"),
+            persist=True,
+        )
+        live = store._message_or_raise(assistant.id)
+        live.status = "streaming"
+        live.assistant_generation_state = "streaming"
+        store.mark_message_complete(assistant.id)
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+            store._message_or_raise(assistant.id).metadata = MessageMetadata(
+                engine="replacement"
+            )
+        elif route == "select":
+            store.add_variant(assistant.id, "replacement")
+        monkeypatch.setattr(
+            persistence, "replace_assistant_generation_projection", None
+        )
+
+        def semantic_stats() -> tuple[int, int]:
+            connection = db.get_connection()
+            revisions = connection.execute(
+                "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+                "WHERE source_message_id = ?",
+                (assistant.persisted_message_id,),
+            ).fetchone()[0]
+            epoch = connection.execute(
+                "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+            ).fetchone()[0]
+            return int(revisions), int(epoch)
+
+        before_revisions, before_epoch = semantic_stats()
+        if sidecar == "metadata":
+            original_sidecar = persistence.update_message_metadata
+
+            def fail_metadata(**_kwargs):
+                raise RuntimeError("legacy metadata sidecar failed")
+
+            monkeypatch.setattr(persistence, "update_message_metadata", fail_metadata)
+        else:
+            original_sidecar = store._enqueue_sync_v2_message_if_ready
+
+            def fail_sync(*_args, **_kwargs):
+                raise RuntimeError("legacy sync sidecar failed")
+
+            monkeypatch.setattr(store, "_enqueue_sync_v2_message_if_ready", fail_sync)
+
+        with pytest.raises(RuntimeError, match=f"legacy {sidecar} sidecar failed"):
+            if route == "finalize":
+                store.finalize_variant_stream(assistant.id)
+            elif route == "add":
+                store.add_variant(assistant.id, "replacement")
+            else:
+                store.select_variant(assistant.id, 0)
+
+        row = db.get_message_by_id(assistant.persisted_message_id)
+        reconciled = store.get_message(assistant.id)
+        expected_content = "original" if route == "select" else "replacement"
+        assert row["content"] == reconciled.content == expected_content
+        assert reconciled.provider_continuation_message_version == row["version"]
+        assert (
+            reconciled.metadata.to_json() if reconciled.metadata is not None else None
+        ) == row["metadata_json"]
+        assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+
+        if sidecar == "metadata":
+            monkeypatch.setattr(
+                persistence, "update_message_metadata", original_sidecar
+            )
+        else:
+            monkeypatch.setattr(
+                store, "_enqueue_sync_v2_message_if_ready", original_sidecar
+            )
+        assert store.persist_selected_generation(assistant.id)
+        assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+@pytest.mark.parametrize("durable_state", ["failed", "stopped"])
+def test_legacy_generation_writer_rejects_unsupported_state_transition_precommit(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    route: str,
+    durable_state: str,
+) -> None:
+    """A body-only adapter cannot publish a mismatched terminal state."""
+
+    db = CharactersRAGDB(
+        tmp_path / f"legacy-{durable_state}-{route}.sqlite",
+        "legacy-state",
+    )
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Legacy state fence")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+            persist=True,
+        )
+        if route == "select":
+            store.add_variant(assistant.id, "replacement")
+        live = store._message_or_raise(assistant.id)
+        live.status = "streaming"
+        live.assistant_generation_state = "streaming"
+        if durable_state == "failed":
+            store.mark_message_failed(assistant.id)
+        else:
+            store.mark_message_stopped(assistant.id)
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+
+        monkeypatch.setattr(
+            persistence, "replace_assistant_generation_projection", None
+        )
+        before_message = deepcopy(store._message_or_raise(assistant.id))
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        connection = db.get_connection()
+        before_revisions = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+                "WHERE source_message_id = ?",
+                (assistant.persisted_message_id,),
+            ).fetchone()[0]
+        )
+        before_epoch = int(
+            connection.execute(
+                "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+            ).fetchone()[0]
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Generation projection persistence is unavailable",
+        ):
+            if route == "finalize":
+                store.finalize_variant_stream(assistant.id)
+            elif route == "add":
+                store.add_variant(assistant.id, "replacement")
+            else:
+                store.select_variant(assistant.id, 0)
+
+        assert store._message_or_raise(assistant.id) == before_message
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+                "WHERE source_message_id = ?",
+                (assistant.persisted_message_id,),
+            ).fetchone()[0]
+            == before_revisions
+        )
+        assert (
+            connection.execute(
+                "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+            ).fetchone()[0]
+            == before_epoch
+        )
+    finally:
+        db.close_connection()
+
+
+class _HiddenLegacyGenerationAdapter:
+    """Expose only the explicit legacy projection contract, never ``.db``."""
+
+    def __init__(self, service: ChatPersistenceService) -> None:
+        self._service = service
+        self.update_calls: list[dict[str, object]] = []
+        self.reader_result: object = None
+        self.override_reader = False
+        self.race_before_update = False
+        self.reader_calls = 0
+        self.postwrite_reader_outcome: str | None = None
+        self._first_reader_row: dict[str, object] | None = None
+        self.fail_reader_after_race = False
+        self.persistently_stale_after_write = False
+        self.race_projection: dict[str, object] = {}
+
+    def __getattr__(self, name: str):
+        if name in {"db", "replace_assistant_generation_projection"}:
+            raise AttributeError(name)
+        return getattr(self._service, name)
+
+    def read_canonical_generation_projection(self, message_id: str):
+        self.reader_calls += 1
+        if self.fail_reader_after_race and not self.race_before_update:
+            raise RuntimeError("canonical winner reader unavailable")
+        if self.override_reader:
+            return self.reader_result
+        row = self._service.read_canonical_generation_projection(message_id)
+        if self.reader_calls == 1 and row is not None:
+            self._first_reader_row = dict(row)
+        if (
+            self.persistently_stale_after_write
+            and self.reader_calls >= 2
+            and self._first_reader_row is not None
+        ):
+            return deepcopy(self._first_reader_row)
+        if self.reader_calls == 2:
+            if self.postwrite_reader_outcome == "raise":
+                raise RuntimeError("post-CAS canonical read failed")
+            if self.postwrite_reader_outcome == "malformed":
+                return {"assistant_generation_state": "complete"}
+            if self.postwrite_reader_outcome == "stale":
+                return deepcopy(self._first_reader_row)
+        return row
+
+    def read_canonical_generation_projection_bundle(self, message_id: str):
+        row = self.read_canonical_generation_projection(message_id)
+        if row is None:
+            return None
+        return {
+            "message": dict(row),
+            "attachments": self._service.get_attachments_for_messages([message_id]).get(
+                message_id, []
+            ),
+            "generation_metadata": self._service.get_generation_metadata_for_messages(
+                [message_id]
+            ).get(message_id, []),
+        }
+
+    def update_message_content(self, **kwargs):
+        self.update_calls.append(dict(kwargs))
+        if self.race_before_update:
+            self.race_before_update = False
+            row = self._service.read_canonical_generation_projection(
+                str(kwargs["message_id"])
+            )
+            self._service.replace_assistant_generation_projection(
+                message_id=str(kwargs["message_id"]),
+                content=str(self.race_projection.get("content", "concurrent winner")),
+                thinking_blocks_json=self.race_projection.get("thinking_blocks_json"),
+                provider_continuation_json=self.race_projection.get(
+                    "provider_continuation_json"
+                ),
+                assistant_generation_state=str(
+                    self.race_projection.get("assistant_generation_state", "complete")
+                ),
+                usage_json=self.race_projection.get("usage_json"),
+                expected_version=int(row["version"]),
+            )
+        return self._service.update_message_content(**kwargs)
+
+
+def _legacy_projection_fixture(tmp_path, name: str):
+    db = CharactersRAGDB(tmp_path / f"{name}.sqlite", name)
+    service = ChatPersistenceService(db)
+    store = ConsoleChatStore(persistence=service)
+    session = store.create_session(title=name)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="original",
+        persist=True,
+    )
+    live = store._message_or_raise(assistant.id)
+    live.status = "streaming"
+    live.assistant_generation_state = "streaming"
+    store.mark_message_complete(assistant.id)
+    adapter = _HiddenLegacyGenerationAdapter(service)
+    store.persistence = adapter
+    return db, service, store, assistant, adapter
+
+
+def _message_semantic_stats(db: CharactersRAGDB, message_id: str) -> tuple[int, int]:
+    connection = db.get_connection()
+    revisions = connection.execute(
+        "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+        "WHERE source_message_id = ?",
+        (message_id,),
+    ).fetchone()[0]
+    epoch = connection.execute(
+        "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+    ).fetchone()[0]
+    return int(revisions), int(epoch)
+
+
+def _quarantine_from_unreadable_cas_winner(
+    store: ConsoleChatStore,
+    assistant: ConsoleChatMessage,
+    adapter: _HiddenLegacyGenerationAdapter,
+) -> None:
+    adapter.race_before_update = True
+    adapter.fail_reader_after_race = True
+    with pytest.raises(RuntimeError, match="unavailable"):
+        store.add_variant(assistant.id, "losing replacement")
+    assert store._message_or_raise(assistant.id).generation_projection_quarantined
+
+
+def test_quarantined_feedback_cannot_overwrite_canonical_winner(tmp_path) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-feedback"
+    )
+    try:
+        _quarantine_from_unreadable_cas_winner(store, assistant, adapter)
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+        before_feedback = store._message_or_raise(assistant.id).feedback
+
+        with pytest.raises(ConsoleGenerationProjectionQuarantined, match="reload"):
+            store.set_message_feedback(assistant.id, "up")
+
+        assert store._message_or_raise(assistant.id).feedback == before_feedback
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("durable_state", ["failed", "stopped"])
+def test_hidden_db_legacy_adapter_rejects_stale_live_generation_state(
+    tmp_path, durable_state: str
+) -> None:
+    db, service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, f"hidden-stale-{durable_state}"
+    )
+    try:
+        row = service.read_canonical_generation_projection(
+            assistant.persisted_message_id
+        )
+        service.replace_assistant_generation_projection(
+            message_id=assistant.persisted_message_id,
+            content="external terminal",
+            thinking_blocks_json=None,
+            provider_continuation_json=None,
+            assistant_generation_state=durable_state,
+            usage_json=None,
+            expected_version=int(row["version"]),
+        )
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+        before_live = deepcopy(store._message_or_raise(assistant.id))
+
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            store.add_variant(assistant.id, "replacement")
+
+        assert adapter.update_calls == []
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+        assert store._message_or_raise(assistant.id) == before_live
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "reader_result",
+    [
+        {"assistant_generation_state": "complete"},
+        {
+            "id": "wrong-message",
+            "version": 2,
+            "deleted": 0,
+            "assistant_generation_state": "complete",
+            "thinking_blocks_json": None,
+            "provider_continuation_json": None,
+            "content": "original",
+        },
+        {
+            "id": "placeholder",
+            "version": True,
+            "deleted": 0,
+            "assistant_generation_state": "complete",
+            "thinking_blocks_json": None,
+            "provider_continuation_json": None,
+            "content": "original",
+        },
+        {
+            "id": "placeholder",
+            "version": 2,
+            "deleted": 1,
+            "assistant_generation_state": "complete",
+            "thinking_blocks_json": None,
+            "provider_continuation_json": None,
+            "content": "original",
+        },
+        {
+            "id": "placeholder",
+            "version": 2,
+            "deleted": 0,
+            "assistant_generation_state": "complete",
+            "content": "original",
+        },
+    ],
+)
+def test_legacy_generation_reader_rejects_malformed_canonical_mapping(
+    tmp_path, reader_result: dict[str, object]
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "malformed-reader"
+    )
+    try:
+        adapter.override_reader = True
+        adapter.reader_result = {
+            key: (assistant.persisted_message_id if value == "placeholder" else value)
+            for key, value in reader_result.items()
+        }
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            store.add_variant(assistant.id, "replacement")
+
+        assert adapter.update_calls == []
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+def test_persisted_legacy_adapter_without_canonical_reader_fails_closed(
+    tmp_path,
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "missing-reader"
+    )
+    try:
+        adapter.read_canonical_generation_projection = None
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            store.add_variant(assistant.id, "replacement")
+
+        assert adapter.update_calls == []
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+def test_hidden_db_legacy_adapter_uses_canonical_version_cas(
+    tmp_path, route: str
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, f"hidden-success-{route}"
+    )
+    try:
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+        elif route == "select":
+            store.add_variant(assistant.id, "replacement")
+            adapter.update_calls.clear()
+        before = dict(db.get_message_by_id(assistant.persisted_message_id))
+
+        if route == "finalize":
+            store.finalize_variant_stream(assistant.id)
+        elif route == "add":
+            store.add_variant(assistant.id, "replacement")
+        else:
+            store.select_variant(assistant.id, 0)
+
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        assert adapter.update_calls[-1]["expected_version"] == before["version"]
+        assert row["version"] == before["version"] + 1
+        assert live.provider_continuation_message_version == row["version"]
+        assert live.assistant_generation_state == row["assistant_generation_state"]
+        assert live.content == row["content"]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("winner_read_outcome", [None, "stale"])
+def test_hidden_db_legacy_adapter_cas_race_cannot_overwrite_winner(
+    tmp_path, winner_read_outcome: str | None
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "hidden-cas-race"
+    )
+    try:
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+        adapter.race_before_update = True
+        adapter.postwrite_reader_outcome = winner_read_outcome
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "Generation projection persistence (?:did not commit|is unavailable)"
+            ),
+        ):
+            store.add_variant(assistant.id, "losing replacement")
+
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        assert row["content"] == "concurrent winner"
+        assert live.content == row["content"]
+        assert live.assistant_generation_state == row["assistant_generation_state"]
+        assert live.provider_continuation_message_version == row["version"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+        assert adapter.update_calls[-1]["expected_version"] == row["version"] - 1
+    finally:
+        db.close_connection()
+
+
+def test_hidden_db_legacy_cas_miss_with_unavailable_reader_marks_live_stale(
+    tmp_path,
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "hidden-cas-reader-unavailable"
+    )
+    try:
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+        adapter.race_before_update = True
+        adapter.fail_reader_after_race = True
+
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            store.add_variant(assistant.id, "losing replacement")
+
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        assert row["content"] == "concurrent winner"
+        assert live.generation_projection_quarantined
+        assert live.provider_continuation_message_version is None
+        assert not live.provider_continuation_actions_enabled
+        assert live.provider_continuation_warning is not None
+        assert "reload" in live.provider_continuation_warning.lower()
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        transcript = store.messages_for_session(
+            store.session_id_for_message(assistant.id)
+        )[-1]
+        assert transcript.generation_projection_quarantined
+        assert transcript.content != "original"
+        assert transcript.content != row["content"]
+        assert "reload" in transcript.content.lower()
+
+        from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+        controller = ConsoleChatController(store=store, provider_gateway=object())
+        with pytest.raises(RuntimeError, match="reload"):
+            controller._provider_messages_for_session(
+                store.session_id_for_message(assistant.id)
+            )
+        with pytest.raises(RuntimeError, match="reload"):
+            controller.provider_messages_for_next_send_estimate(
+                store.session_id_for_message(assistant.id)
+            )
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            store.reload_quarantined_generation(assistant.id)
+        assert store._message_or_raise(assistant.id).generation_projection_quarantined
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        adapter.fail_reader_after_race = False
+        quarantine_version = live.generation_projection_quarantine_version
+        assert quarantine_version is not None
+        assert not asyncio.run(
+            controller.recover_provider_continuation(
+                "reload", assistant.id, quarantine_version - 1
+            )
+        )
+        assert asyncio.run(
+            controller.recover_provider_continuation(
+                "reload", assistant.id, quarantine_version
+            )
+        )
+        reloaded = store.get_message(assistant.id)
+        assert not reloaded.generation_projection_quarantined
+        assert reloaded.content == row["content"]
+        assert reloaded.assistant_generation_state == row["assistant_generation_state"]
+        assert reloaded.provider_continuation_message_version == row["version"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+def test_hidden_db_legacy_persistently_stale_post_cas_reader_quarantines_owner(
+    tmp_path, route: str
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, f"legacy-persistent-stale-{route}"
+    )
+    try:
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+        elif route == "select":
+            store.add_variant(assistant.id, "replacement")
+        adapter.reader_calls = 0
+        adapter._first_reader_row = None
+        adapter.persistently_stale_after_write = True
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            if route == "finalize":
+                store.finalize_variant_stream(assistant.id)
+            elif route == "add":
+                store.add_variant(assistant.id, "replacement")
+            else:
+                store.select_variant(assistant.id, 0)
+
+        durable = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        assert live.generation_projection_quarantined
+        assert live.generation_projection_quarantine_version == durable["version"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        with pytest.raises(RuntimeError, match="reload"):
+            store.persist_selected_generation(assistant.id)
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            store.reload_quarantined_generation(assistant.id)
+        assert store._message_or_raise(assistant.id).generation_projection_quarantined
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        adapter.persistently_stale_after_write = False
+        reloaded = store.reload_quarantined_generation(assistant.id)
+        assert not reloaded.generation_projection_quarantined
+        assert reloaded.content == durable["content"]
+        assert reloaded.provider_continuation_message_version == durable["version"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+    finally:
+        db.close_connection()
+
+
+def test_quarantine_reload_restores_full_canonical_generation_projection(
+    tmp_path,
+) -> None:
+    db, service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-full-projection"
+    )
+    try:
+        # Position zero has no durable display-name column; the canonical
+        # projection therefore restores its exact persisted empty label.
+        first = MessageAttachment(b"first", "image/png", "", 0)
+        second = MessageAttachment(b"second", "image/webp", "second.webp", 1)
+        metadata = MessageMetadata(engine="canonical-engine")
+        before = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert service.update_message_content(
+            message_id=assistant.persisted_message_id,
+            content="original",
+            image_data=None,
+            image_mime_type=None,
+            attachments=(
+                {
+                    "position": 0,
+                    "data": first.data,
+                    "mime_type": first.mime_type,
+                    "display_name": first.display_name,
+                },
+                {
+                    "position": 1,
+                    "data": second.data,
+                    "mime_type": second.mime_type,
+                    "display_name": second.display_name,
+                },
+            ),
+            metadata_json=metadata.to_json(),
+            expected_version=int(before["version"]),
+        )
+        setup_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        live.image_data = first.data
+        live.image_mime_type = first.mime_type
+        live.attachment_label = first.display_name
+        live.attachments = (first, second)
+        live.metadata = metadata
+        live.provider_continuation_message_version = int(setup_row["version"])
+        live.assistant_generation_state = setup_row["assistant_generation_state"]
+
+        replacement_usage = ProviderUsage(
+            uncached_input=13,
+            output=17,
+            provider="openai",
+            model="gpt-test",
+        )
+        thinking_json = json.dumps(
+            {
+                "version": 1,
+                "blocks": [
+                    {
+                        "block_id": "canonical-thinking",
+                        "round_ordinal": 0,
+                        "provider": "openai",
+                        "model": "gpt-test",
+                        "protocol": "responses",
+                        "source_format": "summary",
+                        "status": "complete",
+                        "text": "canonical reason",
+                        "visibility": "displayable",
+                    }
+                ],
+            },
+            separators=(",", ":"),
+        )
+        adapter.race_projection = {
+            "content": "concurrent full winner",
+            "assistant_generation_state": "complete",
+            "thinking_blocks_json": thinking_json,
+            "usage_json": replacement_usage.to_json(),
+        }
+        adapter.race_before_update = True
+        adapter.fail_reader_after_race = True
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            store.add_variant(assistant.id, "losing replacement")
+        assert adapter.update_calls, "expected the legacy body CAS to be attempted"
+        assert store._message_or_raise(assistant.id).generation_projection_quarantined
+
+        # Quarantine may outlive arbitrarily stale process state.  Reload must
+        # rebuild every generation-owned value from durable rows, not trust
+        # any field left on the hidden live owner.
+        stale = store._message_or_raise(assistant.id)
+        stale.attachments = (MessageAttachment(b"stale", "image/gif", "stale.gif", 0),)
+        stale.image_data = b"stale"
+        stale.image_mime_type = "image/gif"
+        stale.attachment_label = "stale.gif"
+        stale.generation_metadata = (
+            GenerationVariantMeta("stale", "", "stale", None, None, None, {}),
+        )
+        stale.metadata = MessageMetadata(engine="stale-engine")
+        stale.video_metadata = VideoGenerationMetadata(
+            name="stale-video", prompt="stale", backend="local"
+        )
+        stale.usage = None
+        stale.thinking = None
+        stale.variants = None
+
+        adapter.fail_reader_after_race = False
+        canonical = service.read_canonical_generation_projection(
+            assistant.persisted_message_id
+        )
+        assert canonical is not None
+        adapter.override_reader = True
+        adapter.reader_result = {**canonical, "conversation_id": "wrong-owner"}
+        with pytest.raises(RuntimeError, match="unavailable"):
+            store.reload_quarantined_generation(assistant.id)
+        assert store._message_or_raise(assistant.id).generation_projection_quarantined
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        adapter.override_reader = False
+        reloaded = store.reload_quarantined_generation(assistant.id)
+        durable = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert reloaded.content == durable["content"] == "concurrent full winner"
+        assert reloaded.attachments == (first, second)
+        assert reloaded.image_data == first.data
+        assert reloaded.image_mime_type == first.mime_type
+        assert reloaded.attachment_label is None
+        assert reloaded.generation_metadata == ()
+        assert reloaded.metadata == metadata
+        assert reloaded.video_metadata is None
+        assert reloaded.usage == replacement_usage
+        assert reloaded.thinking is not None
+        assert reloaded.provider_continuation is None
+        assert reloaded.assistant_generation_state == "complete"
+        assert reloaded.provider_continuation_message_version == durable["version"]
+        assert reloaded.variants is not None
+        assert reloaded.variants.current.content == durable["content"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+    finally:
+        db.close_connection()
+
+
+def test_quarantine_hides_video_and_reload_restores_only_canonical_video(
+    tmp_path,
+) -> None:
+    db, service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-video"
+    )
+    try:
+        video = VideoGenerationMetadata(
+            name="canonical-video", prompt="waves", backend="local"
+        )
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert service.update_message_content(
+            message_id=assistant.persisted_message_id,
+            content=video_content_marker(video.name),
+            image_data=None,
+            image_mime_type=None,
+            metadata_json=video.to_json(),
+            expected_version=int(row["version"]),
+        )
+        live = store._message_or_raise(assistant.id)
+        live.content = video_content_marker(video.name)
+        live.video_metadata = video
+        live.metadata = None
+        live.provider_continuation_message_version = int(
+            db.get_message_by_id(assistant.persisted_message_id)["version"]
+        )
+
+        canonical = dict(db.get_message_by_id(assistant.persisted_message_id))
+        store._quarantine_generation_projection(
+            live,
+            minimum_version=int(canonical["version"]),
+            reason="Canonical generation is unavailable; reload required.",
+        )
+
+        quarantined = store.get_message(assistant.id)
+        assert quarantined.video_metadata is None
+        assert (
+            ConsoleMessageActionService()
+            .action_groups(quarantined, video_file_available=True)
+            .media
+            == ()
+        )
+
+        reloaded = store.reload_quarantined_generation(assistant.id)
+        assert reloaded.video_metadata == video
+        assert reloaded.metadata is None
+        assert {
+            action.action_id
+            for action in ConsoleMessageActionService()
+            .action_groups(reloaded, video_file_available=True)
+            .media
+        } == {"video-play", "video-save-copy"}
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("content", "video", "image_data", "image_mime_type"),
+    [
+        (
+            video_content_marker("wrong-name"),
+            VideoGenerationMetadata(name="clip", prompt="p", backend="local"),
+            None,
+            None,
+        ),
+        (
+            "ordinary text",
+            VideoGenerationMetadata(name="clip", prompt="p", backend="local"),
+            None,
+            None,
+        ),
+        (
+            video_content_marker("clip"),
+            VideoGenerationMetadata(name="clip", prompt="p", backend="local"),
+            b"image",
+            "image/png",
+        ),
+        (video_content_marker("clip"), None, None, None),
+        (
+            video_content_marker("clip"),
+            VideoGenerationMetadata(
+                name="clip", prompt="p", backend="local", is_unavailable_tombstone=True
+            ),
+            None,
+            None,
+        ),
+    ],
+)
+def test_quarantine_reload_rejects_inconsistent_canonical_video_tuple(
+    tmp_path,
+    content: str,
+    video: VideoGenerationMetadata | None,
+    image_data: bytes | None,
+    image_mime_type: str | None,
+) -> None:
+    db, service, store, assistant, _adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-invalid-video"
+    )
+    try:
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert service.update_message_content(
+            message_id=assistant.persisted_message_id,
+            content=content,
+            image_data=image_data,
+            image_mime_type=image_mime_type,
+            metadata_json=video.to_json() if video is not None else None,
+            expected_version=int(row["version"]),
+        )
+        durable = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        store._quarantine_generation_projection(
+            live,
+            minimum_version=int(durable["version"]),
+            reason="Canonical generation is unavailable; reload required.",
+        )
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            store.reload_quarantined_generation(assistant.id)
+
+        quarantined = store.get_message(assistant.id)
+        assert quarantined.generation_projection_quarantined
+        assert quarantined.video_metadata is None
+        assert (
+            ConsoleMessageActionService()
+            .action_groups(quarantined, video_file_available=True)
+            .media
+            == ()
+        )
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+def test_quarantine_rejects_stale_tts_until_canonical_reload(tmp_path) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-tts"
+    )
+    try:
+        issued = store.issue_tts_message_speech_snapshot(assistant.id)
+        _quarantine_from_unreadable_cas_winner(store, assistant, adapter)
+
+        with pytest.raises(ConsoleSpeechSnapshotRejected) as issue_error:
+            store.issue_tts_message_speech_snapshot(assistant.id)
+        assert (
+            issue_error.value.code is ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+        )
+        with pytest.raises(ConsoleSpeechSnapshotRejected) as validation_error:
+            store.validate_tts_message_speech_snapshot(issued)
+        assert (
+            validation_error.value.code
+            is ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+        )
+
+        adapter.fail_reader_after_race = False
+        store.reload_quarantined_generation(assistant.id)
+        fresh = store.issue_tts_message_speech_snapshot(assistant.id)
+        assert fresh.raw_content == "concurrent winner"
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "usage",
+        "metadata",
+        "thinking",
+        "continuation",
+        "edit",
+        "reset_stream",
+        "retry",
+        "begin_variant",
+    ],
+)
+def test_quarantine_rejects_generation_owned_late_writes(tmp_path, route: str) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, f"quarantine-late-{route}"
+    )
+    try:
+        _quarantine_from_unreadable_cas_winner(store, assistant, adapter)
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        token = store._generation_attempt_tokens.get(assistant.id)
+        with pytest.raises(ConsoleGenerationProjectionQuarantined, match="reload"):
+            if route == "usage":
+                store.set_message_usage(
+                    assistant.id,
+                    ProviderUsage(
+                        uncached_input=9,
+                        output=7,
+                        provider="openai",
+                        model="late",
+                    ),
+                )
+            elif route == "metadata":
+                store.set_message_metadata(assistant.id, MessageMetadata(engine="late"))
+            elif route == "thinking":
+                store.replace_message_thinking(assistant.id, None)
+            elif route == "continuation":
+                store.discard_provider_continuation(
+                    assistant.id,
+                    expected_message_version=int(before_row["version"]),
+                )
+            elif route == "edit":
+                store.update_message_content(assistant.id, "late stale edit")
+            elif route == "reset_stream":
+                store.reset_stream_content(assistant.id)
+            elif route == "retry":
+                store.prepare_message_retry(assistant.id, generation_token=token)
+            else:
+                store.begin_variant_stream(assistant.id, generation_token=token)
+
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+def test_quarantine_rejects_image_generation_sidecar_writes(tmp_path) -> None:
+    db, service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-image-sidecars"
+    )
+    try:
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert service.update_message_content(
+            message_id=assistant.persisted_message_id,
+            content="original",
+            image_data=None,
+            image_mime_type=None,
+            attachments=(
+                {"position": 0, "data": b"zero", "mime_type": "image/png"},
+                {"position": 1, "data": b"one", "mime_type": "image/png"},
+            ),
+            expected_version=int(row["version"]),
+        )
+        live = store._message_or_raise(assistant.id)
+        store._set_message_attachments(
+            live,
+            (
+                MessageAttachment(b"zero", "image/png", "", 0),
+                MessageAttachment(b"one", "image/png", "", 1),
+            ),
+        )
+        meta = GenerationVariantMeta("p", "", "local", None, None, None, {})
+        live.generation_metadata = (meta, meta)
+        live.provider_continuation_message_version = int(
+            db.get_message_by_id(assistant.persisted_message_id)["version"]
+        )
+        _quarantine_from_unreadable_cas_winner(store, assistant, adapter)
+        before_attachments = db.get_attachments_for_messages(
+            [assistant.persisted_message_id]
+        )
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(ConsoleGenerationProjectionQuarantined, match="reload"):
+            store.append_generation_variant(
+                store.session_id_for_message(assistant.id),
+                assistant.id,
+                data=b"late",
+                mime_type="image/png",
+                meta=meta,
+            )
+        with pytest.raises(ConsoleGenerationProjectionQuarantined, match="reload"):
+            store.keep_generation_variant(
+                store.session_id_for_message(assistant.id), assistant.id, position=1
+            )
+
+        assert (
+            db.get_attachments_for_messages([assistant.persisted_message_id])
+            == before_attachments
+        )
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+def test_quarantine_reload_never_mixes_row_and_sidecar_versions(
+    tmp_path, monkeypatch
+) -> None:
+    db, service, store, assistant, _adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-atomic-bundle"
+    )
+    try:
+        baseline = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert service.update_message_content(
+            message_id=assistant.persisted_message_id,
+            content="row-v3",
+            image_data=None,
+            image_mime_type=None,
+            attachments=(
+                {"position": 0, "data": b"image-v3", "mime_type": "image/png"},
+            ),
+            expected_version=int(baseline["version"]),
+        )
+        live = store._message_or_raise(assistant.id)
+        live.provider_continuation_message_version = int(
+            db.get_message_by_id(assistant.persisted_message_id)["version"]
+        )
+        store._quarantine_generation_projection(
+            live,
+            minimum_version=live.provider_continuation_message_version,
+            reason="Canonical generation is unavailable; reload required.",
+        )
+        store.persistence = service
+
+        reader_thread = get_ident()
+        row_read = Event()
+        writer_done = Event()
+        writer_errors: list[BaseException] = []
+        original_get = db.get_message_by_id
+
+        def pausing_get(message_id):
+            row = original_get(message_id)
+            if get_ident() == reader_thread and not row_read.is_set():
+                row_read.set()
+                writer_done.wait(0.5)
+            return row
+
+        monkeypatch.setattr(db, "get_message_by_id", pausing_get)
+
+        def write_v4() -> None:
+            try:
+                assert row_read.wait(2)
+                current = original_get(assistant.persisted_message_id)
+                assert service.update_message_content(
+                    message_id=assistant.persisted_message_id,
+                    content="row-v4",
+                    image_data=None,
+                    image_mime_type=None,
+                    attachments=(
+                        {
+                            "position": 0,
+                            "data": b"image-v4",
+                            "mime_type": "image/png",
+                        },
+                    ),
+                    expected_version=int(current["version"]),
+                )
+            except BaseException as exc:
+                writer_errors.append(exc)
+            finally:
+                writer_done.set()
+
+        writer = Thread(target=write_v4)
+        writer.start()
+        reloaded = store.reload_quarantined_generation(assistant.id)
+        writer.join(timeout=3)
+        assert not writer.is_alive()
+        assert writer_errors == []
+        assert (reloaded.content, reloaded.attachments[0].data) in {
+            ("row-v3", b"image-v3"),
+            ("row-v4", b"image-v4"),
+        }
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+@pytest.mark.parametrize("reader_outcome", ["raise", "malformed", "stale"])
+def test_hidden_db_legacy_post_cas_reader_failure_reconciles_committed_owner(
+    tmp_path, route: str, reader_outcome: str
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, f"legacy-post-cas-{route}-{reader_outcome}"
+    )
+    try:
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+        elif route == "select":
+            store.add_variant(assistant.id, "replacement")
+        adapter.reader_calls = 0
+        adapter._first_reader_row = None
+        adapter.postwrite_reader_outcome = reader_outcome
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            if route == "finalize":
+                store.finalize_variant_stream(assistant.id)
+            elif route == "add":
+                store.add_variant(assistant.id, "replacement")
+            else:
+                store.select_variant(assistant.id, 0)
+
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        expected_content = "original" if route == "select" else "replacement"
+        assert row["version"] == before_row["version"] + 1
+        assert row["content"] == live.content == expected_content
+        assert live.assistant_generation_state == row["assistant_generation_state"]
+        assert live.provider_continuation_message_version == row["version"]
+        assert live.variants is not None
+        assert live.variants.current.content == row["content"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        adapter.postwrite_reader_outcome = None
+        assert store.persist_selected_generation(assistant.id)
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("declared_process_local", [False, True])
+def test_unpersisted_legacy_fake_requires_explicit_process_local_marker(
+    declared_process_local: bool,
+) -> None:
+    persistence = SimpleNamespace(
+        console_process_local_only=declared_process_local,
+    )
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="original",
+        persist=False,
+    )
+
+    if declared_process_local:
+        updated = store.add_variant(assistant.id, "replacement")
+        assert updated.content == "replacement"
+        assert updated.persisted_message_id is None
+    else:
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            store.add_variant(assistant.id, "replacement")
+
+
+@pytest.mark.parametrize("route", ["add", "select", "delete"])
+def test_failed_generation_or_delete_keeps_fence_and_message_state(route):
+    persistence = FaultInjectingSemanticPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Atomic generation fence")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="original",
+        persist=True,
+    )
+    if route == "select":
+        store.add_variant(message.id, "alternative")
+    token = store.begin_generation_attempt(message.id)
+    before_message = deepcopy(store._message_or_raise(message.id))
+    before_store = _store_route_state(store, session.id)
+    persistence.fail = True
+
+    with pytest.raises(RuntimeError, match="durable semantic mutation failed"):
+        if route == "add":
+            store.add_variant(message.id, "ghost")
+        elif route == "select":
+            store.select_variant(message.id, 0)
+        else:
+            store.delete_message(message.id)
+
+    assert store._generation_attempt_tokens[message.id] == token
+    assert store._message_or_raise(message.id) == before_message
+    assert _store_route_state(store, session.id) == before_store
 
 
 def test_pending_attachment_is_per_session():
@@ -3562,6 +6461,39 @@ def test_materialize_between_ticks_is_noop_without_new_chunks():
     assert store._stream_chunks_by_message[message.id] == ["steady"]
 
 
+def test_read_only_messages_for_session_projects_stream_buffer_without_mutation():
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(ephemeral=True)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=False,
+    )
+    store.append_stream_chunk(message.id, "seed")
+    assert store.messages_for_session(session.id)[0].content == "seed"
+    store.append_stream_chunk(message.id, " plus")
+    store.append_stream_chunk(message.id, " buffered")
+
+    live = store._message_or_raise(message.id)
+    content_before = live.content
+    materialized_before = dict(store._stream_materialized_counts)
+    payload_before = dict(store._payload_revisions)
+    speech_before = dict(store._message_speech_revisions)
+    persistence_before = (list(persistence.created), list(persistence.updated))
+
+    projected = store.read_only_messages_for_session(session.id)
+
+    assert projected[0] is not live
+    assert projected[0].content == "seed plus buffered"
+    assert live.content == content_before == "seed"
+    assert store._stream_materialized_counts == materialized_before
+    assert store._payload_revisions == payload_before
+    assert store._message_speech_revisions == speech_before
+    assert (persistence.created, persistence.updated) == persistence_before
+
+
 def test_collapsed_buffer_keeps_terminal_flush_content_exact():
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -3622,6 +6554,255 @@ def test_collapsed_buffer_variant_stream_finalizes_full_content():
         "original",
         "regenerated",
     ]
+
+
+def test_thinking_activity_identity_survives_variant_and_durable_lifecycle(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "thinking-activity-identity.db", "thinking-id")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Thinking identity")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+        )
+        assert assistant.persisted_message_id is None
+        assert session.persisted_conversation_id is None
+
+        store.begin_variant_stream(assistant.id)
+        first_capture = ThinkingCapture(assistant_owner_id=assistant.id)
+        live = first_capture.observe(
+            ProviderThinkingDelta(
+                text="first reasoning",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+        )
+        assert live.envelope is not None
+        store.replace_message_thinking(assistant.id, live.envelope)
+        live_activity_id = project_thinking_activities(
+            assistant=store.get_message(assistant.id)
+        )[0].activity_id
+
+        store.append_stream_chunk(assistant.id, "regenerated")
+        settled = first_capture.settle("complete")
+        assert settled.envelope is not None
+        store.replace_message_thinking(assistant.id, settled.envelope)
+        finalized = store.finalize_variant_stream(assistant.id)
+        assert finalized.persisted_message_id is None
+        finalized_activity_id = project_thinking_activities(assistant=finalized)[
+            0
+        ].activity_id
+
+        persisted = store.persist_message_if_needed(assistant.id)
+        assert persisted.persisted_message_id == assistant.id
+        assert session.persisted_conversation_id is not None
+        persisted_activity_id = project_thinking_activities(assistant=persisted)[
+            0
+        ].activity_id
+
+        store.select_variant(assistant.id, 0)
+        switched_back = store.select_variant(assistant.id, 1)
+        switched_back_activity_id = project_thinking_activities(
+            assistant=switched_back
+        )[0].activity_id
+
+        tree = ChatConversationService(db).get_conversation_tree(
+            session.persisted_conversation_id,
+            root_limit=100,
+            depth_cap=100,
+        )
+        nodes = console_messages_from_conversation_tree(tree, db=db)
+        restored_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        restored_session = restored_store.restore_persisted_session(
+            title="Thinking identity restored",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=nodes,
+            active_leaf_persisted_id=persisted.persisted_message_id,
+        )
+        restored = restored_store.get_message(assistant.id)
+        restored_activity_id = project_thinking_activities(assistant=restored)[
+            0
+        ].activity_id
+
+        store.begin_variant_stream(assistant.id)
+        second_capture = ThinkingCapture(assistant_owner_id=assistant.id)
+        second = second_capture.observe(
+            ProviderThinkingDelta(
+                text="second reasoning",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+        )
+        assert second.envelope is not None
+        store.replace_message_thinking(assistant.id, second.envelope)
+        second_activity_id = project_thinking_activities(
+            assistant=store.get_message(assistant.id)
+        )[0].activity_id
+
+        assert restored_session.id != session.id
+        assert {
+            live_activity_id,
+            finalized_activity_id,
+            persisted_activity_id,
+            switched_back_activity_id,
+            restored_activity_id,
+        } == {live_activity_id}
+        assert second_activity_id != live_activity_id
+    finally:
+        db.close_connection()
+
+
+def test_thinking_identity_persistence_respects_temporary_and_durable_sessions(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "thinking-owner-ids.db", "thinking-owner-ids")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        temporary = store.create_session(title="Temporary", ephemeral=True)
+        temporary_assistant = store.append_message(
+            temporary.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="temporary answer",
+        )
+        temporary_capture = ThinkingCapture(assistant_owner_id=temporary_assistant.id)
+        temporary_result = temporary_capture.observe(
+            ProviderThinkingDelta(
+                text="temporary reasoning",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+        )
+        assert temporary_result.envelope is not None
+        store.replace_message_thinking(
+            temporary_assistant.id, temporary_result.envelope
+        )
+        assert (
+            store.persist_message_if_needed(temporary_assistant.id).persisted_message_id
+            is None
+        )
+
+        durable_ids: list[str] = []
+        for title in ("Durable A", "Durable B"):
+            session = store.create_session(title=title)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content=f"{title} answer",
+            )
+            capture = ThinkingCapture(assistant_owner_id=assistant.id)
+            result = capture.observe(
+                ProviderThinkingDelta(
+                    text=f"{title} reasoning",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                )
+            )
+            assert result.envelope is not None
+            store.replace_message_thinking(assistant.id, result.envelope)
+            persisted = store.persist_message_if_needed(assistant.id)
+            assert persisted.persisted_message_id == assistant.id
+            durable_ids.append(assistant.id)
+
+        assert len(set(durable_ids)) == 2
+        assert all(
+            db.get_message_by_id(message_id) is not None for message_id in durable_ids
+        )
+    finally:
+        db.close_connection()
+
+
+def test_thinking_activity_identity_survives_late_thinking_on_durable_owner(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "late-thinking-identity.db", "late-thinking")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Late thinking")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="ordinary answer",
+        )
+        persisted = store.persist_message_if_needed(assistant.id)
+        assert persisted.persisted_message_id is not None
+        assert persisted.persisted_message_id != assistant.id
+
+        store.begin_variant_stream(assistant.id)
+        capture = ThinkingCapture(assistant_owner_id=assistant.id)
+        observed = capture.observe(
+            ProviderThinkingDelta(
+                text="late reasoning",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+        )
+        assert observed.envelope is not None
+        store.replace_message_thinking(assistant.id, observed.envelope)
+        store.append_stream_chunk(assistant.id, "regenerated answer")
+        settled = capture.settle("complete")
+        assert settled.envelope is not None
+        store.replace_message_thinking(assistant.id, settled.envelope)
+        finalized = store.finalize_variant_stream(assistant.id)
+        before_restart = project_thinking_activities(assistant=finalized)[0]
+
+        assert session.persisted_conversation_id is not None
+        tree = ChatConversationService(db).get_conversation_tree(
+            session.persisted_conversation_id,
+            root_limit=100,
+            depth_cap=100,
+        )
+        nodes = console_messages_from_conversation_tree(tree, db=db)
+        restored_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        restored_store.restore_persisted_session(
+            title="Late thinking restored",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=nodes,
+            active_leaf_persisted_id=persisted.persisted_message_id,
+        )
+        restored = restored_store.get_message(persisted.persisted_message_id)
+        after_restart = project_thinking_activities(assistant=restored)[0]
+
+        assert before_restart.activity_id == after_restart.activity_id
+    finally:
+        db.close_connection()
+
+
+def test_ordinary_message_persistence_keeps_database_allocated_identity(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "ordinary-message-id.db", "ordinary-id")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Ordinary")
+        ordinary = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="ordinary answer",
+        )
+
+        persisted = store.persist_message_if_needed(ordinary.id)
+
+        assert persisted.persisted_message_id is not None
+        assert persisted.persisted_message_id != ordinary.id
+        assert db.get_message_by_id(persisted.persisted_message_id) is not None
+    finally:
+        db.close_connection()
 
 
 def test_one_shot_prefill_accessors_round_trip():
@@ -4556,7 +7737,7 @@ def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
     create, and a follow-up metadata-only patch (mirroring the "final" case's own
     two-step order: content write, then status write) marks it "empty"."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
@@ -4609,7 +7790,7 @@ def test_empty_transcript_placeholder_reaches_a_real_db_through_the_deferred_cre
     write_and_leaves_version_unchanged`) for exactly this kind of durability
     claim."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
@@ -4665,7 +7846,9 @@ def test_set_message_metadata_flushes_locally_and_leaves_the_version_alone():
         persisted_id = store.get_message(message.id).persisted_message_id
         assert persisted_id is not None
         row_before = db.get_message_by_id(persisted_id)
-        assert row_before["metadata_json"] is None
+        terminal_metadata = MessageMetadata.from_json(row_before["metadata_json"])
+        assert terminal_metadata is not None
+        assert terminal_metadata.terminal_receipt_id
         change_id = db.get_latest_sync_log_change_id()
 
         store.set_message_metadata(
@@ -4747,6 +7930,7 @@ def test_first_persist_flushes_roleplay_context_after_conversation_exists():
             "conversation_id": conversation_id,
             "user_name_override": "Rowan",
             "character_system_template": "Speak with {{user}}.",
+            "character_name_snapshot": "Alraune",
         }
     ]
 
@@ -4947,11 +8131,12 @@ def test_character_roleplay_swap_persists_only_the_final_projection_and_context(
             "conversation_id": "conv-1",
             "user_name_override": None,
             "character_system_template": "Serve {{user}} as {{character}}.",
+            "character_name_snapshot": "Brynn",
         }
     ]
 
 
-def test_first_persist_context_failure_is_observable_but_promotion_rolls_back():
+def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_path():
     class RefusingPersistence(FakePersistence):
         def update_conversation_roleplay_context(self, **kwargs):
             return False
@@ -4963,12 +8148,43 @@ def test_first_persist_context_failure_is_observable_but_promotion_rolls_back():
     assert store.persist_session_if_needed(saved.id) == "conv-1"
     assert saved.persisted_conversation_id == "conv-1"
 
-    temporary = store.create_session(ephemeral=True)
+    temporary = store.create_session(
+        ephemeral=True,
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
     temporary.user_display_name_override = "Rowan"
-    with pytest.raises(RuntimeError, match="roleplay context"):
-        store.promote_ephemeral_session(temporary.id)
-    assert temporary.ephemeral is True
-    assert temporary.persisted_conversation_id is None
+    conversation_id = store.promote_ephemeral_session(temporary.id)
+
+    assert conversation_id is not None
+    assert temporary.ephemeral is False
+    assert temporary.persisted_conversation_id == conversation_id
+    assert persistence.promotion_trace_boundaries[-1] is None
+    roleplay = persistence.last_create_kwargs["metadata"]["console_roleplay_context"]
+    assert roleplay["user_name_override"] == "Rowan"
+    assert roleplay["character_name_snapshot"] == "Alraune"
+
+
+def test_generic_roleplay_context_does_not_capture_a_character_name():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp")
+    )
+    session.user_display_name_override = "Rowan"
+
+    conversation_id = store.persist_session_if_needed(session.id)
+
+    assert persistence.roleplay_updates == [
+        {
+            "conversation_id": conversation_id,
+            "user_name_override": "Rowan",
+            "character_system_template": None,
+            "character_name_snapshot": None,
+        }
+    ]
 
 
 def test_identical_real_seed_does_not_append_a_duplicate_greeting():
@@ -5071,6 +8287,11 @@ def test_prepare_roleplay_refresh_materializes_live_before_immutable_persistence
     assert persistence.updated_messages == []
     with pytest.raises(FrozenInstanceError):
         plan.generation = -1
+    assert plan.system_prompt_write is not None
+    assert plan.system_prompt_write.expected_roleplay_context == ConsoleRoleplayContext(
+        character_system_template="Speak with {{user}}.",
+        character_name_snapshot="Alraune",
+    )
 
     store.close_session(session.id)
     result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
@@ -5125,6 +8346,7 @@ def test_forced_restored_roleplay_repair_accepts_owned_alpha_ancestor(tmp_path):
                 conversation_id=conversation_id,
                 user_name_override=None,
                 character_system_template="Speak with {{user}}.",
+                character_name_snapshot="Alraune",
             )
             is True
         )
@@ -5410,6 +8632,18 @@ def test_partial_projection_failure_retains_real_durable_ancestor_for_repair(
         conversation_id=conversation_id,
         user_name_override=None,
         character_system_template="Speak with {{user}}.",
+        character_name_snapshot="Alraune",
+    )
+    from tldw_chatbook.Chat.console_roleplay_metadata import (
+        parse_console_roleplay_context,
+    )
+
+    durable_context = parse_console_roleplay_context(
+        db.get_conversation_by_id(conversation_id)["metadata"]
+    )
+    assert durable_context == ConsoleRoleplayContext(
+        character_system_template="Speak with {{user}}.",
+        character_name_snapshot="Alraune",
     )
     metadata = MessageMetadata(
         template_kind="character_greeting",
@@ -5537,39 +8771,719 @@ def test_presentation_context_resolves_override_identity_and_roleplay_row():
     assert presentation.row_class == "console-transcript-message-roleplay-character"
 
 
-def test_promotion_transaction_rolls_back_created_conversation_on_context_failure():
-    class TransactionalRefusingPersistence(FakePersistence):
-        def __init__(self):
-            super().__init__()
-            self.db = self
+def test_atomic_promotion_adapter_failure_preserves_ephemeral_fake_state():
+    class FailingAtomicPersistence(FakePersistence):
+        def promote_console_conversation_bundle(self, **kwargs):
+            raise RuntimeError("atomic bundle failure")
 
-        def transaction(self):
-            persistence = self
-
-            class _Transaction:
-                def __enter__(self):
-                    self.conversations = list(persistence.created_conversations)
-                    self.messages = list(persistence.created_messages)
-                    return self
-
-                def __exit__(self, exc_type, exc, traceback):
-                    if exc_type is not None:
-                        persistence.created_conversations[:] = self.conversations
-                        persistence.created_messages[:] = self.messages
-                    return False
-
-            return _Transaction()
-
-        def update_conversation_roleplay_context(self, **kwargs):
-            return False
-
-    persistence = TransactionalRefusingPersistence()
+    persistence = FailingAtomicPersistence()
     store = ConsoleChatStore(persistence=persistence)
     session = store.create_session(ephemeral=True)
     session.user_display_name_override = "Rowan"
 
-    with pytest.raises(RuntimeError, match="roleplay context"):
+    with pytest.raises(RuntimeError, match="atomic bundle failure"):
         store.promote_ephemeral_session(session.id)
 
     assert persistence.created_conversations == []
     assert session.ephemeral is True
+
+
+def test_canvas_participant_joins_promotion_and_confirms_only_after_success(tmp_path):
+    """Omitting the participant or confirming before commit loses temporary history."""
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion.sqlite", "canvas-promotion")
+    try:
+        staging = CanvasStagingStore()
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        staged = staging.create_canvas(
+            owner=owner,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+        updated_origin = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas updated.",
+        )
+        staging.update_canvas(
+            owner=owner,
+            run_id="run-update",
+            tool_call_id="call-update",
+            canvas_id=staged.revision.canvas_id,
+            expected_parent_revision_id=staged.revision.revision_id,
+            source="<!doctype html><html><body>updated planner</body></html>",
+            origin_message_id=updated_origin.id,
+        )
+        rename_origin = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Call it Schedule.",
+        )
+        renamed = staging.rename_canvas(
+            owner=owner,
+            run_id="run-rename",
+            tool_call_id="call-rename",
+            canvas_id=staged.revision.canvas_id,
+            expected_parent_revision_id=staged.revision.revision_id,
+            title="Schedule",
+            origin_message_id=rename_origin.id,
+        )
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT revision.origin_message_id, revision.origin_turn_id "
+                "FROM canvas_revisions AS revision WHERE revision.id = ?",
+                (staged.revision.revision_id,),
+            )
+            .fetchone()
+        )
+        assert row is not None
+        assert row[0] == store.get_message(assistant.id).persisted_message_id
+        assert row[1] == "run-create"
+        history = (
+            db.get_connection()
+            .execute(
+                "SELECT parent_revision_id, sequence, title, actor_kind, origin_message_id "
+                "FROM canvas_revisions WHERE canvas_id = ? ORDER BY sequence",
+                (staged.revision.canvas_id,),
+            )
+            .fetchall()
+        )
+        assert [tuple(row[:4]) for row in history] == [
+            (None, 1, "Planner", "assistant"),
+            (staged.revision.revision_id, 2, "Planner", "assistant"),
+            (staged.revision.revision_id, 3, "Schedule", "user_rename"),
+        ]
+        assert (
+            history[1][4] == store.get_message(updated_origin.id).persisted_message_id
+        )
+        assert history[2][4] == store.get_message(rename_origin.id).persisted_message_id
+        assert (
+            db.get_connection()
+            .execute(
+                "SELECT last_canvas_id FROM canvas_conversation_hints "
+                "WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            .fetchone()[0]
+            == renamed.revision.canvas_id
+        )
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM sync_log WHERE entity LIKE 'canvas%'")
+            .fetchone()[0]
+            == 0
+        )
+        assert staging.staged_revision_count(session.id) == 0
+        assert session.ephemeral is False
+    finally:
+        db.close_connection()
+
+
+def test_failed_canvas_promotion_preserves_chat_and_staging_for_retry(
+    tmp_path, monkeypatch
+):
+    """Publishing identities or clearing staging on rollback makes retry impossible."""
+
+    from tldw_chatbook.Chat import console_transaction_contribution as seam
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion-retry.sqlite", "canvas-retry")
+    try:
+        staging = CanvasStagingStore()
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        staged = staging.create_canvas(
+            owner=owner,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>private planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+        original_execute = seam._CursorConsoleTransactionWriter.execute
+        failed = False
+
+        def fail_once(self, statement, parameters):
+            nonlocal failed
+            original_execute(self, statement, parameters)
+            if statement.startswith("INSERT INTO canvas_documents") and not failed:
+                failed = True
+                raise RuntimeError("injected_canvas_write_failure")
+
+        monkeypatch.setattr(seam._CursorConsoleTransactionWriter, "execute", fail_once)
+        with pytest.raises(RuntimeError, match="canvas_promotion_failed"):
+            store.promote_ephemeral_session(session.id)
+
+        assert session.ephemeral is True
+        assert session.persisted_conversation_id is None
+        assert assistant.persisted_message_id is None
+        assert staging.staged_revision_count(session.id) == 1
+        connection = db.get_connection()
+        assert (
+            connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+        )
+        assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0]
+            == 0
+        )
+
+        retry_origin = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas retry update.",
+        )
+        retry_update = staging.update_canvas(
+            owner=owner,
+            run_id="run-retry-update",
+            tool_call_id="call-retry-update",
+            canvas_id=staged.revision.canvas_id,
+            expected_parent_revision_id=staged.revision.revision_id,
+            source="<!doctype html><html><body>retry planner</body></html>",
+            origin_message_id=retry_origin.id,
+        )
+
+        monkeypatch.setattr(
+            seam._CursorConsoleTransactionWriter, "execute", original_execute
+        )
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        assert session.ephemeral is False
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM canvas_revisions WHERE id = ?",
+                (staged.revision.revision_id,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM canvas_revisions WHERE id = ?",
+                (retry_update.revision.revision_id,),
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+def test_console_lifecycle_discards_exact_canvas_staging() -> None:
+    """A close, restore replacement, or app teardown retaining plans leaks source."""
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(canvas_promotion_participant=staging)
+    closed = store.create_session(ephemeral=True)
+    _create_staged_canvas_for_console(staging, closed.id, "closed")
+    survivor = store.create_session(ephemeral=True)
+    _create_staged_canvas_for_console(staging, survivor.id, "survivor")
+
+    store.close_session(closed.id)
+
+    assert staging.staged_revision_count(closed.id) == 0
+    assert staging.staged_revision_count(survivor.id) == 1
+
+    replacement = replace(survivor)
+    store.restore_state(sessions=[replacement], messages_by_session={survivor.id: ()})
+
+    assert staging.staged_revision_count(survivor.id) == 0
+    _create_staged_canvas_for_console(staging, survivor.id, "teardown")
+    store.end_app_runtime()
+    assert staging.staged_revision_count(survivor.id) == 0
+
+
+def test_canvas_promotion_lease_rejects_concurrent_update_without_stranding_graph(
+    tmp_path,
+) -> None:
+    """A write racing between snapshot and commit must not become unpromotable."""
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion-race.sqlite", "canvas-race")
+    entered = Event()
+    release = Event()
+
+    class PausingPersistence:
+        def __init__(self) -> None:
+            self.delegate = ChatPersistenceService(db)
+
+        def promote_console_conversation_bundle(self, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return self.delegate.promote_console_conversation_bundle(**kwargs)
+
+    try:
+        staging = CanvasStagingStore()
+        store = ConsoleChatStore(
+            persistence=PausingPersistence(),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        created = staging.create_canvas(
+            owner=owner,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+        outcome = {}
+
+        def promote() -> None:
+            outcome["conversation_id"] = store.promote_ephemeral_session(session.id)
+
+        thread = Thread(target=promote)
+        thread.start()
+        assert entered.wait(timeout=5)
+        with pytest.raises(CanvasStagingError, match="promotion_in_flight"):
+            staging.update_canvas(
+                owner=owner,
+                run_id="run-racing",
+                tool_call_id="call-racing",
+                canvas_id=created.revision.canvas_id,
+                expected_parent_revision_id=created.revision.revision_id,
+                source="<!doctype html><html><body>racing</body></html>",
+                origin_message_id=assistant.id,
+            )
+        release.set()
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()
+        assert outcome["conversation_id"] is not None
+        assert session.ephemeral is False
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM canvas_revisions")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        release.set()
+        db.close_connection()
+
+
+def test_canvas_promotion_reservation_refuses_close_and_same_id_recreate(
+    tmp_path,
+) -> None:
+    """Close/recreate during SQLite work must not replace the promotion owner."""
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion-close-race.sqlite", "close-race")
+    entered = Event()
+    release = Event()
+
+    class PausingPersistence:
+        def __init__(self) -> None:
+            self.delegate = ChatPersistenceService(db)
+
+        def promote_console_conversation_bundle(self, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return self.delegate.promote_console_conversation_bundle(**kwargs)
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(
+        persistence=PausingPersistence(),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+    outcome: dict[str, object] = {}
+
+    def promote() -> None:
+        try:
+            outcome["conversation_id"] = store.promote_ephemeral_session(session.id)
+        except Exception as exc:
+            outcome["error"] = exc
+
+    thread = Thread(target=promote)
+    thread.start()
+    try:
+        assert entered.wait(timeout=5)
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+            store.close_session(session.id)
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+            store.create_session(session_id=session.id, ephemeral=True)
+    finally:
+        release.set()
+        thread.join(timeout=5)
+
+    try:
+        assert not thread.is_alive()
+        assert "error" not in outcome
+        assert store._sessions[session.id] is session
+        assert session.ephemeral is False
+        assert staging.staged_revision_count(session.id) == 0
+        assert store.promote_ephemeral_session(session.id) is None
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM conversations")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+def test_canvas_promotion_reservation_refuses_restore_and_runtime_teardown(
+    tmp_path,
+) -> None:
+    """Restore or teardown during SQLite work must not replace the live owner."""
+
+    db = CharactersRAGDB(
+        tmp_path / "canvas-promotion-restore-race.sqlite", "restore-race"
+    )
+    entered = Event()
+    release = Event()
+
+    class PausingPersistence:
+        def __init__(self) -> None:
+            self.delegate = ChatPersistenceService(db)
+
+        def promote_console_conversation_bundle(self, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return self.delegate.promote_console_conversation_bundle(**kwargs)
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(
+        persistence=PausingPersistence(),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+    replacement = replace(session)
+    outcome: dict[str, object] = {}
+
+    def promote() -> None:
+        try:
+            outcome["conversation_id"] = store.promote_ephemeral_session(session.id)
+        except Exception as exc:
+            outcome["error"] = exc
+
+    thread = Thread(target=promote)
+    thread.start()
+    try:
+        assert entered.wait(timeout=5)
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+            store.restore_state(
+                sessions=[replacement],
+                messages_by_session={replacement.id: ()},
+            )
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+            store.end_app_runtime()
+    finally:
+        release.set()
+        thread.join(timeout=5)
+
+    try:
+        assert not thread.is_alive()
+        assert "error" not in outcome
+        assert store._sessions[session.id] is session
+        assert session.ephemeral is False
+        assert replacement.ephemeral is True
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM conversations")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+def test_delayed_second_promotion_returns_idempotently_before_any_write(
+    tmp_path,
+) -> None:
+    """A caller delayed before reservation must recheck the durable decision."""
+
+    class WriteProbe:
+        def __init__(self) -> None:
+            self.write_count = 0
+
+        def write(self, *, writer, conversation_id, message_ids) -> None:
+            self.write_count += 1
+
+    db = CharactersRAGDB(
+        tmp_path / "canvas-promotion-delayed-entrant.sqlite",
+        "delayed-entrant",
+    )
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(db),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+    delayed_at_reservation = Event()
+    release_delayed = Event()
+    original_reserve = store._reserve_ephemeral_promotion
+    probe = WriteProbe()
+    outcome: dict[str, object] = {}
+
+    def pause_delayed(session_to_reserve):
+        if current_thread().name == "promotion-b":
+            delayed_at_reservation.set()
+            assert release_delayed.wait(timeout=5)
+        return original_reserve(session_to_reserve)
+
+    store._reserve_ephemeral_promotion = pause_delayed
+
+    def promote_delayed() -> None:
+        try:
+            outcome["result"] = store.promote_ephemeral_session(
+                session.id,
+                contributions=(probe,),
+            )
+        except Exception as exc:
+            outcome["error"] = exc
+
+    delayed = Thread(target=promote_delayed, name="promotion-b")
+    delayed.start()
+    try:
+        assert delayed_at_reservation.wait(timeout=5)
+        first_conversation_id = store.promote_ephemeral_session(session.id)
+    finally:
+        release_delayed.set()
+        delayed.join(timeout=5)
+
+    try:
+        assert not delayed.is_alive()
+        assert "error" not in outcome
+        assert outcome["result"] is None
+        assert first_conversation_id == session.persisted_conversation_id
+        assert probe.write_count == 0
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM conversations")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("confirm_behavior", ["false", "exception"])
+def test_postcommit_canvas_confirm_failure_leaves_chat_durable_and_stage_retired(
+    tmp_path, confirm_behavior
+) -> None:
+    """SQLite cannot roll back after return, so publication must survive confirm."""
+
+    class ConfirmFailureStaging(CanvasStagingStore):
+        def __init__(self):
+            super().__init__()
+            self.retire_calls = 0
+
+        def confirm_contribution(self, session_id, contribution):
+            if confirm_behavior == "exception":
+                raise RuntimeError("private confirm detail")
+            return False
+
+        def retire_contribution(self, session_id, contribution):
+            self.retire_calls += 1
+            return super().retire_contribution(session_id, contribution)
+
+        def discard_session(self, session_id):
+            raise AssertionError("postcommit cleanup must be exact")
+
+    db = CharactersRAGDB(
+        tmp_path / f"canvas-confirm-{confirm_behavior}.sqlite",
+        f"canvas-confirm-{confirm_behavior}",
+    )
+    try:
+        staging = ConfirmFailureStaging()
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        staging.create_canvas(
+            owner=owner,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        assert session.ephemeral is False
+        assert session.persisted_conversation_id == conversation_id
+        assert staging.staged_revision_count(session.id) == 0
+        assert staging.retire_calls == 1
+        assert db.get_conversation_by_id(conversation_id) is not None
+    finally:
+        db.close_connection()
+
+
+def test_canvas_abort_cleanup_cannot_mask_primary_persistence_failure() -> None:
+    """Participant cleanup failure must not replace the database exception."""
+
+    class FailingPersistence(FakePersistence):
+        def promote_console_conversation_bundle(self, **kwargs):
+            raise ValueError("primary persistence failure")
+
+    class AbortFailureStaging(CanvasStagingStore):
+        def abort_contribution(self, session_id, contribution):
+            raise RuntimeError("private abort failure")
+
+    staging = AbortFailureStaging()
+    store = ConsoleChatStore(
+        persistence=FailingPersistence(),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+
+    with pytest.raises(ValueError, match="primary persistence failure"):
+        store.promote_ephemeral_session(session.id)
+
+    assert session.ephemeral is True
+
+
+def test_canvas_owner_fences_late_callbacks_across_close_restore_and_shutdown() -> None:
+    """Lifecycle deletion alone permits same-id ABA and post-shutdown resurrection."""
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(canvas_promotion_participant=staging)
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    closed_owner = staging.session_owner(session.id)
+    store.close_session(session.id)
+    replacement = store.create_session(session_id="same-id", ephemeral=True)
+    replacement_owner = staging.session_owner(replacement.id)
+
+    with pytest.raises(CanvasStagingError, match="session_retired"):
+        staging.create_canvas(
+            owner=closed_owner,
+            run_id="run-closed",
+            tool_call_id="call-closed",
+            title="Closed",
+            source="<!doctype html><html><body>closed</body></html>",
+            origin_message_id="assistant-closed",
+        )
+
+    store.restore_state(sessions=[replace(replacement)], messages_by_session={})
+    restored_owner = staging.session_owner(replacement.id)
+    assert restored_owner is not replacement_owner
+    with pytest.raises(CanvasStagingError, match="session_retired"):
+        staging.create_canvas(
+            owner=replacement_owner,
+            run_id="run-replaced",
+            tool_call_id="call-replaced",
+            title="Replaced",
+            source="<!doctype html><html><body>replaced</body></html>",
+            origin_message_id="assistant-replaced",
+        )
+
+    store.end_app_runtime()
+    with pytest.raises(CanvasStagingError, match="runtime_closed"):
+        staging.create_canvas(
+            owner=restored_owner,
+            run_id="run-ended",
+            tool_call_id="call-ended",
+            title="Ended",
+            source="<!doctype html><html><body>ended</body></html>",
+            origin_message_id="assistant-ended",
+        )
+
+
+def _create_staged_canvas_for_console(
+    staging: CanvasStagingStore, session_id: str, suffix: str
+):
+    return staging.create_canvas(
+        owner=staging.session_owner(session_id),
+        run_id=f"run-{suffix}",
+        tool_call_id=f"call-{suffix}",
+        title="Temporary",
+        source=f"<!doctype html><html><body>{suffix}</body></html>",
+        origin_message_id=f"assistant-{suffix}",
+    )

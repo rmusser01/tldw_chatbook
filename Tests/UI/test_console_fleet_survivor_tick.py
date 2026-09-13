@@ -23,10 +23,13 @@ patching the global clock would destabilize the event loop's own timers.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.widgets import Static
 
 from Tests.UI.test_console_fleet_panel import (
+    _real_fleet_recovery_database,
     _AGENT_SECTION_SIZE,
     _scroll_into_view,
     _setup_console,
@@ -90,6 +93,11 @@ class _SurvivorBridge:
     def has_unsettled_children(self, conversation_id: str) -> bool:
         return self.unsettled
 
+    def subagent_counts(self, conversation_ids: list[str]) -> dict[str, int]:
+        if self.conversation_id not in conversation_ids:
+            return {}
+        return {self.conversation_id: 1}
+
     def subagent_run(self, run_id: str):
         return None
 
@@ -137,7 +145,7 @@ async def test_survivor_elapsed_advances_with_no_other_interaction():
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console, controller = await _wire_survivor(pilot, host, bridge)
         await pilot.pause(0.5)  # let the mount hedge fire against idle
-        assert console._console_fleet_survivor_timer is None
+        assert console._fleet._console_fleet_survivor_timer is None
         bridge.unsettled = True
         bridge.started_at = _time.monotonic() - 1.0
         console._sync_console_agent_section()
@@ -193,7 +201,7 @@ async def test_the_tick_stops_itself_with_one_final_settle_paint():
         await pilot.pause()
         console._start_console_transcript_sync_timer()
         await pilot.pause(0.5)
-        assert console._console_fleet_survivor_timer is not None, (
+        assert console._fleet._console_fleet_survivor_timer is not None, (
             "precondition: the survivor tick armed at the poll's stop edge"
         )
 
@@ -203,13 +211,13 @@ async def test_the_tick_stops_itself_with_one_final_settle_paint():
         bridge.finished_at = bridge.started_at + 5.0
         await pilot.pause(2.5)
 
-        assert console._console_fleet_survivor_timer is None, (
+        assert console._fleet._console_fleet_survivor_timer is None, (
             "15664 AC#2: the survivor tick must stop itself when nothing is live"
         )
         after = _fleet_row_text(console)
         assert "✓" in after, (
             "the tick's final pass must paint the terminal glyph without "
-            f"any user interaction: {after!r}"
+            f"any user interaction: {after!r}; state={console._agent._console_agent_fleet_section_state()!r}; mounted={console.is_mounted}; active={host.screen is console}"
         )
 
 
@@ -223,11 +231,11 @@ async def test_an_idle_console_never_gains_a_survivor_timer():
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console, controller = await _wire_survivor(pilot, host, bridge)
-        console._maybe_start_console_fleet_survivor_tick()
+        console._fleet._maybe_start_console_fleet_survivor_tick()
         console._start_console_transcript_sync_timer()
         await pilot.pause(0.6)
         assert console._console_transcript_sync_timer is None
-        assert console._console_fleet_survivor_timer is None
+        assert console._fleet._console_fleet_survivor_timer is None
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +274,9 @@ async def test_unseen_mark_paints_the_tab_badge_and_viewing_clears_it(tmp_path):
         first = store.ensure_session()
         second = store.create_session(title="Background research")
         store.switch_session(first.id)
+        await asyncio.to_thread(
+            app.console_runtime.activity_receipts.hydrate_from_storage
+        )
         # The production write pair: the consumer writes the mark on the
         # child thread and bumps the badge-cache revision on the app loop.
         marks.set_mark(second.id, ConversationLocalMarksService.FLEET_UNSEEN)
@@ -288,7 +299,7 @@ async def test_unseen_mark_paints_the_tab_badge_and_viewing_clears_it(tmp_path):
         await pilot.pause()
         assert not marks.has_mark(
             second.id, ConversationLocalMarksService.FLEET_UNSEEN
-        ), "viewing the conversation must clear the durable mark"
+        ), (store.active_session_id, console._fleet._active_session_id_accessor(), console._fleet._console_screen_displayed(), controller.fleet_wake.has_pending(second.id), controller.fleet_wake.pause_reason(second.id))
         tab = console.query_one(f"#console-session-tab-{second.id}")
         assert "◈" not in str(tab.label), (
             f"the badge must not outlive the mark: {tab.label!r}"
@@ -385,7 +396,7 @@ async def test_mount_claim_switches_to_the_settled_conversations_session():
                 conversation_id=second.id, session_id=second.id
             ),
         )
-        assert console.consume_pending_console_fleet_completion() is True
+        assert console._fleet.consume_pending_console_fleet_completion() is True
         assert store.active_session_id == second.id, (
             "the claim must land the user on the settled conversation"
         )
@@ -398,7 +409,7 @@ async def test_mount_claim_switches_to_the_settled_conversations_session():
             HandoffChannel.CONSOLE_FLEET_COMPLETION,
             ConsoleFleetCompletionTarget(conversation_id="conv-gone"),
         )
-        assert console.consume_pending_console_fleet_completion() is False
+        assert console._fleet.consume_pending_console_fleet_completion() is False
         assert store.active_session_id == second.id
         assert not app.pending_handoffs.has_pending(
             HandoffChannel.CONSOLE_FLEET_COMPLETION

@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.1.8.0"
+version = "0.2.1"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
 description = "A Textual TUI for chatting with LLMs, and interacting with the tldw server."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 keywords = ["tui", "cli", "llm", "textual", "ai", "chat", "rag", "embeddings", "terminal"]
@@ -25,7 +25,6 @@ classifiers = [
     "Topic :: Communications :: Chat",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Environment :: Console",
@@ -36,13 +35,15 @@ classifiers = [
 
 # --- Dependencies ---
 dependencies = [
-    "chardet",
+    "chardet>=3.0.2,<6",
     "httpx",
     "loguru",
     "textual==8.2.8",  # exact pin: UI framework, bump deliberately (TASK-1353)
     "textual-diff-view==0.1.5",  # exact pin: diff widget, bump deliberately (TASK-1351)
     "requests",
     "rich",
+    "pyte==0.8.2",
+    "regex==2026.4.4",
     "wcwidth>=0.2.14,<1",
     "rich-pixels>=3.0.0",
     # TASK-18606: was pinned to ==11.2.1 for ADR-054 renderer identity. The
@@ -58,6 +59,8 @@ dependencies = [
     "pillow>=10.4",
     "PyYAML",
     "pydantic>=2.4,<3",
+    "rfc8785==0.1.4",  # exact pin: shared profile JCS contract (ADR-102)
+    "cryptography",  # AES-GCM Personal Context envelopes and key wrapping
     "portalocker==3.2.0",
     "psutil",
     "toml",
@@ -71,8 +74,20 @@ dependencies = [
     "aiofiles",
     "croniter>=1.4.0",
     "textual-image",
-    "tiktoken",      # engine tokens strategy (Q2: hard-required, shim-enforced)
+    "tiktoken==0.14.0",  # exact pin: reviewed offline encoding bundle/runtime seam
     "defusedxml",    # engine xml security parsing (Q9: core)
+    "html5lib>=1.1,<2",
+    "tinycss2>=1.4,<2",
+    "aiohttp>=3.9,<4",
+    # Base-install live speaker labels for Meetings (31827): the ONNX diarizer
+    # engine runs in the worker subprocess, so the 2 GB torch stack stays an
+    # extra. numpy is its array seam (and the meeting mixer's).
+    # Upper bound: the engine names seven sherpa-onnx classes, so a 2.x
+    # rename would break live labels on every base install (degrading to
+    # coarse, not fatal -- but silently). numpy stays unbounded, like every
+    # other base dep here.
+    "sherpa-onnx>=1.13,<2",
+    "numpy",
 ]
 
 # --- Optional Dependencies ---
@@ -225,13 +240,17 @@ media_processing = [
     # pip install -e ".[media_processing,transcription_parakeet]"
 ]
 chatterbox = [
-    "chatterbox-tts",
+    "chatterbox-tts>=0.1.7",  # Avoid older releases' broken pkuseg source install
+    # Perth 1.0.1 needs pkg_resources at runtime (removed in setuptools 82).
+    # Remove this cap once Perth replaces that import and declares its runtime deps.
+    "setuptools<82",
     "torchaudio",
     "torch",
     "faster-whisper",  # For validation of generated audio
 ]
 local_tts = [
     "kokoro-onnx",
+    "kokoro>=0.9.4,<0.10; python_version < '3.13'",  # Official PyTorch runtime
     "scipy",
     "numpy",
     "nltk",
@@ -272,6 +291,7 @@ nemo = [
     "torchaudio",  # Required for audio processing
 ]
 speech_recording = [
+    "tldw-voice-aec==0.2.0",  # Native WebRTC AEC3 companion; version-locked to this app release
     "pyaudio>=0.2.14",  # Primary audio backend
     "sounddevice>=0.4.6",  # Fallback audio backend
     "webrtcvad-wheels>=2.0.14",  # Voice activity detection (drop-in `webrtcvad` fork; upstream webrtcvad 2.0.10 imports pkg_resources, which setuptools>=81 removed)
@@ -294,6 +314,11 @@ dev = [
     "pytest-timeout",  # For handling hanging tests
     "pytest-xdist",  # Parallel test execution: pytest -n auto --dist loadscope
     "pytest-mock",  # Used throughout Tests/; was only in requirements-test.txt
+    # Tests/Agents/test_local_tool_provider.py imports Draft202012Validator at
+    # module level. It reached environments only TRANSITIVELY (chromadb,
+    # docling-core, mcp-unified -- all optional extras), so a plain
+    # `.[dev]` install could not collect that module at all.
+    "jsonschema",
     "pytest-cov",  # Coverage runs documented in Tests/README.md
     "textual-dev", # For Textual development tools
     "hypothesis",
@@ -328,10 +353,10 @@ subscriptions = [
     "defusedxml",  # Safe XML parsing; falls back to stdlib xml.etree if absent
     "tqdm",
 ]
-# Note: cryptography and defusedxml are shipped in this extra but are NOT part of
-# the availability gate in Utils/optional_deps.py, because both have working
-# fallbacks. Installing them is still the right default -- the fallbacks are
-# plaintext credentials and a less safe XML parser respectively.
+# Note: defusedxml is shipped in this extra but is not part of the availability
+# gate in Utils/optional_deps.py because it has a stdlib fallback. Cryptography
+# is also listed here for compatibility but is now a base Personal Context
+# dependency; subscription credential storage still must not use plaintext.
 web = [
     "textual-serve",  # Web server for running Textual apps in browser
 ]
@@ -394,9 +419,11 @@ all-tools = [
     "librosa",
     
     # === TTS (Text-to-Speech) ===
-    "chatterbox-tts",
+    "chatterbox-tts>=0.1.7",
+    "setuptools<82",  # Perth runtime compatibility; see the chatterbox extra above
     "torchaudio",
     "kokoro-onnx",
+    "kokoro>=0.9.4,<0.10; python_version < '3.13'",
     "onnxruntime",
     "av",
     # Note: higgs_tts requires manual installation of boson-multimodal from GitHub
@@ -459,7 +486,7 @@ all-tools = [
 "Source Code" = "https://github.com/rmusser01/tldw_chatbook"
 "Changelog" = "https://github.com/rmusser01/tldw_chatbook/blob/main/CHANGELOG.md"
 
-# This creates a command-line script called 'tldw-chatbook'
+# Console scripts installed by the PyPI package.
 [project.scripts]
 # Loads the full app only when the command is invoked.
 tldw-cli = "tldw_chatbook.cli:main_cli_runner"
@@ -469,53 +496,132 @@ tldw-serve = "tldw_chatbook.Web_Server.serve:main"
 [tool.setuptools]
 include-package-data = false
 
+[tool.setuptools.package-dir]
+tldw_profile_core = "packages/tldw_profile_core/src/tldw_profile_core"
+
 [tool.setuptools.packages.find]
-where = ["."]  # Look for packages in the current directory (where pyproject.toml is)
+where = [".", "packages/tldw_profile_core/src"]
 # Include the 'tldw_chatbook' package and its submodules
-include = ["tldw_chatbook*"]
+include = ["tldw_chatbook*", "tldw_profile_core*"]
 exclude = [
     "Tests*",
     ".venv*",
-    "tldw_chatbook.Chunking.templates*",
 ]
 
 [tool.setuptools.package-data]
-# Bundle only the reviewed Samira character and Visual Identity pack inventory.
+# Bundle only the reviewed character, Buddy and tiktoken runtime inventories.
 "tldw_chatbook" = [
     "assets/characters/samira/*.json",
     "assets/characters/samira/*.png",
     "assets/characters/samira/*.md",
     "assets/characters/samira/expressions/*.webp",
+    "assets/characters/pixel_migu/*.json",
+    "assets/characters/pixel_migu/*.png",
+    "assets/characters/pixel_migu/*.md",
+    "assets/characters/pixel_migu/expressions/*.png",
+    "assets/persona_visual/pixel_migu/*.json",
+    "assets/persona_visual/pixel_migu/*.png",
+    "assets/persona_visual/pixel_migu/*.md",
+    "assets/tiktoken_cache/0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4",
+    "assets/tiktoken_cache/6c7ea1a7e38e3a7f062df639a5b80947f075ffe6",
+    "assets/tiktoken_cache/6d1cbeee0f20b3d9449abfede4726ed8212e3aee",
+    "assets/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4",
+    "assets/tiktoken_cache/ec7223a39ce59f226a68acc30dc1af2788490e15",
+    "assets/tiktoken_cache/fb374d419588a4632f3f557e76b4b70aebbca790",
+    "assets/tiktoken_cache/LICENSE.txt",
+    "assets/tiktoken_cache/NOTICE.txt",
+    "assets/tiktoken_cache/manifest.json",
 ]
+"tldw_chatbook.Canvas" = [
+    "guides/basics.md",
+    "guides/controls.md",
+    "guides/repair.md",
+    "static/canvas_shell.html",
+    "static/canvas_shell.css",
+    "static/canvas_shell.js",
+    "static/quickjs-runtime.js",
+    "static/canvas_renderer.js",
+    "static/canvas_runtime_worker.js",
+    "static/canvas_runtime_worker_v2.js",
+    "static/canvas_renderer_v2.js",
+    "static/runtime-manifest.json",
+    "static/THIRD_PARTY_LICENSES.txt",
+    "static/profile-catalog.json",
+    "static/mermaid-subset.json",
+    "static/mermaid-runtime-manifest.json",
+    "static/MERMAID_THIRD_PARTY_LICENSES.txt",
+    "static/mermaid-authoring.txt",
+    "mermaid/inputs.json",
+    "mermaid/budget.js",
+    "mermaid/text.js",
+    "mermaid/semantic.js",
+    "mermaid/entry.js",
+    "mermaid/scene.js",
+    "mermaid/flow_layout.js",
+    "mermaid/sequence_layout.js",
+]
+"tldw_chatbook.Web_Server" = [
+    "static/served_shell.html",
+    "static/served_shell.css",
+    "static/served_shell.js",
+]
+"tldw_profile_core" = ["schemas/*.json", "fixtures/v1/*.json"]
 # Include all .tcss files in css directory and subdirectories
 "tldw_chatbook.css" = ["*.tcss", "**/*.tcss"]
 # Include theme files
 "tldw_chatbook.css.Themes" = ["*.tcss"]
-# Include JSON configuration, guides, and the RAG pipeline defaults
+# Include JSON configuration, guides, and the RAG pipeline defaults.
+# `rag_pipelines.toml` stays a literal ON PURPOSE (audited in task-19860): a
+# `*.toml` glob would also ship `embedding_configs_examples.toml`, which
+# `Packaging/check_manifest.py` forbids in the wheel. Adding a *runtime*
+# `.toml` here means adding its name here too.
 "tldw_chatbook.Config_Files" = ["*.json", "*.md", "rag_pipelines.toml"]
-# Include runtime chunking templates and evaluator defaults
-"tldw_chatbook.Chunking" = ["templates/*.json"]
-"tldw_chatbook.Evals" = ["config/*.yaml"]
+# Runtime chunking templates are DB rows now (spec §8.1.2): the deleted
+# Chunking/templates/ file store ships in neither artifact.
+# `eval_datasets/*.json` is RUNTIME data, not a sample: `Evals/eval_templates/
+# research.py` hands its absolute path to the runner as `dataset_name`, and
+# `eval_runner.py` does `Path(dataset_name).exists()` -- absent from the
+# artifact, the bundled "Research Report Self-Eval" template silently loses its
+# dataset. Found by the task-19860 reviewer sweep for runtime reads of non-.py
+# assets; it was the second instance of the same defect class.
+"tldw_chatbook.Evals" = ["config/*.yaml", "eval_datasets/*.json"]
 "tldw_chatbook.Image_Generation" = ["workflows/*.json"]
 "tldw_chatbook.Video_Generation" = ["workflows/*.json"]
-"tldw_chatbook.TTS" = ["audio_cpp_artifact_manifest.json"]
 "tldw_chatbook.Backup_Recovery" = ["native_qualification.json"]
-"tldw_chatbook.DB" = [
-    "migrations/chachanotes_v26_to_v27_citation_provenance.sql",
-    "migrations/chachanotes_v27_to_v28_character_authority.sql",
-    "migrations/chachanotes_v32_to_v33_console_context_memory.sql",
-    "migrations/chachanotes_v33_to_v34_visual_compaction_policy.sql",
-    "migrations/chachanotes_v34_to_v35_conversation_dictionary_attachments.sql",
-    "migrations/chachanotes_v35_to_v36_note_folders.sql",
-    "migrations/chachanotes_v36_to_v37_provider_continuation.sql",
-    "migrations/chachanotes_v37_to_v38_message_trajectory_metadata.sql",
-    "migrations/chachanotes_v38_to_v39_visual_identity.sql",
-    "migrations/chachanotes_v39_to_v40_transcript_annotations.sql",
-    "migrations/chachanotes_v40_to_v41_persona_visual.sql",
+"tldw_chatbook.Audio" = [
+    "voice_qualification_manifest.json",
+    "voice_build_identity.json",
 ]
-# Preserve the licenses for vendored packages
+# One pinned artifact manifest, named ON PURPOSE (audited in task-19860):
+# `Tests/Packaging` pins its repository, commit and package count, so a second
+# TTS `.json` appearing in the wheel is a decision, not a glob's side effect.
+"tldw_chatbook.TTS" = ["audio_cpp_artifact_manifest.json"]
+# Every migration script, matched -- never enumerated (task-19860). The
+# hand-written list this replaced held 13 of the 32 files that existed;
+# `chachanotes_v40_to_v41_persona_visual.sql` and
+# `chachanotes_v45_to_v46_sync_log_retention.sql` are both read by
+# `_initialize_schema`'s v4->current chain, so a PyPI install died with a
+# SchemaError before the app could start. A new migration must ship the
+# moment it lands, and only the author of the migration knows it exists;
+# `*.sql` is the only rule that cannot go stale. README.md stays out: the
+# wheel forbids development Markdown.
+"tldw_chatbook.DB" = [
+    "migrations/chachanotes_v55_to_v56_console_semantic_trace.sql",
+    "migrations/chachanotes_v56_to_v57_semantic_mutation_guard.sql",
+    "migrations/*.sql",
+]
+# Preserve the licenses for vendored packages. Named ON PURPOSE (audited in
+# task-19860): a licence notice is a fixed legal obligation per vendored
+# package, not a growing asset directory. The obligation is what makes the
+# list's COMPLETENESS load-bearing -- `LLM_Calls/` and `tldw_api/` re-license
+# their own modules under Apache-2.0 (see the README in each), those modules
+# ship in the wheel, and §4(a) requires the licence text to travel with them;
+# both were missing until the task-19860 reviewer diffed the tree against the
+# artifact.
 "tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]
 "tldw_chatbook.Third_Party.textual_fspicker" = ["LICENSE"]
+"tldw_chatbook.LLM_Calls" = ["LICENSE"]
+"tldw_chatbook.tldw_api" = ["LICENSE"]
 # Engine is vendored from tldw_server (GPL-3.0-only): GPLv3 §4 requires the
 # licence text itself to ship, so the scope map and the GPL text both travel
 # with the package.
@@ -524,6 +630,9 @@ exclude = [
 "tldw_chatbook.css.core" = ["*.tcss"]
 "tldw_chatbook.css.features" = ["*.tcss"]
 "tldw_chatbook.css.layout" = ["*.tcss"]
+# Ship the macOS system-audio helper's Swift source: `ensure_helper()` compiles
+# it with swiftc on first use when no prebuilt binary is bundled.
+"tldw_chatbook.Audio.audiotap" = ["*.swift"]
 # If you have other assets inside your tldw_chatbook package (e.g., tldw_chatbook/assets/), add them here:
 # "tldw_chatbook.assets" = ["*"]
 
@@ -543,8 +652,17 @@ addopts = "--ignore=STests --import-mode=importlib --durations=25 --durations-mi
 asyncio_mode = "auto"
 # Default timeout for all tests (in seconds)
 timeout = 300
-# Timeout method: thread (default) or signal
-timeout_method = "thread"
+# Timeout method: DELIBERATELY UNSET (TASK-22062). pytest-timeout picks
+# `signal` where SIGALRM exists (Linux, macOS) and falls back to `thread` on
+# Windows. The previous explicit `thread` was set on the belief -- recorded in
+# the comment it replaced -- that thread was the library default. It is not.
+#
+# It matters because `thread` cannot interrupt a blocked thread: when the
+# timeout fires it destroys the pytest process, so no JUnit is written, no test
+# is named as failing, and under xdist the worker dies and takes its queued
+# tests with it as setup errors. Measured on one real hang in
+# `test_console_local_citation_boundary`: with `thread` no JUnit file was
+# produced at all; with `signal` the same hang reported as exactly one failure.
 markers = [
     "unit: marks tests as unit tests",
     "integration: marks tests as integration tests",
@@ -562,7 +680,7 @@ markers = [
     "notes: Notes feature tests",
     "requires_display: tests that require a display (may fail in CI)",
     "requires_cleanup: tests that need a gc pass immediately after running",
-    "real_audio_device: opts out of the autouse _no_real_audio_device guard (Tests/conftest.py) to exercise a real sounddevice OutputStream",
+    "real_audio_device: opts out of the autouse _no_real_audio_device guard (Tests/conftest.py) to exercise a real sounddevice OutputStream, or a mocked input recorder loop",
     "allow_network: opts out of the autouse _no_network_io guard (Tests/conftest.py) to open a real socket; justify it in the test's docstring",
     "loopback_network: permits only numeric IPv4 127.0.0.0/8 and IPv6 ::1 sockets under the autouse _no_network_io guard (Tests/conftest.py)",
     "local_server_probe: opts out of the autouse _no_local_server_probes guard (Tests/conftest.py) to exercise the real /v1/models probe against an injected httpx.MockTransport client",
@@ -571,7 +689,7 @@ markers = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 warn_return_any = false
 warn_unused_configs = true

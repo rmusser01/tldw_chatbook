@@ -11,7 +11,6 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
 )
 from tldw_chatbook.UI.CCP_Modules import (
     CCPCharacterHandler,
-    CCPConversationHandler,
     CCPMessageManager,
     CCPPersonaHandler,
     PersonaMessage,
@@ -156,55 +155,6 @@ def test_legacy_ccp_dictionary_list_wrapper_uses_current_db_api(monkeypatch):
     assert fetch_all_dictionaries(db) == [{"id": 4, "name": "Lore"}]
 
 
-class TestCCPConversationHandler:
-    """Conversation handler coverage for string-first IDs."""
-
-    @pytest.mark.asyncio
-    async def test_load_conversation_wrapper_accepts_string_identifier(
-        self, mock_window
-    ):
-        handler = CCPConversationHandler(mock_window)
-
-        await handler.load_conversation("conv-1")
-
-        mock_window.run_worker.assert_called_once()
-        call_args = mock_window.run_worker.call_args
-        assert call_args[0][0] == handler._load_conversation_sync
-        assert call_args[0][1] == "conv-1"
-
-    def test_search_excludes_workspace_scoped_conversations_from_general_results(
-        self, mock_window
-    ):
-        class FakeConversationDb:
-            def search_conversations_by_title(self, title_query, limit=100):
-                return [
-                    {
-                        "id": "conv-global-1",
-                        "title": "Alpha",
-                        "discovery_owner": "general_chat",
-                        "scope_type": "global",
-                    },
-                    {
-                        "id": "conv-ws-1",
-                        "title": "Alpha",
-                        "discovery_owner": "general_chat",
-                        "scope_type": "workspace",
-                        "workspace_id": "ws-9",
-                    },
-                ]
-
-        mock_window.app_instance.chachanotes_db = FakeConversationDb()
-        mock_window.state.selected_character_id = None
-        mock_window.state.selected_persona_id = None
-        handler = CCPConversationHandler(mock_window)
-
-        CCPConversationHandler._search_conversations_sync.__wrapped__(
-            handler, "Alpha", "title"
-        )
-
-        assert [row["id"] for row in handler.search_results] == ["conv-global-1"]
-
-
 class TestCCPCharacterHandler:
     """Character handler coverage for string-friendly selected IDs."""
 
@@ -221,7 +171,9 @@ class TestCCPCharacterHandler:
         worker_callable = call_args[0][0]
         assert isinstance(worker_callable, partial)
         assert worker_callable.func == handler._load_character_sync
-        assert worker_callable.args == ("char.local.alice",)
+        # TASK-19563: the dispatch generation rides along with the id, so the
+        # arrival callback can reject a superseded load.
+        assert worker_callable.args == ("char.local.alice", 1)
 
     @pytest.mark.asyncio
     async def test_list_chat_greetings_routes_via_scope_service(self, mock_window):
@@ -472,3 +424,38 @@ class TestCCPMessageManager:
 
         mock_fetch.assert_called_with("conv-1")
         assert manager.current_messages[0]["id"] == "msg-1"
+
+
+@pytest.mark.asyncio
+async def test_ccp_character_load_discards_out_of_order_stale_results(mock_window):
+    """TASK-19563: a superseded character card must never be displayed.
+
+    Display corruption only -- the modern save path carries its own generation
+    guard, so stored character data is not at risk either way.
+    """
+    handler = CCPCharacterHandler(mock_window)
+    displayed: list[str] = []
+    handler._display_character_card = lambda: displayed.append(
+        str(handler.current_character_id)
+    )
+
+    await handler.load_character("char.local.alice")
+    await handler.load_character("char.local.bob")
+    assert mock_window.run_worker.call_count == 2
+
+    first_generation, second_generation = (
+        call[0][0].args[1] for call in mock_window.run_worker.call_args_list
+    )
+    assert second_generation > first_generation
+
+    # Newest arrives first, then the stale one.
+    handler._apply_loaded_character(
+        second_generation, "char.local.bob", {"name": "Bob"}
+    )
+    handler._apply_loaded_character(
+        first_generation, "char.local.alice", {"name": "Alice"}
+    )
+
+    assert displayed == ["char.local.bob"]
+    assert handler.current_character_id == "char.local.bob"
+    assert handler.current_character_data == {"name": "Bob"}

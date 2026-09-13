@@ -1,6 +1,6 @@
 ---
 id: TASK-258
-title: config.py import hygiene: single TOML parse, consolidated load, lazy chardet
+title: 'config.py import hygiene: single TOML parse, consolidated load, lazy chardet'
 status: Done
 assignee: [claude]
 created_date: '2026-07-16 14:30'

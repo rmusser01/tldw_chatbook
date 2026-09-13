@@ -1,0 +1,47 @@
+diff --git a/api/audio/echo_control.h b/api/audio/echo_control.h
+index 8d567bf2b8..9c77dd3dea 100644
+--- a/api/audio/echo_control.h
++++ b/api/audio/echo_control.h
+@@ -11,6 +11,8 @@
+ #ifndef API_AUDIO_ECHO_CONTROL_H_
+ #define API_AUDIO_ECHO_CONTROL_H_
+-
++
++#include <stddef.h>
++
+ #include <memory>
+-
++
+ #include "rtc_base/checks.h"
+@@ -40,6 +42,10 @@ class EchoControl {
+     double echo_return_loss;
+     double echo_return_loss_enhancement;
+     int delay_ms;
++    bool delay_estimate_available;
++    bool delay_estimate_refined;
++    size_t delay_estimate_age_blocks;
++    bool clock_drift;
+   };
+-
++
+   // Collect current metrics from the echo controller.
+diff --git a/modules/audio_processing/aec3/block_processor.cc b/modules/audio_processing/aec3/block_processor.cc
+index 9116c81a9f..09008fd6ed 100644
+--- a/modules/audio_processing/aec3/block_processor.cc
++++ b/modules/audio_processing/aec3/block_processor.cc
+@@ -230,6 +230,14 @@ void BlockProcessorImpl::GetMetrics(EchoControl::Metrics* metrics) const {
+   constexpr int block_size_ms = 4;
+   absl::optional<size_t> delay = render_buffer_->Delay();
+   metrics->delay_ms = delay ? static_cast<int>(*delay) * block_size_ms : 0;
++  metrics->delay_estimate_available = estimated_delay_.has_value();
++  metrics->delay_estimate_refined =
++      estimated_delay_ &&
++      estimated_delay_->quality == DelayEstimate::Quality::kRefined;
++  metrics->delay_estimate_age_blocks =
++      estimated_delay_ ? estimated_delay_->blocks_since_last_update : 0;
++  metrics->clock_drift =
++      delay_controller_ ? delay_controller_->HasClockdrift() : false;
+ }
+-
++
+ void BlockProcessorImpl::SetAudioBufferDelay(int delay_ms) {

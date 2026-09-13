@@ -1,6 +1,7 @@
 """LibraryScreen rail-level UI tests."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -71,19 +72,19 @@ def _minimal_ingest_screen() -> LibraryScreen:
     its own assertions, same as before.
     """
     screen = LibraryScreen(MagicMock())
-    screen._library_ingest_form = LibraryIngestFormState()
+    screen._ingest_state.form = LibraryIngestFormState()
     screen._transcribe_cpp_configured = False
     # Set by ``__init__``, which this shortcut bypasses. (task-3303 branch
     # repair: siblings 3301/3302 taught the submit/state paths to read these
     # instance attributes, and this helper had drifted -- three tests in
     # this file were failing at HEAD with bare AttributeErrors.)
-    screen._library_ingest_preflight_worker = None
-    screen._library_ingest_preflight_generation = 0
+    screen._ingest_state.preflight_worker = None
+    screen._ingest_state.preflight_generation = 0
     screen._library_selected_row_id = ""
-    screen._library_ingest_clear_finished_armed = False
-    screen._library_ingest_clear_finished_armed_at = 0.0
-    screen._library_ingest_expanded_details = set()
-    screen._library_ingest_recent_ledger = []
+    screen._ingest_state.clear_finished_armed = False
+    screen._ingest_state.clear_finished_armed_at = 0.0
+    screen._ingest_state.expanded_details = set()
+    screen._ingest_state.recent_ledger = []
     # Submit schedules the scroll-receipt-into-view callback (task-3304);
     # the real method posts a message this unmounted shortcut cannot.
     screen.call_after_refresh = lambda *_args, **_kwargs: None
@@ -92,7 +93,7 @@ def _minimal_ingest_screen() -> LibraryScreen:
 
 def test_build_ingest_options_snapshot_returns_shallow_copy() -> None:
     screen = _minimal_ingest_screen()
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.type_options = {
         "pdf": {"pdf_engine": "docling"},
         "audio_video": {"transcription_model": "small"},
@@ -109,7 +110,7 @@ def test_build_ingest_options_snapshot_returns_shallow_copy() -> None:
 
 def test_build_ingest_options_snapshot_includes_generic_toggles() -> None:
     screen = _minimal_ingest_screen()
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.analyze = True
     form.chunk = True
     form.chunk_size = "2048"
@@ -132,7 +133,7 @@ def test_build_ingest_options_snapshot_includes_generic_toggles() -> None:
 
 def test_build_ingest_options_snapshot_merges_generic_without_clobbering() -> None:
     screen = _minimal_ingest_screen()
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.type_options = {
         "generic": {"encoding": "utf-8"},
         "pdf": {"pdf_engine": "pymupdf"},
@@ -160,7 +161,7 @@ def test_build_ingest_options_snapshot_merges_generic_without_clobbering() -> No
 
 def test_build_ingest_options_snapshot_clamps_invalid_chunk_size() -> None:
     screen = _minimal_ingest_screen()
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.chunk_size = "not-a-number"
 
     snapshot = screen._build_ingest_options_snapshot()
@@ -179,7 +180,7 @@ def test_do_submit_ingest_persists_options(monkeypatch) -> None:
     screen.app_instance.submit_library_ingest_job = MagicMock()
     screen.refresh = MagicMock()
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = "/tmp/test.pdf"
     form.title = "A title"
     form.author = "An author"
@@ -248,15 +249,15 @@ def test_load_ingest_options_from_config(monkeypatch) -> None:
 
     screen._load_library_ingest_options_from_config()
 
-    assert screen._library_ingest_form.type_options["pdf"] == {
+    assert screen._ingest_state.form.type_options["pdf"] == {
         "pdf_engine": "docling",
         "ocr": True,
     }
-    assert screen._library_ingest_form.type_options["audio_video"] == {
+    assert screen._ingest_state.form.type_options["audio_video"] == {
         "transcription_model": "small"
     }
     assert screen._transcribe_cpp_configured is True
-    assert "/private/model.gguf" not in repr(screen._library_ingest_form)
+    assert "/private/model.gguf" not in repr(screen._ingest_state.form)
 
 
 def test_task_3303_options_round_trip_persisted_config(monkeypatch) -> None:
@@ -272,7 +273,7 @@ def test_task_3303_options_round_trip_persisted_config(monkeypatch) -> None:
     screen.app_instance.submit_library_ingest_job = MagicMock()
     screen.refresh = MagicMock()
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = "/tmp/report.docx"
     submitted_options = {
         "document": {
@@ -323,7 +324,7 @@ def test_task_3303_options_round_trip_persisted_config(monkeypatch) -> None:
 
     loader._load_library_ingest_options_from_config()
 
-    restored = loader._library_ingest_form.type_options
+    restored = loader._ingest_state.form.type_options
     for group, values in submitted_options.items():
         for name, value in values.items():
             assert restored.get(group, {}).get(name) == value, (
@@ -340,7 +341,7 @@ def test_task_3306_av_options_round_trip_persisted_config(monkeypatch) -> None:
     screen.app_instance.submit_library_ingest_job = MagicMock()
     screen.refresh = MagicMock()
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = "/tmp/talk.mp3"
     submitted = {
         "audio_video": {
@@ -380,7 +381,7 @@ def test_task_3306_av_options_round_trip_persisted_config(monkeypatch) -> None:
 
     loader._load_library_ingest_options_from_config()
 
-    restored = loader._library_ingest_form.type_options.get("audio_video", {})
+    restored = loader._ingest_state.form.type_options.get("audio_video", {})
     for name, value in submitted["audio_video"].items():
         assert restored.get(name) == value, f"audio_video.{name} did not load back"
 
@@ -493,7 +494,7 @@ def test_local_force_stop_handler_targets_the_job_attempt() -> None:
 def test_trigger_preflight_delegates_to_library_preflight() -> None:
     """``_trigger_preflight`` is a thin seam around the real worker trigger."""
     screen = _minimal_ingest_screen()
-    screen._library_ingest_preflight_worker = None
+    screen._ingest_state.preflight_worker = None
     screen._trigger_library_ingest_preflight = MagicMock()
 
     screen._trigger_preflight("/tmp/some-file.pdf")
@@ -506,9 +507,9 @@ def test_trigger_preflight_delegates_to_library_preflight() -> None:
 def test_on_preflight_retry_triggers_preflight() -> None:
     """Pressing the retry button re-runs pre-flight for the current path."""
     screen = _minimal_ingest_screen()
-    screen._library_ingest_preflight_worker = None
+    screen._ingest_state.preflight_worker = None
     screen._trigger_preflight = MagicMock()
-    screen._library_ingest_form.path = "/tmp/retry-target.pdf"
+    screen._ingest_state.form.path = "/tmp/retry-target.pdf"
 
     screen._on_preflight_retry()
 
@@ -663,8 +664,10 @@ def test_ingest_browse_remembers_the_directory_of_the_picked_file(
     picked.write_text("hi")
 
     saved: list[tuple] = []
+    # task-32242: the write now goes through the shared, generation-ordered
+    # `library_browse_location`, so that is the module whose save is patched.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
+        "tldw_chatbook.Library.library_browse_location.save_setting_to_cli_config",
         lambda section, key, value: saved.append((section, key, value)) or True,
     )
 
@@ -706,8 +709,8 @@ def test_backend_switch_flips_and_persists_the_target(monkeypatch) -> None:
     # `save_setting_to_cli_config` it wraps) keeps this test's own subject
     # -- which target the handler decides to persist -- intact.
     saved: list[tuple] = []
-    screen._save_library_ingest_backend = (
-        lambda target: saved.append(("library.ingest", "backend", target)) or True
+    screen._save_library_ingest_backend = lambda target, _generation: (
+        saved.append(("library.ingest", "backend", target)) or True
     )
 
     screen.handle_library_ingest_backend_switch(MagicMock())
@@ -726,8 +729,8 @@ def test_backend_switch_returns_to_local(monkeypatch) -> None:
     # `@work(thread=True)` instance method rather than the module-level
     # config function it wraps.
     saved: list[tuple] = []
-    screen._save_library_ingest_backend = (
-        lambda target: saved.append(("library.ingest", "backend", target)) or True
+    screen._save_library_ingest_backend = lambda target, _generation: (
+        saved.append(("library.ingest", "backend", target)) or True
     )
 
     screen.handle_library_ingest_backend_switch(MagicMock())
@@ -755,8 +758,9 @@ def test_save_library_ingest_backend_writes_the_real_dotted_section() -> None:
     submission` elsewhere in this test suite.
     """
     screen = _minimal_ingest_screen()
+    screen._ingest_state.backend_generation = 1
 
-    LibraryScreen._save_library_ingest_backend.__wrapped__(screen, "server")
+    LibraryScreen._save_library_ingest_backend.__wrapped__(screen, "server", 1)
 
     assert get_cli_setting("library.ingest", "backend", None) == "server"
     on_disk = toml.load(_get_effective_config_path())
@@ -781,6 +785,28 @@ def test_switch_is_not_offered_when_the_server_seam_cannot_submit() -> None:
     assert state.show_backend_switch is False
 
 
+def test_pending_backend_choice_does_not_impersonate_persisted_owner() -> None:
+    """The canvas stays on the durable owner until its worker confirms the save."""
+
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance._resolve_ingest_backend = MagicMock(return_value="server")
+    screen.app_instance.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_source="server", server_configured=True)
+    )
+    screen.app_instance.media_db = object()
+    screen.app_instance.server_media_reading_service = SimpleNamespace(
+        submit_ingest_jobs=lambda **_kwargs: None
+    )
+    screen._server_binding_is_shipped_placeholder = lambda: False
+    screen._ingest_state.backend_target = "local"
+    screen._library_ingest_registry = MagicMock(return_value=MagicMock(jobs=lambda: ()))
+
+    state = screen._build_library_ingest_state()
+
+    assert state.ingest_backend == "server"
+
+
 def test_task_3307_image_options_round_trip_persisted_config(monkeypatch) -> None:
     """(task-3307) The image group's options persist on submit and load
     back on a fresh screen -- same two real seams the task-3303 round-trip
@@ -790,7 +816,7 @@ def test_task_3307_image_options_round_trip_persisted_config(monkeypatch) -> Non
     screen.app_instance.submit_library_ingest_job = MagicMock()
     screen.refresh = MagicMock()
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = "/tmp/scan.png"
     submitted = {
         "image": {"ocr": True, "ocr_language": "de", "ocr_backend": "tesseract"},
@@ -824,7 +850,7 @@ def test_task_3307_image_options_round_trip_persisted_config(monkeypatch) -> Non
 
     loader._load_library_ingest_options_from_config()
 
-    restored = loader._library_ingest_form.type_options
+    restored = loader._ingest_state.form.type_options
     for name, value in submitted["image"].items():
         assert restored.get("image", {}).get(name) == value, (
             f"image.{name} did not load back"

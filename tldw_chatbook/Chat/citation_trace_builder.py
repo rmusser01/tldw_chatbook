@@ -635,17 +635,14 @@ class CitationTraceBuilder:
         if self._answer_attempts:
             raise ValueError("initial answer attempt is already recorded")
         if len(self._answer_attempts) >= ANSWER_ATTEMPTS_MAX:
-            raise ValueError(
-                f"answer attempts exceeds {ANSWER_ATTEMPTS_MAX} entries"
-            )
+            raise ValueError(f"answer attempts exceeds {ANSWER_ATTEMPTS_MAX} entries")
         if not isinstance(prompt_evidence_set_id, str):
             raise TypeError("prompt_evidence_set_id must be a string")
         if not isinstance(answer_body, str):
             raise TypeError("answer_body must be a string")
         if len(answer_body.encode("utf-8")) > ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX:
             raise ValueError(
-                "answer_body exceeds "
-                f"{ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX} UTF-8 bytes"
+                f"answer_body exceeds {ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX} UTF-8 bytes"
             )
         if not isinstance(completed_at, datetime):
             raise TypeError("completed_at must be a datetime")
@@ -662,9 +659,7 @@ class CitationTraceBuilder:
             raise ValueError("duplicate prompt evidence set reference")
         prompt_set = matching_prompt_sets[0]
         if completed_at < prompt_set.created_at:
-            raise ValueError(
-                "answer attempt cannot precede its prompt evidence set"
-            )
+            raise ValueError("answer attempt cannot precede its prompt evidence set")
         try:
             marker_spans = eligible_citation_marker_spans(
                 answer_body,
@@ -674,8 +669,7 @@ class CitationTraceBuilder:
         except ValueError:
             raise CitationTraceBuildUnavailable() from None
         evidence_by_marker = {
-            entry.marker_ordinal: entry.evidence_ordinal
-            for entry in prompt_set.entries
+            entry.marker_ordinal: entry.evidence_ordinal for entry in prompt_set.entries
         }
         occurrences = tuple(
             CitationOccurrence(
@@ -748,9 +742,7 @@ class CitationTraceBuilder:
 
     @staticmethod
     def _canonical_payload_bytes(
-        payload: EvidenceRunPayload
-        | EvidenceSnapshotPayload
-        | AnswerAttemptPayload,
+        payload: EvidenceRunPayload | EvidenceSnapshotPayload | AnswerAttemptPayload,
     ) -> int:
         return len(
             json.dumps(
@@ -773,9 +765,7 @@ class CitationTraceBuilder:
         if not self._evidence_runs:
             raise ValueError("citation trace requires at least one evidence run")
         if not self._prompt_evidence_sets:
-            raise ValueError(
-                "citation trace requires at least one prompt evidence set"
-            )
+            raise ValueError("citation trace requires at least one prompt evidence set")
         if not self._answer_attempts:
             raise ValueError("citation trace requires at least one answer attempt")
         selected_attempts = [
@@ -806,9 +796,7 @@ class CitationTraceBuilder:
                 if run is None:
                     raise ValueError("prompt entry references an unknown evidence run")
                 if run.ended_at is None:
-                    raise ValueError(
-                        "every evidence run requires ended_at before seal"
-                    )
+                    raise ValueError("every evidence run requires ended_at before seal")
                 if run.ended_at > prompt_set.created_at:
                     raise ValueError(
                         "prompt evidence set cannot precede its evidence run end"
@@ -832,11 +820,7 @@ class CitationTraceBuilder:
         lifecycle_boundaries = [
             self._created_at,
             *(run.started_at for run in self._evidence_runs),
-            *(
-                run.ended_at
-                for run in self._evidence_runs
-                if run.ended_at is not None
-            ),
+            *(run.ended_at for run in self._evidence_runs if run.ended_at is not None),
             *(prompt.created_at for prompt in self._prompt_evidence_sets),
             *(attempt.created_at for attempt in self._answer_attempts),
         ]
@@ -863,8 +847,7 @@ class CitationTraceBuilder:
             completeness_at_seal=CitationCompleteness.UNAVAILABLE,
         )
         snapshot_payload_index = {
-            payload.payload_id: payload
-            for payload in self._evidence_snapshot_payloads
+            payload.payload_id: payload for payload in self._evidence_snapshot_payloads
         }
         completeness = reduce_selected_attempt_completeness(
             provisional_trace,

@@ -47,6 +47,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 
 from tldw_chatbook.DB.sql_validation import validate_identifier
+from tldw_chatbook.Utils.fts5_match_forms import build_phrase_match_query
 
 # Database Schema Version
 SCHEMA_VERSION = 5
@@ -193,7 +194,27 @@ class EvalsDB:
 
     @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
-        """Get a gated thread-local native connection; retain uncertain handles."""
+        """Get thread-local database connection.
+
+        task-22224 EXCEPTION -- this held connection deliberately keeps the
+        legacy default isolation level instead of ``isolation_level = None``
+        (the held-connection rule in ``Library_Ingest_Jobs_DB.py``'s module
+        docstring, the store template). Every write path in this file relies
+        on Python's implicit transactions via ``with conn:`` bodies, several
+        of them multi-statement (e.g. ``store_result``'s result INSERT plus
+        its completed-samples UPDATE, and ``delete_task``, whose cascade into
+        ``delete_probe_annotations_for_run_groups`` deliberately NESTS
+        ``with conn:`` blocks to share one implicit transaction -- explicit
+        BEGIN cannot nest); there is no explicit-BEGIN transaction
+        manager here, so flipping to autocommit would silently strip their
+        atomicity. The degradation this store risks instead is bounded: no
+        code path issues an explicit BEGIN on this connection, so the
+        borrow/"cannot start a transaction" failure modes cannot fire.
+        Converting this store to the template idiom means giving it an
+        explicit-BEGIN manager and auditing all ~20 ``with conn:`` writes
+        (including un-nesting the nested pair) -- do that as its own task,
+        and do NOT copy this store's pattern into new code.
+        """
         _core_access(self)
         conn = _core_cached_connection(self, getattr(self._local, "connection", None))
         if conn is None:
@@ -1107,7 +1128,25 @@ class EvalsDB:
             return tasks
 
     def search_tasks(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Search tasks using FTS5."""
+        """Search tasks using FTS5.
+
+        Args:
+            query: Plain user text, matched as ONE quoted literal FTS5
+                PHRASE (``build_phrase_match_query``) -- the words must be
+                adjacent and in order, which is what this seam did before
+                TASK-19558 too. Short or punctuation-bearing queries take
+                the LIKE branch below instead. FTS5 operators are inert.
+            limit: Maximum number of rows to return.
+
+        Returns:
+            The matching task dicts; empty when ``query`` is not searchable.
+        """
+        if not isinstance(query, str):
+            # task-19558 (E2 sweep): `None` from an unset filter reached the
+            # generator below and raised a bare `TypeError`. Pre-dates the
+            # task -- fixed here because it is the same failure mode, at the
+            # last seam in this family that still had it.
+            return []
         with self.connection() as conn:
 
             # Remove null bytes and other control characters
@@ -1125,10 +1164,14 @@ class EvalsDB:
                     (f"%{query}%", f"%{query}%", limit),
                 )
             else:
-                # For normal queries, use FTS5 with proper escaping
-                # Escape double quotes in the query
-                escaped_query = query.replace('"', '""')
-                safe_query = f'"{escaped_query}"' if escaped_query else '""'
+                # For normal queries, use FTS5 with proper escaping (the ONE
+                # escape lives in `Utils/fts5_match_forms`; TASK-19558). Phrase,
+                # not AND-of-tokens: this seam bound a quoted PHRASE before the
+                # task too, so widening it would be an unmeasured behaviour
+                # change riding along with a security fix.
+                safe_query = build_phrase_match_query(query)
+                if not safe_query:
+                    return []
                 cursor = conn.execute(
                     """
                 SELECT t.* FROM eval_tasks t
@@ -1326,9 +1369,29 @@ class EvalsDB:
                 return cursor.rowcount > 0
 
     def search_datasets(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Search datasets using FTS5."""
-        # Escape special characters in FTS5 query by wrapping in quotes
-        safe_query = f'"{query}"' if query else '""'
+        """Search datasets using FTS5.
+
+        Args:
+            query: Plain user text, matched as ONE quoted literal FTS5
+                PHRASE (``build_phrase_match_query``) -- the words must be
+                adjacent and in order, as this seam did before TASK-19558.
+                FTS5 operators in it are inert.
+            limit: Maximum number of rows to return.
+
+        Returns:
+            The matching dataset dicts; empty when ``query`` is not
+            searchable (None, empty, NUL-bearing or punctuation-only).
+        """
+        # Escape special characters in FTS5 query by wrapping in quotes.
+        # TASK-19558: this wrapping never doubled an embedded `"`, so a
+        # dataset search containing one raised OperationalError and one
+        # shaped `x" OR name:"y` escaped the literal into a live column
+        # filter. `build_phrase_match_query` is the ONE escape; phrase
+        # rather than AND-of-tokens because this seam bound a phrase before
+        # the task too (see `search_tasks`).
+        safe_query = build_phrase_match_query(query)
+        if not safe_query:
+            return []
 
         with self.connection() as conn:
             cursor = conn.execute(
@@ -1391,6 +1454,27 @@ class EvalsDB:
                     )
                 raise EvalsDBError(f"Failed to create model: {e}")
 
+    @staticmethod
+    def _loads_json_or_default(value: Any, default: Any, *, column: str) -> Any:
+        """Parse a JSON column, tolerating NULL (TASK-21519).
+
+        Rows created without their config columns carry NULL, and
+        ``json.loads(None)`` raises TypeError out of lookup APIs whose
+        consumers include the Evals screen; NULL parses to ``default``.
+        Malformed stored JSON is NOT tolerated (PR #2634 review): silently
+        substituting the default let corrupt rows fabricate empty config
+        into downstream consumers (e.g. grid reconstruction) undiagnosed;
+        it raises ``EvalsDBError`` naming the column instead.
+        """
+        if value is None:
+            return default
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError) as exc:
+            raise EvalsDBError(
+                f"Corrupt JSON in {column}: {exc!r}"
+            ) from exc
+
     def get_model(self, model_id: str) -> Optional[Dict[str, Any]]:
         """Get model by ID."""
         with self.connection() as conn:
@@ -1405,7 +1489,9 @@ class EvalsDB:
             row = cursor.fetchone()
             if row:
                 model = dict(row)
-                model["config"] = json.loads(model["config"])
+                model["config"] = self._loads_json_or_default(
+                    model["config"], {}, column="eval_models.config"
+                )
                 return model
             return None
 
@@ -1429,7 +1515,9 @@ class EvalsDB:
             models = []
             for row in cursor.fetchall():
                 model = dict(row)
-                model["config"] = json.loads(model["config"])
+                model["config"] = self._loads_json_or_default(
+                    model["config"], {}, column="eval_models.config"
+                )
                 models.append(model)
 
             return models
@@ -1629,7 +1717,9 @@ class EvalsDB:
             row = cursor.fetchone()
             if row:
                 run = dict(row)
-                run["config_overrides"] = json.loads(run["config_overrides"])
+                run["config_overrides"] = self._loads_json_or_default(
+                    run["config_overrides"], {}, column="eval_runs.config_overrides"
+                )
                 return run
             return None
 
@@ -1691,7 +1781,9 @@ class EvalsDB:
             runs = []
             for row in cursor.fetchall():
                 run = dict(row)
-                run["config_overrides"] = json.loads(run["config_overrides"])
+                run["config_overrides"] = self._loads_json_or_default(
+                    run["config_overrides"], {}, column="eval_runs.config_overrides"
+                )
                 runs.append(run)
 
             return runs

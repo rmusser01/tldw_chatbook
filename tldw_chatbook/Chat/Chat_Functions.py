@@ -24,7 +24,7 @@ import re
 from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Tuple, Optional, Union, Literal
+from typing import List, Dict, Any, Tuple, Optional, Union, Literal, Mapping
 
 #
 # 3rd-party Libraries
@@ -86,12 +86,19 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 from tldw_chatbook.config import load_settings  # noqa: E402
-from .chat_persistence_service import ChatPersistenceService  # noqa: E402
 from .console_project_instructions import EPHEMERAL_ORIGIN_KEY  # noqa: E402
 from .provider_continuation import (  # noqa: E402
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     read_provider_continuation_json,
+)
+from .assistant_generation_state import (  # noqa: E402
+    normalize_assistant_generation_state,
+)
+from .thinking_blocks import (  # noqa: E402
+    THINKING_EXPORT_WARNING,
+    normalize_thinking_history_policy,
+    thinking_envelope_to_exchange,
 )
 #
 ####################################################################################################
@@ -144,6 +151,21 @@ API_CALL_HANDLERS = {
 }
 
 EPHEMERAL_GROUPING_ENDPOINTS = frozenset({"anthropic", "google"})
+PROVIDERS_WITH_PROVIDER_NAME = frozenset(
+    {
+        "llama_cpp",
+        "vllm",
+        "ollama",
+        "mlx_lm",
+        "vllm_api",
+        "mlx",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_vllm",
+        "local_ollama",
+        "local_mlx_lm",
+    }
+)
 
 
 def _project_instruction_messages_for_handler(
@@ -154,9 +176,12 @@ def _project_instruction_messages_for_handler(
     return [
         dict(message)
         if preserve or EPHEMERAL_ORIGIN_KEY not in message
-        else {key: value for key, value in message.items() if key != EPHEMERAL_ORIGIN_KEY}
+        else {
+            key: value for key, value in message.items() if key != EPHEMERAL_ORIGIN_KEY
+        }
         for message in messages
     ]
+
 
 # Keep this list explicit rather than deriving it from ``API_CALL_HANDLERS``.
 # The parity test then forces every newly registered chat handler through the
@@ -405,6 +430,7 @@ PROVIDER_PARAM_MAP = {
         "stop": "stop",  # often 'stop_sequences'
     },
     "llama_cpp": {  # Has api_url as a positional argument which needs special handling if not None
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "temp": "temp",  # audit task-286: was a dead 'temperature' key (temp silently dropped); handler takes temp
         "messages_payload": "input_data",
@@ -428,6 +454,9 @@ PROVIDER_PARAM_MAP = {
         "top_logprobs": "top_logprobs",
         "reasoning_effort": "reasoning_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "koboldcpp": {
         "api_key": "api_key",
@@ -479,6 +508,7 @@ PROVIDER_PARAM_MAP = {
         "stop": "stop",
     },
     "vllm": {  # vllm_api_url consideration
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temperature",
@@ -501,8 +531,12 @@ PROVIDER_PARAM_MAP = {
         "user_identifier": "user_identifier",
         "reasoning_effort": "reasoning_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "local-llm": {
+        "chat_template_kwargs": "chat_template_kwargs",
         "messages_payload": "input_data",
         "temp": "temp",
         "system_message": "system_message",
@@ -518,6 +552,7 @@ PROVIDER_PARAM_MAP = {
         "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "ollama": {  # api_url consideration
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",  # api_key is not used by ollama directly, url is more important
         "messages_payload": "input_data",
         "temp": "temperature",
@@ -532,6 +567,9 @@ PROVIDER_PARAM_MAP = {
         "response_format": "format",  # 'json' string
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "aphrodite": {
         "api_key": "api_key",
@@ -635,6 +673,7 @@ PROVIDER_PARAM_MAP = {
     },
     # Local provider mappings (same as their non-local counterparts)
     "local_llamacpp": {
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temp",  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
@@ -654,8 +693,12 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "reasoning_effort": "reasoning_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "local_llamafile": {
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temp",  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
@@ -675,8 +718,12 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "reasoning_effort": "reasoning_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "local_ollama": {
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temperature",
@@ -691,8 +738,12 @@ PROVIDER_PARAM_MAP = {
         "response_format": "format",
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "local_vllm": {
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temperature",
@@ -714,6 +765,9 @@ PROVIDER_PARAM_MAP = {
         "user_identifier": "user_identifier",
         "reasoning_effort": "reasoning_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "local_mlx_lm": {
         "api_key": "api_key",
@@ -926,6 +980,7 @@ def chat_api_call(
     request_retry_delay: Optional[float] = None,
     *,
     api_key_resolved: bool | None = None,
+    chat_template_kwargs: dict[str, Any] | None = None,
 ):
     """
     Acts as a unified dispatcher to call various LLM API providers.
@@ -1024,12 +1079,6 @@ def chat_api_call(
         endpoint_lower, messages_payload
     )
 
-    params_map = PROVIDER_PARAM_MAP.get(endpoint_lower, {})
-    call_kwargs = {}
-
-    # Construct kwargs for the handler function based on the map
-    # This requires careful mapping and ensuring the handler functions are adapted.
-
     # Generic parameters available from chat_api_call, derived from the
     # function's own signature so the dispatcher can never drift from it —
     # a hand-maintained dict here previously allowed map keys that existed
@@ -1039,40 +1088,11 @@ def chat_api_call(
         for name, value in locals().items()
         if name in _CHAT_API_GENERIC_PARAMS
     }
-
-    for generic_param_name, provider_param_name in params_map.items():
-        if (
-            generic_param_name in available_generic_params
-            and available_generic_params[generic_param_name] is not None
-        ):
-            call_kwargs[provider_param_name] = available_generic_params[
-                generic_param_name
-            ]
-
-    if api_base_url is not None:
-        call_kwargs["api_base_url"] = api_base_url
+    call_kwargs = project_chat_handler_kwargs(endpoint_lower, available_generic_params)
+    params_map = PROVIDER_PARAM_MAP.get(endpoint_lower, {})
 
     if call_kwargs.get(params_map.get("api_key", "api_key")):
         logger.info("Debug - Chat API Call - API key provided.")
-
-    # Add provider_name to kwargs only for handlers that support it
-    # Some local providers use this for dynamic configuration loading
-    PROVIDERS_WITH_PROVIDER_NAME = {
-        "llama_cpp",
-        "vllm",
-        "ollama",
-        "mlx_lm",
-        "vllm_api",
-        "mlx",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_vllm",
-        "local_ollama",
-        "local_mlx_lm",
-    }
-
-    if endpoint_lower in PROVIDERS_WITH_PROVIDER_NAME:
-        call_kwargs["provider_name"] = endpoint_lower
 
     try:
         logger.debug(
@@ -1120,8 +1140,12 @@ def chat_api_call(
                         usage_completion = usage.get("completion_tokens")
                         if usage_completion is None:
                             usage_completion = usage.get("output_tokens")
-                        if recorder is not None and isinstance(usage, dict) and (
-                            usage_prompt is not None or usage_completion is not None
+                        if (
+                            recorder is not None
+                            and isinstance(usage, dict)
+                            and (
+                                usage_prompt is not None or usage_completion is not None
+                            )
                         ):
                             recorder.record_usage(
                                 prompt_tokens=usage_prompt,
@@ -1184,14 +1208,28 @@ def chat_api_call(
                 message=f"Authentication failed for {endpoint_lower}. Check API key. Detail: {error_text[:200]}",
             )
         elif status_code == 429:
+            # TASK-25901 AC#2: carry the provider's own Retry-After when it is
+            # a usable number of seconds; the retry backoff honours it.
+            retry_after_header = None
+            try:
+                raw_retry_after = getattr(e.response, "headers", {}).get("Retry-After")
+                if raw_retry_after is not None:
+                    retry_after_header = float(str(raw_retry_after).strip())
+            except (TypeError, ValueError):
+                retry_after_header = None
             raise ChatRateLimitError(
                 provider=endpoint_lower,
                 message=f"Rate limit exceeded for {endpoint_lower}. Detail: {error_text[:200]}",
+                retry_after=retry_after_header,
             )
         elif 400 <= status_code < 500:
+            # Carry the REAL status: 402/403 mean the money or quota is gone,
+            # which the fallback chain treats differently from a malformed
+            # request (TASK-25902 review C3c). Type unchanged for catchers.
             raise ChatBadRequestError(
                 provider=endpoint_lower,
                 message=f"Bad request to {endpoint_lower} (Status {status_code}). Detail: {error_text[:200]}",
+                status_code=status_code,
             )
         elif 500 <= status_code < 600:
             raise ChatProviderError(
@@ -1250,8 +1288,13 @@ def chat_api_call(
                     provider=endpoint_lower, message=safe_message
                 ) from None
             if isinstance(e_chat_direct, ChatConfigurationError):
+                # task-32342: keep the carried status. Dropping it here
+                # restored the 500 default under the sensitive policy, and a
+                # client-side request-preparation failure carries none.
                 raise ChatConfigurationError(
-                    provider=endpoint_lower, message=safe_message
+                    provider=endpoint_lower,
+                    message=safe_message,
+                    status_code=status_code,
                 ) from None
             if isinstance(e_chat_direct, ChatProviderError):
                 raise ChatProviderError(
@@ -1302,9 +1345,7 @@ def chat_api_call(
         )
 
 
-def _estimate_prompt_text(
-    messages_payload: Any, system_message: Optional[str]
-) -> str:
+def _estimate_prompt_text(messages_payload: Any, system_message: Optional[str]) -> str:
     """Text used for ESTIMATED prompt tokens (task-16814): the system
     message is part of the prompt and must count; multimodal content lists
     contribute only their text parts so base64 image payloads cannot
@@ -1362,6 +1403,41 @@ _CHAT_API_GENERIC_PARAMS = frozenset(inspect.signature(chat_api_call).parameters
 }
 """The dispatcher's generic parameter names — the single source of truth is
 ``chat_api_call``'s own signature (see ``available_generic_params``)."""
+
+
+def project_chat_handler_kwargs(
+    api_endpoint: str,
+    generic_values: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Project generic dispatcher values through Chatbook-owned provider rules."""
+
+    endpoint = api_endpoint.lower()
+    params_map = PROVIDER_PARAM_MAP.get(endpoint, {})
+    bound = inspect.signature(chat_api_call).bind_partial(
+        api_endpoint=endpoint, **dict(generic_values)
+    )
+    bound.apply_defaults()
+    available = {
+        name: value
+        for name, value in bound.arguments.items()
+        if name in _CHAT_API_GENERIC_PARAMS
+    }
+    messages = available.get("messages_payload")
+    if not isinstance(messages, list):
+        raise TypeError("messages_payload must be a list")
+    available["messages_payload"] = _project_instruction_messages_for_handler(
+        endpoint, messages
+    )
+    projected = {
+        provider_name: available[generic_name]
+        for generic_name, provider_name in params_map.items()
+        if generic_name in available and available[generic_name] is not None
+    }
+    if available.get("api_base_url") is not None:
+        projected["api_base_url"] = available["api_base_url"]
+    if endpoint in PROVIDERS_WITH_PROVIDER_NAME:
+        projected["provider_name"] = endpoint
+    return projected
 
 
 def chat(
@@ -2186,7 +2262,26 @@ def save_chat_history_to_db_wrapper(
         - `Optional[str]`: The conversation ID (new or existing). None on critical failure
                            to create a conversation entry.
         - `str`: A status message indicating success or failure.
+
+    Raises:
+        ImportError: If `chat_persistence_service` cannot be imported. The import is
+            deferred (TASK-23112) and deliberately sits above the `try` below, so a
+            broken or partial install surfaces as an ImportError here rather than
+            being swallowed into a "save failed" status string. Every other failure
+            mode is still reported through the returned status message.
     """
+    # Deferred (TASK-23112 / ADR-097): a module-scope import here put
+    # `chat_persistence_service` and 17 of its dependencies on the
+    # `import tldw_chatbook.app` closure (app.py reaches this module through
+    # Library.library_local_rag_search_service), breaching the 660-module
+    # ratchet. This is the service's only construction site in this module and
+    # this function runs only on a user-driven save -- never at import time,
+    # never during `TldwCli.__init__`. Kept ABOVE the `try` below so an import
+    # failure surfaces as an ImportError instead of being swallowed into a
+    # "save failed" status string. Guarded by
+    # `Tests/Packaging/test_chat_persistence_import_closure.py`.
+    from .chat_persistence_service import ChatPersistenceService
+
     log_counter("save_chat_history_to_db_attempt")
     start_time = time.time()
     logging.info(
@@ -2461,7 +2556,12 @@ def save_chat_history_to_db_wrapper(
 
         # --- Save Messages (Handles new OpenAI format) ---
         try:
-            with db.transaction():
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # the nested hot messages writers save_history drives
+            # (transaction(immediate=) is depth-0 only); DEFERRED here re-opens
+            # the snapshot-upgrade "database is locked" window (see
+            # CharactersRAGDB.add_message's scoping comment).
+            with db.transaction(immediate=True):
                 message_save_count = persistence_service.save_history(
                     conversation_id=current_conversation_id,
                     chatbot_history=chatbot_history,
@@ -2552,7 +2652,7 @@ def save_chat_history(
     start_time = time.time()
     try:
         content, conversation_name = generate_chat_history_content(
-            history, conversation_id, media_content
+            history, conversation_id, media_content, db_instance=db_instance
         )
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2644,10 +2744,23 @@ def generate_chat_history_content(
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Try to get conversation name from DB if possible
+    # Resolve DB-owned conversation metadata once so policy cannot silently
+    # downgrade when the owning lookup fails.
+    conversation = None
     conversation_name = None
-    if conversation_id:
-        conversation_name = get_conversation_name(conversation_id, db_instance)
+    if conversation_id is not None:
+        if db_instance is None:
+            raise ValueError("Conversation metadata is unavailable for export.")
+        try:
+            conversation = db_instance.get_conversation_by_id(conversation_id)
+        except Exception:
+            raise ValueError(
+                "Conversation metadata is unavailable for export."
+            ) from None
+        if not conversation:
+            raise ValueError("Conversation metadata is unavailable for export.")
+        if conversation and conversation.get("title"):
+            conversation_name = conversation["title"]
 
     if not conversation_name:  # Fallback logic
         media_name_extracted = extract_media_name(
@@ -2670,7 +2783,11 @@ def generate_chat_history_content(
         # Assuming 'history' is like chatbot: List[Tuple[Optional[str], Optional[str]]]
     }
 
+    raw_policy = conversation.get("thinking_history_policy") if conversation else None
+    chat_data["thinking_history_policy"] = normalize_thinking_history_policy(raw_policy)
+
     contains_private = False
+    contains_thinking = False
     for item in history:  # Iterating through the provided history structure
         if isinstance(item, tuple) and len(item) == 2:  # Expected (user_msg, bot_msg)
             user_msg, bot_msg = item
@@ -2704,6 +2821,42 @@ def generate_chat_history_content(
             if private_value is None and isinstance(item.get("_private"), dict):
                 private_value = item["_private"].get("provider_continuation")
             private = read_provider_continuation_json(private_value)
+            raw_state = item.get("assistant_generation_state")
+            if raw_state is not None and item["role"] != "assistant":
+                raise ValueError("Invalid assistant generation state on export.")
+            try:
+                generation_state = normalize_assistant_generation_state(
+                    role=item["role"],
+                    raw_state=raw_state,
+                    has_valid_active_continuation=(
+                        private.checkpoint is not None
+                        and private.checkpoint.state == "active"
+                    ),
+                )
+            except ValueError:
+                raise ValueError(
+                    "Invalid assistant generation state on export."
+                ) from None
+            if (
+                generation_state is not None
+                and generation_state.value == "continuation_active"
+                and (private.checkpoint is None or private.checkpoint.state != "active")
+            ):
+                raise ValueError("Invalid assistant generation state on export.")
+            if raw_state is not None:
+                projected["assistant_generation_state"] = (
+                    generation_state.value if generation_state is not None else None
+                )
+            thinking_value = item.get("thinking_blocks_json")
+            if thinking_value is not None:
+                if item["role"] != "assistant":
+                    raise ValueError("Invalid thinking owner on export.")
+                thinking_payload = thinking_envelope_to_exchange(thinking_value)
+                if thinking_payload is not None:
+                    projected["thinking_blocks"] = thinking_payload
+                    contains_thinking = contains_thinking or bool(
+                        thinking_payload["blocks"]
+                    )
             if item["role"] == "assistant" and private.checkpoint is not None:
                 canonical = dump_provider_continuation_json(private.checkpoint)
                 projected["_private"] = {
@@ -2718,9 +2871,11 @@ def generate_chat_history_content(
         chat_data["private_data_warning"] = (
             "This JSON contains private provider continuation data."
         )
+    if contains_private or contains_thinking:
+        chat_data["sensitive_data_warning"] = THINKING_EXPORT_WARNING
 
     return json.dumps(
-        chat_data, indent=2
+        chat_data, indent=2, ensure_ascii=False
     ), conversation_name  # Return the derived/fetched name
 
 

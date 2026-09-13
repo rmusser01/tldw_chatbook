@@ -12,7 +12,7 @@ Revision: 4 — fourth design-review corrections incorporated.
 Status: Approved by the user on 2026-09-07. Revision 4 is the implementation baseline;
 implementation planning follows this approval. Production implementation has not started.
 
-Task: [TASK-31978](../../../backlog/tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)
+Task: [TASK-32471](../../../backlog/tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)
 
 ADR required: yes
 
@@ -957,7 +957,7 @@ is qualified. Existing selective exports remain available during development.
 
 ## 12. Approval and implementation handoff
 
-The user approved revision 4 and ADR-126 on 2026-09-07. TASK-31978 records the completed
+The user approved revision 4 and ADR-126 on 2026-09-07. TASK-32471 records the completed
 design review. The [implementation roadmap](../plans/2026-09-07-complete-local-backup-restore.md)
 links six component plans and atomic Backlog tasks in dependency order, with ADR
 links and scoped release evidence. Approval and planning do not claim production

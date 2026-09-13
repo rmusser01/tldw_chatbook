@@ -1701,7 +1701,7 @@ async def test_style_pick_reset_on_edit_requested_reopen(
     screen._expression_generate_style = template
     screen._update_expression_style_readout()
 
-    screen._handle_edit_requested(EditCharacterRequested(str(char_id)))
+    await screen._handle_edit_requested(EditCharacterRequested(str(char_id)))
 
     assert screen._expression_generate_style is None
     editor = screen.query_one(PersonasCharacterEditorWidget)

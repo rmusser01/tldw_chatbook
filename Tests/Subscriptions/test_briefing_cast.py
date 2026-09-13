@@ -1488,3 +1488,89 @@ async def test_a_concurrent_kept_cast_for_the_same_kept_briefing_is_refused(tmp_
         assert kept_id not in active_kept_cast_claims()
     finally:
         chacha_db.close_connection()
+
+
+# --- TASK-21515: reasoning-aware completion budget (cast side) ---------------
+#
+# The cast call inherits the same defect a briefing's own call has: the
+# DeepSeek handler's ``max_tokens`` is reasoning-inclusive with no effort
+# lever, so a reasoning-typed default model spends a plain 3000-token budget
+# on thinking and returns an empty completion, failing the script row.
+
+
+@pytest.mark.asyncio
+async def test_a_reasoning_typed_deepseek_cast_gets_a_larger_completion_budget(
+    tmp_path,
+):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+
+    chat = _FakeChat()
+    row = await generate_script(
+        db,
+        briefing_id,
+        preset_id=preset_id,
+        chat=chat,
+        provider="deepseek",
+        model="deepseek-v4-flash",
+    )
+
+    assert row["status"] == STATUS_COMPLETE
+    assert chat.calls[0]["max_tokens"] == briefing_cast.CAST_REASONING_MAX_TOKENS == 12000
+
+
+@pytest.mark.asyncio
+async def test_a_plain_deepseek_chat_cast_keeps_the_plain_completion_budget(
+    tmp_path,
+):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+
+    chat = _FakeChat()
+    row = await generate_script(
+        db,
+        briefing_id,
+        preset_id=preset_id,
+        chat=chat,
+        provider="deepseek",
+        model="deepseek-chat",
+    )
+
+    assert row["status"] == STATUS_COMPLETE
+    assert chat.calls[0]["max_tokens"] == briefing_cast.CAST_MAX_TOKENS == 3000
+
+
+def test_cast_effective_max_tokens_gates_on_the_deepseek_endpoint_and_model():
+    helper = briefing_cast._effective_max_tokens
+    assert helper("deepseek", "deepseek-v4-flash") == (
+        briefing_cast.CAST_REASONING_MAX_TOKENS
+    )
+    assert helper("DeepSeek", "deepseek-reasoner") == (
+        briefing_cast.CAST_REASONING_MAX_TOKENS
+    )
+    assert helper("openai", "deepseek-v4-flash") == briefing_cast.CAST_MAX_TOKENS
+    assert helper("deepseek", "deepseek-chat") == briefing_cast.CAST_MAX_TOKENS
+
+
+@pytest.mark.parametrize(
+    ("resolved_default", "expected"),
+    [
+        # Qodo #7/#8: a model=None cast on the deepseek endpoint runs the
+        # handler's own configured (reasoning-typed) default, so the gate
+        # resolves it instead of testing the literal None.
+        ("deepseek-v4-flash", briefing_cast.CAST_REASONING_MAX_TOKENS),
+        ("deepseek-reasoner", briefing_cast.CAST_REASONING_MAX_TOKENS),
+        ("deepseek-chat", briefing_cast.CAST_MAX_TOKENS),
+    ],
+)
+def test_cast_effective_max_tokens_resolves_the_deepseek_default_when_model_is_none(
+    monkeypatch, resolved_default, expected
+):
+    monkeypatch.setattr(
+        briefing_cast, "resolve_deepseek_effective_model", lambda m: resolved_default
+    )
+    assert briefing_cast._effective_max_tokens("deepseek", None) == expected

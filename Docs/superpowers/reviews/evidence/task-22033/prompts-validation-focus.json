@@ -1,0 +1,7 @@
+{
+  "dirty": true,
+  "focused": "library-prompt-name",
+  "mode": "basic",
+  "status": "Name is required; enter a Prompt name.",
+  "svg": "prompts-validation-focus.svg"
+}

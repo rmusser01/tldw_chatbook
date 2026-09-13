@@ -29,7 +29,11 @@ from ..Backup_Recovery.participants import _core_operation
 from ..Backup_Recovery.profile_paths import lexical_path
 from ..Utils.config_encryption import ConfigEncryption
 from ..Metrics.metrics_logger import log_counter
-from ..config import CLI_APP_CLIENT_ID, get_subscriptions_db_path
+from ..config import (
+    CLI_APP_CLIENT_ID,
+    get_subscriptions_db_path,
+    load_console_library_migration_seed,
+)
 #
 ########################################################################################################################
 #
@@ -267,7 +271,11 @@ class SiteConfigManager:
         self.db_path = ":memory:" if self.is_memory_db else lexical_path(db_path)
         self._initialize_site_configs()
 
-        self.db = CharactersRAGDB(self.db_path, CLI_APP_CLIENT_ID)
+        self.db = CharactersRAGDB(
+            self.db_path,
+            CLI_APP_CLIENT_ID,
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         self.encryption = ConfigEncryption()
         self.rate_limiter = RateLimiter()
         self._config_cache = {}

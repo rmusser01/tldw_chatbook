@@ -1,4 +1,4 @@
-"""Pure canonical path selection; no bootstrap, service imports or filesystem writes.
+"""Canonical path selection; no bootstrap, service imports or filesystem writes.
 
 Relative custom paths retain the application's cwd interpretation. XDG_DATA_HOME
 is intentionally ignored: honoring it here would silently select a different profile.
@@ -35,6 +35,28 @@ def default_base_data_dir() -> Path:
     return base / ".local" / "share" / "tldw_cli"
 
 
+DEFAULT_DATA_FALLBACK_DIRECTORY = ".tldw_cli-data"
+
+
+def selected_default_base_data_dir() -> Path:
+    """Observe ADR-127's durable fallback without creating or resolving paths."""
+    conventional = default_base_data_dir()
+    fallback = conventional.parents[2] / DEFAULT_DATA_FALLBACK_DIRECTORY
+
+    def exists(path):
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            return False
+        return True
+
+    if not exists(fallback):
+        return conventional
+    if exists(conventional):
+        raise ValueError("ambiguous_default_data_roots")
+    return fallback
+
+
 def user_folder_name(user_name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "_", user_name) or "default_user"
 
@@ -54,7 +76,7 @@ def data_base(config: Mapping[str, object]) -> Path:
         selected = setting(config, "Paths", "data_dir")
     if selected and not isinstance(selected, str):
         raise ValueError("invalid_config_path")
-    return lexical_path(selected) if selected else default_base_data_dir()
+    return lexical_path(selected) if selected else selected_default_base_data_dir()
 
 
 def user_data_dir(config: Mapping[str, object]) -> Path:

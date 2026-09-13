@@ -461,7 +461,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     active_step_ids,
     build_appearance_commit,
     build_model_commit,
-    build_notes_commit,
     build_provider_commit,
     build_rag_commit,
     build_tools_commit,
@@ -475,7 +474,8 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
 
 class TestActiveStepIds:
     def test_full_track_without_key(self):
-        """Voice follows Model; Speech remains after RAG in the Full track."""
+        """Voice follows Model; Speech remains after RAG; Protect is always
+        present (TASK-21148, UAT N-6 — stable step totals)."""
         assert active_step_ids(TRACK_FULL, key_entered=False) == (
             STEP_WELCOME,
             STEP_PROVIDER,
@@ -486,6 +486,7 @@ class TestActiveStepIds:
             STEP_TOOLS,
             STEP_NOTES,
             STEP_APPEARANCE,
+            STEP_PROTECT,
             STEP_SUMMARY,
         )
 
@@ -505,11 +506,14 @@ class TestActiveStepIds:
         )
 
     def test_quick_track(self):
+        # TASK-21148 (UAT N-6): Protect is always on the track — the step
+        # total never changes mid-flight when a key is entered.
         assert active_step_ids(TRACK_QUICK, key_entered=False) == (
             STEP_WELCOME,
             STEP_PROVIDER,
             STEP_MODEL,
             STEP_VOICE,
+            STEP_PROTECT,
             STEP_SUMMARY,
         )
 
@@ -558,20 +562,6 @@ class TestCommitBuilders:
         assert commit == {
             "tools": {"read_file_enabled": True, "write_file_enabled": False}
         }
-
-    def test_notes_commit(self):
-        commit = build_notes_commit(sync_directory="~/Notes", auto_sync_enabled=True)
-        assert commit == {
-            "notes": {"sync_directory": "~/Notes", "auto_sync_enabled": True}
-        }
-
-    def test_notes_commit_disable_only_omits_directory(self):
-        """No sync_directory passed -> not present in the commit at all, so
-        a merge-only writer never clobbers the persisted directory with an
-        empty string when only the enabled flag flips off."""
-        commit = build_notes_commit(auto_sync_enabled=False)
-        assert commit == {"notes": {"auto_sync_enabled": False}}
-        assert "sync_directory" not in commit["notes"]
 
     def test_appearance_commit_with_splash(self):
         commit = build_appearance_commit(
@@ -1536,7 +1526,6 @@ class TestSectionAllowlist:
             build_model_commit(provider_value="OpenAI", model_id="m"),
             build_rag_commit(default_model_id="e5-small-v2"),
             build_tools_commit(gate_values={"read_file_enabled": True}),
-            build_notes_commit(sync_directory="~/n", auto_sync_enabled=False),
             build_appearance_commit(default_theme="t", splash_card="c"),
             build_wizard_state_commit(started=True),
             build_speech_transcription_commit(
@@ -1700,7 +1689,6 @@ class TestWizardPrefill:
     def test_reads_current_values(self):
         cfg = {
             "chat_defaults": {"provider": "Anthropic", "model": "claude-opus-5"},
-            "notes": {"sync_directory": "~/N", "auto_sync_enabled": True},
             "general": {"default_theme": "textual-light"},
             "tools": {"read_file_enabled": True},
             "splash_screen": {"card_selection": "matrix"},
@@ -1708,8 +1696,6 @@ class TestWizardPrefill:
         prefill = read_wizard_prefill(cfg)
         assert prefill.provider_value == "Anthropic"
         assert prefill.model_id == "claude-opus-5"
-        assert prefill.sync_directory == "~/N"
-        assert prefill.auto_sync_enabled is True
         assert prefill.default_theme == "textual-light"
         assert ("read_file_enabled", True) in prefill.tool_gates
         assert prefill.card_selection == "matrix"
@@ -2090,6 +2076,28 @@ class TestSummaryThreeState:
         assert rows["Tools"].state == ROW_DEFAULT
         assert rows["RAG"].state == ROW_DEFAULT  # optional, not an error
 
+    def test_tools_row_off_detail_names_where_to_enable(self):
+        """task-32289 AC#1: the Summary's tools line names the destination
+        instead of just calling it "default" -- both a Quick-track user (who
+        never saw the Tools step) and a Full-track user who left every switch
+        off share this same empty-gates condition, so one detail string
+        covers both.
+
+        task-32284 (Qodo #2600 #17): the path is `TOOL_GATES_PANE_PATH`, the
+        SAME constant the gate enumerator and the MCP hub use. It used to be
+        retyped here as a shortened "MCP ▸ Servers ▸ Tool gates", which skips
+        the built-in server row the pane actually lives inside -- a
+        breadcrumb that led nowhere.
+        """
+        from tldw_chatbook.Agents.builtin_tool_gate import TOOL_GATES_PANE_PATH
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
+
+        rows = {r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)}
+        assert rows["Tools"].detail == (
+            f"all off; turn them on under {TOOL_GATES_PANE_PATH}"
+        )
+        assert TOOL_GATES_PANE_PATH == "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+
     def test_plaintext_keys_flag_encryption_as_attention(self):
         """Unencrypted stored keys make the encryption row a ✗ call to action."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
@@ -2244,3 +2252,198 @@ class TestSummaryTemplateHonesty:
         }
         assert rows["RAG"].ok is True
         assert "bge-large-en" in rows["RAG"].detail
+
+
+class TestProviderTrustChain:
+    """TASK-21143 (UAT S-1/M-2/N-7): probe outcomes drive tracker, gate,
+    and summary — "configured" must never masquerade as "working"."""
+
+    def test_classify_discovery_failure(self):
+        classify = setup_state.classify_discovery_failure
+        assert classify("available", "") == setup_state.PROVIDER_PROBE_NONE
+        assert (
+            classify("listing_unavailable", "")
+            == setup_state.PROVIDER_PROBE_NONE
+        )
+        assert (
+            classify("connection_failed", "authentication")
+            == setup_state.PROVIDER_PROBE_AUTH
+        )
+        for category in ("connection error", "request failed", "timeout", ""):
+            assert (
+                classify("connection_failed", category)
+                == setup_state.PROVIDER_PROBE_CONNECTION
+            )
+
+    def test_summary_actions_flip_on_probe_failure(self):
+        primary, secondary, tertiary = setup_state.build_first_run_summary_actions(
+            provider_configured=True,
+            model_configured=True,
+            provider_probe_failed=True,
+        )
+        assert primary == "review_provider"
+        assert (secondary, tertiary) == ("explore_home", "review_settings")
+        # The saved-and-working case keeps its happy primary.
+        primary, _, _ = setup_state.build_first_run_summary_actions(
+            provider_configured=True,
+            model_configured=True,
+            provider_probe_failed=False,
+        )
+        assert primary == "start_chatting"
+
+    def test_summary_actions_reject_non_bool_probe_state(self):
+        with pytest.raises(ValueError):
+            setup_state.build_first_run_summary_actions(
+                provider_configured=True,
+                model_configured=True,
+                provider_probe_failed="yes",
+            )
+
+    def test_probe_failure_overlays_only_configured_provider_row(self):
+        rows = (
+            setup_state.SummaryRow(
+                label="Provider", state=setup_state.ROW_CONFIGURED, detail=""
+            ),
+            setup_state.SummaryRow(
+                label="Default model",
+                state=setup_state.ROW_CONFIGURED,
+                detail="m",
+            ),
+        )
+        out = setup_state.apply_probe_failure_to_summary_rows(
+            rows, setup_state.PROVIDER_PROBE_AUTH
+        )
+        assert out[0].state == setup_state.ROW_ATTENTION
+        assert "authentication" in out[0].detail
+        assert out[1] == rows[1]
+        # No failure — untouched (identity, not equality, is fine too).
+        assert (
+            setup_state.apply_probe_failure_to_summary_rows(rows, "") == rows
+        )
+        # An unconfigured Provider row keeps its own, more specific message.
+        unconfigured = (
+            setup_state.SummaryRow(
+                label="Provider",
+                state=setup_state.ROW_ATTENTION,
+                detail="no credentials or saved endpoint",
+            ),
+        )
+        kept = setup_state.apply_probe_failure_to_summary_rows(
+            unconfigured, setup_state.PROVIDER_PROBE_CONNECTION
+        )
+        assert kept == unconfigured
+
+    def test_progress_attention_downgrades_only_completed_steps(self):
+        items = setup_state.build_setup_progress(
+            (
+                setup_state.STEP_WELCOME,
+                setup_state.STEP_PROVIDER,
+                setup_state.STEP_MODEL,
+                setup_state.STEP_SUMMARY,
+            ),
+            3,
+            attention_ids=frozenset(
+                {setup_state.STEP_PROVIDER, setup_state.STEP_MODEL}
+            ),
+        )
+        assert [item.state for item in items] == [
+            "complete",
+            "attention",
+            "attention",
+            "active",
+        ]
+        # The active step never downgrades, even if flagged.
+        items = setup_state.build_setup_progress(
+            (setup_state.STEP_WELCOME, setup_state.STEP_PROVIDER),
+            1,
+            attention_ids=frozenset({setup_state.STEP_PROVIDER}),
+        )
+        assert [item.state for item in items] == ["complete", "active"]
+
+
+class TestEnvKeyFirstRunNotice:
+    """TASK-21147 (UAT E-1): name the env vars that silenced the wizard
+    offer, exactly once, and only on genuinely fresh env-key installs."""
+
+    def _config(self, first_run=None, api_key=None, env_var="OPENAI_API_KEY"):
+        cfg = {
+            "api_settings": {
+                "openai": {"api_key_env_var": env_var}
+                | ({"api_key": api_key} if api_key else {})
+            }
+        }
+        if first_run is not None:
+            cfg["first_run"] = first_run
+        return cfg
+
+    def test_fresh_install_with_env_key_names_the_var(self):
+        names = setup_state.env_keys_that_silenced_first_run(
+            self._config(), {"OPENAI_API_KEY": "sk-live-abc123456789"}
+        )
+        assert names == ("OPENAI_API_KEY",)
+
+    def test_no_env_value_means_no_notice(self):
+        assert (
+            setup_state.env_keys_that_silenced_first_run(self._config(), {})
+            == ()
+        )
+
+    def test_inline_config_key_means_no_notice(self):
+        names = setup_state.env_keys_that_silenced_first_run(
+            self._config(api_key="sk-live-abc123456789"),
+            {"OPENAI_API_KEY": "sk-live-abc123456789"},
+        )
+        assert names == ()
+
+    @pytest.mark.parametrize(
+        "flags",
+        [
+            {"setup_started": True},
+            {"setup_completed": True},
+            {setup_state.ENV_KEY_NOTICE_KEY: True},
+        ],
+    )
+    def test_any_recorded_state_suppresses_the_notice(self, flags):
+        names = setup_state.env_keys_that_silenced_first_run(
+            self._config(first_run=flags),
+            {"OPENAI_API_KEY": "sk-live-abc123456789"},
+        )
+        assert names == ()
+
+
+class TestSetupAttentionIds:
+    """TASK-25716: a visited step that configured nothing must not wear the ✓."""
+
+    def _ids(self, wizard_data, probe_failed=False):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import setup_attention_ids
+
+        return setup_attention_ids(wizard_data, probe_failed=probe_failed)
+
+    def test_unconfigured_provider_and_model_earn_attention(self):
+        assert self._ids({}) == frozenset({"provider", "model"})
+
+    def test_configured_provider_and_model_are_clean(self):
+        wizard_data = {
+            "provider": {"provider_key": "llama_cpp"},
+            "model": {"model_id": "local-model"},
+        }
+        assert self._ids(wizard_data) == frozenset()
+
+    def test_blank_values_do_not_count_as_configured(self):
+        wizard_data = {"provider": {"provider_key": "   "}, "model": {"model_id": ""}}
+        assert self._ids(wizard_data) == frozenset({"provider", "model"})
+
+    def test_probe_failure_still_flags_both(self):
+        wizard_data = {
+            "provider": {"provider_key": "openai"},
+            "model": {"model_id": "gpt-4.1"},
+        }
+        assert self._ids(wizard_data, probe_failed=True) == frozenset(
+            {"provider", "model"}
+        )
+
+    def test_optional_steps_are_never_flagged(self):
+        """Skipping voice or protection is legitimate; do not cry wolf."""
+        flagged = self._ids({})
+        assert "voice" not in flagged
+        assert "protect-keys" not in flagged

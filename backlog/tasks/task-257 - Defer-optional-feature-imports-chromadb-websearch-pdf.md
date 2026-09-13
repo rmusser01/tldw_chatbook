@@ -1,6 +1,6 @@
 ---
 id: TASK-257
-title: Defer optional-feature imports: chromadb, web-search chain, PDF/document processors (~550ms)
+title: 'Defer optional-feature imports: chromadb, web-search chain, PDF/document processors (~550ms)'
 status: Done
 assignee: []
 created_date: '2026-07-16 14:30'

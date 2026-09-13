@@ -11,18 +11,22 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any, Sequence
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Static, Switch
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_RAG_SOURCE_TYPES,
     library_rag_source_scope_summary,
+)
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_SELECTED,
+    LIBRARY_GLYPH_UNSELECTED,
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
@@ -45,19 +49,6 @@ CONSOLE_RAG_SOURCE_SUMMARY_PREFIX = "Sources"
 CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX = "console-rag-settings-source-"
 CONSOLE_RAG_SOURCE_TOGGLE_CLASS = "console-rag-settings-source-toggle"
 _SOURCE_TYPE_LABELS = dict(LIBRARY_RAG_SOURCE_TYPES)
-
-#: TASK-3170 (RAG-port P0 task 7): the modal's own default when no
-#: constructor value is given. The CALLER (chat_screen.py's
-#: `_open_console_rag_settings`) is the one that reads the persisted
-#: `[chat_defaults] rag_auto_retrieve_on_send` config value and passes it
-#: in -- the modal never touches config directly.
-CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID = "console-rag-settings-auto-retrieve"
-CONSOLE_RAG_AUTO_RETRIEVE_LABEL = "Auto-retrieve on send"
-CONSOLE_RAG_AUTO_RETRIEVE_TOOLTIP = (
-    "When on, each plain text send first retrieves library evidence into "
-    "the staged-evidence strip"
-)
-
 
 def normalize_console_rag_source_types(value: Any) -> tuple[str, ...]:
     """Return a usable Console RAG source-type selection from loose input.
@@ -91,13 +82,22 @@ def normalize_console_rag_source_types(value: Any) -> tuple[str, ...]:
 
 
 def console_rag_source_toggle_label(source_type: str, selected: bool) -> str:
-    """Return one source toggle's visible label ("✓ Notes" / "○ Prompts").
+    """Return one source toggle's visible label ("☑ Notes" / "☐ Prompts").
 
     Mirrors the Library Search canvas's own toggle marker convention
     (`scope_toggle_label`) minus its `(N)` count suffix: the Console has
     no per-source counts to show, and inventing one would be a lie. The
     display label itself comes from Library's one label table, so this
     modal never introduces a second source vocabulary.
+
+    task-32303 (user decision: this modal adopts Library's legend, reading the
+    shared constants): these toggles are a selection the user makes, so they
+    wear the checkbox pair from ``library_shell_state`` -- the SAME constants
+    Library's own toggles read, not a second copy of the glyphs. "○" keeps the
+    one meaning task-32235 left it (blocked/disabled), which is why an
+    unchecked source can no longer borrow it. Scoped to this modal: the
+    per-conversation library-access modal's RADIO pair is still ●/○ (its own
+    decision, task-32464).
 
     Args:
         source_type: A Library source-type identifier.
@@ -106,7 +106,7 @@ def console_rag_source_toggle_label(source_type: str, selected: bool) -> str:
     Returns:
         The toggle Button's label text.
     """
-    marker = "✓" if selected else "○"
+    marker = LIBRARY_GLYPH_SELECTED if selected else LIBRARY_GLYPH_UNSELECTED
     return f"{marker} {_SOURCE_TYPE_LABELS.get(source_type, source_type)}"
 
 
@@ -121,19 +121,11 @@ class ConsoleRagSettingsResult:
             (RAG-44). Deliberately not the retrieval item scope
             (conversation ∩ workspace), which the Console resolves
             separately and this modal never touches.
-        auto_retrieve_on_send: The "Auto-retrieve on send" switch's value at
-            dismiss time (TASK-3170 / RAG-port P0 task 7), reported here for
-            completeness/tests. The switch is NOT gated on this dismiss --
-            it already persisted the instant it flipped, through the
-            modal's ``on_auto_retrieve_changed`` callback (see
-            ``ConsoleRagSettingsModal.__init__``), because it is a standing
-            preference rather than part of the query/source-type draft.
     """
 
     query: str
     run: bool
     source_types: tuple[str, ...] = CONSOLE_RAG_DEFAULT_SOURCE_TYPES
-    auto_retrieve_on_send: bool = False
 
 
 class ConsoleRagSettingsModal(
@@ -148,7 +140,9 @@ class ConsoleRagSettingsModal(
 
     #console-rag-settings {
         width: 64;
-        height: auto;
+        max-width: 96%;
+        height: 20;
+        max-height: 96%;
         border: tall gray;
         background: black;
         padding: 1 2;
@@ -156,6 +150,12 @@ class ConsoleRagSettingsModal(
 
     .console-rag-settings-status {
         margin: 0 0 1 0;
+    }
+
+    #console-rag-settings-body {
+        height: 1fr;
+        min-height: 0;
+        scrollbar-gutter: stable;
     }
 
     #console-rag-settings-query {
@@ -167,8 +167,17 @@ class ConsoleRagSettingsModal(
         margin: 0 0 1 0;
     }
 
-    .console-rag-settings-sources {
+    .console-rag-settings-item-scope {
+        color: $text-muted;
         height: auto;
+        margin: 0 0 1 0;
+    }
+
+    .console-rag-settings-sources {
+        grid-size: 2 2;
+        grid-columns: 1fr 1fr;
+        grid-rows: 1 1;
+        height: 2;
         margin: 0 0 1 0;
     }
 
@@ -193,21 +202,21 @@ class ConsoleRagSettingsModal(
         background: $panel;
     }
 
-    .console-rag-settings-auto-retrieve {
-        height: auto;
-        margin: 0 0 1 0;
-    }
-
-    .console-rag-settings-auto-retrieve Switch {
-        margin: 0 1 0 0;
-    }
-
     .console-rag-settings-actions {
-        height: 3;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
     }
 
-    .console-rag-settings-actions Button {
-        margin: 0 2 0 0;
+    #console-rag-settings .console-rag-settings-actions Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        border: none;
+        padding: 0;
+        margin: 0 1 0 0;
     }
 
     .console-rag-settings-hint {
@@ -224,10 +233,9 @@ class ConsoleRagSettingsModal(
         *,
         query: str = "",
         source_types: Sequence[str] = CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+        item_scope_summary: str = "",
         rag_active: bool = False,
         staged_title: str = "",
-        auto_retrieve_on_send: bool = False,
-        on_auto_retrieve_changed: Callable[[bool], None] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the modal.
@@ -238,32 +246,19 @@ class ConsoleRagSettingsModal(
                 which KINDS of sources retrieval reads. Rendered as one
                 toggle per Library source and returned (possibly edited) in
                 the result.
+            item_scope_summary: Current retrieval item-scope label, when the
+                caller owns an item scope distinct from source kinds.
             rag_active: Whether RAG currently reads "on" (staged evidence).
             staged_title: Title of the staged evidence when ``rag_active``,
                 for honest status copy.
-            auto_retrieve_on_send: Initial value for the "Auto-retrieve on
-                send" switch (TASK-3170). The caller reads this from
-                `[chat_defaults] rag_auto_retrieve_on_send`; the modal's own
-                default here is OFF.
-            on_auto_retrieve_changed: Called with the new value the INSTANT
-                the switch flips (TASK-3170 fix). "Auto-retrieve on send" is
-                a standing preference, not part of the query/source-type
-                draft this modal otherwise discards on Cancel/Escape/a
-                backdrop click -- gating its persistence on those same
-                dismiss paths silently lost the setting on Escape, and gave
-                a blank-query user no way to save it without a throwaway
-                retrieval. The caller wires this to a real (worker-backed)
-                persist call; leaving it unset (e.g. in modal-only tests)
-                just means nothing is persisted.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
         self._query = query
         self._source_types = normalize_console_rag_source_types(source_types)
+        self._item_scope_summary = str(item_scope_summary or "")
         self._rag_active = rag_active
         self._staged_title = staged_title
-        self._auto_retrieve_on_send = bool(auto_retrieve_on_send)
-        self._on_auto_retrieve_changed = on_auto_retrieve_changed
 
     def _status_copy(self) -> str:
         """Return honest Library-search-state copy for the top of the modal."""
@@ -303,41 +298,45 @@ class ConsoleRagSettingsModal(
         """
         with Vertical(id="console-rag-settings"):
             yield Static("Library search", classes="console-modal-header")
-            yield Static(
-                self._status_copy(),
-                classes="console-rag-settings-status",
-                markup=False,
-            )
-            yield Input(
-                value=self._query,
-                placeholder="What should the Library search look for?",
-                id="console-rag-settings-query",
-            )
-            yield Static(
-                self._scope_summary(),
-                id="console-rag-settings-scope",
-                classes="console-rag-settings-scope",
-                markup=False,
-            )
-            with Horizontal(classes="console-rag-settings-sources"):
-                for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES:
-                    label = _SOURCE_TYPE_LABELS.get(source_type, source_type)
-                    yield Button(
-                        console_rag_source_toggle_label(
-                            source_type, source_type in self._source_types
-                        ),
-                        id=f"{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}{source_type}",
-                        classes=CONSOLE_RAG_SOURCE_TOGGLE_CLASS,
-                        tooltip=f"Include {label} in Library retrieval.",
-                    )
-            with Horizontal(classes="console-rag-settings-auto-retrieve"):
-                yield Switch(
-                    value=self._auto_retrieve_on_send,
-                    id=CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID,
-                    tooltip=CONSOLE_RAG_AUTO_RETRIEVE_TOOLTIP,
-                )
+            with VerticalScroll(id="console-rag-settings-body"):
                 yield Static(
-                    CONSOLE_RAG_AUTO_RETRIEVE_LABEL,
+                    self._status_copy(),
+                    classes="console-rag-settings-status",
+                    markup=False,
+                )
+                yield Input(
+                    value=self._query,
+                    placeholder="What should the Library search look for?",
+                    id="console-rag-settings-query",
+                )
+                if self._item_scope_summary:
+                    yield Static(
+                        self._item_scope_summary,
+                        id="console-library-search-item-scope",
+                        classes="console-rag-settings-item-scope",
+                        markup=False,
+                    )
+                yield Static(
+                    self._scope_summary(),
+                    id="console-rag-settings-scope",
+                    classes="console-rag-settings-scope",
+                    markup=False,
+                )
+                with Grid(classes="console-rag-settings-sources"):
+                    for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES:
+                        label = _SOURCE_TYPE_LABELS.get(source_type, source_type)
+                        yield Button(
+                            console_rag_source_toggle_label(
+                                source_type, source_type in self._source_types
+                            ),
+                            id=f"{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}{source_type}",
+                            classes=CONSOLE_RAG_SOURCE_TOGGLE_CLASS,
+                            tooltip=f"This search only: include {label}.",
+                        )
+                yield Static(
+                    "Enter runs the search. Esc or a click outside closes "
+                    "without changes.",
+                    classes="console-rag-settings-hint",
                     markup=False,
                 )
             with Horizontal(classes="console-rag-settings-actions"):
@@ -348,12 +347,6 @@ class ConsoleRagSettingsModal(
                     disabled=not self._can_run(self._query),
                 )
                 yield Button("Cancel", id="console-rag-settings-cancel")
-            yield Static(
-                "Enter runs the search. Esc or a click outside closes "
-                "without changes.",
-                classes="console-rag-settings-hint",
-                markup=False,
-            )
 
     def _current_query(self) -> str:
         return self.query_one("#console-rag-settings-query", Input).value
@@ -367,7 +360,6 @@ class ConsoleRagSettingsModal(
             query=self._current_query(),
             run=True,
             source_types=self._source_types,
-            auto_retrieve_on_send=self._auto_retrieve_on_send,
         )
 
     def _refresh_run_availability(self, query: str | None = None) -> None:
@@ -405,21 +397,6 @@ class ConsoleRagSettingsModal(
             self._scope_summary()
         )
         self._refresh_run_availability()
-
-    @on(Switch.Changed, f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
-    def _auto_retrieve_toggled(self, event: Switch.Changed) -> None:
-        """Persist "Auto-retrieve on send" the instant it flips (TASK-3170).
-
-        Deliberately NOT treated as part of the query/source-type draft:
-        this is a standing preference, so it must survive Cancel/Escape/a
-        backdrop click, not be silently discarded with them. Also kept in
-        ``self._auto_retrieve_on_send`` so the dismiss result still reports
-        the current value (see ``_run_result``).
-        """
-        event.stop()
-        self._auto_retrieve_on_send = event.value
-        if self._on_auto_retrieve_changed is not None:
-            self._on_auto_retrieve_changed(event.value)
 
     @on(Input.Changed, "#console-rag-settings-query")
     def _sync_run_availability(self, event: Input.Changed) -> None:

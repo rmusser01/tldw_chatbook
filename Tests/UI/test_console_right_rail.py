@@ -23,18 +23,42 @@ and byte-identical afterwards (task-4 brief, global constraint 3).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
+import importlib
 import threading
+import time
+from types import SimpleNamespace
 
 import pytest
 from textual.containers import Horizontal
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
+    ConsoleDisplayRow,
+    ConsoleInspectorAction,
+    ConsoleInspectorState,
+    ConsoleRetrievalScopeState,
+)
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
-from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
+from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
+    ConsoleConversationInspector,
+)
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
+from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
+    ConsoleSendAuthoritySummary,
+    project_console_send_authority,
+)
+from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -44,7 +68,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 
 
 @asynccontextmanager
-async def make_console_pilot(*, size=(160, 45)):
+async def make_console_pilot(*, size=(160, 45), css: str | None = None):
     """Mount a fresh, send-ready Console (ChatScreen) via the production harness.
 
     Mirrors ``test_console_left_rail.py``'s ``make_console_pilot``: rail-click
@@ -58,7 +82,14 @@ async def make_console_pilot(*, size=(160, 45)):
     """
     app = _build_test_app()
     _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
+    if css is None:
+        host = ConsoleHarness(app)
+    else:
+
+        class StyledConsoleHarness(ConsoleHarness):
+            CSS = css
+
+        host = StyledConsoleHarness(app)
     async with host.run_test(size=size) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
@@ -74,6 +105,761 @@ def _right_rail_open(pilot) -> bool:
 def _handle_visible(pilot) -> bool:
     handle = pilot.app.screen.query_one("#console-inspector-rail-handle")
     return bool(handle.display) and handle.styles.display != "none"
+
+
+async def _wait_for_right_rail_condition(
+    pilot,
+    predicate,
+    *,
+    description: str | Callable[[], str],
+    timeout: float = 5.0,
+    attempts: int | None = None,
+) -> None:
+    """Bound asynchronous rail reconciliation by observable state and time."""
+
+    deadline = time.monotonic() + timeout
+    polls = 0
+    while time.monotonic() < deadline and (attempts is None or polls < attempts):
+        if predicate():
+            return
+        polls += 1
+        await pilot.pause(0.02)
+    if predicate():
+        return
+    detail = description() if callable(description) else description
+    pytest.fail(f"Timed out waiting for {detail}")
+
+
+_EXPECTED_BOUNDARY_ANCHORS = (
+    ("console-project-instruction-status", "Project Instructions"),
+    ("console-send-authority-summary", "Next send authority"),
+    # task-9: Environment and Tasks sections -- mounted at the TOP of the
+    # scrollable Inspector body, ahead of the staged-context tray, per the
+    # redesign spec's rail ordering.
+    ("console-environment-section", "Environment"),
+    ("console-tasks-section", "Tasks"),
+    # task-10: the Agent rail's fleet mini-section, moved here from the
+    # left rail's Agent section -- directly below Tasks, ahead of Sources.
+    ("console-agent-section-subagents", "Agents"),
+    ("console-staged-context-tray", "Sources — next send"),
+    # TASK-24611: the Library search controls, moved out of the live-work
+    # readiness card to sit beside the empty state that names them. It is a
+    # real n/p boundary, so it belongs in this inventory.
+    ("console-library-search-region", "Library search"),
+    ("console-retrieval-scope-row", "Scope"),
+    ("console-inspector-run-heading", "Run"),
+    ("console-inspector-source-readiness-heading", "Source Readiness"),
+    ("console-inspector-tools-heading", "Tools"),
+    ("console-inspector-approvals-heading", "Approvals"),
+    ("console-inspector-artifacts-heading", "Artifacts"),
+    (
+        "console-inspector-selected-conversation-heading",
+        "Selected Conversation",
+    ),
+    ("console-inspector-session-defaults-heading", "Session Defaults"),
+    ("console-inspector-selected-message-heading", "Selected Message"),
+    ("console-inspector-changes-heading", "Changes"),
+    ("console-inspector-dictionaries-heading", "Chat Dictionaries"),
+    ("console-inspector-worldbooks-heading", "World Books"),
+    ("console-settings-summary", "Session Settings"),
+)
+_LIVE_WORK_IDS = {
+    "console-pending-launch-card",
+    "console-live-work-source-readiness",
+}
+
+
+def _expected_run_inspector_child_ids(state) -> tuple[str, ...]:
+    """Project every direct child ID from canonical STRICT ownership data."""
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+    projected = ownership.classify_inspector_content(
+        state, ownership.InspectorOwnershipPolicy.STRICT
+    )
+    child_ids = []
+
+    for owner, heading_id, _labels in ownership.ROW_GROUPS:
+        rows = projected.rows_for(owner)
+        actions = projected.actions_for(owner)
+        if not rows and not actions:
+            continue
+        if rows or any(action.enabled for action in actions):
+            child_ids.append(heading_id)
+            child_ids.append(
+                f"console-bounded-section-{owner.lower().replace(' ', '-')}"
+            )
+
+    for heading_id, rows, actions in (
+        (
+            "console-inspector-dictionaries-heading",
+            projected.dictionary_rows,
+            projected.dictionary_actions,
+        ),
+        (
+            "console-inspector-worldbooks-heading",
+            projected.world_book_rows,
+            projected.world_book_actions,
+        ),
+    ):
+        if not rows and not actions:
+            continue
+        child_ids.append(heading_id)
+        child_ids.append(
+            "console-bounded-section-"
+            + ("chat-dictionaries" if "dictionaries" in heading_id else "world-books")
+        )
+
+    return tuple(child_ids)
+
+
+def _mounted_boundary_ids(rail) -> tuple[str, ...]:
+    """Read semantic boundaries from the mounted production hierarchy."""
+    body = rail.query_one("#console-inspector-rail-body")
+    direct_children = tuple(child.id for child in body.children)
+    # task-9: Environment and Tasks are the first two children now, ahead of
+    # the staged-context tray -- mounted unconditionally (hidden via
+    # `styles.display = "none"` when their projection has no rows, never
+    # omitted from the DOM), so they always occupy these two slots.
+    #
+    # task-10: the Agent rail's fleet mini-section moved here from the left
+    # rail's Agent section, directly below Tasks -- same unconditional-
+    # mount/hide-when-empty pattern.
+    #
+    # TASK-24611: the Library search region sits directly beneath the Sources
+    # tray, because the tray's empty state ("Stage sources from Library.") is
+    # the sentence it answers. It used to be the first three children of the
+    # readiness card at the very bottom, ~25 rows further down. The readiness
+    # card itself still anchors last, which is task-400's placement.
+    assert direct_children[:7] == (
+        "console-environment-section",
+        "console-tasks-section",
+        "console-agent-section-subagents",
+        "console-staged-context-tray",
+        "console-library-search-region",
+        "console-retrieval-scope-row",
+        "console-run-inspector",
+    )
+    assert len(direct_children) == 8
+    assert direct_children[-1] == "console-live-work-section"
+
+    run_wrapper = rail.query_one("#console-run-inspector")
+    run_wrapper_children = tuple(child.id for child in run_wrapper.children)
+    assert run_wrapper_children == (
+        "console-run-inspector-state",
+        "console-selected-turn",
+        "console-settings-summary",
+    )
+    inspector = run_wrapper.query_one(
+        "#console-run-inspector-state", ConsoleRunInspector
+    )
+    expected_inspector_children = _expected_run_inspector_child_ids(inspector.state)
+    actual_inspector_children = tuple(child.id for child in inspector.children)
+    assert actual_inspector_children == expected_inspector_children
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+    boundary_ids = {
+        "console-inspector-dictionaries-heading",
+        "console-inspector-worldbooks-heading",
+        *(heading_id for _owner, heading_id, _labels in ownership.ROW_GROUPS),
+    }
+    inspector_boundaries = tuple(
+        child_id for child_id in expected_inspector_children if child_id in boundary_ids
+    )
+    return (
+        "console-project-instruction-status",
+        "console-send-authority-summary",
+        # task-9: five pre-run boundaries, not three -- Environment and
+        # Tasks were prepended ahead of the Sources tray/Library
+        # search/Scope trio (TASK-24611 added the middle one, "three ...
+        # not two", to that trio). task-10 then prepended the Agent
+        # fleet mini-section after Tasks, making six.
+        *direct_children[:6],
+        *inspector_boundaries,
+        run_wrapper_children[-1],
+        next(card_id for card_id in _LIVE_WORK_IDS if list(rail.query(f"#{card_id}"))),
+    )
+
+
+def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners():
+    assert tuple(owner for _widget_id, owner in _EXPECTED_BOUNDARY_ANCHORS) + (
+        "Live Work",
+    ) == (
+        "Project Instructions",
+        "Next send authority",
+        "Environment",
+        "Tasks",
+        "Agents",
+        "Sources — next send",
+        "Library search",
+        "Scope",
+        "Run",
+        "Source Readiness",
+        "Tools",
+        "Approvals",
+        "Artifacts",
+        "Selected Conversation",
+        "Session Defaults",
+        "Selected Message",
+        "Changes",
+        "Chat Dictionaries",
+        "World Books",
+        "Session Settings",
+        "Live Work",
+    )
+    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:8]) | {
+        "console-settings-summary": "Session Settings",
+    } | {live_id: "Live Work" for live_id in _LIVE_WORK_IDS} == {
+        "console-project-instruction-status": "Project Instructions",
+        "console-send-authority-summary": "Next send authority",
+        "console-environment-section": "Environment",
+        "console-tasks-section": "Tasks",
+        "console-agent-section-subagents": "Agents",
+        "console-staged-context-tray": "Sources — next send",
+        "console-library-search-region": "Library search",
+        "console-retrieval-scope-row": "Scope",
+        "console-settings-summary": "Session Settings",
+        "console-pending-launch-card": "Live Work",
+        "console-live-work-source-readiness": "Live Work",
+    }
+
+
+@pytest.mark.asyncio
+async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order():
+    exhaustive_rows = tuple(
+        ConsoleDisplayRow(label, "value")
+        for label in (
+            "Run recipe",
+            "Live work",
+            "Setup",
+            "Send blocked",
+            "Recovery action",
+            "Blocked impact",
+            "Next action",
+            "Provider",
+            "Sources",
+            "RAG/source",
+            "Evidence",
+            "Authority",
+            "Tools",
+            "MCP",
+            "Approvals",
+            "Artifacts",
+            "Selected conversation",
+            "Conversation source",
+            "Workspace",
+            "Resume state",
+            "Prefill (next send only)",
+            "Prefill (pinned)",
+            "Session provider",
+            "Session model",
+            "Session endpoint",
+            "Session sampling",
+            "Session persona",
+            "Selected message",
+            "Message actions",
+            "Keyboard",
+            "Variants",
+            "Excerpt",
+            "Delete confirmation",
+        )
+    )
+    exhaustive_state = ConsoleInspectorState(
+        rows=exhaustive_rows,
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-review-approval", "Review approval", True
+            ),
+            ConsoleInspectorAction(
+                "console-inspector-review-changes", "Review changes", True
+            ),
+            ConsoleInspectorAction(
+                "console-inspector-save-chatbook", "Save as Chatbook", True
+            ),
+        ),
+        dictionary_rows=(ConsoleDisplayRow("Dictionary", "attached"),),
+        dictionary_actions=(
+            ConsoleInspectorAction(
+                "console-inspector-dictionaries-attach", "Attach dictionary", True
+            ),
+        ),
+        world_book_rows=(ConsoleDisplayRow("World Book", "attached"),),
+        world_book_actions=(
+            ConsoleInspectorAction(
+                "console-inspector-worldbooks-attach", "Attach World Book", True
+            ),
+        ),
+    )
+
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        rail._inspector_state = exhaustive_state
+        await rail.recompose()
+        await pilot.pause()
+
+        mounted_ids = _mounted_boundary_ids(rail)
+        expected_ids = tuple(item[0] for item in _EXPECTED_BOUNDARY_ANCHORS)
+        assert mounted_ids[:-1] == expected_ids
+        assert mounted_ids[-1] in _LIVE_WORK_IDS
+
+        compact_ids = {
+            "console-project-instruction-status",
+            "console-retrieval-scope-row",
+        }
+        for compact_id in compact_ids:
+            compact = rail.query_one(f"#{compact_id}")
+            assert not any(
+                isinstance(ancestor, ConsoleBoundedSection)
+                for ancestor in compact.ancestors
+            )
+
+        specialized = (
+            ("#console-staged-context-tray", "sources"),
+            ("#console-settings-summary", "session-settings"),
+            ("#console-live-work-section", "live-work"),
+        )
+        for root_selector, section_id in specialized:
+            root = rail.query_one(root_selector)
+            bodies = list(root.query(ConsoleBoundedSection))
+            assert [body.section_id for body in bodies] == [section_id]
+
+
+@pytest.mark.asyncio
+async def test_new_specialized_sibling_fails_mounted_production_census():
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        for parent_selector, sibling_id in (
+            ("#console-inspector-rail-body", "console-new-specialized-sibling"),
+            ("#console-run-inspector", "console-new-run-wrapper-sibling"),
+            (
+                "#console-run-inspector-state",
+                "console-new-inspector-content-sibling",
+            ),
+        ):
+            sibling = Static("new", id=sibling_id)
+            await rail.query_one(parent_selector).mount(sibling)
+            with pytest.raises(AssertionError):
+                _mounted_boundary_ids(rail)
+            await sibling.remove()
+
+
+@pytest.mark.asyncio
+async def test_agent_fleet_section_lives_in_the_right_rail():
+    """task-10: the agent-fleet mini-section moved out of the left rail.
+
+    ``#console-agent-section-subagents`` (id unchanged) must now be a
+    descendant of the Inspector rail's own scrollable body rather than the
+    left (Context) rail's -- the move this task exists to make.
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        section = screen.query_one("#console-agent-section-subagents")
+        body = screen.query_one("#console-inspector-rail-body")
+        node = section
+        while node is not None and node is not body:
+            node = node.parent
+        assert node is body, "fleet section must be a descendant of the Inspect rail body"
+
+
+@pytest.mark.asyncio
+async def test_sources_use_exact_twenty_line_content_ceiling():
+    async with make_console_pilot(size=(235, 52)) as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        section = rail.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        await section.viewport.remove_children()
+        content = Static("\n".join(f"row {index}" for index in range(20)))
+        await section.viewport.mount(content)
+        section.request_reconcile()
+        for _ in range(5):
+            await pilot.pause()
+
+        assert section.viewport.content_region.height == 20
+        assert section.hint.display is False
+
+        content.update("\n".join(f"row {index}" for index in range(21)))
+        content.refresh(layout=True)
+        section.request_reconcile()
+        for _ in range(5):
+            await pilot.pause()
+
+        assert section.viewport.content_region.height == 20
+        assert section.hint.display is True
+        assert section.hint.region.height == 1
+
+
+@pytest.mark.parametrize(
+    (
+        "direction",
+        "terminal_width",
+        "payload_rows",
+        "acp_status",
+        "before_demand",
+        "after_demand",
+    ),
+    (
+        # TASK-24611 moved the Library search controls out of the readiness
+        # card, so its demand fell 21 -> 15 (a 2-row scope label, a 3-row
+        # Input and a 1-row Button). With the old 9-row payload the pending
+        # card sat at exactly 20 and NEITHER side crossed the 20-row cap any
+        # more -- the swap still happened but the test had stopped exercising
+        # the hint-on/hint-off boundary it exists for. A 10-row payload puts
+        # pending back at 21, so each direction still crosses the cap once.
+        ("pending-to-readiness", 250, 10, "not_configured", 21, 15),
+        ("readiness-to-pending", 250, 10, "not_configured", 15, 21),
+    ),
+)
+@pytest.mark.asyncio
+async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
+    monkeypatch,
+    direction,
+    terminal_width,
+    payload_rows,
+    acp_status,
+    before_demand,
+    after_demand,
+):
+    async with make_console_pilot(size=(terminal_width, 52)) as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.2)
+        screen = pilot.app.screen
+        rail = screen.query_one("#console-right-rail")
+        live_root = rail.query_one("#console-live-work-section")
+        header = rail.query_one("#console-live-work-header")
+        pending_header = rail.query_one("#console-live-work-status-badge")
+        readiness_header = rail.query_one("#console-live-work-source-readiness-title")
+        bounded = rail.query_one(
+            "#console-bounded-section-live-work", ConsoleBoundedSection
+        )
+        viewport = bounded.viewport
+        hint = bounded.hint
+        pending = ConsoleLiveWorkLaunch.from_values(
+            source="test",
+            title="physical row boundary",
+            payload={f"row-{index:02}": "value" for index in range(payload_rows)},
+        )
+        screen.app_instance.acp_runtime_process_manager = SimpleNamespace(
+            snapshot=lambda: {"status": acp_status}
+        )
+
+        if direction == "pending-to-readiness":
+            screen._pending_console_launch_context = pending
+            await screen._apply_console_live_work_card_swap()
+        else:
+            screen._pending_console_launch_context = None
+            await screen._apply_console_live_work_card_swap()
+
+        def initial_geometry_is_stable() -> bool:
+            return (
+                not bounded._reconcile_scheduled
+                and not rail._outer_reconcile_scheduled
+                and bounded.desired_content_lines == before_demand
+                and bounded.viewport.content_region.height
+                == min(before_demand, bounded.max_content_lines)
+                and bounded.hint.display is (before_demand > bounded.max_content_lines)
+            )
+
+        await _wait_for_right_rail_condition(
+            pilot,
+            initial_geometry_is_stable,
+            description=lambda: (
+                "initial Live Work widget geometry: "
+                f"demand={bounded.desired_content_lines}, "
+                f"width={viewport.content_region.width}, "
+                f"viewport={viewport.content_region.height}, "
+                f"hint={bounded.hint.display}"
+            ),
+        )
+        await pilot.pause()
+        assert initial_geometry_is_stable(), (
+            bounded.desired_content_lines,
+            viewport.content_region.width,
+            viewport.content_region.height,
+            bounded.hint.display,
+            rail._outer_reconcile_scheduled,
+        )
+
+        assert bounded.desired_content_lines == before_demand
+        assert bounded.viewport.content_region.height == min(
+            before_demand, bounded.max_content_lines
+        )
+        assert bounded.hint.display is (before_demand > bounded.max_content_lines)
+
+        order = []
+        original_local = bounded.request_reconcile
+        original_outer = rail.request_outer_reconcile
+
+        def observe_local() -> None:
+            order.append("local")
+            original_local()
+
+        def observe_outer() -> None:
+            order.append("outer")
+            original_outer()
+
+        monkeypatch.setattr(bounded, "request_reconcile", observe_local)
+        monkeypatch.setattr(rail, "request_outer_reconcile", observe_outer)
+        baseline = rail._outer_owner_reconcile_count
+
+        screen._pending_console_launch_context = (
+            None if direction == "pending-to-readiness" else pending
+        )
+        await screen._apply_console_live_work_card_swap()
+
+        def swapped_geometry_is_stable() -> bool:
+            return (
+                order[:2] == ["local", "outer"]
+                and not bounded._reconcile_scheduled
+                and not rail._outer_reconcile_scheduled
+                and rail._outer_owner_reconcile_count == baseline + 1
+                and bounded.desired_content_lines == after_demand
+                and bounded.viewport.content_region.height
+                == min(after_demand, bounded.max_content_lines)
+                and bounded.hint.display is (after_demand > bounded.max_content_lines)
+                and rail.query_one("#console-live-work-section") is live_root
+                and rail.query_one("#console-live-work-header") is header
+                and rail.query_one("#console-bounded-section-live-work") is bounded
+                and bounded.viewport is viewport
+                and bounded.hint is hint
+            )
+
+        await _wait_for_right_rail_condition(
+            pilot,
+            swapped_geometry_is_stable,
+            description=lambda: (
+                "swapped Live Work widget geometry: "
+                f"demand={bounded.desired_content_lines}, "
+                f"width={viewport.content_region.width}, "
+                f"viewport={viewport.content_region.height}, "
+                f"hint={bounded.hint.display}, order={order}, "
+                "completed_owner_passes="
+                f"{rail._outer_owner_reconcile_count - baseline}"
+            ),
+        )
+        await pilot.pause()
+        assert swapped_geometry_is_stable()
+
+        assert order[:2] == ["local", "outer"]
+        assert rail.query_one("#console-live-work-section") is live_root
+        assert rail.query_one("#console-live-work-header") is header
+        assert rail.query_one("#console-live-work-status-badge") is pending_header
+        assert (
+            rail.query_one("#console-live-work-source-readiness-title")
+            is readiness_header
+        )
+        assert rail.query_one("#console-bounded-section-live-work") is bounded
+        assert bounded.viewport is viewport
+        assert bounded.hint is hint
+        assert bounded.desired_content_lines == after_demand
+        assert bounded.viewport.content_region.height == min(
+            after_demand, bounded.max_content_lines
+        )
+        assert bounded.hint.display is (after_demand > bounded.max_content_lines)
+        assert bounded.hint.region.height == int(
+            after_demand > bounded.max_content_lines
+        )
+        assert bounded._reconcile_scheduled is False
+        assert rail._outer_owner_reconcile_count == baseline + 1
+        assert rail._outer_reconcile_scheduled is False
+
+        if direction == "pending-to-readiness":
+            assert (
+                rail.query_one("#console-live-work-source-readiness").parent is viewport
+            )
+            assert pending_header.display is False
+            assert readiness_header.display is True
+        else:
+            assert rail.query_one("#console-pending-launch-card").parent is viewport
+            assert pending_header.display is True
+            assert readiness_header.display is False
+
+
+@pytest.mark.asyncio
+async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = screen._ensure_console_chat_store()
+        message = store.append_message(
+            store.active_session_id,
+            role=ConsoleMessageRole.USER,
+            content="selected producer message",
+        )
+        await screen._sync_native_console_chat_ui()
+        transcript = screen.query_one("#console-native-transcript")
+        transcript.select_message(message.id)
+        screen._retrieval._active_dictionaries_summary = {
+            "dictionaries": [{"name": "Producer dictionary", "source": "conversation"}]
+        }
+        screen._retrieval._active_world_books_summary = {
+            "world_books": [
+                {"name": "Producer world book", "entry_count": 2, "enabled": True}
+            ]
+        }
+        monkeypatch.setattr(
+            screen, "_console_provider_blocker_copy", lambda: "Provider setup needed"
+        )
+        monkeypatch.setattr(
+            screen,
+            "_console_provider_recovery_action",
+            lambda: ("Open Settings", "settings", "Open provider settings"),
+        )
+
+        state = screen._build_console_inspector_state(None)
+        classified = ownership.classify_inspector_content(
+            state, ownership.InspectorOwnershipPolicy.STRICT
+        )
+
+        assert not classified.incomplete
+        assert {row.label for row in state.rows} >= {
+            "Setup",
+            "Blocked impact",
+            "Next action",
+            "Selected conversation",
+            "Conversation source",
+            "Selected message",
+            "Message actions",
+            "Keyboard",
+        }
+        assert state.dictionary_rows
+        assert state.dictionary_actions
+        assert state.world_book_rows
+        assert state.world_book_actions
+
+
+@pytest.mark.asyncio
+async def test_active_run_alone_never_produces_a_setup_recovery_row(monkeypatch):
+    """task-32345: an active turn is not a provider-configuration problem.
+
+    ``build_console_settings_readiness(..., active_run=True)`` blocks an
+    OTHERWISE fully-configured provider with ``recovery_action=
+    "wait_for_active_run"`` -- the same "wait, don't reconfigure" signal
+    ``_console_setup_blocked_reason``/``_console_send_blocked_reason``
+    already special-case. ``_console_provider_blocker_copy`` (which feeds
+    the Setup/Blocked-impact/Next-action inspector rows) did not, so a
+    turn with a pending approval read "Setup: Provider configuration
+    required" -- and the authority summary's ``recovery_required`` check
+    (any "Next action" row present) rendered "Recovery required" over a
+    healthy pending approval.
+    """
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        build_console_settings_readiness,
+    )
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        settings = ConsoleSessionSettings(
+            provider="ollama", model="model", base_url="http://127.0.0.1:11434"
+        )
+        readiness = build_console_settings_readiness(
+            settings,
+            app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+            environ={},
+            active_run=True,
+        )
+        assert readiness.operability == "not_ready"
+        assert readiness.recovery_action == "wait_for_active_run"
+        monkeypatch.setattr(
+            screen, "_active_console_settings_readiness", lambda: (settings, readiness)
+        )
+
+        assert screen._console_provider_blocker_copy() == ""
+
+        state = screen._build_console_inspector_state(None)
+        labels = {row.label for row in state.rows}
+        assert "Setup" not in labels
+        assert "Blocked impact" not in labels
+        assert "Next action" not in labels
+
+
+@pytest.mark.asyncio
+async def test_rail_recompose_retains_unknown_fingerprint_deduper(monkeypatch):
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+    inspector_module = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_run_inspector"
+    )
+    diagnostics = []
+    monkeypatch.setattr(
+        inspector_module,
+        "logger",
+        SimpleNamespace(
+            warning=lambda message, fingerprint: diagnostics.append(
+                (message, fingerprint)
+            )
+        ),
+    )
+
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        initial = rail._inspector_state
+        rail._inspector_state = replace(
+            initial,
+            rows=initial.rows
+            + (ConsoleDisplayRow("Unknown retained", "PRIVATE VALUE"),),
+        )
+        await rail.recompose()
+        await pilot.pause()
+        assert len(diagnostics) == 1
+        assert (
+            rail.query_one(
+                "#console-run-inspector-state", ConsoleRunInspector
+            ).ownership_policy
+            is ownership.InspectorOwnershipPolicy.RESILIENT
+        )
+
+        await rail.recompose()
+        await pilot.pause()
+        assert len(diagnostics) == 1
+
+        rail._inspector_state = replace(
+            initial,
+            rows=initial.rows
+            + (ConsoleDisplayRow("Another unknown", "OTHER PRIVATE VALUE"),),
+        )
+        await rail.recompose()
+        await pilot.pause()
+        assert len(diagnostics) == 2
+        assert diagnostics[-1][1] == ("row:Another unknown",)
+        assert "PRIVATE VALUE" not in repr(diagnostics)
+
+
+def test_inspector_composition_boundary_resolves_strict_opt_in(monkeypatch):
+    right_rail = importlib.import_module("tldw_chatbook.UI.Console_Modules.right_rail")
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_STRICT_INSPECTOR_OWNERSHIP", raising=False)
+    assert (
+        right_rail._resolve_inspector_ownership_policy()
+        is ownership.InspectorOwnershipPolicy.RESILIENT
+    )
+    monkeypatch.setenv("TLDW_CONSOLE_STRICT_INSPECTOR_OWNERSHIP", "1")
+    assert (
+        right_rail._resolve_inspector_ownership_policy()
+        is ownership.InspectorOwnershipPolicy.STRICT
+    )
+    monkeypatch.setenv("TLDW_CONSOLE_STRICT_INSPECTOR_OWNERSHIP", "true")
+    assert (
+        right_rail._resolve_inspector_ownership_policy()
+        is ownership.InspectorOwnershipPolicy.RESILIENT
+    )
 
 
 @pytest.mark.asyncio
@@ -108,7 +894,7 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
             pilot.app.screen, pilot, "#console-inspector-rail-open"
         )
         open_button = pilot.app.screen.query_one("#console-inspector-rail-open", Button)
-        assert str(open_button.label) == "<-Inspect"
+        assert str(open_button.label) == "◂ Inspect"
         far_end = (
             open_button.region.width - 1,
             open_button.region.height // 2,
@@ -139,7 +925,7 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
 
         await pilot.click("#console-project-instruction-status-button")
         await pilot.pause()
-        assert isinstance(pilot.app.screen, ConsoleContextModal)
+        assert isinstance(pilot.app.screen, ConsoleConversationInspector)
         await pilot.press("escape")
         await pilot.pause()
 
@@ -168,7 +954,11 @@ async def test_inspector_header_is_one_full_width_collapse_button() -> None:
         assert isinstance(header, Horizontal)
         assert list(header.children) == [button]
         assert not screen.query("#console-inspector-rail-title")
-        assert str(button.label) == "Inspect|--------->"
+        # TASK-23195 follow-up: the ASCII arrow became a readable name
+        # plus one resolved glyph, mirroring the Context rail. The
+        # header is still ONE full-width collapse button.
+        assert "Inspect" in str(button.label)
+        assert "---" not in str(button.label)
         assert button.tooltip == "Collapse Inspector rail"
         assert header.content_region.contains_region(button.region)
         assert button.region.width == header.content_region.width
@@ -176,6 +966,373 @@ async def test_inspector_header_is_one_full_width_collapse_button() -> None:
         assert button.region.height == 1
         assert button.styles.text_align == "left"
         assert button.styles.content_align_horizontal == "left"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(140, 45), (235, 52)])
+async def test_inspector_root_pins_project_and_authority_above_outer_body(
+    size,
+) -> None:
+    async with make_console_pilot(size=size) as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        assert tuple(child.id for child in rail.children) == (
+            "console-inspector-rail-header",
+            "console-project-instruction-status",
+            "console-send-authority-summary",
+            "console-inspector-rail-body",
+            "console-inspector-outer-scroll-hint",
+        )
+        summary = rail.query_one("#console-send-authority-summary")
+        body = rail.query_one("#console-inspector-rail-body")
+        assert summary.parent is rail
+        assert summary not in tuple(body.query("*"))
+        assert summary.region.height == 6
+        assert rail.content_region.contains_region(summary.region)
+
+        region_before = summary.region
+        body.scroll_end(animate=False)
+        await pilot.pause()
+        assert summary.region == region_before
+
+
+@pytest.mark.asyncio
+async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
+    monkeypatch,
+) -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        summary = screen.query_one(
+            "#console-send-authority-summary", ConsoleSendAuthoritySummary
+        )
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        snapshot = screen._build_console_inspector_state(
+            screen._pending_console_launch_context
+        )
+        builds: list[object] = []
+        summary_states: list[object] = []
+        inspector_states: list[object] = []
+        rail_states: list[object] = []
+        build_rail_state = screen._build_console_rail_state
+        monkeypatch.setattr(
+            screen,
+            "_build_console_inspector_state",
+            lambda _launch: builds.append(snapshot) or snapshot,
+        )
+        monkeypatch.setattr(summary, "sync_state", summary_states.append)
+        monkeypatch.setattr(inspector, "sync_state", inspector_states.append)
+        monkeypatch.setattr(
+            screen,
+            "_build_console_rail_state",
+            lambda **kwargs: (
+                rail_states.append(kwargs["inspector_state"])
+                or build_rail_state(**kwargs)
+            ),
+        )
+
+        screen._sync_console_control_bar()
+
+        assert builds == [snapshot]
+        assert summary_states == [snapshot]
+        assert inspector_states == [snapshot]
+        assert rail_states == [snapshot]
+        assert summary_states[0] is inspector_states[0]
+        assert inspector_states[0] is rail_states[0]
+
+
+@pytest.mark.asyncio
+async def test_effective_empty_scope_survives_snapshot_projection_as_no_sources(
+    monkeypatch,
+) -> None:
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        monkeypatch.setattr(
+            screen._retrieval,
+            "_build_console_retrieval_scope_state",
+            lambda: ConsoleRetrievalScopeState.empty(cause="no-workspace-overlap"),
+        )
+
+        snapshot = screen._build_console_inspector_state(
+            screen._pending_console_launch_context
+        )
+
+        assert snapshot.scope_item_count == 0
+        assert project_console_send_authority(snapshot).scope == "No sources"
+
+
+@pytest.mark.asyncio
+async def test_strict_inspector_rejection_keeps_authority_summary_at_prior_snapshot(
+    monkeypatch,
+) -> None:
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        summary = screen.query_one(
+            "#console-send-authority-summary", ConsoleSendAuthoritySummary
+        )
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        inspector.ownership_policy = ownership.InspectorOwnershipPolicy.STRICT
+        prior = summary.last_state
+        rejected = ConsoleInspectorState(
+            rows=(ConsoleDisplayRow("Unknown changed row", "must not publish"),)
+        )
+        monkeypatch.setattr(
+            screen,
+            "_build_console_inspector_state",
+            lambda _launch: rejected,
+        )
+
+        with pytest.raises(ownership.UnownedInspectorContentError):
+            screen._sync_console_control_bar()
+
+        assert summary.last_state is prior
+
+
+@pytest.mark.asyncio
+async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        summary = screen.query_one(
+            "#console-send-authority-summary", ConsoleSendAuthoritySummary
+        )
+        expected = summary.contextual_help_rows()
+        summary.focus()
+        await pilot.pause()
+        await pilot.press("f1")
+        await pilot.pause()
+
+        panel = pilot.app.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        rendered = panel.state.render_text()
+        assert "What happens if I send now?" in rendered
+        for label, value in expected:
+            assert f"{label}: {value}" in rendered
+
+
+@pytest.mark.asyncio
+async def test_authority_focus_f1_preserves_literal_rich_markup() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        summary = screen.query_one(
+            "#console-send-authority-summary", ConsoleSendAuthoritySummary
+        )
+        summary.sync_state(
+            ConsoleInspectorState(
+                rows=(
+                    ConsoleDisplayRow("Workspace", "[bold]literal[/bold]"),
+                    ConsoleDisplayRow("Selected conversation", "Chat"),
+                    ConsoleDisplayRow("Provider", "ready", status="ready"),
+                )
+            )
+        )
+        summary.focus()
+        await pilot.pause()
+        await screen.action_show_workbench_help()
+        await pilot.pause()
+
+        panel = pilot.app.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        body = panel.query_one("#workbench-help-body", Static)
+        assert r"\[bold]literal\[/bold]" in body.render().plain
+
+
+@pytest.mark.asyncio
+async def test_more_toggle_disappearance_recovers_to_next_inspector_boundary(
+    monkeypatch,
+) -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        rail = screen.query_one("#console-right-rail")
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        toggle = inspector.query_one("#console-inspector-more-toggle", Button)
+        boundaries = rail._mounted_boundaries()
+        expected_section_id = "selected-conversation"
+        assert expected_section_id in {
+            section.section_id for section, _header in boundaries
+        }
+        toggle.focus()
+        await pilot.pause()
+        assert pilot.app.focused is toggle
+        recovered: list[str | None] = []
+        recover_focus = inspector._on_more_focus_removed
+        monkeypatch.setattr(
+            inspector,
+            "_on_more_focus_removed",
+            lambda section_id: (
+                recovered.append(section_id) or recover_focus(section_id)
+            ),
+        )
+
+        rows = tuple(
+            row
+            for row in inspector.state.rows
+            if row.label not in {"Tools", "Approvals", "Artifacts"}
+        ) + (
+            ConsoleDisplayRow("Tools", "1 ready"),
+            ConsoleDisplayRow("Approvals", "1 pending", status="blocked"),
+            ConsoleDisplayRow("Artifacts", "Chatbook available"),
+        )
+        inspector.sync_state(replace(inspector.state, rows=rows))
+        for _ in range(4):
+            await pilot.pause()
+
+        assert not list(inspector.query("#console-inspector-more-toggle"))
+        focused = pilot.app.focused
+        assert focused is not None
+        assert recovered == [expected_section_id]
+        assert rail.inspector_active(focused)
+        assert focused.id == "console-inspector-rail-body"
+        assert focused.id not in {
+            "console-inspector-tools-heading",
+            "console-inspector-approvals-heading",
+            "console-inspector-artifacts-heading",
+            "console-native-transcript",
+            "console-native-composer",
+        }
+
+
+@pytest.mark.asyncio
+async def test_more_disappearance_does_not_steal_newer_context_focus() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        toggle = inspector.query_one("#console-inspector-more-toggle", Button)
+        context_focus = screen.query_one("#console-context-rail-collapse", Button)
+        toggle.focus()
+        await pilot.pause()
+        assert pilot.app.focused is toggle
+
+        rows = tuple(
+            row
+            for row in inspector.state.rows
+            if row.label not in {"Tools", "Approvals", "Artifacts"}
+        ) + (
+            ConsoleDisplayRow("Tools", "1 ready"),
+            ConsoleDisplayRow("Approvals", "1 pending", status="blocked"),
+            ConsoleDisplayRow("Artifacts", "Chatbook available"),
+        )
+        inspector.sync_state(replace(inspector.state, rows=rows))
+        context_focus.focus()
+        for _ in range(4):
+            await pilot.pause()
+
+        assert not list(inspector.query("#console-inspector-more-toggle"))
+        assert pilot.app.focused is context_focus
+
+
+@pytest.mark.asyncio
+async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        context_focus = screen.query_one("#console-context-rail-collapse", Button)
+        active_actions = tuple(
+            replace(action, enabled=True, disabled_reason="")
+            if action.widget_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID
+            else action
+            for action in inspector.state.actions
+        )
+        active_state = replace(inspector.state, actions=active_actions)
+        before_recompose = inspector.recompose_count
+        inspector.sync_state(active_state)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                inspector.recompose_count > before_recompose
+                and not inspector.query_one(
+                    f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button
+                ).disabled
+                and inspector.query_one("#console-inspector-more-body")
+                not in inspector.query_one(
+                    f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button
+                ).ancestors
+            ),
+            description="promoted Artifacts action before demotion",
+        )
+        artifact_action = inspector.query_one(
+            f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button
+        )
+        artifact_action.focus()
+        await pilot.pause()
+        assert pilot.app.focused is artifact_action
+
+        disabled_actions = tuple(
+            replace(action, enabled=False, disabled_reason="unavailable")
+            if action.widget_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID
+            else action
+            for action in active_actions
+        )
+        inspector.sync_state(replace(active_state, actions=disabled_actions))
+        context_focus.focus()
+        for _ in range(4):
+            await pilot.pause()
+
+        assert pilot.app.focused is context_focus
+
+
+@pytest.mark.asyncio
+async def test_more_toggle_persists_without_programmatic_repost() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        body = screen.query_one("#console-inspector-more-body")
+        assert body.display is False
+        toggle = screen.query_one("#console-inspector-more-toggle", Button)
+        toggle.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert body.display is True
+        stored = next(
+            iter(screen.app_instance.app_config["console"]["rail_state"].values())
+        )
+        assert stored["inspector_more_open"] is True
+
+        rail_state = replace(
+            screen._current_console_rail_state(), inspector_more_open=False
+        )
+        screen._sync_console_rail_visibility(rail_state)
+        await pilot.pause()
+
+        assert body.display is False
+        assert stored["inspector_more_open"] is True
 
 
 @pytest.mark.asyncio
@@ -188,7 +1345,8 @@ async def test_clicking_inspector_header_title_start_collapses_the_rail() -> Non
         await pilot.pause(0.2)
 
         button = pilot.app.screen.query_one("#console-inspector-rail-collapse", Button)
-        assert str(button.label) == "Inspect|--------->"
+        assert "Inspect" in str(button.label)
+        assert "---" not in str(button.label)
         title_start = (1, 0)
         assert await pilot.click(button, offset=title_start)
         await pilot.pause(0.2)
@@ -242,7 +1400,7 @@ async def test_context_modal_refresh_factory_keeps_opening_session_after_switch(
         await pilot.click("#console-project-instruction-status-button")
         await pilot.pause()
         modal = pilot.app.screen
-        assert isinstance(modal, ConsoleContextModal)
+        assert isinstance(modal, ConsoleConversationInspector)
         assert modal._project_instruction_session_id == captured.id
 
         active = store.create_session(title="Active")
@@ -270,7 +1428,9 @@ async def test_context_modal_refresh_factory_keeps_opening_session_after_switch(
         state = await modal._project_instruction_recovery(captured.id, "disable")
         assert state.status == "Off"
         assert setter_threads == [main_thread_id]
-        captured_after = next(item for item in store.sessions() if item.id == captured.id)
+        captured_after = next(
+            item for item in store.sessions() if item.id == captured.id
+        )
         active_after = next(item for item in store.sessions() if item.id == active.id)
         assert captured_after.project_instruction_state == (
             ProjectInstructionControlState.legacy_disabled()
@@ -297,3 +1457,319 @@ async def test_project_status_remains_visible_in_real_thirty_column_rail(size):
         )
         assert button.region.width <= 30
         assert str(button.label).endswith(" · Project")
+
+
+# --- TASK-24602 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_screen_wires_a_failed_run_into_the_pinned_authority_line():
+    """TASK-24602 end to end, not just the projection.
+
+    The controller already recorded a terminal FAILED run state with visible
+    copy; the defect was that ``_build_console_inspector_state`` never read
+    it, so the pinned line answered "Ready" beside a transcript saying the
+    run had failed. A projection-only test would pass with the screen still
+    not wired, which is exactly how this shipped.
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+
+        ready = screen._build_console_inspector_state(None)
+        assert ready.run_failed is False
+        assert project_console_send_authority(ready).run == "Ready"
+
+        controller = screen._ensure_console_chat_controller()
+        # `run_state` is a read-only facade; `_set_run_state` is the only
+        # path that mutates the per-session map (parallel-agents spec §2),
+        # and it is the same call the agent-run failure path makes.
+        controller._set_run_state(
+            ConsoleRunState(
+                ConsoleRunStatus.FAILED,
+                "Agent run failed: provider returned HTTP 401",
+            )
+        )
+
+        after = screen._build_console_inspector_state(None)
+        assert after.run_failed is True, (
+            "the screen did not read the controller's FAILED run state"
+        )
+        assert "401" in after.run_failure_reason
+        projected = project_console_send_authority(after).run
+        assert projected.startswith("Failed"), projected
+        assert "401" in projected
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_stops_describing_the_next_send_once_it_starts():
+    """TASK-24602, the recovery direction (Qodo focus area, third round).
+
+    Pinning the authority line to a terminal FAILED status is only correct
+    if something un-pins it, or an old failure keeps describing a send that
+    has already recovered. `_clear_terminal_run_state` handles session
+    switch and provider change, but NOT a new send on the same session --
+    that path relies on the first thing `_send_console_message` does, which
+    is to transition the run state to VALIDATING. This asserts that
+    transition actually clears the pinned line, so the un-pinning is covered
+    by a test rather than by reading the send path.
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        controller = screen._ensure_console_chat_controller()
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED, "Agent run failed: HTTP 401")
+        )
+        assert screen._build_console_inspector_state(None).run_failed is True
+
+        # The send path's own first transition, verbatim.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        recovered = screen._build_console_inspector_state(None)
+        assert recovered.run_failed is False, (
+            "a new send left the previous failure pinned to the authority line"
+        )
+        assert recovered.run_failure_reason == ""
+        assert not project_console_send_authority(recovered).run.startswith("Failed")
+
+
+# --- TASK-24611 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_search_sits_with_the_empty_state_that_points_at_it():
+    """TASK-24611: the control that stages sources lives beside the sentence
+    telling you to stage sources.
+
+    The Sources tray's empty state reads "No sources attached. Stage sources
+    from Library." The `Ask Library` input and `Search Library` button that
+    do exactly that used to be the first children of the live-work readiness
+    card at the BOTTOM of the rail -- roughly 25 rows below that sentence,
+    behind the fold, under a heading naming a status inventory.
+
+    Deliberately NOT a whole-section swap: the readiness card keeps the
+    bottom anchor task-400 chose for it (stated in that task's own test
+    docstring), and run state keeps its place above the fold.
+    """
+    async with make_console_pilot(size=(120, 45)) as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.3)
+
+        tray = screen.query_one("#console-staged-context-tray")
+        search = screen.query_one("#console-library-search-region")
+        scope = screen.query_one("#console-retrieval-scope-row")
+        run_inspector = screen.query_one("#console-run-inspector")
+
+        assert tray.region.y < search.region.y, (
+            "the Library search must sit BELOW the Sources tray's empty state"
+        )
+        assert search.region.y < scope.region.y < run_inspector.region.y, (
+            "the search region must sit between the tray and the run "
+            f"inspector; got search={search.region.y} scope={scope.region.y} "
+            f"run={run_inspector.region.y}"
+        )
+
+        # The controls really moved -- they are no longer inside the
+        # readiness card, which is now rows only.
+        readiness = screen.query_one("#console-live-work-source-readiness")
+        assert not list(readiness.query("#console-library-rag-query-input"))
+        assert not list(readiness.query("#console-run-library-rag"))
+        assert search.query_one("#console-library-rag-query-input")
+        assert search.query_one("#console-run-library-rag")
+
+        # And the readiness card still anchors at the bottom (task-400).
+        assert run_inspector.region.y < readiness.region.y
+
+
+# --- TASK-24704 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_readiness_card_picks_up_mcp_after_it_connects():
+    """TASK-24704 (Qodo #1): the card must not freeze its MCP sample.
+
+    The readiness card reads MCP and RAG when it is BUILT, and the only
+    thing that rebuilds it is the live-work card swap -- scheduled from
+    `_sync_console_pending_launch_surfaces`, which is reached only when a
+    launch is consumed or evidence is unstaged. A card mounted before MCP
+    connected therefore kept saying "Not wired" no matter how many tools the
+    catalog later published.
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.3)
+
+        mcp_row = screen.query_one("#console-live-work-source-mcp", Static)
+        assert "Not wired" in str(mcp_row.renderable), str(mcp_row.renderable)
+
+        # MCP connects and publishes a catalog, exactly as
+        # `_publish_mcp_inspector_counts` does mid-run.
+        screen.app_instance.console_mcp_tool_count = 4
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+
+        refreshed = str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+        assert refreshed == "MCP: Connected - 4 tools ready.", refreshed
+
+        # And back again when the catalog empties, without a card swap.
+        screen.app_instance.console_mcp_tool_count = None
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+        assert "Not wired" in str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_raising_acp_snapshot_cannot_take_down_the_console_sync_tick():
+    """TASK-24704 (Qodo focus area, third round): isolate the tick's read.
+
+    `_sync_console_live_work_readiness_rows` runs on the console sync tick,
+    which re-raises on a LIVE screen inside a worker whose `exit_on_error`
+    is Textual's default True. `snapshot()` reaches `Popen.poll()` and the
+    manager is duck-typed off `app_instance`, so an unguarded raise here is
+    not "a card renders stale" -- it is the app exiting, five times a second
+    during an active run. The card BUILDER makes the same read and is left
+    unguarded on purpose: it runs once, at compose, off the tick.
+
+    Only the ACP row may freeze. It keeps its last known text rather than
+    falling back to a status nobody measured (TASK-24601's contract), but
+    MCP and RAG come from their own probes and have nothing to do with ACP
+    -- a PERSISTENT ACP failure must not stop them updating (Qodo #3).
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.3)
+
+        screen.app_instance.console_mcp_tool_count = 4
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+        settled = str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+        assert settled == "MCP: Connected - 4 tools ready.", settled
+
+        acp_before = str(
+            screen.query_one("#console-live-work-source-acp", Static).renderable
+        )
+
+        class ExplodingManager:
+            """Stands in for a process manager whose runtime died mid-tick."""
+
+            def snapshot(self):
+                raise RuntimeError("runtime went away mid-tick")
+
+        screen.app_instance.acp_runtime_process_manager = ExplodingManager()
+        # Must not raise -- on the real tick any exception here reaches the
+        # worker's error handler and exits the app.
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+
+        assert (
+            str(screen.query_one("#console-live-work-source-acp", Static).renderable)
+            == acp_before
+        ), "a failed ACP read overwrote the row it never measured"
+
+        # ...and the rows that ACP has nothing to do with are still live, so
+        # a PERSISTENT failure cannot freeze them.
+        screen.app_instance.console_mcp_tool_count = 9
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+        refreshed = str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+        assert refreshed == "MCP: Connected - 9 tools ready.", refreshed
+
+
+def test_a_probed_empty_mcp_catalog_is_not_reported_as_unprobed():
+    """TASK-24704 (Qodo #2): `None` cannot mean "nobody looked" here.
+
+    `_publish_mcp_inspector_counts` documents `(None, None)` as the contract
+    for the no-service, kill-switch-on, compose-failed AND empty-catalog
+    paths alike, so a probed-but-empty catalog is indistinguishable from an
+    absent one. Claiming "Not checked" for both asserted something the data
+    does not support, and made "Not wired" unreachable for the ordinary
+    zero-tool result.
+    """
+    from tldw_chatbook.Chat.console_live_work import (
+        ConsoleLiveWorkSourceReadinessState,
+    )
+
+    def mcp_text(count):
+        state = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+            "not_configured", mcp_tool_count=count
+        )
+        return next(
+            row.text
+            for row in state.rows
+            if row.widget_id == "console-live-work-source-mcp"
+        )
+
+    assert mcp_text(None) == "MCP: Not wired - MCP servers."
+    assert mcp_text(0) == "MCP: Not wired - MCP servers."
+    assert mcp_text(1) == "MCP: Connected - 1 tool ready."
+    assert mcp_text(4) == "MCP: Connected - 4 tools ready."
+
+
+@pytest.mark.asyncio
+async def test_rag_row_probes_instead_of_trusting_the_unset_registry_flag(
+    monkeypatch,
+) -> None:
+    """TASK-24704 (Qodo #4): the RAG row must not read an unprobed default.
+
+    `DEPENDENCIES_AVAILABLE["embeddings_rag"]` starts False and is only ever
+    populated by `check_embeddings_rag_deps`, which nothing calls
+    automatically. Reading it raw therefore reported `RAG: Unavailable` on
+    installs where the extras are genuinely present -- an unprobed default
+    rendered as a measured negative, which is the exact failure mode this
+    whole task exists to remove.
+
+    `embeddings_rag_deps_installed` is the repo's cheap `find_spec` probe,
+    documented as safe for render paths.
+    """
+    from tldw_chatbook.Utils import optional_deps
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+
+        # The registry says "no" purely because nobody probed.
+        monkeypatch.setitem(
+            optional_deps.DEPENDENCIES_AVAILABLE, "embeddings_rag", False
+        )
+        # ...while the packages are in fact importable.
+        monkeypatch.setattr(
+            optional_deps, "embeddings_rag_deps_installed", lambda: True
+        )
+        screen._console_rag_extras_cache = None
+
+        assert screen._console_rag_extras_available() is True, (
+            "the screen trusted the unprobed registry default instead of probing"
+        )
+
+        # And it reports honestly when the extras really are missing.
+        monkeypatch.setattr(
+            optional_deps, "embeddings_rag_deps_installed", lambda: False
+        )
+        screen._console_rag_extras_cache = None
+        assert screen._console_rag_extras_available() is False

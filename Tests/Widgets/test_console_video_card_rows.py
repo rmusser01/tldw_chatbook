@@ -30,7 +30,9 @@ def _rows_for(message, spec):
     transcript = ConsoleTranscript()
     transcript.set_messages([message])
     transcript.set_video_card_specs({message.id: spec} if spec is not None else {})
-    return transcript._transcript_rows()
+    # Media rows are adjuncts nested into the top-level assistant-turn row;
+    # exercise the flat row planner that owns the video-card projection.
+    return transcript._flat_transcript_rows()
 
 
 def test_video_message_renders_video_card_row():
@@ -42,7 +44,7 @@ def test_video_message_renders_video_card_row():
     assert row.key == f"video-card:{message.id}"
     assert row.video_card_spec is not None
     # The signature flips with the status, driving reconcile.
-    assert row.signature[2] == "ready"
+    assert row.signature[0][2] == "ready"
 
 
 def test_video_message_without_spec_renders_no_media_rows():
@@ -58,7 +60,7 @@ def test_expired_tombstone_stays_a_row():
     rows = _rows_for(message, _spec(message, status="expired"))
     video_rows = [row for row in rows if row.kind == "video-card"]
     assert len(video_rows) == 1
-    assert video_rows[0].signature[2] == "expired"
+    assert video_rows[0].signature[0][2] == "expired"
 
 
 def test_action_kwargs_expose_file_availability():

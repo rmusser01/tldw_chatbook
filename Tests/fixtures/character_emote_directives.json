@@ -1,0 +1,98 @@
+[
+  {
+    "name": "strips directives and records offsets",
+    "input": "Emote: annoyed\nWhat now?\n\nEmote: smug\nFine.",
+    "clean_text": "What now?\n\nFine.",
+    "events": [
+      {"state": "annoyed", "at_char": 0},
+      {"state": "smug", "at_char": 11}
+    ]
+  },
+  {
+    "name": "keeps inline prose visible",
+    "input": "She says Emote: smug and smiles.",
+    "clean_text": "She says Emote: smug and smiles.",
+    "events": []
+  },
+  {
+    "name": "keeps directives inside code fences visible",
+    "input": "```text\nEmote: smug\n```\nDone.",
+    "clean_text": "```text\nEmote: smug\n```\nDone.",
+    "events": []
+  },
+  {
+    "name": "strips invalid standalone directive",
+    "input": "Emote: ../../bad\nVisible.",
+    "clean_text": "Visible.",
+    "events": []
+  },
+  {
+    "name": "normalizes whitespace state",
+    "input": "  Emote: Thinking Hard  \nVisible.",
+    "clean_text": "Visible.",
+    "events": [{"state": "thinking-hard", "at_char": 0}]
+  },
+  {
+    "name": "drops duplicate consecutive state",
+    "input": "Emote: smug\nEmote: smug\nVisible.",
+    "clean_text": "Visible.",
+    "events": [{"state": "smug", "at_char": 0}]
+  },
+  {
+    "name": "preserves visible CRLF and strips directive CRLF",
+    "input": "Emote: smug\r\nHello\r\nEmote: sad\r\nDone",
+    "clean_text": "Hello\r\nDone",
+    "events": [
+      {"state": "smug", "at_char": 0},
+      {"state": "sad", "at_char": 7}
+    ]
+  },
+  {
+    "name": "counts emoji offsets as JavaScript UTF-16 units",
+    "input": "🙂 hello\nEmote: smug\nbye",
+    "clean_text": "🙂 hello\nbye",
+    "events": [{"state": "smug", "at_char": 9}]
+  },
+  {
+    "name": "accepts exactly forty state characters",
+    "input": "Emote: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nDone",
+    "clean_text": "Done",
+    "events": [
+      {"state": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "at_char": 0}
+    ]
+  },
+  {
+    "name": "strips a forty one character invalid state",
+    "input": "Emote: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nDone",
+    "clean_text": "Done",
+    "events": []
+  },
+  {
+    "name": "caps accepted events and strips the remainder",
+    "input": "Emote: state-0\nEmote: state-1\nEmote: state-2\nEmote: state-3\nEmote: state-4\nEmote: state-5\nEmote: state-6\nDone",
+    "clean_text": "Done",
+    "events": [
+      {"state": "state-0", "at_char": 0},
+      {"state": "state-1", "at_char": 0},
+      {"state": "state-2", "at_char": 0},
+      {"state": "state-3", "at_char": 0},
+      {"state": "state-4", "at_char": 0}
+    ]
+  },
+  {
+    "name": "accepts a nonconsecutive duplicate",
+    "input": "Emote: smug\nA\nEmote: sad\nEmote: smug\nB",
+    "clean_text": "A\nB",
+    "events": [
+      {"state": "smug", "at_char": 0},
+      {"state": "sad", "at_char": 2},
+      {"state": "smug", "at_char": 2}
+    ]
+  },
+  {
+    "name": "parses an unterminated final directive line",
+    "input": "Visible\nEmote: surprised",
+    "clean_text": "Visible\n",
+    "events": [{"state": "surprised", "at_char": 8}]
+  }
+]

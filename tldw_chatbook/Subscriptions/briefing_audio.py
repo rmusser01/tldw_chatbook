@@ -215,9 +215,7 @@ from tldw_chatbook.TTS.audio_stitch import (
     wav_duration_seconds,
 )
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_PROVIDER_IDS
-from tldw_chatbook.TTS.legacy_request_builder import build_legacy_speech_request
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
-from tldw_chatbook.TTS.text_processing import TextChunker
 from tldw_chatbook.Utils.path_validation import is_safe_path
 from tldw_chatbook.Utils.private_paths import (
     atomic_private_write_bytes,
@@ -387,6 +385,8 @@ def _split_turn_text(text: str) -> list[str]:
     """
     if len(text) <= MAX_TURN_CHARS:
         return [text]
+
+    from tldw_chatbook.TTS.text_processing import TextChunker
 
     chunker = TextChunker(max_tokens=_CHUNK_MAX_TOKENS)
     pieces = [chunk.text for chunk in chunker.chunk_text(text) if chunk.text.strip()]
@@ -680,6 +680,8 @@ async def _synthesize_legacy_chunk(
             f"speaker {selection.speaker!r} turn {turn_index}: no voice is "
             "selected for this provider"
         )
+
+    from tldw_chatbook.TTS.legacy_request_builder import build_legacy_speech_request
 
     request, internal_model_id = build_legacy_speech_request(
         provider_id=selection.provider_id,
@@ -1466,6 +1468,7 @@ def fail_interrupted_audio(
     *,
     exclude: Collection[int] = (),
     exclude_scripts: Collection[int] = (),
+    max_row_id: int | None = None,
 ) -> int:
     """Fail every `generating` audio row as `interrupted`; return the count.
 
@@ -1519,6 +1522,15 @@ def fail_interrupted_audio(
             Defaults to `()`, so every caller that predates this fix is
             unchanged.
 
+        max_row_id: The highest row id this sweep may touch. The startup
+            reconcile passes the boundary it captured before this process
+            could insert anything (``Subscriptions/startup_reconcile.py``),
+            which is what stops it failing rows this process's own scheduler
+            created moments earlier (Qodo, PR #1972). ``None`` -- every
+            pre-existing, UI-gated caller -- is unbounded as before; those
+            callers protect live rows with the claim-registry ``exclude``
+            arguments above instead.
+
     Returns:
         How many rows were failed.
     """
@@ -1538,6 +1550,9 @@ def fail_interrupted_audio(
         placeholders = ",".join("?" for _ in exclude_scripts)
         sql += f" AND script_id NOT IN ({placeholders})"
         params.extend(exclude_scripts)
+    if max_row_id is not None:
+        sql += " AND id <= ?"
+        params.append(int(max_row_id))
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount

@@ -1,0 +1,209 @@
+"""Synthetic controls only: no model, CUDA runtime, audio, or NVIDIA commands."""
+
+import importlib.util
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import chatterbox_observation as observation
+import pytest
+
+
+def component(device):
+    return SimpleNamespace(
+        parameters=lambda: iter([SimpleNamespace(device=device, dtype="torch.float32")])
+    )
+
+
+@pytest.mark.parametrize("bad_component", ["t3", "s3gen", "ve"])
+def test_mixed_component_fallback_is_rejected(bad_component):
+    model = SimpleNamespace(
+        t3=component("cuda:0"), s3gen=component("cuda:0"), ve=component("cuda:0")
+    )
+    assert observation.check_model_devices(model)["t3"]["devices"] == ["cuda:0"]
+    setattr(model, bad_component, component("cpu"))
+    with pytest.raises(ValueError, match="parameter placement"):
+        observation.check_model_devices(model)
+
+
+def test_cancelled_native_requires_reap_and_gpu_pid_disappearance(
+    tmp_path, monkeypatch
+):
+    phase = {"id": "cancel", "native_calls": []}
+    process = SimpleNamespace(pid=17, returncode=None)
+    receipt = tmp_path / "child.json"
+    receipt.write_text(
+        json.dumps({"pid": 17, "native_calls": [{"sequence": 0, "enter_at": 1.0}]})
+    )
+    record = {"receipt_path": str(receipt)}
+    owner = observation.ChildObservations(tmp_path, tmp_path, lambda: phase, {}, None)
+    owner.children.append((process, record))
+    owner.sync()
+    assert "exit_at" not in phase["native_calls"][0]
+    assert owner.pending_gpu_release() == 0  # A live orphan is not a reaped owner.
+    process.returncode = -15
+    monkeypatch.setattr(
+        observation, "gpu_processes", lambda: {"at": 5.0, "processes": [{"pid": 17}]}
+    )
+    owner.sync()
+    assert "exit_at" not in phase["native_calls"][0]
+    assert owner.pending_gpu_release() == 1
+    monkeypatch.setattr(
+        observation, "gpu_processes", lambda: {"at": 7.0, "processes": []}
+    )
+    owner.sync()
+    assert owner.pending_gpu_release() == 0
+    call = phase["native_calls"][0]
+    assert call["exit_at"] == 7.0
+    assert call["completion_kind"] == "process_terminated"
+    assert "cuda_synchronized" not in call
+    assert owner.final_resources() == {"provider_processes": 0, "provider_gpu_pids": 0}
+    frozen = json.dumps(phase)
+    owner.current = lambda: {"id": "successor", "native_calls": []}
+    owner.sync()
+    assert json.dumps(phase) == frozen
+
+
+def test_successful_child_completion_is_not_relabelled_when_child_exits(
+    tmp_path, monkeypatch
+):
+    phase = {"id": "success", "native_calls": []}
+    receipt = tmp_path / "child.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "pid": 17,
+                "native_calls": [
+                    {
+                        "sequence": 0,
+                        "enter_at": 1.0,
+                        "exit_at": 3.0,
+                        "cuda_synchronized": True,
+                        "completion_kind": "native_return",
+                    }
+                ],
+            }
+        )
+    )
+    owner = observation.ChildObservations(tmp_path, tmp_path, lambda: phase, {}, None)
+    owner.children.append(
+        (SimpleNamespace(pid=17, returncode=0), {"receipt_path": str(receipt)})
+    )
+    monkeypatch.setattr(
+        observation, "gpu_processes", lambda: {"at": 7.0, "processes": []}
+    )
+    owner.sync()
+    assert phase["native_calls"][0]["exit_at"] == 3.0
+    assert phase["native_calls"][0]["completion_kind"] == "native_return"
+
+
+def test_post_delivery_barrier_is_pending_until_child_receipt_settles(tmp_path):
+    phase = {"id": "success", "native_calls": []}
+    receipt = tmp_path / "child.json"
+    state = {"pid": 17, "native_calls": [], "delivery_pending": True}
+    receipt.write_text(json.dumps(state))
+    owner = observation.ChildObservations(tmp_path, tmp_path, lambda: phase, {}, None)
+    owner.children.append(
+        (SimpleNamespace(pid=17, returncode=None), {"receipt_path": str(receipt)})
+    )
+    owner.sync()
+    assert owner.pending_delivery() == 1
+    state.update(
+        delivery_pending=False, memory_after_delivery={"cuda_allocated_bytes": 123}
+    )
+    receipt.write_text(json.dumps(state))
+    owner.sync()
+    assert owner.pending_delivery() == 0
+    assert owner.settled_memory()[0]["memory"] == {"cuda_allocated_bytes": 123}
+
+
+def test_runner_and_child_imports_do_not_import_model_runtime(monkeypatch):
+    import sys
+
+    class DenyRuntime:
+        def find_spec(self, fullname, *args):
+            if fullname.split(".")[0] in {"torch", "chatterbox", "sounddevice"}:
+                raise AssertionError("Eager runtime import")
+
+    monkeypatch.setattr(sys, "meta_path", [DenyRuntime(), *sys.meta_path])
+    for name in ("qualify_chatterbox", "observe_child"):
+        path = Path(__file__).with_name(name + ".py")
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+
+def test_child_launcher_observes_inner_inference_after_preprocessing(
+    tmp_path, monkeypatch
+):
+    import sys
+
+    import observe_child
+
+    receipt = tmp_path / "receipt.json"
+    original = tmp_path / "original_process.py"
+    original.write_text("""
+from chatterbox.tts import ChatterboxTTS
+
+def send_chunked_audio(audio):
+    assert audio == b"untouched audio"
+
+def main():
+    model = ChatterboxTTS.from_pretrained(device="cuda")
+    send_chunked_audio(model.generate("Synthetic test text"))
+
+if __name__ == "__main__":
+    main()
+""")
+
+    class FakeModel:
+        def __init__(self):
+            self.t3 = component("cuda:0")
+            self.s3gen = component("cuda:0")
+            self.ve = component("cuda:0")
+            self.t3.inference = lambda value: value
+            self.s3gen.inference = lambda value: value
+
+        @classmethod
+        def from_pretrained(cls, device):
+            assert device == "cuda"
+            return cls()
+
+        def generate(self, text):
+            # Outer generate must remain insufficient cancellation evidence.
+            state = json.loads(receipt.read_text())
+            assert state["generate_calls"][0]["text"] == text
+            assert state["native_calls"] == []
+            assert self.t3.inference(17) == 17
+            assert self.s3gen.inference(23) == 23
+            return b"untouched audio"
+
+    fake_tts = SimpleNamespace(ChatterboxTTS=FakeModel, hf_hub_download=lambda: None)
+    monkeypatch.setitem(sys.modules, "chatterbox", SimpleNamespace(tts=fake_tts))
+    monkeypatch.setitem(sys.modules, "chatterbox.tts", fake_tts)
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            cuda=SimpleNamespace(synchronize=lambda device: None),
+            set_num_threads=lambda value: None,
+        ),
+    )
+    monkeypatch.setattr(
+        observe_child, "pytorch_device_provenance", lambda *args: {"device": "cuda:0"}
+    )
+    monkeypatch.setattr(
+        observe_child, "memory_snapshot", lambda **kwargs: {"cuda_allocated_bytes": 17}
+    )
+    monkeypatch.setattr(sys, "addaudithook", lambda hook: None)
+    monkeypatch.setattr(sys, "argv", ["observe_child.py", str(original), str(receipt)])
+    observe_child.main()
+    state = json.loads(receipt.read_text())
+    assert [call["method"] for call in state["native_calls"]] == [
+        "t3.inference",
+        "s3gen.inference",
+    ]
+    assert all(call["cuda_synchronized"] for call in state["native_calls"])
+    assert state["delivery_pending"] is False
+    assert state["memory_after_delivery"] == {"cuda_allocated_bytes": 17}
+    assert "original_main_returned_at" in state

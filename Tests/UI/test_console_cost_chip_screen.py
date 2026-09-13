@@ -17,19 +17,22 @@ call), and ``_wait_for_visible_text``/``_wait_for_selector`` from
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import replace
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from textual.widgets import Button
 
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_destination_shells import (
-    _build_test_app,
     _visible_text,
     _wait_for_selector,
     _wait_for_visible_text,
+)
+from Tests.UI.test_console_native_chat_flow import (
+    _build_console_send_test_app as _build_test_app,
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -39,13 +42,20 @@ from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
     EvidenceReference,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
+    MessageAttachment,
+)
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCacheState
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleCostChip
+from tldw_chatbook.config import load_settings, save_settings_to_cli_config
+from Tests.console_provider_doubles import provider_resolution
 
 _ASYNC_SETTLE_TIMEOUT = 10.0
 
@@ -66,6 +76,12 @@ WARM_USAGE = {
 }
 
 
+def _next_send_dollars(state) -> float:
+    match = re.search(r"On next send ~\+\$(\d+\.\d+)", state.label)
+    assert match is not None
+    return float(match.group(1))
+
+
 def _configure_anthropic_ready_console(app, model: str = "claude-sonnet-4-6") -> None:
     """Configure a send-ready Console on a priced Anthropic model.
 
@@ -75,10 +91,13 @@ def _configure_anthropic_ready_console(app, model: str = "claude-sonnet-4-6") ->
     ``build_console_settings_readiness`` sees a configured key and doesn't
     gate the send behind the first-run setup modal).
     """
-    app.app_config["chat_defaults"] = {"provider": "anthropic", "model": model}
-    app.app_config["api_settings"] = {
-        "anthropic": {"api_key": "test-anthropic-key"}
-    }
+    assert save_settings_to_cli_config(
+        {
+            "chat_defaults": {"provider": "anthropic", "model": model},
+            "api_settings.anthropic": {"api_key": "test-anthropic-key"},
+        }
+    )
+    app.app_config = load_settings()
     app.chat_api_provider_value = "anthropic"
     app.chat_api_model_value = model
 
@@ -96,10 +115,12 @@ class _AnthropicCostGateway:
         self.sent_messages: list[list[dict]] = []
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
+        return provider_resolution(
             provider="anthropic",
             base_url=selection.base_url or "",
-            model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
+            model=selection.explicit_model
+            or selection.configured_model
+            or "claude-sonnet-4-6",
             ready=True,
             visible_copy="",
             prompt_caching=True,
@@ -123,10 +144,12 @@ class _AnthropicWaitingGateway:
         self.release = asyncio.Event()
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
+        return provider_resolution(
             provider="anthropic",
             base_url=selection.base_url or "",
-            model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
+            model=selection.explicit_model
+            or selection.configured_model
+            or "claude-sonnet-4-6",
             ready=True,
             visible_copy="",
             prompt_caching=True,
@@ -137,6 +160,33 @@ class _AnthropicWaitingGateway:
         self.started.set()
         await self.release.wait()
         yield " done"
+
+
+class _AnthropicReadinessWaitingGateway:
+    """Ready gateway that exposes the optimistic-echo readiness window."""
+
+    def __init__(self) -> None:
+        self.resolving = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def resolve_for_send(self, selection):
+        self.resolving.set()
+        await self.release.wait()
+        return provider_resolution(
+            provider="anthropic",
+            base_url=selection.base_url or "",
+            model=(
+                selection.explicit_model
+                or selection.configured_model
+                or "claude-sonnet-4-6"
+            ),
+            ready=True,
+            visible_copy="",
+            prompt_caching=True,
+        )
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        yield "ready answer"
 
 
 async def _send_and_settle(console, pilot, draft: str, expect_text: str) -> None:
@@ -159,6 +209,7 @@ async def _send_and_settle(console, pilot, draft: str, expect_text: str) -> None
 async def test_cost_chip_shows_dollar_figure_after_priced_send():
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -175,6 +226,9 @@ async def test_cost_chip_shows_dollar_figure_after_priced_send():
         state = console._last_console_cost_state
         assert state is not None
         assert state.alert is False
+        assert "Current $0.006 ·" in state.label
+        assert "Current $0.006 ●" not in state.label
+        assert "Current ~$" not in state.label
 
 
 # --- (b)/(c) editing earlier history alerts a WARM cache, reverting clears --
@@ -201,6 +255,7 @@ async def _mount_and_send_warm_reply(console, pilot):
 async def test_editing_earlier_history_alerts_the_warm_cache_chip():
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -256,6 +311,7 @@ async def test_projected_delta_estimator_skipped_when_warm_without_break_reason(
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -310,6 +366,7 @@ async def test_projected_delta_estimator_skipped_when_warm_without_break_reason(
 async def test_reverting_the_edit_clears_the_alert():
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -379,6 +436,7 @@ async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm()
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -415,9 +473,7 @@ async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm()
 
         # The deadline itself is untouched by the edit/revert round trip --
         # not just "still warm" but the SAME deadline the original send set.
-        warm_until_after, had_activity_after = controller.cache_ttl_snapshot(
-            session_id
-        )
+        warm_until_after, had_activity_after = controller.cache_ttl_snapshot(session_id)
         assert had_activity_after is True
         assert warm_until_after == warm_until_before
 
@@ -437,6 +493,7 @@ async def test_system_prompt_revert_after_genuine_ttl_lapse_still_reports_expire
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -480,6 +537,7 @@ def test_build_console_cost_state_returns_none_without_native_session():
     repository_for_matching_database`` in test_console_native_chat_flow.py)
     -- no store has been created yet, so there is no active native session."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     screen = ChatScreen(app)
     assert screen._console_chat_store is None
 
@@ -490,14 +548,9 @@ def test_build_console_cost_state_returns_none_without_native_session():
 
 
 @pytest.mark.asyncio
-async def test_build_console_cost_state_counts_staged_evidence_before_send():
-    """task-6: reproduces the critique's exact symptom -- "0 tok" with five
-    sources staged (one a 942 KB corpus), none of it sent yet. Staged,
-    unsent evidence must price into the chip as an ESTIMATED row so the
-    total moves off zero and the `~` honesty marker (an unsent estimate,
-    not a real spend) appears -- even though the session has zero
-    messages."""
+async def test_staged_evidence_changes_next_send_but_not_current_spend():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -505,9 +558,13 @@ async def test_build_console_cost_state_counts_staged_evidence_before_send():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-cost-chip")
 
-        empty_state = console._build_console_cost_state()
-        assert empty_state is not None
-        assert "Tokens: 0" in empty_state.tooltip
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("price this request")
+        console._sync_console_settings_summary()
+        before = console._build_console_cost_state()
+        assert before is not None
+        assert "Current $0.00" in before.label
+        assert "On next send ~+$" in before.label
 
         big_reference = EvidenceReference(
             evidence_id="S1",
@@ -534,12 +591,12 @@ async def test_build_console_cost_state_counts_staged_evidence_before_send():
         console._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
-        state = console._build_console_cost_state()
+        after = console._build_console_cost_state()
 
-        assert state is not None
-        assert "Tokens: 0" not in state.tooltip
-        assert "includes estimated" in state.tooltip.lower()
-        assert state.label.startswith("~")
+        assert after is not None
+        assert "Current $0.00" in after.label
+        assert _next_send_dollars(after) > _next_send_dollars(before)
+        assert "Estimated text input:" in after.tooltip
 
 
 @pytest.mark.asyncio
@@ -555,6 +612,7 @@ async def test_build_console_cost_state_includes_fleet_token_spend():
     itself (already covered in `Tests/UI/test_console_agent_rail.py`).
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -576,6 +634,7 @@ async def test_build_console_cost_state_includes_fleet_token_spend():
 @pytest.mark.asyncio
 async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(200, 48)) as pilot:
@@ -600,6 +659,7 @@ async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
 async def test_ttl_timer_expires_the_chip_and_stops_itself():
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -641,6 +701,7 @@ async def test_ttl_timer_expires_the_chip_and_stops_itself():
 async def test_fingerprint_recompute_is_skipped_while_streaming():
     gateway = _AnthropicWaitingGateway()
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -683,8 +744,13 @@ async def test_fingerprint_recompute_is_skipped_while_streaming():
 
 @pytest.mark.asyncio
 async def test_cost_chip_press_opens_the_breakdown_modal():
+    """task-8: the cost chip now opens the shared Conversation Inspector
+    (not the retired standalone cost modal, deleted in task-10), starting
+    on its Costs tab -- copies this file's existing chip-press driver
+    verbatim, only the pushed-modal assertion changes."""
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -704,11 +770,16 @@ async def test_cost_chip_press_opens_the_breakdown_modal():
         chip.action_open_cost_breakdown()
         await pilot.pause()
 
-        from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal
+        from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
+            TAB_COSTS,
+            ConsoleConversationInspector,
+        )
 
-        assert isinstance(host.screen_stack[-1], ConsoleCostModal)
-        modal_text = _visible_text(host.screen_stack[-1])
-        assert "Cost breakdown" in modal_text
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleConversationInspector)
+        assert modal.query_one("#console-inspector-tabs").active == TAB_COSTS
+        modal_text = _visible_text(modal)
+        assert "Conversation Inspector" in modal_text
         assert "Total" in modal_text
 
 
@@ -742,6 +813,7 @@ async def test_cost_chip_state_isolated_across_session_tabs():
     """
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="priced on A")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -777,9 +849,7 @@ async def test_cost_chip_state_isolated_across_session_tabs():
         state_b = console._last_console_cost_state
         assert state_b is not None
         assert state_b != state_a
-        # B was never sent to -- no priced total, so no dollar glyph at all
-        # (build_cost_state's tokens-only fallback for an all-zero snapshot).
-        assert "$" not in state_b.label
+        assert "Current $0.00 · On next send —" in state_b.label
 
         # Hop 3: B -> A again -- A's state must come back EXACTLY, not a
         # ghost of B's (e.g. a stale single shared memo instead of a
@@ -812,6 +882,7 @@ async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
     and forwards it.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -830,3 +901,528 @@ async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
         state = console._build_console_cost_state()
         assert state is not None
         assert "Sub-agents: 1.3k tok (not priced)" in state.tooltip
+
+
+# --- Current-versus-next-send ownership ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_blank_draft_has_exact_zero_current_and_no_next_send():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "Current $0.00 · On next send —" in state.label
+
+
+@pytest.mark.asyncio
+async def test_first_send_draft_changes_next_send_without_changing_current():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        console._session._apply_console_session_system_prompt(
+            "You are a thorough assistant. " * 5
+        )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello, this is my first message")
+        console._sync_console_settings_summary()
+
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "Current $0.00" in state.label
+        assert "On next send ~+$" in state.label
+        assert "thorough assistant" not in state.label
+
+
+@pytest.mark.asyncio
+async def test_live_draft_increases_context_fullness():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        console._sync_console_settings_summary()
+        before = console._last_console_context_control_state.request_tokens
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("just a draft " * 10_000)
+        console._sync_console_settings_summary()
+
+        assert console._last_console_context_control_state.request_tokens > before
+
+
+@pytest.mark.asyncio
+async def test_followup_draft_does_not_change_completed_current_spend():
+    gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _send_and_settle(console, pilot, "hello", "the priced answer")
+
+        before = console._build_console_cost_state()
+        assert before is not None
+
+        # Everything the fold-in would count, queued behind a finished reply:
+        # none of it may leak into the conversation's running total.
+        console._session._apply_console_session_system_prompt(
+            "You are a thorough assistant. " * 20
+        )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("a queued follow-up message " * 100)
+
+        after = console._build_console_cost_state()
+        assert after is not None
+
+        def _tokens_line(state):
+            return next(
+                line
+                for line in state.tooltip.splitlines()
+                if line.startswith("Tokens:")
+            )
+
+        assert _tokens_line(after) == _tokens_line(before)
+        assert (
+            after.label.partition(" · On next send")[0]
+            == before.label.partition(" · On next send")[0]
+        )
+        assert "On next send ~+$" in after.label
+
+
+@pytest.mark.asyncio
+async def test_console_next_send_token_estimate_counts_context_not_just_draft():
+    """task-25836: the estimate wired into the inspector's Next Send header
+    must count the assembled payload (system prompt + draft turn), not the
+    draft text alone -- the first-message case where the gap is largest."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+    from tldw_chatbook.Utils.token_counter import estimate_tokens
+
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session_id = (
+            store.active_session_id or store.ensure_session(title="First message").id
+        )
+        console._session._apply_console_session_system_prompt(
+            "You are a thorough assistant. " * 5
+        )
+        await pilot.pause()
+
+        snapshot = await controller.build_context_snapshot(
+            draft="hello there", session_id=session_id
+        )
+        estimate = console._console_next_send_token_estimate(snapshot)
+
+        draft_only = estimate_tokens("hello there", "", "")
+        assert estimate is not None
+        assert estimate > draft_only
+
+        degraded = ConsoleContextSnapshot(
+            current_messages=[], next_send_payload={"error": "boom"}
+        )
+        assert console._console_next_send_token_estimate(degraded) is None
+
+
+# --- Qodo review fixes (task-25836 round 2) ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_historical_text_without_a_draft_is_not_sendable():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.USER,
+            content="already sent",
+        )
+        console._sync_console_settings_summary()
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "On next send —" in state.label
+
+
+@pytest.mark.asyncio
+async def test_seeded_leading_assistant_greeting_counts_in_context_not_current():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        console._sync_console_settings_summary()
+        before = console._last_console_context_control_state.request_tokens
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="A long seeded greeting. " * 2_000,
+        )
+        console._sync_console_settings_summary()
+        state = console._build_console_cost_state()
+
+        assert console._last_console_context_control_state.request_tokens > before
+        assert state is not None
+        assert "Current $0.00" in state.label
+
+
+@pytest.mark.asyncio
+async def test_idle_draft_edit_burst_coalesces_one_cost_refresh(monkeypatch):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        summary_refresh = Mock(wraps=console._sync_console_settings_summary)
+        cost_refresh = Mock(wraps=console._sync_console_cost_chip)
+        monkeypatch.setattr(console, "_sync_console_settings_summary", summary_refresh)
+        monkeypatch.setattr(console, "_sync_console_cost_chip", cost_refresh)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        composer.load_draft("first")
+        composer.load_draft("second")
+        composer.load_draft("final forecast " * 1_000)
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if summary_refresh.call_count:
+                break
+
+        assert summary_refresh.call_count == 1
+        assert cost_refresh.call_count == 1
+        assert console._console_draft_spend_refresh.timer is None
+        assert "On next send ~+$" in console._last_console_cost_state.label
+
+
+@pytest.mark.asyncio
+async def test_active_edit_cancels_an_already_armed_idle_cost_timer(monkeypatch):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        summary_refresh = Mock()
+        cost_refresh = Mock()
+        monkeypatch.setattr(console, "_sync_console_settings_summary", summary_refresh)
+        monkeypatch.setattr(console, "_sync_console_cost_chip", cost_refresh)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("arm while idle")
+        await pilot.pause(0.01)
+        assert console._console_draft_spend_refresh.timer is not None
+
+        controller = console._ensure_console_chat_controller()
+        session_id = console._ensure_console_chat_store().active_session_id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+            session_id=session_id,
+        )
+        composer.load_draft("edit after send starts")
+        await pilot.pause(0.3)
+
+        assert console._console_draft_spend_refresh.timer is None
+        summary_refresh.assert_not_called()
+        cost_refresh.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_keyboard_send_cancels_idle_refresh_before_run_starts(monkeypatch):
+    gateway = _AnthropicReadinessWaitingGateway()
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        refresh_callback = Mock()
+        monkeypatch.setattr(
+            type(console._console_draft_spend_refresh), "refresh", refresh_callback
+        )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        composer.load_draft("send before debounce fires")
+        await pilot.pause(0.01)
+        assert console._console_draft_spend_refresh.timer is not None
+
+        await pilot.press("enter")
+        await asyncio.wait_for(gateway.resolving.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
+        await pilot.pause(0.3)
+
+        assert composer.draft_text() == ""
+        assert console._console_draft_spend_refresh.timer is None
+        refresh_callback.assert_not_called()
+
+        gateway.release.set()
+        await _wait_for_visible_text(console, pilot, "ready answer")
+
+
+@pytest.mark.asyncio
+async def test_predispatch_echo_stays_in_context_but_not_current():
+    gateway = _AnthropicReadinessWaitingGateway()
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("slow readiness request")
+        console._sync_console_settings_summary()
+        before_tokens = console._last_console_context_control_state.request_tokens
+
+        console.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.resolving.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
+        console._sync_console_settings_summary()
+        state = console._build_console_cost_state()
+
+        assert (
+            console._last_console_context_control_state.request_tokens == before_tokens
+        )
+        assert state is not None
+        assert "Current $0.00" in state.label
+
+        gateway.release.set()
+        await _wait_for_visible_text(console, pilot, "ready answer")
+
+
+@pytest.mark.asyncio
+async def test_dispatched_echo_keeps_context_full_and_current_frozen():
+    gateway = _AnthropicWaitingGateway()
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep current frozen")
+        console._sync_console_settings_summary()
+        before_tokens = console._last_console_context_control_state.request_tokens
+        console.query_one("#console-send-message", Button).press()
+
+        await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
+        console._sync_console_settings_summary()
+        state = console._build_console_cost_state()
+
+        assert (
+            console._last_console_context_control_state.request_tokens >= before_tokens
+        )
+        assert state is not None
+        assert "Current $0.00" in state.label
+
+        gateway.release.set()
+        await _wait_for_visible_text(console, pilot, "partial done")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "excluded", ["failed", "assistant", "missing-data", "nonvision", "unaccepted"]
+)
+async def test_excluded_historical_media_keeps_next_send_priced(monkeypatch, excluded):
+    from types import SimpleNamespace
+    from tldw_chatbook.Chat.console_turn_preparation import ConsoleTurnPreparationState
+
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(session_id, role=ConsoleMessageRole.USER, content="prior")
+        message = store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT
+            if excluded == "assistant"
+            else ConsoleMessageRole.USER,
+            content="image row",
+            attachments=(
+                MessageAttachment(
+                    None if excluded == "missing-data" else b"pixels",
+                    "image/png",
+                    "history.png",
+                    0,
+                ),
+            ),
+        )
+        if excluded == "failed":
+            store.mark_message_send_blocked(message.id)
+        controller = console._ensure_console_chat_controller()
+        if excluded == "nonvision":
+            configuration = controller.resolve_turn_configuration_snapshot(session_id)
+            monkeypatch.setattr(
+                controller,
+                "resolve_turn_configuration_snapshot",
+                lambda _id: replace(
+                    configuration,
+                    capabilities={**configuration.capabilities, "vision": False},
+                ),
+            )
+        if excluded == "unaccepted":
+            monkeypatch.setattr(
+                store,
+                "preparation_for_session",
+                lambda _id: SimpleNamespace(
+                    transient_user_message_id=message.id,
+                    state=ConsoleTurnPreparationState.PREPARING,
+                ),
+            )
+        monkeypatch.setattr(
+            controller,
+            "_provider_message_payloads",
+            Mock(side_effect=AssertionError("serialized media")),
+        )
+        console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
+            "follow up " * 500
+        )
+        console._sync_console_settings_summary()
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert _next_send_dollars(state) > 0
+
+
+@pytest.mark.asyncio
+async def test_context_cost_refresh_does_not_materialize_attachment_payloads(
+    monkeypatch,
+):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        store.append_message(
+            store.active_session_id,
+            role=ConsoleMessageRole.USER,
+            content="historical image",
+            attachments=(MessageAttachment(b"pixels", "image/png", "history.png", 0),),
+        )
+        controller = console._ensure_console_chat_controller()
+        monkeypatch.setattr(
+            controller,
+            "_provider_message_payloads",
+            Mock(side_effect=AssertionError("serialized provider attachments")),
+        )
+        console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
+            "text follow-up"
+        )
+
+        console._sync_console_settings_summary()
+        state = console._build_console_cost_state()
+
+        assert console._last_console_context_control_state.request_tokens is not None
+        assert state is not None
+        assert "On next send unavailable" in state.label
+
+
+@pytest.mark.asyncio
+async def test_next_send_estimate_gates_staged_evidence_on_session():
+    """Qodo finding 4: staged evidence belongs to the ACTIVE session; an
+    estimate captured for a different session must not splice it in."""
+    from tldw_chatbook.Chat.citation_evidence_models import (
+        EvidenceBundle,
+        EvidenceReference,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+    from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+
+        big_reference = EvidenceReference(
+            evidence_id="S1",
+            source_id="media-1",
+            source_type="media",
+            title="Big corpus",
+            snippet="staged evidence text " * 5_000,
+            authority_label="local",
+            status="available",
+            source_owner="local",
+        )
+        bundle = EvidenceBundle(
+            bundle_id="bundle-gate",
+            query="question",
+            source="Library Search/RAG",
+            references=(big_reference,),
+        )
+        launch = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Library Search/RAG retrieval",
+            payload={"query": "question", "evidence_bundle": bundle.to_payload()},
+            status="staged",
+        )
+        console._retrieval._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        snapshot = ConsoleContextSnapshot(
+            current_messages=[],
+            next_send_payload={
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        active_id = store.active_session_id
+        with_staging = console._console_next_send_token_estimate(
+            snapshot, session_id=active_id
+        )
+        without_staging = console._console_next_send_token_estimate(
+            snapshot, session_id="a-different-session"
+        )
+
+        assert with_staging is not None and without_staging is not None
+        assert with_staging > without_staging

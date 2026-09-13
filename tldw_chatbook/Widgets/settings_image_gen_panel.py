@@ -51,7 +51,6 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
-from tldw_chatbook.Image_Generation.config import get_image_generation_config
 from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
     get_all_templates,
@@ -66,6 +65,16 @@ from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     key_source_after_clear,
     load_user_image_generation_table,
 )
+
+
+def get_image_generation_config(*args: Any, **kwargs: Any) -> Any:
+    """Load image-generation configuration only when this panel composes."""
+
+    from tldw_chatbook.Image_Generation.config import (
+        get_image_generation_config as load,
+    )
+
+    return load(*args, **kwargs)
 
 
 # Generation-defaults scalar fields, in display order. `context_llm_enabled`

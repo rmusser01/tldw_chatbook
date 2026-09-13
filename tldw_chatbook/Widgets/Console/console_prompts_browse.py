@@ -110,11 +110,10 @@ class ConsolePromptsBrowse(Vertical):
             id="console-prompts-model-status",
             markup=False,
         )
-        if self._improve_unavailable_reason:
+        if self._improve_unavailable_reason and self._can_configure_provider:
             yield Button(
                 "Configure provider / model",
                 id="console-prompts-configure-provider",
-                disabled=not self._can_configure_provider,
             )
         with Horizontal(id="console-prompts-browse-controls"):
             yield Select(

@@ -91,6 +91,48 @@ server contract is a compatibility source only.
 
 ## Context
 
+### Reviewed Buddy snapshot conversion (2026-09-07)
+
+Users may explicitly convert a validated saved Buddy or native archive into a new
+independent Character. A review maps operational states to expression keys and
+selects a portrait; conversion encodes ordinary native expression images. No live
+cross-runtime binding is created. Character publication uses the existing Actor
+Pack activation transaction and privately prepared files. Source/destination
+authority is rechecked before commit. Deleting or changing the source afterwards
+cannot affect the character.
+
+Per-image `tldw/buddy_conversion` v1 lineage is public, bounded, and hash-bound.
+It travels in attribution carrier v2 with required `visual-buddy-conversion/v1`;
+older readers reject rather than discard it. Source local identifiers never leave
+the profile. The exact contract and alternatives are recorded in the
+[conversion plan](../../Docs/superpowers/plans/2026-09-07-buddy-character-conversion.md).
+This narrowly permits a reviewed one-time transformation while preserving the
+separate runtime/storage models and the portable identities defined above.
+
+### Artwork attribution amendment (TASK-32024, 2026-09-07)
+
+Shared Visual Identity may carry a versioned public attribution record in the
+`tldw/artwork` source-context namespace. Actor Packs preserve these records in
+`shared-visual-identity/attribution.json`, covered by the ordinary member inventory
+and digest, with required feature `visual-artwork-attribution/v1`. The exact bounded
+record and compatibility contract is in the
+[implementation plan](../../Docs/superpowers/plans/2026-09-07-artwork-attribution.md).
+Older importers reject the feature rather than drop notices. Existing packs without
+attribution retain their existing wire format. Native visual manifests are unchanged.
+
+These records are inert public data, never runtime authority, instructions, or a
+license grant. Only known fields leave the profile; local identifiers and arbitrary
+source context do not. Image records bind to output SHA-256. Edits preserve retained
+image records and the existing manifest license; replacement images lose stale
+records. Profile forks preserve public attribution beside new local bookkeeping.
+
+This enables the provenance prerequisite for a later explicitly reviewed independent
+Buddy snapshot conversion. The two runtimes remain separate; this amendment neither
+introduces live cross-bindings nor claims server-side sidecar support. Putting notices
+in existing display-summary strings was rejected because those strings truncate and
+do not bind attribution to image content. Expanding the native visual schema was
+rejected because a portable notice carrier need not alter rendering contracts.
+
 ADR-067 established Shared Visual Identity as an immutable expression runtime and
 kept Persona Visual Packs separate. The programme now needs a local Persona operational
 runtime, an app-wide Buddy, and a portable actor format without weakening that boundary
@@ -115,6 +157,22 @@ until review, validation, and activation all succeed.
 | Store Persona runtime sections opaquely or defer the runtime | Actor Packs and Buddy would claim Persona visual portability without being able to validate, resolve, render, or safely activate it. |
 
 ## Consequences
+
+### Buddy presentation ownership (TASK-21123, 2026-09-04)
+
+The app owns one disposable Buddy presentation coordinator as well as the domain
+controller. The coordinator mounts the native view on the current primary screen;
+screens carry no Buddy-specific view or reconciliation state. Screen-change signals
+and a generic post-recompose notification keep the view current, including when a
+screen rebuilds without navigation. Controller generation notifications cross to
+the UI through thread-safe app messages. Covered views preserve their existing modal
+behavior, stale view generations cannot publish unavailable state, and geometry
+flushes before controller shutdown. The controller still owns no Textual object.
+
+The implementation must preserve the existing pet-only visual and interaction
+contract. This clarifies ADR-074's app ownership; it does not introduce a general
+overlay framework or use private Textual system-child retention conventions.
+See [the design](../../Docs/superpowers/specs/2026-09-04-task-21123-buddy-overlay-owner.md).
 
 - Actor Pack import/export and Buddy operate only on profile-local actors; server
   Personas require an explicit local copy.

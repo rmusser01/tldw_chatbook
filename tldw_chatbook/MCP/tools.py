@@ -283,17 +283,55 @@ class MCPTools:
             query: Search query
             limit: Maximum number of results
             media_types: Optional list of media types to filter
-            use_semantic: Whether to use semantic search (if available)
+            use_semantic: False forces media keyword search; true or omitted
+                follows the active RAG profile.
 
         Returns:
-            List of search results with content and metadata
+            List of search results with content and metadata. A
+            single-item list with an ``error`` key if ``query``/``limit``
+            fail validation (TASK-1077: an MCP tool handler is a boundary
+            -- the caller is a model -- so inputs are validated here like
+            every other tool in this module).
         """
+        if not isinstance(query, str) or not query.strip():
+            return [{"error": "query must be a non-empty string"}]
+        if not validate_text_input(
+            query, max_length=MAX_SEARCH_QUERY_LENGTH, allow_html=False
+        ):
+            return [
+                {
+                    "error": (
+                        "query must be plain text of at most "
+                        f"{MAX_SEARCH_QUERY_LENGTH} characters"
+                    )
+                }
+            ]
+        # Strict integer check (PR #2624 review): a float-based range
+        # helper accepts fractional/Boolean/numeric-string values, and its
+        # float() conversion raises OverflowError on huge ints -- both
+        # escape the error-dict contract. Bools are ints by subclass, so
+        # they are excluded explicitly.
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            return [
+                {
+                    "error": (
+                        "limit must be an integer between 1 and "
+                        f"{MAX_SEARCH_RESULTS_LIMIT}"
+                    )
+                }
+            ]
+        if not 1 <= limit <= MAX_SEARCH_RESULTS_LIMIT:
+            return [
+                {
+                    "error": (
+                        f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}"
+                    )
+                }
+            ]
+
         try:
-            # Perform search (both service methods are coroutines — they must
-            # be awaited directly, not dispatched via asyncio.to_thread, which
-            # would return the unawaited coroutine object)
-            if use_semantic and hasattr(self.rag_service, "semantic_search"):
-                results = await self.rag_service.semantic_search(
+            if use_semantic:
+                results = await self.rag_service.profile_search(
                     query=query,
                     limit=limit,
                     media_types=media_types,

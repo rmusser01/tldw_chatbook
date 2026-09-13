@@ -85,6 +85,37 @@ class PrivateBinaryFile:
     result: PrivatePathResult
 
 
+@dataclass(frozen=True)
+class PrivateFileWritePrecondition:
+    """Pinned target identity required by a later atomic replacement."""
+
+    target_identity: tuple[int, int] | None
+
+    def __post_init__(self) -> None:
+        identity = self.target_identity
+        if identity is not None and (
+            type(identity) is not tuple
+            or len(identity) != 2
+            or any(type(part) is not int or part < 0 for part in identity)
+        ):
+            raise ValueError("target_identity must be a device/inode pair or None")
+
+    @classmethod
+    def from_opened(cls, opened: PrivateBinaryFile) -> PrivateFileWritePrecondition:
+        """Capture the identity of a pinned private file."""
+
+        if not isinstance(opened, PrivateBinaryFile):
+            raise TypeError("opened must be PrivateBinaryFile")
+        opened_stat = os.fstat(opened.stream.fileno())
+        return cls((opened_stat.st_dev, opened_stat.st_ino))
+
+    @classmethod
+    def missing(cls) -> PrivateFileWritePrecondition:
+        """Require the atomic replacement target to remain absent."""
+
+        return cls(None)
+
+
 def lexical_path(path: PathInput) -> Path:
     raw = os.fspath(path)
     if "\x00" in raw:
@@ -743,7 +774,11 @@ def _admitted_stream(function):
                 return _MCPAppendStream(function(path, *args, **kwargs), operation)
             if state.source is not config or lexical_path(
                 path
-            ) != state.selected.with_name(state.selected.name + ".lock"):
+            ) != (
+                state.selected
+                if state.route == "config_data_lock"
+                else state.selected.with_name(state.selected.name + ".lock")
+            ):
                 raise RuntimeError("raw_source_helper_not_supported")
             return _ConfigStream(function(path, *args, **kwargs), operation)
         lease = acquire_storage(lexical_path(path))
@@ -906,15 +941,29 @@ def atomic_private_write_bytes(
     payload: bytes,
     *,
     application_owned_directory: PathInput | None = None,
+    target_precondition: PrivateFileWritePrecondition | None = None,
 ) -> PrivatePathResult:
     """Atomically replace a private file without following its target."""
 
     selected = lexical_path(path)
     operation = _runtime_operation(selected)
     raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+
+    if target_precondition is not None and not isinstance(
+        target_precondition, PrivateFileWritePrecondition
+    ):
+        raise TypeError("target_precondition must be PrivateFileWritePrecondition")
     _prepare_application_owned_parent(selected, application_owned_directory)
 
     if not _atomic_posix_guards_available():
+        if target_precondition is not None:
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    reason="atomic_target_precondition_unavailable",
+                )
+            )
         if _WINDOWS_PLATFORM:
             try:
                 if operation is None:
@@ -995,7 +1044,35 @@ def atomic_private_write_bytes(
         except FileNotFoundError:
             existing_stat = None
             prior_mode = None
-        else:
+
+        if target_precondition is not None:
+            expected_identity = target_precondition.target_identity
+            if expected_identity is None:
+                if existing_stat is not None:
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.OPERATION_FAILED,
+                            reason="target_appeared",
+                        )
+                    )
+            elif (
+                existing_stat is None
+                or (
+                    existing_stat.st_dev,
+                    existing_stat.st_ino,
+                )
+                != expected_identity
+            ):
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.OPERATION_FAILED,
+                        reason="target_replaced",
+                    )
+                )
+
+        if existing_stat is not None:
             rejected = _classify_private_file_stat(
                 existing_stat,
                 expected_uid=os.geteuid(),
@@ -1163,6 +1240,7 @@ def atomic_private_write_text(
     *,
     application_owned_directory: PathInput | None = None,
     encoding: str = "utf-8",
+    target_precondition: PrivateFileWritePrecondition | None = None,
 ) -> PrivatePathResult:
     """Atomically replace a private text file."""
 
@@ -1170,6 +1248,7 @@ def atomic_private_write_text(
         path,
         text.encode(encoding),
         application_owned_directory=application_owned_directory,
+        target_precondition=target_precondition,
     )
 
 
@@ -1203,7 +1282,21 @@ def open_private_text_append_stream(
     encoding: str = "utf-8",
     errors: str | None = None,
 ) -> TextIO:
-    """Return a pinned private text stream opened for append."""
+    """Return a pinned private text stream opened for append.
+
+    Every stream this returns writes ``\\n`` as a single LF byte on every
+    platform (``newline="\\n"``). The default (``newline=None``) translates
+    each ``\\n`` a caller writes into ``os.linesep``, which on Windows is
+    ``\\r\\n`` -- so a caller that encodes a line, writes it as text, and then
+    reasons about the file's SIZE (or diffs the file against the bytes it
+    just wrote) is wrong by one byte per line there. ``MCPExecutionLog``
+    does exactly that: it caches a generation's sanitized bytes keyed on
+    ``st_size``, so under CRLF translation the cache was dropped on every
+    append and the whole log was re-parsed and rewritten each time -- the
+    exact per-tool-call cost TASK-21134's cache removed on POSIX. These are
+    line-oriented JSONL/log files, so LF is also the shape every reader here
+    already assumes.
+    """
 
     selected = lexical_path(path)
     _prepare_application_owned_parent(selected, application_owned_directory)
@@ -1213,13 +1306,13 @@ def open_private_text_append_stream(
             selected.parent.mkdir(parents=True, exist_ok=True)
             operation = _runtime_operation(selected)
             if operation is None:
-                return selected.open("a", encoding=encoding, errors=errors)
+                return selected.open("a", encoding=encoding, errors=errors, newline="\n")
             fd = _native_open(
                 selected, os.O_WRONLY | os.O_APPEND | os.O_CREAT, _PRIVATE_FILE_MODE
             )
             try:
                 stream = os.fdopen(
-                    fd, "a", encoding=encoding, errors=errors, closefd=False
+                    fd, "a", encoding=encoding, errors=errors, newline="\n", closefd=False
                 )
             except BaseException:
                 _native_close(fd)
@@ -1294,6 +1387,11 @@ def open_private_text_append_stream(
             "a",
             encoding=encoding,
             errors=errors,
+            # Same LF contract as the Windows branch above. A no-op on this
+            # platform (``os.linesep`` is already LF), stated so the two
+            # branches cannot drift apart on the one property callers of
+            # this helper reason about in bytes.
+            newline="\n",
             closefd=operation is None,
         )
         if operation is not None:
@@ -1309,6 +1407,48 @@ def open_private_text_append_stream(
         if file_fd >= 0:
             _native_close(file_fd)
         _native_close(parent_fd)
+
+
+def unlink_private_file(
+    path: PathInput,
+    *,
+    application_owned_directory: PathInput | None = None,
+) -> bool:
+    """Delete one verified private regular file without following links."""
+
+    selected = lexical_path(path)
+    _prepare_application_owned_parent(selected, application_owned_directory)
+    if not _atomic_posix_guards_available():
+        try:
+            with open_private_binary(selected):
+                pass
+            os.unlink(selected)
+        except FileNotFoundError:
+            return False
+        return True
+
+    try:
+        parent_fd, leaf = _open_verified_parent(
+            selected,
+            missing_leaf_allowed=False,
+        )
+    except FileNotFoundError:
+        return False
+    try:
+        try:
+            target_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        rejected = _classify_private_file_stat(
+            target_stat,
+            expected_uid=os.geteuid(),
+        )
+        if rejected is not None:
+            raise PrivatePathError(PrivatePathResult(selected, rejected))
+        os.unlink(leaf, dir_fd=parent_fd)
+        return True
+    finally:
+        os.close(parent_fd)
 
 
 @contextlib.contextmanager
@@ -1549,15 +1689,19 @@ def secure_private_directory(
                             reason="missing_component_in_shared_sticky_parent",
                         )
                     ) from None
-                _native_mkdir(
-                    component,
-                    mode=_PRIVATE_DIRECTORY_MODE,
-                    dir_fd=current_fd,
-                )
-                next_fd = _open_directory_component(
-                    current_fd, component, **open_options
-                )
-                created_component = True
+                try:
+                    _native_mkdir(
+                        component,
+                        mode=_PRIVATE_DIRECTORY_MODE,
+                        dir_fd=current_fd,
+                    )
+                    created_component = True
+                except FileExistsError:
+                    # Another caller may have created this entry after our
+                    # open. Reopen without following links and apply the same
+                    # owner/type/mode checks below; existence is not trust.
+                    pass
+                next_fd = _open_directory_component(current_fd, component, **open_options)
             except OSError as exc:
                 current_fd, symlink_hops = _follow_trusted_symlink(
                     current_fd=current_fd,

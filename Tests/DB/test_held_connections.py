@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Callable, Optional
 
 import pytest
 
@@ -81,6 +83,46 @@ def _begins(statements: list[str]) -> list[str]:
     ]
 
 
+def _seed_legacy_collection(
+    db: LibraryCollectionsDB,
+    collection_id: str,
+    name: str,
+    *,
+    description: str = "",
+) -> None:
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO library_collections (
+                collection_id, name, description, created_at, updated_at
+            )
+            VALUES (?, ?, ?, '2026-01-01', '2026-01-01')
+            """,
+            (collection_id, name, description),
+        )
+
+
+def _seed_legacy_membership(
+    db: LibraryCollectionsDB,
+    membership_id: str,
+    collection_id: str,
+    *,
+    source_type: str,
+    source_id: str,
+    title: str,
+) -> None:
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO library_collection_items (
+                membership_id, collection_id, source_type, source_id, title, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, '2026-01-01')
+            """,
+            (membership_id, collection_id, source_type, source_id, title),
+        )
+
+
 # === 1. One connection per thread, not per operation ===
 
 
@@ -91,8 +133,8 @@ class TestConnectionsAreHeldPerThread:
         service = LocalLibraryCollectionsService(db)
         opened = _count_opens(db)
 
-        service.create_collection("alpha")
-        service.create_collection("beta")
+        _seed_legacy_collection(db, "legacy-alpha", "alpha")
+        _seed_legacy_collection(db, "legacy-beta", "beta")
         for _ in range(10):
             service.list_collections()
             service.list_library_collections()
@@ -121,6 +163,10 @@ class TestConnectionsAreHeldPerThread:
 
     def test_client_notifications_reuses_one_connection_across_inserts(self, tmp_path):
         db = ClientNotificationsDB(tmp_path / "notifications.db")
+        # TASK-21105: the store opens on first use, so warm the held
+        # connection with one read BEFORE installing the counter -- the
+        # subject here is reuse ACROSS inserts, not the first open.
+        db.get_settings()
         opened = _count_opens(db)
 
         for index in range(20):
@@ -274,9 +320,16 @@ class TestPureReadsDoNotTakeWriteTransactions:
     def _service(self, tmp_path):
         db = LibraryCollectionsDB(tmp_path / "collections.db")
         service = LocalLibraryCollectionsService(db)
-        service.create_collection("alpha", description="first")
-        service.add_item_to_collection(
-            service.list_collections()[0].collection_id,
+        _seed_legacy_collection(
+            db,
+            "legacy-alpha",
+            "alpha",
+            description="first",
+        )
+        _seed_legacy_membership(
+            db,
+            "membership-alpha",
+            "legacy-alpha",
             source_type="media",
             source_id="7",
             title="doc",
@@ -311,11 +364,11 @@ class TestPureReadsDoNotTakeWriteTransactions:
         assert begins.count("ROLLBACK") == 1, begins
         db.close()
 
-    def test_writes_still_take_an_immediate_write_transaction(self, tmp_path):
+    def test_database_writes_still_take_an_immediate_transaction(self, tmp_path):
         db, service = self._service(tmp_path)
         statements = _trace(db._held_connection())
 
-        service.create_collection("beta")
+        _seed_legacy_collection(db, "legacy-beta", "beta")
 
         begins = _begins(statements)
         assert begins.count("BEGIN IMMEDIATE") == 1, begins
@@ -348,7 +401,11 @@ class TestPureReadsDoNotTakeWriteTransactions:
         assert {record.name for record in service.list_collections()} == before
         assert db._held_connection().in_transaction is False
         # The connection is still usable: the guard rolled back before it raised.
-        service.create_collection("after-the-guard")
+        _seed_legacy_collection(
+            db,
+            "legacy-after-the-guard",
+            "after-the-guard",
+        )
         assert "after-the-guard" in {
             record.name for record in service.list_collections()
         }
@@ -394,16 +451,17 @@ class TestPureReadsDoNotTakeWriteTransactions:
         db.close()
 
     def test_a_failed_write_rolls_back_and_leaves_no_open_transaction(self, tmp_path):
-        from tldw_chatbook.Library.library_collections_service import (
-            DuplicateLibraryCollectionItem,
-        )
-
         db, service = self._service(tmp_path)
         collection_id = service.list_collections()[0].collection_id
 
-        with pytest.raises(DuplicateLibraryCollectionItem):
-            service.add_item_to_collection(
-                collection_id, source_type="media", source_id="7", title="dup"
+        with pytest.raises(sqlite3.IntegrityError):
+            _seed_legacy_membership(
+                db,
+                "membership-duplicate",
+                collection_id,
+                source_type="media",
+                source_id="7",
+                title="dup",
             )
 
         # The held connection is reusable straight afterwards -- an
@@ -722,3 +780,232 @@ class TestWorkspaceDBAutocommitAndNesting:
             record.workspace_id for record in service.list_workspaces()
         } == before
         db.close()
+
+
+# === 6. task-22224: stores that copied the held-connection idiom without autocommit ===
+#
+# Mechanism (verified empirically on Python 3.12.11 / SQLite 3.49.1, this repo's
+# floor pair): without ``isolation_level = None``, one bare DML statement on a
+# held connection opens an implicit DEFERRED transaction. A store whose
+# ``transaction()`` issues an unconditional explicit BEGIN then raises "cannot
+# start a transaction within a transaction"; ChaChaNotes' manager instead
+# BORROWS the implicit transaction (``TransactionContextManager.__enter__``),
+# silently degrading ``transaction(immediate=True)`` to a deferred snapshot it
+# will never commit. These guards pin the repaired stores, including the store
+# TEMPLATE others copy (``Library_Ingest_Jobs_DB``).
+
+
+@dataclass
+class _AutocommitProbe:
+    """One store reduced to the surface these guards need."""
+
+    conn: sqlite3.Connection
+    bare_dml: Callable[[], None]
+    write_transaction: Optional[Callable[[], None]]
+    expected_begin: Optional[str]
+    close: Callable[[], None]
+
+
+def _library_ingest_probe(tmp_path) -> _AutocommitProbe:
+    from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+
+    db = LibraryIngestJobsDB(tmp_path / "ingest_jobs.db")
+    conn = db._get_connection()
+
+    def bare_dml() -> None:
+        conn.execute(
+            "INSERT INTO ingest_jobs (seq, job_id, source_path, state) "
+            "VALUES (1, 'ingest-job-1', 'src', 'queued')"
+        )
+
+    def write_transaction() -> None:
+        with db.transaction() as txn_conn:
+            txn_conn.execute(
+                "UPDATE ingest_jobs SET title = 'renamed' WHERE job_id = 'ingest-job-1'"
+            )
+
+    return _AutocommitProbe(conn, bare_dml, write_transaction, "BEGIN", db.close)
+
+
+def _chachanotes_probe(tmp_path) -> _AutocommitProbe:
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "chachanotes.db", "t22224")
+    conn = db.get_connection()
+    # A scratch table keeps the bare DML independent of the production schema
+    # (DDL autocommits identically in both isolation modes).
+    conn.execute("CREATE TABLE IF NOT EXISTS t22224_scratch (x INTEGER)")
+
+    def bare_dml() -> None:
+        conn.execute("INSERT INTO t22224_scratch VALUES (1)")
+
+    def write_transaction() -> None:
+        with db.transaction(immediate=True) as cursor:
+            cursor.execute("SELECT 1").fetchone()
+
+    return _AutocommitProbe(
+        conn, bare_dml, write_transaction, "BEGIN IMMEDIATE", db.close_connection
+    )
+
+
+def _kanban_probe(tmp_path) -> _AutocommitProbe:
+    from tldw_chatbook.Kanban_Interop import local_kanban_db as kanban
+
+    conn = kanban.open_connection(tmp_path / "kanban.db")
+    kanban.initialize_schema(conn)
+
+    def bare_dml() -> None:
+        conn.execute(
+            "INSERT OR REPLACE INTO local_kanban_schema_meta (key, value) "
+            "VALUES ('t22224', '1')"
+        )
+
+    def write_transaction() -> None:
+        with kanban.transaction(conn) as txn_conn:
+            txn_conn.execute(
+                "INSERT OR REPLACE INTO local_kanban_schema_meta (key, value) "
+                "VALUES ('t22224-txn', '1')"
+            )
+
+    return _AutocommitProbe(conn, bare_dml, write_transaction, "BEGIN", conn.close)
+
+
+def _notes_mirror_probe(tmp_path) -> _AutocommitProbe:
+    from tldw_chatbook.Sync_Interop.notes_mirror import NotesMirror
+
+    mirror = NotesMirror(tmp_path / "notes_mirror.db")
+    conn = mirror._conn
+
+    def bare_dml() -> None:
+        conn.execute(
+            "INSERT INTO notes_object_mirror "
+            "(dataset_id, object_id, object_revision, object_hash, server_cursor) "
+            "VALUES ('d', 'o', 1, 'h', 1)"
+        )
+
+    return _AutocommitProbe(conn, bare_dml, None, None, mirror.close)
+
+
+def _tamagotchi_probe(tmp_path) -> _AutocommitProbe:
+    from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import SQLiteStorage
+
+    # ``:memory:`` is the branch that HOLDS a connection (the file branch
+    # opens per operation); it is also how the held-idiom copy would fire.
+    storage = SQLiteStorage(":memory:", enable_recovery=False)
+    conn = storage._connect()
+
+    def bare_dml() -> None:
+        conn.execute("INSERT INTO tamagotchis (pet_id, name) VALUES ('p1', 'Momo')")
+
+    return _AutocommitProbe(conn, bare_dml, None, None, storage.close)
+
+
+_T22224_PROBES = {
+    "library_ingest_jobs_template": _library_ingest_probe,
+    "chachanotes": _chachanotes_probe,
+    "kanban_local": _kanban_probe,
+    "notes_mirror": _notes_mirror_probe,
+    "tamagotchi": _tamagotchi_probe,
+}
+
+_T22224_MANAGER_PROBES = [
+    "library_ingest_jobs_template",
+    "chachanotes",
+    "kanban_local",
+]
+
+
+@pytest.mark.unit
+class TestTask22224StoresUseAutocommit:
+    """task-22224: ``isolation_level=None`` on the stores that lacked it."""
+
+    @pytest.mark.parametrize("store", list(_T22224_PROBES), ids=list(_T22224_PROBES))
+    def test_connection_isolation_level_is_none(self, tmp_path, store):
+        probe = _T22224_PROBES[store](tmp_path)
+        try:
+            assert probe.conn.isolation_level is None, (
+                f"{store}: held/store connection is not in autocommit mode -- "
+                "one bare DML statement re-arms the implicit-DEFERRED trap"
+            )
+        finally:
+            probe.close()
+
+    @pytest.mark.parametrize("store", list(_T22224_PROBES), ids=list(_T22224_PROBES))
+    def test_bare_dml_leaves_no_open_transaction(self, tmp_path, store):
+        probe = _T22224_PROBES[store](tmp_path)
+        try:
+            probe.bare_dml()
+            assert probe.conn.in_transaction is False, (
+                f"{store}: bare DML left an implicit transaction open on the "
+                "held connection"
+            )
+        finally:
+            probe.close()
+
+    @pytest.mark.parametrize("store", _T22224_MANAGER_PROBES, ids=_T22224_MANAGER_PROBES)
+    def test_bare_dml_then_write_transaction_still_begins(self, tmp_path, store):
+        """The review's repro: bare DML must not degrade ``transaction()``.
+
+        Pre-fix this is red two different ways: the template and kanban raise
+        "cannot start a transaction within a transaction" at the explicit
+        BEGIN, while ChaChaNotes silently borrows the implicit transaction and
+        the expected BEGIN never reaches SQLite. Asserted off the actual
+        statements SQLite ran (``set_trace_callback``), not the call graph.
+        """
+        probe = _T22224_PROBES[store](tmp_path)
+        try:
+            probe.bare_dml()
+            statements = _trace(probe.conn)
+
+            probe.write_transaction()
+
+            begins = _begins(statements)
+            assert probe.expected_begin in begins, (
+                f"{store}: expected an explicit {probe.expected_begin} after "
+                f"bare DML, got transaction statements {begins}"
+            )
+            assert begins.count("COMMIT") == 1, begins
+        finally:
+            probe.close()
+
+    def test_template_bare_dml_survives_closing_the_held_connection(self, tmp_path):
+        """The task-3012 failure, pinned on the store TEMPLATE others copy.
+
+        Under legacy isolation the bare INSERT auto-BEGINs and is silently
+        rolled back when the held connection closes.
+        """
+        from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+
+        path = tmp_path / "ingest_jobs.db"
+        db = LibraryIngestJobsDB(path)
+        db._get_connection().execute(
+            "INSERT INTO ingest_jobs (seq, job_id, source_path, state) "
+            "VALUES (1, 'ingest-job-1', 'src', 'queued')"
+        )
+        db.close()
+
+        reopened = LibraryIngestJobsDB(path)
+        try:
+            jobs = reopened.all_jobs()
+            assert [job["job_id"] for job in jobs] == ["ingest-job-1"]
+        finally:
+            reopened.close()
+
+    def test_notes_mirror_bare_dml_survives_close(self, tmp_path):
+        from tldw_chatbook.Sync_Interop.notes_mirror import NotesMirror
+
+        path = tmp_path / "notes_mirror.db"
+        mirror = NotesMirror(path)
+        mirror._conn.execute(
+            "INSERT INTO notes_object_mirror "
+            "(dataset_id, object_id, object_revision, object_hash, server_cursor) "
+            "VALUES ('d', 'o', 7, 'h', 9)"
+        )
+        mirror.close()
+
+        reopened = NotesMirror(path)
+        try:
+            record = reopened.get("d", "o")
+            assert record is not None and record.object_revision == 7
+        finally:
+            reopened.close()

@@ -1,0 +1,24 @@
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Rol  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────┐            ‹ Back to list
+│ Navigation           │          Name
+│     Import…          │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │          ▊ Release assistant                         ▎
+│ ▊ Search Library… ▎  │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │                                                       ▁
+│                      │          Description
+│ ───────────────────  │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+│  Browse        ▾     │          ▊ Prepares release notes                    ▎
+│    Media (0)       ▅ │<--- ---> ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+│    Chats (0)         │
+│    Notes (0+)        │            Basic     Advanced     Info
+│  ▸ Prompts (1)       │          This prompt requires compatibility or
+│    Skills (0)        │          conversion controls.
+│    Collections       │          Prompt · Local · structured format
+│    Search / RAG      │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+│ ───────────────────  │
+│  Create        ▾     │            Use in Console
+└──────────────────────┘            More actions
+  / focus search | F6 next pane | esc focus rail | F1 · Ctrl+P · Ctrl+Q

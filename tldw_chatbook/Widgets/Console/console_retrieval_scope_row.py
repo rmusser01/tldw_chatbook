@@ -29,6 +29,15 @@ EDIT_LABEL = "Edit"
 CLEAR_LABEL = "Clear"
 
 
+def console_retrieval_scope_label(state: ConsoleRetrievalScopeState) -> str:
+    """Return the shared visible summary for a retrieval item scope."""
+    if state.is_empty:
+        return "Scope: no sources"
+    if state.is_scoped:
+        return f"Scope: {state.item_count} items"
+    return UNSCOPED_LABEL
+
+
 class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
     """Compact Inspector row summarizing the active conversation's RAG scope.
 
@@ -84,12 +93,7 @@ class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
         # default, diverging from the status-pills chip's ``_scope_chip_render``
         # (which checks ``is_empty`` explicitly). Row and chip render the
         # exact same state snapshot and must agree.
-        if self.state.is_empty:
-            label = "Scope: no sources"
-        elif self.state.is_scoped:
-            label = f"Scope: {self.state.item_count} items"
-        else:
-            label = UNSCOPED_LABEL
+        label = console_retrieval_scope_label(self.state)
         label_widget = Static(
             label,
             id=LABEL_ID,
@@ -123,13 +127,13 @@ class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
             yield self._action_button(
                 CLEAR_LABEL,
                 CLEAR_BTN_ID,
-                f"console-retrieval-scope-action {CLEAR_BUTTON_CLASS}",
+                f"console-retrieval-scope-action console-rail-focus-carrier {CLEAR_BUTTON_CLASS}",
             )
         else:
             yield self._action_button(
                 NARROW_LABEL,
                 NARROW_BTN_ID,
-                f"console-retrieval-scope-action {OPEN_BUTTON_CLASS}",
+                f"console-retrieval-scope-action console-rail-focus-carrier {OPEN_BUTTON_CLASS}",
             )
 
     @staticmethod

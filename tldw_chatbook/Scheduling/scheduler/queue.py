@@ -10,11 +10,31 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import DORMANT_TRANSFER_STATES
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
 _FUTURE_SORT_KEY = "9999-12-31T23:59:59+00:00"
 _DEFAULT_OWNER_ID = "local"
+#: Server-scoped owners ("server:<user_id>") mark rows the SERVER executes
+#: (ADR-077 decision 1, single-owner execution): the local loop must never
+#: arm or dispatch them, or an app running while the server also fires the
+#: row would double-execute by construction.
+_SERVER_OWNER_PREFIX = "server:"
+
+
+def is_server_scoped_owner(owner_id: Any) -> bool:
+    """Return True when a row's owner marks it server-executed (ADR-077).
+
+    Args:
+        owner_id: A reminder row's ``owner_id`` value (any type tolerated;
+            non-strings simply are not server-scoped).
+
+    Returns:
+        True when ``owner_id`` is a string prefixed with the server-owner
+        prefix, marking the row as executed by the server.
+    """
+    return isinstance(owner_id, str) and owner_id.startswith(_SERVER_OWNER_PREFIX)
 
 
 class PriorityQueue:
@@ -44,16 +64,49 @@ class PriorityQueue:
         briefing jobs that have a ``next_run_at``, and sorts the combined list
         by ``next_run_at``.
 
+        Local automation definitions (schedules-handoff PR-2, Task 5) are
+        armed the same way: real DB rows, not a projection (spec §7.2) --
+        loaded unconditionally, each tagged ``"type": "automation_definition"``
+        so ``SchedulerLoop`` routes it to the registered handler.
+
         The ``now`` parameter is retained for back-compat and tests: when
         provided, only reminder tasks scheduled at or before ``now`` are loaded;
-        projections are still appended unconditionally.
+        projections and automation definitions are still appended
+        unconditionally.
         """
         if now is None:
-            self._items = self.db.list_reminder_tasks(enabled=True)
+            self._items = self.db.list_reminder_tasks(enabled=True, armable_only=True)
             # Filter out tasks without a next run time and sort by it.
             self._items = [item for item in self._items if item.get("next_run_at")]
         else:
             self._items = self.db.reminders_due_before(now)
+
+        for definition in self.db.list_armable_automation_definitions(
+            owner_id=_DEFAULT_OWNER_ID
+        ):
+            definition["type"] = "automation_definition"
+            self._items.append(definition)
+
+        # ADR-077 decision 1 (single-owner execution): server-scoped rows
+        # are the server's to execute. They are dropped at the queue seam
+        # so no tick, reload, or load-path variant can ever dispatch one
+        # locally -- their notifications arrive through the server feed.
+        # Automation-definition rows are included here too (defense in
+        # depth with `list_armable_automation_definitions`'s own
+        # `owner_id` filter above): neither guard alone is trusted to keep
+        # a server-scoped definition from arming locally.
+        #
+        # A second, independent guard drops any row still carrying a
+        # dormant `transfer_state` (spec §6.1 ruling 2): defense in depth
+        # with the DB-query layer's own exclusion above (`list_reminder_
+        # tasks(armable_only=True)` / `reminders_due_before` /
+        # `list_armable_automation_definitions`) for both primitives.
+        self._items = [
+            item
+            for item in self._items
+            if not is_server_scoped_owner(item.get("owner_id"))
+            and item.get("transfer_state") not in DORMANT_TRANSFER_STATES
+        ]
 
         self._append_projected(self.watchlist_projection)
         self._append_projected(self.briefing_projection)

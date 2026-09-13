@@ -17,7 +17,7 @@ references:
   - Docs/superpowers/specs/2026-08-12-notes-folder-import-sync-design.md
   - backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md
   - >-
-    backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md
+    backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md
 priority: high
 ---
 
@@ -45,9 +45,9 @@ Execute a user-approved one-time import plan into local Database Notes with boun
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
 
-ADR paths: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`, `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+ADR paths: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`, `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
 
-Reason: ADR-059 already assigns one-time import receipts and provenance to the device-private Notes sync owner, and ADR-060 already fixes optimistic updates, binding privacy, backup exclusion, and interruption semantics. This task implements those accepted boundaries for the local one-time-import executor without adding server authority or lasting-sync behavior.
+Reason: ADR-059 already assigns one-time import receipts and provenance to the device-private Notes sync owner, and ADR-073 already fixes optimistic updates, binding privacy, backup exclusion, and interruption semantics. This task implements those accepted boundaries for the local one-time-import executor without adding server authority or lasting-sync behavior.
 
 1. Define approval, execution, progress, outcome, and redacted-diagnostic models with a private canonical plan digest.
 2. Add the first migration of the private Notes sync-state SQLite owner for import sessions, folders, payload effects, and repeat observations, including owner-registry and backup-exclusion coverage.
@@ -76,7 +76,7 @@ Verification evidence:
 - Privacy/storage: no production logging or raw-exception emission in the import modules, no raw `sqlite3.connect` in the receipt owner or executor, receipt tables store only opaque identifiers/private digests/bounded state, inventory row C49 is exact, and `notes.sync_state` is private-file-only and excluded from backup/export registration.
 - Backlog duplicate-ID guard: **1,936 task files, no duplicate IDs**.
 
-ADR required: no new ADR. ADR-059 and ADR-060 already govern device-local receipt ownership, optimistic conflict handling, privacy, backup exclusion, and interruption semantics; the implementation follows and retains both links.
+ADR required: no new ADR. ADR-059 and ADR-073 already govern device-local receipt ownership, optimistic conflict handling, privacy, backup exclusion, and interruption semantics; the implementation follows and retains both links.
 
 Primary implementation files are `note_import_execution_models.py`, `note_import_receipts.py`, `note_import_executor.py`, `note_import_planner.py`, `note_folder_repository.py`, `private_sqlite.py`, and `config.py`, with focused Notes/private-SQLite tests, the SQLite owner inventory update, and the executable implementation plan. The implementation series runs from `25e720482` through `22c053b2d`; closeout hardening is in `cbdaf09a4` and `a0057cc8b`.
 <!-- SECTION:NOTES:END -->
@@ -88,7 +88,7 @@ Primary implementation files are `note_import_execution_models.py`, `note_import
 - [x] #2 The implementation plan was followed or deviations are documented in Implementation Notes.
 - [x] #3 Focused unit and integration tests cover execution, storage, interruption, retry, and privacy behavior.
 - [x] #4 Relevant static analysis, formatting, duplicate-task, and diff checks pass.
-- [x] #5 ADR-059/060 and affected storage documentation remain accurate and linked.
+- [x] #5 ADR-059/073 and affected storage documentation remain accurate and linked.
 - [x] #6 The final diff is self-reviewed and receives independent code review.
 - [x] #7 Implementation Notes summarize the approach, decisions, exact verification, and modified files.
 - [x] #8 Any reusable incident is recorded in the applicable lessons file, or closeout states that none was warranted.

@@ -1,0 +1,490 @@
+name: Release Voice AEC
+
+on:
+  workflow_dispatch:
+    inputs:
+      matrix_run_id:
+        description: Successful Voice AEC wheels workflow-run ID for this tag commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+
+jobs:
+  verify-qualified-release:
+    name: Verify protected tag and exact qualified artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      source_sha: ${{ steps.matrix.outputs.source_sha }}
+      version: ${{ steps.tag.outputs.version }}
+      release_tag: ${{ steps.tag.outputs.release_tag }}
+      artifact_name: ${{ steps.matrix.outputs.artifact_name }}
+      source_tree_digest: ${{ steps.tree.outputs.digest }}
+      event_name: ${{ steps.matrix.outputs.event_name }}
+      repository_id: ${{ steps.matrix.outputs.repository_id }}
+      repository_owner_id: ${{ steps.matrix.outputs.repository_owner_id }}
+      run_attempt: ${{ steps.matrix.outputs.run_attempt }}
+    steps:
+      - name: Check out the protected release tag without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up verification Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Require exact voice-aec-v<app-version> protected tag
+        id: tag
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          python Packaging/check_voice_aec_version_sync.py
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import tomllib
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          expected = f"refs/tags/voice-aec-v{version}"
+          if os.environ["RELEASE_REF"] != expected:
+              raise SystemExit(
+                  f"release must run from protected tag {expected}; "
+                  f"got {os.environ['RELEASE_REF']}"
+              )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+              output.write(f"release_tag=voice-aec-v{version}\n")
+          PY
+
+      - name: Require explicit successful exact-commit matrix workflow run
+        id: matrix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MATRIX_RUN_ID: ${{ inputs.matrix_run_id }}
+          RELEASE_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          case "$MATRIX_RUN_ID" in
+            ''|*[!0-9]*) echo "matrix_run_id must be numeric" >&2; exit 1 ;;
+          esac
+          gh api "/repos/$REPOSITORY/actions/runs/$MATRIX_RUN_ID" > matrix-run.json
+          python - <<'PY'
+          import json
+          import os
+
+          run = json.load(open("matrix-run.json", encoding="utf-8"))
+          expected = {
+              "conclusion": "success",
+              "head_sha": os.environ["RELEASE_SHA"],
+              "id": int(os.environ["MATRIX_RUN_ID"]),
+              "path": ".github/workflows/voice-aec-wheels.yml",
+          }
+          for key, value in expected.items():
+              if run.get(key) != value:
+                  raise SystemExit(
+                      f"matrix workflow-run {key} mismatch: {run.get(key)!r} != {value!r}"
+                  )
+          if run.get("event") not in {"push", "workflow_dispatch"}:
+              raise SystemExit("release qualification cannot come from a pull-request run")
+          if run.get("head_branch") != "main":
+              raise SystemExit("release qualification must come from refs/heads/main")
+          if run.get("repository", {}).get("full_name") != os.environ["REPOSITORY"]:
+              raise SystemExit("matrix workflow-run repository identity mismatch")
+          repository_id = run.get("repository", {}).get("id")
+          repository_owner_id = run.get("repository", {}).get("owner", {}).get("id")
+          run_attempt = run.get("run_attempt")
+          if not all(
+              isinstance(value, int) and value > 0
+              for value in (repository_id, repository_owner_id, run_attempt)
+          ):
+              raise SystemExit("matrix workflow-run stable identity metadata is missing")
+          source_sha = run["head_sha"]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"source_sha={source_sha}\n")
+              output.write(f"artifact_name=voice-aec-qualified-{source_sha}\n")
+              output.write(f"event_name={run['event']}\n")
+              output.write(f"repository_id={repository_id}\n")
+              output.write(f"repository_owner_id={repository_owner_id}\n")
+              output.write(f"run_attempt={run_attempt}\n")
+          PY
+
+      - name: Download only the named immutable artifact from that run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.matrix.outputs.artifact_name }}
+          path: qualified
+          run-id: ${{ inputs.matrix_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Recompute and match the source-tree digest at the tag
+        id: tree
+        env:
+          SOURCE_SHA: ${{ steps.matrix.outputs.source_sha }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import subprocess
+
+          listing = subprocess.run(
+              [
+                  "git", "ls-tree", "-r", "--full-tree", os.environ["SOURCE_SHA"],
+                  "--", "native/voice_aec",
+              ],
+              check=True,
+              capture_output=True,
+          ).stdout
+          digest = hashlib.sha256(listing).hexdigest()
+          expected = f"{digest}  native/voice_aec"
+          if Path("qualified/source-tree.sha256").read_text().strip() != expected:
+              raise SystemExit("qualified source-tree digest does not match the tag")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"digest={digest}\n")
+          PY
+
+      - name: Install the official Sigstore verifier
+        run: python -m pip install --disable-pip-version-check sigstore==4.1.0
+
+      - name: Cryptographically verify every retained keyless provenance statement
+        env:
+          WORKFLOW_IDENTITY: >-
+            https://github.com/${{ github.repository }}/.github/workflows/voice-aec-wheels.yml@refs/heads/main
+        shell: bash
+        run: |
+          shopt -s nullglob
+          statements=(qualified/attestations/*.provenance.json)
+          test "${#statements[@]}" -gt 0
+          for statement in "${statements[@]}"; do
+            python -m sigstore verify identity \
+              --bundle "$statement.sigstore.json" \
+              --cert-identity "$WORKFLOW_IDENTITY" \
+              --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$statement"
+          done
+
+      - name: Verify GitHub OIDC provenance for every exact distribution byte
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.matrix.outputs.source_sha }}
+          SIGNER_WORKFLOW: >-
+            ${{ github.repository }}/.github/workflows/voice-aec-wheels.yml
+          WORKFLOW_IDENTITY: >-
+            https://github.com/${{ github.repository }}/.github/workflows/voice-aec-wheels.yml@refs/heads/main
+        shell: bash
+        run: |
+          shopt -s nullglob
+          distributions=(qualified/dist/*)
+          test "${#distributions[@]}" -gt 0
+          for distribution in "${distributions[@]}"; do
+            gh attestation verify "$distribution" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle qualified/github-build-provenance.jsonl \
+              --signer-workflow "$SIGNER_WORKFLOW" \
+              --cert-identity "$WORKFLOW_IDENTITY" \
+              --source-digest "$SOURCE_SHA" \
+              --source-ref refs/heads/main \
+              --deny-self-hosted-runners
+          done
+
+      - name: Fail closed on hashes, contents, SBOM, notices, and provenance fields
+        env:
+          SOURCE_SHA: ${{ steps.matrix.outputs.source_sha }}
+          SOURCE_TREE_DIGEST: ${{ steps.tree.outputs.digest }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          EVENT_NAME: ${{ steps.matrix.outputs.event_name }}
+          REPOSITORY_ID: ${{ steps.matrix.outputs.repository_id }}
+          REPOSITORY_OWNER_ID: ${{ steps.matrix.outputs.repository_owner_id }}
+          RUN_ATTEMPT: ${{ steps.matrix.outputs.run_attempt }}
+          RUN_ID: ${{ inputs.matrix_run_id }}
+          WORKFLOW_IDENTITY: >-
+            https://github.com/${{ github.repository }}/.github/workflows/voice-aec-wheels.yml@refs/heads/main
+        run: |
+          python Packaging/verify_voice_aec_attestations.py qualified \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-identity "$WORKFLOW_IDENTITY" \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-digest "$SOURCE_TREE_DIGEST" \
+            --workflow-ref "refs/heads/main" \
+            --workflow-path ".github/workflows/voice-aec-wheels.yml" \
+            --event-name "$EVENT_NAME" \
+            --repository-id "$REPOSITORY_ID" \
+            --repository-owner-id "$REPOSITORY_OWNER_ID" \
+            --runner-environment "github-hosted" \
+            --run-id "$RUN_ID" \
+            --run-attempt "$RUN_ATTEMPT" \
+            --expected-version "$VERSION"
+
+  verify-app-rollout-authority:
+    name: Regenerate source-bound app rollout authority
+    needs: verify-qualified-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the exact protected release tag without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up the qualified evidence interpreter
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Download the exact repaired-wheel evidence artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify-qualified-release.outputs.artifact_name }}
+          path: qualified
+          run-id: ${{ inputs.matrix_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Install the exact local companion and qualification tools
+        shell: bash
+        run: |
+          shopt -s nullglob
+          wheels=(qualified/dist/*cp312*manylinux*x86_64.whl)
+          test "${#wheels[@]}" -eq 1
+          python -m pip install --disable-pip-version-check "${wheels[0]}"
+          python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Recompute, regenerate, and byte-compare rollout authority
+        env:
+          APP_VERSION: ${{ needs.verify-qualified-release.outputs.version }}
+        shell: bash
+        run: |
+          voice_source_digest="$(python Packaging/compute_voice_source_digest.py)"
+          mkdir generated-authority
+          python Packaging/generate_voice_qualification_manifest.py \
+            --source-tree-digest "$voice_source_digest" \
+            --app-version "$APP_VERSION" \
+            --aec-upstream 109e23c9cec3a44e67c08774874a409741b1e58a \
+            --wheelhouse qualified/dist \
+            --automated-dir Artifacts/voice_qualification/automated \
+            --physical-dir Artifacts/voice_qualification/physical \
+            --output generated-authority/voice_qualification_manifest.json \
+            --build-identity-output generated-authority/voice_build_identity.json
+          cmp --silent generated-authority/voice_qualification_manifest.json \
+            tldw_chatbook/Audio/voice_qualification_manifest.json
+          cmp --silent generated-authority/voice_build_identity.json \
+            tldw_chatbook/Audio/voice_build_identity.json
+
+      - name: Run every platform-key authority regression
+        run: >-
+          python -m pytest -q
+          Tests/Packaging/test_voice_qualification_manifest.py
+          Tests/Chat/test_console_voice_settings.py
+
+      - name: Build the source-bound application wheel
+        run: |
+          python -m build --wheel --outdir app-dist
+          test "$(find app-dist -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 1
+
+      - name: Run installed app wheel authority smoke
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/app-authority-venv"
+          app_python="$RUNNER_TEMP/app-authority-venv/bin/python"
+          shopt -s nullglob
+          native_wheels=(qualified/dist/*cp312*manylinux*x86_64.whl)
+          app_wheels=(app-dist/*.whl)
+          test "${#native_wheels[@]}" -eq 1
+          test "${#app_wheels[@]}" -eq 1
+          "$app_python" -m pip install --disable-pip-version-check \
+            "${native_wheels[0]}" "${app_wheels[0]}"
+          cd "$RUNNER_TEMP"
+          "$app_python" - <<'PY'
+          import os
+          from pathlib import Path
+
+          import tldw_chatbook
+          from tldw_chatbook.Chat.console_voice_settings import (
+              speculative_voice_qualified,
+          )
+
+          package = Path(tldw_chatbook.__file__).resolve()
+          if package.is_relative_to(Path(os.environ["GITHUB_WORKSPACE"]).resolve()):
+              raise SystemExit("authority smoke imported the checkout, not the wheel")
+          if not speculative_voice_qualified():
+              raise SystemExit("installed app wheel is not qualified on this platform")
+          PY
+
+  publish-exact-bytes:
+    name: Approve and publish exact qualified bytes
+    needs: [verify-qualified-release, verify-app-rollout-authority]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: pypi-release
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    steps:
+      - name: Download the same immutable artifact after approval
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify-qualified-release.outputs.artifact_name }}
+          path: qualified
+          run-id: ${{ inputs.matrix_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify SHA256SUMS immediately before publishing
+        shell: bash
+        run: |
+          cd qualified
+          sha256sum --check SHA256SUMS
+
+      - name: Archive exact qualified evidence on the protected release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.verify-qualified-release.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.verify-qualified-release.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSET_NAME="voice-aec-qualified-${SOURCE_SHA}.tar.gz"
+          tar --format=gnu --sort=name --mtime=@0 \
+            --owner=0 --group=0 --numeric-owner \
+            --mode='u+rw,go+rX,go-w' -cf - qualified | gzip -n > "$ASSET_NAME"
+          ARCHIVE_SHA256="$(sha256sum "$ASSET_NAME" | cut -d ' ' -f 1)"
+
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" "$ASSET_NAME" --verify-tag \
+              --title "$RELEASE_TAG native evidence" \
+              --notes "Retained qualified voice-AEC release evidence."
+          else
+            if ! gh release view "$RELEASE_TAG" --json assets \
+              --jq '.assets[].name' | grep -Fxq "$ASSET_NAME"; then
+              echo "existing release is missing qualified evidence" >&2
+              exit 1
+            fi
+            mkdir existing-asset
+            gh release download "$RELEASE_TAG" --pattern "$ASSET_NAME" \
+              --dir existing-asset
+            EXISTING_SHA256="$(sha256sum "existing-asset/$ASSET_NAME" \
+              | cut -d ' ' -f 1)"
+            if [ "$EXISTING_SHA256" != "$ARCHIVE_SHA256" ]; then
+              echo "existing release evidence differs; refusing overwrite" >&2
+              exit 1
+            fi
+          fi
+
+          RELEASE_STATE="$(gh release view "$RELEASE_TAG" \
+            --json tagName,isDraft,isImmutable \
+            --jq '[.tagName, (.isDraft | tostring), (.isImmutable | tostring)] | @tsv')"
+          IFS=$'\t' read -r ACTUAL_TAG IS_DRAFT IS_IMMUTABLE <<< "$RELEASE_STATE"
+          test "$ACTUAL_TAG" = "$RELEASE_TAG"
+          test "$IS_DRAFT" = "false"
+          test "$IS_IMMUTABLE" = "true"
+
+          mkdir downloaded-asset
+          gh release download "$RELEASE_TAG" --pattern "$ASSET_NAME" \
+            --dir downloaded-asset
+          DOWNLOADED_SHA256="$(sha256sum "downloaded-asset/$ASSET_NAME" \
+            | cut -d ' ' -f 1)"
+          test "$DOWNLOADED_SHA256" = "$ARCHIVE_SHA256"
+
+      - name: Trusted Publishing of the exact wheel and sdist bytes
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: qualified/dist
+          attestations: true
+          skip-existing: false
+          verbose: true
+
+  verify-published-wheels:
+    name: Install ${{ matrix.platform }} / Python ${{ matrix.python }}
+    needs: [verify-qualified-release, publish-exact-bytes]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+        platform:
+          - macos-x86_64
+          - macos-arm64
+          - windows-x86_64
+          - linux-x86_64
+          - linux-aarch64
+        include:
+          - platform: macos-x86_64
+            runner: macos-15-intel
+          - platform: macos-arm64
+            runner: macos-15
+          - platform: windows-x86_64
+            runner: windows-2025
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Set up the target Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Download the qualified hashes only; never rebuild
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify-qualified-release.outputs.artifact_name }}
+          path: qualified
+          run-id: ${{ inputs.matrix_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Create one exact-version, wheel-only, hash-locked requirement
+        env:
+          VERSION: ${{ needs.verify-qualified-release.outputs.version }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          hashes = []
+          for line in Path("qualified/SHA256SUMS").read_text().splitlines():
+              digest, relative = line.split("  ", 1)
+              if relative.endswith(".whl"):
+                  hashes.append(digest)
+          if not hashes:
+              raise SystemExit("qualified bundle has no wheel hashes")
+          requirement = " ".join(
+              [f"tldw-voice-aec=={os.environ['VERSION']}"]
+              + [f"--hash=sha256:{digest}" for digest in sorted(hashes)]
+          )
+          Path("exact-wheel-requirement.txt").write_text(requirement + "\n")
+          PY
+
+      - name: Install the published wheel by exact version and qualified hash
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --only-binary=:all:
+          --no-deps
+          --require-hashes
+          --index-url https://pypi.org/simple
+          -r exact-wheel-requirement.txt
+
+      - name: Run an installed native binding smoke
+        run: >-
+          python -c
+          "from tldw_voice_aec import AecProcessor;
+          p=AecProcessor(sample_rate=48000, channels=1);
+          f=bytes(960); p.analyze_render(f, delay_ms=0);
+          assert len(p.process_capture(f, delay_ms=0)) == 960"

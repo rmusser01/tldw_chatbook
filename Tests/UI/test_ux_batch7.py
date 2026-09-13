@@ -97,10 +97,19 @@ def test_saved_filter_roundtrip() -> None:
         def compose(self) -> ComposeResult:
             yield LogsWindow(SimpleNamespace(_log_records=deque()))
 
+    def _batched_save(section_values):
+        # task-21124: save_filter_state persists via ONE batched
+        # save_settings_to_cli_config mutation instead of two sequential
+        # save_setting_to_cli_config rewrites.
+        for section, values in section_values.items():
+            for key, value in values.items():
+                saved[(section, key)] = value
+        return True
+
     with (
         patch(
-            "tldw_chatbook.config.save_setting_to_cli_config",
-            lambda section, key, value: saved.__setitem__((section, key), value),
+            "tldw_chatbook.config.save_settings_to_cli_config",
+            _batched_save,
         ),
         patch(
             "tldw_chatbook.config.get_cli_setting",
@@ -145,7 +154,9 @@ async def test_bulk_mark_and_toggle() -> None:
         from textual.widgets import DataTable
 
         table = screen.query_one("#scheduling-task-table", DataTable)
-        first_title = str(table.get_row_at(0)[0])
+        # redesign PR-2, Task 2: column 0 is now the glyph, column 1 the
+        # title (old single-primitive shape was Title/Type/Status/Next Run).
+        first_title = str(table.get_row_at(0)[1])
         assert first_title.startswith("● ")
 
         screen.action_toggle_enabled()

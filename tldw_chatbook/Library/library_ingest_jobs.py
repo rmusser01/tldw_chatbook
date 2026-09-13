@@ -74,6 +74,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
 
+from tldw_chatbook.Research_Workspace.source_operations import (
+    validate_source_operation_id,
+)
 from tldw_chatbook.STT.persistence import (
     FailedTranscriptionAttempt,
     dump_failed_transcription_attempt,
@@ -175,9 +178,7 @@ def _normalize_active_ingest_url(parsed: Any) -> str:
     if not host:
         raise ValueError("http(s) source requires a host")
     rendered_host = f"[{host}]" if ":" in host else host
-    raw_userinfo = (
-        f"{parsed.netloc.rsplit('@', 1)[0]}@" if "@" in parsed.netloc else ""
-    )
+    raw_userinfo = f"{parsed.netloc.rsplit('@', 1)[0]}@" if "@" in parsed.netloc else ""
     port = parsed.port
     if port is not None and not (
         (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
@@ -307,7 +308,9 @@ class ActiveIngestSubmissionRefused(RuntimeError):
         self.matches = materialized[:ACTIVE_INGEST_REF_LIMIT]
         self.consent_scope = consent_scope
         self.candidate_changed = bool(candidate_changed)
-        super().__init__(f"Active ingest admission refused ({self.match_count} matches).")
+        super().__init__(
+            f"Active ingest admission refused ({self.match_count} matches)."
+        )
 
     def __repr__(self) -> str:
         return (
@@ -423,6 +426,10 @@ class LibraryIngestJob:
         stt_failure_provenance: This job's own sanitized failed STT attempt.
         retry_source_failure_provenance: Immutable failed-attempt snapshot
             carried into this retry.
+        research_source_operation_id: Opaque durable Research Workspace source
+            operation associated with this ingest lineage, when any.
+        dispatch_held: Whether the durable queue row is ineligible for owner
+            dispatch until its Research operation link is committed.
     """
 
     job_id: str
@@ -465,6 +472,8 @@ class LibraryIngestJob:
     retry_of_job_id: str | None = None
     stt_failure_provenance: dict[str, Any] | None = None
     retry_source_failure_provenance: dict[str, Any] | None = None
+    research_source_operation_id: str | None = None
+    dispatch_held: bool = False
 
 
 def _copy_job(job: LibraryIngestJob) -> LibraryIngestJob:
@@ -476,9 +485,7 @@ def _copy_job(job: LibraryIngestJob) -> LibraryIngestJob:
         progress=deepcopy(job.progress),
         error_detail=deepcopy(job.error_detail),
         stt_failure_provenance=deepcopy(job.stt_failure_provenance),
-        retry_source_failure_provenance=deepcopy(
-            job.retry_source_failure_provenance
-        ),
+        retry_source_failure_provenance=deepcopy(job.retry_source_failure_provenance),
     )
 
 
@@ -592,6 +599,13 @@ class LibraryIngestJobRegistry:
         except Exception:
             logger.opt(exception=True).debug(f"ingest job persist failed: {job.job_id}")
 
+    def _persist_required(self, job: LibraryIngestJob) -> None:
+        """Persist ``job`` or raise before exposing a durable-only mutation."""
+
+        if self._store is None:
+            raise RuntimeError("An ingest-job persistence store is required.")
+        self._store.upsert_job(job)
+
     def _persist_delete(self, job_id: str) -> None:
         """Best-effort delete ``job_id`` from the attached store, if any.
 
@@ -625,6 +639,58 @@ class LibraryIngestJobRegistry:
         """
         self._jobs = [_copy_job(job) for job in jobs]
         self._next_id = next_id
+        self._notify_listeners()
+
+    def merge_restored(self, jobs: list[LibraryIngestJob], next_id: int) -> None:
+        """Seed from persisted history WITHOUT discarding jobs submitted since.
+
+        Args:
+            jobs: The persisted jobs, seq-ascending, exactly as ``restore``
+                takes them.
+            next_id: The next sequence number implied by ``jobs``.
+
+        Identical to :meth:`restore` when the registry is still empty, which
+        is the normal startup case. It exists because TASK-21111 moved the
+        app's persisted-history read off the UI thread: the read now finishes
+        a few milliseconds after ``on_mount`` returns, opening a (narrow)
+        window in which a job could already have been submitted. Plain
+        ``restore`` would silently delete it.
+
+        Live jobs are kept and ordered AFTER the restored ones (they are, by
+        definition, newer). A restored job whose ``job_id`` collides with a
+        live one is dropped rather than duplicated -- both sessions allocate
+        ids from ``ingest-job-1`` upward, so a collision in that window is
+        the likely case, and two entries sharing a ``job_id`` would make
+        every id-keyed mutation ambiguous. ``_next_id`` takes the maximum so
+        no future allocation can collide either.
+
+        Unlike the restored jobs -- already in the store by definition -- the
+        live ones are written through here when a store is attached. They
+        were submitted while the registry was still store-less, so their own
+        ``submit`` reached a ``_persist`` that was a no-op, and nothing else
+        ever re-offers them: without this they were silently absent from the
+        store, gone after the next launch, and any stale persisted row that
+        shared their id was restored in their place. Attach the store BEFORE
+        calling this (see ``TldwCli._apply_ingest_job_restore``); with none
+        attached the write-through is a no-op and the pure/in-memory contract
+        is unchanged.
+        """
+        live = self._jobs
+        if not live:
+            self.restore(jobs, next_id)
+            return
+        live_ids = {job.job_id for job in live}
+        restored = [_copy_job(job) for job in jobs if job.job_id not in live_ids]
+        logger.warning(
+            "Ingest job history restored alongside {} job(s) submitted during "
+            "startup; dropped {} colliding persisted id(s).",
+            len(live),
+            len(jobs) - len(restored),
+        )
+        self._jobs = restored + live
+        self._next_id = max(next_id, self._next_id)
+        for job in live:
+            self._persist(job)
         self._notify_listeners()
 
     # -- listeners -----------------------------------------------------
@@ -726,6 +792,9 @@ class LibraryIngestJobRegistry:
         ingest_options: dict[str, Any] | None = None,
         origin: str = "local",
         batch_id: str | None = None,
+        research_source_operation_id: str | None = None,
+        dispatch_held: bool = False,
+        require_persisted: bool = False,
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 
@@ -748,10 +817,27 @@ class LibraryIngestJobRegistry:
             batch_id: Shared id for jobs submitted together (task-2221: a
                 folder expansion mints one so the queue can group the run);
                 ``None`` for single-file submissions.
+            research_source_operation_id: Opaque durable Research Workspace
+                source operation to retain across completion and retry.
+            dispatch_held: Keep the queued row ineligible for dispatch until
+                :meth:`release_dispatch_hold` commits the release.
+            require_persisted: Persist before exposing the queued row or
+                notifying listeners. Used by two-phase Research intake only.
 
         Returns:
             The newly created ``QUEUED`` job (a registry-owned copy).
         """
+        if require_persisted and self._store is None:
+            raise RuntimeError("An ingest-job persistence store is required.")
+        if type(dispatch_held) is not bool:
+            raise TypeError("dispatch_held must be bool")
+        if dispatch_held and not research_source_operation_id:
+            raise ValueError("dispatch_held requires a Research source operation")
+        operation_id = (
+            None
+            if research_source_operation_id is None
+            else validate_source_operation_id(research_source_operation_id)
+        )
         job = LibraryIngestJob(
             job_id=self._allocate_job_id(),
             source_path=source_path,
@@ -767,14 +853,24 @@ class LibraryIngestJobRegistry:
             ingest_options=ingest_options or {},
             origin=origin,
             batch_id=batch_id,
+            research_source_operation_id=operation_id,
+            dispatch_held=dispatch_held,
         )
-        self._jobs.append(job)
-        self._notify_listeners()
-        self._persist(job)
+        if require_persisted:
+            self._persist_required(job)
+            self._jobs.append(job)
+            self._notify_listeners()
+        else:
+            self._jobs.append(job)
+            self._notify_listeners()
+            self._persist(job)
         return _copy_job(job)
 
     def next_queued(
-        self, *, skip_types: frozenset[str] = frozenset()
+        self,
+        *,
+        skip_types: frozenset[str] = frozenset(),
+        only_types: frozenset[str] | None = None,
     ) -> LibraryIngestJob | None:
         """Return the oldest still-``QUEUED`` job, or ``None`` if none.
 
@@ -783,19 +879,61 @@ class LibraryIngestJobRegistry:
                 returns the oldest queued job of any type; a non-empty set
                 returns the oldest queued job whose ``detected_type`` is not
                 in the set (skip-ahead for the heavy-lane cap).
+            only_types: Optional set of ``detected_type`` values eligible for
+                selection. Used when a parse-pool generation owns one resource
+                class, such as ebooks.
 
         Returns:
             A copy of the oldest queued job in FIFO submission order whose
-            ``detected_type`` is not in ``skip_types``, or ``None`` when no
-            such job is queued.
+            ``detected_type`` passes both filters, or ``None`` when no such
+            job is queued.
         """
         for job in self._jobs:
             if (
                 job.state == IngestJobState.QUEUED
+                and not job.dispatch_held
                 and job.detected_type not in skip_types
+                and (only_types is None or job.detected_type in only_types)
             ):
                 return _copy_job(job)
         return None
+
+    def release_dispatch_hold(
+        self, job_id: str, *, require_persisted: bool = True
+    ) -> LibraryIngestJob | None:
+        """Persistently release a held job to its explicit dispatch owner.
+
+        A Research retry is atomically claimed as ``PARSING`` with its release,
+        so a later owner or failure-write error can never expose it to the
+        generic ``QUEUED`` selector. Initial Research intake retains the legacy
+        queued release because its operation owner has not retried a failed job.
+        """
+
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.state is not IngestJobState.QUEUED:
+            return None
+        if not current.dispatch_held:
+            return _copy_job(current)
+        claim_retry = bool(
+            current.research_source_operation_id and current.retry_of_job_id
+        )
+        updated = replace(
+            current,
+            dispatch_held=False,
+            state=IngestJobState.PARSING if claim_retry else current.state,
+            started_at=time.monotonic() if claim_retry else current.started_at,
+        )
+        if require_persisted:
+            self._persist_required(updated)
+            self._jobs[index] = updated
+        else:
+            self._jobs[index] = updated
+            self._persist(updated)
+        self._notify_listeners()
+        return _copy_job(updated)
 
     def _find_index(self, job_id: str) -> int | None:
         for index, job in enumerate(self._jobs):
@@ -954,6 +1092,12 @@ class LibraryIngestJobRegistry:
         current = self._jobs[index]
         if current.superseded or current.dismissed:
             return None
+        if current.origin != "local":
+            logger.warning(
+                f"mark_done called for server job {job_id}; ignoring "
+                "(a server completion must record remote_media_id)."
+            )
+            return None
         updated = replace(
             current,
             state=IngestJobState.DONE,
@@ -964,8 +1108,8 @@ class LibraryIngestJobRegistry:
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
-        self._notify_listeners()
         self._persist(updated)
+        self._notify_listeners()
         return _copy_job(updated)
 
     def mark_failed(
@@ -979,6 +1123,7 @@ class LibraryIngestJobRegistry:
         stt_failure_provenance: (
             FailedTranscriptionAttempt | dict[str, Any] | None
         ) = None,
+        require_persisted: bool = False,
     ) -> LibraryIngestJob | None:
         """Transition a job to ``FAILED`` and stamp ``finished_at``/``finished_at_wall``.
 
@@ -995,6 +1140,8 @@ class LibraryIngestJobRegistry:
                 failure time.
             stt_failure_provenance: Complete sanitized context for this
                 job's failed STT attempt.
+            require_persisted: Persist before exposing the terminal row or
+                notifying listeners. Used by two-phase Research intake only.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
@@ -1034,9 +1181,13 @@ class LibraryIngestJobRegistry:
             finished_at=time.monotonic(),
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
-        self._jobs[index] = updated
+        if require_persisted:
+            self._persist_required(updated)
+            self._jobs[index] = updated
+        else:
+            self._jobs[index] = updated
+            self._persist(updated)
         self._notify_listeners()
-        self._persist(updated)
         return _copy_job(updated)
 
     def mark_remote_done(
@@ -1098,8 +1249,8 @@ class LibraryIngestJobRegistry:
             ),
         )
         self._jobs[index] = updated
-        self._notify_listeners()
         self._persist(updated)
+        self._notify_listeners()
         return _copy_job(updated)
 
     def update_progress(
@@ -1146,7 +1297,11 @@ class LibraryIngestJobRegistry:
         return _copy_job(updated)
 
     def mark_cancelled(
-        self, job_id: str, *, reason: str = ""
+        self,
+        job_id: str,
+        *,
+        reason: str = "",
+        require_persisted: bool = False,
     ) -> LibraryIngestJob | None:
         """Transition a still-running job to ``CANCELLED``.
 
@@ -1161,6 +1316,8 @@ class LibraryIngestJobRegistry:
             job_id: The job to transition.
             reason: Optional human-readable reason, stored in ``error`` since
                 that is the field the queue row already surfaces.
+            require_persisted: Persist before exposing the terminal row or
+                notifying listeners. Used by two-phase Research intake only.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is unknown,
@@ -1182,9 +1339,13 @@ class LibraryIngestJobRegistry:
             finished_at=time.monotonic(),
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
-        self._jobs[index] = updated
+        if require_persisted:
+            self._persist_required(updated)
+            self._jobs[index] = updated
+        else:
+            self._jobs[index] = updated
+            self._persist(updated)
         self._notify_listeners()
-        self._persist(updated)
         return _copy_job(updated)
 
     def mark_skipped(
@@ -1234,6 +1395,7 @@ class LibraryIngestJobRegistry:
         job_id: str,
         *,
         ingest_options: dict[str, Any] | None = None,
+        dispatch_held: bool = False,
     ) -> LibraryIngestJob | None:
         """Append a fresh ``QUEUED`` copy of a ``FAILED`` job, superseding it.
 
@@ -1269,6 +1431,8 @@ class LibraryIngestJobRegistry:
             ingest_options: Optional replacement option snapshot for an explicit
                 user-selected recovery action. Omitted retries preserve the
                 source snapshot unchanged.
+            dispatch_held: Persist the replacement as ineligible until its
+                Research operation points to the new job. Requires a store.
 
         Returns:
             The newly appended ``QUEUED`` job (a copy), or ``None`` when
@@ -1279,6 +1443,10 @@ class LibraryIngestJobRegistry:
         if index is None:
             return None
         source = self._jobs[index]
+        if type(dispatch_held) is not bool:
+            raise TypeError("dispatch_held must be bool")
+        if dispatch_held and self._store is None:
+            raise RuntimeError("An ingest-job persistence store is required.")
         unsupported = (
             source.error_detail is not None
             and source.error_detail.get("category") == "unsupported_file_type"
@@ -1307,11 +1475,12 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
             retry_count=source.retry_count + 1,
+            origin=source.origin,
             batch_id=source.batch_id,
             retry_of_job_id=source.job_id,
-            retry_source_failure_provenance=deepcopy(
-                source.stt_failure_provenance
-            ),
+            research_source_operation_id=source.research_source_operation_id,
+            dispatch_held=dispatch_held,
+            retry_source_failure_provenance=deepcopy(source.stt_failure_provenance),
         )
         superseded_source = replace(source, superseded=True)
         if self._store is not None:
@@ -1414,15 +1583,9 @@ class LibraryIngestJobRegistry:
             return ()
         matches: list[LibraryIngestJob] = []
         for job in self._jobs:
-            if (
-                job.superseded
-                or job.dismissed
-                or job.state not in ACTIVE_INGEST_STATES
-            ):
+            if job.superseded or job.dismissed or job.state not in ACTIVE_INGEST_STATES:
                 continue
-            job_key = _active_source_key_or_none(
-                job.source_path, origin=job.origin
-            )
+            job_key = _active_source_key_or_none(job.source_path, origin=job.origin)
             if job_key in keys:
                 matches.append(_copy_job(job))
         return tuple(matches)
@@ -1458,9 +1621,7 @@ class LibraryIngestJobRegistry:
             ``INGEST_DUPLICATE_PROGRESS_PREFIX`` progress marker.
         """
         return count_duplicate_done_jobs(
-            job
-            for job in self._jobs
-            if not (job.superseded or job.dismissed)
+            job for job in self._jobs if not (job.superseded or job.dismissed)
         )
 
     def counts(self) -> dict[str, int]:
@@ -1572,6 +1733,12 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
         no fixed epoch) -- they are left at their dataclass defaults
         (``0.0``/``None``/``None``).
     """
+    operation_id = row.get("research_source_operation_id")
+    if operation_id is not None:
+        operation_id = validate_source_operation_id(operation_id)
+    raw_dispatch_held = row.get("dispatch_held", 0)
+    if raw_dispatch_held not in {0, 1, False, True}:
+        raise ValueError("dispatch_held must be stored as 0 or 1")
     return LibraryIngestJob(
         job_id=row["job_id"],
         source_path=row["source_path"],
@@ -1613,6 +1780,8 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
             if row.get("retry_source_failure_provenance_json")
             else None
         ),
+        research_source_operation_id=operation_id,
+        dispatch_held=bool(raw_dispatch_held),
         # monotonic fields are not round-trippable -- leave defaults.
         submitted_at=0.0,
         started_at=None,
@@ -1641,13 +1810,17 @@ def plan_restore(rows: list[dict], *, max_persisted: int, now_iso: str) -> Resto
         ``"Interrupted by app restart"``, ``permanent=False`` (so they
         remain retryable), and ``finished_at_wall=now_iso``. ``retry_count``
         is preserved, not reset. When ``max_persisted >= 1`` and
-        ``len(rows) > max_persisted``, the oldest-by-seq rows beyond the cap
-        are dropped from ``jobs`` and their ids returned in ``delete_ids``.
+        ``len(rows) > max_persisted``, oldest settled/interrupted history beyond
+        the cap is dropped from ``jobs`` and returned in ``delete_ids``. Held
+        queued Research rows are never pruned before reconciliation; if holds
+        alone exceed the history cap, the safety barrier wins over the cap.
     """
     jobs = [_job_from_row(r) for r in rows]  # rows are seq-ascending
     normalized_ids: set[str] = set()
     for i, job in enumerate(jobs):
-        if job.state in _INTERRUPTED_STATES:
+        if job.state in _INTERRUPTED_STATES and not (
+            job.state is IngestJobState.QUEUED and job.dispatch_held
+        ):
             jobs[i] = replace(
                 job,
                 state=IngestJobState.FAILED,
@@ -1656,6 +1829,7 @@ def plan_restore(rows: list[dict], *, max_persisted: int, now_iso: str) -> Resto
                 finished_at_wall=now_iso,
             )
             normalized_ids.add(job.job_id)
+    next_id = max((int(j.job_id.rsplit("-", 1)[-1]) for j in jobs), default=0) + 1
     delete_ids: list[str] = []
     # Guard the cap: only prune for a positive cap that is actually exceeded.
     # A non-positive cap keeps everything (never wipe all history on a
@@ -1664,9 +1838,18 @@ def plan_restore(rows: list[dict], *, max_persisted: int, now_iso: str) -> Resto
     # == 0`` would slice ``[:0]``/``[0:]`` (prune nothing) and a NEGATIVE cap
     # would slice with a positive index and silently delete the oldest rows.
     if max_persisted >= 1 and len(jobs) > max_persisted:
-        pruned = jobs[:-max_persisted]
+        held_ids = {
+            job.job_id
+            for job in jobs
+            if job.state is IngestJobState.QUEUED and job.dispatch_held
+        }
+        ordinary_slots = max(max_persisted - len(held_ids), 0)
+        ordinary_ids = [job.job_id for job in jobs if job.job_id not in held_ids]
+        keep_ids = held_ids | set(
+            ordinary_ids[-ordinary_slots:] if ordinary_slots else ()
+        )
+        pruned = [job for job in jobs if job.job_id not in keep_ids]
         delete_ids = [j.job_id for j in pruned]
-        jobs = jobs[-max_persisted:]
+        jobs = [job for job in jobs if job.job_id in keep_ids]
     upsert = [j for j in jobs if j.job_id in normalized_ids]  # kept + normalized
-    next_id = max((int(j.job_id.rsplit("-", 1)[-1]) for j in jobs), default=0) + 1
     return RestorePlan(jobs=jobs, next_id=next_id, upsert=upsert, delete_ids=delete_ids)

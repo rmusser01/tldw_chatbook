@@ -413,6 +413,39 @@ DEFAULT_PRICING_PATTERNS: Dict[str, List[Dict[str, Any]]] = {
 #
 # Dataclasses
 #
+def _models_dev_pricing(provider: str, model: str) -> "ModelPricing | None":
+    """TASK-26023: a models.dev gap-fill price, or None.
+
+    ``as_of="models.dev"`` records the origin so a displayed price is
+    traceable to its source (AC#5). Returns None when the model is unknown
+    upstream too, preserving the honest no-fabricated-price behavior (AC#6).
+    """
+    try:
+        from tldw_chatbook.LLM_Provider_Catalog.models_dev_catalog import (
+            models_dev_entry,
+        )
+
+        entry = models_dev_entry(provider, model)
+    except Exception:  # noqa: BLE001 -- the gap-fill never breaks a lookup
+        return None
+    # Review minor 3: require BOTH rates -- a missing output price would
+    # otherwise bill $0 for output (a misleading half price). No partial
+    # price is more honest than a wrong one (AC#6).
+    if (
+        entry is None
+        or entry.input_price_per_mtok is None
+        or entry.output_price_per_mtok is None
+    ):
+        return None
+    return ModelPricing(
+        input_per_mtok=entry.input_price_per_mtok,
+        output_per_mtok=entry.output_price_per_mtok,
+        cache_read_per_mtok=None,
+        cache_write_per_mtok=None,
+        as_of="models.dev",
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ModelPricing:
     """Per-million-token USD rates for one resolved provider/model pair.
@@ -679,7 +712,14 @@ class PricingCatalog:
         if provider_key_normalized in LOCAL_PROVIDERS:
             return self._zero_pricing
 
-        # 4. Unknown model: no fabricated price, let the UI fall back to token counts.
+        # 4. TASK-26023: upstream models.dev as a LOWER-priority gap-fill,
+        # beneath the hand-maintained direct/pattern entries above (AC#2).
+        # Disabled by default and network-free -- see models_dev_catalog.
+        upstream = _models_dev_pricing(provider_key_normalized, model_l)
+        if upstream is not None:
+            return upstream
+
+        # 5. Unknown model: no fabricated price, let the UI fall back to token counts.
         return None
 
     def cost_for_usage(self, usage: ProviderUsage) -> Optional[CostBreakdown]:

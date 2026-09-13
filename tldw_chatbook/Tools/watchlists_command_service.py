@@ -1,0 +1,884 @@
+"""Bounded synchronous Console commands for local Watchlists authoring."""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import re
+import unicodedata
+from collections.abc import Callable, Mapping
+from datetime import datetime
+from typing import Any
+from urllib.parse import urlsplit
+
+from tldw_chatbook.Scheduling.services.briefing_projection import (
+    next_briefing_eligibility,
+)
+
+
+_SOURCE_ID = re.compile(r"^local:subscription:([1-9][0-9]*)$")
+_WATCHLIST_ID = re.compile(r"^local:watchlist:([1-9][0-9]*)$")
+_SOURCE_KEYS = frozenset(
+    {"url", "name", "type", "tags", "active", "check_frequency"}
+)
+_TOP_SOURCE_KEYS = frozenset({"sources"})
+_COLLECTION_KEYS = frozenset(
+    {"name", "description", "tags", "source_ids", "if_exists"}
+)
+_UPDATE_KEYS = frozenset(
+    {"collection_id", "add_source_ids", "remove_source_ids"}
+)
+_CHECK_KEYS = frozenset({"source_ids", "collection_id"})
+_GENERATE_KEYS = frozenset({"collection_id", "preset_id"})
+_SCHEDULE_KEYS = frozenset(
+    {"collection_id", "cadence", "preset_id", "selection_mode"}
+)
+_SCHEDULE_INTERVALS = {
+    "every_12_hours": 43_200,
+    "every_24_hours": 86_400,
+    "every_7_days": 604_800,
+    "off": None,
+}
+_SELECTION_MODES = frozenset({"auto", "curated", "auto_featured"})
+_SCHEDULE_RECOVERY = (
+    "Chatbook schedules run while the app is open. Review the global gate in "
+    "Settings and this collection's cadence in Artifacts."
+)
+_SCHEDULE_ROUTE_RECOVERY = (
+    "Schedule saved, but the briefing provider/model route is not ready. "
+    "Configure it in Settings before briefings can run."
+)
+_COLLISION_POLICIES = frozenset({"conflict", "return_existing", "auto_suffix"})
+_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z", re.IGNORECASE)
+
+
+class WatchlistsCommandService:
+    """Validate and shape Console-only Watchlists mutations."""
+
+    def __init__(
+        self,
+        *,
+        runtime_source_loader: Callable[[], object],
+        create_sources_batch: Callable[[list[Mapping[str, Any]]], Any],
+        create_collection: Callable[..., Any],
+        update_collection_sources: Callable[..., Any],
+        accept_source_checks: Callable[[list[int]], Any] | None = None,
+        accept_briefing: Callable[[int, int | None], Any] | None = None,
+        resolve_collection_sources: Callable[[int], Any] | None = None,
+        set_briefing_schedule: Callable[..., Any] | None = None,
+        briefing_schedules_enabled: Callable[[], bool] | None = None,
+        scheduler_running: Callable[[], bool] | None = None,
+        request_scheduler_reload: Callable[[], Any] | None = None,
+        wait_scheduler_reload: Callable[[Any, float], bool] | None = None,
+        default_briefing_defaults: Callable[[], tuple[str, str]] | None = None,
+    ) -> None:
+        self._runtime_source_loader = runtime_source_loader
+        self._create_sources_batch = create_sources_batch
+        self._create_collection = create_collection
+        self._update_collection_sources = update_collection_sources
+        self._accept_source_checks = accept_source_checks
+        self._accept_briefing = accept_briefing
+        self._resolve_collection_sources = resolve_collection_sources
+        self._set_briefing_schedule = set_briefing_schedule
+        self._briefing_schedules_enabled = briefing_schedules_enabled
+        self._scheduler_running = scheduler_running
+        self._request_scheduler_reload = request_scheduler_reload
+        self._wait_scheduler_reload = wait_scheduler_reload
+        self._default_briefing_defaults = default_briefing_defaults
+
+    @staticmethod
+    def _json(payload: Mapping[str, Any]) -> str:
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+    @classmethod
+    def _invalid(cls, message: str) -> str:
+        return cls._json(
+            {"status": "invalid_argument", "retryable": False, "message": message}
+        )
+
+    @classmethod
+    def _unavailable(cls) -> str:
+        return cls._json(
+            {
+                "status": "feature_unavailable",
+                "retryable": True,
+                "message": "Watchlists storage is temporarily unavailable. Try again.",
+            }
+        )
+
+    def _local_or_refusal(self) -> str | None:
+        try:
+            loaded = self._runtime_source_loader()
+            source = str(getattr(loaded, "active_source", loaded)).strip().casefold()
+        except Exception:  # noqa: BLE001 - the boundary returns fixed copy
+            return self._unavailable()
+        if source != "local":
+            return self._json(
+                {
+                    "status": "unsupported",
+                    "retryable": False,
+                    "message": "Watchlists authoring commands require local mode.",
+                }
+            )
+        return None
+
+    @staticmethod
+    def _exact_object(
+        value: object, *, allowed: frozenset[str], required: frozenset[str]
+    ) -> dict[str, Any] | None:
+        if type(value) is not dict:
+            return None
+        if not required <= set(value) or set(value) - allowed:
+            return None
+        return dict(value)
+
+    @staticmethod
+    def _string(
+        value: object, *, maximum: int, allow_empty: bool = False
+    ) -> str | None:
+        if not isinstance(value, str) or len(value) > maximum:
+            return None
+        stripped = value.strip()
+        if not allow_empty and not stripped:
+            return None
+        return stripped
+
+    @classmethod
+    def _tags(cls, value: object) -> list[str] | None:
+        if type(value) is not list or len(value) > 20:
+            return None
+        tags: list[str] = []
+        for raw_tag in value:
+            tag = cls._string(raw_tag, maximum=64)
+            if tag is None:
+                return None
+            tags.append(tag)
+        return tags
+
+    @staticmethod
+    def _valid_hostname(hostname: str) -> bool:
+        try:
+            ipaddress.ip_address(hostname)
+            return True
+        except ValueError:
+            pass
+        try:
+            ascii_hostname = hostname.encode("idna").decode("ascii")
+        except UnicodeError:
+            return False
+        labels = ascii_hostname.split(".")
+        if len(ascii_hostname) > 253 or any(not label for label in labels):
+            return False
+        for label in labels:
+            if _HOST_LABEL.fullmatch(label) is None:
+                return False
+            if label.casefold().startswith("xn--"):
+                try:
+                    decoded = label.encode("ascii").decode("idna")
+                    round_trip = decoded.encode("idna").decode("ascii")
+                except UnicodeError:
+                    return False
+                if round_trip.casefold() != label.casefold():
+                    return False
+        return True
+
+    @staticmethod
+    def _source_url(value: object) -> tuple[str | None, str | None]:
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 2_048
+            or any(unicodedata.category(character) == "Cc" for character in value)
+        ):
+            return None, "Source URL must be an absolute HTTP(S) URL."
+        source = value.strip()
+        if "\\" in source or any(character.isspace() for character in source):
+            return None, "Source URL must be an absolute HTTP(S) URL."
+        try:
+            parsed = urlsplit(source)
+            hostname = parsed.hostname
+            parsed.port
+        except ValueError:
+            return None, "Source URL must be an absolute HTTP(S) URL."
+        if parsed.username is not None or parsed.password is not None:
+            return None, "Source URL must not include credentials."
+        if (
+            parsed.scheme.casefold() not in {"http", "https"}
+            or not hostname
+            or not WatchlistsCommandService._valid_hostname(hostname)
+        ):
+            return None, "Source URL must be an absolute HTTP(S) URL."
+        return source, None
+
+    @staticmethod
+    def _canonical_id(value: object, pattern: re.Pattern[str]) -> int | None:
+        if not isinstance(value, str):
+            return None
+        match = pattern.fullmatch(value)
+        if match is None:
+            return None
+        number = int(match.group(1))
+        return number if number <= 2**63 - 1 else None
+
+    @classmethod
+    def _canonical_ids(
+        cls, value: object, *, maximum: int
+    ) -> list[int] | None:
+        if type(value) is not list or len(value) > maximum:
+            return None
+        ids: list[int] = []
+        for raw_id in value:
+            source_id = cls._canonical_id(raw_id, _SOURCE_ID)
+            if source_id is None or source_id in ids:
+                return None
+            ids.append(source_id)
+        return ids
+
+    @classmethod
+    def approval_source_destinations(cls, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        """Return content-free source-creation approval scope."""
+        sources = arguments.get("sources")
+        if type(sources) is not list:
+            return {"source_count": 0, "destination_hosts": []}
+        hosts: list[str] = []
+        for row in sources[:50]:
+            if type(row) is not dict:
+                continue
+            source, error = cls._source_url(row.get("url"))
+            if error is not None or source is None:
+                continue
+            try:
+                host = urlsplit(source).hostname
+            except ValueError:
+                continue
+            if host and host not in hosts:
+                hosts.append(host)
+        return {"source_count": len(sources), "destination_hosts": hosts}
+
+    def create_sources(self, arguments: object) -> str:
+        """Validate and create one bounded source batch."""
+        refusal = self._local_or_refusal()
+        if refusal is not None:
+            return refusal
+        values = self._exact_object(
+            arguments, allowed=_TOP_SOURCE_KEYS, required=_TOP_SOURCE_KEYS
+        )
+        if values is None or type(values.get("sources")) is not list:
+            return self._invalid("Expected exactly one sources array.")
+        raw_sources = values["sources"]
+        if not 1 <= len(raw_sources) <= 50:
+            return self._invalid("Provide between 1 and 50 sources.")
+
+        valid: list[dict[str, Any]] = []
+        valid_indexes: list[int] = []
+        results: dict[int, dict[str, Any]] = {}
+        for index, raw_source in enumerate(raw_sources):
+            row = self._exact_object(
+                raw_source, allowed=_SOURCE_KEYS, required=frozenset({"url"})
+            )
+            message = "Source definition has unsupported or missing fields."
+            if row is not None:
+                url, url_error = self._source_url(row["url"])
+                if url_error is not None:
+                    message = url_error
+                else:
+                    source_type = row.get("type", "rss")
+                    name = row.get("name")
+                    tags = row.get("tags")
+                    active = row.get("active", True)
+                    frequency = row.get("check_frequency")
+                    if not isinstance(source_type, str) or source_type not in {
+                        "rss",
+                        "atom",
+                        "url",
+                    }:
+                        message = "Source type must be rss, atom, or url."
+                    elif name is not None and self._string(name, maximum=512) is None:
+                        message = "Source name must be a non-empty string of at most 512 characters."
+                    elif tags is not None and self._tags(tags) is None:
+                        message = "Source tags must contain at most 20 short strings."
+                    elif type(active) is not bool:
+                        message = "Source active must be a boolean."
+                    elif frequency is not None and (
+                        type(frequency) is not int
+                        or not 60 <= frequency <= 2_678_400
+                    ):
+                        message = "Source check_frequency must be an integer from 60 to 2678400."
+                    else:
+                        valid.append(
+                            {
+                                "url": url,
+                                "name": self._string(name, maximum=512)
+                                if name is not None
+                                else None,
+                                "source_type": source_type,
+                                "tags": self._tags(tags) if tags is not None else [],
+                                "active": active,
+                                **(
+                                    {"check_frequency": frequency}
+                                    if frequency is not None
+                                    else {}
+                                ),
+                            }
+                        )
+                        valid_indexes.append(index)
+                        continue
+            results[index] = {
+                "input_index": index,
+                "outcome": "invalid",
+                "message": message,
+            }
+
+        if not valid:
+            return self._json(
+                {
+                    "status": "invalid_argument",
+                    "retryable": False,
+                    "message": "No valid sources were provided.",
+                    "results": [results[index] for index in range(len(raw_sources))],
+                }
+            )
+        try:
+            outcomes = self._create_sources_batch(valid)
+            for outcome in outcomes:
+                valid_index = outcome["input_index"]
+                if type(valid_index) is not int or not 0 <= valid_index < len(valid):
+                    raise ValueError("invalid domain source index")
+                input_index = valid_indexes[valid_index]
+                source = outcome["source"]
+                source_id = source["source_id"]
+                result_outcome = str(outcome["outcome"])
+                if (
+                    result_outcome not in {"created", "existing"}
+                    or type(source_id) is not int
+                    or not 1 <= source_id <= 2**63 - 1
+                    or input_index in results
+                ):
+                    raise ValueError("invalid domain source outcome")
+                results[input_index] = {
+                    "input_index": input_index,
+                    "outcome": result_outcome,
+                    "source_id": f"local:subscription:{source_id}",
+                }
+            ordered_results = [results[index] for index in range(len(raw_sources))]
+            partial = len(valid) != len(raw_sources)
+            return self._json(
+                {
+                    "status": "partial_success" if partial else "ok",
+                    "retryable": False,
+                    "follow_on_confirmation_required": partial,
+                    "results": ordered_results,
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+
+    def create_collection(self, arguments: object) -> str:
+        """Validate and atomically create or resolve one collection."""
+        refusal = self._local_or_refusal()
+        if refusal is not None:
+            return refusal
+        values = self._exact_object(
+            arguments, allowed=_COLLECTION_KEYS, required=frozenset({"name"})
+        )
+        if values is None:
+            return self._invalid("Collection arguments are invalid.")
+        name = self._string(values["name"], maximum=256)
+        description = values.get("description")
+        tags = values.get("tags")
+        source_ids = self._canonical_ids(values.get("source_ids", []), maximum=100)
+        policy = values.get("if_exists", "conflict")
+        if name is None:
+            return self._invalid("Collection name is invalid.")
+        if description is not None and self._string(
+            description, maximum=2_048, allow_empty=True
+        ) is None:
+            return self._invalid("Collection description is invalid.")
+        if tags is not None and self._tags(tags) is None:
+            return self._invalid("Collection tags are invalid.")
+        if source_ids is None:
+            return self._invalid("Collection source IDs must be unique canonical IDs.")
+        if not isinstance(policy, str) or policy not in _COLLISION_POLICIES:
+            return self._invalid("Collection collision policy is invalid.")
+        try:
+            outcome = self._create_collection(
+                name=name,
+                description=description,
+                tags=self._tags(tags) if tags is not None else None,
+                source_ids=source_ids,
+                if_exists=policy,
+            )
+        except ValueError as exc:
+            if "already exists" in str(exc):
+                return self._json(
+                    {
+                        "status": "conflict",
+                        "retryable": False,
+                        "message": "A collection with that name already exists.",
+                    }
+                )
+            return self._unavailable()
+        except KeyError:
+            return self._json(
+                {
+                    "status": "not_found",
+                    "retryable": False,
+                    "message": "One or more source IDs were not found.",
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+        try:
+            result_outcome = outcome["outcome"]
+            collection_id = outcome["watchlist"]["id"]
+            membership_count = outcome["membership_count"]
+            if (
+                result_outcome not in {"created", "existing"}
+                or type(collection_id) is not int
+                or not 1 <= collection_id <= 2**63 - 1
+                or type(membership_count) is not int
+                or membership_count < 0
+            ):
+                raise ValueError("invalid domain collection outcome")
+            return self._json(
+                {
+                    "status": "ok",
+                    "retryable": False,
+                    "outcome": result_outcome,
+                    "collection_id": f"local:watchlist:{collection_id}",
+                    "collision_policy": policy,
+                    "membership_count": membership_count,
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+
+    def update_collection_sources(self, arguments: object) -> str:
+        """Validate and atomically replace requested collection memberships."""
+        refusal = self._local_or_refusal()
+        if refusal is not None:
+            return refusal
+        values = self._exact_object(
+            arguments,
+            allowed=_UPDATE_KEYS,
+            required=frozenset({"collection_id"}),
+        )
+        if values is None:
+            return self._invalid("Collection membership arguments are invalid.")
+        watchlist_id = self._canonical_id(values["collection_id"], _WATCHLIST_ID)
+        add_ids = self._canonical_ids(values.get("add_source_ids", []), maximum=100)
+        remove_ids = self._canonical_ids(
+            values.get("remove_source_ids", []), maximum=100
+        )
+        if watchlist_id is None or add_ids is None or remove_ids is None:
+            return self._invalid("Use unique canonical collection and source IDs.")
+        if not add_ids and not remove_ids:
+            return self._invalid("Provide at least one source to add or remove.")
+        if len(add_ids) + len(remove_ids) > 100:
+            return self._invalid("Provide at most 100 membership changes.")
+        if set(add_ids) & set(remove_ids):
+            return self._invalid("A source cannot be both added and removed.")
+        try:
+            outcome = self._update_collection_sources(
+                watchlist_id=watchlist_id,
+                add_ids=add_ids,
+                remove_ids=remove_ids,
+            )
+        except KeyError:
+            return self._json(
+                {
+                    "status": "not_found",
+                    "retryable": False,
+                    "message": "The collection or one of its sources was not found.",
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+        try:
+            added = outcome["added"]
+            removed = outcome["removed"]
+            membership_count = outcome["membership_count"]
+            if (
+                type(added) is not int
+                or added < 0
+                or type(removed) is not int
+                or removed < 0
+                or type(membership_count) is not int
+                or membership_count < 0
+            ):
+                raise ValueError("invalid domain membership outcome")
+            return self._json(
+                {
+                    "status": "ok",
+                    "retryable": False,
+                    "collection_id": f"local:watchlist:{watchlist_id}",
+                    "added": added,
+                    "removed": removed,
+                    "membership_count": membership_count,
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+
+    @staticmethod
+    def _poll_contract(operation_id: str, terminal_states: list[str]) -> dict[str, Any]:
+        return {
+            "poll_tool": "watchlists_get_operation_status",
+            "poll_arguments": {"operation_id": operation_id},
+            "suggested_poll_seconds": 2,
+            "maximum_poll_seconds": 8,
+            "terminal_states": terminal_states,
+        }
+
+    def check_sources(self, arguments: object) -> str:
+        """Accept one bounded explicit or collection-scoped source check."""
+        refusal = self._local_or_refusal()
+        if refusal is not None:
+            return refusal
+        values = self._exact_object(
+            arguments,
+            allowed=_CHECK_KEYS,
+            required=frozenset(),
+        )
+        if values is None or set(values) not in ({"source_ids"}, {"collection_id"}):
+            return self._invalid("Provide source_ids or one collection_id, not both.")
+
+        try:
+            if "source_ids" in values:
+                source_ids = self._canonical_ids(values["source_ids"], maximum=50)
+                if not source_ids:
+                    return self._invalid("Provide between 1 and 50 unique source IDs.")
+            else:
+                watchlist_id = self._canonical_id(values["collection_id"], _WATCHLIST_ID)
+                if watchlist_id is None:
+                    return self._invalid("Use one canonical collection ID.")
+                if self._resolve_collection_sources is None:
+                    return self._unavailable()
+                resolved = self._resolve_collection_sources(watchlist_id)
+                if type(resolved) is not list or any(
+                    type(source_id) is not int or source_id < 1 for source_id in resolved
+                ):
+                    return self._unavailable()
+                source_ids = list(dict.fromkeys(resolved))
+                if not source_ids:
+                    return self._invalid("The collection has no sources to check.")
+                if len(source_ids) > 50:
+                    return self._invalid(
+                        "The collection has more than 50 sources; list it and submit batches of at most 50."
+                    )
+            if self._accept_source_checks is None:
+                return self._unavailable()
+            receipts = self._accept_source_checks(source_ids)
+            if type(receipts) is not list or len(receipts) != len(source_ids):
+                return self._unavailable()
+            operations: list[dict[str, Any]] = []
+            for receipt in receipts:
+                run_id = receipt.get("run_id") if isinstance(receipt, Mapping) else None
+                source_id = receipt.get("source_id") if isinstance(receipt, Mapping) else None
+                status = receipt.get("status") if isinstance(receipt, Mapping) else None
+                if (
+                    type(run_id) is not int
+                    or run_id < 1
+                    or type(source_id) is not int
+                    or source_id < 1
+                    or status not in {"queued", "running", "completed", "failed", "cancelled"}
+                ):
+                    return self._unavailable()
+                operation_id = f"local:watchlist_run:{run_id}"
+                operations.append(
+                    {
+                        "operation_id": operation_id,
+                        "source_id": f"local:subscription:{source_id}",
+                        "status": status,
+                        **self._poll_contract(
+                            operation_id,
+                            ["completed", "failed", "cancelled"],
+                        ),
+                    }
+                )
+            return self._json(
+                {"status": "accepted", "retryable": False, "operations": operations}
+            )
+        except KeyError:
+            return self._json(
+                {
+                    "status": "not_found",
+                    "retryable": False,
+                    "message": "The collection or one of its sources was not found.",
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+
+    def generate_briefing(self, arguments: object) -> str:
+        """Accept one durable local briefing generation receipt."""
+        refusal = self._local_or_refusal()
+        if refusal is not None:
+            return refusal
+        values = self._exact_object(
+            arguments,
+            allowed=_GENERATE_KEYS,
+            required=frozenset({"collection_id"}),
+        )
+        if values is None:
+            return self._invalid("Briefing arguments are invalid.")
+        watchlist_id = self._canonical_id(values["collection_id"], _WATCHLIST_ID)
+        preset_id = values.get("preset_id")
+        if watchlist_id is None or (
+            preset_id is not None
+            and (type(preset_id) is not int or not 1 <= preset_id <= 2**63 - 1)
+        ):
+            return self._invalid("Use a canonical collection ID and valid preset ID.")
+        if self._accept_briefing is None:
+            return self._unavailable()
+        try:
+            receipt = self._accept_briefing(watchlist_id, preset_id)
+            briefing_id = receipt.get("id") if isinstance(receipt, Mapping) else None
+            status = receipt.get("status") if isinstance(receipt, Mapping) else None
+            if type(briefing_id) is not int or briefing_id < 1 or status != "generating":
+                return self._unavailable()
+            operation_id = f"local:briefing:{briefing_id}"
+            return self._json(
+                {
+                    "status": "accepted",
+                    "retryable": False,
+                    "operation_id": operation_id,
+                    "collection_id": f"local:watchlist:{watchlist_id}",
+                    "receipt_status": status,
+                    **self._poll_contract(
+                        operation_id,
+                        ["complete", "empty", "failed"],
+                    ),
+                }
+            )
+        except KeyError:
+            return self._json(
+                {
+                    "status": "not_found",
+                    "retryable": False,
+                    "message": "The collection or briefing preset was not found.",
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+
+    @staticmethod
+    def _cadence_argument(value: object) -> tuple[int | None, str] | None:
+        """Normalize one canonical cadence preset or bounded advanced interval."""
+        if isinstance(value, str):
+            if value not in _SCHEDULE_INTERVALS:
+                return None
+            return _SCHEDULE_INTERVALS[value], value
+        if type(value) is int and 3_600 <= value <= 2_678_400:
+            return value, "advanced"
+        return None
+
+    @staticmethod
+    def _stored_cadence(value: object) -> str | None:
+        """Name one stored cadence without pretending an advanced value is a preset."""
+        if value is None:
+            return "off"
+        for name, seconds in _SCHEDULE_INTERVALS.items():
+            if seconds == value:
+                return name
+        return "advanced" if type(value) is int else None
+
+    def set_briefing_schedule(self, arguments: object) -> str:
+        """Commit one collection cadence and report scheduler reload evidence."""
+        refusal = self._local_or_refusal()
+        if refusal is not None:
+            return refusal
+        values = self._exact_object(
+            arguments,
+            allowed=_SCHEDULE_KEYS,
+            required=frozenset({"collection_id", "cadence"}),
+        )
+        if values is None:
+            return self._invalid("Briefing schedule arguments are invalid.")
+        watchlist_id = self._canonical_id(values["collection_id"], _WATCHLIST_ID)
+        cadence = self._cadence_argument(values["cadence"])
+        if watchlist_id is None or cadence is None:
+            return self._invalid(
+                "Use a canonical collection ID and supported briefing cadence."
+            )
+
+        write_arguments: dict[str, Any] = {
+            "briefing_cadence_seconds": cadence[0]
+        }
+        if "preset_id" in values:
+            preset_id = values["preset_id"]
+            if preset_id is not None and (
+                type(preset_id) is not int or not 1 <= preset_id <= 2**63 - 1
+            ):
+                return self._invalid("Preset ID must be a positive integer or null.")
+            write_arguments["default_preset_id"] = preset_id
+        if "selection_mode" in values:
+            selection_mode = values["selection_mode"]
+            if type(selection_mode) is not str or selection_mode not in _SELECTION_MODES:
+                return self._invalid("Briefing selection mode is invalid.")
+            write_arguments["selection_mode"] = selection_mode
+
+        if self._set_briefing_schedule is None:
+            return self._unavailable()
+        try:
+            stored = self._set_briefing_schedule(watchlist_id, **write_arguments)
+        except KeyError:
+            return self._json(
+                {
+                    "status": "not_found",
+                    "retryable": False,
+                    "message": "The collection or briefing preset was not found.",
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+        if not isinstance(stored, Mapping) or stored.get("watchlist_id") != watchlist_id:
+            return self._unavailable()
+
+        cadence_seconds = stored.get("briefing_cadence_seconds")
+        cadence_name = self._stored_cadence(cadence_seconds)
+        selection_mode = stored.get("briefing_selection_mode")
+        preset_id = stored.get("default_briefing_preset_id")
+        preset_provider = stored.get("preset_provider")
+        preset_model = stored.get("preset_model")
+        if (
+            cadence_name is None
+            or (cadence_seconds is not None and type(cadence_seconds) is not int)
+            or selection_mode not in _SELECTION_MODES
+            or (preset_id is not None and type(preset_id) is not int)
+            or (preset_provider is not None and not isinstance(preset_provider, str))
+            or (preset_model is not None and not isinstance(preset_model, str))
+        ):
+            return self._unavailable()
+
+        try:
+            gate_enabled = bool(
+                self._briefing_schedules_enabled
+                and self._briefing_schedules_enabled()
+            )
+        except Exception:  # noqa: BLE001 - durable stored state remains truthful
+            gate_enabled = False
+        try:
+            scheduler_running = bool(
+                self._scheduler_running and self._scheduler_running()
+            )
+        except Exception:  # noqa: BLE001 - durable stored state remains truthful
+            scheduler_running = False
+
+        default_provider = ""
+        default_model = ""
+        if not preset_provider and self._default_briefing_defaults is not None:
+            try:
+                default_provider, default_model = self._default_briefing_defaults()
+            except Exception:  # noqa: BLE001 - fixed protocol-safe receipt boundary
+                default_provider = ""
+                default_model = ""
+        if not isinstance(default_provider, str):
+            default_provider = ""
+        if not isinstance(default_model, str):
+            default_model = ""
+
+        provider = preset_provider or default_provider or None
+        resolved_model = (
+            preset_model or (default_model if not preset_provider else None) or None
+        )
+        if isinstance(provider, str) and not provider.strip():
+            provider = None
+        if isinstance(resolved_model, str) and not resolved_model.strip():
+            resolved_model = None
+        briefing_route_ready = provider is not None and resolved_model is not None
+        provider_resolution_source = (
+            "preset"
+            if preset_provider
+            else ("app_default" if provider else "unavailable")
+        )
+        model_resolution_source = (
+            "preset"
+            if preset_model
+            else (
+                "provider_default"
+                if preset_provider and resolved_model
+                else ("app_default" if resolved_model else "unavailable")
+            )
+        )
+
+        reload_requested = False
+        reload_token: int | None = None
+        reload_acknowledged = False
+        if self._request_scheduler_reload is not None:
+            try:
+                token = self._request_scheduler_reload()
+                token_value = getattr(token, "value", None)
+                if type(token_value) is int and token_value > 0:
+                    reload_requested = True
+                    reload_token = token_value
+                    if (
+                        gate_enabled
+                        and scheduler_running
+                        and self._wait_scheduler_reload is not None
+                    ):
+                        reload_acknowledged = bool(
+                            self._wait_scheduler_reload(token, 1.0)
+                        )
+            except Exception:  # noqa: BLE001 - persistence remains the durable truth
+                reload_acknowledged = False
+
+        next_eligible_at: str | None = None
+        if cadence_seconds is not None:
+            try:
+                next_eligible_at = next_briefing_eligibility(dict(stored)).isoformat()
+            except (TypeError, ValueError, OverflowError):
+                return self._unavailable()
+
+        def receipt_value(key: str) -> str | None:
+            value = stored.get(key)
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, str) and len(value) <= 512:
+                return value
+            raise ValueError(key)
+
+        try:
+            collection_name = receipt_value("name")
+            preset_name = receipt_value("default_preset_name")
+            last_attempt_at = receipt_value("last_attempt_at")
+            last_success_at = receipt_value("last_success_at")
+        except ValueError:
+            return self._unavailable()
+
+        return self._json(
+            {
+                "status": "ok",
+                "retryable": False,
+                "collection_id": f"local:watchlist:{watchlist_id}",
+                "collection_name": collection_name,
+                "cadence": cadence_name,
+                "cadence_seconds": cadence_seconds,
+                "selection_mode": selection_mode,
+                "preset_id": preset_id,
+                "preset_name": preset_name,
+                "global_gate_enabled": gate_enabled,
+                "scheduler_running": scheduler_running,
+                "reload_requested": reload_requested,
+                "reload_token": reload_token,
+                "reload_acknowledged": reload_acknowledged,
+                "next_eligible_at": next_eligible_at,
+                "last_attempt_at": last_attempt_at,
+                "last_success_at": last_success_at,
+                "briefing_route_ready": briefing_route_ready,
+                "preset_resolution_source": (
+                    "stored_preset" if preset_id is not None else "app_default"
+                ),
+                "provider": provider,
+                "provider_resolution_source": provider_resolution_source,
+                "model": resolved_model,
+                "model_resolution_source": model_resolution_source,
+                "recovery": (
+                    _SCHEDULE_RECOVERY
+                    if briefing_route_ready
+                    else _SCHEDULE_ROUTE_RECOVERY
+                ),
+            }
+        )

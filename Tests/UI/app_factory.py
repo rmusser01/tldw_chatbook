@@ -26,7 +26,7 @@ from typing import Any, Mapping
 from unittest.mock import MagicMock, patch
 
 from tldw_chatbook.app import TldwCli
-from tldw_chatbook.config import load_settings
+from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 from tldw_chatbook.runtime_policy import RuntimeSourceState
 
 # Every user-data dir handed to a TldwCli built here; drained (rmtree'd) by the
@@ -117,11 +117,54 @@ def build_test_app_config(
         config["first_run"] = first_run
     if first_run_setup_completed:
         first_run["setup_completed"] = True
+        # A completed setup is authoritative over load_settings()'s transient
+        # annotation for a newly-created test sandbox.
+        config.pop("_first_run", None)
     else:
         first_run.pop("setup_completed", None)
     if overrides:
         _deep_merge_into(config, overrides)
     return config
+
+
+def attach_chachanotes_db(app, *, client_id: str = "test-client"):
+    """Give a factory-built app the durable ChaChaNotes DB a real send needs.
+
+    TASK-21590. `_build_test_app` patches `get_chachanotes_db_lazy` to `None`,
+    so a factory app boots with `chachanotes_db = None`. `ConsoleRuntime.
+    ensure_chat_store` then builds the Console store with `persistence=None` --
+    and since TASK-19900.3's review-fix commit `56db75386` a durable Console
+    turn (any non-ephemeral manual or queued send) *fails closed* unless the
+    persistence adapter exposes a callable ``commit_durable_turn``, which a
+    `None` adapter cannot. That refusal returns a bare `ConsoleSubmitResult`
+    instead of going through `_block`, so it writes no system row and raises no
+    toast: 26 mounted send tests kept pressing Send and asserting against a
+    transcript production had silently refused to write.
+
+    ``:memory:`` is load-bearing, not a shortcut. `ConsoleRuntime.
+    ensure_agent_bridge` deliberately refuses to build an agent bridge for a
+    `:memory:` DB ("an in-memory harness still builds neither"), so this
+    restores exactly the precondition the send path lost -- a durable-capable
+    persistence adapter -- without also switching the caller onto the agent
+    loop, which a file-backed DB does and which these tests were never written
+    against. A test that is *about* the agent runtime must attach a
+    file-backed DB itself.
+
+    Attach BEFORE mounting: the store is built lazily on first use and caches
+    its persistence adapter.
+
+    Args:
+        app: A `_build_test_app` product, not yet mounted.
+        client_id: Client id recorded on the DB's rows.
+
+    Returns:
+        The `CharactersRAGDB` now assigned to ``app.chachanotes_db``.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(":memory:", client_id)
+    app.chachanotes_db = db
+    return db
 
 
 def drain_created_dirs() -> int:
@@ -167,6 +210,7 @@ def _build_test_app(
     configured_default: str | None = None,
     *,
     first_run_setup_completed: bool = True,
+    preserve_profile_admission: bool = False,
     config_overrides: Mapping[str, Any] | None = None,
 ) -> TldwCli:
     """Build a TldwCli instance with every real I/O seam faked out.
@@ -178,6 +222,24 @@ def _build_test_app(
             this app's snapshot only -- see `build_test_app_config`, and
             prefer `save_setting_to_cli_config` for anything a refreshing
             seam must also see.
+        preserve_profile_admission: Defaults to False, which clears
+            ``library_new_profile_admission``. `app.py` sets that flag from
+            `first_profile_created_this_session()`, and the per-test config
+            sandbox creates a profile for every test -- so every factory-built
+            app claimed to be a brand-new profile. The Library rail answers
+            that claim by composing a compact starter rail (two rows plus
+            "Explore all tools") and returning before the search input, the
+            Browse/Create sections and the Details disclosure, which made
+            rows like ``#library-row-browse-media`` unreachable for the many
+            tests written before progressive disclosure existed.
+            Three Library test modules had already hand-rolled exactly this
+            clearing in local `_build_test_app` wrappers; this hoists it to
+            the one factory they all go through. Cleared rather than pinning
+            a lifecycle value, so the screen still derives its own state --
+            an existing profile with no persisted lifecycle settles to
+            Expanded, which is the product's own contract (see
+            `test_library_real_existing_config_without_lifecycle_defaults_expanded`).
+            Pass ``True`` for a test that is *about* new-profile admission.
         first_run_setup_completed: Defaults to True: task-11 added a
             first-run setup wizard that FirstRunSetupWizard.first_run_setup_state.
             should_offer_wizard() auto-offers (pushed on top of whatever the
@@ -266,6 +328,21 @@ def _build_test_app(
             patch("tldw_chatbook.app.load_settings", return_value=fake_app_config),
             patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting),
             patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None),
+            # task-32059: `__init__` stamps `[library.rail_state] lifecycle
+            # = "unknown"` for a profile this run created, and the sandbox
+            # creates one per test. A factory app that goes on to CLEAR
+            # `library_new_profile_admission` (below) is pretending to be a
+            # returning profile, so the creation-time stamp must not reach
+            # its config file either -- the screen's own CLI fallback would
+            # read it back and skip the Expanded default.
+            patch(
+                "tldw_chatbook.app.save_setting_to_cli_config",
+                side_effect=(
+                    save_setting_to_cli_config
+                    if preserve_profile_admission
+                    else (lambda *args, **kwargs: True)
+                ),
+            ),
             patch(
                 "tldw_chatbook.app.ServerNotesWorkspaceService.from_config",
                 return_value=MagicMock(),
@@ -322,7 +399,7 @@ def _build_test_app(
                 return_value=user_data_dir,
             ),
             patch(
-                "tldw_chatbook.Video_Generation.video_store.get_video_generation_config",
+                "tldw_chatbook.Video_Generation.video_store.get_video_store_policy",
                 return_value=SimpleNamespace(
                     retention="session",
                     retention_ttl_hours=24,
@@ -350,4 +427,17 @@ def _build_test_app(
         # shipping app must use). A test that wants generation assigns its
         # own fake callable.
         app.library_rag_answer_chat = None
+        # See `preserve_profile_admission` above: the config sandbox creates a
+        # profile per test, so this flag is True for every factory-built app
+        # and the Library rail answers it with the compact starter rail.
+        if not preserve_profile_admission:
+            app.library_new_profile_admission = False
+            # ...and drop the same stamp from the in-memory snapshot: the
+            # patch above keeps it off disk, this keeps it out of the dict
+            # `LibraryScreen` reads first.
+            library_config = app.app_config.get("library")
+            if isinstance(library_config, dict):
+                rail_state = library_config.get("rail_state")
+                if isinstance(rail_state, dict):
+                    rail_state.pop("lifecycle", None)
         return app

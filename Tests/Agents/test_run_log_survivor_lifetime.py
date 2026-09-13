@@ -362,12 +362,15 @@ def test_a_survivors_post_turn_records_stay_hidden_from_grep_files(
         release.set()
     _join(survivor_threads)
 
-    # The record really was written (or the grep below proves nothing).
+    # The record really was written (or the grep below proves nothing), but
+    # capture-time privacy removes the credential before it reaches disk.
     child_records = [r for r in _records_of(turn_one_id) if r.run_id == child_id]
-    assert any(secret in r.content for r in child_records), (
+    assert child_records, (
         "the survivor's post-turn record was never written -- a silent drop "
         "is not an acceptable answer to misfiling"
     )
+    assert all(secret not in record.content for record in child_records)
+    assert all("sk-live-survivor1" not in record.content for record in child_records)
     assert grep("SURVIVOR_SECRET_API_KEY") == [], (
         "a survivor's post-turn records must stay as unreadable to "
         "grep_files as the ones written during the turn"

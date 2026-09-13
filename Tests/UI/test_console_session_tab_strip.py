@@ -6,14 +6,19 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from textual import events
 from textual.app import App
 from textual.containers import HorizontalScroll
 from textual.content import Content
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
-from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_session_surface import (
+    ConsoleSessionSurface,
+    ConsoleSessionTabStrip,
+)
 
 
 def _rendered_tooltip(button: Button) -> str:
@@ -271,3 +276,174 @@ async def test_new_tab_and_temporary_buttons_render_unclipped_labels() -> None:
         assert "New tab" in rendered, (
             f"'New tab' tab-strip button label was clipped:\n{rendered}"
         )
+
+
+# -- TASK-28028: wheel scrolling + overflow hints ---------------------------
+
+
+async def _wheel(
+    pilot, strip: ConsoleSessionTabStrip, *, down: bool, ctrl: bool = False
+) -> None:
+    """Post a real-shape SGR mouse-wheel event to the strip, as a terminal delivers it.
+
+    ``Pilot`` has no wheel helper; posting the event message runs the same
+    ``_on_mouse_scroll_*`` dispatch a real wheel travels through.
+    """
+    event_cls = events.MouseScrollDown if down else events.MouseScrollUp
+    strip.post_message(
+        event_cls(
+            widget=strip,
+            x=strip.region.x + 5,
+            y=strip.region.y,
+            delta_x=0,
+            delta_y=1 if down else -1,
+            button=0,
+            shift=False,
+            meta=False,
+            ctrl=ctrl,
+        )
+    )
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_plain_wheel_scrolls_strip_horizontally() -> None:
+    """TASK-28028: a plain vertical wheel over the strip scrolls it horizontally.
+
+    Textual 8.2.8's base wheel handler does nothing for a height-1
+    ``HorizontalScroll`` (vertical scroll is disabled), so without this the
+    only horizontal wheel paths are the undiscoverable shift/ctrl chords.
+    """
+    app = TabStripHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        # 10 tabs x 24 cells (tab 21 + close 3) + 26 cells of new-tab buttons
+        # = 266 cells of content in an 80-cell strip: guaranteed overflow.
+        await surface.sync_sessions(sessions=_sessions(10), active_session_id="s1")
+        await pilot.pause()
+        await pilot.pause()
+
+        strip = app.query_one("#console-native-tab-strip", ConsoleSessionTabStrip)
+        assert strip.scroll_x == 0
+
+        await _wheel(pilot, strip, down=True)
+        assert strip.scroll_x > 0, "wheel-down did not scroll the strip right"
+
+        scroll_after_down = strip.scroll_x
+        await _wheel(pilot, strip, down=False)
+        assert strip.scroll_x < scroll_after_down, (
+            "wheel-up did not scroll the strip back left"
+        )
+
+
+@pytest.mark.asyncio
+async def test_wheel_at_left_edge_keeps_strip_at_zero() -> None:
+    """A wheel-up at scroll position 0 must be a no-op, not a jump."""
+    app = TabStripHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        await surface.sync_sessions(sessions=_sessions(10), active_session_id="s1")
+        await pilot.pause()
+        await pilot.pause()
+
+        strip = app.query_one("#console-native-tab-strip", ConsoleSessionTabStrip)
+        await _wheel(pilot, strip, down=False)
+        assert strip.scroll_x == 0
+
+
+@pytest.mark.asyncio
+async def test_overflow_hints_follow_hidden_tabs_and_scroll_position() -> None:
+    """TASK-28028: ‹ › hints appear only on the side with hidden tabs."""
+    app = TabStripHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        await surface.sync_sessions(sessions=_sessions(10), active_session_id="s1")
+        await pilot.pause()
+        await pilot.pause()
+
+        left = app.query_one("#console-tab-overflow-left", Static)
+        right = app.query_one("#console-tab-overflow-right", Static)
+        strip = app.query_one("#console-native-tab-strip", ConsoleSessionTabStrip)
+
+        # At the far-left end: tabs hidden on the right only.
+        assert right.styles.visibility == "visible", (
+            "right hint missing with tabs hidden right"
+        )
+        assert left.styles.visibility == "hidden", (
+            "left hint shown with nothing hidden left"
+        )
+
+        await _wheel(pilot, strip, down=True)
+        assert left.styles.visibility == "visible", (
+            "left hint missing after scrolling right"
+        )
+
+
+@pytest.mark.asyncio
+async def test_overflow_hint_toggles_never_shift_the_strip_region() -> None:
+    """Qodo PR #2327 review: hint toggles must not resize or move the strip.
+
+    The hints hide via ``visibility`` (cells stay in the row's layout), not
+    ``display: none`` (cells leave it). If this regresses, a hint appearing
+    narrows the 1fr strip by a cell and visibly jumps the tabs at every
+    threshold crossing. Pin the strip's region across a toggle cycle.
+    """
+    app = TabStripHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        await surface.sync_sessions(sessions=_sessions(10), active_session_id="s1")
+        await pilot.pause()
+        await pilot.pause()
+
+        strip = app.query_one("#console-native-tab-strip", ConsoleSessionTabStrip)
+        left = app.query_one("#console-tab-overflow-left", Static)
+
+        region_before = strip.region
+        assert left.styles.visibility == "hidden"
+
+        # Wheel right until the left hint appears (a toggle happened).
+        for _ in range(3):
+            await _wheel(pilot, strip, down=True)
+        assert left.styles.visibility == "visible"
+        assert strip.scroll_x > 0
+        assert strip.region == region_before, (
+            "strip region moved/resized when a hint toggled: "
+            f"{region_before} -> {strip.region}"
+        )
+
+        # And back: the reverse toggle must be just as inert.
+        for _ in range(6):
+            await _wheel(pilot, strip, down=False)
+        assert left.styles.visibility == "hidden"
+        assert strip.region == region_before
+
+
+@pytest.mark.asyncio
+async def test_overflow_hints_hidden_without_overflow() -> None:
+    """A strip that fits shows neither hint."""
+    app = TabStripHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        await surface.sync_sessions(sessions=_sessions(1), active_session_id="s1")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert (
+            app.query_one("#console-tab-overflow-left", Static).styles.visibility
+            == "hidden"
+        )
+        assert (
+            app.query_one("#console-tab-overflow-right", Static).styles.visibility
+            == "hidden"
+        )
+
+
+def test_chat_screen_exposes_rail_body_height_seam() -> None:
+    """TASK-28028: the wiring lambda's ``screen._console_rail_body_height()``
+    must exist on ``ChatScreen`` -- the adaptive row-limit WIP shipped
+    without it and every Console screen resume crashed with AttributeError.
+    The functional leg is the switcher pair in
+    ``test_console_native_chat_flow.py``, which drives the real screen.
+    """
+    assert callable(getattr(ChatScreen, "_console_rail_body_height", None))
+

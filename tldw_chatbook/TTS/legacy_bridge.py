@@ -574,6 +574,23 @@ class LegacyBackendHost:
         request: OpenAISpeechRequest,
         progress_sink: ProgressSink | None,
     ) -> AsyncIterator[bytes]:
+        if self.provider_id == "kokoro" and internal_model_id in {
+            "local_kokoro_default_onnx",
+            "local_kokoro_default_pytorch",
+        }:
+            options = request.extra_params or {}
+            if "use_onnx" in options:
+                use_onnx = options["use_onnx"]
+            elif internal_model_id.endswith("_pytorch"):
+                use_onnx = False
+            else:
+                # The legacy ONNX route is also the implicit default emitted
+                # by Console/briefings. Inherit the applied provider setting
+                # unless a request explicitly selects an engine.
+                app_tts = self._app_config.get("app_tts", {})
+                use_onnx = app_tts.get("KOKORO_USE_ONNX", True)
+            engine = "onnx" if use_onnx else "pytorch"
+            internal_model_id = f"local_kokoro_default_{engine}"
         return _LegacyOperation(
             self,
             internal_model_id,
@@ -800,11 +817,29 @@ class LegacyTTSAdapter:
         route = resolve_legacy_route(internal_id)
         if route.provider_id != self.provider_id:
             raise ValueError("Legacy route does not match provider")
+        sample_rate = None
+        metadata = {}
+        if legacy_request.response_format == "pcm" and (
+            self.provider_id != "openai"
+            or normalize_openai_compatible_endpoint(
+                self.admitted_outbound_endpoint()
+            ).official
+        ):
+            # Retained backends normalize PCM to signed little-endian 16-bit,
+            # mono 24 kHz. Custom OpenAI-compatible servers have no such promise.
+            sample_rate = 24_000
+            metadata = {
+                "sample_rate": sample_rate,
+                "channels": 1,
+                "sample_encoding": "pcm_s16le",
+            }
         return TTSAudioResponse(
             provider_id=self.provider_id,
             model_id=request.model_id,
             audio_format=legacy_request.response_format,
             content_type=_content_type(legacy_request.response_format),
+            sample_rate=sample_rate,
+            metadata=metadata,
             byte_stream=self.host.generate(
                 route.internal_model_id,
                 legacy_request,

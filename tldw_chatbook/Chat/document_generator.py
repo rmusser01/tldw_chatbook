@@ -20,7 +20,7 @@ import pyperclip
 from loguru import logger
 
 # Local imports
-from ..config import get_cli_setting
+from ..config import get_cli_setting, load_console_library_migration_seed
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..LLM_Calls.LLM_API_Calls import (
     chat_with_openai,
@@ -49,6 +49,7 @@ from ..LLM_Calls.LLM_API_Calls_Local import (
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..Internal_Prompts import get_internal_prompt
 from .Chat_Deps import ChatAPIError
+from .assistant_generation_state import render_exported_assistant_content
 
 # Configure logger
 logger = logger.bind(module="DocumentGenerator")
@@ -65,7 +66,11 @@ class DocumentGenerator:
             db_path: Path to the ChaChaNotes database
             client_id: Client identifier for database operations
         """
-        self.db = CharactersRAGDB(db_path, client_id)
+        self.db = CharactersRAGDB(
+            db_path,
+            client_id,
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
 
         # Load prompt configurations
         self.timeline_config = get_cli_setting(
@@ -162,6 +167,7 @@ class DocumentGenerator:
                 "role": msg.get("role") or msg.get("sender", "unknown"),
                 "content": msg.get("content", ""),
                 "timestamp": msg.get("timestamp", ""),
+                "assistant_generation_state": msg.get("assistant_generation_state"),
             }
             for msg in messages
         ]
@@ -184,7 +190,11 @@ class DocumentGenerator:
         # Add conversation history
         for msg in messages:
             role = msg.get("role", "unknown")
-            content = msg.get("content", "")
+            content = render_exported_assistant_content(
+                role=role,
+                content=msg.get("content", ""),
+                state=msg.get("assistant_generation_state"),
+            )
             timestamp = msg.get("timestamp", "")
 
             context_parts.append(f"[{timestamp}] {role.upper()}: {content}")
@@ -238,9 +248,7 @@ class DocumentGenerator:
 
         # Build prompt
         system_prompt = get_internal_prompt("document_generation.timeline_system")
-        user_prompt = (
-            f"{get_internal_prompt('document_generation.timeline_user')}\n\nConversation Context:\n{context}"
-        )
+        user_prompt = f"{get_internal_prompt('document_generation.timeline_user')}\n\nConversation Context:\n{context}"
 
         # Call LLM
         try:
@@ -336,9 +344,7 @@ class DocumentGenerator:
 
         # Build prompt
         system_prompt = get_internal_prompt("document_generation.study_guide_system")
-        user_prompt = (
-            f"{get_internal_prompt('document_generation.study_guide_user')}\n\nConversation Context:\n{context}"
-        )
+        user_prompt = f"{get_internal_prompt('document_generation.study_guide_user')}\n\nConversation Context:\n{context}"
 
         # Call LLM
         try:
@@ -434,9 +440,7 @@ class DocumentGenerator:
 
         # Build prompt
         system_prompt = get_internal_prompt("document_generation.briefing_system")
-        user_prompt = (
-            f"{get_internal_prompt('document_generation.briefing_user')}\n\nConversation Context:\n{context}"
-        )
+        user_prompt = f"{get_internal_prompt('document_generation.briefing_user')}\n\nConversation Context:\n{context}"
 
         # Call LLM
         try:

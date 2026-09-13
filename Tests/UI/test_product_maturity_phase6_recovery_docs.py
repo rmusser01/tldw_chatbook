@@ -185,7 +185,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             assert "Set up provider" in console_text
             assert (
                 app.screen._console_provider_blocker_copy()
-                == "Provider setup needed: OpenAI missing API key"
+                == "Provider setup needed: API key missing for OpenAI"
             )
 
             await app.handle_screen_navigation(NavigateToScreen("acp"))

@@ -258,3 +258,374 @@ class ServerNotificationsService:
     async def delete_reminder(self, task_id: str) -> dict[str, Any]:
         self._enforce("notifications.reminders.configure.server")
         return self._dump(await self._require_client().delete_reminder_task(task_id))
+
+    async def get_scheduled_automation_capabilities(self) -> dict[str, Any]:
+        """Probe server-advertised Scheduled Tasks automation capabilities.
+
+        task-3 (schedules UAT remediation ruling 5) capabilities
+        handshake: a 404 here means the server predates Scheduled Tasks
+        automation entirely, which `SchedulingServerClient.get_capabilities`
+        turns into an honest degrade rather than a crash.
+
+        Returns:
+            The capabilities response (``items``, one entry per
+            automation family) as a JSON-mode dict.
+        """
+        self._enforce("scheduler.automations.list.server")
+        return self._dump(
+            await self._require_client().get_scheduled_task_automation_capabilities()
+        )
+
+    async def list_scheduled_automations(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List the server's automation definitions (ADR-077 control plane).
+
+        Args:
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+
+        Returns:
+            The definition list response (``items`` plus total/has_more
+            pagination fields) as a JSON-mode dict.
+        """
+        self._enforce("scheduler.automations.list.server")
+        return self._dump(
+            await self._require_client().list_scheduled_task_automation_definitions(
+                limit=limit, offset=offset
+            )
+        )
+
+    async def list_scheduled_automation_audit(
+        self,
+        definition_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        event_type: str | None = None,
+    ) -> dict[str, Any]:
+        """List one server definition's durable execution-audit trail.
+
+        Args:
+            definition_id: The server definition whose trail to fetch.
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+            event_type: Optional event-type filter (e.g. ``run_succeeded``).
+
+        Returns:
+            The audit list response (``items`` with ``run_{status}`` events
+            plus total/has_more pagination) as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.list.server")
+        return self._dump(
+            await self._require_client().list_scheduled_task_automation_definition_audit(
+                definition_id, limit=limit, offset=offset, event_type=event_type
+            )
+        )
+
+    async def run_scheduled_automation_now(
+        self,
+        definition_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Trigger one immediate server-side execution of a definition.
+
+        Args:
+            definition_id: The server definition to dispatch.
+            idempotency_key: Optional dedupe key; the server collapses
+                repeated triggers within its run-slot window when present.
+
+        Returns:
+            The run reference (definition, run slot, job id, dedupe flag).
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.launch.server")
+        return self._dump(
+            await self._require_client().run_scheduled_task_automation_definition_now(
+                definition_id, idempotency_key=idempotency_key
+            )
+        )
+
+    async def list_scheduled_automation_results(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        definition_id: str | None = None,
+        review_state: str | None = None,
+    ) -> dict[str, Any]:
+        """List the server's scheduled-task results (spec §4.2).
+
+        Args:
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+            definition_id: Optional filter to one definition's results.
+            review_state: Optional review-state filter.
+
+        Returns:
+            The result list response (``items`` plus total/has_more
+            pagination fields) as a JSON-mode dict.
+        """
+        self._enforce("scheduler.automations.list.server")
+        return self._dump(
+            await self._require_client().list_scheduled_task_results(
+                limit=limit,
+                offset=offset,
+                definition_id=definition_id,
+                review_state=review_state,
+            )
+        )
+
+    async def review_scheduled_automation_result(
+        self,
+        result_id: str,
+        review_state: str,
+        *,
+        review_note: str | None = None,
+    ) -> dict[str, Any]:
+        """Set one result's review state.
+
+        Unlike ``run_scheduled_automation_now`` (which uses the LAUNCH
+        action -- it dispatches a brand-new execution), reviewing a result
+        only mutates existing metadata; it never launches or lists
+        anything. That makes it a CONFIGURE-class action, the same
+        reasoning ``notifications.reminders.configure.server`` uses for
+        reminder create/update/delete.
+
+        Args:
+            result_id: The server result to update.
+            review_state: New review state (``read``/``dismissed``/etc).
+            review_note: Optional free-text note attached to the review.
+
+        Returns:
+            The updated result row.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().review_scheduled_task_result(
+                result_id, review_state, review_note=review_note
+            )
+        )
+
+    async def preview_scheduled_automation_definition(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Create a server-side authoring preview (spec §5.1).
+
+        A preview never mutates a definition by itself -- it validates and
+        normalizes a payload and reports what the server WOULD persist --
+        but it still requires the same authoring credentials as create and
+        update, so all three of these seams gate on the CONFIGURE action (a
+        recorded plan ruling for this task; unlike ``review_scheduled_
+        automation_result`` above, there is no LIST/LAUNCH action here to
+        distinguish it from).
+
+        Args:
+            request: The preview request payload (``ScheduledTaskPreview
+                CreateRequest`` fields: ``mode``, ``family``,
+                ``definition_id``, ``definition_version``, ``name``,
+                ``description``, ``config``, ``input``, ``schedule``,
+                ``visibility_policy``, ``notification_policy``,
+                ``approval_policy``).
+
+        Returns:
+            The preview response (``status``/``validation_errors``/
+            ``normalized_config``/etc) as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.scheduled_tasks_automation_schemas import (
+            ScheduledTaskPreviewCreateRequest,
+        )
+
+        self._enforce("scheduler.automations.configure.server")
+        request_model = ScheduledTaskPreviewCreateRequest.model_validate(request)
+        return self._dump(
+            await self._require_client().preview_scheduled_task_definition(
+                request_model
+            )
+        )
+
+    async def create_scheduled_automation_definition(
+        self,
+        preview_id: str,
+        *,
+        initial_lifecycle: str = "configured",
+    ) -> dict[str, Any]:
+        """Create a server-side automation definition from a consumed preview.
+
+        Args:
+            preview_id: The valid create-mode preview to consume.
+            initial_lifecycle: Starting lifecycle -- ``"configured"``
+                (default) or ``"paused"``.
+
+        Returns:
+            The created definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().create_scheduled_task_definition(
+                preview_id, initial_lifecycle=initial_lifecycle
+            )
+        )
+
+    async def update_scheduled_automation_definition(
+        self,
+        definition_id: str,
+        preview_id: str,
+    ) -> dict[str, Any]:
+        """Apply a consumed update-mode preview to an existing definition.
+
+        Args:
+            definition_id: The definition to update.
+            preview_id: The valid update-mode preview to consume.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().update_scheduled_task_definition(
+                definition_id, preview_id
+            )
+        )
+
+    async def pause_scheduled_automation_definition(
+        self, definition_id: str
+    ) -> dict[str, Any]:
+        """Pause a server-side automation definition.
+
+        Same CONFIGURE-class reasoning as preview/create/update above --
+        a lifecycle transition, gated on the same action id.
+
+        Args:
+            definition_id: The server definition to pause.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().pause_scheduled_task_definition(
+                definition_id
+            )
+        )
+
+    async def resume_scheduled_automation_definition(
+        self, definition_id: str
+    ) -> dict[str, Any]:
+        """Resume a paused server-side automation definition.
+
+        Args:
+            definition_id: The server definition to resume.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().resume_scheduled_task_definition(
+                definition_id
+            )
+        )
+
+    async def archive_scheduled_automation_definition(
+        self, definition_id: str
+    ) -> dict[str, Any]:
+        """Archive a server-side automation definition.
+
+        Args:
+            definition_id: The server definition to archive.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().archive_scheduled_task_definition(
+                definition_id
+            )
+        )
+
+    async def mark_scheduled_automation_definition_solved(
+        self, definition_id: str, *, result_id: str | None = None
+    ) -> dict[str, Any]:
+        """Mark a server-side automation definition solved.
+
+        Same CONFIGURE-class reasoning as pause/resume/archive above -- a
+        resolution-state transition, gated on the same action id.
+
+        Args:
+            definition_id: The server definition to mark solved.
+            result_id: The server result id that triggered the
+                resolution, if any.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().mark_scheduled_task_definition_solved(
+                definition_id, result_id=result_id
+            )
+        )
+
+    async def reopen_scheduled_automation_definition(
+        self,
+        definition_id: str,
+        *,
+        target_lifecycle: str = "paused",
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Reopen a solved server-side automation definition.
+
+        Args:
+            definition_id: The server definition to reopen.
+            target_lifecycle: Lifecycle to restore -- ``"configured"`` or
+                ``"paused"`` (default).
+            reason: Optional free-text reason recorded on the audit event.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().reopen_scheduled_task_definition(
+                definition_id, target_lifecycle=target_lifecycle, reason=reason
+            )
+        )

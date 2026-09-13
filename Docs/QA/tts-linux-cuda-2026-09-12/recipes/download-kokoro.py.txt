@@ -1,0 +1,16 @@
+import hashlib,json,urllib.request
+from pathlib import Path
+root=Path('/home/ml-user/tts-linux-cuda-20260912')
+rev='f3ff3571791e39611d31c381e3a41a3af07b4987'
+files={'kokoro-v1_0.pth':'496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4','config.json':None,'voices/af_heart.pt':'0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff'}
+manifest=[]
+for name,expected in files.items():
+ url=f'https://huggingface.co/hexgrad/Kokoro-82M/resolve/{rev}/{name}'
+ path=root/'models/kokoro'/name
+ path.parent.mkdir(parents=True,exist_ok=True)
+ urllib.request.urlretrieve(url,path)
+ digest=hashlib.sha256(path.read_bytes()).hexdigest()
+ assert expected is None or expected==digest
+ manifest.append({'path':str(path),'url':url,'revision':rev,'sha256':digest,'bytes':path.stat().st_size})
+ print(name,digest,flush=True)
+(root/'logs/kokoro-assets.json').write_text(json.dumps(manifest,indent=2)+'\n')

@@ -14,15 +14,14 @@ failed twice, plus one recorded window needing a ruling:
    keystroke;
 3. (AC#3) a wake deferred while its conversation is VIEWED view-cleared
    the mark while the ledger still owed -- restart in that window leaves
-   an owed, UNMARKED run, and the mount-claim is marks-indexed
-   (``seed_from_marks``: the mark names WHICH conversations to claim),
-   so it never seeds. Verified here as a limit of the marks-indexed
-   claim; fixed by making the view-clear YIELD while the coordinator
-   still owes the conversation, so the mark -- the restart staging bit --
-   survives every deferral window.
+   an owed, UNMARKED run. ADR135 now discovers pending results from the
+   durable ledger independently of badges. The tests preserve visible
+   attention through deferral and verify unmarked results are discovered.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 import time
 
@@ -39,7 +38,7 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_panel import _AGENT_SECTION_SIZE
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import (
-    StaticConversationTreeService,
+    SearchableConversationService,
     _click_console_workspace_conversation_for_id,
     _configure_grouped_browser_workspaces,
     _configure_native_ready_console,
@@ -52,6 +51,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 
 
 async def _settle(pilot, predicate, seconds: float = 8.0) -> bool:
@@ -75,6 +75,7 @@ async def test_unseen_mark_reaches_membership_rows_without_a_session(tmp_path):
     restart shape -- session tabs do not restore) must carry the ◈ on its
     membership browser row, exactly as an open session's tab does."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     marks = _attach_real_dbs(app, tmp_path)
     service = _configure_grouped_browser_workspaces(app)
     service.link_membership(
@@ -107,18 +108,12 @@ async def test_unseen_mark_reaches_persisted_rows_without_a_session(tmp_path):
     """Same restart shape through the persisted-conversation listing path
     (the grouped browser's saved-conversation rows)."""
 
-    class _PersistedListingService:
-        async def list_conversations(self, **kwargs):
-            if kwargs.get("scope_type") == "global":
-                return {
-                    "items": [{"id": "conv-marked", "title": "Marked saved"}],
-                    "total": 1,
-                }
-            return {"items": [], "total": 0}
-
     app = _build_test_app()
+    _configure_native_ready_console(app)
     marks = _attach_real_dbs(app, tmp_path)
-    app.chat_conversation_scope_service = _PersistedListingService()
+    app.chachanotes_db.add_conversation(
+        {"id": "conv-marked", "title": "Marked saved"}
+    )
     marks.set_mark("conv-marked", ConversationLocalMarksService.FLEET_UNSEEN)
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
@@ -156,6 +151,11 @@ async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
     Live, the wake sat pending until an unrelated composer keystroke."""
     app = _build_test_app()
     _configure_native_ready_console(app)
+    assert save_setting_to_cli_config("console", "agent_runtime", False)
+    assert save_setting_to_cli_config(
+        "console.conversation_browser", "expanded_workspace_ids", ["ws-a"]
+    )
+    app.app_config = load_settings()
     marks = _attach_real_dbs(app, tmp_path)
     # The conversation genuinely exists in ChaChaNotes (production shape:
     # it persisted before the restart) so the wake's SYSTEM notice row can
@@ -171,7 +171,6 @@ async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
             "content": "please research this in the background",
         }
     )
-    app.app_config.setdefault("console", {})["agent_runtime"] = False
     service = _configure_grouped_browser_workspaces(app)
     service.link_membership(
         "ws-a",
@@ -180,10 +179,15 @@ async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
         role="workspace-thread",
         title="Marked while away",
     )
-    app.chat_conversation_scope_service = StaticConversationTreeService(
+    app.chat_conversation_scope_service = SearchableConversationService(
         {
             "conv-marked": {
-                "conversation": {"id": "conv-marked", "title": "Marked while away"},
+                "conversation": {
+                    "id": "conv-marked",
+                    "title": "Marked while away",
+                    "scope_type": "workspace",
+                    "workspace_id": "ws-a",
+                },
                 "root_threads": [
                     {
                         "id": "message-1",
@@ -212,6 +216,8 @@ async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
         controller = console._ensure_console_chat_controller()
         gateway = _RecordingWakeGateway(reply="acting on the staged result")
         controller.provider_gateway = gateway
+        console._console_provider_gateway = gateway
+        console._ensure_console_agent_bridge()._gateway = gateway
         assert controller.fleet_wake.has_pending("conv-marked"), (
             "precondition: the mount-claim must have seeded the owed wake "
             "from mark + ledger"
@@ -250,6 +256,7 @@ async def test_view_clear_yields_while_a_wake_is_still_owed(tmp_path):
     marks-indexed mount-claim depends on. Once nothing is owed, viewing
     clears it exactly as before (Task 4's behaviour, preserved)."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     marks = _attach_real_dbs(app, tmp_path)
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
@@ -279,6 +286,8 @@ async def test_view_clear_yields_while_a_wake_is_still_owed(tmp_path):
             "unmarked run the marks-indexed mount-claim never seeds"
         )
 
+        # Hydrate receipt authority before view-clearing the compatibility mark.
+        await asyncio.to_thread(app.console_runtime.activity_receipts.hydrate_from_storage)
         # Nothing owed anymore (the delivery committed): viewing clears.
         with wake._registry_lock:
             wake._pending.pop(session.id, None)
@@ -290,25 +299,14 @@ async def test_view_clear_yields_while_a_wake_is_still_owed(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_marks_indexed_mount_claim_alone_misses_an_unmarked_owed_run(
-    tmp_path,
-):
-    """The verified limit the AC#3 ruling records: ``seed_from_marks`` is
-    marks-INDEXED -- the ledger defines WHAT is owed, but only for
-    conversations the mark names. An owed, unmarked run seeds nothing.
-    This is why the fix above keeps the mark alive through every deferral
-    window instead of trying to claim from the ledger globally (which
-    would also sweep in restart-orphans the corrected spec §3 deliberately
-    leaves to next-turn handling)."""
+async def test_mount_claim_discovers_an_unmarked_owed_run(tmp_path):
+    """ADR135: durable completion discovery is independent of UI badges."""
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
         tmp_path
     )
     try:
         _parent, _run_id = _terminal_subagent_run(runs_db, "conv-unmarked")
-        assert controller.fleet_wake.seed_from_marks() == 0, (
-            "documented limit: an owed but UNMARKED conversation is "
-            "invisible to the marks-indexed mount-claim"
-        )
-        assert not controller.fleet_wake.has_pending("conv-unmarked")
+        assert controller.fleet_wake.seed_from_marks() == 1
+        assert controller.fleet_wake.has_pending("conv-unmarked")
     finally:
         chacha.close()

@@ -41,6 +41,7 @@ logger = logger.bind(module="PersonasPreviewController")
 # Cap on the preview transcript text staged into a Console handoff body.
 PREVIEW_HANDOFF_TRANSCRIPT_CHAR_LIMIT = 6000
 
+
 def build_preview_system_prompt(
     record: Mapping[str, Any], *, greeting: str = ""
 ) -> str:
@@ -173,9 +174,7 @@ class PersonasPreviewController:
             for g in (record.get("alternate_greetings") or [])
             if isinstance(g, str)
         ]
-        self._greetings = [
-            replace_placeholders(g, name, "User") for g in raw
-        ]
+        self._greetings = [replace_placeholders(g, name, "User") for g in raw]
         if keep_index and self._greetings:
             self._current_greeting_index = min(
                 self._current_greeting_index, len(self._greetings) - 1
@@ -188,9 +187,7 @@ class PersonasPreviewController:
             )
         except QueryError:
             pass
-        return (
-            self._greetings[self._current_greeting_index] if self._greetings else ""
-        )
+        return self._greetings[self._current_greeting_index] if self._greetings else ""
 
     async def reset_for_character(
         self,
@@ -295,9 +292,7 @@ class PersonasPreviewController:
         """
         raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
         config = raw_config if isinstance(raw_config, Mapping) else {}
-        char_selection = self._selection_from_defaults(
-            config, "character_defaults"
-        )
+        char_selection = self._selection_from_defaults(config, "character_defaults")
         chat_selection = self._selection_from_defaults(config, "chat_defaults")
         char_provider = char_selection.provider
         char_model = self._selection_model(char_selection)
@@ -676,9 +671,10 @@ class PersonasPreviewController:
 
         fallback = self._selection_from_defaults(config, "chat_defaults")
         chat_provider = fallback.provider
-        same_target = (
-            chat_provider.lower() == (selection.provider or "").lower()
-            and self._selection_model(fallback) == self._selection_model(selection)
+        same_target = chat_provider.lower() == (
+            selection.provider or ""
+        ).lower() and self._selection_model(fallback) == self._selection_model(
+            selection
         )
         if chat_provider and not same_target:
             try:
@@ -697,9 +693,7 @@ class PersonasPreviewController:
                 logger.bind(
                     character_provider=selection.provider,
                     fallback_provider=chat_provider,
-                ).info(
-                    "Character provider not ready; preview using chat_defaults."
-                )
+                ).info("Character provider not ready; preview using chat_defaults.")
                 return fallback, fallback_resolution, chat_provider
             # Both providers are unready. Surface the chat_defaults blocker: it
             # is the provider the guided-flow user actually configured, so its
@@ -778,7 +772,7 @@ class PersonasPreviewController:
             """Render one provider stream into the pane; ``None`` means stale."""
             consumed = ""
             opened = False
-            async for chunk in gateway.stream_chat(res, messages):
+            async for chunk in gateway.stream_chat(res, messages, route=None):
                 if _stale():
                     await pane.discard_partial_reply()
                     return None

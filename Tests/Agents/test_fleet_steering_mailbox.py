@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 
 import pytest
 
@@ -59,6 +60,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
     ToolCallExecuting,
     ToolCallFinished,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
     format_steering_message,
@@ -198,9 +200,14 @@ def test_red_f_concurrent_post_and_drain_lose_and_duplicate_nothing():
 
     def post(worker: int) -> None:
         for i in range(per_poster):
-            assert c.post_steering(
+            deadline = time.monotonic() + 10.0
+            while not c.post_steering(
                 h.handle_id, STEERING_SOURCE_USER, f"w{worker}-{i}"
-            )
+            ):
+                # ADR-129: admission may refuse a full queue; retry the
+                # unsent entry after a drainer has had a chance to run.
+                assert time.monotonic() < deadline
+                stop.wait(0.001)
 
     def drain() -> None:
         while not stop.is_set():
@@ -264,7 +271,9 @@ def make_deps(call_model, *, invoke=None, cancel=None, drain=None, on_record=Non
         invoke_tool=invoke or (lambda call: ToolResult(ok=True, content="42")),
         spawn=lambda task: ToolResult(ok=True, content="sub done"),
         find_tools=lambda query: [],
-        load_schemas=lambda ids: [CALC],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(
+            accepted=(CALC,)
+        ),
         should_cancel=cancel or (lambda: False),
         clock=lambda: 0.0,
         drain_mailbox=drain,
@@ -357,7 +366,7 @@ def test_red_a_fence_mid_batch_post_delivers_only_at_the_next_boundary():
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": fence_text},
         {"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}calculator: 42"},
-        {"role": "user", "content": labeled},
+        {"role": "user", "content": labeled, "_tldw_exchange_continuation": True},
     ]
     # The step log shows WHEN the entry reached the model.
     assert [step.kind for step in out.steps] == [
@@ -420,7 +429,7 @@ def test_red_a_native_mid_batch_post_delivers_only_at_the_next_boundary():
         echo,
         {"role": "tool", "tool_call_id": "c1", "content": "r-c1"},
         {"role": "tool", "tool_call_id": "c2", "content": "r-c2"},
-        {"role": "user", "content": labeled},
+        {"role": "user", "content": labeled, "_tldw_exchange_continuation": True},
     ]
     for payload in seen:
         _assert_batch_pairing_unbroken(payload)
@@ -490,11 +499,11 @@ def test_red_b_two_native_batches_never_interleave_steering_among_tool_results()
         echo_one,
         {"role": "tool", "tool_call_id": "c1", "content": "r-c1"},
         {"role": "tool", "tool_call_id": "c2", "content": "r-c2"},
-        {"role": "user", "content": steer_one},
+        {"role": "user", "content": steer_one, "_tldw_exchange_continuation": True},
         echo_two,
         {"role": "tool", "tool_call_id": "c3", "content": "r-c3"},
         {"role": "tool", "tool_call_id": "c4", "content": "r-c4"},
-        {"role": "user", "content": steer_two},
+        {"role": "user", "content": steer_two, "_tldw_exchange_continuation": True},
     ]
     for payload in seen:
         _assert_batch_pairing_unbroken(payload)
@@ -621,7 +630,7 @@ def test_red_c_restore_batch_path_never_drains():
         [
             {"role": "user", "content": "go"},
             {"role": "tool", "tool_call_id": "call-1", "content": "4"},
-            {"role": "user", "content": labeled},
+            {"role": "user", "content": labeled, "_tldw_exchange_continuation": True},
         ]
     ]
 
@@ -681,7 +690,7 @@ def test_red_d_drain_under_an_active_checkpoint_produces_no_continuation_error()
     # Delivered under the ACTIVE checkpoint, at the coherent boundary.
     assert seen[1][-2:] == [
         {"role": "tool", "tool_call_id": "call-1", "content": "4"},
-        {"role": "user", "content": labeled},
+        {"role": "user", "content": labeled, "_tldw_exchange_continuation": True},
     ]
 
 
@@ -911,7 +920,7 @@ def test_fleet_child_drain_is_wired_to_its_own_coordinator_mailbox(db):
     second_payload = chat.child_calls["task one"][1]["messages_payload"]
     # Delivered at the coherent boundary: after the batch's tool result,
     # as the final message before the child's next assistant turn.
-    assert second_payload[-1] == {"role": "user", "content": labeled}
+    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
     assert str(second_payload[-2]["content"]).startswith(
         f"{FENCE_TOOL_RESULT_PREFIX}calculator:"
     )
@@ -965,14 +974,23 @@ def test_only_the_threaded_fleet_child_is_wired_for_drain(db, monkeypatch):
         for prompt, drain in recorded
         if prompt.startswith(SUBAGENT_PROMPT_PREFIX)
     ]
-    assert primary_drains == [None]
+    # TASK-25903 updated this contract: the primary is now wired too -- to
+    # its USER-steering mailbox (steer_primary), a different producer from
+    # the child's coordinator mailbox. What this test still pins is that the
+    # fleet child gets its own drain and that they are distinct objects.
+    assert len(primary_drains) == 1 and primary_drains[0] is not None
     assert len(child_drains) == 1 and child_drains[0] is not None
+    assert primary_drains[0] is not child_drains[0]
 
 
 def test_inline_children_and_their_primary_stay_unwired(db, monkeypatch):
     """CHARACTERIZATION PIN (not a red -- current behavior is already
     correct): the inline path has no handle and so no mailbox; wiring a
-    drain there would be the regression this test exists to catch."""
+    drain there would be the regression this test exists to catch.
+
+    TASK-25903: the PRIMARY half of the old assertion is superseded -- a
+    primary now carries its user-steering drain -- so this pins only that
+    the INLINE CHILD stays unwired."""
     recorded = []
     real_loop = agent_service.run_agent_loop
 
@@ -999,4 +1017,8 @@ def test_inline_children_and_their_primary_stay_unwired(db, monkeypatch):
 
     assert outcome.status == RUN_DONE and outcome.final_text == "final answer"
     assert len(recorded) == 2  # primary + one inline child
-    assert recorded == [None, None]
+    primary_drain, inline_child_drain = recorded
+    assert primary_drain is not None, "the primary's user-steering drain"
+    assert inline_child_drain is None, (
+        "an inline child has no handle and must stay unwired"
+    )

@@ -1,4 +1,8 @@
 from tldw_chatbook.Library.library_skills_state import (
+    SkillBrowseScope,
+    apply_skill_browse_result,
+    begin_skill_browse,
+    build_skill_browse_result,
     coerce_skill_editor_mode,
     reconcile_skill_allowed_tools,
     SkillEditorSupportingFile,
@@ -53,6 +57,19 @@ def test_list_renders_trusted_and_blocked_with_glyphs():
     assert state.count == 2
 
 
+def test_list_marks_the_selected_skill_independently_of_focus():
+    state = build_skills_list_state(
+        _ctx(available=[_summary("alpha"), _summary("bravo")]),
+        query="",
+        sort="name",
+        selected_name="bravo",
+    )
+
+    by_name = {row.name: row for row in state.rows}
+    assert by_name["alpha"].selected is False
+    assert by_name["bravo"].selected is True
+
+
 def test_status_sort_puts_needs_review_first():
     state = build_skills_list_state(
         _ctx(
@@ -79,6 +96,108 @@ def test_query_matches_name_and_description():
     assert [r.name for r in state.rows] == ["code-review"]
 
 
+def test_skill_browse_scope_is_local_bounded_and_fingerprints_full_scope():
+    scope = SkillBrowseScope(query="  Needle  ", sort="STATUS", page=2)
+
+    assert scope.backend == "local"
+    assert scope.query == "Needle"
+    assert scope.sort == "status"
+    assert scope.page_size == 20
+    assert scope.fingerprint != SkillBrowseScope(query="Needle", page=1).fingerprint
+
+
+def test_skill_browse_result_validates_exact_page_and_source_wide_trust():
+    scope = SkillBrowseScope(query="needle", sort="status", page=2)
+    result = build_skill_browse_result(
+        scope,
+        {
+            "skills": [_summary("skill-20", trust_blocked=True)],
+            "count": 1,
+            "total": 21,
+            "limit": 20,
+            "offset": 20,
+            "blocked_total": 4,
+            "first_blocked_skill_name": "blocked-alpha",
+        },
+        request_token=7,
+    )
+
+    assert result.page == 2
+    assert result.total_items == 21
+    assert result.blocked_total == 4
+    assert result.first_blocked_skill_name == "blocked-alpha"
+    assert result.items[0]["name"] == "skill-20"
+
+
+def test_skill_browse_result_rejects_duplicate_or_inexact_page_rows():
+    scope = SkillBrowseScope(page=1)
+    duplicate = _summary("same")
+
+    for skills, count, total in (
+        ([duplicate, duplicate], 2, 2),
+        ([_summary("only")], 1, 2),
+    ):
+        try:
+            build_skill_browse_result(
+                scope,
+                {
+                    "skills": skills,
+                    "count": count,
+                    "total": total,
+                    "limit": 20,
+                    "offset": 0,
+                    "blocked_total": 0,
+                    "first_blocked_skill_name": None,
+                },
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("malformed Skill page must fail closed")
+
+
+def test_skill_browse_result_rejects_contradictory_blocked_recovery_metadata():
+    scope = SkillBrowseScope()
+
+    try:
+        build_skill_browse_result(
+            scope,
+            {
+                "skills": [],
+                "count": 0,
+                "total": 0,
+                "limit": 20,
+                "offset": 0,
+                "blocked_total": 0,
+                "first_blocked_skill_name": "blocked-alpha",
+            },
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("zero blocked total cannot expose a review target")
+
+
+def test_skill_browse_result_applies_only_to_matching_loading_generation():
+    scope = SkillBrowseScope()
+    loading = begin_skill_browse(scope, request_token=3)
+    late = build_skill_browse_result(
+        scope,
+        {
+            "skills": [],
+            "count": 0,
+            "total": 0,
+            "limit": 20,
+            "offset": 0,
+            "blocked_total": 0,
+            "first_blocked_skill_name": None,
+        },
+        request_token=2,
+    )
+
+    assert apply_skill_browse_result(loading, late) is loading
+
+
 def test_flags_line_variants():
     # task-418 copy pass: spell the invocability out instead of the bare
     # "user · agent" tokens (no legend existed anywhere in the UI).
@@ -97,9 +216,13 @@ def test_skill_editor_mode_defaults_to_basic_and_accepts_only_known_values():
 
 
 def test_skill_invocation_copy_treats_user_and_agent_as_independent_choices():
-    assert skill_invocation_copy(True, False) == "You and the agent can invoke this Skill."
+    assert (
+        skill_invocation_copy(True, False) == "You and the agent can invoke this Skill."
+    )
     assert skill_invocation_copy(True, True) == "Only you can invoke this Skill."
-    assert skill_invocation_copy(False, False) == "Only the agent can invoke this Skill."
+    assert (
+        skill_invocation_copy(False, False) == "Only the agent can invoke this Skill."
+    )
     assert skill_invocation_copy(False, True) == (
         "Reference only — neither you nor the agent can invoke this Skill."
     )
@@ -113,7 +236,9 @@ def test_skill_trust_details_expand_only_for_actionable_safety_state():
 
 
 def test_skill_allowed_tools_sequence_preserves_order_duplicates_and_unknowns():
-    assert skill_allowed_tools_sequence("read_file, mystery, read_file, calculator") == (
+    assert skill_allowed_tools_sequence(
+        "read_file, mystery, read_file, calculator"
+    ) == (
         "read_file",
         "mystery",
         "read_file",
@@ -123,12 +248,15 @@ def test_skill_allowed_tools_sequence_preserves_order_duplicates_and_unknowns():
 
 def test_skill_allowed_tools_stay_exact_until_the_picker_is_explicitly_edited():
     captured = ("read_file", "mystery", "read_file", "calculator")
-    assert reconcile_skill_allowed_tools(
-        captured,
-        selected=("calculator",),
-        catalog_order=("calculator", "read_file", "write_file"),
-        picker_changed=False,
-    ) == captured
+    assert (
+        reconcile_skill_allowed_tools(
+            captured,
+            selected=("calculator",),
+            catalog_order=("calculator", "read_file", "write_file"),
+            picker_changed=False,
+        )
+        == captured
+    )
 
 
 def test_skill_allowed_tools_reconcile_only_known_user_edits_losslessly():
@@ -323,7 +451,6 @@ def test_shadow_name_set_stays_in_sync_with_real_sources():
     )
 
 
-
 def test_build_editor_state_marks_derived_description_and_keeps_field_empty():
     """task-419: when the SKILL.md frontmatter has NO description, the
     service derives one from the first body line for list display -- the
@@ -360,7 +487,14 @@ def test_skill_trust_header_line_maps_postures():
     from tldw_chatbook.Library.library_skills_state import skill_trust_header_line
 
     assert skill_trust_header_line("needs_setup", 0)[1] == "setup"
-    assert "isn't set up" in skill_trust_header_line("needs_setup", 0)[0]
+    # task-32363: the banner states the precedence -- with no trust store
+    # there is nothing to verify an approval against, so an approved skill
+    # reads "needs review" beside an unapproved one and the list looks
+    # wrong rather than unverifiable.
+    assert skill_trust_header_line("needs_setup", 0)[0] == (
+        'Skill trust isn\'t set up, so every skill reads "needs review" — '
+        "set it up to review and use skills."
+    )
     assert skill_trust_header_line("needs_resetup", 0)[1] == "resetup"
     assert "again after an update" in skill_trust_header_line("needs_resetup", 0)[0]
     assert skill_trust_header_line("unavailable", 0)[1] == "retry"

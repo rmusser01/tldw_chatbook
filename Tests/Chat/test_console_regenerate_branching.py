@@ -13,21 +13,12 @@ import pytest
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from Tests.console_provider_doubles import provider_resolution
 
 
 class StreamingGateway:
     async def resolve_for_send(self, selection):
-        return type(
-            "Resolution",
-            (),
-            {
-                "ready": True,
-                "provider": "llama_cpp",
-                "model": "test-model",
-                "base_url": "http://127.0.0.1:9099",
-                "visible_copy": "",
-            },
-        )()
+        return provider_resolution(base_url="http://127.0.0.1:9099")
 
     async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in ("hel", "lo"):
@@ -150,11 +141,11 @@ async def test_regenerate_mid_conversation_forks_branch_and_preserves_old_tail()
 
 
 @pytest.mark.asyncio
-async def test_regenerate_stream_failure_marks_new_sibling_failed_not_a1():
+async def test_regenerate_stream_failure_retains_failed_sibling_and_restores_anchor():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hi")
+    u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hi")
     a1 = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content="seed"
     )
@@ -170,19 +161,53 @@ async def test_regenerate_stream_failure_marks_new_sibling_failed_not_a1():
     assert unchanged_a1.content == "seed"
     assert unchanged_a1.status == "complete"
 
-    # The NEW sibling is the one left in the "failed" (retryable) state --
-    # this is the intended node-model behavior: a failed regenerate does not
-    # restore the old reply in place, it leaves a retryable failed node as
-    # the new branch tip. (The active leaf itself has since moved to the
-    # failure system row that `_stream_assistant_response` appends, which is
-    # pre-existing, unrelated-to-Task-6 behavior -- not asserted here.)
-    messages = store.messages_for_session(session.id)
-    new_sibling = next(
-        m
-        for m in messages
-        if m.role is ConsoleMessageRole.ASSISTANT and m.id != a1.id
-    )
+    siblings, _index, count = store.siblings_at(a1.id)
+    assert count == 2
+    new_sibling = next(sibling for sibling in siblings if sibling.id != a1.id)
     assert new_sibling.status == "failed"
+    assert store.active_leaf(session.id) == a1.id
+    assert store.active_path_message_ids(session.id) == [u1.id, a1.id]
+    assert {"role": "assistant", "content": "seed"} in (
+        controller._provider_messages_for_session(session.id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_regenerate_mid_conversation_failure_restores_selected_anchor_not_former_tail():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingBeforeAnyChunkGateway()
+    )
+    session = store.ensure_session()
+    u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1")
+    a1 = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a1-seed"
+    )
+    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
+    a2 = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a2-seed"
+    )
+
+    result = await controller.regenerate_message(a1.id)
+
+    assert result.accepted is True
+    assert "Provider stream failed:" in result.visible_copy
+    assert store.active_path_message_ids(session.id) == [u1.id, a1.id]
+    assert store.get_message(u2.id).content == "q2"
+    assert store.get_message(a2.id).content == "a2-seed"
+    assert u2.id not in store.active_path_message_ids(session.id)
+    assert a2.id not in store.active_path_message_ids(session.id)
+
+    siblings, _index, count = store.siblings_at(a1.id)
+    assert count == 2
+    failed_sibling = next(sibling for sibling in siblings if sibling.id != a1.id)
+    assert failed_sibling.status == "failed"
+
+    provider_messages = controller._provider_messages_for_session(session.id)
+    assert provider_messages[-1] == {
+        "role": "assistant",
+        "content": "a1-seed",
+    }
 
 
 @pytest.mark.asyncio
@@ -249,7 +274,6 @@ async def test_regenerate_persists_new_sibling_when_store_has_persistence():
     # would make it silently vanish from the DB.
     assert new_message.persisted_message_id is not None
     assert any(
-        entry["id"] == new_message.persisted_message_id
-        and entry["content"] == "hello"
+        entry["id"] == new_message.persisted_message_id and entry["content"] == "hello"
         for entry in persistence.created_messages
     )

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery import test_held_sqlite_rollback as _native_fixture
 from tldw_chatbook.Backup_Recovery import publication
 from tldw_chatbook.Backup_Recovery.journal import _Object, observe_artifact
 
@@ -54,7 +55,7 @@ def test_regular_safety_file_keeps_existing_full_object_witness(tmp_path):
 
 
 @pytest.fixture
-def builtin_case(tmp_path, monkeypatch, helper_resource_root):
+def builtin_case(tmp_path, monkeypatch, helper_resource_root, request):
     import hashlib
     from dataclasses import replace
     from threading import Event
@@ -62,7 +63,7 @@ def builtin_case(tmp_path, monkeypatch, helper_resource_root):
     import keyring.core
     from keyring.backends.null import Keyring
 
-    from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
+    replacement_case = _native_fixture.replacement_case
     from tldw_chatbook.Backup_Recovery import crypto, replacement
     from tldw_chatbook.Backup_Recovery.inventory import _sqlite_sidecars
     from tldw_chatbook.Backup_Recovery.models import (
@@ -78,6 +79,7 @@ def builtin_case(tmp_path, monkeypatch, helper_resource_root):
 
     monkeypatch.setattr(keyring.core, "_keyring_backend", Keyring())
     monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
+    owner_id = getattr(request, "param", "persona.visual_identity_builtin")
     core_key = "profile:profile:db.chachanotes.primary"
 
     def core_source(live):
@@ -91,57 +93,88 @@ def builtin_case(tmp_path, monkeypatch, helper_resource_root):
     ) as case:
         candidate, original, _, _, _, selector = case
         archive = replacement._acquired_source(candidate, original, Event())
-        root = selector.parent / "package-assets"
+        root = selector.parent / (
+            "persona_visual" if owner_id == "persona.assets" else "package-assets"
+        )
         selected = root / "characters" / "selected.png"
         selected.parent.mkdir(parents=True, mode=0o700)
         root.chmod(0o700)
         selected.write_bytes(b"selected builtin bytes")
         selected.chmod(0o600)
-        (root / "unselected").symlink_to(tmp_path / "absent")
+        if owner_id == "persona.visual_identity_builtin":
+            (root / "unselected").symlink_to(tmp_path / "absent")
         core = selector.parent / "core.db"
         db = CharactersRAGDB(core, "fixture")
         try:
-            actor = db.add_character_card({"name": "Original builtin"})
-            VisualIdentityRepository(db).activate_pack(
-                pack={
-                    "title": "builtin",
-                    "default_expression_key": "neutral",
-                    "source_kind": "builtin",
-                },
-                manifest={},
-                assets=[
-                    {
-                        "expression_key": "neutral",
-                        "original_expression_key": "neutral",
-                        "source_filename": selected.name,
-                        "storage_relpath": selected.relative_to(root).as_posix(),
-                        "content_type": "image/png",
-                        "bytes": selected.stat().st_size,
-                        "sha256": hashlib.sha256(selected.read_bytes()).hexdigest(),
-                        "width": 1,
-                        "height": 1,
-                    }
-                ],
-                actor_kind="character",
-                actor_id=actor,
-            )
+            if owner_id == "persona.assets":
+                from Tests.Persona_Visual.test_persona_visual_publication import (
+                    _snapshot,
+                )
+                from tldw_chatbook.Persona_Visual.publication import (
+                    publish_persona_visual,
+                )
+                from tldw_chatbook.Persona_Visual.repository import (
+                    PersonaVisualRepository,
+                )
+
+                selected.unlink()
+                selected.parent.rmdir()
+                source = tmp_path / "legacy-source"
+                source.mkdir(mode=0o700)
+                publish_persona_visual(
+                    PersonaVisualRepository(db),
+                    _snapshot(source),
+                    source_root=source,
+                    profile_root=selector.parent,
+                    authority_guard=lambda: True,
+                )
+                selected = (
+                    selector.parent
+                    / db.get_connection()
+                    .execute("SELECT storage_relpath FROM persona_visual_assets")
+                    .fetchone()[0]
+                )
+            else:
+                actor = db.add_character_card({"name": "Original builtin"})
+                VisualIdentityRepository(db).activate_pack(
+                    pack={
+                        "title": "builtin",
+                        "default_expression_key": "neutral",
+                        "source_kind": "builtin",
+                    },
+                    manifest={},
+                    assets=[
+                        {
+                            "expression_key": "neutral",
+                            "original_expression_key": "neutral",
+                            "source_filename": selected.name,
+                            "storage_relpath": selected.relative_to(root).as_posix(),
+                            "content_type": "image/png",
+                            "bytes": selected.stat().st_size,
+                            "sha256": hashlib.sha256(selected.read_bytes()).hexdigest(),
+                            "width": 1,
+                            "height": 1,
+                        }
+                    ],
+                    actor_kind="character",
+                    actor_id=actor,
+                )
         finally:
             db.close()
         # Relocate only the fixture's installed source root. Discovery, finite
         # reference selection, native core/asset validation and capture are real.
         monkeypatch.setattr(_Assets, "_root", lambda self, config: root)
+        monkeypatch.setattr(_Assets, "_definition_path", lambda self, config: root)
         config = {
             "database": {"chachanotes_db_path": str(core)},
             DISCOVERY_CONTEXT_KEY: DiscoveryContext(selector, "profile"),
         }
-        owner = next(
-            a
-            for a in recovery_adapters()
-            if a.owner_id == "persona.visual_identity_builtin"
-        )
+        owner = next(a for a in recovery_adapters() if a.owner_id == owner_id)
         members = owner.discover(config)
         assert all(i.status in {"included", "included_directory"} for i in members)
-        assert {i.path for i in members if i.status == "included"} == {selected}
+        files = {i.path for i in members if i.status == "included"}
+        assert selected in files
+        assert len(files) == (1 if owner_id == "persona.visual_identity_builtin" else 3)
         root_key = next(i.logical_id for i in members if i.path == root)
         transients = _sqlite_sidecars(
             core_adapters()[0].discover(config), core_adapters()
@@ -173,6 +206,9 @@ def builtin_case(tmp_path, monkeypatch, helper_resource_root):
         yield archive, plan_for, members, selected
 
 
+@pytest.mark.parametrize(
+    "builtin_case", ["persona.visual_identity_builtin", "persona.assets"], indirect=True
+)
 @pytest.mark.parametrize("corrupt_readback", [False, True])
 def test_actual_builtin_finite_safety_copy_is_authenticated_without_unselected_tree(
     builtin_case, tmp_path, monkeypatch, corrupt_readback
@@ -191,7 +227,7 @@ def test_actual_builtin_finite_safety_copy_is_authenticated_without_unselected_t
 
         def changed(archive, payload, destination, cancel):
             native_copy(archive, payload, destination, cancel)
-            if payload.owner_id == "persona.visual_identity_builtin":
+            if payload.owner_id == members[0].owner:
                 destination.write_bytes(b"changed authenticated private candidate")
 
         monkeypatch.setattr(replacement, "_copy_verified_payload", changed)
@@ -261,12 +297,15 @@ def test_actual_builtin_finite_safety_copy_is_authenticated_without_unselected_t
         Event(),
     )
     doc = archive_reader.verify_sealed(sealed)
-    owner_files = [
-        row for row in doc.files if row.owner_id == "persona.visual_identity_builtin"
-    ]
-    assert len(owner_files) == 1
+    owner_files = [row for row in doc.files if row.owner_id == members[0].owner]
+    expected = {
+        i.logical_id: i.path.read_bytes() for i in members if i.status == "included"
+    }
+    assert {row.logical_id for row in owner_files} == expected.keys()
     with zipfile.ZipFile(sealed.path) as packed:
-        assert packed.read(owner_files[0].payload) == before[0]
+        assert all(
+            packed.read(row.payload) == expected[row.logical_id] for row in owner_files
+        )
     assert {row["logical_id"] for row in proof["safety_sources"]} == {
         i.logical_id for i in members
     }
@@ -275,7 +314,10 @@ def test_actual_builtin_finite_safety_copy_is_authenticated_without_unselected_t
     }
 
 
-@pytest.mark.parametrize("omitted", ["root", "ancestor", "file"])
+@pytest.mark.parametrize(
+    "builtin_case", ["persona.visual_identity_builtin", "persona.assets"], indirect=True
+)
+@pytest.mark.parametrize("omitted", ["root", "ancestor", "file", "foreign_owner"])
 def test_builtin_safety_requires_explicit_finite_member_closure(
     builtin_case, tmp_path, omitted
 ):
@@ -297,12 +339,42 @@ def test_builtin_safety_requires_explicit_finite_member_closure(
             else i.status == "included_directory" and i.metadata.parent_id is not None
         )
     )
-    plan = plan_for(i.logical_id for i in members if i is not missing)
+    if omitted == "foreign_owner":
+        from dataclasses import replace
+
+        plan = plan_for(i.logical_id for i in members)
+        from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+
+        target = replace(
+            plan.target,
+            items=tuple(
+                replace(item, owner="persona.visual_identity")
+                if item in members
+                else item
+                for item in plan.target.items
+            ),
+        )
+        plan = plan_restore(
+            archive,
+            mode="replace",
+            target=target,
+            destinations=dict((*plan.destinations, *plan.selectors)),
+            profile_names=dict(plan.profile_names),
+            safety_scope=plan.safety_scope,
+            acknowledged_credential_issues=plan.acknowledged_credential_issues,
+        )
+    else:
+        plan = plan_for(i.logical_id for i in members if i is not missing)
     candidate = stage_restore(archive, plan, tmp_path / "builtin-stage", Event())
     before = {
         i.path: i.path.read_bytes() for i in plan.target.items if i.status == "included"
     }
-    with pytest.raises(ValueError, match="safety_scope_incomplete"):
+    expected_error = (
+        "safety_scope_capability_unavailable"
+        if omitted == "foreign_owner"
+        else "safety_scope_incomplete"
+    )
+    with pytest.raises(ValueError, match=expected_error):
         replacement.replace(
             plan,
             candidate,
@@ -317,6 +389,9 @@ def test_builtin_safety_requires_explicit_finite_member_closure(
     assert all(path.read_bytes() == data for path, data in before.items())
 
 
+@pytest.mark.parametrize(
+    "builtin_case", ["persona.visual_identity_builtin", "persona.assets"], indirect=True
+)
 def test_builtin_semantic_validation_checks_actual_core_references(builtin_case):
     from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
     from tldw_chatbook.Backup_Recovery.replacement import _validate_builtin_safety
@@ -324,8 +399,10 @@ def test_builtin_semantic_validation_checks_actual_core_references(builtin_case)
     _archive, _plan_for, members, selected = builtin_case
     plan = _plan_for(item.logical_id for item in members)
     candidates = {i.logical_id: i.path for i in members if i.status == "included"}
-    candidates["profile:profile:db.chachanotes.primary"] = (
-        selected.parents[2] / "core.db"
+    candidates["profile:profile:db.chachanotes.primary"] = next(
+        item.path
+        for item in plan.target.items
+        if item.logical_id == "profile:profile:db.chachanotes.primary"
     )
     owners = {a.owner_id: a for a in install_adapters()}
     _validate_builtin_safety(members, candidates, owners, plan)

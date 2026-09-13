@@ -35,6 +35,7 @@ from tldw_chatbook.Library.library_shell_state import (
     library_disabled_action_label,
 )
 from tldw_chatbook.Notes.file_notes_git_commit import (
+    session_note_count as _session_note_count,
     CommitIncludedNote,
     CommitOutcome,
     CommitRecoveryProjection,
@@ -48,8 +49,10 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushReviewProjection,
 )
 from tldw_chatbook.Notes.file_notes_session_owner import (
+    FileSystemIdentity,
     HeadIdentity,
     PushCandidateAvailability,
+    RepositoryIdentity,
     SessionGitRow,
     SessionGitStatus,
 )
@@ -178,12 +181,14 @@ class CommitPanelReviewProjection:
     """Sanitized review facts paired with explicit note change types."""
 
     review: CommitReviewProjection
+    repository: RepositoryIdentity
     included_notes: tuple[CommitReviewNoteProjection, ...]
 
     def __post_init__(self) -> None:
         included_notes = tuple(self.included_notes)
         if (
-            tuple(item.note for item in included_notes)
+            type(self.repository) is not RepositoryIdentity
+            or tuple(item.note for item in included_notes)
             != self.review.included_notes
         ):
             raise ValueError(
@@ -229,10 +234,12 @@ class PushPanelReviewProjection:
 
     review: PushReviewProjection
     availability: PushCandidateAvailability
+    repository: RepositoryIdentity
 
     def __post_init__(self) -> None:
         if (
-            self.review.candidate != self.availability.candidate
+            type(self.repository) is not RepositoryIdentity
+            or self.review.candidate != self.availability.candidate
             or len(self.review.candidate.included_notes)
             != len(self.availability.change_types)
         ):
@@ -286,6 +293,24 @@ def _repository_path_for_display(path: str, *, markup: bool = False) -> str:
             parts.append(character)
     display = "".join(parts)
     return escape_markup(display) if markup else display
+
+
+#: Cells one Session Git row occupies (`.file-notes-git-row { height: 2 }`).
+_ROW_CELLS = 2
+
+#: Most rows the list shows before it scrolls its own overflow.
+_ROW_LIST_MAX_CELLS = 12
+
+
+def _branch_for_display(ref: str) -> str:
+    """Render a branch ref the way a user names it: ``main``, not the ref.
+
+    task-32265: the pre-commit disclosure is the most honest copy in the
+    product and then said ``refs/heads/main``. The push panel already
+    stripped the prefix inline; this is that same expression, named, for
+    every place a branch is shown.
+    """
+    return _repository_path_for_display(ref.removeprefix("refs/heads/"))
 
 
 def _grapheme_spans(text: str) -> list[tuple[int, int, int]]:
@@ -419,6 +444,13 @@ def _push_destination_summary(destination: PushDestinationProjection) -> str:
         f"{destination.scheme} · {principal}:{destination.port} · "
         f"{destination.repository_path}"
     )
+
+
+def _filesystem_identity_summary(identity: FileSystemIdentity) -> str:
+    """Format one already-owned filesystem identity for audit display."""
+    device = "?" if identity.device is None else str(identity.device)
+    inode = "?" if identity.inode is None else str(identity.inode)
+    return f"{device}:{inode}"
 
 
 def _row_primary_copy(row: SessionGitRow) -> str:
@@ -698,6 +730,13 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     #file-notes-git-rows {
+        /* task-32248 AC#3: a bare `1fr` made the list swallow every spare
+           row of the surface, so Stage/Commit -- the actions for the
+           SELECTED row -- rendered ~24 rows below it (live capture: row 20
+           vs row 44 at 235x52). `1fr` is kept, because the list still has
+           to SHRINK on a short pane (at 40x20 a fixed height pushes the
+           status line off the bottom); the ceiling is set per render from
+           the row count instead -- see `_sync_row_list_height`. */
         height: 1fr;
         min-height: 1;
     }
@@ -789,12 +828,13 @@ class LibraryFileNotesGitPanel(Vertical):
         text-wrap: wrap;
     }
 
-    .file-notes-git-push-review-heading {
+    .file-notes-git-review-heading {
         text-style: bold;
         margin-top: 1;
     }
 
-    #file-notes-git-push-review-what-changes-heading {
+    #file-notes-git-commit-review-what-heading,
+    #file-notes-git-push-review-what-heading {
         margin-top: 0;
     }
 
@@ -805,6 +845,7 @@ class LibraryFileNotesGitPanel(Vertical):
         background: $surface-darken-1;
     }
 
+    #file-notes-git-commit-review-technical,
     #file-notes-git-push-review-technical {
         height: auto;
         min-height: 1;
@@ -813,6 +854,7 @@ class LibraryFileNotesGitPanel(Vertical):
         background: transparent;
     }
 
+    #file-notes-git-commit-review-technical > CollapsibleTitle,
     #file-notes-git-push-review-technical > CollapsibleTitle {
         height: 1;
         min-height: 1;
@@ -822,6 +864,7 @@ class LibraryFileNotesGitPanel(Vertical):
         color: $text;
     }
 
+    #file-notes-git-commit-review-technical > CollapsibleTitle:focus,
     #file-notes-git-push-review-technical > CollapsibleTitle:focus {
         border: none;
         outline: heavy $accent;
@@ -830,6 +873,7 @@ class LibraryFileNotesGitPanel(Vertical):
         text-style: bold underline;
     }
 
+    #file-notes-git-commit-review-technical > Contents,
     #file-notes-git-push-review-technical > Contents {
         height: auto;
         padding: 1 0 0 0;
@@ -1168,6 +1212,15 @@ class LibraryFileNotesGitPanel(Vertical):
         self._commit_included_expanded = False
         self._commit_note_render_generation = 0
         self._commit_list_focus_pending = False
+        #: Set by the FIRST ready status, consumed once the rows mount
+        #: (task-32248 AC#1).
+        self._entry_focus_pending = False
+        #: The exact widget that held focus when `_entry_focus_pending` was
+        #: armed. The rows mount on a worker, and the user can move focus
+        #: while they do -- including to another control INSIDE this panel,
+        #: which a containment check cannot tell apart from not having moved
+        #: at all. Identity can.
+        self._entry_focus_anchor: Widget | None = None
         self._commit_list_preferred_group_id: int | None = None
         self._commit_list_focus_selector: str | None = None
         self._commit_entry_focus: tuple[object, str] | None = None
@@ -1369,9 +1422,12 @@ class LibraryFileNotesGitPanel(Vertical):
                     classes="file-notes-git-commit-phase",
                 ):
                     yield Static(
-                        "",
-                        id="file-notes-git-commit-review-branch",
-                        classes="file-notes-git-commit-copy",
+                        "What",
+                        id="file-notes-git-commit-review-what-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
                         markup=False,
                     )
                     yield Static(
@@ -1383,6 +1439,36 @@ class LibraryFileNotesGitPanel(Vertical):
                         "",
                         id="file-notes-git-commit-review-message",
                         classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "Where",
+                        id="file-notes-git-commit-review-where-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-commit-review-repository",
+                        classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-commit-review-branch",
+                        classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "Impact",
+                        id="file-notes-git-commit-review-impact-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
                         markup=False,
                     )
                     yield Static(
@@ -1441,6 +1527,37 @@ class LibraryFileNotesGitPanel(Vertical):
                         classes="file-notes-git-commit-copy",
                         markup=False,
                     )
+                    yield Static(
+                        "Recovery",
+                        id="file-notes-git-commit-review-recovery-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-commit-review-recovery",
+                        classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    with Collapsible(
+                        title="Technical details",
+                        collapsed=True,
+                        id="file-notes-git-commit-review-technical",
+                    ):
+                        for widget_id in (
+                            "worktree-identity",
+                            "git-directory",
+                            "git-common-directory",
+                        ):
+                            yield Static(
+                                "",
+                                id=f"file-notes-git-commit-review-{widget_id}",
+                                classes="file-notes-git-commit-copy",
+                                markup=False,
+                            )
 
                 with Vertical(
                     id="file-notes-git-commit-execution",
@@ -1538,51 +1655,27 @@ class LibraryFileNotesGitPanel(Vertical):
                     classes="file-notes-git-push-phase",
                 ):
                     yield Static(
-                        "What changes",
-                        id="file-notes-git-push-review-what-changes-heading",
+                        "What",
+                        id="file-notes-git-push-review-what-heading",
                         classes=(
                             "file-notes-git-push-copy "
-                            "file-notes-git-push-review-heading"
+                            "file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
-                    for widget_id in ("lead", "subject"):
+                    for widget_id in (
+                        "lead",
+                        "subject",
+                        "candidate",
+                        "transition",
+                        "counts",
+                    ):
                         yield Static(
                             "",
                             id=f"file-notes-git-push-review-{widget_id}",
                             classes="file-notes-git-push-copy",
                             markup=False,
                         )
-                    yield Static(
-                        "Where it goes",
-                        id="file-notes-git-push-review-destination-heading",
-                        classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-push-review-heading"
-                        ),
-                        markup=False,
-                    )
-                    yield Static(
-                        "",
-                        id="file-notes-git-push-review-destination",
-                        classes="file-notes-git-push-copy",
-                        markup=False,
-                    )
-                    yield Static(
-                        "Exact scope",
-                        id="file-notes-git-push-review-scope-heading",
-                        classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-push-review-heading"
-                        ),
-                        markup=False,
-                    )
-                    yield Static(
-                        "",
-                        id="file-notes-git-push-review-counts",
-                        classes="file-notes-git-push-copy",
-                        markup=False,
-                    )
                     yield TextArea(
                         "",
                         id="file-notes-git-push-review-notes",
@@ -1591,38 +1684,82 @@ class LibraryFileNotesGitPanel(Vertical):
                         tab_behavior="focus",
                     )
                     yield Static(
-                        "Side effects",
-                        id="file-notes-git-push-review-effects-heading",
+                        "Where",
+                        id="file-notes-git-push-review-where-heading",
                         classes=(
                             "file-notes-git-push-copy "
-                            "file-notes-git-push-review-heading"
+                            "file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
-                    for widget_id in ("effects", "later-edits"):
+                    for widget_id in (
+                        "repository",
+                        "local-branch",
+                        "destination",
+                        "remote",
+                        "ref",
+                        "endpoint",
+                        "lease",
+                        "transport",
+                        "authentication",
+                    ):
                         yield Static(
                             "",
                             id=f"file-notes-git-push-review-{widget_id}",
                             classes="file-notes-git-push-copy",
                             markup=False,
                         )
+                    yield Button(
+                        "Endpoint details",
+                        id="file-notes-git-push-review-details",
+                        compact=True,
+                    )
+                    yield Static(
+                        "Impact",
+                        id="file-notes-git-push-review-impact-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    for widget_id in (
+                        "effects",
+                        "later-edits",
+                        "local-hooks",
+                        "objects",
+                    ):
+                        yield Static(
+                            "",
+                            id=f"file-notes-git-push-review-{widget_id}",
+                            classes="file-notes-git-push-copy",
+                            markup=False,
+                        )
+                    yield Static(
+                        "Recovery",
+                        id="file-notes-git-push-review-recovery-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-push-review-recovery",
+                        classes="file-notes-git-push-copy",
+                        markup=False,
+                    )
                     with Collapsible(
                         title="Technical details",
                         collapsed=True,
                         id="file-notes-git-push-review-technical",
                     ):
                         for widget_id in (
-                            "candidate",
-                            "transition",
-                            "local-branch",
-                            "remote",
-                            "ref",
-                            "endpoint",
-                            "lease",
-                            "transport",
-                            "authentication",
-                            "local-hooks",
-                            "objects",
+                            "worktree-identity",
+                            "git-directory",
+                            "git-common-directory",
+                            "refspec-audit",
                         ):
                             yield Static(
                                 "",
@@ -1630,11 +1767,6 @@ class LibraryFileNotesGitPanel(Vertical):
                                 classes="file-notes-git-push-copy",
                                 markup=False,
                             )
-                        yield Button(
-                            "Endpoint details",
-                            id="file-notes-git-push-review-details",
-                            compact=True,
-                        )
 
                 with Vertical(
                     id="file-notes-git-push-result",
@@ -1952,16 +2084,21 @@ class LibraryFileNotesGitPanel(Vertical):
         review = projection.review
         candidate = review.candidate
         destination = review.destination
-        branch = destination.destination_ref.removeprefix("refs/heads/")
+        repository = projection.repository
+        branch = _branch_for_display(destination.destination_ref)
         values = {
             "lead": (
                 "Pushes 1 reviewed commit created from "
-                f"{candidate.included_note_count} session notes."
+                f"{_session_note_count(candidate.included_note_count)}."
             ),
             "subject": f"Commit subject: {candidate.subject}",
+            "repository": (
+                "Local repository: "
+                f"{_repository_path_for_display(repository.worktree_root)}"
+            ),
             "destination": f"{review.configured_remote_label}/{branch}",
             "counts": (
-                f"{candidate.included_note_count} session notes: "
+                f"{_session_note_count(candidate.included_note_count)}: "
                 + " · ".join(
                     f"{change_type} {count}"
                     for change_type, count in projection.availability.change_counts
@@ -1973,6 +2110,10 @@ class LibraryFileNotesGitPanel(Vertical):
             ),
             "candidate": f"Candidate OID: {candidate.candidate_oid}",
             "transition": f"Parent transition: {candidate.transition}",
+            # NOT `_branch_for_display`: this line sits in the push panel's
+            # Technical details beside "Full destination ref", where the
+            # complete ref IS the audit evidence (task-32265 is scoped to
+            # the pre-commit disclosure).
             "local-branch": f"Local branch: {candidate.local_branch_ref}",
             "remote": (
                 f"Configured remote: {review.configured_remote_label}"
@@ -2001,6 +2142,26 @@ class LibraryFileNotesGitPanel(Vertical):
                 "Git publishes the reviewed commit and required Git objects; "
                 "this list is provenance, not a separate note-transfer selection"
             ),
+            "recovery": (
+                "Back leaves this review without pushing. If the result is "
+                "uncertain, Check remote again never pushes."
+            ),
+            "worktree-identity": (
+                "Worktree identity: "
+                f"{_filesystem_identity_summary(repository.worktree_identity)}"
+            ),
+            "git-directory": (
+                "Git directory: "
+                f"{_repository_path_for_display(repository.git_dir)} · identity "
+                f"{_filesystem_identity_summary(repository.git_dir_identity)}"
+            ),
+            "git-common-directory": (
+                "Git common directory: "
+                f"{_repository_path_for_display(repository.git_common_dir)} "
+                "· identity "
+                f"{_filesystem_identity_summary(repository.git_common_dir_identity)}"
+            ),
+            "refspec-audit": f"Exact refspec: {review.exact_refspec}",
         }
         for widget_id, copy in values.items():
             self.query_one(
@@ -2180,13 +2341,13 @@ class LibraryFileNotesGitPanel(Vertical):
     def render_commit_form(self, projection: CommitDraftProjection) -> None:
         """Render the literal binding-scoped draft and its inline errors."""
         self._active_commit_draft = projection
-        branch = _repository_path_for_display(projection.branch)
+        branch = _branch_for_display(projection.branch)
         self.query_one(
             "#file-notes-git-commit-form-meta",
             Static,
         ).update(
             f"Branch: {branch} · "
-            f"{projection.staged_note_count} session notes staged"
+            f"{_session_note_count(projection.staged_note_count)} staged"
         )
         subject = self.query_one("#file-notes-git-commit-subject", Input)
         body = self.query_one("#file-notes-git-commit-body-input", TextArea)
@@ -2246,11 +2407,19 @@ class LibraryFileNotesGitPanel(Vertical):
         """Render one immutable, literal review without owning its authority."""
         self._commit_review = projection
         review = projection.review
-        branch = _repository_path_for_display(review.branch)
+        repository = projection.repository
+        branch = _branch_for_display(review.branch)
+        self.query_one(
+            "#file-notes-git-commit-review-repository",
+            Static,
+        ).update(
+            "Repository: "
+            f"{_repository_path_for_display(repository.worktree_root)}"
+        )
         self.query_one(
             "#file-notes-git-commit-review-branch",
             Static,
-        ).update(f"Branch: {branch} · Parent: {review.old_commit[:12]}")
+        ).update(f"Branch: {branch} · Parent: {review.old_commit}")
         self.query_one(
             "#file-notes-git-commit-review-message",
             Static,
@@ -2280,7 +2449,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "#file-notes-git-commit-review-promise",
             Static,
         ).update(
-            f"{count} session notes will be committed; "
+            f"{_session_note_count(count)} will be committed; "
             "unrelated changes untouched"
         )
         self.query_one(
@@ -2319,6 +2488,41 @@ class LibraryFileNotesGitPanel(Vertical):
             "Included notes use their complete staged file state, "
             "not only edits made in Chatbook"
         )
+        self.query_one(
+            "#file-notes-git-commit-review-recovery",
+            Static,
+        ).update(
+            "Edit message or cancel before the commit starts. If the result "
+            "is uncertain, Check again verifies without retrying."
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-worktree-identity",
+            Static,
+        ).update(
+            "Worktree identity: "
+            f"{_filesystem_identity_summary(repository.worktree_identity)}"
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-git-directory",
+            Static,
+        ).update(
+            "Git directory: "
+            f"{_repository_path_for_display(repository.git_dir)} · identity "
+            f"{_filesystem_identity_summary(repository.git_dir_identity)}"
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-git-common-directory",
+            Static,
+        ).update(
+            "Git common directory: "
+            f"{_repository_path_for_display(repository.git_common_dir)} "
+            "· identity "
+            f"{_filesystem_identity_summary(repository.git_common_dir_identity)}"
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-technical",
+            Collapsible,
+        ).collapsed = True
 
         self._commit_notes = projection.included_notes
         self._commit_included_expanded = False
@@ -2349,7 +2553,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "#file-notes-git-commit-execution-title",
             Static,
         ).update(
-            f"Committing {projection.staged_note_count} session notes..."
+            f"Committing {_session_note_count(projection.staged_note_count)}..."
         )
         self.query_one(
             "#file-notes-git-commit-execution-detail",
@@ -2659,6 +2863,15 @@ class LibraryFileNotesGitPanel(Vertical):
                 status still belongs to the currently trusted authority.
         """
         prior_group_id = self._selected_group_id
+        # task-32248 AC#1: the panel advertises "Up/Down select · Tab
+        # actions · Enter run" and then, after Trust, left focus on
+        # Refresh (the trust button hides and `_repair_hidden_focus`
+        # rescues focus onto it) -- so Down did nothing, Tab reached the
+        # list, and Enter ran nothing. The status list is the only
+        # actionable thing on this panel, so the FIRST ready status
+        # focuses it. Only the first: a Refresh or a post-stage
+        # re-render must not yank focus off whatever the user is on.
+        was_ready = self._status_ready
         authority_available = status.repository is not None
         self._trusted = authority_available
         self._trust_available = False
@@ -2677,6 +2890,9 @@ class LibraryFileNotesGitPanel(Vertical):
 
         if self._status_ready:
             self._rows = status.rows
+            if not was_ready and status.rows and self._focus_is_inside():
+                self._entry_focus_pending = True
+                self._entry_focus_anchor = self.screen.focused
             self._replace_rows(prior_group_id)
             stage_count = sum(row.stage_eligible for row in self._rows)
             unstage_count = sum(row.unstage_eligible for row in self._rows)
@@ -2880,6 +3096,22 @@ class LibraryFileNotesGitPanel(Vertical):
         self.query_one("#file-notes-git-rows", ListView).display = (
             bool(self._rows) and not self._replacing_rows
         )
+        self._sync_row_list_height()
+
+    def _sync_row_list_height(self) -> None:
+        """Cap the row list at its own content, and at six rows.
+
+        task-32248 AC#3. Without a ceiling the `1fr` list takes every spare
+        row of the surface and the actions it feeds render at the pane
+        floor. Without the `1fr` it cannot shrink, and on a 40x20 pane the
+        status line falls off the bottom. So: `1fr` for the shrink, this
+        for the growth. Six rows because past that the bulk actions are the
+        right tool anyway.
+        """
+        rows = max(1, len(self._rows))
+        self.query_one("#file-notes-git-rows", ListView).styles.max_height = min(
+            rows * _ROW_CELLS, _ROW_LIST_MAX_CELLS
+        )
 
     def _settle_commit_list_focus(self) -> None:
         """Focus a requested row only after its mounted generation settles."""
@@ -2979,6 +3211,17 @@ class LibraryFileNotesGitPanel(Vertical):
                 self._replacing_rows = False
                 self._sync_empty_state()
                 self._update_actions()
+                if self._entry_focus_pending:
+                    self._entry_focus_pending = False
+                    anchor = self._entry_focus_anchor
+                    self._entry_focus_anchor = None
+                    # Checked HERE, and by IDENTITY: this runs on the far
+                    # side of a worker, and any focus move during the mount
+                    # -- to the editor, or to another control in this panel
+                    # -- was the user's. Only an untouched focus is still
+                    # ours to place.
+                    if self._entry_focus_is_still_ours(anchor):
+                        self._commit_list_focus_pending = True
                 if self._commit_list_focus_pending:
                     self._settle_commit_list_focus()
 
@@ -2990,8 +3233,8 @@ class LibraryFileNotesGitPanel(Vertical):
             object_id = head.object_id or "unknown"
             return f"Detached HEAD {object_id[:12]}"
         if head.kind == "unborn":
-            return f"Branch: {head.branch or 'unborn'} (unborn)"
-        return f"Branch: {head.branch or 'unknown'}"
+            return f"Branch: {_branch_for_display(head.branch or 'unborn')} (unborn)"
+        return f"Branch: {_branch_for_display(head.branch or 'unknown')}"
 
     def _selected_row(self) -> SessionGitRow | None:
         return next(
@@ -3098,7 +3341,7 @@ class LibraryFileNotesGitPanel(Vertical):
                 target = refresh
             else:
                 target = back
-            self.screen.set_focus(target, scroll_visible=False)
+            self._repair_focus_to(target)
             self.call_after_refresh(partial(self._settle_action_focus, target))
             focused = target
         if not bulk_available:
@@ -3133,13 +3376,89 @@ class LibraryFileNotesGitPanel(Vertical):
             if label != rendered_label:
                 button.label = rendered_label
 
+    def _focus_is_inside(self) -> bool:
+        """Return whether focus currently sits on this panel.
+
+        Guards ARMING the entry-focus move (task-32248 AC#1): a status
+        result that lands while the user is somewhere else entirely must
+        not pull focus into Session Git. Consuming the arm is guarded by
+        identity instead -- see `_entry_focus_anchor`.
+        """
+        focused = self.screen.focused
+        return focused is not None and (
+            focused is self or self in focused.ancestors
+        )
+
+    def _entry_focus_is_still_ours(self, anchor: Widget | None) -> bool:
+        """Return whether the armed entry focus may still be taken.
+
+        Two ways it is still ours, and no third (review F1):
+
+        * nothing moved -- the exact widget focus was on when the status
+          landed still holds it; or
+        * the panel took that widget away AND focus is still in here.
+          Trust landing hides the trust button, and Textual moves focus
+          itself the moment the focused widget stops being focusable --
+          onto this panel's own next control. The user's focus was yanked
+          by US, so there is no deliberate choice left to protect. Asked
+          HERE and not when the control was hidden, because Textual does
+          not guarantee it moves focus inside the same call that flipped
+          ``display`` -- and when it did not, AC#1 silently stopped firing
+          (measured: 8 of 10 runs). Both halves are load-bearing: pressing
+          Edit ALSO hides the anchor (the whole Manage surface goes), and
+          that one is the user, which is why the landing place decides.
+
+        Anything else -- the user Tabbed away, pressed Edit, focused
+        another control in this panel -- is a focus move we must not undo.
+        """
+        if anchor is None:
+            return False
+        if self.screen.focused is anchor:
+            return True
+        # NOT `Widget.focusable`: it consults `visible` (the `visibility`
+        # style) and never `display`, and this panel hides controls with
+        # `display`, so a hidden button still reports focusable=True. The
+        # ancestors walk is the idiom `_repair_hidden_focus` and
+        # `_focus_push_list_control` already use here for exactly this.
+        anchor_hidden = any(
+            isinstance(node, Widget) and not node.display
+            for node in anchor.ancestors_with_self
+        )
+        # A hidden anchor is not on its own enough: pressing Edit hides the
+        # whole Manage surface the anchor sat on, and that IS the user
+        # moving focus -- to the editor, outside this panel
+        # (`test_deferred_git_row_focus_does_not_steal_retained_editor`).
+        # When the panel displaced its own control, the focus it lost lands
+        # on this panel's own fallback, which is still in here.
+        return anchor_hidden and self._focus_is_inside()
+
+    def _repair_focus_to(self, target: Widget) -> None:
+        """Move focus for the PANEL's own reasons, keeping the anchor true.
+
+        Trust landing hides the trust button, and this panel's repair then
+        moves focus to Refresh -- but `_repair_hidden_focus` defers that
+        while the rows mount, so it lands BETWEEN the entry focus being
+        armed and the re-check that consumes it. A repair is not the user
+        moving focus, so it must not read as one (review F1): re-point the
+        anchor at whatever we just focused.
+
+        Not merely a nicety over ``_entry_focus_is_still_ours``'s
+        hidden-anchor branch: re-pointing at a LIVE widget is what keeps a
+        user move made AFTER a repair detectable. Left on the hidden one,
+        that branch would answer "still ours" for the rest of the mount,
+        whatever the user did next.
+        """
+        self.screen.set_focus(target, scroll_visible=False)
+        if self._entry_focus_pending:
+            self._entry_focus_anchor = target
+
     def _settle_action_focus(self, target: Button) -> None:
         """Finish action focus repair without stealing focus outside the panel."""
         focused = self.screen.focused
         if focused is not None and self not in focused.ancestors:
             return
         if target.display and not target.disabled:
-            self.screen.set_focus(target, scroll_visible=False)
+            self._repair_focus_to(target)
 
     def _repair_hidden_focus(
         self,
@@ -3168,7 +3487,7 @@ class LibraryFileNotesGitPanel(Vertical):
             target = refresh
         else:
             target = back
-        self.screen.set_focus(target, scroll_visible=False)
+        self._repair_focus_to(target)
 
     @on(ListView.Highlighted, "#file-notes-git-rows")
     def _row_highlighted(self, event: ListView.Highlighted) -> None:

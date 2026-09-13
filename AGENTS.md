@@ -6,7 +6,7 @@ This file provides comprehensive guidance to Codex (Codex.ai/code) when working 
 
 **tldw_chatbook** - TUI application built with Textual for LLM interactions. Features: conversation management, character chat, notes with file sync, media ingestion, RAG capabilities.
 
-**Tech Stack**: Python ≥3.11, Textual 8.x (≥8.0.0,<9), SQLite with FTS5, AGPLv3+
+**Tech Stack**: Python ≥3.12, Textual 8.x (≥8.0.0,<9), SQLite with FTS5, AGPLv3+
 **Key Dependencies**: httpx, loguru, rich, pydantic, toml, keyring, aiofiles, jinja2
 
 ## Quick Commands
@@ -166,7 +166,11 @@ Key sections:
 - `Agents/tool_catalog.py` is the provider seam: builtin/local/skill/MCP providers register with one `ToolCatalogRegistry`
 - Local fs_* tools (fs_list/fs_read/fs_write/fs_edit/fs_glob/fs_grep) in `Tools/local_tool_impls.py`, exposed via `Agents/local_tool_provider.py`
 - Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
-- Config: `[console] local_tools_enabled` / `workspace_root` (fallback confinement root for disabled/legacy project-instruction sessions; empty = app cwd). An enabled session's selected project-instruction binding takes precedence as the tool and instruction authority root.
+- Console file authority: every live Chat gets private temporary scratch. Named Workspaces may add explicit folder bindings; local `fs_*`/Git uses scratch unless project instructions explicitly select one binding. `[console] workspace_root` is compatibility-only outside this Console path and never grants a Console Chat access.
+
+### Console Run Hooks
+- User-configured external commands at six lifecycle events (UserPromptSubmit, PreToolUse, PostToolUse, ApprovalRequested, Stop, SubagentStop); config: `[hooks]` in config.toml (ADR-148).
+- Deny-only: hooks can refuse tool calls but never bypass the permission store; PreToolUse fails closed, UserPromptSubmit fails open; argv-list commands only, process-group timeout kill.
 
 ### Console Project Instructions
 - `AGENTS.override.md` / `AGENTS.md` startup and lazy nested guidance is untrusted, ephemeral user context bounded by one selected local-filesystem binding; it never grants tool permission.
@@ -201,6 +205,11 @@ Key sections:
 - Config: `[model_catalog]` in config.toml; per-provider opt-in write-through appends new models to `[providers]`
 - Governance: ADR-020 (amends ADR-002), spec/plan in Docs/superpowers/{specs,plans}/2026-07-17-model-catalog-auto-refresh*
 
+### Workspace Assistant Defaults
+- Explicit workspaces carry reference-backed `assistant_defaults` (persona + permission profile); Default/global stay unset.
+- Persona policy rules narrow only (deny-by-default advertising, ask floors, per-run call caps); profiles inherit unset keys from `default`; all existing gates/floors apply first.
+- Governance: `backlog/decisions/079-workspace-assistant-defaults.md` and `Docs/superpowers/specs/2026-08-29-workspace-assistant-defaults-design.md`.
+
 ## Project-Specific Gotchas
 
 1. **No localStorage** in artifacts - use React state or JS variables
@@ -224,6 +233,32 @@ Critical files for common tasks:
 - LLM: `LLM_API_Calls.py`, `model_capabilities.py`
 - Security: `path_validation.py`, `input_validation.py`
 - UI: `form_components.py`, reactive patterns in any widget
+
+## Design Language (UI Tokens) — ADR-150
+
+All UI work is governed by a design-token system. **Read
+`backlog/docs/design-language.md` before creating or modifying any screen,
+widget, or stylesheet.**
+
+Hard rules:
+
+- Every consistent visual value is a `$ds-*` token in
+  `tldw_chatbook/css/core/_variables.tcss` — spacing (`$ds-space-*`),
+  sizing (`$ds-control-*`), motion (`$ds-duration-*`), opacity, typography
+  emphasis, colors, status, and component states. Do not invent literals or
+  ad-hoc tokens in feature sheets; the governance test
+  (`Tests/UI/test_design_token_governance.py`) fails on undefined `$ds-*`
+  references and on new hex literals outside the token file.
+- Describe new UI by composing tokens, component patterns, layout laws, and
+  interaction rules from the constitution — never "make it look modern".
+- Adding a value the language can't express? Add the token to
+  `_variables.tcss` first, then use it.
+- Never edit `tldw_chatbook/css/tldw_cli_modular.tcss` directly; edit source
+  modules and rebuild with `python tldw_chatbook/css/build_css.py`.
+- Python code assigns token-backed CSS classes instead of ad-hoc
+  `styles.*` literals for token-covered values.
+- Changing an existing token's value is a visual-breaking change; verify
+  live per `backlog/docs/lessons-live-verification.md`.
 
 ## Code Style
 

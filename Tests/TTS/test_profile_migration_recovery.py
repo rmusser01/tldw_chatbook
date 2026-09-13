@@ -21,7 +21,10 @@ from zlib import crc32
 import pytest
 
 from tldw_chatbook.TTS import profile_schema
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileMigrationCleanupError,
+    ProfileRepositoryError,
+)
 
 
 def test_namespace_import_on_windows_does_not_probe_posix_libc(
@@ -151,6 +154,91 @@ def _link_then_unlink(source: Path, destination: Path, *, finish: bool) -> None:
     os.link(source, destination, follow_symlinks=False)
     if finish:
         source.unlink()
+
+
+@pytest.mark.parametrize("defer_signal", [False, True])
+def test_authoritative_validation_retains_parent_and_file_after_close_failure(
+    tmp_path, monkeypatch, defer_signal
+):
+    from Tests.TTS.test_profile_migration_publication import CloseOnceFailure
+    from tldw_chatbook.TTS.profile_errors import _migration_cleanup_owner
+
+    publication, recovery = _modules()
+    _, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    journal = _write_journal(
+        publication, active, artifacts, destinations, phase="prepared"
+    )
+    real_connect = recovery.connect_private_sqlite_descriptor
+    real_close = os.close
+    real_hash = recovery._hash_sqlite
+    proxies = []
+    pins = []
+    raw_after_failure = []
+    signal = asyncio.CancelledError()
+    stages = []
+
+    def stage_hook(stage):
+        stages.append(stage)
+        if defer_signal and len(stages) == 1:
+            raise signal
+
+    def connect(owner, fd, **kwargs):
+        proxy = CloseOnceFailure(real_connect(owner, fd, **kwargs))
+        proxies.append(proxy)
+        pins.append(fd)
+        return proxy
+
+    def close(fd):
+        if proxies and proxies[0].close_calls:
+            raw_after_failure.append(fd)
+        return real_close(fd)
+
+    def hash_file(fd):
+        if proxies and proxies[0].close_calls:
+            pytest.fail("recovery resumed hashing after failed close")
+        return real_hash(fd)
+
+    monkeypatch.setattr(recovery, "connect_private_sqlite_descriptor", connect)
+    monkeypatch.setattr(os, "close", close)
+    monkeypatch.setattr(recovery, "_hash_sqlite", hash_file)
+    try:
+        with pytest.raises(
+            asyncio.CancelledError if defer_signal else ProfileMigrationCleanupError
+        ) as failure:
+            recovery.recover_profile_migration_publication(
+                active, _stage_hook=stage_hook
+            )
+        if defer_signal:
+            assert failure.value is signal
+        assert raw_after_failure == []
+        assert journal.exists()
+        assert os.fstat(pins[0]).st_ino == active.stat().st_ino
+        owner = _migration_cleanup_owner(failure.value)
+        parent_fd, file_fd = owner.parent_fd, owner.file_fd
+        assert stages == (
+            ["admitted", "admitted", "repaired"]
+            if defer_signal
+            else ["admitted", "repaired"]
+        )
+        owner.close()
+        owner.close()
+        assert proxies[0].close_calls == 2
+        assert [fd for fd in raw_after_failure if fd in {file_fd, parent_fd}] == [
+            file_fd, parent_fd
+        ]
+        assert not owner.native.active
+        with pytest.raises(OSError):
+            os.fstat(parent_fd)
+    finally:
+        for proxy in proxies:
+            proxy.connection.close()
+        for fd in pins:
+            try:
+                real_close(fd)
+            except OSError:
+                pass
 
 
 def _paths(artifact: object, destination: object) -> tuple[Path, Path, Path]:

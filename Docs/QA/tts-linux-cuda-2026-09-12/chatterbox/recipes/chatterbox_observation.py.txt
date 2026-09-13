@@ -1,0 +1,272 @@
+"""Task-local observations around the unchanged Chatterbox child protocol."""
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import subprocess
+import time
+from pathlib import Path
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--model-cache",
+        type=Path,
+        required=True,
+        help="HF_HUB_CACHE root containing models--ResembleAI--chatterbox",
+    )
+    parser.add_argument("--reference-dir", type=Path)
+    parser.add_argument(
+        "--voice",
+        default="default",
+        help="Optional reference WAV stem for a separate Lab phase; baseline always uses default",
+    )
+    parser.add_argument("--format", choices=("wav", "mp3"), default="wav")
+    parser.add_argument("--text-file", type=Path)
+    parser.add_argument("--cancel-text-file", type=Path)
+    parser.add_argument("--phase-timeout", type=float, default=600)
+    parser.add_argument("--cleanup-timeout", type=float, default=120)
+    parser.add_argument("--run-timeout", type=float, default=3600)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--expected-package-root", type=Path, required=True)
+    parser.add_argument("--scenarios", default="playback,cancel,repeat")
+    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--play-audio", action="store_true")
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    return parser
+
+
+def validate_args(args):
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    if not args.play_audio:
+        raise ValueError("Real device playback requires --play-audio")
+    for name in ("phase_timeout", "cleanup_timeout", "run_timeout"):
+        if not math.isfinite(getattr(args, name)) or getattr(args, name) <= 0:
+            raise ValueError(f"{name} must be finite and positive")
+    if args.run_timeout > 7200 or not 1 <= args.repeats <= 12:
+        raise ValueError("Runtime/repeats exceed bounded task limits")
+    args.scenarios = args.scenarios.split(",")
+    if not args.scenarios or any(
+        item not in {"playback", "cancel", "repeat"} for item in args.scenarios
+    ):
+        raise ValueError("Unknown scenario")
+    for name in (
+        "model_cache",
+        "reference_dir",
+        "text_file",
+        "cancel_text_file",
+        "expected_package_root",
+    ):
+        value = getattr(args, name)
+        if value is not None:
+            setattr(
+                args,
+                name,
+                validate_path_simple(value.expanduser(), require_exists=True).resolve(),
+            )
+    for name in ("model_cache", "reference_dir", "expected_package_root"):
+        value = getattr(args, name)
+        if value is not None and not value.is_dir():
+            raise ValueError(f"{name} must be a directory")
+    if not (args.model_cache / "models--ResembleAI--chatterbox").is_dir():
+        raise ValueError("model-cache must be the HF_HUB_CACHE root")
+    if not (
+        args.expected_package_root / "TTS/backends/chatterbox_process.py"
+    ).is_file():
+        raise ValueError("Qualification requires the registered subprocess wrapper")
+    if not args.voice or any(
+        char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        for char in args.voice
+    ):
+        raise ValueError("voice must be a local reference stem or default")
+    if args.voice != "default" and (
+        args.reference_dir is None
+        or not (args.reference_dir / f"{args.voice}.wav").is_file()
+    ):
+        raise ValueError("Selected reference voice is missing")
+    for name in ("text_file", "cancel_text_file"):
+        value = getattr(args, name)
+        if value and (
+            not value.is_file()
+            or value.stat().st_size > 32000
+            or not 1 <= len(value.read_text().strip()) <= 8000
+        ):
+            raise ValueError("Text must contain 1-8000 characters, at most 32000 bytes")
+    output = validate_path_simple(args.output.expanduser(), probe_existing=False)
+    if output.is_symlink() or (os.path.lexists(output) and not args.worker):
+        raise ValueError("Output already exists or is a symlink")
+    if not output.parent.is_dir() or (args.worker and not output.is_dir()):
+        raise ValueError("Output parent/worker directory is missing")
+    args.output = output.parent.resolve() / output.name
+    if args.worker and os.environ.get("TLDW_LIVE_VALIDATION_WORKER") != str(
+        args.output
+    ):
+        raise ValueError("Private worker must be started by the controller")
+    args.reference_voice = args.voice if args.voice != "default" else None
+    args.voice = "default"
+    args.engine, args.device, args.language, args.speed = "pytorch", "cuda", "en", 1.0
+
+
+def select_lab_reference(pane, path):
+    """Use the real picker-completion callback and catalog's Upload Reference choice."""
+    from textual.widgets import Select
+
+    selector = pane.query_one("#tts-voice-select", Select)
+    if "custom" not in {value for _, value in selector._options}:
+        raise ValueError("Speech Lab Upload Reference Audio selection is unavailable")
+    pane._handle_reference_audio_selection(str(path))
+    selector.value = "custom"
+
+
+def hash_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def check_model_devices(model, expected="cuda:0"):
+    result = {}
+    for name in ("t3", "s3gen", "ve"):
+        parameters = list(getattr(model, name).parameters())
+        devices = sorted({str(parameter.device) for parameter in parameters})
+        if not parameters or devices != [expected]:
+            raise ValueError(
+                f"Actual {name} parameter placement differs from {expected}: {devices}"
+            )
+        result[name] = {
+            "devices": devices,
+            "dtypes": sorted({str(parameter.dtype) for parameter in parameters}),
+            "parameter_tensors": len(parameters),
+        }
+    return result
+
+
+def gpu_processes():
+    output = subprocess.check_output(
+        [
+            "nvidia-smi",
+            "--query-compute-apps=pid,gpu_uuid,used_gpu_memory",
+            "--format=csv,noheader,nounits",
+        ],
+        text=True,
+        timeout=15,
+    )
+    rows = []
+    for line in output.splitlines():
+        if line.strip():
+            pid, uuid, memory = [part.strip() for part in line.split(",")]
+            rows.append(
+                {"pid": int(pid), "gpu_uuid": uuid, "used_gpu_memory_mib": memory}
+            )
+    return {"at": time.monotonic(), "processes": rows}
+
+
+class ChildObservations:
+    """Mirror atomic child receipts without treating parent work as inference."""
+
+    def __init__(self, root, package, current, evidence, checkpoint_writer):
+        self.root, self.package, self.current = root, package, current
+        self.evidence, self.write = evidence, checkpoint_writer
+        self.children = []
+        self.calls = {}
+
+    async def launch(self, original, *args, **kwargs):
+        expected = self.package / "TTS/backends/chatterbox_process.py"
+        if len(args) < 2 or Path(str(args[1])).resolve() != expected.resolve():
+            return await original(*args, **kwargs)
+        index = len(self.children)
+        receipt = self.root / f"child-{index:02d}.json"
+        launcher = Path(__file__).with_name("observe_child.py")
+        process = await original(
+            args[0], str(launcher), str(expected), str(receipt), *args[2:], **kwargs
+        )
+        record = {
+            "pid": process.pid,
+            "receipt_path": str(receipt),
+            "original_script": str(expected),
+            "original_script_sha256": hash_file(expected),
+            "launcher_sha256": hash_file(launcher),
+            "launched_at": time.monotonic(),
+            "spawn_phase": self.current()["id"],
+        }
+        self.children.append((process, record))
+        self.evidence.setdefault("children", []).append(record)
+        return process
+
+    def sync(self):
+        for process, record in self.children:
+            receipt = Path(record["receipt_path"])
+            if receipt.exists():
+                state = json.loads(receipt.read_text())
+                if state["pid"] != process.pid:
+                    raise ValueError("Child receipt PID mismatch")
+                record["observations"] = state
+                for native in state["native_calls"]:
+                    key = (process.pid, native["sequence"])
+                    if key not in self.calls:
+                        row = self.current()
+                        if row is None:
+                            raise ValueError("Native child call has no admitted phase")
+                        mirrored = {"request_id": row["id"]}
+                        row["native_calls"].append(mirrored)
+                        self.calls[key] = mirrored
+                    mirrored = self.calls[key]
+                    mirrored.update(native)
+            if process.returncode is not None and "gpu_release" not in record:
+                record.setdefault("reaped_at", time.monotonic())
+                record["returncode"] = process.returncode
+                sample = gpu_processes()
+                if any(item["pid"] == process.pid for item in sample["processes"]):
+                    continue
+                record["gpu_release"] = sample
+                for (pid, _), native in self.calls.items():
+                    if pid == process.pid and "exit_at" not in native:
+                        native.update(
+                            exit_at=sample["at"],
+                            completion_kind="process_terminated",
+                            child_reaped_at=record["reaped_at"],
+                            child_returncode=process.returncode,
+                            gpu_pid_absent_at=sample["at"],
+                        )
+
+    def pending_delivery(self):
+        return sum(
+            bool(record.get("observations", {}).get("delivery_pending"))
+            for process, record in self.children
+            if process.returncode is None
+        )
+
+    def pending_gpu_release(self):
+        """Retain observed ownership after reap until NVIDIA confirms release."""
+        return sum(
+            process.returncode is not None and "gpu_release" not in record
+            for process, record in self.children
+        )
+
+    def settled_memory(self):
+        return [
+            {
+                "pid": process.pid,
+                "memory": record.get("observations", {}).get("memory_after_delivery"),
+                "gpu_release": record.get("gpu_release"),
+            }
+            for process, record in self.children
+            if process.returncode is None or "gpu_release" not in record
+        ]
+
+    def final_resources(self):
+        self.sync()
+        return {
+            "provider_processes": sum(
+                process.returncode is None for process, _ in self.children
+            ),
+            "provider_gpu_pids": sum(
+                "gpu_release" not in record for _, record in self.children
+            ),
+        }

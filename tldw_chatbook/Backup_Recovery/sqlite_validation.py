@@ -5,7 +5,8 @@ entry checks SQLite content and owned BLOBs; it never opens those external paths
 """
 
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from threading import Event
 from time import monotonic
@@ -17,6 +18,24 @@ _STEP_BUDGET = 5_000_000
 _SECONDS = 30.0
 _CATALOG_LIMIT = 10_000
 _CATALOG_BYTES = 8 * 1024**2
+
+
+_active_restrictions = ContextVar("recovery_sqlite_restrictions", default=None)
+
+
+@contextmanager
+def _recovery_restriction_scope(connection, restrictions):
+    """Expose only this connection's original budget to nested owner checks."""
+    token = _active_restrictions.set((connection, restrictions))
+    try:
+        yield
+    finally:
+        _active_restrictions.reset(token)
+
+
+def _current_restrictions(connection):
+    active = _active_restrictions.get()
+    return active[1] if active is not None and active[0] is connection else None
 
 
 def _installed_owner(owner_id):
@@ -70,6 +89,8 @@ class _Restrictions:
         self.deadline = monotonic() + _SECONDS
         self.steps = 0
         self.migrating = False
+        self.canvas_schema = False
+        self.changing_schema_trust = False
         connection.set_authorizer(self.authorize)
         connection.set_progress_handler(self.progress, _PROGRESS_INTERVAL)
 
@@ -116,6 +137,8 @@ class _Restrictions:
                 "match",
                 "hex",
             }
+            if self.canvas_schema:
+                allowed.add("canvas_revision_payload_valid")
             if self.migrating:
                 allowed |= {"printf", "sqlite_rename_test", "sqlite_rename_quotefix"}
             return sqlite3.SQLITE_OK if second in allowed else sqlite3.SQLITE_DENY
@@ -130,6 +153,11 @@ class _Restrictions:
             metadata = {"table_xinfo", "index_list", "index_xinfo", "table_list"}
             permitted = (first in reads and second is None) or first in metadata
             permitted |= first == "trusted_schema" and second in ("OFF", "0")
+            permitted |= (
+                self.changing_schema_trust
+                and first == "trusted_schema"
+                and second in ("ON", "1")
+            )
             permitted |= self.migrating and first == "user_version"
             return sqlite3.SQLITE_OK if permitted else sqlite3.SQLITE_DENY
         if self.migrating:
@@ -149,7 +177,7 @@ class _Restrictions:
         return sqlite3.SQLITE_DENY
 
 
-def _restrict_connection(connection):
+def _restrict_connection(connection, cancel=None):
     """Install and verify mandatory primitives before any candidate query."""
     try:
         connection.enable_load_extension(False)
@@ -173,7 +201,7 @@ def _restrict_connection(connection):
                 raise ValueError("sqlite_security_unavailable")
         connection.execute("PRAGMA cache_size=-2048")
         connection.execute("PRAGMA temp_store=MEMORY")
-        return _Restrictions(connection)
+        return _Restrictions(connection, cancel)
     except (AttributeError, NotImplementedError, sqlite3.Error) as error:
         raise ValueError("sqlite_security_unavailable") from error
 
@@ -214,28 +242,116 @@ def _metadata(connection, catalog):
     return tuple(result)
 
 
+@contextmanager
+def _canvas_schema_access(connection, schema, restrictions=None):
+    """Run the shipped pure CHECK only for an exact installed Canvas catalog.
+
+    Candidate callers must first compare their entire catalog. Reference and
+    reconstruction callers execute only this same frozen installed SQL. Python
+    cannot mark a SQLite UDF innocuous, so trust is enabled for this bounded
+    scope and removed before the restricted connection returns to its caller.
+    """
+    from tldw_chatbook.DB.canvas_payload_validation import (
+        CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION,
+        install_canvas_revision_payload_validator,
+    )
+    from tldw_chatbook.DB.recovery_core_schema import (
+        CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+        CORE_SCHEMAS,
+    )
+
+    function = CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION
+    if not any(function in sql for sql in schema):
+        yield
+        return
+    from tldw_chatbook.DB.recovery_operations import _SUBSCRIPTIONS_SCHEMA
+
+    installed = next(
+        sql for owner, _, sql in CORE_SCHEMAS if owner == "db.chachanotes.primary"
+    )
+    frozen = (
+        installed,
+        CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+        *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
+    )
+    if schema not in frozen:
+        raise ValueError("unsupported_schema")
+    if connection.execute("PRAGMA trusted_schema").fetchone() != (0,):
+        raise ValueError("sqlite_security_unavailable")
+    install_canvas_revision_payload_validator(connection)
+    try:
+        if restrictions is not None:
+            restrictions.canvas_schema = True
+            restrictions.changing_schema_trust = True
+        connection.execute("PRAGMA trusted_schema=ON")
+        if connection.execute("PRAGMA trusted_schema").fetchone() != (1,):
+            raise ValueError("sqlite_security_unavailable")
+        if restrictions is not None:
+            restrictions.changing_schema_trust = False
+        yield
+    finally:
+        # An expired validation deadline must not interrupt removal of trust.
+        if restrictions is not None:
+            connection.set_progress_handler(None, 0)
+        try:
+            connection.execute("PRAGMA trusted_schema=OFF")
+            if connection.execute("PRAGMA trusted_schema").fetchone() != (0,):
+                raise ValueError("sqlite_security_unavailable")
+        finally:
+            if restrictions is not None:
+                restrictions.canvas_schema = False
+                restrictions.changing_schema_trust = False
+                connection.set_progress_handler(
+                    restrictions.progress, _PROGRESS_INTERVAL
+                )
+            connection.create_function(function, 3, None)
+
+
+def _canvas_payload_issues(connection, restrictions):
+    """Check payloads explicitly after the installed CHECK function is enabled.
+
+    SQLite may have parsed the CHECK before this connection registered the UDF;
+    its cached schema can then omit it from quick_check. A direct expression
+    evaluates the exact shipped validator under the same limits and progress
+    handler, regardless of that schema-cache state.
+    """
+    if restrictions is None or not restrictions.canvas_schema:
+        return ()
+    if (
+        connection.execute(
+            "SELECT 1 FROM canvas_revisions WHERE typeof(html) != 'text' OR "
+            "canvas_revision_payload_valid(CAST(html AS BLOB),content_sha256,html_bytes) != 1 LIMIT 1"
+        ).fetchone()
+        is not None
+    ):
+        return ("invalid_sqlite_integrity",)
+    return ()
+
+
 def _reference(schema):
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
     with closing(
         connect_private_sqlite("recovery.validation_schema", ":memory:")
     ) as reference:
-        # Execute only the installed catalog, never the candidate's SQL text.
-        tables = [
-            sql
-            for sql in schema
-            if sql.upper().startswith("CREATE TABLE")
-            or sql.upper().startswith("CREATE VIRTUAL TABLE")
-        ]
-        others = [sql for sql in schema if sql not in tables]
-        for sql in tables + others:
-            # AUTOINCREMENT and FTS create their own internal/shadow tables.
-            existing = {row[3] for row in _catalog(reference)}
-            if sql in existing:
-                continue
-            reference.execute(sql)
-        catalog = _catalog(reference)
-        return catalog, _metadata(reference, catalog)
+        reference.execute("PRAGMA trusted_schema=OFF")
+        with _canvas_schema_access(reference, schema):
+            # Execute only the installed catalog, never the candidate's SQL text.
+            tables = [
+                sql
+                for sql in schema
+                if sql.upper().startswith("CREATE TABLE")
+                or sql.upper().startswith("CREATE VIRTUAL TABLE")
+            ]
+            others = [sql for sql in schema if sql not in tables]
+            for sql in tables + others:
+                # AUTOINCREMENT and FTS create their own internal/shadow tables.
+                existing = {row[3] for row in _catalog(reference)}
+                if sql in existing:
+                    continue
+                reference.execute(sql)
+            catalog = _catalog(reference)
+            return catalog, _metadata(reference, catalog)
 
 
 def _version(connection, owner_id):
@@ -250,11 +366,11 @@ def _version(connection, owner_id):
     elif owner_id in {
         "db.media.primary",
         "db.prompts.primary",
-        "db.library_collections",
         "db.library_ingest_jobs",
     }:
         query = "SELECT version FROM schema_version"
     elif owner_id in {
+        "db.library_collections",
         "db.workspaces",
         "db.agent_runs",
         "db.subscriptions",
@@ -274,7 +390,9 @@ def _version(connection, owner_id):
     return rows[0][0] if len(rows) == 1 else None
 
 
-def _check(connection, owner, policy):
+def _check(connection, owner, policy, restrictions):
+    if restrictions.expired():
+        raise ValueError("sqlite_resource_limit")
     actual = _catalog(connection)
     actual_sql = tuple(row[3] for row in actual if row[3] is not None)
     matched = tuple(
@@ -289,28 +407,34 @@ def _check(connection, owner, policy):
     version = _version(connection, owner.owner_id)
     if version not in policy.versions or not any(v == version for v, _ in matched):
         return ("unsupported_schema_version",), None
-    reference_catalog, metadata = _reference(matched[0][1])
-    if actual != reference_catalog or _metadata(connection, actual) != metadata:
-        return ("unsupported_schema",), None
-    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-        return ("invalid_domain_reference",), None
-    if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-        return ("invalid_sqlite_integrity",), None
-    if (
-        owner.owner_id == "db.subscriptions"
-        and any(row[1] == "db_schema_version" for row in actual)
-        and connection.execute(
-            "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
-        ).fetchone()
-        != (42,)
-    ):
-        return ("unsupported_schema_version",), None
-    checker = getattr(owner, "_validate_connection", None)
-    if checker is not None:
-        issues = checker(connection)
-        if issues:
-            return issues, None
-    return (), version
+    with _canvas_schema_access(connection, matched[0][1], restrictions):
+        reference_catalog, metadata = _reference(matched[0][1])
+        if actual != reference_catalog or _metadata(connection, actual) != metadata:
+            return ("unsupported_schema",), None
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            return ("invalid_domain_reference",), None
+        payload_issues = _canvas_payload_issues(connection, restrictions)
+        if payload_issues:
+            return payload_issues, None
+        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+            return ("invalid_sqlite_integrity",), None
+        if (
+            owner.owner_id == "db.subscriptions"
+            and any(row[1] == "db_schema_version" for row in actual)
+            and connection.execute(
+                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+            ).fetchone()
+            != (73,)
+        ):
+            return ("unsupported_schema_version",), None
+        checker = getattr(owner, "_validate_connection", None)
+        if checker is not None:
+            issues = checker(connection)
+            if issues:
+                return issues, None
+        if restrictions.expired():
+            raise ValueError("sqlite_resource_limit")
+        return (), version
 
 
 def _validate_candidate(
@@ -328,10 +452,13 @@ def _validate_candidate(
         if owner.schema_policy() != policy:
             return (("unsupported_schema_policy",), None)
         with open_recovery_validation(
-            installed.owner_id, candidate, writable=migrate
-        ) as connection:
-            restrictions = _Restrictions(connection, cancel)
-            issues, version = _check(connection, installed, policy)
+            installed.owner_id,
+            candidate,
+            writable=migrate,
+            with_restrictions=True,
+            cancel=cancel,
+        ) as (connection, restrictions):
+            issues, version = _check(connection, installed, policy, restrictions)
             if issues:
                 return (issues, None)
             if migrate and version != max(policy.versions):
@@ -352,7 +479,9 @@ def _validate_candidate(
                                 raise InterruptedError
                             connection.execute(statement)
                         restrictions.migrating = False
-                        issues, version = _check(connection, installed, policy)
+                        issues, version = _check(
+                            connection, installed, policy, restrictions
+                        )
                         if issues or version != expected:
                             return (issues or ("unsupported_schema_migration",), None)
                         restrictions.migrating = True

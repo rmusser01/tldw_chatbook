@@ -1,14 +1,15 @@
-# File Notes — plain files on disk, edited in place
+# Folder files — plain notes on disk, edited in place
 
 ## What this screen is for
 
-File Notes edits ordinary files that live in a folder you choose on disk —
+Folder files edits ordinary files that live in a folder you choose on disk —
 what you see in the editor is exactly what's in the file, and saves write
-straight back to it. It is a separate system from [Database notes](notes.md):
-nothing here is stored in the Library database, there are no templates or
-autosync, and no "Use in Console" handoff. This is also the key difference
-from the Database side's Notes sync panel: Sync *mirrors* a folder's notes
-into the Library database (a copy lives in both places), while Files mode
+straight back to it. It is a separate system from [Library notes](notes.md):
+nothing here is stored in the Library's own database, there are no templates or
+database mirror, and no "Use in Console" handoff. This is also the key
+difference
+from Library Notes lasting sync: lasting sync keeps a reviewed relationship
+between a managed Library folder and a local folder, while Folder files mode
 edits that folder directly with nothing mirrored anywhere. Reach for it
 when your notes are a
 folder of Markdown files (a wiki, a repo's docs, an Obsidian vault) and you
@@ -20,39 +21,72 @@ commit to its existing upstream, without leaving the app.
 
 Open [Library](../library.md) (**Ctrl+3**), pick **Notes** in the rail's
 Browse section, then use the source strip at the top of the canvas: it reads
-**Database** | **Files**. Click **Files** — while the workspace loads you'll
-briefly see "Opening File Notes…". At 120 columns and wider, the rail stays
-beside the workspace unless you press **Collapse** in its **Navigation**
-heading; use the slim **Nav** handle to expand it again. On compact
-terminals, Library shows the File Notes canvas as the single visible stage so
-its controls remain on-screen; **Escape** or **Database** returns to Database
-Notes. Either switch first saves any unsaved edits on the side you're leaving.
+**Library notes** | **Folder files**. Click **Folder files** — while the
+workspace loads you'll briefly see "Opening File Notes…". At wide sizes,
+Library navigation and the Folder files tree have separate slim collapse
+grips. Each pane remembers its own choice; collapsing the tree does not also
+collapse Library navigation or the Library notes list. On compact
+terminals, Library shows the Folder files canvas as the single visible stage so
+its controls remain on-screen; **Escape** or **Library notes** returns to the
+Library notes view. Either switch first saves any unsaved edits on the side
+you're leaving.
+
+The first editable file opened during a wide Notes work session closes Library
+navigation automatically once to make room. That temporary close does not
+change your saved pane choice. Reopen Library navigation with its grip and it
+stays open for the rest of the work session. Opening another file, switching
+between Edit and Manage, autosaving, resolving a conflict, or resizing does
+not close it again. The automatic close resets only when you close or clear
+the open Folder files file, switch between Folder files and Library notes,
+change the linked folder, clear the selected Library note, or leave Notes.
+Using compact **Back to navigator** does not reset it.
 
 ## Layout tour
 
 ![File Notes workspace](../images/library/file-notes.svg)
 
+- **Source strip** (above the workspace) — **Library notes** | **Folder
+  files**, with **Folder files** marked as the selected source. At wide sizes
+  the strip stays visible while you are in Folder files: it is a mode of
+  Notes, not a separate screen, and **Library notes** is the way back. On
+  compact terminals the strip collapses to a **‹ Library / Notes** cue
+  instead.
+- **Library navigation** (left of the workspace) — the same Library rail as
+  the rest of the screen, so you can leave for Media, Prompts or Skills
+  without going back through Notes first. The rail is there before a folder
+  is linked too — the file list and the editor are what wait for a folder,
+  not the rail — but its collapse grip arrives with the folder, so before
+  linking the rail is simply always open. Once linked, the grip collapses
+  it. On compact terminals (under about 120 columns) the rail is collapsed
+  whether or not a folder is linked, so the empty state takes the full
+  canvas width there.
 - **Folder link row** (top) — before setup the status reads "Choose a notes
-  folder." with buttons **Details** and **Choose folder…**. Once linked, the
-  status becomes "Linked — \<folder\>" (or "Checking — …" / "Offline — …"
-  when the folder can't be verified) and the button relabels to **Change…**.
-  **Details** opens the read-only "File Notes folder details" dialog.
-- **Navigator** (left) — a "Search file contents…" input, the **Files** tree
-  of everything under the linked folder, a **Search results** tree that
-  appears only while a query is active, and the **Session Git (N)** button —
-  N counts the files changed in this session. Large folders and direct-path
+  folder." with buttons **Details** and **Choose folder…**, and the line
+  under it explains the mode: "Folder files edits Markdown files in a folder
+  on disk, in place. Nothing is copied into the Library." When a notes
+  folder is already configured, a **Use \<folder\>** button offers that
+  folder directly. Once linked, the status becomes "Linked · Local folder:
+  \<folder\>" (or "Checking · Local folder: …" / "Offline · Local folder: …"
+  when the folder can't be verified) and the button relabels to
+  **Change…**. **Details** opens the read-only "File Notes folder details"
+  dialog. A folder-change reason that is currently owning the row (see
+  "While a folder change runs" below) replaces this summary until you try
+  again; the linked-folder detail stays available in the row's tooltip and
+  in Details throughout.
+- **Folder navigator** (left) — a **New** action, a "File contents…" search
+  input, the **Files** tree of everything under the linked folder, and a
+  **Search results** tree that appears only while a query is active. Its grip
+  collapses or restores this tree independently of Library navigation and the
+  Library notes list. Large folders and direct-path
   search fallbacks show 100 rows at a time; activate **Load more** to append
   the next 100 without rebuilding the entire tree.
-- **Editor pane** (right) — a breadcrumb ("No file selected" until you open
-  one; "Recently deleted: \<path\>" right after a delete), a save-status
-  label (Idle / Dirty / Saving / Saved / Conflict / Error, sometimes with a
-  detail after a dash), a path input with placeholder "relative/path.md",
-  two toolbars (a primary row beginning with **New** and ending with
-  **Delete**, plus the disclosed secondary actions), the text editor itself,
-  and an action-status line where results like "Deleted. Restore remains
-  available." appear.
-- **Session Git panel** — pressing **Session Git (N)** swaps the whole
-  workspace for the staging, commit, and guarded-push panel described below;
+- **File work area** (right) — a breadcrumb ("No file selected" until you
+  open one; "Recently deleted: \<path\>" right after a delete), an
+  Idle / Dirty / Saving / Saved / Conflict / Error status, and **Edit** /
+  **Manage** modes. Edit gives the file body nearly all available space;
+  Manage groups path details, file actions, Session Git, and Danger.
+- **Session Git panel** — **Manage** → **Review session changes (N)** opens
+  the staging, commit, and guarded-push panel described below;
   from the row list, **Esc** or **Back to navigator** returns to the files.
   During commit or push, **Esc** follows the phase-specific safe action in the
   keyboard table below.
@@ -63,31 +97,75 @@ Notes. Either switch first saves any unsaved edits on the side you're leaving.
 
 | Control | What it does |
 |---|---|
-| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml |
+| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. Type into the **Folder path** field and either press Enter (browses into it) or click **Select** (uses it right away, without needing Enter first); an invalid path shows an inline reason and leaves the picker open |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
+| **Cancel** (folder change) | Appears once a folder change has been running about three seconds — the same moment the line stops being a bare "Changing folder…". Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
+| **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
+| **Choose another** (folder change) | Appears with **Keep waiting**. Abandons the change, keeps the folder you already had, and reopens the folder picker in one step |
+| **Use \<folder\>** | Appears only before a folder is linked, and only when a configured folder still exists. It reads `[file_notes] root` — the key **Choose folder…** writes — and falls back to the legacy `[notes] sync_directory`; either must name an existing folder by absolute path in config.toml. Links that folder without opening the picker |
 
-### Editor toolbar
+While a folder change runs, the folder line reads `Changing folder…` and the
+row holds nothing else. If it is still going after about three seconds it
+starts reporting how far the scan has got — `Changing folder… · 1,240
+entries so far` (or `· still working` before the first count) — and that is
+when **Cancel**, **Keep waiting** and **Choose another** arrive: the way out
+appears with the line that admits one is needed. Those three are then the
+whole row: **Details** and **Change…** step aside, because **Details**
+would only repeat the line you are already reading and **Change…** is
+inert until the change ends, which is what **Choose another** is for.
+After 30 seconds the change gives up on
+its own and the folder line itself reads "Folder change timed out · previous
+folder kept. Try again or choose a different folder." That reason stays on
+the folder line until you start another folder change or open a file.
+Either way the previously linked folder is untouched — unless the change had already
+finished saving when you cancelled, in which case the folder line says
+"Folder change finished before it could be stopped · now linked to the new
+folder." and the new folder is the one in use.
 
-The path input ("relative/path.md") is the target for **New**, **Move**, and
-**Save draft as copy** or **Export exact copy**: type where you want the file
-to go, then press the relevant button.
+Abandoning a folder change — by **Cancel**, by **Choose another**, or by
+letting it time out — also stops the folder scan itself. Picking a different
+folder afterwards works normally; you do not have to restart the app.
 
-On a wide editor, **New** stays at the far left and **Delete** is separated
-from the routine actions at the far right. On a compact editor, **Delete** is
-the final full-width row. Its two-activation confirmation is unchanged.
+Leaving Folder files while a change is running abandons it as well — Esc,
+the "‹ Library / Notes" cue and moving to another screen all do. The folder
+line goes with the surface you left, so that outcome arrives as a
+notification instead: "Folder change cancelled · previous folder kept".
+
+### Edit and Manage
+
+**Edit** is the ordinary writing view. It keeps the file body prominent and
+shows only safe actions that become relevant to the current state, such as
+Restore, Compare, Resolve conflict, Reload from disk, or Save Copy. Saving is
+automatic; there is no ordinary Save button.
+
+**Manage** keeps less-frequent controls in clearly named sections:
+
+- **File details & path** shows the exact linked path and save details.
+- **File actions** contains Move, Reload, Save copy, and **More file actions**;
+  the latter reveals Protect/Unprotect and Refresh when available.
+- **Session Git** contains **Review session changes (N)**.
+- **Danger** contains Delete, separated from routine file work.
+
+**New**, **Move**, and **Save copy** are named path tasks rather than one
+always-visible path field. Start the task, enter its labeled target such as
+`ideas/today.md`, and choose its named action: **Create**, **Move**, or **Save
+Copy**. Only one path task can be open at a time; starting another replaces it
+after any pending save or conflict is handled. **Cancel** or **Escape** closes
+the path task and returns focus to the action that opened it. **Restore** is
+contextual and restores the recently deleted path without asking for a target.
 
 | Control | What it does |
 |---|---|
-| **New** | Creates an empty file at the typed path and opens it — there is no file picker for creating content |
-| **Move** | Moves the open file to the typed path |
-| **Delete** | Two-press: first press shows "Click Delete again to confirm.", second deletes ("Deleted. Restore remains available.") |
+| **New** | Opens a **New file path** task; **Create** makes an empty file at that absent relative path and opens it — there is no file picker for creating content |
+| **Move** | Opens a **Move file to** task; its **Move** action moves the open file to that relative path |
+| **Delete** | Two-press: first activation shows "Activate Delete again to confirm.", second deletes ("Deleted. Restore remains available.") |
 | **Restore** | Brings back the most recently deleted file |
 | **Protect** / **Unprotect** | Toggles protection on the open file ("Protected." / "Unprotected."); every save to a protected file first stores a checkpoint of its previous contents in the local recovery database |
-| **Reload** / **Discard draft and reload** | Re-reads the open file from disk. In Error, the destructive label is shown and the first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
+| **Reload** / **Reload from disk** / **Discard draft and reload** | Re-reads the open file from disk. **Reload from disk** becomes immediately visible in Conflict; in Error, the destructive label is shown. The first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
 | **Compare** | Appears only for a Conflict and opens a read-only Base / Draft / Disk comparison without resolving the conflict or changing the editor |
 | **Resolve conflict** | Appears only for a Conflict and discloses the three bounded choices described below; none overwrites the changed disk file |
-| **Save draft as copy** | Writes the complete editor draft to the typed path; enabled while the save status is Dirty or Error. In Conflict, use **Resolve conflict** and **Save draft as new note** instead |
-| **Export exact copy** | Replaces **Save draft as copy** for a large read-only file and streams the complete current disk bytes, not the visible excerpt, to an absent typed path |
+| **Save copy** | Opens a **Save copy as** task; **Save Copy** writes the complete editor draft to that absent path. It is available as an ordinary Manage action and as a safe recovery action when relevant |
+| **Export exact copy** | Replaces **Save copy** for a large read-only file and opens a named path task that streams the complete current disk bytes, not the visible excerpt, to an absent path |
 | **Refresh** | Re-scans the folder and rebuilds the **Files** tree |
 
 Saving is automatic: edit and the status walks Dirty → Saving → Saved. If the
@@ -100,14 +178,20 @@ report that diff output was omitted or elided. A deleted or unreadable Disk side
 is named explicitly. Closing Compare returns to the conflict without resolving
 it or changing any side.
 
+Folder files does not use **Ctrl+S** and does not assign a replacement. Keep
+typing and autosave writes the file. When the file body has keyboard focus,
+only its boundary becomes more prominent; its background and size do not
+change. Compact inputs such as a named target path keep their usual filled
+focus treatment.
+
 **Resolve conflict** keeps **Compare** available and opens three explicit safe
 choices:
 
 - **Keep editing** closes the resolution choices and returns focus to
   **Resolve conflict**. The Base, Draft, Disk, and Conflict state are unchanged.
-- **Save draft as new note** uses the path input, labeled "New note path" while
-  the choices are open. It writes the exact draft only when that destination
-  does not already exist, then opens the new note after the write succeeds.
+- **Save draft as new note** opens the named **Save copy as** task. It writes
+  the exact draft only when that destination does not already exist, then
+  opens the new note after the write succeeds.
 - **Discard draft and load disk** opens the same Cancel-first, freshness-checked
   confirmation described below. It is the only resolution choice that can
   replace the editor draft.
@@ -115,13 +199,22 @@ choices:
 There is no overwrite choice. If the proposed new-note destination already
 exists, File Notes leaves both that file and the conflict draft unchanged.
 
-**Discard draft and reload** first reads the current disk
+**Reload from disk** (Conflict) or **Discard draft and reload** (Error) first
+reads the current disk
 version and asks for confirmation. **Cancel** or **Escape** preserves the exact
-draft and conflict; confirming rechecks the root, file, editing session, and
-disk version before it replaces the draft. If any of those changed, reload
-stops with recovery guidance and leaves the draft untouched.
+draft and conflict. **Save Copy** stays available while the confirmation is
+open, so opening its named path task remains a safe exit and dismisses the
+reload decision without changing the original file. Confirming rechecks the
+root, file, editing session, and disk version before it replaces the draft. If
+any of those changed, reload stops with recovery guidance and leaves the draft
+untouched.
 
 ### Session Git — stage and commit session edits, then push the exact commit
+
+Open **Manage** and choose **Review session changes (N)**. Consequential Git
+states such as checking, pushing, or needing attention also remain visible in
+the work header, so you do not have to leave Edit merely to learn that work is
+still running.
 
 The panel is headed "Prepare session for commit" with the scope line
 "Session paths only · stages complete file state" and the keyboard guide
@@ -129,7 +222,9 @@ The panel is headed "Prepare session for commit" with the scope line
 it shows "Repository: not checked" / "Status: NOT CHECKED".
 
 **Trust first.** Press **Trust and check status** and a confirmation dialog
-titled "Trust Session Git repository?" appears:
+titled "Trust repository for session changes?" appears (was "Trust Session
+Git repository?" — superseded by task-32271 below; the title was read off the
+live dialog on dev):
 
 > Repository: \<path\>
 >
@@ -141,7 +236,12 @@ titled "Trust Session Git repository?" appears:
 
 **Cancel** is focused first, so Enter alone runs nothing. Confirming with
 **Trust and check status** checks the repository and, from then on, a
-**Refresh** button takes the trust button's place.
+**Refresh** button takes the trust button's place. Focus lands on the row
+list as soon as the first status arrives, so the panel's own line is true
+from where it leaves you: **Up/Down** moves between rows, **Tab** steps into
+that row's actions, **Enter** runs the focused one. The actions render
+directly under the rows — **Stage** / **Unstage**, then bulk actions, then
+**Commit staged (N)** — rather than at the floor of the pane.
 
 **Rows.** Each file edited this session gets a row whose second line states
 where it stands:
@@ -163,15 +263,21 @@ With no session edits the panel says "No current-session Git changes."
 behind the gate "Stage at least one session note to commit" until something
 is staged. It then opens the commit form — **Subject** (placeholder
 "Required commit subject") and **Body (optional)** — and **Review commit**
-runs a pre-check ("Checking commit...") before showing the review: the
-"Exact commit message" as Git will record it, a "Show included notes (N)"
-toggle listing every file going in, and branch/identity details. Finish with
-**Confirm commit**, or step back with **Edit message** / **Cancel commit**.
-If a result comes back uncertain, **Check again** re-checks it.
+runs a pre-check ("Checking commit...") before showing a decision-first
+review. **What** contains the exact message as Git will record it. **Where**
+names the local repository, branch, and exact parent commit. **Impact**
+lists the author/committer, included-note counts and complete staged-file scope,
+plus the hook and signing policy. **Recovery** explains when to edit, cancel,
+or use **Check again** without retrying an uncertain commit. **Technical
+details** is collapsed by default and holds filesystem-identity audit evidence;
+**Show included notes (N)** remains a separate disclosure for every file going
+in. Finish with **Confirm commit**, or step back with **Edit message** /
+**Cancel commit**.
 
 The commit review states the exact scope — for example, "2 session notes will
-be committed; unrelated changes untouched". A successful commit is still
-local: Chatbook never starts a push automatically.
+be committed; unrelated changes untouched", or "1 session note will be
+committed" for a single file. A successful commit is still local: Chatbook
+never starts a push automatically.
 
 #### Guarded push
 
@@ -194,11 +300,16 @@ outside Chatbook, or later note edits.
    SSH agent may run after authorization, but terminal prompts remain
    disabled. The panel then reads "Checking remote before push…" and still
    offers **Cancel check**.
-3. Read the immutable review. It identifies the commit and parent transition,
-   configured remote and full ref, expected-parent lease, included session-note
-   provenance, secure-transport policy, and possible remote effects. The
-   included notes are not a new selection: later edits remain local. Local
-   pre-push hooks do not run; remote hooks, branch policy, CI, or mirrors may.
+3. Read the immutable decision-first review. **What** identifies the exact
+   commit, parent transition, and included session-note provenance. **Where**
+   shows the local repository and branch, configured destination, full ref,
+   sanitized endpoint, exact parent lease, transport, and authentication
+   policy. **Endpoint details** remains independently available for the
+   selectable endpoint fields. **Impact** states the publication scope, local
+   hook bypass, later-local edits, and possible remote hooks, branch policy,
+   CI, or mirrors. **Recovery** explains how to leave without pushing and how
+   an uncertain result is checked without another push. Collapsed **Technical
+   details** contains only duplicate/internal audit evidence.
 4. **Back** has initial focus. Choose **Push 1 commit** only after confirming
    the destination. Chatbook freshly re-checks the candidate, configuration,
    authorization, and remote parent before requesting the one reviewed ref
@@ -207,8 +318,8 @@ outside Chatbook, or later note edits.
 You may use **Cancel check** before the network push process starts. Once the
 panel says "Pushing 1 reviewed commit…", cancellation is unavailable;
 **Back to Files — push continues** lets you keep editing while the owned
-operation settles. Reopening **Session Git** reattaches to that same operation
-or result without starting another request; the navigator button reports
+operation settles. Reopening **Manage** → **Review session changes** reattaches
+to that same operation or result without starting another request; the header reports
 **Push checking**, **Pushing**, or **Push needs attention** as appropriate.
 
 | Push result | Meaning and next step |
@@ -244,13 +355,15 @@ not available.
 
 ## Common tasks
 
-1. **Link a notes folder.** Open Files (source strip), press
+1. **Link a notes folder.** Open **Folder files** (source strip), press
    **Choose folder…**, pick the folder in "Choose File Notes Folder". The
-   status becomes "Linked — \<folder\>" and the **Files** tree fills in.
-2. **Create a file.** Type its location — e.g. `ideas/today.md` — into the
-   "relative/path.md" input and press **New**. The file is created on disk
-   and opened; start typing and it saves automatically.
-3. **Find text across files.** Type a query into "Search file contents…" —
+   status becomes "Linked · Local folder: \<folder\>" and the **Files** tree
+   fills in.
+2. **Create a file.** Press **New** above the Folder files tree, enter a path
+   such as `ideas/today.md` in the **New file path** task, and choose
+   **Create**. The file is created on disk and opened; start typing and it
+   saves automatically.
+3. **Find text across files.** Type a query into "File contents…" —
    a **Search results** tree appears under the **Files** tree; pick a result
    to open that file. Activate **Load more** when a direct-path result set has
    another 100 rows. Clear the query and the tree disappears.
@@ -258,8 +371,8 @@ not available.
    Disk. Press **Resolve conflict**, then either keep editing, save the exact
    draft to an absent new-note path, or enter the Cancel-first discard
    confirmation. No choice overwrites the changed disk file.
-5. **Stage and commit this session's edits, then push the exact commit.** Press
-   **Session Git (N)**,
+5. **Stage and commit this session's edits, then push the exact commit.** Open
+   **Manage** and choose **Review session changes (N)**,
    trust the repository if asked, press **Stage all (N)**, then
    **Commit staged (N)**. Fill in **Subject**, press **Review commit**,
    confirm the exact message and "unrelated changes untouched" scope, then
@@ -276,21 +389,29 @@ not available.
 
 | Key | Action |
 |---|---|
+| Esc (named path task) | Cancel New, Move, or Save copy and return to the action that opened it |
 | Up / Down (Session Git panel) | Select a row |
 | Tab (Session Git panel) | Move into the selected row's actions |
 | Enter (Session Git panel) | Run the highlighted action |
 | Esc (reload confirmation) | Cancel reload, preserve the draft and conflict, and return focus to the action that opened the confirmation |
 | Esc (Session Git panel) | Step back safely: row list → Files; commit form → cancel; commit review → edit message; candidate/remote check → cancel; push review → Back; active push/uncertain recovery check → Files while it continues; push result → session |
 | Esc (dialogs) | Close "File Notes folder details" or **Endpoint Details**; cancel the repository-trust or destination-authorization dialog |
+| Esc (folder change running) | Leaves Folder files for Library notes, exactly as it does when nothing is running — the folder change is abandoned and the previously linked folder is kept. The same applies to the "‹ Library / Notes" cue, the **Library notes** button, switching rail rows, the command palette and Ctrl+Q: a running folder change never blocks the way out |
+
+Folder files does not register **Ctrl+S** and does not replace it with another
+save shortcut. File edits save automatically.
 
 ## Related settings & docs
 
 - **config.toml `[file_notes]`** — `root` is the linked folder; written
-  whenever you use **Choose folder…** / **Change…**.
-- [Database notes](notes.md) — the Library-stored notes system, with
-  templates, the Notes sync panel, and Console handoff. The sync panel there
-  mirrors DB notes to a folder; File Notes is different — the files *are*
-  the notes.
+  whenever you use **Choose folder…** / **Change…**. `browse` is where that
+  picker reopens while no folder is linked yet: the folder you last picked
+  through it, written on every pick, and ignored in favour of your home
+  directory if it no longer exists. **Import once** and **Keep a folder
+  synced** keep their own separate keys, see [Library notes](notes.md).
+- [Library notes](notes.md) — the Library-stored notes system, with
+  templates, reviewed **Add from files…**, lasting root management, and Console
+  handoff. Folder files is different — the files *are* the notes.
 - [Library](../library.md) — the parent screen; [guide index](../index.md)
   for global keys.
 - There is no deeper Docs/Features write-up for File Notes or Session Git —
@@ -298,6 +419,19 @@ not available.
 
 ## Quirks & troubleshooting
 
+- **The "Chunking Lab | Try selected text" strip is not part of this
+  canvas.** It paints under the header on every Library canvas and opens a
+  full-screen developer tool for comparing chunking strategies; Escape does
+  not leave it. See [Library overview](../library.md); demoting it is
+  tracked as task-32064.
+
+- **YAML frontmatter is hidden from the editor and kept exactly as it is on
+  disk.** A file that opens with a `---` block (Obsidian properties, for
+  example) shows only the body below it; the block itself is never displayed
+  and never edited here. A line above the editor says so — "N lines of YAML
+  frontmatter above this body are hidden here and kept exactly as they are on
+  disk" — and every save writes those bytes back unchanged, so properties
+  survive a Chatbook edit. Edit the block itself in your own editor.
 - **Per-file caps: 8 MB and 2,000,000 characters.** Edits that would push a
   file past either limit are refused at save time. A body above 200,000
   characters opens read-only with exact byte and character sizes and a labeled
@@ -307,8 +441,8 @@ not available.
   session appear in the panel, and staging records each file's complete
   current state — not a partial diff. A path you already staged outside
   Chatbook shows BLOCKED here on purpose: finish it in Git, then **Refresh**.
-- **Trust doesn't persist.** The "Trust Session Git repository?" dialog
-  returns after every app restart — trust lasts only for the running
+- **Trust doesn't persist.** The "Trust repository for session changes?"
+  dialog returns after every app restart — trust lasts only for the running
   process, by design.
 - **Guarded push is deliberately narrow.** It publishes only the exact guarded
   commit created in this app process, to its one existing tracking upstream,
@@ -331,7 +465,7 @@ not available.
   operation updates only the approved remote ref; it does not fetch or update
   the local remote-tracking ref. Refresh that state later with external Git if
   you need it.
-- **No Console handoff.** Unlike Database notes, media, and prompts, this
+- **No Console handoff.** Unlike Library notes, media, and prompts, this
   workspace has no "Use in Console" — copy text out manually if you need it
   in a chat.
 - **Structural actions wait during Git work.** While a stage, unstage, commit,
@@ -343,10 +477,112 @@ not available.
   \<error\>", search falls back to a slower direct scan, and **Restore** may
   be unavailable.
 
-—
-*Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Files mode
+## Verified against
+
+*Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Folder files mode
 stays inside the Library rail/canvas frame instead of replacing the whole
-shell; Escape returns to Database)*
+shell; Escape returns to Library notes)*
+
 *Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
-Files mode's canvas now states in-app how it differs from Sync — edits the
-folder directly, versus Sync's mirror-into-the-Library behavior).*
+Folder files mode's canvas states in-app that it edits the folder directly,
+unlike a managed Library relationship).*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073: the
+Library-wide "Chunking Lab | Try selected text" header strip, which paints
+on this canvas too, was undocumented everywhere; it is described once on
+the [Library overview](../library.md) and cross-referenced here. No other
+claim on this page changed.)*
+
+*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a folder
+change shows "still working · Cancel" after three seconds, times out after
+30, and never blocks Escape, the back cue or Quit).*
+
+*Verified against fix/library-notes-file-notes — 2026-09-09 (task-32121: an
+abandoned or timed-out folder change stops its scan, so the next folder still
+links normally; the timeout reason is painted on the folder line and stays
+there; a slow scan reports its entry count and offers Keep waiting / Choose
+another. task-32136: once a folder is linked, Folder files keeps the Library
+rail and the source strip at wide sizes; the empty state shown before any
+folder is linked explains the mode and offers the configured
+`[notes] sync_directory` folder, but was a full-width onboarding step without
+the Library rail until you linked one — superseded by task-32173 below.)*
+
+*Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
+"Choose File Notes Folder" picker used to commit the directory being
+browsed and silently ignore a typed-but-unsubmitted path when **Select**
+was pressed. It now resolves the **Folder path** field first — Enter still
+browses into it, and Select uses it immediately, with an inline error and
+the picker left open for an invalid path. Pinned in
+`Tests/UI/test_select_directory_typed_path.py`.)*
+
+*Verified against fix/library-notes-docs — 2026-09-09 (task-32141: guide
+sweep after the Notes critique wave; the linked-folder status line reads
+"Linked · Local folder: \<folder\>", not "Linked — \<folder\>"; corrected
+here and in [Library notes](notes.md)).*
+
+*Verified against fix/library-notes-file-notes — 2026-09-09 (task-32121
+review round 2: **Keep waiting** also extends a change queued behind an
+earlier folder's scan, and the "finished before it could be stopped" outcome
+is painted on the folder line rather than only in the editor's status line.
+`[notes] sync_directory` must be an absolute path to be offered.)*
+
+*Verified against fix/library-notes-r-pickers — 2026-09-09 (task-32174: the
+"Choose File Notes Folder" picker opens on the current folder when one is
+linked; otherwise it now opens on the folder last picked through it,
+falling back to home when none has been picked yet — or when the stored
+value no longer names a real folder. Stored as `[file_notes] browse` in
+`config.toml`. Independent of Import once's and
+Keep a folder synced's own last-used directories, see
+[Library notes](notes.md).)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32173:
+the Library rail is now shown inside Folder files before a folder is linked,
+not only after — the file list and the editor are what wait for a folder. On
+terminals under about 120 columns the rail stays collapsed either way, which
+is unchanged. task-32180: at 60 columns the slow-folder-change row kept
+**Choose another** 11 cells off the right edge; **Cancel** / **Keep
+waiting** / **Choose another** now size to their labels and **Details** /
+**Change…** stand down for the duration of the change. **Use \<folder\>**
+reads `[file_notes] root` first and the legacy `[notes] sync_directory`
+second.)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32180
+review round 1: a folder change started from the unlinked empty state kept
+the empty state's hug-your-own-width status, so at 60 columns **Keep
+waiting** and **Choose another** were pushed off the row. The busy line now
+elides in that state too. The pre-link Library rail has no collapse grip;
+the grip arrives with the folder.)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-10 (task-32102,
+landed on this branch so the workspace lands once: **Cancel** now arrives
+with the still-working line rather than at t=0, leaving Folder files during
+a folder change reports the cancellation as a notification rather than into
+the row being torn down, and the wait line no longer carries the warning or
+offline tint of the state it replaced. Pinned by tests, not by a live
+capture.)*
+
+*Verified against fix/library-crit9-notes — 2026-09-10 (task-32218: one noun
+per Notes source. This page, the canvas authority line and the F1 Escape row
+all say **Folder files** and **Library notes**; the capitalised "Folder Files"
+and the "back to Database" footer chip are retired. Escape from Folder files
+now reads `esc back to Library notes`.)*
+
+*Verified against fix/library-notes-w3-pickers-git — 2026-09-11 (task-32248,
+task-32265, task-32264, task-32251 AC#5. Session Git now honours the keyboard
+contract it prints: focus lands on the row list after **Trust and check
+status**, Tab from a row reaches **Stage**, and the actions render under the
+rows instead of ~24 rows below them at 235x52. The pre-commit disclosure says
+**main**, not `refs/heads/main`, and pluralises the session-note count. The
+editor discloses hidden-but-preserved YAML frontmatter. The folder picker now
+falls back to `[notes] sync_directory` before your home directory. Verified
+live against a real git-backed vault: keyboard staging and a real commit
+(`git log`: `e69848b w3 round2 commit`).)*
+
+*Verified against fix/library-notes-wave3-docs — 2026-09-12 (task-32271: the
+Session Git chapter re-walked on dev 7159fc0b99 at 235x52 against a
+git-backed vault — Trust and check status → "Trust repository for session
+changes?" (the title corrected above; this page used to say "Trust Session
+Git repository?") → focus on the row list → Tab to **Stage** → **Commit
+staged (1)** → the commit review → committed; the "Choose File Notes Folder"
+picker's pre-filled **Folder path** selects on the click that focuses it; the
+hidden-frontmatter line reads as described.)*

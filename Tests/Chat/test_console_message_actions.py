@@ -1,7 +1,11 @@
+from dataclasses import replace
+
 import pytest
 
 from tldw_chatbook.Chat import console_message_actions as message_actions
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleVariantSet,
@@ -9,7 +13,174 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
     action_row_guide,
+    assistant_canvas_html_blocks,
 )
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+
+
+def test_mermaid_wrapper_never_creates_script_markup():
+    from tldw_chatbook.Canvas.authoring import wrap_mermaid_document
+
+    source = 'flowchart TD\nA[</pre><script>bad()</script>&]'
+    html = wrap_mermaid_document(source)
+    assert '<script>bad()' not in html
+    assert '&lt;/pre&gt;&lt;script&gt;bad()&lt;/script&gt;&amp;' in html
+    assert 'data-canvas-diagram="mermaid"' in html
+
+
+@pytest.mark.parametrize("source", ["", " \n", "é" * 4097, "\ud800"])
+def test_mermaid_wrapper_rejects_empty_over_budget_and_invalid_unicode(source):
+    from tldw_chatbook.Canvas.authoring import wrap_mermaid_document
+    from tldw_chatbook.Canvas.limits import CanvasLimitError
+
+    with pytest.raises(CanvasLimitError):
+        wrap_mermaid_document(source)
+
+
+def test_mermaid_fences_keep_html_ordinals_and_use_distinct_replay_identity():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="mixed", role=ConsoleMessageRole.ASSISTANT,
+        persisted_message_id="persisted-mixed",
+        content=('```mermaid\nflowchart TD\nA --> B\n```\n'
+                 '```html\n<p>First</p>\n```\n'
+                 '```mermaid\nflowchart LR\nA --> B\n```\n'
+                 '```html\n<p>Second</p>\n```\n'),
+    )
+    blocks = assistant_canvas_html_blocks(message)
+    assert [(b.language, b.index, b.identity) for b in blocks] == [
+        ("mermaid", 0, "mixed:canvas-mermaid:0"),
+        ("html", 0, "mixed:canvas-html:0"),
+        ("mermaid", 1, "mixed:canvas-mermaid:1"),
+        ("html", 1, "mixed:canvas-html:1"),
+    ]
+    html = service.dispatch("canvas-open-0", message).canvas_block_ref
+    mermaid = service.dispatch("canvas-open-mermaid-0", message).canvas_block_ref
+    assert html.language == "html"
+    assert mermaid.language == "mermaid"
+    assert message_actions.resolve_canvas_html_block(message, html).html == '<p>First</p>\n'
+    assert 'flowchart TD\nA --&gt; B\n' in message_actions.resolve_canvas_html_block(message, mermaid).html
+    assert service.dispatch("canvas-open-mermaid-new-0", message).canvas_block_ref.create_new
+    origin = message_actions.canvas_block_origin_turn_id
+    assert origin(message, 0) == origin(message, 0, language="html")
+    assert origin(message, 0) != origin(message, 0, language="mermaid")
+    assert assistant_canvas_html_blocks(replace(message, status="streaming")) == ()
+    changed = replace(message, content=message.content.replace("flowchart TD", "flowchart TB"))
+    assert message_actions.resolve_canvas_html_block(changed, mermaid) is None
+
+
+def test_oversized_mermaid_keeps_discovery_safe_and_refuses_open():
+    message = ConsoleChatMessage(
+        id="large", role=ConsoleMessageRole.ASSISTANT,
+        content="```mermaid\n" + "é" * 4097 + "\n```",
+    )
+    assert len(assistant_canvas_html_blocks(message)) == 1
+    result = ConsoleMessageActionService().dispatch("canvas-open-mermaid-0", message)
+    assert result.status == "blocked"
+    assert "8 KiB" in result.visible_copy
+    assert "é" not in repr(result)
+
+
+def test_mermaid_compile_repair_does_not_advertise_v1_diagram_execution():
+    from tldw_chatbook.Canvas.compiler import CanvasCompileError
+    from tldw_chatbook.Canvas.models import CanvasCompatibilityIssue
+
+    message = ConsoleChatMessage(id="diagram", role=ConsoleMessageRole.ASSISTANT,
+        content="```mermaid\nflowchart TD\nA --> B\n```")
+    reference = ConsoleMessageActionService().dispatch("canvas-open-mermaid-0", message).canvas_block_ref
+    error = CanvasCompileError((CanvasCompatibilityIssue(
+        code="profile-unavailable", message="Unavailable"),))
+    result = message_actions.canvas_compile_repair_result("canvas-open-mermaid-0", message, reference, error)
+    assert "Mermaid block 1" in result.target_content
+    assert "Canvas V1" not in result.target_content
+    assert "source-only" in result.target_content
+
+
+def test_canvas_html_actions_use_parsed_fences_and_stable_block_identity():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="assistant-canvas",
+        role=ConsoleMessageRole.ASSISTANT,
+        content=(
+            "A prose mention of ```html is not a block.\n\n"
+            "```python\nprint('<p>not html</p>')\n```\n\n"
+            "```html\n<!doctype html><title>One</title><p>safe</p>\n```\n"
+        ),
+    )
+
+    blocks = assistant_canvas_html_blocks(message)
+    actions = service.available_actions(message)
+
+    assert len(blocks) == 1
+    assert blocks[0].identity == "assistant-canvas:canvas-html:0"
+    assert blocks[0].compatible is None
+    canvas_action_ids = [
+        action.action_id
+        for action in actions
+        if action.action_id.startswith("canvas-")
+    ]
+    assert canvas_action_ids == [
+        "canvas-open-0",
+        "canvas-open-new-0",
+    ]
+    result = service.dispatch("canvas-open-0", message)
+    assert result.status == "canvas_open_requested"
+    assert result.target_content is None
+    assert result.canvas_block_ref is not None
+    assert result.canvas_block_ref.message_id == message.id
+    assert result.canvas_block_ref.block_index == 0
+    assert result.canvas_block_ref.identity == blocks[0].identity
+    assert repr(result).find("<!doctype") == -1
+    open_as_new = service.dispatch("canvas-open-new-0", message)
+    assert open_as_new.status == "canvas_open_requested"
+    assert open_as_new.canvas_block_ref is not None
+    assert open_as_new.canvas_block_ref.create_new is True
+
+
+def test_canvas_candidate_defers_compatibility_validation_until_open():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="assistant-incompatible",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="```html\n<script src='https://example.com/app.js'></script>\n```",
+    )
+
+    block = assistant_canvas_html_blocks(message)[0]
+    result = service.dispatch("canvas-open-0", message)
+
+    assert block.identity == "assistant-incompatible:canvas-html:0"
+    assert result.status == "canvas_open_requested"
+    assert result.target_content is None
+    assert result.canvas_block_ref is not None
+    assert result.canvas_block_ref.identity == block.identity
+
+
+def test_canvas_action_discovery_and_dispatch_do_not_compile_candidates(
+    monkeypatch,
+):
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="assistant-many-candidates",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="".join(
+            f"```html\n<!doctype html><p>{index}</p>\n```\n" for index in range(8)
+        ),
+    )
+
+    def fail_if_compiled(_source):
+        pytest.fail("candidate discovery/dispatch compiled on the caller thread")
+
+    monkeypatch.setattr(
+        message_actions, "compile_canvas_document", fail_if_compiled, raising=False
+    )
+
+    actions = service.available_actions(message)
+    result = service.dispatch("canvas-open-7", message)
+
+    assert len([item for item in actions if item.action_id.startswith("canvas-")]) == 16
+    assert result.status == "canvas_open_requested"
+    assert result.canvas_block_ref is not None
+    assert result.canvas_block_ref.block_index == 7
 
 
 def test_assistant_message_actions_include_required_order():
@@ -23,10 +194,14 @@ def test_assistant_message_actions_include_required_order():
         "🔊",
         "Edit",
         "Save as...",
+        "Fork",
         "♻",
         "--->",
         "Feedback",
         "🗑",
+        "Capture as note",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
 
 
@@ -65,10 +240,13 @@ def test_streaming_assistant_message_shows_completed_actions_disabled_with_reaso
         "Copy",
         "Edit",
         "Save as...",
+        "Fork",
         "♻",
         "--->",
         "Feedback",
         "🗑",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -92,10 +270,13 @@ def test_pending_assistant_message_shows_completed_actions_disabled_with_reasons
         "Copy",
         "Edit",
         "Save as...",
+        "Fork",
         "♻",
         "--->",
         "Feedback",
         "🗑",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -155,7 +336,7 @@ def test_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑"
+    assert " ".join(labels) == "Copy 🔊 Edit Fork ♻ ---> More…"
     assert len(" ".join(labels)) <= 48
 
 
@@ -178,10 +359,14 @@ def test_variant_action_labels_use_symbolic_navigation():
         "Save as...",
         "<",
         ">",
+        "Fork",
         "♻",
         "--->",
         "Feedback",
         "🗑",
+        "Capture as note",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
 
 
@@ -244,11 +429,11 @@ def test_variant_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy 🔊 Edit Save as... < > ♻ ---> 👍 👎 🗑"
+    assert " ".join(labels) == "Copy 🔊 Edit < > Fork ♻ ---> More…"
     assert len(" ".join(labels)) <= 52
 
 
-def test_failed_action_labels_include_retry_inside_terminal_width_budget():
+def test_failed_action_labels_offer_retry_instead_of_continue():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
@@ -256,10 +441,17 @@ def test_failed_action_labels_include_retry_inside_terminal_width_budget():
         status="failed",
     )
 
-    labels = service.plain_action_labels(message)
+    actions = service.available_actions(message)
+    action_ids = [action.action_id for action in actions]
+    labels = service.expand_plain_action_labels(actions)
 
-    assert " ".join(labels) == "Copy Edit Save as... Retry ♻ ---> 👍 👎 🗑"
-    assert len(" ".join(labels)) <= 52
+    assert "retry" in action_ids
+    assert "continue" not in action_ids
+    assert " ".join(labels) == (
+        "Copy Edit Save as... Fork Retry 👍 👎 🗑 "
+        "Summarize up to here as note Save transcript up to here as note"
+    )
+    assert len(" ".join(labels)) <= 120
 
 
 def test_copy_action_returns_clipboard_text():
@@ -299,6 +491,30 @@ def test_feedback_actions_return_completed_result(
     assert result.visible_copy == f"Marked message feedback: {expected_feedback}."
     assert result.target_message_id == message.id
     assert result.target_content == expected_feedback
+
+
+def test_quarantined_feedback_actions_are_disabled_and_dispatch_is_blocked():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Reload canonical generation to continue.",
+        generation_projection_quarantined=True,
+    )
+
+    feedback = {
+        action.action_id: action
+        for action in service.action_groups(message).overflow
+        if action.action_id in {"feedback-up", "feedback-down"}
+    }
+
+    assert feedback.keys() == {"feedback-up", "feedback-down"}
+    assert all(not action.enabled for action in feedback.values())
+    assert all(
+        "reload" in action.disabled_reason.lower() for action in feedback.values()
+    )
+    result = service.dispatch("feedback-up", message)
+    assert result.status == "blocked"
+    assert "reload" in result.visible_copy.lower()
 
 
 def test_edit_action_requests_modal_with_current_message_content():
@@ -347,10 +563,14 @@ def test_regression_no_generation_kwargs_matches_text_sibling_gating():
         "Save as...",
         "<",
         ">",
+        "Fork",
         "♻",
         "--->",
         "Feedback",
         "🗑",
+        "Capture as note",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
     by_id = {action.action_id: action for action in actions}
     assert by_id["variant-previous"].enabled is True
@@ -548,6 +768,49 @@ def test_continue_action_targets_selected_variant_content():
     assert result.target_content == "second"
 
 
+def test_continue_action_is_blocked_for_failed_response():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial response",
+        status="failed",
+        id="m1",
+    )
+
+    result = service.dispatch("continue", message)
+
+    assert result.status == "blocked"
+    assert result.visible_copy == "Retry the failed response instead."
+
+
+def test_continue_action_remains_available_for_stopped_response():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial response",
+        status="stopped",
+        id="m1",
+    )
+
+    result = service.dispatch("continue", message)
+
+    assert result.status == "continue_requested"
+
+
+def test_continue_action_remains_available_for_failed_user_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="partial request",
+        status="failed",
+        id="m1",
+    )
+
+    result = service.dispatch("continue", message)
+
+    assert result.status == "continue_requested"
+
+
 # --- TASK-1: speak (TTS) action ------------------------------------------
 
 
@@ -582,9 +845,7 @@ def test_completed_assistant_header_has_canonical_speech_presentation(
         id="m1",
     )
 
-    presentation = message_actions.resolve_console_header_speech(
-        message, speech_state
-    )
+    presentation = message_actions.resolve_console_header_speech(message, speech_state)
 
     assert presentation.action is not None
     assert presentation.action.action_id == action_id
@@ -813,10 +1074,14 @@ def test_speak_action_swaps_to_stop_when_message_is_speaking():
         "speak-stop",
         "edit",
         "save-as",
+        "fork",
         "regenerate",
         "continue",
         "feedback",
         "delete",
+        "capture-note",
+        "summarize-note",
+        "save-transcript-note",
     ]
 
 
@@ -905,6 +1170,63 @@ def test_original_attempt_action_is_explicit_and_precedes_regenerate():
     )
     assert "View original attempt" not in service.plain_action_labels(message)
     assert "View original attempt" not in service.plain_action_row(message)
+
+
+def test_original_attempt_is_an_exceptional_diagnostic_in_more() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Repaired answer [S1]",
+        id="assistant-repaired",
+    )
+
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        original_attempt_available=True,
+    )
+
+    assert tuple(action.action_id for action in groups.primary) == (
+        "copy",
+        "speak",
+        "edit",
+        "fork",
+        "regenerate",
+        "continue",
+        "more",
+    )
+    assert tuple(action.action_id for action in groups.overflow) == (
+        "save-as",
+        "view-original-attempt",
+        "feedback-up",
+        "feedback-down",
+        "delete",
+        "capture-note",
+        "summarize-note",
+        "save-transcript-note",
+    )
+    assert groups.media == ()
+
+
+def test_original_attempt_is_not_a_direct_selected_row_action() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Repaired answer [S1]",
+        id="assistant-repaired",
+    )
+
+    actions = ConsoleMessageActionService().selected_row_actions(
+        message,
+        original_attempt_available=True,
+    )
+
+    assert tuple(action.action_id for action in actions) == (
+        "copy",
+        "speak",
+        "edit",
+        "fork",
+        "regenerate",
+        "continue",
+        "more",
+    )
 
 
 @pytest.mark.parametrize(
@@ -1038,6 +1360,31 @@ def test_tool_marker_with_full_output_and_diff_keeps_full_output_label():
     assert action.label == "Full output"
 
 
+@pytest.mark.parametrize(
+    "status", ["denied", "blocked_off", "blocked_kill_switch", "blocked"]
+)
+def test_refused_tool_marker_says_the_body_went_to_the_model(status: str):
+    """task-32279: what a refused step hides is the instruction the MODEL got.
+
+    Live evidence: after a Deny, expanding the marker showed "Do not retry
+    this call..." under "Full output" -- reading as if the tool had produced
+    it.
+    """
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="list_characters → ERROR: tool call denied by the user.",
+        tool_output_full="tool call denied by the user. Do not retry this call.",
+        activity_presentation=ConsoleActivityPresentation(
+            "tool", "list_characters", status
+        ),
+    )
+
+    action = _tool_output_action(message)
+
+    assert action is not None
+    assert action.label == "Sent to the model"
+
+
 def test_plain_tool_marker_offers_no_expansion():
     """No hidden text and no diff: no dead affordance (TASK-1843 rule)."""
     message = ConsoleChatMessage(
@@ -1046,6 +1393,8 @@ def test_plain_tool_marker_offers_no_expansion():
     )
 
     assert _tool_output_action(message) is None
+
+
 # --- task-2154.14 (DS-01): the action-row legend names glyphs in words ----
 
 
@@ -1057,7 +1406,7 @@ def test_action_row_guide_names_every_glyph_in_a_standard_row():
     guide = action_row_guide(service.available_actions(message))
 
     assert guide == (
-        "Guide: j/k select · c Copy · 🔊 Speak · e Edit · r ♻ Regenerate · "
+        "Guide: j/k select · c Copy · 🔊 Speak · e Edit · f Fork · r ♻ Regenerate · "
         "---> Continue · 👍/👎 Rate · 🗑 Delete · Esc clear"
     )
 
@@ -1116,5 +1465,441 @@ def test_plain_action_guide_matches_the_plain_action_rows_inputs():
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
 
     assert service.plain_action_guide(message) == action_row_guide(
-        service.available_actions(message)
+        service.selected_row_actions(message)
     )
+
+
+@pytest.mark.parametrize(
+    "role",
+    (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT),
+)
+def test_complete_conversation_rows_place_fork_immediately_before_regenerate(
+    role: ConsoleMessageRole,
+) -> None:
+    message = ConsoleChatMessage(role=role, content="stable", id="message-1")
+
+    action_ids = [
+        action.action_id
+        for action in ConsoleMessageActionService().available_actions(
+            message,
+            fork_eligibility=ConsoleForkEligibility(True),
+        )
+    ]
+
+    assert "fork" in action_ids
+    assert action_ids.index("fork") + 1 == action_ids.index("regenerate")
+
+
+@pytest.mark.parametrize("status", ("stopped", "failed"))
+def test_nonempty_partial_assistant_rows_can_fork(status: str) -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial answer",
+        status=status,
+        id="assistant-partial",
+    )
+
+    fork = next(
+        action
+        for action in ConsoleMessageActionService().available_actions(
+            message,
+            fork_eligibility=ConsoleForkEligibility(True),
+        )
+        if action.action_id == "fork"
+    )
+
+    assert fork.enabled is True
+    assert fork.disabled_reason == ""
+
+
+@pytest.mark.parametrize(
+    ("status", "content"),
+    (
+        ("pending", ""),
+        ("streaming", "partial"),
+        ("discarded", "discarded response"),
+        ("failed", "   "),
+    ),
+)
+def test_unstable_assistant_rows_expose_a_fork_disabled_reason(
+    status: str,
+    content: str,
+) -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content=content,
+        status=status,
+        id="assistant-unstable",
+    )
+
+    fork = next(
+        action
+        for action in ConsoleMessageActionService().available_actions(
+            message,
+            fork_eligibility=ConsoleForkEligibility(True),
+        )
+        if action.action_id == "fork"
+    )
+
+    assert fork.enabled is False
+    assert fork.disabled_reason
+
+
+def test_store_derived_fork_reason_controls_durable_eligibility() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="saved boundary",
+        persisted_message_id="persisted-boundary",
+        id="assistant-1",
+    )
+    unsaved_prefix = ConsoleForkEligibility(
+        False,
+        "This message has not been saved yet. Try Fork again after it is saved.",
+    )
+
+    denied = next(
+        action
+        for action in ConsoleMessageActionService().available_actions(
+            message,
+            fork_eligibility=unsaved_prefix,
+        )
+        if action.action_id == "fork"
+    )
+    allowed_without_presentation_id = next(
+        action
+        for action in ConsoleMessageActionService().available_actions(
+            replace(message, persisted_message_id=None),
+            fork_eligibility=ConsoleForkEligibility(True),
+        )
+        if action.action_id == "fork"
+    )
+
+    assert denied.enabled is False
+    assert denied.disabled_reason == unsaved_prefix.reason
+    assert allowed_without_presentation_id.enabled is True
+
+
+def test_action_groups_separate_primary_overflow_and_media_actions() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="[image] answer",
+        image_data=b"png",
+        image_mime_type="image/png",
+        id="assistant-image",
+    )
+
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        generation_variant_count=2,
+        generation_browsed_index=0,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+
+    assert [action.action_id for action in groups.primary] == [
+        "copy",
+        "speak",
+        "edit",
+        "fork",
+        "regenerate",
+        "continue",
+        "more",
+    ]
+    assert [action.label for action in groups.overflow] == [
+        "Save as…",
+        "Helpful",
+        "Not helpful",
+        "Delete",
+        "Capture as note",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
+    ]
+    assert [action.action_id for action in groups.media] == [
+        "variant-previous",
+        "variant-next",
+        "toggle-image-view",
+        "save-image",
+    ]
+    assert not (
+        {action.action_id for action in groups.primary}
+        & {action.action_id for action in groups.media}
+    )
+    assert not (
+        {action.action_id for action in groups.overflow}
+        & {action.action_id for action in groups.media}
+    )
+
+
+def test_text_response_sibling_navigation_remains_direct() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="second answer",
+        id="assistant-sibling",
+        sibling_index=1,
+        sibling_count=2,
+    )
+
+    groups = ConsoleMessageActionService().action_groups(message)
+
+    assert "variant-previous" in {action.action_id for action in groups.primary}
+    assert "variant-next" in {action.action_id for action in groups.primary}
+    assert groups.media == ()
+
+
+def test_non_generation_image_controls_remain_direct() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="attached image",
+        id="assistant-image",
+        image_data=b"png",
+        image_mime_type="image/png",
+    )
+
+    groups = ConsoleMessageActionService().action_groups(message)
+
+    primary_ids = {action.action_id for action in groups.primary}
+    assert {"toggle-image-view", "save-image"} <= primary_ids
+    assert groups.media == ()
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_primary"),
+    (
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                content="question",
+                id="user-complete",
+            ),
+            ("copy", "edit", "fork", "regenerate", "continue", "more"),
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="partial answer",
+                status="stopped",
+                id="assistant-stopped",
+            ),
+            ("copy", "edit", "fork", "regenerate", "continue", "more"),
+        ),
+    ),
+)
+def test_user_and_stopped_assistant_action_groups_are_exact(
+    message,
+    expected_primary,
+) -> None:
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+
+    assert tuple(action.action_id for action in groups.primary) == expected_primary
+    assert tuple(action.action_id for action in groups.overflow) == (
+        "save-as",
+        "feedback-up",
+        "feedback-down",
+        "delete",
+        "summarize-note",
+        "save-transcript-note",
+    )
+    assert groups.media == ()
+
+
+def test_video_actions_are_an_exact_separate_media_group() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="generated video",
+        video_metadata=VideoGenerationMetadata(
+            name="clip",
+            prompt="waves",
+            backend="local",
+        ),
+        id="assistant-video",
+    )
+
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        video_file_available=True,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+
+    assert tuple(action.action_id for action in groups.primary) == (
+        "copy",
+        "speak",
+        "edit",
+        "fork",
+        "regenerate",
+        "continue",
+        "more",
+    )
+    assert tuple(action.action_id for action in groups.overflow) == (
+        "save-as",
+        "feedback-up",
+        "feedback-down",
+        "delete",
+        "capture-note",
+        "summarize-note",
+        "save-transcript-note",
+    )
+    assert tuple(action.action_id for action in groups.media) == (
+        "video-play",
+        "video-save-copy",
+    )
+
+
+def test_action_groups_preserve_the_speak_stop_slot() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        id="speaking-message",
+    )
+
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        speaking_message_id=message.id,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+
+    assert [action.action_id for action in groups.primary][:3] == [
+        "copy",
+        "speak-stop",
+        "edit",
+    ]
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="tool preview",
+            tool_output_full="full tool output",
+            id="tool-row",
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="working",
+            activity_presentation=ConsoleActivityPresentation(
+                "thinking", "Thinking", "done"
+            ),
+            id="activity-row",
+        ),
+    ),
+)
+def test_tool_and_activity_rows_never_expose_fork_or_more(message) -> None:
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+    action_ids = {
+        action.action_id
+        for group in (groups.primary, groups.overflow, groups.media)
+        for action in group
+    }
+
+    assert "fork" not in action_ids
+    assert "more" not in action_ids
+    if message.tool_output_full:
+        assert [action.action_id for action in groups.primary] == ["tool-output"]
+
+
+def test_assistant_activity_row_keeps_only_its_specialized_action() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="review complete",
+        change_review_run_id="review-1",
+        activity_presentation=ConsoleActivityPresentation("changes", "Changes", "done"),
+        id="assistant-activity-row",
+    )
+
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+
+    assert tuple(action.action_id for action in groups.primary) == ("review-changes",)
+    assert groups.overflow == ()
+    assert groups.media == ()
+
+
+def test_fork_dispatch_requests_the_exact_message() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        id="fork-boundary",
+    )
+
+    result = ConsoleMessageActionService().dispatch("fork", message)
+
+    assert result.status == "fork_requested"
+    assert result.target_message_id == "fork-boundary"
+
+
+# --- task-32146: capture one answer as a Library note -----------------------
+
+
+@pytest.mark.parametrize(
+    ("message", "offered"),
+    (
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT, content="answer", id="a-done"
+            ),
+            True,
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER, content="question", id="u-done"
+            ),
+            False,
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="half",
+                status="streaming",
+                id="a-streaming",
+            ),
+            False,
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT, content="   ", id="a-blank"
+            ),
+            False,
+        ),
+    ),
+)
+def test_capture_note_is_offered_only_on_finished_assistant_answers(
+    message, offered
+) -> None:
+    """There is no answer to file until an ASSISTANT row has finished with
+    text -- the question and a half-streamed row must not offer it."""
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+
+    assert ("capture-note" in [a.action_id for a in groups.overflow]) is offered
+    # Never a direct row button: it is an overflow (More…) action.
+    assert "capture-note" not in [a.action_id for a in groups.primary]
+
+
+def test_capture_note_is_blocked_while_the_chat_is_temporary() -> None:
+    """A temporary chat promises no local write; capturing a note is one,
+    so it is disabled with the registry's reason rather than hidden."""
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="a-temp"
+    )
+
+    action = next(
+        action
+        for action in ConsoleMessageActionService().action_groups(
+            message,
+            ephemeral=True,
+            fork_eligibility=ConsoleForkEligibility(True),
+        ).overflow
+        if action.action_id == "capture-note"
+    )
+
+    assert action.enabled is False
+    assert "temporary chat" in action.disabled_reason

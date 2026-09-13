@@ -1,10 +1,15 @@
 """No-mount contracts for Console retrieval ownership."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 
 
@@ -38,6 +43,7 @@ def _controller() -> tuple[ConsoleRetrievalController, SimpleNamespace]:
         set_library_rag_source_scope=lambda _scope: None,
         set_library_rag_query=lambda _query: None,
         run_library_rag_action=lambda: None,
+        push_screen=lambda *_args, **_kwargs: None,
         library_rag_source_scope=lambda: ("notes", "media", "conversations"),
         library_rag_top_k=lambda: 5,
         pending_launch=lambda: state.pending,
@@ -110,22 +116,56 @@ def test_staging_updates_state_before_sync_and_recomposes_only_as_fallback() -> 
 
 
 @pytest.mark.unit
-def test_placeholder_cleanup_never_drops_newer_staging() -> None:
-    """Identity ownership keeps an older retrieval from clearing newer work."""
-    controller, state = _controller()
-    placeholder = ConsoleLiveWorkLaunch.from_values(
-        source="Library Search/RAG",
-        title="First retrieval",
-        status="searching",
-    )
-    newer = ConsoleLiveWorkLaunch.from_values(
-        source="Library Search/RAG",
-        title="Newer retrieval",
-        status="staged",
-    )
-    state.pending = newer
+def test_retrieval_controller_owns_no_automatic_placeholder_cleanup() -> None:
+    """Automatic preparation placeholders belong to controller/store state."""
+    controller, _state = _controller()
 
-    controller._clear_console_auto_rag_placeholder(placeholder)
+    assert not hasattr(controller, "_clear_console_auto_rag_placeholder")
 
-    assert state.pending is newer
-    assert state.sync_calls == 0
+
+@pytest.mark.asyncio
+async def test_rag_scope_save_keeps_fork_transition_through_final_publication(
+    monkeypatch,
+) -> None:
+    controller, _state = _controller()
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test")
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Question",
+    )
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Answer",
+    )
+    controller._chat_store = lambda: store
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocking_transition(_store, _session, _scope):
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(
+        controller,
+        "_apply_console_retrieval_scope_save_transition",
+        blocking_transition,
+    )
+    scope = RagScope(
+        items=(ScopeItem("note", "1"),),
+        updated_at="2026-08-29T00:00:00Z",
+    )
+    task = asyncio.create_task(
+        controller._apply_console_retrieval_scope_save(session, scope)
+    )
+    await entered.wait()
+    eligibility = store.fork_eligibility(assistant.id)
+    assert eligibility.eligible is False
+    assert "changing" in eligibility.reason.lower()
+    release.set()
+    await asyncio.wait_for(task, timeout=2)
+    assert session.id not in store._fork_source_transitions

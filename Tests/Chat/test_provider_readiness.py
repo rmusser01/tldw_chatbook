@@ -570,6 +570,9 @@ def test_evidence_records_are_frozen_slotted_and_secret_free():
         "endpoint",
         "model_ids",
         "category",
+        "credential",
+        "generation",
+        "generation_category",
     ]
     assert not hasattr(identity, "__dict__")
     assert not hasattr(evidence, "__dict__")

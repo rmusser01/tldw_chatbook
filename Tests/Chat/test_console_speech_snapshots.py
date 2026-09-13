@@ -80,6 +80,25 @@ def test_snapshot_rejects_invalid_structural_values():
         )
 
 
+def test_explicit_speech_owner_does_not_change_default_visible_guard():
+    store = ConsoleChatStore()
+    owner = store.create_session(ephemeral=True)
+    message = store.append_message(owner.id, role=ConsoleMessageRole.ASSISTANT, content="Owned reply")
+    other = store.create_session(ephemeral=True)
+    with pytest.raises(ConsoleSpeechSnapshotRejected):
+        store.issue_tts_message_speech_snapshot(message.id)
+    snapshot = store.issue_tts_message_speech_snapshot(message.id, owner_session_id=owner.id)
+    assert store.validate_tts_message_speech_snapshot(snapshot, owner_session_id=owner.id) == "Owned reply"
+    assert store.active_session_id == other.id
+    with pytest.raises(ConsoleSpeechSnapshotRejected):
+        store.validate_tts_message_speech_snapshot(snapshot)
+    with pytest.raises(ConsoleSpeechSnapshotRejected):
+        store.validate_tts_message_speech_snapshot(snapshot, owner_session_id=other.id)
+    store.close_session(owner.id)
+    with pytest.raises(ConsoleSpeechSnapshotRejected):
+        store.validate_tts_message_speech_snapshot(snapshot, owner_session_id=owner.id)
+
+
 def test_snapshot_rejection_exposes_only_bounded_code_and_safe_retry_copy():
     error = ConsoleSpeechSnapshotRejected(
         ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED

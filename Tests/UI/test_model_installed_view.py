@@ -161,6 +161,31 @@ def _unmanaged_inventory(source: Path):
     )
 
 
+def _managed_inventory_row(tmp_path: Path, reference: ArtifactRef):
+    from tldw_chatbook.UI.Screens.model_browser_state import InventoryRow
+
+    return InventoryRow(
+        path=tmp_path / reference.artifact_id,
+        reference=reference,
+        model_label=reference.artifact_id,
+        revision=reference.revision,
+        precision=reference.variant,
+        dependencies=(),
+        ready=True,
+        active=False,
+        activation_allowed=True,
+        is_broken=False,
+        is_unmanaged=False,
+        provenance="Integrity verified",
+        action_hint="Ready",
+        error=None,
+        size_bytes=1024,
+        installed_store_bytes=2048,
+        staging_store_bytes=0,
+        free_bytes=4096,
+    )
+
+
 async def _wait_until(pilot, predicate, *, timeout_seconds: float = 10.0) -> None:
     """Pump Textual until a cross-thread observation becomes true.
 
@@ -243,6 +268,189 @@ async def test_installed_view_performs_no_io_at_compose_time(tmp_path: Path) -> 
         await pilot.pause()
 
     service_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reveal_reference_focuses_the_exact_installed_row_without_activation(
+    tmp_path: Path,
+) -> None:
+    """Open Installed locates one exact managed identity and remains read-only."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    target = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    other = ArtifactRef("other-gguf", "b" * 40, "q8_0")
+
+    service_factory = MagicMock()
+    view = InstalledView(service_factory=service_factory, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = (
+        _managed_inventory_row(tmp_path, other),
+        _managed_inventory_row(tmp_path, target),
+    )
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.reveal_reference(target)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                widget.has_class("-revealed")
+                for widget in view.query(".installed-model-row")
+            ),
+        )
+        await _wait_until(
+            pilot,
+            lambda: app.focused is not None
+            and any(
+                getattr(ancestor, "reference", None) == target
+                for ancestor in app.focused.ancestors_with_self
+            ),
+        )
+
+        target_row = next(
+            widget
+            for widget in view.query(".installed-model-row")
+            if getattr(widget, "reference", None) == target
+        )
+        focused = app.focused
+
+        assert target_row.has_class("-revealed")
+        assert focused is not None
+        assert target_row in focused.ancestors_with_self
+        assert focused.has_class("model-activate")
+        assert target_row in app.screen._compositor.visible_widgets
+
+    service_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reveal_reference_never_auto_focuses_delete_when_activation_unavailable(
+    tmp_path: Path,
+) -> None:
+    """A revealed non-activatable row keeps focus on a safe header action."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    target = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    row = replace(
+        _managed_inventory_row(tmp_path, target),
+        activation_allowed=False,
+    )
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = (row,)
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _wait_until(pilot, lambda: bool(view.query(".model-delete")))
+        refresh = view.query_one("#installed-models-refresh", Button)
+        refresh.focus()
+        view.reveal_reference(target)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                widget.has_class("-revealed")
+                for widget in view.query(".installed-model-row")
+            ),
+        )
+        await pilot.pause()
+
+        delete = view.query_one(".model-delete", Button)
+        assert app.focused is refresh
+        assert app.focused is not delete
+
+
+@pytest.mark.asyncio
+async def test_reveal_reference_focuses_after_a_fresh_inventory_load(
+    tmp_path: Path,
+) -> None:
+    """A just-downloaded model is located even when Installed was initially stale."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    target = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded = MagicMock()
+        view.reveal_reference(target)
+        view._apply_inventory(
+            (_managed_inventory_row(tmp_path, target),),
+            ArtifactDiskUsage(1024, 0, 4096),
+            None,
+        )
+        await _wait_until(
+            pilot,
+            lambda: app.focused is not None
+            and any(
+                getattr(ancestor, "reference", None) == target
+                for ancestor in app.focused.ancestors_with_self
+            ),
+        )
+
+        assert view.ensure_loaded.call_args.kwargs == {"force": True}
+        assert app.focused is not None
+        assert app.focused.has_class("model-activate")
+
+
+@pytest.mark.asyncio
+async def test_reveal_reference_missing_after_successful_refresh_surfaces_recovery(
+    tmp_path: Path,
+) -> None:
+    """A vanished exact ref clears pending focus and explains recovery inline."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    target = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded = MagicMock()
+        view.reveal_reference(target)
+        view._apply_inventory(
+            (),
+            ArtifactDiskUsage(0, 0, 4096),
+            None,
+        )
+        await _wait_until(
+            pilot,
+            lambda: bool(view.query("#installed-reveal-status")),
+        )
+
+        recovery = view.query_one("#installed-reveal-status", Static)
+        assert view._revealed_reference is None
+        assert str(recovery.renderable) == (
+            "That managed model is no longer available. Refresh Installed models "
+            "and try again."
+        )
+        assert str(tmp_path) not in str(recovery.renderable)
+
+
+@pytest.mark.asyncio
+async def test_reveal_reference_inventory_error_keeps_retryable_identity(
+    tmp_path: Path,
+) -> None:
+    """A load failure stays distinct from proof that the exact ref vanished."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    target = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded = MagicMock()
+        view.reveal_reference(target)
+        view._apply_inventory(
+            (),
+            None,
+            "The local model inventory could not be loaded.",
+        )
+        await pilot.pause()
+
+        assert view._revealed_reference == target
+        assert not view.query("#installed-reveal-status")
+        assert "The local model inventory could not be loaded." in _rendered_static_text(
+            view
+        )
 
 
 @pytest.mark.asyncio
@@ -345,9 +553,17 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
         for _ in range(6):
             await pilot.pause()
 
-        screen.query_one(LLMManagementWindow)
-        view = screen.query_one(InstalledView)
-        assert [name for name, _thread in lifecycle_threads] == [
+        window = screen.query_one(LLMManagementWindow)
+        assert "construct" not in [name for name, _thread in lifecycle_threads]
+
+        window.active_view = "installed"
+        for _ in range(12):
+            await pilot.pause()
+            installed_views = list(screen.query(InstalledView))
+            if installed_views:
+                break
+        view = installed_views[0]
+        assert [name for name, _thread in lifecycle_threads][-4:] == [
             "construct",
             "listener",
             "read",
@@ -364,7 +580,9 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
             ensure_after_mount,
         )
 
-        view._service_factory = _Core
+        # First activation also starts the inventory load, so replace the
+        # already-created worker service used by this focused lifecycle test.
+        view._service = _Core()
         view._legacy_dir = tmp_path
         view._apply_lifecycle_result = MagicMock()
         await view._activate_model(root).wait()
@@ -1929,8 +2147,11 @@ async def test_tldwcli_css_finish_slice_restores_terminal_import_focus(
             await _wait_until(pilot, lambda: service.inventory_reads >= 1)
             await _wait_until(
                 pilot,
-                lambda: (
-                    view.query_one("#installed-models-import-gguf", Button).has_focus
+                lambda: any(
+                    button.has_focus
+                    for button in view.query("#installed-models-import-gguf").results(
+                        Button
+                    )
                 ),
                 timeout_seconds=30.0,
             )
@@ -1948,6 +2169,39 @@ async def test_tldwcli_css_finish_slice_restores_terminal_import_focus(
 
     preference_callback.assert_not_called()
     assert str(source) not in "".join(logs)
+
+
+@pytest.mark.asyncio
+async def test_import_focus_recovery_retries_across_recompose_mount_gap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient child-mount gap does not discard terminal focus recovery."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    view._loaded = True
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        import_button = view.query_one("#installed-models-import-gguf", Button)
+        original_query_one = view.query_one
+        missing_once = {
+            "#installed-gguf-import-retry",
+            "#installed-models-import-gguf",
+        }
+
+        def query_one_with_mount_gap(selector, expect_type=None):
+            if selector in missing_once:
+                missing_once.remove(selector)
+                raise NoMatches(f"Transient mount gap for {selector}")
+            return original_query_one(selector, expect_type)
+
+        monkeypatch.setattr(view, "query_one", query_one_with_mount_gap)
+        view._schedule_import_focus_recovery()
+
+        await _wait_until(pilot, lambda: import_button.has_focus)
+        assert view._import_focus_attempts == 0
 
 
 # Windows Proactor event-loop setup owns an internal loopback socket pair.
@@ -2681,7 +2935,9 @@ def test_forced_refresh_queues_behind_an_inflight_inventory_load(
         None,
     )
 
-    view._load_inventory.assert_called_once_with()
+    # TASK-19563: the dispatch generation rides with the read so
+    # `_apply_inventory` can refuse a superseded one.
+    view._load_inventory.assert_called_once_with(view._inventory_generation)
     assert view._loading is True
 
 
@@ -3283,3 +3539,40 @@ def test_models_rail_lists_surviving_destinations_without_a_downloader() -> None
     models_section = dict(MODELS_RAIL_SECTIONS)["Models"]
     keys = [key for key, _label in models_section]
     assert keys == ["curated", "installed", "external", "remote"]
+
+
+def test_superseded_inventory_read_is_discarded_on_arrival(tmp_path: Path) -> None:
+    """TASK-19563: a slow first inventory read cannot overwrite a newer one.
+
+    `_load_inventory` is a *thread* worker. `Worker.cancel()` does not stop a
+    thread worker -- the body finishes in the executor and its
+    `call_from_thread` callback lands regardless -- so the group on that
+    decorator cannot help. The generation captured at dispatch and compared on
+    arrival is what actually refuses the stale rows.
+
+    Born red against the branch base, where `_apply_inventory` took no
+    generation at all and applied whichever result arrived last.
+    """
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    view.refresh = MagicMock()
+    view._load_inventory = MagicMock()
+
+    view.ensure_loaded()
+    # Pretend the first read has left the dispatcher but not yet come back.
+    view._loading = False
+    view._loaded = True
+    view.ensure_loaded(force=True)
+
+    first_generation, second_generation = (
+        call.args[0] for call in view._load_inventory.call_args_list
+    )
+    assert second_generation > first_generation
+
+    # The stale read lands after the fresh one was dispatched.
+    view._apply_inventory(("stale",), None, None, None, first_generation)
+    assert view._rows == (), "a superseded inventory read was applied"
+
+    view._apply_inventory(("fresh",), None, None, None, second_generation)
+    assert view._rows == ("fresh",)

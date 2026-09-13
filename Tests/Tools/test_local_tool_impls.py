@@ -1,7 +1,13 @@
+import hashlib
+import json
+import multiprocessing
+import threading
 from pathlib import Path
 
+import portalocker
 import pytest
 
+from tldw_chatbook.Tools import local_tool_impls
 from tldw_chatbook.Tools.local_tool_impls import (
     MAX_READ_CHARS,
     LocalToolError,
@@ -13,12 +19,95 @@ from tldw_chatbook.Tools.local_tool_impls import (
     resolve_workspace_path,
     write_file,
 )
+from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+
+def _write_while_locked(workspace: str, expected: str, outcomes) -> None:
+    try:
+        write_file(
+            "AGENTS.md",
+            "replacement",
+            workspace_root=Path(workspace),
+            expected_sha256=expected,
+        )
+    except LocalToolError:
+        outcomes.put("blocked")
+    else:
+        outcomes.put("written")
+
+
+@pytest.mark.parametrize(
+    ("relative", "exclusion", "is_directory", "expected"),
+    (
+        (".", SensitiveExclusion("file", "."), True, True),
+        (".", SensitiveExclusion("subtree", "."), True, True),
+        ("child.txt", SensitiveExclusion("direct_children", "."), False, True),
+        ("nested/child.txt", SensitiveExclusion("direct_children", "."), False, False),
+        ("secret/child.txt", SensitiveExclusion("direct_children", "secret"), False, True),
+        ("secret/nested.txt", SensitiveExclusion("file", "secret/nested.txt"), False, True),
+        ("secret/nested/child.txt", SensitiveExclusion("file", "secret/nested.txt"), False, False),
+        ("secret/nested/child.txt", SensitiveExclusion("subtree", "secret"), False, True),
+        ("nested/credentials", SensitiveExclusion("name", "credentials"), False, True),
+        ("credentials", SensitiveExclusion("name", "credentials"), True, False),
+    ),
+)
+def test_relative_sensitive_exclusion_matcher_covers_root_and_each_kind(
+    relative: str,
+    exclusion: SensitiveExclusion,
+    is_directory: bool,
+    expected: bool,
+) -> None:
+    assert (
+        local_tool_impls._is_relative_sensitive_path(
+            Path(relative), (exclusion,), is_directory=is_directory
+        )
+        is expected
+    )
 
 
 def test_resolve_workspace_path_confines(tmp_path):
     assert resolve_workspace_path("a/b", tmp_path) == (tmp_path / "a/b").resolve()
     with pytest.raises(LocalToolError, match="outside the workspace root"):
         resolve_workspace_path("../x", tmp_path)
+
+
+def test_stat_path_returns_only_allowlisted_workspace_metadata(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "note.txt"
+    target.write_text("hello", encoding="utf-8")
+
+    fields = dict(
+        line.split(": ", 1)
+        for line in local_tool_impls.stat_path(
+            "note.txt", workspace_root=ws
+        ).splitlines()
+    )
+
+    assert fields.keys() == {"path", "type", "size", "modified_ns", "mode"}
+    assert fields["path"] == "note.txt"
+    assert fields["type"] == "file"
+    assert fields["size"] == "5"
+    assert fields["modified_ns"].isdigit()
+    assert len(fields["mode"]) == 4
+
+
+def test_stat_path_uses_the_shared_confinement_and_sensitive_path_choke_point(
+    tmp_path, monkeypatch
+):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "safe.txt").write_text("safe", encoding="utf-8")
+
+    with pytest.raises(LocalToolError, match="outside the workspace root"):
+        local_tool_impls.stat_path("../outside.txt", workspace_root=ws)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.local_tool_impls.is_sensitive_path",
+        lambda path, **_kwargs: Path(path).name == "safe.txt",
+    )
+    with pytest.raises(LocalToolError, match="protected path"):
+        local_tool_impls.stat_path("safe.txt", workspace_root=ws)
 
 
 def test_list_directory_shows_dirs_first_then_files(tmp_path):
@@ -108,6 +197,23 @@ def test_fs_read_missing_file(tmp_path):
         read_file("nope.txt", workspace_root=ws)
 
 
+def test_fs_read_keeps_in_root_symlinks_and_refuses_escaping_symlinks(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    inside = ws / "inside.txt"
+    inside.write_text("inside\n", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    import os
+
+    os.symlink(inside, ws / "inside-link.txt")
+    os.symlink(outside, ws / "outside-link.txt")
+
+    assert "1\tinside" in read_file("inside-link.txt", workspace_root=ws)
+    with pytest.raises(LocalToolError, match="outside the workspace root"):
+        read_file("outside-link.txt", workspace_root=ws)
+
+
 def test_fs_read_empty_file_returns_notice(tmp_path):
     ws = tmp_path / "ws"; ws.mkdir()
     (ws / "empty.txt").write_text("")
@@ -150,6 +256,156 @@ def test_fs_write_overwrites(tmp_path):
     (ws / "f.txt").write_text("old")
     write_file("f.txt", "new", workspace_root=ws)
     assert (ws / "f.txt").read_text() == "new"
+
+
+def test_fs_write_preserves_existing_file_mode(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "script.sh"
+    target.write_text("old")
+    target.chmod(0o751)
+
+    write_file("script.sh", "new", workspace_root=ws)
+
+    assert target.read_text() == "new"
+    assert target.stat().st_mode & 0o7777 == 0o751
+
+
+def test_fs_write_dry_run_returns_bounded_exact_state_without_mutation(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "AGENTS.md"
+    target.write_text("old\n")
+
+    result = json.loads(
+        write_file(
+            "AGENTS.md",
+            "new\n",
+            workspace_root=ws,
+            dry_run=True,
+        )
+    )
+
+    assert result["target_state"] == "present"
+    assert result["current_sha256"] == hashlib.sha256(b"old\n").hexdigest()
+    assert result["replacement_sha256"] == hashlib.sha256(b"new\n").hexdigest()
+    assert result["replacement_bytes"] == 4
+    assert "-old" in result["diff"] and "+new" in result["diff"]
+    assert target.read_text() == "old\n"
+
+
+def test_fs_write_expected_digest_refuses_stale_state_without_mutation(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "AGENTS.md"
+    target.write_text("user edit")
+
+    with pytest.raises(LocalToolError, match="precondition"):
+        write_file(
+            "AGENTS.md",
+            "replacement",
+            workspace_root=ws,
+            expected_sha256="0" * 64,
+        )
+
+    assert target.read_text() == "user edit"
+
+
+def test_fs_write_expected_absent_refuses_file_created_after_preview(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "AGENTS.md"
+    target.write_text("intervening")
+
+    with pytest.raises(LocalToolError, match="precondition"):
+        write_file(
+            "AGENTS.md",
+            "replacement",
+            workspace_root=ws,
+            expected_absent=True,
+        )
+
+    assert target.read_text() == "intervening"
+
+
+def test_fs_write_preconditions_are_mutually_exclusive(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    with pytest.raises(LocalToolError, match="mutually exclusive"):
+        write_file(
+            "AGENTS.md",
+            "replacement",
+            workspace_root=ws,
+            expected_sha256="0" * 64,
+            expected_absent=True,
+        )
+
+
+def test_two_same_expectation_writers_allow_exactly_one(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "AGENTS.md"
+    target.write_text("before")
+    expected = hashlib.sha256(b"before").hexdigest()
+    barrier = threading.Barrier(3)
+    outcomes: list[str] = []
+
+    def writer(content: str) -> None:
+        barrier.wait()
+        try:
+            write_file(
+                "AGENTS.md",
+                content,
+                workspace_root=ws,
+                expected_sha256=expected,
+            )
+        except LocalToolError:
+            outcomes.append("stale")
+        else:
+            outcomes.append("written")
+
+    threads = [
+        threading.Thread(target=writer, args=("first",)),
+        threading.Thread(target=writer, args=("second",)),
+    ]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(outcomes) == ["stale", "written"]
+    assert target.read_text() in {"first", "second"}
+
+
+def test_expected_digest_write_respects_cross_process_target_lock(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "AGENTS.md"
+    target.write_text("before")
+    expected = hashlib.sha256(b"before").hexdigest()
+    context = multiprocessing.get_context("spawn")
+    outcomes = context.Queue()
+
+    with target.open("r+b") as handle:
+        portalocker.lock(
+            handle,
+            portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
+        )
+        process = context.Process(
+            target=_write_while_locked,
+            args=(str(ws), expected, outcomes),
+        )
+        process.start()
+        process.join(timeout=10)
+        if process.is_alive():
+            process.terminate()
+            process.join()
+            pytest.fail("CAS writer blocked instead of failing closed")
+
+    assert process.exitcode == 0
+    assert outcomes.get(timeout=1) == "blocked"
+    assert target.read_text() == "before"
 
 
 def test_fs_write_requires_existing_parent(tmp_path):
@@ -232,6 +488,31 @@ def test_fs_write_unencodable_content_preserves_file(tmp_path):
     with pytest.raises(LocalToolError, match="UTF-8"):
         write_file("f.txt", "lone surrogate: \ud800", workspace_root=ws)
     assert (ws / "f.txt").read_text() == "keep me"
+
+
+def test_relative_mutation_bodies_use_the_supplied_io_root_and_preserve_bytes(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "f.txt").write_bytes(b"before\r\n")
+
+    edit_result = local_tool_impls._edit_relative_file(
+        Path("f.txt"),
+        "before",
+        "after",
+        workspace=ws,
+        display_path="f.txt",
+    )
+    write_result = local_tool_impls._write_relative_file(
+        Path("new.txt"),
+        "created\n",
+        workspace=ws,
+        display_path="new.txt",
+    )
+
+    assert edit_result == "made 1 replacement in f.txt"
+    assert write_result == "wrote 8 characters to new.txt"
+    assert (ws / "f.txt").read_bytes() == b"after\r\n"
+    assert (ws / "new.txt").read_bytes() == b"created\n"
 
 
 def test_fs_glob_matches_and_sorts_by_mtime(tmp_path):

@@ -30,6 +30,15 @@ class AnimationFrame:
 class BaseEffect:
     """Base class for animation effects."""
 
+    # Effects that treat BaseEffect.start_time as a per-frame delta anchor
+    # (reading AND resetting it inside update()) set this True. The splash
+    # driver frame-locks absolute-elapsed effects by re-anchoring start_time
+    # to the virtual frame clock; for delta-clocked effects that anchor must
+    # instead yield a constant one-interval delta per rendered frame, or
+    # their computed deltas would compound and accelerate the effect
+    # (Qodo review of PR #2329).
+    FRAME_DELTA_CLOCK: bool = False
+
     def __init__(self, parent_widget: Any, **kwargs):
         self.parent = parent_widget
         self.frame_count = 0

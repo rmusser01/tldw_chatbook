@@ -1,0 +1,862 @@
+{
+  "attempt_id": "attempt-0001",
+  "attempt_lineage": [
+    {
+      "attempt_id": "attempt-0001",
+      "state": "running"
+    },
+    {
+      "attempt_id": "attempt-0001",
+      "raw_sha256": "2cdda7f369979fb1ac65f4f668bfd8ad4a28b4d2502f081eb767dc766d944a8c",
+      "state": "complete_pending_review",
+      "verdict": "inconclusive"
+    }
+  ],
+  "burn_in_blocks": 5,
+  "burn_in_exclusion_rule": "phase == measured only",
+  "campaign_schedule": {
+    "burn_in_blocks": 5,
+    "conversation_count": 108,
+    "iterations": 30,
+    "kind": "official"
+  },
+  "fixture_hashes": {
+    "mutation_sha256": "04630906249e9f2fe123d406404dc8577d2b998484217f9c48d64f7368198ce6",
+    "tool_definition_sha256_by_arm": {
+      "control": "be1dec3a1a1a7f31c8fd33956eab6ba5c6100c9b3649e55b928764911476d0bf",
+      "disabled": "be1dec3a1a1a7f31c8fd33956eab6ba5c6100c9b3649e55b928764911476d0bf",
+      "enabled": "be1dec3a1a1a7f31c8fd33956eab6ba5c6100c9b3649e55b928764911476d0bf"
+    },
+    "turn_prompts_sha256": "3f6b88ffa37b4f6b9673878288b93d81e965c50cba1fb2ce7bbb4dfadb5245ac",
+    "workspace_content_tree_digest": "f7d3e52271c125417208dbad8c1f7a3aadc1e80a5c7f1856db787c9132873ea6"
+  },
+  "fixture_ids": {
+    "mutation": "task-19641-confined-fs-write-v1",
+    "tool_schema": "local:fs_write-target-definition-v1",
+    "turn_prompts": "task-19641-three-turn-prompts-v1",
+    "workspace_corpus": "task-19641-workspace-corpus-v1"
+  },
+  "harness": {
+    "revision": "1275ffc39f81c38821fdf1c6b3cae42da53287ba",
+    "runner_sha256": "6591f6755897c73d03abe1e7481659f6f28a6260e25f63d57e88a895659ca9a2"
+  },
+  "host_load": {
+    "after": {
+      "load_average": [
+        7.48193359375,
+        7.69677734375,
+        6.8828125
+      ],
+      "logical_cpu_count": 14
+    },
+    "before": {
+      "load_average": [
+        5.556640625,
+        5.9384765625,
+        7.12744140625
+      ],
+      "logical_cpu_count": 14
+    }
+  },
+  "implementation_base_revision": "77c5e9f487af79391a479deb85e712163bfed909",
+  "listener_identity": {
+    "fingerprint_sha256": "3252eb7a4878ddf6f6523dd81327a4d57b8ccd49fc3a42fa9eea48ba4f90c45c",
+    "listener_count": 1
+  },
+  "listener_resources": {
+    "after": {
+      "listener_count": 1,
+      "processes": [
+        {
+          "cpu_percent": 0.0,
+          "rss_bytes": 2288304128
+        }
+      ]
+    },
+    "before": {
+      "listener_count": 1,
+      "processes": [
+        {
+          "cpu_percent": 37.8,
+          "rss_bytes": 2092138496
+        }
+      ]
+    }
+  },
+  "max_tokens": 512,
+  "model": "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf",
+  "model_weight_identity": "not_retained_by_original_benchmark",
+  "original_evidence_sha256": {
+    "README.md": "724be0f80eff3c9a2eced35b86ae4ce2e6f9a7524d44016cd3f49b61752bd491",
+    "real-provider-three-turn-summary.md": "fdb4528bd82a33f244b4e6fbcfe3b739bd2374006cfea2df878f2e0d27a7d5c2",
+    "real-provider-three-turn.manifest.json": "f5dec9153845b585d32660ca87f8d4aef7ad31be4dc431bb52e64fdc29187bb6",
+    "real-provider-three-turn.raw.jsonl": "82150cd55ba701b5a2680f87fce43b15676004fc1609f477f458a7abb2078319",
+    "real-provider-three-turn.summary.json": "edec5d347427748e26c93d21da7ecf121cccedb41ea7d304fb6cdad684f3668a"
+  },
+  "original_harness": {
+    "revision": "eb8225a32f88ea43c337aff99804d360384e7668",
+    "runner_sha256": "fbca69703b771f7b7b27fa78ef9bf095fb30712435743877e20fcb01bb6d06ae"
+  },
+  "preflight": {
+    "completion_chars": 15,
+    "model": "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf",
+    "model_count": 1,
+    "status": "ready"
+  },
+  "protocol_equivalence": {
+    "mismatches": [],
+    "status": "passed"
+  },
+  "protocol_preflight": [
+    {
+      "arm": "control",
+      "behavior_sha256": "5264afdd1a161e9606ffa32bacdc244311b41b8be3081dea053e854b707c61d3",
+      "event": "protocol_preflight",
+      "final_ownership": {
+        "live_threads": 0
+      },
+      "iteration": -1,
+      "phase": "protocol_preflight",
+      "sample_id": "protocol_preflight-control",
+      "schedule_position": -1,
+      "target_modules": {
+        "Tests.UI.test_destination_shells": "Tests/UI/test_destination_shells.py",
+        "Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation": "Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py",
+        "tldw_chatbook": "tldw_chatbook/__init__.py"
+      },
+      "target_revision_kind": "legacy",
+      "tool_definition_sha256": "be1dec3a1a1a7f31c8fd33956eab6ba5c6100c9b3649e55b928764911476d0bf",
+      "workspace_content_tree_digest": "f7d3e52271c125417208dbad8c1f7a3aadc1e80a5c7f1856db787c9132873ea6"
+    },
+    {
+      "arm": "disabled",
+      "behavior_sha256": "1919f1aa44db36d209cabf966b2de95ccdf5f031046f9cde16be50d16e021a2b",
+      "event": "protocol_preflight",
+      "final_ownership": {
+        "live_threads": 0
+      },
+      "iteration": -1,
+      "phase": "protocol_preflight",
+      "sample_id": "protocol_preflight-disabled",
+      "schedule_position": -1,
+      "target_modules": {
+        "Tests.UI.test_destination_shells": "Tests/UI/test_destination_shells.py",
+        "Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation": "Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py",
+        "tldw_chatbook": "tldw_chatbook/__init__.py"
+      },
+      "target_revision_kind": "candidate",
+      "tool_definition_sha256": "be1dec3a1a1a7f31c8fd33956eab6ba5c6100c9b3649e55b928764911476d0bf",
+      "workspace_content_tree_digest": "f7d3e52271c125417208dbad8c1f7a3aadc1e80a5c7f1856db787c9132873ea6"
+    },
+    {
+      "arm": "enabled",
+      "behavior_sha256": "82788a2d71df6391cf44cf9c7ea75276faaf63d128d438c97f5ac8bdb9ae677e",
+      "event": "protocol_preflight",
+      "final_ownership": {
+        "live_threads": 0
+      },
+      "iteration": -1,
+      "phase": "protocol_preflight",
+      "sample_id": "protocol_preflight-enabled",
+      "schedule_position": -1,
+      "target_modules": {
+        "Tests.UI.test_destination_shells": "Tests/UI/test_destination_shells.py",
+        "Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation": "Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py",
+        "tldw_chatbook": "tldw_chatbook/__init__.py"
+      },
+      "target_revision_kind": "candidate",
+      "tool_definition_sha256": "be1dec3a1a1a7f31c8fd33956eab6ba5c6100c9b3649e55b928764911476d0bf",
+      "workspace_content_tree_digest": "f7d3e52271c125417208dbad8c1f7a3aadc1e80a5c7f1856db787c9132873ea6"
+    }
+  ],
+  "provider": "llama_cpp",
+  "provider_server": {
+    "build_info": "b8795-c0de6eda7",
+    "context_tokens": 64000,
+    "endpoints": {
+      "metrics": false,
+      "props": false,
+      "slots": true
+    },
+    "is_sleeping": false,
+    "modalities": {
+      "audio": false,
+      "vision": false
+    },
+    "model_alias": "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf",
+    "total_slots": 1
+  },
+  "reasoning_effort": "none",
+  "revisions": {
+    "candidate": "eb8225a32f88ea43c337aff99804d360384e7668",
+    "control": "5f720a40417eaa78f33619d5cbc82effc470104b"
+  },
+  "runtime": {
+    "dependencies": {
+      "httpx": "0.28.1",
+      "pydantic": "2.12.5",
+      "rich": "14.3.3",
+      "textual": "8.2.8"
+    },
+    "python": {
+      "implementation": "cpython",
+      "version": "3.12.11"
+    },
+    "sqlite": "3.49.1"
+  },
+  "sample_schedule": [
+    {
+      "arm": "control",
+      "iteration": -1,
+      "phase": "warmup",
+      "schedule_position": 0
+    },
+    {
+      "arm": "disabled",
+      "iteration": -1,
+      "phase": "warmup",
+      "schedule_position": 1
+    },
+    {
+      "arm": "enabled",
+      "iteration": -1,
+      "phase": "warmup",
+      "schedule_position": 2
+    },
+    {
+      "arm": "control",
+      "iteration": 0,
+      "phase": "burn_in",
+      "schedule_position": 3
+    },
+    {
+      "arm": "disabled",
+      "iteration": 0,
+      "phase": "burn_in",
+      "schedule_position": 4
+    },
+    {
+      "arm": "enabled",
+      "iteration": 0,
+      "phase": "burn_in",
+      "schedule_position": 5
+    },
+    {
+      "arm": "disabled",
+      "iteration": 1,
+      "phase": "burn_in",
+      "schedule_position": 6
+    },
+    {
+      "arm": "enabled",
+      "iteration": 1,
+      "phase": "burn_in",
+      "schedule_position": 7
+    },
+    {
+      "arm": "control",
+      "iteration": 1,
+      "phase": "burn_in",
+      "schedule_position": 8
+    },
+    {
+      "arm": "enabled",
+      "iteration": 2,
+      "phase": "burn_in",
+      "schedule_position": 9
+    },
+    {
+      "arm": "control",
+      "iteration": 2,
+      "phase": "burn_in",
+      "schedule_position": 10
+    },
+    {
+      "arm": "disabled",
+      "iteration": 2,
+      "phase": "burn_in",
+      "schedule_position": 11
+    },
+    {
+      "arm": "control",
+      "iteration": 3,
+      "phase": "burn_in",
+      "schedule_position": 12
+    },
+    {
+      "arm": "disabled",
+      "iteration": 3,
+      "phase": "burn_in",
+      "schedule_position": 13
+    },
+    {
+      "arm": "enabled",
+      "iteration": 3,
+      "phase": "burn_in",
+      "schedule_position": 14
+    },
+    {
+      "arm": "disabled",
+      "iteration": 4,
+      "phase": "burn_in",
+      "schedule_position": 15
+    },
+    {
+      "arm": "enabled",
+      "iteration": 4,
+      "phase": "burn_in",
+      "schedule_position": 16
+    },
+    {
+      "arm": "control",
+      "iteration": 4,
+      "phase": "burn_in",
+      "schedule_position": 17
+    },
+    {
+      "arm": "enabled",
+      "iteration": 0,
+      "phase": "measured",
+      "schedule_position": 18
+    },
+    {
+      "arm": "control",
+      "iteration": 0,
+      "phase": "measured",
+      "schedule_position": 19
+    },
+    {
+      "arm": "disabled",
+      "iteration": 0,
+      "phase": "measured",
+      "schedule_position": 20
+    },
+    {
+      "arm": "control",
+      "iteration": 1,
+      "phase": "measured",
+      "schedule_position": 21
+    },
+    {
+      "arm": "disabled",
+      "iteration": 1,
+      "phase": "measured",
+      "schedule_position": 22
+    },
+    {
+      "arm": "enabled",
+      "iteration": 1,
+      "phase": "measured",
+      "schedule_position": 23
+    },
+    {
+      "arm": "disabled",
+      "iteration": 2,
+      "phase": "measured",
+      "schedule_position": 24
+    },
+    {
+      "arm": "enabled",
+      "iteration": 2,
+      "phase": "measured",
+      "schedule_position": 25
+    },
+    {
+      "arm": "control",
+      "iteration": 2,
+      "phase": "measured",
+      "schedule_position": 26
+    },
+    {
+      "arm": "enabled",
+      "iteration": 3,
+      "phase": "measured",
+      "schedule_position": 27
+    },
+    {
+      "arm": "control",
+      "iteration": 3,
+      "phase": "measured",
+      "schedule_position": 28
+    },
+    {
+      "arm": "disabled",
+      "iteration": 3,
+      "phase": "measured",
+      "schedule_position": 29
+    },
+    {
+      "arm": "control",
+      "iteration": 4,
+      "phase": "measured",
+      "schedule_position": 30
+    },
+    {
+      "arm": "disabled",
+      "iteration": 4,
+      "phase": "measured",
+      "schedule_position": 31
+    },
+    {
+      "arm": "enabled",
+      "iteration": 4,
+      "phase": "measured",
+      "schedule_position": 32
+    },
+    {
+      "arm": "disabled",
+      "iteration": 5,
+      "phase": "measured",
+      "schedule_position": 33
+    },
+    {
+      "arm": "enabled",
+      "iteration": 5,
+      "phase": "measured",
+      "schedule_position": 34
+    },
+    {
+      "arm": "control",
+      "iteration": 5,
+      "phase": "measured",
+      "schedule_position": 35
+    },
+    {
+      "arm": "enabled",
+      "iteration": 6,
+      "phase": "measured",
+      "schedule_position": 36
+    },
+    {
+      "arm": "control",
+      "iteration": 6,
+      "phase": "measured",
+      "schedule_position": 37
+    },
+    {
+      "arm": "disabled",
+      "iteration": 6,
+      "phase": "measured",
+      "schedule_position": 38
+    },
+    {
+      "arm": "control",
+      "iteration": 7,
+      "phase": "measured",
+      "schedule_position": 39
+    },
+    {
+      "arm": "disabled",
+      "iteration": 7,
+      "phase": "measured",
+      "schedule_position": 40
+    },
+    {
+      "arm": "enabled",
+      "iteration": 7,
+      "phase": "measured",
+      "schedule_position": 41
+    },
+    {
+      "arm": "disabled",
+      "iteration": 8,
+      "phase": "measured",
+      "schedule_position": 42
+    },
+    {
+      "arm": "enabled",
+      "iteration": 8,
+      "phase": "measured",
+      "schedule_position": 43
+    },
+    {
+      "arm": "control",
+      "iteration": 8,
+      "phase": "measured",
+      "schedule_position": 44
+    },
+    {
+      "arm": "enabled",
+      "iteration": 9,
+      "phase": "measured",
+      "schedule_position": 45
+    },
+    {
+      "arm": "control",
+      "iteration": 9,
+      "phase": "measured",
+      "schedule_position": 46
+    },
+    {
+      "arm": "disabled",
+      "iteration": 9,
+      "phase": "measured",
+      "schedule_position": 47
+    },
+    {
+      "arm": "control",
+      "iteration": 10,
+      "phase": "measured",
+      "schedule_position": 48
+    },
+    {
+      "arm": "disabled",
+      "iteration": 10,
+      "phase": "measured",
+      "schedule_position": 49
+    },
+    {
+      "arm": "enabled",
+      "iteration": 10,
+      "phase": "measured",
+      "schedule_position": 50
+    },
+    {
+      "arm": "disabled",
+      "iteration": 11,
+      "phase": "measured",
+      "schedule_position": 51
+    },
+    {
+      "arm": "enabled",
+      "iteration": 11,
+      "phase": "measured",
+      "schedule_position": 52
+    },
+    {
+      "arm": "control",
+      "iteration": 11,
+      "phase": "measured",
+      "schedule_position": 53
+    },
+    {
+      "arm": "enabled",
+      "iteration": 12,
+      "phase": "measured",
+      "schedule_position": 54
+    },
+    {
+      "arm": "control",
+      "iteration": 12,
+      "phase": "measured",
+      "schedule_position": 55
+    },
+    {
+      "arm": "disabled",
+      "iteration": 12,
+      "phase": "measured",
+      "schedule_position": 56
+    },
+    {
+      "arm": "control",
+      "iteration": 13,
+      "phase": "measured",
+      "schedule_position": 57
+    },
+    {
+      "arm": "disabled",
+      "iteration": 13,
+      "phase": "measured",
+      "schedule_position": 58
+    },
+    {
+      "arm": "enabled",
+      "iteration": 13,
+      "phase": "measured",
+      "schedule_position": 59
+    },
+    {
+      "arm": "disabled",
+      "iteration": 14,
+      "phase": "measured",
+      "schedule_position": 60
+    },
+    {
+      "arm": "enabled",
+      "iteration": 14,
+      "phase": "measured",
+      "schedule_position": 61
+    },
+    {
+      "arm": "control",
+      "iteration": 14,
+      "phase": "measured",
+      "schedule_position": 62
+    },
+    {
+      "arm": "enabled",
+      "iteration": 15,
+      "phase": "measured",
+      "schedule_position": 63
+    },
+    {
+      "arm": "control",
+      "iteration": 15,
+      "phase": "measured",
+      "schedule_position": 64
+    },
+    {
+      "arm": "disabled",
+      "iteration": 15,
+      "phase": "measured",
+      "schedule_position": 65
+    },
+    {
+      "arm": "control",
+      "iteration": 16,
+      "phase": "measured",
+      "schedule_position": 66
+    },
+    {
+      "arm": "disabled",
+      "iteration": 16,
+      "phase": "measured",
+      "schedule_position": 67
+    },
+    {
+      "arm": "enabled",
+      "iteration": 16,
+      "phase": "measured",
+      "schedule_position": 68
+    },
+    {
+      "arm": "disabled",
+      "iteration": 17,
+      "phase": "measured",
+      "schedule_position": 69
+    },
+    {
+      "arm": "enabled",
+      "iteration": 17,
+      "phase": "measured",
+      "schedule_position": 70
+    },
+    {
+      "arm": "control",
+      "iteration": 17,
+      "phase": "measured",
+      "schedule_position": 71
+    },
+    {
+      "arm": "enabled",
+      "iteration": 18,
+      "phase": "measured",
+      "schedule_position": 72
+    },
+    {
+      "arm": "control",
+      "iteration": 18,
+      "phase": "measured",
+      "schedule_position": 73
+    },
+    {
+      "arm": "disabled",
+      "iteration": 18,
+      "phase": "measured",
+      "schedule_position": 74
+    },
+    {
+      "arm": "control",
+      "iteration": 19,
+      "phase": "measured",
+      "schedule_position": 75
+    },
+    {
+      "arm": "disabled",
+      "iteration": 19,
+      "phase": "measured",
+      "schedule_position": 76
+    },
+    {
+      "arm": "enabled",
+      "iteration": 19,
+      "phase": "measured",
+      "schedule_position": 77
+    },
+    {
+      "arm": "disabled",
+      "iteration": 20,
+      "phase": "measured",
+      "schedule_position": 78
+    },
+    {
+      "arm": "enabled",
+      "iteration": 20,
+      "phase": "measured",
+      "schedule_position": 79
+    },
+    {
+      "arm": "control",
+      "iteration": 20,
+      "phase": "measured",
+      "schedule_position": 80
+    },
+    {
+      "arm": "enabled",
+      "iteration": 21,
+      "phase": "measured",
+      "schedule_position": 81
+    },
+    {
+      "arm": "control",
+      "iteration": 21,
+      "phase": "measured",
+      "schedule_position": 82
+    },
+    {
+      "arm": "disabled",
+      "iteration": 21,
+      "phase": "measured",
+      "schedule_position": 83
+    },
+    {
+      "arm": "control",
+      "iteration": 22,
+      "phase": "measured",
+      "schedule_position": 84
+    },
+    {
+      "arm": "disabled",
+      "iteration": 22,
+      "phase": "measured",
+      "schedule_position": 85
+    },
+    {
+      "arm": "enabled",
+      "iteration": 22,
+      "phase": "measured",
+      "schedule_position": 86
+    },
+    {
+      "arm": "disabled",
+      "iteration": 23,
+      "phase": "measured",
+      "schedule_position": 87
+    },
+    {
+      "arm": "enabled",
+      "iteration": 23,
+      "phase": "measured",
+      "schedule_position": 88
+    },
+    {
+      "arm": "control",
+      "iteration": 23,
+      "phase": "measured",
+      "schedule_position": 89
+    },
+    {
+      "arm": "enabled",
+      "iteration": 24,
+      "phase": "measured",
+      "schedule_position": 90
+    },
+    {
+      "arm": "control",
+      "iteration": 24,
+      "phase": "measured",
+      "schedule_position": 91
+    },
+    {
+      "arm": "disabled",
+      "iteration": 24,
+      "phase": "measured",
+      "schedule_position": 92
+    },
+    {
+      "arm": "control",
+      "iteration": 25,
+      "phase": "measured",
+      "schedule_position": 93
+    },
+    {
+      "arm": "disabled",
+      "iteration": 25,
+      "phase": "measured",
+      "schedule_position": 94
+    },
+    {
+      "arm": "enabled",
+      "iteration": 25,
+      "phase": "measured",
+      "schedule_position": 95
+    },
+    {
+      "arm": "disabled",
+      "iteration": 26,
+      "phase": "measured",
+      "schedule_position": 96
+    },
+    {
+      "arm": "enabled",
+      "iteration": 26,
+      "phase": "measured",
+      "schedule_position": 97
+    },
+    {
+      "arm": "control",
+      "iteration": 26,
+      "phase": "measured",
+      "schedule_position": 98
+    },
+    {
+      "arm": "enabled",
+      "iteration": 27,
+      "phase": "measured",
+      "schedule_position": 99
+    },
+    {
+      "arm": "control",
+      "iteration": 27,
+      "phase": "measured",
+      "schedule_position": 100
+    },
+    {
+      "arm": "disabled",
+      "iteration": 27,
+      "phase": "measured",
+      "schedule_position": 101
+    },
+    {
+      "arm": "control",
+      "iteration": 28,
+      "phase": "measured",
+      "schedule_position": 102
+    },
+    {
+      "arm": "disabled",
+      "iteration": 28,
+      "phase": "measured",
+      "schedule_position": 103
+    },
+    {
+      "arm": "enabled",
+      "iteration": 28,
+      "phase": "measured",
+      "schedule_position": 104
+    },
+    {
+      "arm": "disabled",
+      "iteration": 29,
+      "phase": "measured",
+      "schedule_position": 105
+    },
+    {
+      "arm": "enabled",
+      "iteration": 29,
+      "phase": "measured",
+      "schedule_position": 106
+    },
+    {
+      "arm": "control",
+      "iteration": 29,
+      "phase": "measured",
+      "schedule_position": 107
+    }
+  ],
+  "schema": 1,
+  "stream_options": {
+    "include_usage": true
+  },
+  "temperature": 0.0
+}

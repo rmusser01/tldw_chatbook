@@ -8,15 +8,14 @@ copy, followed by an immutable read-only validation handle.
 
 from __future__ import annotations
 
-import json
 import hashlib
 import sqlite3
 import stat
-import struct
-from dataclasses import dataclass
 import tempfile
-from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 from uuid import UUID
@@ -26,125 +25,102 @@ if TYPE_CHECKING:
 
 from tldw_chatbook.DB.private_sqlite import (
     _SQLiteAdmissionOutcome,
-    connect_private_sqlite,
     connect_private_sqlite_descriptor,
+
+    _connect_registered_sqlite,
+    connect_private_sqlite,
 )
 from tldw_chatbook.DB.sql_validation import escape_identifier, validate_identifier
 from tldw_chatbook.Utils.platform_files import os
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.DB.private_sqlite_process import (
+    HELPER_ADMISSION,
+    HelperLease,
+    HelperPreDispatchTimeoutError,
+    HelperProtocolError,
+    HelperTimeoutError,
+    HelperUnavailableError,
+    OperationDeadline,
+)
+from tldw_chatbook.DB.private_sqlite_protocol import (
+    FileIdentity,
+    PrepareRequest,
+    TTSRestoreAuthority,
+    is_tts_authority_refusal,
+    validate_tts_identity,
+)
+from tldw_chatbook.TTS import profile_validation as _validation
+from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _migrate_v0_to_v1
+from tldw_chatbook.TTS.migrations.v1_to_v2 import migrate as _migrate_v1_to_v2
+from tldw_chatbook.TTS.migrations.v2_to_v3 import migrate as _migrate_v2_to_v3
+from tldw_chatbook.TTS.migrations.v3_to_v4 import migrate as _migrate_v3_to_v4
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileRepositoryError,
+    _raise_migration_cleanup_failure,
+)
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
 )
-from tldw_chatbook.Utils import private_paths
-from tldw_chatbook.TTS.migrations.v0_to_v1 import (
-    ASSIGNMENT_PROFILE_INDEX_DDL as _ASSIGNMENT_PROFILE_INDEX_DDL,
-)
-from tldw_chatbook.TTS.migrations.v0_to_v1 import (
-    ASSIGNMENT_TABLE_DDL as _ASSIGNMENT_TABLE_DDL,
-)
-from tldw_chatbook.TTS.migrations.v0_to_v1 import (
-    PROFILE_TABLE_DDL as _PROFILE_TABLE_DDL,
-)
-from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _migrate_v0_to_v1
-from tldw_chatbook.TTS.migrations.v1_to_v2 import migrate as _migrate_v1_to_v2
-from tldw_chatbook.TTS.migrations.v2_to_v3 import (
-    REFERENCE_ID_INDEX as _REFERENCE_ID_INDEX,
-)
-from tldw_chatbook.TTS.migrations.v2_to_v3 import (
-    REFERENCE_ID_INDEX_DDL as _REFERENCE_ID_INDEX_DDL,
-)
-from tldw_chatbook.TTS.migrations.v2_to_v3 import (
-    REFERENCE_TABLE as _REFERENCE_TABLE,
-)
-from tldw_chatbook.TTS.migrations.v2_to_v3 import (
-    REFERENCE_TABLE_DDL as _REFERENCE_TABLE_DDL,
-)
-from tldw_chatbook.TTS.migrations.v2_to_v3 import migrate as _migrate_v2_to_v3
-from tldw_chatbook.TTS.migrations.v3_to_v4 import (
-    REFERENCE_ID_INDEX_DDL as _V4_REFERENCE_ID_INDEX_DDL,
-)
-from tldw_chatbook.TTS.migrations.v3_to_v4 import (
-    REFERENCE_TABLE_DDL as _V4_REFERENCE_TABLE_DDL,
-)
-from tldw_chatbook.TTS.migrations.v3_to_v4 import migrate as _migrate_v3_to_v4
+from tldw_chatbook.TTS.profile_sqlite_policy import configure_native_close_policy
 from tldw_chatbook.TTS.profile_types import (
-    AssignedTTSProfileSnapshot,
-    CharacterRef,
     CharacterTTSAssignment,
-    FrozenJsonOptions,
     JsonOptions,
     TTSGenerationProfile,
-    _freeze_options,
     canonical_json_options,
 )
+from tldw_chatbook.Utils import private_paths
 
-CURRENT_PROFILE_SCHEMA_VERSION = 4
-BUSY_TIMEOUT_MS = 5_000
-_DEADLINE_PROGRESS_OPCODE_INTERVAL = 1_000
-_MAX_PERSISTED_DISPLAY_NAME_CHARACTERS = 128
-_MAX_PERSISTED_RESPONSE_FORMAT_CHARACTERS = 32
-_MAX_PERSISTED_OPTIONS_BYTES = 16 * 1024
-PROFILE_TABLE = "tts_generation_profiles"
-ASSIGNMENT_TABLE = "character_tts_assignments"
-ASSIGNMENT_PROFILE_INDEX = "idx_character_tts_assignments_profile_id"
-
-PROFILE_COLUMNS = (
-    "profile_id",
-    "display_name",
-    "normalized_name",
-    "provider_id",
-    "model_id",
-    "voice_id",
-    "response_format",
-    "speed",
-    "options_json",
-    "revision",
-    "created_at",
-    "updated_at",
+# Compatibility exports retain one implementation in the isolated validator leaf.
+_REFERENCE_TABLE = _validation._REFERENCE_TABLE
+CURRENT_PROFILE_SCHEMA_VERSION = _validation.CURRENT_PROFILE_SCHEMA_VERSION
+BUSY_TIMEOUT_MS = _validation.BUSY_TIMEOUT_MS
+_DEADLINE_PROGRESS_OPCODE_INTERVAL = _validation._DEADLINE_PROGRESS_OPCODE_INTERVAL
+_MAX_PERSISTED_DISPLAY_NAME_CHARACTERS = (
+    _validation._MAX_PERSISTED_DISPLAY_NAME_CHARACTERS
 )
-ASSIGNMENT_COLUMNS = (
-    "source",
-    "authority_id",
-    "character_id",
-    "profile_id",
-    "created_at",
-    "updated_at",
+_MAX_PERSISTED_RESPONSE_FORMAT_CHARACTERS = (
+    _validation._MAX_PERSISTED_RESPONSE_FORMAT_CHARACTERS
 )
-
-# These aliases are the persistence contract for joined assignment/profile rows.
-# Every duplicate column name is qualified by its owning record.
-JOINED_ASSIGNMENT_ALIASES = tuple(
-    f"assignment_{column}" for column in ASSIGNMENT_COLUMNS
+_MAX_PERSISTED_OPTIONS_BYTES = _validation._MAX_PERSISTED_OPTIONS_BYTES
+PROFILE_TABLE = _validation.PROFILE_TABLE
+ASSIGNMENT_TABLE = _validation.ASSIGNMENT_TABLE
+ASSIGNMENT_PROFILE_INDEX = _validation.ASSIGNMENT_PROFILE_INDEX
+PROFILE_COLUMNS = _validation.PROFILE_COLUMNS
+ASSIGNMENT_COLUMNS = _validation.ASSIGNMENT_COLUMNS
+JOINED_ASSIGNMENT_ALIASES = _validation.JOINED_ASSIGNMENT_ALIASES
+JOINED_PROFILE_ALIASES = _validation.JOINED_PROFILE_ALIASES
+ASSIGNED_PROFILE_JOIN_SELECT = _validation.ASSIGNED_PROFILE_JOIN_SELECT
+RowLike = _validation.RowLike
+_MAX_EXACT_METADATA_ROWS = _validation._MAX_EXACT_METADATA_ROWS
+_repository_error = _validation._repository_error
+_update_metadata_digest = _validation._update_metadata_digest
+_stream_exact_store_metadata_evidence = (
+    _validation._stream_exact_store_metadata_evidence
 )
-JOINED_PROFILE_ALIASES = tuple(f"profile_{column}" for column in PROFILE_COLUMNS)
-
-ASSIGNED_PROFILE_JOIN_SELECT = """
-SELECT
-    a.source AS assignment_source,
-    a.authority_id AS assignment_authority_id,
-    a.character_id AS assignment_character_id,
-    a.profile_id AS assignment_profile_id,
-    a.created_at AS assignment_created_at,
-    a.updated_at AS assignment_updated_at,
-    p.profile_id AS profile_profile_id,
-    p.display_name AS profile_display_name,
-    p.normalized_name AS profile_normalized_name,
-    p.provider_id AS profile_provider_id,
-    p.model_id AS profile_model_id,
-    p.voice_id AS profile_voice_id,
-    p.response_format AS profile_response_format,
-    p.speed AS profile_speed,
-    p.options_json AS profile_options_json,
-    p.revision AS profile_revision,
-    p.created_at AS profile_created_at,
-    p.updated_at AS profile_updated_at
-FROM character_tts_assignments AS a
-LEFT JOIN tts_generation_profiles AS p ON p.profile_id = a.profile_id
-"""
-
-RowLike: TypeAlias = sqlite3.Row | Mapping[str, object]
-
-_MAX_EXACT_METADATA_ROWS = 1_000_000
+encode_uuid = _validation.encode_uuid
+decode_uuid = _validation.decode_uuid
+encode_utc_datetime = _validation.encode_utc_datetime
+decode_utc_datetime = _validation.decode_utc_datetime
+decode_options = _validation.decode_options
+_freeze_via_profile_options = _validation._freeze_via_profile_options
+_row_value = _validation._row_value
+_decode_profile = _validation._decode_profile
+decode_profile = _validation.decode_profile
+_decode_assignment = _validation._decode_assignment
+decode_assignment = _validation.decode_assignment
+decode_assigned_snapshot = _validation.decode_assigned_snapshot
+_configure_connection = _validation._configure_connection
+_user_tables = _validation._user_tables
+_user_schema_objects = _validation._user_schema_objects
+_normalized_ddl = _validation._normalized_ddl
+_validated_quoted_identifier = _validation._validated_quoted_identifier
+_validate_owned_schema_sql = _validation._validate_owned_schema_sql
+_table_xinfo_manifest = _validation._table_xinfo_manifest
+_has_exact_binary_index_keys = _validation._has_exact_binary_index_keys
+_has_exact_primary_key_index = _validation._has_exact_primary_key_index
+_run_with_deadline_progress = _validation._run_with_deadline_progress
+_validate_schema = _validation._validate_schema
+_validate_schema_body = _validation._validate_schema_body
+validate_profile_store_rows = _validation.validate_profile_store_rows
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -158,11 +134,204 @@ class PostInitProfileStoreAuthority:
         return "PostInitProfileStoreAuthority(<private>)"
 
 
-def _repository_error(code: str) -> ProfileRepositoryError:
-    return ProfileRepositoryError(code)
-
-
 class _ExactCurrentProfileConnection:
+    """Own live SQLite, remote original-inode proof, and one local directory."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        selected: Path,
+        parent_fd: int,
+        helper: HelperLease,
+        identity: dict[str, object],
+    ) -> None:
+        self._connection = connection
+        self.selected = selected
+        self._parent_fd = parent_fd
+        self._helper = helper
+        self._parent_identity = FileIdentity.from_payload(identity["parent"])
+        self._file_identity = FileIdentity.from_payload(identity["main"])
+        self._proof_lost = False
+        self._sqlite_closed = False
+        self._wal_acquired = False
+        self._cohort_complete = identity["wal"] is not None
+        self._backup_lease = None
+        self._directory_fds = {parent_fd}
+        self._directory_pending = set()
+        self._directory_failed_closes = set()
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._connection, name)
+
+    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
+        return self._connection.execute(sql, parameters)  # type: ignore[arg-type]
+
+    @property
+    def in_transaction(self) -> bool:
+        return self._connection.in_transaction
+
+    def commit(self) -> None:
+        self._connection.commit()
+
+    def rollback(self) -> None:
+        self._connection.rollback()
+
+    @property
+    def row_factory(self) -> object:
+        return self._connection.row_factory
+
+    @row_factory.setter
+    def row_factory(self, value: object) -> None:
+        self._connection.row_factory = value  # type: ignore[assignment]
+
+    def _lose_proof(self) -> None:
+        if not self._proof_lost:
+            self._proof_lost = True
+            self._helper.retain_terminal_owner()
+            HELPER_ADMISSION.latch_tts_proof_loss()
+            try:
+                self._helper.close()
+            except Exception:  # noqa: BLE001 - retain ownership and bound private cleanup failures
+                raise ExactProfileStoreProofLostError(self) from None
+        raise ExactProfileStoreProofLostError(self)
+
+    def _request(
+        self, operation: str, deadline: OperationDeadline
+    ) -> dict[str, object]:
+        if self._proof_lost:
+            raise ExactProfileStoreProofLostError(self)
+        try:
+            response = self._helper.request(operation, deadline=deadline)
+        except HelperPreDispatchTimeoutError:
+            raise
+        except (HelperUnavailableError, HelperProtocolError, HelperTimeoutError):
+            self._lose_proof()
+        if is_tts_authority_refusal(response):
+            raise ExactProfileStoreAuthorityError()
+        if response["status"] != "ok":
+            self._lose_proof()
+        return validate_tts_identity(response["identity"])
+
+    def _verify_directory(self) -> None:
+        if self._directory_pending or self._directory_failed_closes:
+            raise ExactProfileStoreCleanupError(self)
+        reopened = -1
+        try:
+            reopened, leaf = private_paths._open_verified_parent(
+                self.selected, missing_leaf_allowed=False,
+                _open=self._open_directory_component,
+                _close=self._close_directory_component,
+            )
+            expected = self._parent_identity
+            for descriptor in (reopened, self._parent_fd):
+                observed = FileIdentity.from_stat(os.fstat(descriptor))
+                if (
+                    leaf != self.selected.name
+                    or observed.nlink <= 0
+                    or expected.nlink <= 0
+                    or (
+                        observed.dev,
+                        observed.ino,
+                        observed.mode,
+                        observed.uid,
+                        observed.gid,
+                    )
+                    != (
+                        expected.dev,
+                        expected.ino,
+                        expected.mode,
+                        expected.uid,
+                        expected.gid,
+                    )
+                ):
+                    raise ExactProfileStoreAuthorityError()
+        except Exception:  # noqa: BLE001 - normalize private path/stat failures without their contents
+            raise ExactProfileStoreAuthorityError() from None
+        finally:
+            if reopened >= 0:
+                self._close_directory(reopened, os.close)
+
+    def _open_directory_component(self, *args, **kwargs):
+        outcome = private_paths._NativeOpenOutcome()
+        attempt = object()
+        self._directory_pending.add(attempt)
+        try:
+            return private_paths._native_open(*args, _outcome=outcome, **kwargs)
+        finally:
+            if outcome.descriptor is not None:
+                self._directory_fds.add(outcome.descriptor)
+                self._directory_pending.discard(attempt)
+            elif outcome.rejected:
+                self._directory_pending.discard(attempt)
+
+    def _close_directory_component(self, descriptor):
+        self._close_directory(descriptor, private_paths._native_close)
+
+    def _close_directory(self, descriptor, close):
+        if descriptor in self._directory_failed_closes:
+            raise ExactProfileStoreCleanupError(self)
+        try:
+            close(descriptor)
+        except BaseException:
+            # An error can follow successful native close. Keep exclusion and
+            # never retry this descriptor number, which could already be reused.
+            self._directory_failed_closes.add(descriptor)
+            raise
+        self._directory_fds.discard(descriptor)
+
+    def _revalidate(self, deadline: OperationDeadline) -> None:
+        operation = (
+            "tts_pin_sidecars"
+            if self._wal_acquired and not self._cohort_complete
+            else "tts_recheck"
+        )
+        identity = self._request(operation, deadline)
+        self._file_identity = FileIdentity.from_payload(identity["main"])
+        self._cohort_complete = identity["wal"] is not None
+        self._verify_directory()
+
+    def export_restore_authority(
+        self, *, deadline: OperationDeadline
+    ) -> TTSRestoreAuthority:
+        identity = self._request("tts_export_restore_authority", deadline)
+        self._verify_directory()
+        remote = TTSRestoreAuthority.from_payload(identity)
+        # The helper binds stable directory authority before SQLite can create
+        # sidecars. Namespace mutation additionally needs the directory's exact
+        # current link count (including those owned creations on macOS).
+        return TTSRestoreAuthority(
+            parent=FileIdentity.from_stat(os.fstat(self._parent_fd)),
+            main=remote.main,
+            wal=remote.wal,
+            shm=remote.shm,
+        )
+
+    def verified_parent_fd(self, *, deadline: OperationDeadline) -> int:
+        self._revalidate(deadline)
+        return self._parent_fd
+
+    def close(self) -> None:
+        if self._directory_pending or self._directory_failed_closes:
+            raise ExactProfileStoreCleanupError(self)
+        # Keep the native flag enabled. Normal cleanup owns PASSIVE; restore
+        # owns its stronger TRUNCATE and must not acquire a duplicate checkpoint.
+        if not self._sqlite_closed:
+            self._revalidate(OperationDeadline(None))
+            self._connection.close()
+            self._sqlite_closed = True
+        self._helper.close()
+        if self._parent_fd >= 0:
+            self._close_directory(self._parent_fd, os.close)
+            self._parent_fd = -1
+        for descriptor in tuple(self._directory_fds):
+            self._close_directory(descriptor, os.close)
+        if self._backup_lease is not None:
+            self._backup_lease.close()
+            self._backup_lease = None
+
+
+class _NativeExactCurrentProfileConnection(_ExactCurrentProfileConnection):
     """Live SQLite handle retaining the descriptor authority that admitted it."""
 
     def __init__(
@@ -320,6 +489,21 @@ class _ExactCurrentProfileConnection:
             self.cleanup_errors.append(error)
             raise
 
+    def export_restore_authority(self, *, deadline: OperationDeadline) -> TTSRestoreAuthority:
+        deadline.remaining(30.0)
+        revalidate_exact_current_profile_store(self, self.selected)
+        return TTSRestoreAuthority(
+            parent=FileIdentity.from_stat(os.fstat(self.parent_fd)),
+            main=FileIdentity.from_stat(os.fstat(self.file_fd)),
+            wal=FileIdentity.from_stat(os.fstat(self.sidecar_fds["-wal"])),
+            shm=FileIdentity.from_stat(os.fstat(self.sidecar_fds["-shm"])),
+        )
+
+    def verified_parent_fd(self, *, deadline: OperationDeadline) -> int:
+        deadline.remaining(30.0)
+        revalidate_exact_current_profile_store(self, self.selected)
+        return self.parent_fd
+
 
 class ExactProfileStoreCleanupError(ProfileRepositoryError):
     """Carry exact retained authority when an internal close cannot settle."""
@@ -327,6 +511,35 @@ class ExactProfileStoreCleanupError(ProfileRepositoryError):
     def __init__(self, connection: _ExactCurrentProfileConnection) -> None:
         super().__init__("operation_failed")
         self.connection = connection
+
+
+def _exact_profile_store_cleanup_error(
+    error: BaseException,
+) -> ExactProfileStoreCleanupError | None:
+    """Read only this live-open attempt's owner, bypassing signal hooks."""
+    if isinstance(error, ExactProfileStoreCleanupError):
+        return error
+    metadata = BaseException.__dict__["__dict__"].__get__(error, BaseException)
+    cleanup = metadata.get("_profile_exact_cleanup_error")
+    return cleanup if isinstance(cleanup, ExactProfileStoreCleanupError) else None
+
+
+def _carry_exact_profile_cleanup(
+    error: BaseException, cleanup: ExactProfileStoreCleanupError | None
+) -> None:
+    """Keep prior live owners reachable without transferring them again."""
+    metadata = BaseException.__dict__["__dict__"].__get__(error, BaseException)
+    previous = _exact_profile_store_cleanup_error(error)
+    if previous is not None and previous is not cleanup:
+        history = metadata.get("_profile_exact_cleanup_history", ())
+        if all(previous is not retained for retained in history):
+            history = (*history, previous)
+        metadata["_profile_exact_cleanup_history"] = history
+    else:
+        metadata.setdefault("_profile_exact_cleanup_history", ())
+    # None is intentional: a reused signal may now leave before acquiring a
+    # live handle, or after healthy close. Earlier owners are history only.
+    metadata["_profile_exact_cleanup_error"] = cleanup
 
 
 class ExactProfileStoreNotCurrentError(ProfileRepositoryError):
@@ -341,6 +554,14 @@ class ExactProfileStoreAuthorityError(ProfileRepositoryError):
 
     def __init__(self) -> None:
         super().__init__("operation_failed")
+
+
+class ExactProfileStoreProofLostError(ExactProfileStoreAuthorityError):
+    """Retain the complete live owner after irreplaceable remote proof loss."""
+
+    def __init__(self, connection: _ExactCurrentProfileConnection) -> None:
+        ProfileRepositoryError.__init__(self, "restart_required")
+        self.connection = connection
 
 
 def _exact_store_namespace_safe(
@@ -448,7 +669,7 @@ def _open_exact_store_sidecars(
     return descriptors, identities
 
 
-def revalidate_exact_current_profile_store(
+def _revalidate_native_exact_current_profile_store(
     connection: sqlite3.Connection,
     path: Path | None,
     *,
@@ -546,6 +767,25 @@ def revalidate_exact_current_profile_store(
         )
     ):
         raise ExactProfileStoreAuthorityError()
+
+
+def revalidate_exact_current_profile_store(
+    connection: sqlite3.Connection,
+    path: Path | None,
+    *,
+    deadline: OperationDeadline | None = None,
+    _delete_mode_partial_cleanup: bool = False,
+) -> None:
+    """Recheck the original remote proof and local directory before live use."""
+    if isinstance(connection, _NativeExactCurrentProfileConnection):
+        return _revalidate_native_exact_current_profile_store(
+            connection, path, _delete_mode_partial_cleanup=_delete_mode_partial_cleanup
+        )
+    if not isinstance(connection, _ExactCurrentProfileConnection):
+        return
+    if path is None or connection.selected != path:
+        raise ExactProfileStoreAuthorityError()
+    connection._revalidate(deadline or OperationDeadline(None))
 
 
 def _same_parent_authority(
@@ -670,128 +910,6 @@ def capture_post_init_profile_store_authority(
                 _native_close(_native, os, parent_fd)
 
 
-def _update_metadata_digest(digest: Any, value: object) -> None:
-    """Length-frame one SQLite scalar into an incremental digest."""
-
-    if value is None:
-        payload = b""
-        tag = b"n"
-    elif type(value) is int:
-        payload = str(value).encode("ascii")
-        tag = b"i"
-    elif type(value) is float:
-        payload = struct.pack(">d", value)
-        tag = b"f"
-    elif type(value) is str:
-        payload = value.encode("utf-8")
-        tag = b"s"
-    else:
-        raise _repository_error("corrupt_data")
-    digest.update(tag)
-    digest.update(len(payload).to_bytes(8, "big"))
-    digest.update(payload)
-
-
-def _stream_exact_store_metadata_evidence(
-    connection: sqlite3.Connection,
-) -> tuple[bytes, tuple[int, int, int]]:
-    """Stream bounded exact metadata evidence without retaining rows or blobs."""
-
-    statements = (
-        """
-        SELECT profile_id, display_name, normalized_name, provider_id,
-               model_id, voice_id, response_format, speed, options_json,
-               revision, created_at, updated_at
-        FROM tts_generation_profiles
-        ORDER BY profile_id
-        """,
-        """
-        SELECT source, authority_id, character_id, profile_id,
-               created_at, updated_at
-        FROM character_tts_assignments
-        ORDER BY source, authority_id, character_id
-        """,
-        f"""
-        SELECT profile_id, reference_id, sha256, byte_length,
-               length(wav_bytes), length(CAST(reference_text AS BLOB)),
-               duration_ms, sample_rate_hz, channels, sample_encoding,
-               created_at, updated_at, recipe_id, recipe_revision
-        FROM {_REFERENCE_TABLE}
-        ORDER BY profile_id
-        """,
-    )
-    digest = hashlib.sha256()
-    counts: list[int] = []
-    total = 0
-    for table_index, statement in enumerate(statements):
-        count = 0
-        digest.update(b"t" + table_index.to_bytes(1, "big"))
-        for row in connection.execute(statement):
-            count += 1
-            total += 1
-            if total > _MAX_EXACT_METADATA_ROWS:
-                raise _repository_error("corrupt_data")
-            digest.update(b"r")
-            for value in row:
-                _update_metadata_digest(digest, value)
-        counts.append(count)
-    return digest.digest(), (counts[0], counts[1], counts[2])
-
-
-def encode_uuid(value: UUID) -> str:
-    """Encode an exact UUID domain value as canonical SQLite text."""
-
-    if type(value) is not UUID:
-        raise _repository_error("corrupt_data")
-    return str(value)
-
-
-def decode_uuid(value: object) -> UUID:
-    """Decode canonical UUID text, failing closed for every other value."""
-
-    try:
-        if type(value) is not str:
-            raise ValueError
-        decoded = UUID(value)
-        if str(decoded) != value:
-            raise ValueError
-        return decoded
-    except Exception:
-        raise _repository_error("corrupt_data") from None
-
-
-def encode_utc_datetime(value: datetime) -> str:
-    """Encode an exact UTC datetime using fixed-width ISO-8601 microseconds."""
-
-    try:
-        if type(value) is not datetime or value.tzinfo is None:
-            raise ValueError
-        offset = value.utcoffset()
-        if offset is None or offset.total_seconds() != 0:
-            raise ValueError
-        return (
-            value.astimezone(UTC)
-            .isoformat(timespec="microseconds")
-            .replace("+00:00", "Z")
-        )
-    except Exception:
-        raise _repository_error("corrupt_data") from None
-
-
-def decode_utc_datetime(value: object) -> datetime:
-    """Decode only the canonical timestamp representation emitted above."""
-
-    try:
-        if type(value) is not str or not value.endswith("Z"):
-            raise ValueError
-        decoded = datetime.fromisoformat(f"{value[:-1]}+00:00")
-        if encode_utc_datetime(decoded) != value:
-            raise ValueError
-        return decoded
-    except Exception:
-        raise _repository_error("corrupt_data") from None
-
-
 def encode_options(options: JsonOptions) -> str:
     """Encode validated JSON options using the domain canonicalizer."""
 
@@ -799,37 +917,6 @@ def encode_options(options: JsonOptions) -> str:
         return canonical_json_options(options)
     except Exception:
         raise _repository_error("corrupt_data") from None
-
-
-def decode_options(value: object) -> FrozenJsonOptions:
-    """Decode, validate, freeze, and require canonical JSON object text."""
-
-    try:
-        if type(value) is not str:
-            raise ValueError
-        if len(value.encode("utf-8")) > _MAX_PERSISTED_OPTIONS_BYTES:
-            raise ValueError
-        parsed = json.loads(
-            value,
-            parse_constant=lambda _constant: (_ for _ in ()).throw(ValueError()),
-        )
-        if type(parsed) is not dict:
-            raise ValueError
-        canonical = canonical_json_options(parsed)
-        if canonical != value:
-            raise ValueError
-        # Reconstructing a draft/profile will freeze once more; returning the
-        # domain-canonicalized mapping here also makes this helper independently safe.
-        return _freeze_via_profile_options(parsed)
-    except Exception:
-        raise _repository_error("corrupt_data") from None
-
-
-def _freeze_via_profile_options(options: Mapping[str, object]) -> FrozenJsonOptions:
-    """Freeze options without duplicating Task 2's validation implementation."""
-
-    # Manually freeze the provided options using internal freezing logic
-    return _freeze_options(cast(JsonOptions, options))
 
 
 def encode_profile(profile: TTSGenerationProfile) -> dict[str, object]:
@@ -851,72 +938,6 @@ def encode_profile(profile: TTSGenerationProfile) -> dict[str, object]:
         "created_at": encode_utc_datetime(profile.created_at),
         "updated_at": encode_utc_datetime(profile.updated_at),
     }
-
-
-def _row_value(row: RowLike, column: str) -> object:
-    return row[column]
-
-
-def _decode_profile(row: RowLike, prefix: str) -> TTSGenerationProfile:
-    try:
-        display_name = _row_value(row, f"{prefix}display_name")
-        normalized_name = _row_value(row, f"{prefix}normalized_name")
-        provider_id = _row_value(row, f"{prefix}provider_id")
-        model_id = _row_value(row, f"{prefix}model_id")
-        voice_id = _row_value(row, f"{prefix}voice_id")
-        response_format = _row_value(row, f"{prefix}response_format")
-        speed = _row_value(row, f"{prefix}speed")
-        revision = _row_value(row, f"{prefix}revision")
-        if not all(
-            type(value) is str
-            for value in (
-                display_name,
-                normalized_name,
-                provider_id,
-                model_id,
-                response_format,
-            )
-        ):
-            raise ValueError
-        if voice_id is not None and type(voice_id) is not str:
-            raise ValueError
-        if type(speed) is not float or type(revision) is not int:
-            raise ValueError
-        display_name = cast(str, display_name)
-        response_format = cast(str, response_format)
-        if (
-            len(display_name) > _MAX_PERSISTED_DISPLAY_NAME_CHARACTERS
-            or len(response_format) > _MAX_PERSISTED_RESPONSE_FORMAT_CHARACTERS
-        ):
-            raise ValueError
-        profile = TTSGenerationProfile(
-            profile_id=decode_uuid(_row_value(row, f"{prefix}profile_id")),
-            display_name=display_name,
-            normalized_name=cast(str, normalized_name),
-            provider_id=cast(str, provider_id),
-            model_id=cast(str, model_id),
-            voice_id=cast(str | None, voice_id),
-            response_format=response_format,
-            speed=speed,
-            options=decode_options(_row_value(row, f"{prefix}options_json")),
-            revision=revision,
-            created_at=decode_utc_datetime(_row_value(row, f"{prefix}created_at")),
-            updated_at=decode_utc_datetime(_row_value(row, f"{prefix}updated_at")),
-        )
-        if (
-            profile.display_name != display_name
-            or profile.response_format != response_format
-        ):
-            raise ValueError
-        return profile
-    except Exception:
-        raise _repository_error("corrupt_data") from None
-
-
-def decode_profile(row: RowLike) -> TTSGenerationProfile:
-    """Decode and fully revalidate one profile persistence row."""
-
-    return _decode_profile(row, "")
 
 
 def encode_assignment(
@@ -943,451 +964,12 @@ def encode_assignment(
     }
 
 
-def _decode_assignment(row: RowLike, prefix: str) -> CharacterTTSAssignment:
-    try:
-        source = _row_value(row, f"{prefix}source")
-        authority_id = _row_value(row, f"{prefix}authority_id")
-        character_id = _row_value(row, f"{prefix}character_id")
-        if not all(
-            type(value) is str for value in (source, authority_id, character_id)
-        ):
-            raise ValueError
-        created_at = decode_utc_datetime(_row_value(row, f"{prefix}created_at"))
-        updated_at = decode_utc_datetime(_row_value(row, f"{prefix}updated_at"))
-        if created_at > updated_at:
-            raise ValueError
-        return CharacterTTSAssignment(
-            character_ref=CharacterRef(
-                source=cast(Literal["local", "server"], source),
-                authority_id=cast(str, authority_id),
-                character_id=cast(str, character_id),
-            ),
-            profile_id=decode_uuid(_row_value(row, f"{prefix}profile_id")),
-        )
-    except Exception:
-        raise _repository_error("corrupt_data") from None
-
-
-def decode_assignment(row: RowLike) -> CharacterTTSAssignment:
-    """Decode and fully revalidate one assignment persistence row."""
-
-    return _decode_assignment(row, "")
-
-
-def decode_assigned_snapshot(row: RowLike) -> AssignedTTSProfileSnapshot:
-    """Decode a joined row using the documented deterministic aliases."""
-
-    try:
-        return AssignedTTSProfileSnapshot(
-            assignment=_decode_assignment(row, "assignment_"),
-            profile=_decode_profile(row, "profile_"),
-        )
-    except Exception:
-        raise _repository_error("corrupt_data") from None
-
-
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_v0_to_v1,
     1: _migrate_v1_to_v2,
     2: _migrate_v2_to_v3,
     3: _migrate_v3_to_v4,
 }
-
-
-def _configure_connection(connection: sqlite3.Connection) -> None:
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-        raise _repository_error("schema_corrupt")
-    connection.execute("PRAGMA busy_timeout = 5000")
-    if connection.execute("PRAGMA busy_timeout").fetchone()[0] != BUSY_TIMEOUT_MS:
-        raise _repository_error("schema_corrupt")
-
-
-def _user_tables(connection: sqlite3.Connection) -> set[str]:
-    return {
-        row[0]
-        for row in connection.execute(
-            """
-            SELECT name FROM sqlite_schema
-            WHERE type = 'table' AND name NOT GLOB 'sqlite_*'
-            """
-        )
-    }
-
-
-def _user_schema_objects(connection: sqlite3.Connection) -> set[tuple[str, str]]:
-    return {
-        (row[0], row[1])
-        for row in connection.execute(
-            """
-            SELECT type, name FROM sqlite_schema
-            WHERE lower(substr(name, 1, 7)) != 'sqlite_'
-            """
-        )
-    }
-
-
-def _normalized_ddl(sql: str) -> str:
-    return " ".join(sql.split())
-
-
-def _validated_quoted_identifier(identifier: object, identifier_kind: str) -> str:
-    if type(identifier) is not str:
-        raise ValueError
-    exact_identifier = cast(str, identifier)
-    if not validate_identifier(exact_identifier, identifier_kind):
-        raise ValueError
-    return escape_identifier(exact_identifier)
-
-
-def _validate_owned_schema_sql(
-    connection: sqlite3.Connection, *, schema_version: int
-) -> None:
-    expected = {
-        ("table", PROFILE_TABLE): _normalized_ddl(_PROFILE_TABLE_DDL),
-        ("table", ASSIGNMENT_TABLE): _normalized_ddl(_ASSIGNMENT_TABLE_DDL),
-        ("index", ASSIGNMENT_PROFILE_INDEX): _normalized_ddl(
-            _ASSIGNMENT_PROFILE_INDEX_DDL
-        ),
-    }
-    if schema_version in (3, 4):
-        expected[("table", _REFERENCE_TABLE)] = _normalized_ddl(
-            _REFERENCE_TABLE_DDL if schema_version == 3 else _V4_REFERENCE_TABLE_DDL
-        )
-        expected[("index", _REFERENCE_ID_INDEX)] = _normalized_ddl(
-            _REFERENCE_ID_INDEX_DDL
-            if schema_version == 3
-            else _V4_REFERENCE_ID_INDEX_DDL
-        )
-    actual: dict[tuple[str, str], str] = {}
-    for row in connection.execute(
-        """
-        SELECT type, name, sql
-        FROM sqlite_schema
-        WHERE name NOT GLOB 'sqlite_*'
-        """
-    ):
-        if (
-            type(row["type"]) is not str
-            or type(row["name"]) is not str
-            or type(row["sql"]) is not str
-        ):
-            raise ValueError
-        actual[(row["type"], row["name"])] = _normalized_ddl(row["sql"])
-    if actual != expected:
-        raise ValueError
-
-
-def _table_xinfo_manifest(
-    connection: sqlite3.Connection, table: str
-) -> list[tuple[int, str, str, int, object, int, int]]:
-    quoted_table = _validated_quoted_identifier(table, "table name")
-    return [
-        (
-            row["cid"],
-            row["name"],
-            row["type"],
-            row["notnull"],
-            row["dflt_value"],
-            row["pk"],
-            row["hidden"],
-        )
-        for row in connection.execute(f"PRAGMA table_xinfo({quoted_table})")
-    ]
-
-
-def _has_exact_binary_index_keys(
-    connection: sqlite3.Connection, index: str, columns: tuple[str, ...]
-) -> bool:
-    quoted_index = _validated_quoted_identifier(index, "index name")
-    key_rows = [
-        row
-        for row in connection.execute(f"PRAGMA index_xinfo({quoted_index})")
-        if row["key"] == 1
-    ]
-    return [(row["name"], row["desc"], row["coll"]) for row in key_rows] == [
-        (column, 0, "BINARY") for column in columns
-    ]
-
-
-def _has_exact_primary_key_index(
-    connection: sqlite3.Connection, table: str, columns: tuple[str, ...]
-) -> bool:
-    quoted_table = _validated_quoted_identifier(table, "table name")
-    primary_indexes = [
-        row
-        for row in connection.execute(f"PRAGMA index_list({quoted_table})")
-        if row["origin"] == "pk"
-    ]
-    return (
-        len(primary_indexes) == 1
-        and primary_indexes[0]["unique"] == 1
-        and primary_indexes[0]["partial"] == 0
-        and _has_exact_binary_index_keys(
-            connection, primary_indexes[0]["name"], columns
-        )
-    )
-
-
-def _run_with_deadline_progress(
-    connection: sqlite3.Connection,
-    check_deadline: Callable[[], None] | None,
-    operation: Callable[[], None],
-) -> None:
-    """Run SQLite work with cooperative deadline interruption when requested."""
-
-    if check_deadline is None:
-        operation()
-        return
-
-    callback_error: BaseException | None = None
-    body_error: BaseException | None = None
-    cleanup_error: BaseException | None = None
-    progress_installed = False
-
-    def interrupt_after_deadline() -> int:
-        nonlocal callback_error
-        try:
-            check_deadline()
-        except BaseException as error:
-            callback_error = error
-            return 1
-        return 0
-
-    try:
-        check_deadline()
-        connection.set_progress_handler(
-            interrupt_after_deadline,
-            _DEADLINE_PROGRESS_OPCODE_INTERVAL,
-        )
-        progress_installed = True
-        operation()
-        check_deadline()
-    except BaseException as error:
-        body_error = error
-
-    if progress_installed:
-        try:
-            connection.set_progress_handler(None, 0)
-        except BaseException as error:
-            cleanup_error = error
-
-    if callback_error is not None:
-        body_error = callback_error
-    for candidate_error in (body_error, cleanup_error):
-        if candidate_error is not None and not isinstance(candidate_error, Exception):
-            raise candidate_error
-    if cleanup_error is not None:
-        raise cleanup_error
-    if body_error is not None:
-        raise body_error
-
-
-def _validate_schema(
-    connection: sqlite3.Connection,
-    *,
-    expected_version: int | None = None,
-    check_deadline: Callable[[], None] | None = None,
-) -> None:
-    """Validate every required structural and integrity invariant.
-
-    Versions one and two share the legacy manifest. Version three additionally
-    owns the exact private clone-reference table and unique reference index.
-    """
-
-    try:
-        version = (
-            connection.execute("PRAGMA user_version").fetchone()[0]
-            if expected_version is None
-            else expected_version
-        )
-        if type(version) is not int or version not in (1, 2, 3, 4):
-            raise ValueError
-        _run_with_deadline_progress(
-            connection,
-            check_deadline,
-            lambda: _validate_schema_body(connection, schema_version=version),
-        )
-    except ProfileRepositoryError:
-        raise
-    except BaseException as error:
-        if not isinstance(error, Exception):
-            raise
-        raise _repository_error("schema_corrupt") from None
-
-
-def _validate_schema_body(
-    connection: sqlite3.Connection, *, schema_version: int
-) -> None:
-    """Validate schema invariants while any caller-owned progress hook is active."""
-
-    try:
-        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-            raise ValueError
-        expected_tables = {PROFILE_TABLE, ASSIGNMENT_TABLE}
-        if schema_version in (3, 4):
-            expected_tables.add(_REFERENCE_TABLE)
-        if _user_tables(connection) != expected_tables:
-            raise ValueError
-        _validate_owned_schema_sql(connection, schema_version=schema_version)
-
-        if _table_xinfo_manifest(connection, PROFILE_TABLE) != [
-            (0, "profile_id", "TEXT", 0, None, 1, 0),
-            (1, "display_name", "TEXT", 1, None, 0, 0),
-            (2, "normalized_name", "TEXT", 1, None, 0, 0),
-            (3, "provider_id", "TEXT", 1, None, 0, 0),
-            (4, "model_id", "TEXT", 1, None, 0, 0),
-            (5, "voice_id", "TEXT", 0, None, 0, 0),
-            (6, "response_format", "TEXT", 1, None, 0, 0),
-            (7, "speed", "REAL", 1, None, 0, 0),
-            (8, "options_json", "TEXT", 1, None, 0, 0),
-            (9, "revision", "INTEGER", 1, None, 0, 0),
-            (10, "created_at", "TEXT", 1, None, 0, 0),
-            (11, "updated_at", "TEXT", 1, None, 0, 0),
-        ]:
-            raise ValueError
-        if not _has_exact_primary_key_index(connection, PROFILE_TABLE, ("profile_id",)):
-            raise ValueError
-
-        profile_indexes = list(
-            connection.execute("PRAGMA index_list(tts_generation_profiles)")
-        )
-        normalized_indexes = [row for row in profile_indexes if row["origin"] == "u"]
-        if (
-            len(profile_indexes) != 2
-            or len(normalized_indexes) != 1
-            or normalized_indexes[0]["unique"] != 1
-            or normalized_indexes[0]["partial"] != 0
-            or not _has_exact_binary_index_keys(
-                connection, normalized_indexes[0]["name"], ("normalized_name",)
-            )
-        ):
-            raise ValueError
-        if list(connection.execute("PRAGMA foreign_key_list(tts_generation_profiles)")):
-            raise ValueError
-
-        if _table_xinfo_manifest(connection, ASSIGNMENT_TABLE) != [
-            (0, "source", "TEXT", 1, None, 1, 0),
-            (1, "authority_id", "TEXT", 1, None, 2, 0),
-            (2, "character_id", "TEXT", 1, None, 3, 0),
-            (3, "profile_id", "TEXT", 1, None, 0, 0),
-            (4, "created_at", "TEXT", 1, None, 0, 0),
-            (5, "updated_at", "TEXT", 1, None, 0, 0),
-        ]:
-            raise ValueError
-        if not _has_exact_primary_key_index(
-            connection,
-            ASSIGNMENT_TABLE,
-            ("source", "authority_id", "character_id"),
-        ):
-            raise ValueError
-
-        assignment_index_rows = list(
-            connection.execute("PRAGMA index_list(character_tts_assignments)")
-        )
-        assignment_indexes = {row["name"]: row for row in assignment_index_rows}
-        profile_index = assignment_indexes.get(ASSIGNMENT_PROFILE_INDEX)
-        if (
-            len(assignment_index_rows) != 2
-            or profile_index is None
-            or profile_index["origin"] != "c"
-            or profile_index["partial"] != 0
-            or profile_index["unique"] != 0
-            or not _has_exact_binary_index_keys(
-                connection, ASSIGNMENT_PROFILE_INDEX, ("profile_id",)
-            )
-        ):
-            raise ValueError
-
-        foreign_keys = list(
-            connection.execute("PRAGMA foreign_key_list(character_tts_assignments)")
-        )
-        if len(foreign_keys) != 1:
-            raise ValueError
-        foreign_key = foreign_keys[0]
-        if (
-            foreign_key["table"],
-            foreign_key["from"],
-            foreign_key["to"],
-            foreign_key["on_delete"],
-        ) != (PROFILE_TABLE, "profile_id", "profile_id", "RESTRICT"):
-            raise ValueError
-
-        if schema_version in (3, 4):
-            quoted_reference_table = _validated_quoted_identifier(
-                _REFERENCE_TABLE,
-                "table name",
-            )
-            expected_reference_manifest = [
-                (0, "profile_id", "TEXT", 0, None, 1, 0),
-                (1, "reference_id", "TEXT", 1, None, 0, 0),
-                (2, "wav_bytes", "BLOB", 1, None, 0, 0),
-                (3, "reference_text", "TEXT", 1, None, 0, 0),
-                (4, "sha256", "TEXT", 1, None, 0, 0),
-                (5, "byte_length", "INTEGER", 1, None, 0, 0),
-                (6, "duration_ms", "INTEGER", 1, None, 0, 0),
-                (7, "sample_rate_hz", "INTEGER", 1, None, 0, 0),
-                (8, "channels", "INTEGER", 1, None, 0, 0),
-                (9, "sample_encoding", "TEXT", 1, None, 0, 0),
-                (10, "created_at", "TEXT", 1, None, 0, 0),
-                (11, "updated_at", "TEXT", 1, None, 0, 0),
-            ]
-            if schema_version == 4:
-                expected_reference_manifest.extend(
-                    [
-                        (12, "recipe_id", "TEXT", 0, None, 0, 0),
-                        (13, "recipe_revision", "INTEGER", 0, None, 0, 0),
-                    ]
-                )
-            if (
-                _table_xinfo_manifest(connection, _REFERENCE_TABLE)
-                != expected_reference_manifest
-            ):
-                raise ValueError
-            if not _has_exact_primary_key_index(
-                connection, _REFERENCE_TABLE, ("profile_id",)
-            ):
-                raise ValueError
-            reference_index_rows = list(
-                connection.execute(f"PRAGMA index_list({quoted_reference_table})")
-            )
-            reference_indexes = {row["name"]: row for row in reference_index_rows}
-            reference_id_index = reference_indexes.get(_REFERENCE_ID_INDEX)
-            if (
-                len(reference_index_rows) != 2
-                or reference_id_index is None
-                or reference_id_index["origin"] != "c"
-                or reference_id_index["partial"] != 0
-                or reference_id_index["unique"] != 1
-                or not _has_exact_binary_index_keys(
-                    connection, _REFERENCE_ID_INDEX, ("reference_id",)
-                )
-            ):
-                raise ValueError
-            reference_foreign_keys = list(
-                connection.execute(f"PRAGMA foreign_key_list({quoted_reference_table})")
-            )
-            if len(reference_foreign_keys) != 1:
-                raise ValueError
-            reference_foreign_key = reference_foreign_keys[0]
-            if (
-                reference_foreign_key["table"],
-                reference_foreign_key["from"],
-                reference_foreign_key["to"],
-                reference_foreign_key["on_delete"],
-            ) != (PROFILE_TABLE, "profile_id", "profile_id", "CASCADE"):
-                raise ValueError
-
-        quick_check = [row[0] for row in connection.execute("PRAGMA quick_check")]
-        if quick_check != ["ok"]:
-            raise ValueError
-        if list(connection.execute("PRAGMA foreign_key_check")):
-            raise ValueError
-    except ProfileRepositoryError:
-        raise
-    except Exception:
-        raise _repository_error("schema_corrupt") from None
 
 
 def _validate_full_integrity(connection: sqlite3.Connection) -> None:
@@ -1430,16 +1012,44 @@ def _migration_domain_snapshot(
     return profiles, assignments
 
 
-def _migration_reference_snapshot(
+def _migration_reference_evidence(
     connection: sqlite3.Connection,
 ) -> tuple[tuple[object, ...], ...]:
-    """Capture every schema-v3 reference field in deterministic order."""
+    """Project every reference field except the WAV payload, in row order.
+
+    The projection is deliberately payload-free (TASK-21130): selecting
+    ``wav_bytes`` here materialised the whole reference table in Python, and
+    the migration held two such projections at once -- measured at 966 MiB of
+    peak allocation for a store at the 512 MiB
+    :data:`~tldw_chatbook.TTS.profile_reference_types.MAX_REFERENCE_TOTAL_BYTES`
+    bound, against this subsystem's own 256 KiB streaming norm.
+
+    Byte-for-byte payload identity is still proved, by transitivity rather
+    than by retention: the stored ``sha256`` column travels in this projection
+    verbatim, and :func:`_validate_migration_reference_rows` re-derives
+    ``sha256(wav_bytes)`` from the streamed BLOB and requires it to equal that
+    column on *both* sides of the migration (see
+    ``TTSCloneReference.__post_init__``). So ``blob_before == sha_before``,
+    ``sha_before == sha_after`` (this projection), ``sha_after == blob_after``
+    together give ``blob_before == blob_after``, and any caller comparing two
+    of these projections must run that validation at both boundaries.
+
+    ``reference_text`` is replaced by its UTF-8 length and digest so the
+    evidence retains no private transcript either; the same shape is used for
+    the downgrade-boundary evidence in ``profile_migration_candidate``.
+    """
 
     return tuple(
-        tuple(row)
+        (
+            row[0],
+            row[1],
+            len(row[2].encode("utf-8")),
+            hashlib.sha256(row[2].encode("utf-8")).hexdigest(),
+            *tuple(row[3:]),
+        )
         for row in connection.execute(
             f"""
-            SELECT profile_id, reference_id, wav_bytes, reference_text, sha256,
+            SELECT profile_id, reference_id, reference_text, sha256,
                    byte_length, duration_ms, sample_rate_hz, channels,
                    sample_encoding, created_at, updated_at
             FROM {_REFERENCE_TABLE}
@@ -1566,10 +1176,14 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
         domain_snapshot = (
             ((), ()) if from_version == 0 else _migration_domain_snapshot(connection)
         )
-        reference_snapshot: tuple[tuple[object, ...], ...] = ()
+        reference_evidence: tuple[tuple[object, ...], ...] = ()
         if from_version >= 3:
+            # First link of the payload-identity chain: this proves
+            # sha256(wav_bytes) == the sha256 column for every row BEFORE the
+            # migration. The evidence captured on the next line then carries
+            # that column (never the payload) across the climb.
             _validate_migration_reference_rows(connection, schema_version=from_version)
-            reference_snapshot = _migration_reference_snapshot(connection)
+            reference_evidence = _migration_reference_evidence(connection)
         while version < CURRENT_PROFILE_SCHEMA_VERSION:
             if version == 2:
                 validate_profile_store_rows(connection)
@@ -1598,9 +1212,13 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
             raise RuntimeError
         if _migration_domain_snapshot(connection) != domain_snapshot:
             raise RuntimeError
-        if _migration_reference_snapshot(connection) != reference_snapshot:
+        if _migration_reference_evidence(connection) != reference_evidence:
             raise RuntimeError
         validate_profile_store_rows(connection)
+        # Closing link of the payload-identity chain: re-derives
+        # sha256(wav_bytes) from the streamed BLOB and requires it to equal
+        # the sha256 column the evidence above just proved unchanged. Neither
+        # side ever holds more than one payload at a time.
         _validate_migration_reference_rows(
             connection,
             schema_version=CURRENT_PROFILE_SCHEMA_VERSION,
@@ -1659,7 +1277,7 @@ def peek_profile_store_schema_version(path: Path) -> int | None:
                 pass
 
 
-def open_exact_current_profile_store(
+def _open_native_exact_current_profile_store(
     path: Path,
     *,
     expected_post_init_authority: PostInitProfileStoreAuthority | None = None,
@@ -1674,7 +1292,7 @@ def open_exact_current_profile_store(
     sidecar_identities: dict[str, os.stat_result] = {}
     descriptor: sqlite3.Connection | None = None
     live: sqlite3.Connection | None = None
-    owned = _ExactCurrentProfileConnection(
+    owned = _NativeExactCurrentProfileConnection(
         None,
         evidence_connection=None,
         selected=path,
@@ -1866,6 +1484,191 @@ def open_exact_current_profile_store(
     raise _repository_error("schema_corrupt") from None
 
 
+def _open_helper_exact_current_profile_store(
+    path: Path,
+    *,
+    expected_post_init_authority: PostInitProfileStoreAuthority | None = None,
+    deadline: OperationDeadline | None = None,
+) -> sqlite3.Connection:
+    """Admit current live SQLite with remote proof and one reserved envelope."""
+    cleanup_error: ExactProfileStoreCleanupError | None = None
+    try:
+        if not isinstance(path, Path) or not path.is_absolute():
+            raise _repository_error("operation_failed")
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            raise ExactProfileStoreNotCurrentError() from None
+        deadline = deadline or OperationDeadline(time.monotonic() + 30.0)
+        parent_fd = -1
+        owned: _ExactCurrentProfileConnection | None = None
+        body_error: BaseException | None = None
+        with HELPER_ADMISSION.reserve(
+            transient=1, retained=1, deadline=deadline
+        ) as reservation:
+            helper = HelperLease.start(
+                PrepareRequest(str(path), False, False, False),
+                operation="tts_exact_current",
+                reservation=reservation,
+                deadline=deadline,
+            )
+            try:
+                response = helper.initial_response
+                if response["status"] != "ok":
+                    if response.get("reason") == "exact_not_current":
+                        raise ExactProfileStoreNotCurrentError()
+                    raise _repository_error(response.get("reason", "operation_failed"))
+                identity = validate_tts_identity(response["identity"])
+                parent_fd, _leaf = private_paths._open_verified_parent(
+                    path, missing_leaf_allowed=False
+                )
+                expected = expected_post_init_authority
+                main = FileIdentity.from_payload(identity["main"])
+                parent = FileIdentity.from_payload(identity["parent"])
+                if expected is not None:
+                    expected_main = FileIdentity.from_stat(expected.file_identity)
+                    expected_parent = FileIdentity.from_stat(expected.parent_identity)
+                    if (
+                        not main.same_inode(expected_main)
+                        or main.size != expected_main.size
+                        or (parent.dev, parent.ino, parent.mode, parent.uid, parent.gid)
+                        != (
+                            expected_parent.dev,
+                            expected_parent.ino,
+                            expected_parent.mode,
+                            expected_parent.uid,
+                            expected_parent.gid,
+                        )
+                    ):
+                        raise ExactProfileStoreAuthorityError()
+                live = _connect_registered_sqlite(
+                    "tts.profile_store",
+                    path,
+                    must_exist=True,
+                    expected_identity=main,
+                    isolation_level=None,
+                    operation_deadline=deadline.expires_at,
+                    reservation=reservation,
+                )
+                # Ownership exists before even policy configuration can fail.
+                owned = _ExactCurrentProfileConnection(
+                    live,
+                    selected=path,
+                    parent_fd=parent_fd,
+                    helper=helper,
+                    identity=identity,
+                )
+                parent_fd = -1
+                configure_native_close_policy(live)
+                owned._revalidate(deadline)
+                live.execute("PRAGMA query_only = ON")
+                if live.execute("PRAGMA query_only").fetchone()[0] != 1:
+                    raise _repository_error("schema_corrupt")
+                live.execute("PRAGMA user_version").fetchone()
+                if live.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+                    raise ExactProfileStoreNotCurrentError()
+                owned._wal_acquired = True
+                owned._revalidate(deadline)
+                _configure_connection(cast(sqlite3.Connection, owned))
+                if (
+                    owned.execute("PRAGMA user_version").fetchone()[0]
+                    != CURRENT_PROFILE_SCHEMA_VERSION
+                ):
+                    raise _repository_error("schema_partial")
+                check = lambda: deadline.remaining(30.0)
+                _validate_schema(cast(sqlite3.Connection, owned), check_deadline=check)
+                validate_profile_store_rows(
+                    cast(sqlite3.Connection, owned), check_deadline=check
+                )
+                owned.execute("BEGIN")
+                _run_with_deadline_progress(
+                    cast(sqlite3.Connection, owned),
+                    check,
+                    lambda: _stream_exact_store_metadata_evidence(
+                        cast(sqlite3.Connection, owned)
+                    ),
+                )
+                owned._revalidate(deadline)
+                if (
+                    expected is not None
+                    and owned._file_identity.size != expected.file_identity.st_size
+                ):
+                    raise ExactProfileStoreAuthorityError()
+                owned.rollback()
+                owned._revalidate(deadline)
+                owned.execute("PRAGMA query_only = OFF")
+                if owned.execute("PRAGMA query_only").fetchone()[0] != 0:
+                    raise _repository_error("schema_corrupt")
+                owned._revalidate(deadline)
+            except BaseException as error:  # noqa: BLE001 - settle complete ownership before redelivering control flow
+                body_error = error
+            if body_error is not None and owned is not None:
+                try:
+                    owned.close()
+                except BaseException as error:  # noqa: BLE001 - preserve the earliest control signal and live owner
+                    cleanup_error = ExactProfileStoreCleanupError(owned)
+                    if isinstance(body_error, Exception):
+                        body_error = (
+                            error
+                            if not isinstance(error, Exception)
+                            or isinstance(error, ExactProfileStoreProofLostError)
+                            else cleanup_error
+                        )
+            if owned is not None and not owned._sqlite_closed and not owned._proof_lost:
+                # Settle the transient child before transferring this complete owner.
+                # Do not raise inside the reservation: its exceptional exit would
+                # otherwise reap healthy retained proof needed for close retry.
+                reservation.handoff_retained(helper)
+            if parent_fd >= 0:
+                os.close(parent_fd)
+        if body_error is not None:
+            if not isinstance(body_error, Exception) or isinstance(
+                body_error, ProfileRepositoryError
+            ):
+                raise body_error
+            raise _repository_error("schema_corrupt") from None
+        assert owned is not None
+        return cast(sqlite3.Connection, owned)
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            _carry_exact_profile_cleanup(error, cleanup_error)
+        raise
+
+
+def open_exact_current_profile_store(
+    path: Path,
+    *,
+    expected_post_init_authority: PostInitProfileStoreAuthority | None = None,
+    deadline: OperationDeadline | None = None,
+) -> sqlite3.Connection:
+    """Admit the complete proof owner before opening helper or native resources."""
+    if private_paths._WINDOWS_PLATFORM:
+        return _open_native_exact_current_profile_store(
+            path, expected_post_init_authority=expected_post_init_authority
+        )
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+    lease = acquire_storage(path)
+    try:
+        connection = _open_helper_exact_current_profile_store(
+            path, expected_post_init_authority=expected_post_init_authority,
+            deadline=deadline,
+        )
+    except BaseException as error:
+        cleanup = _exact_profile_store_cleanup_error(error)
+        retained = (
+            error.connection if isinstance(error, ExactProfileStoreProofLostError)
+            else cleanup.connection if cleanup is not None else None
+        )
+        if retained is not None:
+            retained._backup_lease = lease
+        else:
+            lease.close()
+        raise
+    connection._backup_lease = lease
+    return connection
+
+
 def open_profile_store(
     path: Path,
     *,
@@ -2018,44 +1821,6 @@ def open_profile_store(
     if isinstance(body_error, ProfileRepositoryError):
         raise body_error
     raise _repository_error("schema_corrupt") from None
-
-
-def validate_profile_store_rows(
-    connection: sqlite3.Connection,
-    *,
-    check_deadline: Callable[[], None] | None = None,
-) -> None:
-    """Decode every schema-owned profile, assignment, and joined snapshot row.
-
-    Args:
-        connection: Caller-owned connection to a validated profile-store schema.
-
-    Raises:
-        ProfileRepositoryError: If any persisted domain value fails closed.
-        BaseException: A caller control-flow signal preserved unchanged.
-    """
-
-    try:
-        if check_deadline is not None:
-            check_deadline()
-        for row in connection.execute("SELECT * FROM tts_generation_profiles"):
-            if check_deadline is not None:
-                check_deadline()
-            decode_profile(row)
-        for row in connection.execute("SELECT * FROM character_tts_assignments"):
-            if check_deadline is not None:
-                check_deadline()
-            decode_assignment(row)
-        for row in connection.execute(ASSIGNED_PROFILE_JOIN_SELECT):
-            if check_deadline is not None:
-                check_deadline()
-            decode_assigned_snapshot(row)
-        if check_deadline is not None:
-            check_deadline()
-    except ProfileRepositoryError:
-        raise
-    except Exception:
-        raise _repository_error("corrupt_data") from None
 
 
 def validate_profile_store_version(
@@ -2233,6 +1998,7 @@ class _CandidateValidationJob:
         self.leases = []
         self.descriptors: dict[str, int] = {}
         self.connections: dict[str, sqlite3.Connection] = {}
+        self.sqlite_close_failures: dict[str, BaseException] = {}
         self.attempted: set[str] = set()
         self.directory: Path | None = None
         self.directory_identity: tuple[int, int] | None = None
@@ -2340,6 +2106,26 @@ class _CandidateValidationJob:
         _close_candidate_fd(self.descriptors[role])
         del self.descriptors[role]
 
+    def close(self) -> None:
+        """Retry only retained SQLite closes; uncertain fd numbers are never reused."""
+        retry_errors = tuple(self.sqlite_close_failures.values())
+        if self.allocation_pending or any(
+            all(error is not retry for retry in retry_errors)
+            for error in self.cleanup_errors
+        ):
+            raise _repository_error("schema_corrupt")
+        for role in self.sqlite_close_failures:
+            self.attempted.discard(role)
+        self.cleanup_errors.clear()
+        self.sqlite_close_failures.clear()
+        self.uncertain = False
+        cleanup = self.cleanup(None)
+        cleanup.raise_control_flow()
+        if self.connections:
+            _raise_migration_cleanup_failure(self, *self.cleanup_errors)
+        if cleanup.ordinary_cleanup_failed or self.uncertain:
+            raise _repository_error("schema_corrupt")
+
     def cleanup(self, body_error: BaseException | None) -> _CleanupState:
         if self.body_error is None:
             self.body_error = body_error
@@ -2364,10 +2150,20 @@ class _CandidateValidationJob:
                     if role in self.attempted:
                         raise ValueError
                     self.attempted.add(role)
-                    self.connections[role].close()
+                    try:
+                        self.connections[role].close()
+                    except BaseException as error:
+                        self.sqlite_close_failures[role] = error
+                        raise
                     del self.connections[role]
 
                 attempt(close_connection)
+                if role in self.connections:
+                    return cleanup
+        if self.connections:
+            # Every file/directory pin remains owned while any SQLite view can
+            # still hold a native lock or escaped alias.
+            return cleanup
         for role in ("snapshot", "source"):
             if role in self.descriptors:
                 attempt(lambda role=role: self.close_descriptor(role))
@@ -2437,6 +2233,11 @@ def validate_profile_candidate(
     except BaseException as error:
         body_error = error
     cleanup = job.cleanup(body_error)
+    if job.connections:
+        _raise_migration_cleanup_failure(
+            job, body_error, *job.cleanup_errors,
+            code=body_error.code if isinstance(body_error, ProfileRepositoryError) else "schema_corrupt",
+        )
     cleanup.raise_control_flow()
     if body_error is not None:
         raise body_error

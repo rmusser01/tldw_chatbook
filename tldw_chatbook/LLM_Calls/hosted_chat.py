@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import OwnedSSEStream, SSERecord
+from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
 
@@ -40,6 +41,8 @@ _MAX_METADATA_CHARS = 4 * 1024
 _MAX_TOOL_CALLS = 128
 _JSON_DECODE_FAILED = object()
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+ReasoningDisposition = Literal["displayable", "proprietary", "ignored"]
 
 
 class HostedChatBaseURLValidationError(ValueError):
@@ -68,6 +71,8 @@ def _same_json_value(left: object, right: object) -> bool:
 
 class HostedChatFinishPolicy(Protocol):
     """Provider-owned finish and reasoning validation policy."""
+
+    reasoning_disposition: ReasoningDisposition
 
     def validate_finish(
         self,
@@ -533,7 +538,7 @@ def owned_json_post(
 
     retries = llm_retry_count(max(0, config.retries))
     url = f"{base_url}/{route}"
-    session = requests.Session()
+    session = create_default_session()
     response: requests.Response | None = None
     stream_owns_session = False
     try:

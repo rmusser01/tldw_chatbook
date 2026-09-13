@@ -1,0 +1,7 @@
+diff --git a/modules/audio_processing/aec3/reverb_model_estimator.h b/modules/audio_processing/aec3/reverb_model_estimator.h
+--- a/modules/audio_processing/aec3/reverb_model_estimator.h
++++ b/modules/audio_processing/aec3/reverb_model_estimator.h
+@@ -14,2 +14,3 @@
+ #include <array>
++#include <memory>
+ #include <vector>

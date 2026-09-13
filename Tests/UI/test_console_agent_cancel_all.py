@@ -37,6 +37,7 @@ from Tests.UI.test_console_parallel_runs import (
     _assert_widget_and_ancestors_displayed,
 )
 from Tests.UI.test_destination_shells import _build_test_app
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -88,6 +89,7 @@ async def test_cancel_all_paints_while_a_live_child_exists():
     bridge = _CancelAllFleetBridge(coordinator)
 
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -107,6 +109,7 @@ async def test_cancel_all_does_not_paint_with_no_live_rows():
     bridge = _CancelAllFleetBridge(coordinator)
 
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -126,6 +129,7 @@ async def test_cancel_all_does_not_paint_with_no_fleet_at_all():
     bridge = _CancelAllFleetBridge(coordinator)
 
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -146,6 +150,7 @@ async def test_pressing_cancel_all_reaches_the_bridge_once_and_clears_the_afford
     bridge = _CancelAllFleetBridge(coordinator)
 
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -176,6 +181,7 @@ async def test_cancel_all_and_the_steering_bar_hide_together_after_cancel_all():
     bridge = _CancelAllFleetBridge(coordinator)
 
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)

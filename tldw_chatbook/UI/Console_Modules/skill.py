@@ -175,15 +175,30 @@ class ConsoleSkillController:
 
     def _set_console_pending_skill_install(
         self, payload: dict[str, Any] | None
-    ) -> None:
+    ) -> bool:
         """Replace only the pending skill-install task state."""
         current = self._task_resume_state()
-        self._set_task_resume_state(replace(current, pending_skill_install=payload))
+        return bool(
+            self._set_task_resume_state(
+                replace(current, pending_skill_install=payload)
+            )
+        )
 
-    def _set_console_pending_skill_script(self, payload: dict[str, Any] | None) -> None:
+    def _set_console_pending_skill_script(self, payload: dict[str, Any] | None) -> bool:
         """Replace only the pending skill-script task state."""
         current = self._task_resume_state()
-        self._set_task_resume_state(replace(current, pending_skill_script=payload))
+        return bool(
+            self._set_task_resume_state(
+                replace(current, pending_skill_script=payload)
+            )
+        )
+
+    def _set_console_pending_chat_create(
+        self, payload: dict[str, Any] | None
+    ) -> None:
+        """Replace only the pending chat-create task state."""
+        current = self._task_resume_state()
+        self._set_task_resume_state(replace(current, pending_chat_create=payload))
 
     def handle_console_skill_install_decided(
         self, allow: bool, request_id: str | None
@@ -211,5 +226,21 @@ class ConsoleSkillController:
         controller = self._current_chat_controller()
         if controller is not None:
             controller.resolve_pending_skill_script(
+                allow, remember, request_id=request_id
+            )
+
+    def handle_console_chat_create_decided(
+        self, allow: bool, remember: bool, request_id: str | None
+    ) -> None:
+        """Forward a chat-create decision to the current chat controller.
+
+        Args:
+            allow: Whether the user approved creating the chat.
+            remember: Whether to also grant standing session permission.
+            request_id: Identifier of the pending confirmation round.
+        """
+        controller = self._current_chat_controller()
+        if controller is not None:
+            controller.resolve_pending_chat_create(
                 allow, remember, request_id=request_id
             )

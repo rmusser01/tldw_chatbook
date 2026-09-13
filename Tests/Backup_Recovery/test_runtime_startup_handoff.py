@@ -194,3 +194,80 @@ print('retired and reopened')
 @pytest.mark.parametrize("outcome", ["resume", "cancel"])
 def test_native_intent_monitor_settles_actual_app_and_reopens(tmp_path, outcome):
     _run(tmp_path, "monitor", outcome, script=_MONITOR_SCRIPT)
+
+
+_SHUTDOWN_SCRIPT = r"""
+import asyncio,sys,threading
+from Tests.network_guard import install
+install()
+for name in ('sounddevice','pyaudio'):sys.modules[name]=None
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Backup_Recovery import storage_admission as storage,participants
+from tldw_chatbook.Backup_Recovery.runtime_maintenance import monitor_app
+
+async def main():
+ app=TldwCli()
+ startup=next(iter(storage._startups.values()))
+ holder=storage._holds[startup._key]
+ entered,release=threading.Event(),threading.Event()
+ errors=[]
+ def capture():
+  try:
+   with holder.authority.maintenance(holder.names,10):
+    entered.set()
+    assert release.wait(10)
+  except BaseException as error:errors.append(error)
+ monitoring=asyncio.create_task(monitor_app(app))
+ app._backup_maintenance_monitor_task=monitoring
+ worker=threading.Thread(target=capture)
+ worker.start()
+ shutdown=None
+ try:
+  for _ in range(500):
+   if entered.is_set() or errors:break
+   await asyncio.sleep(.01)
+  assert entered.is_set(),errors
+  shutdown=asyncio.create_task(app._shutdown_app_owned_lifecycles())
+  for _ in range(500):
+   if monitoring.cancelling() or shutdown.done() or app.file_notes_session_owner._shutdown:break
+   await asyncio.sleep(.01)
+  assert monitoring.cancelling(),'terminal owner shutdown preceded maintenance settlement'
+  assert not shutdown.done()
+  assert not app.file_notes_session_owner._shutdown
+  if sys.argv[2]=='cancel':
+   shutdown.cancel()
+   await asyncio.sleep(0)
+   assert not shutdown.done()
+   assert not app.file_notes_session_owner._shutdown
+  release.set()
+  try:await shutdown
+  except asyncio.CancelledError:assert sys.argv[2]=='cancel'
+  assert app._backup_maintenance_monitor_task is None
+  assert app.file_notes_session_owner._shutdown
+  assert storage._pause is None
+  assert not errors
+ finally:
+  release.set()
+  if shutdown is not None:await asyncio.gather(shutdown,return_exceptions=True)
+  monitoring.cancel()
+  await asyncio.gather(monitoring,return_exceptions=True)
+  worker.join(2)
+  assert not worker.is_alive()
+  await app._shutdown_app_owned_lifecycles()
+  await app.tts_service.close()
+  for participant in tuple(participants._installed_repositories):
+   repository=participant.repository()
+   if repository is not None:
+    close=getattr(repository,'close_connection',None) or getattr(repository,'close',None)
+    if close is not None:close()
+asyncio.run(main())
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("outcome", ["resume", "cancel"])
+def test_shutdown_settles_held_native_pause_before_terminal_owners(tmp_path, outcome):
+    _run(tmp_path, "shutdown", outcome, script=_SHUTDOWN_SCRIPT)

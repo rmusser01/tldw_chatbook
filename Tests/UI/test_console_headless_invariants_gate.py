@@ -65,6 +65,7 @@ from Tests.UI.test_console_launch_wake import (
     _settle as _launch_settle,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 WAKE_REPLY = "GATE-WAKE-REPLY"
@@ -96,6 +97,7 @@ class _CountingStallGateway(_StallingWakeGateway):
 def _build_console_app(tmp_path):
     """A real app with real DBs and a recording provider gateway."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _CountingStallGateway()
@@ -176,7 +178,7 @@ async def test_autowake_off_silences_the_headless_fire_point_and_loses_no_rows(
         assert not (runs_db.get_run(run_id) or {}).get("wake_delivered_at"), (
             "OFF stamped the ledger for a wake that never ran"
         )
-        assert wake.seed_from_marks() == 0, "OFF seeds nothing at the mount claim"
+        assert wake.seed_from_marks() == 1, "OFF still discovers durable results"
 
         # -- ON, same coordinator, still headless -------------------------
         monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "true")
@@ -253,7 +255,7 @@ async def test_one_delivery_at_a_time_app_wide_across_a_screen_replacement(
     `_delivering` away leaves this test green. The APP-WIDE half of the
     invariant, the one only `_delivering` can enforce, is a SECOND
     conversation whose own session is idle; that is
-    `test_a_second_conversations_wake_waits_while_another_is_delivering`
+    `test_distinct_conversations_wake_concurrently_with_shared_runtime`
     below, and it is the one that dies under that mutation. This test
     owns the structural half: one runtime, one coordinator, one flag,
     across a real screen replacement.
@@ -285,7 +287,7 @@ async def test_one_delivery_at_a_time_app_wide_across_a_screen_replacement(
         assert await _settle(lambda: gateway.entered_stall.is_set(), seconds=10.0), (
             "the headless wake never reached the provider readiness probe"
         )
-        assert wake.delivering_conversation_id() == conversation_id, (
+        assert conversation_id in wake.delivering_conversation_ids(), (
             "the coordinator does not consider a delivery in flight, so the "
             "serialization this test asserts would be vacuous"
         )
@@ -302,7 +304,7 @@ async def test_one_delivery_at_a_time_app_wide_across_a_screen_replacement(
             "the new screen has its own wake coordinator, so it has its own "
             "`_delivering`: two screens could each run a wake turn"
         )
-        assert wake.delivering_conversation_id() == conversation_id, (
+        assert conversation_id in wake.delivering_conversation_ids(), (
             "mounting a fresh Console screen RESET the in-flight delivery flag"
         )
 
@@ -346,27 +348,16 @@ async def test_one_delivery_at_a_time_app_wide_across_a_screen_replacement(
             "a child's result never reached the supervisor: "
             f"{[p[-1]['content'][:60] for p in gateway.payloads]}"
         )
-        assert wake.delivering_conversation_id() is None, (
+        assert not wake.delivering_conversation_ids(), (
             "the coordinator never cleared its in-flight flag"
         )
 
 
 @pytest.mark.asyncio
-async def test_a_second_conversations_wake_waits_while_another_is_delivering(
+async def test_distinct_conversations_wake_concurrently_with_shared_runtime(
     tmp_path,
 ):
-    """The APP-WIDE half: one `_delivering`, two conversations.
-
-    The per-session busy gate cannot serialize this case -- conversation
-    B's session is idle the whole time. Only `_attempt`'s `_delivering`
-    check stands between a wake in flight for A and a second, concurrent
-    wake turn for B on the same app-owned runtime. With ownership still
-    per-screen there was no single flag to hold, which is precisely what
-    "serialized app-wide" had to become true of.
-
-    Mutation-tested: neutering `if self._delivering is not None: return`
-    makes the "no second wake turn" assertion below fail.
-    """
+    """Distinct conversations share custody while using separate wake slots."""
     app, gateway = _build_console_app(tmp_path)
 
     async with app.run_test(size=(160, 48)) as pilot:
@@ -421,29 +412,23 @@ async def test_a_second_conversations_wake_waits_while_another_is_delivering(
         assert gateway.probe_entries == probes_before + 1, (
             f"expected exactly one wake probe; got {gateway.probe_entries - probes_before}"
         )
-        assert wake.delivering_conversation_id() == conversation_a, (
+        assert conversation_a in wake.delivering_conversation_ids(), (
             "no delivery is in flight, so this test would prove nothing"
         )
 
-        # B settles now. Its own session is idle -- nothing but the
-        # app-wide flag can hold it.
+        # B has independent custody and may use another automatic-work slot.
         _drain_from_child_thread(
             wake, _drain(conversation_b, _survivor(run_b, session_id=session_b))
         )
-        assert await _quiet(
-            lambda: gateway.probe_entries > probes_before + 1, seconds=1.5
-        ), (
-            "a second conversation's wake turn STARTED while one was already "
-            "in flight -- deliveries are not serialized app-wide"
-        )
+        assert await _settle(
+            lambda: gateway.probe_entries == probes_before + 2, seconds=10.0
+        ), "independent conversations must be admitted concurrently"
+        assert {conversation_a, conversation_b} <= set(wake.delivering_conversation_ids())
         assert not (runs_db.get_run(run_b) or {}).get("wake_delivered_at"), (
             "conversation B's ledger row was stamped by a turn that never ran"
         )
-        assert wake.has_pending(conversation_b), (
-            "the deferred completion was dropped rather than held"
-        )
 
-        # Releasing A's probe lets both run, one after the other.
+        # Release both probes and verify each result is delivered exactly once.
         gateway.stall = False
         gateway.release.set()
         assert await _settle(
@@ -465,7 +450,7 @@ async def test_a_second_conversations_wake_waits_while_another_is_delivering(
             f"the second conversation's wake persisted a USER row: "
             f"{_senders(app, conversation_b)}"
         )
-        assert wake.delivering_conversation_id() is None
+        assert not wake.delivering_conversation_ids()
 
 
 # ---------------------------------------------------------------------------
@@ -475,39 +460,14 @@ async def test_a_second_conversations_wake_waits_while_another_is_delivering(
 
 @pytest.mark.asyncio
 async def test_a_restart_mid_commit_never_re_announces_more_than_once(tmp_path):
-    """AC#3's exactly-once bit, restarted INSIDE the window it depends on.
+    """Accepted work whose final audit write fails stays paused across restarts.
 
-    `_deliver` commits in this order: `submit_draft` returns accepted (the
-    notice and the reply are already appended AND persisted), and only
-    then is `agent_runs.wake_delivered_at` stamped. A process that dies
-    between those two leaves durable state the ledger cannot describe:
-    rows written, ledger unstamped, ◈ mark set. Every other exactly-once
-    test in this arc restarts either side of that window.
-
-    Process one dies inside it (the stamp raises -- durable state is
-    identical to the kill). Process two is a real launch with Console
-    never opened. Process three is another. This test measures what the
-    conversation actually ends up holding, and pins the bound: the window
-    may cost at most ONE re-announce, never an unbounded loop, and never
-    a lost result.
-
-    **MEASURED on dev 524194c15 (2026-08-17): process two DOES re-announce.**
-    The conversation ends on six rows -- `user, assistant, system,
-    assistant, system, assistant` -- i.e. the same child result announced
-    to the supervisor twice, and paid for twice. Process two's own stamp
-    commits, so a third launch adds nothing; the cost of the window is
-    bounded at one duplicate. `_deliver`'s own comment predicts exactly
-    this ("a lost stamp risks one re-announce at a later claim, never a
-    lost result"), so the behaviour is deliberate -- but the User Guide
-    claimed the stronger thing ("a restart between a wake being accepted
-    and the app exiting does not re-announce anything at the next
-    launch"), which is false in this window and was corrected alongside
-    this test. The assertions below deliberately accept EITHER outcome so
-    that closing the window later is not a test failure; what they pin is
-    the bound, the row shape, and that no USER row appears on any of it.
+    Preserve the already committed notice and reply without replaying the
+    uncertain provider call, even when the coarse attention mark is absent.
     """
     # -- process one: die between acceptance and the stamp -----------------
     app = _build_test_app()
+    attach_chachanotes_db(app)
     marks = _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
@@ -526,10 +486,10 @@ async def test_a_restart_mid_commit_never_re_announces_more_than_once(tmp_path):
         await _navigate(app, pilot, "library", expect="LibraryScreen")
         assert chat not in app.screen_stack, "Console must actually unmount"
 
-        def _die_mid_commit(_run_ids):
+        def _die_mid_commit(_attempt_id, *, owner_id):
             raise RuntimeError("process died between acceptance and the stamp")
 
-        runs_db.mark_wake_delivered = _die_mid_commit
+        runs_db.automatic_work.complete_wake = _die_mid_commit
 
         gateway.reply = WAKE_REPLY
         before = len(gateway.payloads)
@@ -549,9 +509,7 @@ async def test_a_restart_mid_commit_never_re_announces_more_than_once(tmp_path):
             "harness precondition: the stamp must NOT have committed -- "
             "otherwise this is the ordinary already-covered restart"
         )
-        assert marks.has_mark(
-            conversation_id, ConversationLocalMarksService.FLEET_UNSEEN
-        ), "harness precondition: the ◈ mark must survive the crash"
+        assert await _settle(lambda: wake.pause_reason(conversation_id) is not None)
 
     # -- process two: a real launch over that durable state ----------------
     app2, marks2, gateway2 = _launch_app(tmp_path, real_service=True)
@@ -560,36 +518,9 @@ async def test_a_restart_mid_commit_never_re_announces_more_than_once(tmp_path):
         await _launch_settle(pilot2, lambda: bool(gateway2.payloads), 15.0)
         _assert_console_never_mounted(app2)
         rows_after_two = _db_chain(app2.chachanotes_db, conversation_id)
-        runs_db2 = (
-            app2.console_runtime.agent_bridge.runs_db
-            if app2.console_runtime.agent_bridge is not None
-            else None
+        assert len(rows_after_two) == 4, (
+            "uncertain accepted work must not be replayed after restart"
         )
-        stamped_after_two = (
-            bool((runs_db2.get_run(run_id) or {}).get("wake_delivered_at"))
-            if runs_db2 is not None
-            else False
-        )
-        re_announced = len(rows_after_two) > 4
-        assert len(rows_after_two) in (4, 6), (
-            "a single mid-commit crash produced more than one re-announced "
-            f"wake turn: {[(r[1], r[2][:28]) for r in rows_after_two]}"
-        )
-        if re_announced:
-            # The honest cost of the window: one duplicate notice, and the
-            # ledger closed this time so it cannot recur.
-            assert _senders(app2, conversation_id) == [
-                "user",
-                "assistant",
-                "system",
-                "assistant",
-                "system",
-                "assistant",
-            ], _senders(app2, conversation_id)
-            assert stamped_after_two, (
-                "the re-announcing launch did not close the ledger either, so "
-                "the re-announce is UNBOUNDED, not a one-off"
-            )
         assert _senders(app2, conversation_id).count("user") == 1, (
             "the mid-commit restart persisted a USER row: "
             f"{_senders(app2, conversation_id)}"

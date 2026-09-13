@@ -1,6 +1,6 @@
 ---
 id: TASK-15462
-title: Watchlists: profile the screen push before choosing a lever
+title: 'Watchlists: profile the screen push before choosing a lever'
 status: Done
 assignee: []
 created_date: '2026-08-11 12:05'

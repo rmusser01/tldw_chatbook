@@ -50,6 +50,8 @@ def open_connection(db_path: str | Path, *, _source=None) -> sqlite3.Connection:
         # operation (`LocalKanbanService.connect`/`transaction`), so synchronous
         # must be re-applied on every open, not just the first (task-15465).
         conn.execute("PRAGMA synchronous = NORMAL")
+        # Explicit BEGIN in transaction() owns transaction boundaries.
+        conn.isolation_level = None
         return conn
     except BaseException:
         conn.close()
@@ -252,7 +254,8 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
         """,
         ("1" if fts_available else "0",),
     )
-    conn.commit()
+    # No commit(): the connection is autocommit (task-22224); both upserts
+    # above are durable at execute() and the script committed as it went.
 
 
 def _ensure_fts(conn: sqlite3.Connection) -> bool:

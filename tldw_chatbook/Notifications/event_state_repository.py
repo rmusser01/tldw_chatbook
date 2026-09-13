@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+import threading
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
+
+from loguru import logger
 
 from tldw_chatbook.Backup_Recovery.participants import (
     _core_access,
+    _core_cached_connection,
     _core_getter,
+    _core_transaction,
     _register_core_connection,
 )
 from tldw_chatbook.DB.base_db import BaseDB
@@ -31,6 +36,23 @@ from .event_cursor_store import (
     CursorAdvanceStatus,
     DedupeResult,
 )
+
+
+#: Key under which the single shared ``:memory:`` connection is held.
+#: File-backed connections are keyed by thread ident (an ``int``), so a
+#: string key can never collide with one.
+_MEMORY_KEY = "memory"
+
+
+@dataclass(slots=True)
+class _HeldConnection:
+    """One long-lived connection plus the bookkeeping ``close()`` needs."""
+
+    conn: sqlite3.Connection
+    last_used: float = field(default_factory=time.monotonic)
+    #: Number of operations currently inside ``connection()``/``transaction()``
+    #: on this connection. ``close()`` refuses to close a busy connection.
+    depth: int = 0
 
 
 class _NoExpectedCursor:
@@ -81,16 +103,87 @@ class EventReplayWindow:
 
 
 class EventStateRepository(BaseDB):
-    """Durable event rows, dedupe records, cursors, and presentation watermarks."""
+    """Durable event rows, dedupe records, cursors, and presentation watermarks.
+
+    TASK-21131: file-backed connections are HELD per thread (the sibling
+    ``ClientNotificationsDB`` idiom). The previous shape opened a brand-new
+    private-SQLite connection -- which re-validates the owner policy, the
+    trusted directory and the artifact every time -- for every operation
+    and never closed any of them (``with conn:`` is sqlite3's TRANSACTION
+    context manager, not a closing one, so they leaked until GC). Measured
+    on the shipped feed path, that open was 0.54 ms against 0.05 ms for the
+    statement it was opened to run.
+
+    Thread safety: the durable event ledger is written from the event loop
+    (``EventObserver``) and read from ``asyncio.to_thread`` workers (Home's
+    active-work cache), so each thread gets its OWN connection. They are
+    keyed by thread ident in a plain dict rather than a ``threading.local``
+    because ``close()`` has to reach connections it does not own -- which
+    also requires ``check_same_thread=False`` on the file branch: with
+    sqlite3's default guard, a cross-thread ``close()`` raises instead of
+    closing, so a ``threading.local`` store can never release a worker
+    pool's connections at all. Each connection still has exactly one user
+    thread; ``close()`` is the only cross-thread toucher, and it refuses
+    any connection whose thread is mid-operation.
+
+    The ``:memory:`` branch is deliberately NOT per thread: an in-memory
+    database lives inside its connection, so per-thread connections would
+    each see their own empty ledger. It keeps a single shared connection --
+    which is why closing it destroys the database, and why it keeps
+    sqlite3's default same-thread guard rather than silently allowing two
+    threads onto one unserialised handle.
+    """
 
     _CURRENT_SCHEMA_VERSION = 1
 
+    #: Liveness-ping gate (mirrors ``ClientNotificationsDB``): a recently
+    #: used held connection is known-good without spending a ``SELECT 1``
+    #: on every call.
+    _LIVENESS_PING_IDLE_SECONDS = 30.0
+
     def __init__(self, db_path: str | Path, client_id: str = "default") -> None:
         self._memory_conn: sqlite3.Connection | None = None
-        super().__init__(db_path, client_id)
+        self._held: dict[object, _HeldConnection] = {}
+        self._held_lock = threading.RLock()
+        # TASK-21105: file-backed schema creation (10 DDL statements) is
+        # deferred to the first connection (initialize_schema=False below);
+        # a local-only user whose event observation never runs pays nothing
+        # at boot. ``:memory:`` (the app's parity-build fallback) stays
+        # eager so its single cached connection binds to the constructing
+        # thread, exactly as before.
+        self._schema_ready = False
+        self._schema_lock = threading.Lock()
+        super().__init__(db_path, client_id, initialize_schema=False)
+        if self.is_memory_db:
+            self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        """Create the schema exactly once, on first connection (TASK-21105).
+
+        Single-flight under a lock: feed reads can run from thread
+        workers. A failed attempt leaves ``_schema_ready`` False so the
+        next operation retries.
+        """
+        if self._schema_ready:
+            return
+        with self._schema_lock:
+            if self._schema_ready:
+                return
+            self._initialize_schema()
+            self._schema_ready = True
 
     @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        self._ensure_schema()
+        return self._open_connection()
+
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open a raw connection without the first-use schema ensure.
+
+        ``_initialize_schema`` must use this directly: it runs inside
+        ``_ensure_schema``'s lock, and going through ``_get_connection``
+        there would deadlock on the non-reentrant lock.
+        """
         if getattr(self, "is_memory_db", False):
             if self._memory_conn is None:
                 self._memory_conn = connect_private_sqlite(
@@ -102,49 +195,239 @@ class EventStateRepository(BaseDB):
                 # in-memory database; set for uniformity with the file-backed
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
+                self._memory_conn.isolation_level = None
+                # Consistent with the schema-creation script, which also
+                # asserts it. Currently inert -- this schema declares no
+                # FOREIGN KEY constraints -- but the pragma is per
+                # connection, so asserting it in the ONE place connections
+                # are created is what keeps it from drifting if one is
+                # added (TASK-21131 AC #1).
+                self._memory_conn.execute("PRAGMA foreign_keys = ON")
             return self._memory_conn
+        # TASK-21131: this used to go through ``BaseDB._get_connection``,
+        # which opens under the ``db.base`` owner. It now names this
+        # module's OWN owner (whose registry entry was corrected to describe
+        # the private file the app actually gives this store -- the enforced
+        # target kinds are identical to ``db.base``'s), and passes
+        # ``check_same_thread=False``, which BaseDB cannot. Held connections
+        # are handed to ``close()`` on another thread; sqlite3's default
+        # guard would refuse that and leave every worker-pool connection
+        # open for the life of the process.
         _core_access(self)
-        conn = super()._get_connection()
+        conn = connect_private_sqlite(
+            "notifications.event_state",
+            self.db_path_str,
+            check_same_thread=False,
+        )
         _register_core_connection(self, conn)
         try:
             _core_access(self)
+            conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode = WAL")
             # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
             # lose the last commit, acceptable for this local event/notification
             # ledger) and avoids an fsync per commit (task-15465).
             conn.execute("PRAGMA synchronous = NORMAL")
+            # TASK-21131: a HELD (long-lived) connection needs true autocommit.
+            # Python's legacy isolation mode auto-BEGINs a DEFERRED transaction
+            # on the first DML statement, which then makes the explicit
+            # ``BEGIN IMMEDIATE`` in `transaction()` raise "cannot start a
+            # transaction within a transaction", and silently rolls back bare
+            # DML on close.
+            conn.isolation_level = None
+            conn.execute("PRAGMA foreign_keys = ON")
             _core_access(self)
-            return conn
         except BaseException:
             conn.close()
             raise
+        return conn
 
-    def close(self) -> None:
-        if self._memory_conn is not None:
-            self._memory_conn.close()
-            self._memory_conn = None
+    def _held_connection(self) -> sqlite3.Connection:
+        """Return this thread's held sqlite3 connection (see `_held_entry`)."""
+        return self._held_entry().conn
+
+    def _held_entry(self) -> _HeldConnection:
+        """Return this thread's held connection entry, opening or reviving it.
+
+        In-memory stores share the single cached connection instead (see
+        the class docstring). The liveness probe is a plain no-op
+        statement; a connection another component closed (or that SQLite
+        invalidated) is transparently replaced.
+        """
+        if getattr(self, "is_memory_db", False):
+            with self._held_lock:
+                entry = self._held.get(_MEMORY_KEY)
+                if entry is None or entry.conn is not self._memory_conn:
+                    entry = _HeldConnection(conn=self._get_connection())
+                    self._held[_MEMORY_KEY] = entry
+                entry.last_used = time.monotonic()
+                return entry
+
+        _core_access(self)
+        key = threading.get_ident()
+        with self._held_lock:
+            entry = self._held.get(key)
+            if entry is not None and _core_cached_connection(self, entry.conn) is None:
+                del self._held[key]
+                entry = None
+        if entry is not None and (
+            (time.monotonic() - entry.last_used) >= self._LIVENESS_PING_IDLE_SECONDS
+        ):
+            try:
+                entry.conn.execute("SELECT 1")
+            except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                self._close_quietly(entry.conn)
+                with self._held_lock:
+                    if self._held.get(key) is entry:
+                        del self._held[key]
+                entry = None
+        if entry is None:
+            conn = self._get_connection()
+            entry = _HeldConnection(conn=conn)
+            with self._held_lock:
+                self._held[key] = entry
+        entry.last_used = time.monotonic()
+        return entry
+
+    @_core_transaction
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        """Yield this thread's held connection (no transaction opened).
+
+        In autocommit mode a single statement is its own transaction, so
+        reads and single-statement writes need nothing more than this.
+        """
+        # Acquisition and registration share ONE lock hold: a `close()`
+        # landing between them would close a connection this operation is
+        # about to use, which is the exact failure the depth guard exists
+        # to prevent. `_held_lock` is re-entrant, so `_held_entry` may take
+        # it again.
+        with self._held_lock:
+            entry = self._held_entry()
+            entry.depth += 1
+        try:
+            yield entry.conn
+        finally:
+            with self._held_lock:
+                entry.depth -= 1
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Commit/rollback and retire file handles on their creating thread."""
-        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        """Yield the held connection inside an IMMEDIATE write transaction.
 
-        operation = (
-            nullcontext()
-            if self.is_memory_db
-            else _repository_participant(self).operation()
-        )
-        with operation:
-            conn = self._get_connection()
+        ``BEGIN IMMEDIATE`` (not the default deferred begin) is a
+        prerequisite here, not polish: every write body in this repository
+        reads before it writes (dedupe probes, scope lookups, replay-window
+        bounds), and under ``isolation_level=None`` a deferred begin takes a
+        read snapshot whose later write fails ``BUSY_SNAPSHOT`` -- which
+        SQLite's busy handler does NOT retry. Taking the write lock up front
+        also makes the read-modify-write bodies atomic against a concurrent
+        writer on another thread's connection.
+
+        Nesting: the explicit BEGIN runs on the ONE connection this thread
+        holds (or, for ``:memory:``, the single shared one), so nesting a
+        second ``transaction()`` inside one raises
+        ``sqlite3.OperationalError: cannot start a transaction within a
+        transaction``. No body in this file nests.
+
+        Raises:
+            Exception: Re-raised after rolling back, on any error inside
+                the ``with`` block. On clean exit the transaction commits.
+        """
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             try:
-                with conn:
-                    yield conn
-            finally:
-                if not self.is_memory_db:
-                    conn.close()
+                yield conn
+            except BaseException:
+                # BaseException, not Exception: a cancelled or abandoned
+                # body must not leave the write lock held on a connection
+                # this thread will keep using.
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:  # noqa: BLE001
+                    # Never let a failing rollback replace the original
+                    # exception: type name only, no statement or payload.
+                    logger.debug(
+                        "Event state rollback failed: {}",
+                        type(rollback_error).__name__,
+                    )
+                raise
+            else:
+                conn.commit()
+
+    def close(self) -> None:
+        """Close every held connection that is not mid-operation.
+
+        A connection whose thread is still inside ``connection()``/
+        ``transaction()`` is deliberately LEFT OPEN: closing it under live
+        work raises ``ProgrammingError: Cannot operate on a closed
+        database`` inside that operation (the TASK-21101/21125 shutdown
+        class). Committed rows are durable under WAL either way, and an
+        open transaction rolls back when the connection is finalized.
+
+        The store re-arms: a later operation transparently opens a fresh
+        connection. For ``:memory:`` that means a fresh -- and therefore
+        empty -- database, so the schema flag is reset alongside it.
+        """
+        closable: list[sqlite3.Connection] = []
+        with self._held_lock:
+            memory_busy = False
+            for key in list(self._held):
+                entry = self._held[key]
+                if entry.depth > 0:
+                    if key == _MEMORY_KEY:
+                        memory_busy = True
+                    continue
+                del self._held[key]
+                closable.append(entry.conn)
+            if self._memory_conn is not None and not memory_busy:
+                if all(conn is not self._memory_conn for conn in closable):
+                    closable.append(self._memory_conn)
+                self._memory_conn = None
+                # The in-memory database died with its connection; the next
+                # operation must rebuild the schema rather than query tables
+                # that no longer exist.
+                self._schema_ready = False
+        for conn in closable:
+            self._close_quietly(conn)
+
+    @staticmethod
+    def _close_quietly(conn: sqlite3.Connection) -> None:
+        """Close ``conn``, recording a failure instead of discarding it.
+
+        Best-effort by design -- the entry is already out of ``_held`` and a
+        re-close of a handle whose first close raised would keep a broken
+        connection reachable, which is worse than dropping it. What was
+        missing is the record: a swallowed close error left an untracked
+        handle with nothing to debug from. TASK-21131 already lost time to
+        exactly that (a cross-thread ``close()`` was raising and being
+        swallowed, which kept a wrong test green until the cause was found at
+        the mechanism), and both sibling stores --
+        ``Research_Interop.local_research_service`` and
+        ``Writing_Interop.local_writing_service`` -- log this case.
+
+        Type name only, matching those siblings: a sqlite3 message can carry
+        the database path, and this store's teardown is not a place to emit
+        one.
+
+        Args:
+            conn: The connection to close.
+        """
+        try:
+            conn.close()
+        except Exception as exc:  # noqa: BLE001 - best-effort teardown
+            logger.debug(
+                "Event state connection close failed: {}", type(exc).__name__
+            )
 
     def _initialize_schema(self) -> None:
-        with self.transaction() as conn:
+        # Raw connection: runs under _ensure_schema's lock (TASK-21105), so
+        # it cannot use connection()/_held_connection (both re-enter
+        # _get_connection). File-backed: one short-lived connection, closed
+        # below; the held per-thread connection opens on the first real
+        # operation. :memory:: the shared cached connection, never closed.
+        conn = self._open_connection()
+        try:
             conn.executescript(
                 """
                 PRAGMA foreign_keys = ON;
@@ -297,6 +580,9 @@ class EventStateRepository(BaseDB):
                 );
                 """
             )
+        finally:
+            if not getattr(self, "is_memory_db", False):
+                conn.close()
 
     def record_event_and_advance_processed_cursor(
         self,
@@ -308,6 +594,8 @@ class EventStateRepository(BaseDB):
         event_key = self._event_key(event, dedupe_key=dedupe_key)
         now = _utc_now()
 
+        # One IMMEDIATE transaction: the dedupe probe and the inserts it
+        # gates must not straddle another writer's commit.
         with self.transaction() as conn:
             if self._dedupe_exists(conn, dedupe_key):
                 return EventStateRecordResult(
@@ -395,7 +683,6 @@ class EventStateRepository(BaseDB):
                     now=now,
                 )
             self._sync_replay_window_bounds(conn, event, now=now)
-            conn.commit()
 
             return EventStateRecordResult(
                 event_key=event_key,
@@ -406,18 +693,21 @@ class EventStateRepository(BaseDB):
             )
 
     def is_duplicate_event(self, event: NormalizedEventRecord) -> bool:
-        with self.transaction() as conn:
+        with self.connection() as conn:
             return self._dedupe_exists(conn, self._dedupe_key(event))
 
     def remember_event(self, event: NormalizedEventRecord) -> DedupeResult:
         """Compatibility method for observer code paths that only track dedupe."""
 
         dedupe_key = self._dedupe_key(event)
-        if self.is_duplicate_event(event):
-            return DedupeResult(key=dedupe_key, is_duplicate=True)
-
         now = _utc_now()
+        # The dedupe probe used to run on its own connection, so a second
+        # writer could pass it before the first insert committed and then
+        # fail the PRIMARY KEY. Probe and insert now share one IMMEDIATE
+        # transaction.
         with self.transaction() as conn:
+            if self._dedupe_exists(conn, dedupe_key):
+                return DedupeResult(key=dedupe_key, is_duplicate=True)
             conn.execute(
                 """
                 INSERT INTO event_dedupe_records (
@@ -441,7 +731,6 @@ class EventStateRepository(BaseDB):
                     now,
                 ),
             )
-            conn.commit()
         return DedupeResult(key=dedupe_key, is_duplicate=False)
 
     def acknowledge_event(
@@ -501,7 +790,6 @@ class EventStateRepository(BaseDB):
                 details={},
                 now=_utc_now(),
             )
-            conn.commit()
         return CursorAdvanceResult(
             status=CursorAdvanceStatus.STALE_RESET,
             cursor=reset,
@@ -562,7 +850,7 @@ class EventStateRepository(BaseDB):
             stream_name=stream_name,
             stream_instance_id=stream_instance_id,
         )
-        with self.transaction() as conn:
+        with self.connection() as conn:
             return self._get_cursor_with_connection(
                 conn, cursor, table="event_processed_cursors"
             )
@@ -583,7 +871,7 @@ class EventStateRepository(BaseDB):
             stream_name=stream_name,
             stream_instance_id=stream_instance_id,
         )
-        with self.transaction() as conn:
+        with self.connection() as conn:
             return self._get_cursor_with_connection(
                 conn, cursor, table="event_presented_high_water"
             )
@@ -597,6 +885,8 @@ class EventStateRepository(BaseDB):
     ) -> NotificationPresentationRecord:
         now = _utc_now()
         presented_at = presented_at or now
+        # Scope lookup + presentation upsert + high-water advance are one
+        # read-modify-write; IMMEDIATE keeps them atomic.
         with self.transaction() as conn:
             row = conn.execute(
                 """
@@ -642,7 +932,6 @@ class EventStateRepository(BaseDB):
                 cursor=cursor,
                 now=now,
             )
-            conn.commit()
 
         return NotificationPresentationRecord(
             event_key=event_key,
@@ -681,7 +970,7 @@ class EventStateRepository(BaseDB):
             where_clauses.append(f"{field_name} = ?")
             params.append(value)
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-        with self.transaction() as conn:
+        with self.connection() as conn:
             rows = conn.execute(
                 f"""
                 SELECT *
@@ -723,7 +1012,8 @@ class EventStateRepository(BaseDB):
                 details=details or {},
                 now=now,
             )
-            conn.commit()
+        # Read back OUTSIDE the transaction: `transaction()` runs on the one
+        # connection this thread holds, so a nested one would raise.
         return self.get_observer_status(
             source_authority=source_authority,
             server_profile_id=server_profile_id,
@@ -741,7 +1031,7 @@ class EventStateRepository(BaseDB):
         stream_instance_id: str,
         authenticated_principal_id: str | None = None,
     ) -> dict[str, Any] | None:
-        with self.transaction() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 """
                 SELECT *
@@ -786,6 +1076,9 @@ class EventStateRepository(BaseDB):
         if max_count is None and older_than is None:
             raise ValueError("max_count or older_than is required")
 
+        # Select-then-delete plus a replay-window recompute: one IMMEDIATE
+        # transaction, or a concurrent writer's rows can slip between the
+        # census and the DELETEs.
         with self.transaction() as conn:
             rows_by_id: dict[int, sqlite3.Row] = {}
             scope_params = (
@@ -863,7 +1156,6 @@ class EventStateRepository(BaseDB):
                 pruned_event_count=len(rows),
                 now=_utc_now(),
             )
-            conn.commit()
         return len(rows)
 
     def get_replay_window(
@@ -882,7 +1174,7 @@ class EventStateRepository(BaseDB):
             stream_name=stream_name,
             stream_instance_id=stream_instance_id,
         )
-        with self.transaction() as conn:
+        with self.connection() as conn:
             return self._get_replay_window_with_connection(conn, cursor)
 
     def get_replay_status(
@@ -902,7 +1194,7 @@ class EventStateRepository(BaseDB):
             stream_name=stream_name,
             stream_instance_id=stream_instance_id,
         )
-        with self.transaction() as conn:
+        with self.connection() as conn:
             window = self._get_replay_window_with_connection(conn, cursor)
             if requested_cursor is None:
                 state = (
@@ -945,7 +1237,7 @@ class EventStateRepository(BaseDB):
         stream_instance_id: str,
         authenticated_principal_id: str | None = None,
     ) -> EventRetentionPolicy:
-        with self.transaction() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 """
                 SELECT max_age_days, max_count
@@ -1035,7 +1327,7 @@ class EventStateRepository(BaseDB):
                     now,
                 ),
             )
-            conn.commit()
+        # Read back outside the transaction (see `record_observer_status`).
         return self.get_retention_policy(
             source_authority=source_authority,
             server_profile_id=server_profile_id,
@@ -1055,6 +1347,8 @@ class EventStateRepository(BaseDB):
         if not server_profile_id:
             raise ValueError("server_profile_id is required")
 
+        # Census + deletes: the returned counts must describe the rows this
+        # call actually removed, so they share one IMMEDIATE transaction.
         with self.transaction() as conn:
             event_filter, params = self._server_profile_filter(
                 server_profile_id=server_profile_id,
@@ -1147,7 +1441,6 @@ class EventStateRepository(BaseDB):
                 server_profile_id=server_profile_id,
                 authenticated_principal_id=authenticated_principal_id,
             )
-            conn.commit()
 
         return {
             "events": event_count,

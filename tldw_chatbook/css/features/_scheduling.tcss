@@ -4,23 +4,32 @@
  * Scheduling workbench specific styles
  * ======================================== */
 
-/* The destination header + sync bar above the tabs are auto-height siblings;
- * without an explicit 1fr the auto-height TabbedContent measures its fr
- * children against the whole content area and overflows past the footer. */
+/* The liveness Static + bottom status strip are auto-height siblings of
+ * #scheduling-workbench (redesign PR-4 task 5 retired the TabbedContent
+ * this rationale used to name); without an explicit 1fr the auto-height
+ * workbench row measures its fr children against the whole content area
+ * and overflows past the footer. */
 #schedules-shell {
     height: 1fr;
     min-height: 0;
 }
 
-#scheduling-tabs {
-    height: 1fr;
+/* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- it sits
+ * below the whole workbench, not inside the list pane, hosting the existing
+ * SyncStatusWidget (owner indicator + sync health) and a conflicts badge
+ * that PUSHES the conflicts view over the list (redesign PR-4 task 5: the
+ * Conflicts tab it used to switch to is retired). SyncStatusWidget takes the
+ * remaining width so the badge sits flush right; `align` centers the
+ * badge (height:1, from .scheduling-queue-chip) against the taller
+ * padded SyncStatusWidget row. */
+#scheduling-status-strip {
+    height: auto;
+    border-top: solid $ds-grid-line;
+    align: left middle;
 }
 
-SchedulesWorkbench TabbedContent,
-SchedulesWorkbench TabbedContent ContentSwitcher,
-SchedulesWorkbench TabbedContent TabPane {
-    height: 1fr;
-    min-height: 0;
+#scheduling-status-strip > SyncStatusWidget {
+    width: 1fr;
 }
 
 #scheduling-workbench {
@@ -41,10 +50,54 @@ SchedulesWorkbench TabbedContent TabPane {
 #scheduling-detail-pane { width: 4fr; min-width: 52; border: solid $ds-grid-line; padding: 1; }
 #scheduling-inspector-pane { width: 2fr; min-width: 34; border: solid $ds-grid-line; padding: 1; }
 
+/* UAT display blocker (finding 2): both detail panes are a plain
+ * `Vertical` (`overflow: hidden hidden` by default) taller than their
+ * own box at every measured width -- History and the lifecycle action
+ * row were clipped with no scrollbar, no wheel handling, no PageDown.
+ * `overflow-y: auto` alone is not enough: `#scheduling-task-detail-
+ * groups` is itself a plain `Vertical` (`height: 1fr` by default), which
+ * clips ITS OWN children a second time before `TaskDetail` ever gets a
+ * chance to scroll them -- `height: auto` lets it size to its real
+ * content instead. `DefinitionDetail` nests one level shallower (no
+ * separate groups wrapper -- its DetailGroups are direct children of
+ * `#scheduling-automation-detail-body`), so that container gets the
+ * same treatment. */
+TaskDetail, DefinitionDetail {
+    overflow-y: auto;
+}
+
+#scheduling-task-detail-groups,
+#scheduling-automation-detail-body {
+    height: auto;
+}
+
 /* The queue table must fill its pane, or empty queues collapse to a single
  * clipped row at short heights (80x24). */
 #scheduling-task-table {
     height: 1fr;
+}
+
+/* redesign PR-4, task 5: the Automations tab's own three-pane split
+ * (#scheduling-automations-split / -pane / -detail-pane / -history-pane)
+ * is retired with the tab. The ids below that still start with
+ * `#scheduling-automation-detail-` are DefinitionDetail's own CHILD ids,
+ * not that pane's -- they follow the widget wherever it is mounted. */
+#scheduling-automation-detail-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
+}
+
+/* The two detail panes' body cards: the definitions pane's question and
+ * (final review F10) the reminder pane's body text, same card. */
+#scheduling-automation-detail-question,
+#scheduling-task-detail-body-card {
+    height: auto;
+    padding: 1;
+    margin-bottom: 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $text;
 }
 
 #scheduling-queue-filter {
@@ -55,19 +108,85 @@ SchedulesWorkbench TabbedContent TabPane {
     background: $surface-darken-1;
 }
 
+/* redesign PR-2, Task 2: the chip row (spec S3) -- compact single-row
+ * buttons, same height:1/border:none idiom the filter Input above uses,
+ * so the row costs one line rather than a full 3-row Button box. */
+#scheduling-queue-chips {
+    height: 1;
+    margin: 0 0 1 0;
+}
+
+#scheduling-queue-chips .scheduling-queue-chip {
+    height: 1;
+    border: none;
+    min-width: 8;
+    margin-right: 1;
+    background: $surface-darken-1;
+}
+
+/* redesign PR-4, task 6 (spec §11): the collapsed-chip control -- one
+ * button standing in for the four named chips below 84 columns. Same
+ * flat single-row look as the chips it replaces (it deliberately does
+ * NOT carry `.scheduling-queue-chip`: that class is what the compact
+ * rule below hides). `display: none` by default, so it only ever appears
+ * at the widths where the four chips are gone. */
+#scheduling-chip-cycle {
+    display: none;
+    height: 1;
+    border: none;
+    width: auto;
+    min-width: 8;
+    background: $surface-darken-1;
+}
+
 /* Compact mode: the filter's margin row goes to the table (80x24 has
  * exactly one spare row; without this the queue shows only the filter). */
 #scheduling-workbench.compact #scheduling-queue-filter {
     margin: 0;
 }
 
+/* The four chips collapse into the cycling control rather than the whole
+ * row disappearing (ruling 6) -- one row either way, and a mouse user
+ * keeps a filter affordance at the floor. The row's own bottom margin
+ * goes to the table for the same reason the filter's does. */
+#scheduling-workbench.compact #scheduling-queue-chips {
+    margin: 0;
+}
+
+#scheduling-workbench.compact #scheduling-queue-chips .scheduling-queue-chip {
+    display: none;
+}
+
+#scheduling-workbench.compact #scheduling-chip-cycle {
+    display: block;
+}
+
+/* With both side panes hidden the rail is the only thing on screen, so it
+ * takes the whole width -- it used to keep the 24-column width the
+ * three-pane compact split gives it, wrapping the queue into a gutter
+ * while 54 columns sat empty -- and drops its own frame: the workbench's
+ * border is already the visible edge, and 4 rows of pane chrome is a
+ * sixth of an 80x24 terminal. */
+#scheduling-workbench.compact #scheduling-list-pane {
+    width: 1fr;
+    min-width: 0;
+    border: none;
+    padding: 0 1;
+}
+
 SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
     padding: 0;
 }
 
+/* redesign PR-4, task 6: this used to pin the rail to 24 columns, which
+ * left ~20 usable ones -- narrow enough that the header's three Buttons
+ * wrapped their labels, and an auto-height row of wrapped Buttons grew to
+ * SIXTEEN rows, leaving the queue table a single line at 110x40. Sharing
+ * the width with the detail pane (which keeps its own min-width) fits the
+ * header on one row again and gives the table back its space. */
 SchedulesWorkbench.schedules-workbench-compact #scheduling-list-pane {
-    width: 24;
-    min-width: 20;
+    width: 1fr;
+    min-width: 28;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-detail-pane {
@@ -83,12 +202,44 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 /* Pane headers */
 #scheduling-list-title,
 #scheduling-task-detail-header,
-#scheduling-task-inspector-header {
+#scheduling-task-inspector-header,
+#scheduling-automation-detail-header {
     text-style: bold;
     color: $text;
     padding: 0 0 0 0;
     border-bottom: solid $ds-grid-line;
     margin-bottom: 1;
+}
+
+#scheduling-list-header {
+    height: auto;
+}
+
+#scheduling-list-header #scheduling-list-title {
+    width: 1fr;
+}
+
+#scheduling-new-task {
+    width: auto;
+    min-width: 9;
+}
+
+/* redesign PR-2, Task 3: the rail's Mark-all-read button -- hidden by
+ * default (see SchedulesWorkbench.on_mount / _update_mark_all_read_
+ * visibility), same height:auto row as Create above it. */
+#scheduling-mark-all-read {
+    width: auto;
+    min-width: 9;
+    margin-left: 1;
+}
+
+/* redesign PR-4, task 2: the rail's Results relocation affordance,
+ * beside Mark-all-read -- same auto-width row shape, always visible
+ * (never hidden, unlike Mark-all-read). */
+#scheduling-results-badge {
+    width: auto;
+    min-width: 9;
+    margin-left: 1;
 }
 
 /* Empty state */
@@ -109,6 +260,25 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin: 0 1 0 0;
 }
 
+/* redesign PR-4, task 4: the legacy transfer action row (schedules-
+   handoff spec §6, PR-5 task 7) is retired along with its buttons -- the
+   Runs-on row's own dropdown/mini-bar is the one transfer surface now. */
+
+/* task-31823: the reminder pane's second compact action row (Duplicate ·
+ * View runs · View results) -- the rest of spec §5's deferred kebab
+ * list, same auto-height shape as the lifecycle row above. */
+#scheduling-task-detail-secondary-actions {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+/* task-31823: shared by BOTH panes' secondary-actions buttons (reminder
+ * + definition) -- a plain class on each Button, never an
+ * ancestor-scoped bare-type rule. */
+.detail-secondary-action-button {
+    margin: 0 1 0 0;
+}
+
 /* Follow-in-Console prominence */
 #schedules-follow-in-console {
     margin-top: 1;
@@ -116,7 +286,41 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     text-style: bold;
 }
 
-#scheduling-task-detail .follow-why {
+/* Both live instances of the pane: the docked one and, at narrow widths,
+ * the fresh instance `WorkbenchHostScreen` hosts (redesign PR-4, task 6).
+ * Listed by id rather than re-keyed to `TaskDetail .follow-why`, which
+ * would be an ancestor-scoped bare-type rule (PR-3's fastpath ratchet). */
+#scheduling-task-detail .follow-why,
+#scheduling-task-detail-overlay .follow-why {
+    color: $text-muted;
+    height: auto;
+    padding: 0 1;
+}
+
+/* schedules-redesign PR-3, Task 4: the definitions pane's header
+ * Pause/Resume row -- same one-Button lifecycle-row shape as
+ * `#scheduling-task-detail-lifecycle` above. `DefinitionDetail` mounts
+ * under two different ids (Automations tab + Queue tab sibling), so both
+ * selectors share this declaration rather than one id-scoped rule. */
+#scheduling-automation-detail-lifecycle {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+#scheduling-automation-detail-lifecycle .detail-lifecycle-button {
+    margin: 0 1 0 0;
+}
+
+/* task-31823: the definitions pane's own second compact action row --
+ * `.detail-secondary-action-button` above already covers the buttons. */
+#scheduling-automation-detail-secondary-actions {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+/* Same pair as the reminder pane's rule above: docked + pushed instance. */
+#scheduling-queue-definition-detail .follow-why,
+#scheduling-definition-detail-overlay .follow-why {
     color: $text-muted;
     height: auto;
     padding: 0 1;
@@ -159,6 +363,15 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-task-status-badge.archived {
     background: $surface-darken-1;
     color: $text-muted;
+}
+
+/* 31712 AC#6: same "empty state replaces the real content" idiom as
+ * `#scheduling-task-detail-empty-state` above -- distinguishes "no task
+ * selected" from a selected task whose metadata rows read "-" too. */
+#scheduling-task-inspector-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
 }
 
 /* Inspector metadata */
@@ -211,8 +424,160 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     padding: 0;
 }
 
-/* Compact mode (see SchedulesWorkbench.on_resize): the Queue tab label
- * already names the pane; the in-pane title's row goes to the table. */
+/* Compact mode (see SchedulesWorkbench.on_resize): the screen header
+ * already names the pane, so the in-pane TITLE yields its row -- but the
+ * header's buttons do not. redesign PR-4, task 6 (ruling 6: "the rail
+ * degrades readably at 80"): `Create ▾`, `Mark all read` and `Results`
+ * are the only routes to those operations that need no selected row, and
+ * what made the row unaffordable at the floor was the 3-row bordered
+ * Button box, not the buttons. They flatten to one row instead
+ * (height:1/border:none -- the same idiom the chip row and the Runs-on
+ * mini-bar already use), and the header goes from 3 rows to 1. */
 #scheduling-workbench.compact #scheduling-list-title {
     display: none;
+}
+
+#scheduling-workbench.compact #scheduling-new-task,
+#scheduling-workbench.compact #scheduling-mark-all-read,
+#scheduling-workbench.compact #scheduling-results-badge {
+    height: 1;
+    border: none;
+    background: $surface-darken-1;
+}
+
+/* schedules-redesign PR-1, Task 1 (fix round 1): DetailValueRow /
+ * DetailGroup (`Widgets/detail_value_row.py`) live here per the task-1
+ * brief's file list rather than as BUNDLED_CSS on the widget classes --
+ * this module is concatenated into the boot-loaded app bundle in the same
+ * parse pass as core/_variables.tcss, so $ds-* tokens resolve directly,
+ * with no local alias workaround. Selectors are plain type/class
+ * (not scheduling-prefixed): the widgets are reusable beyond Scheduling,
+ * and this is just where the first consumer's CSS happens to ship;
+ * graduate to a shared features file if/when a non-scheduling consumer
+ * appears. */
+DetailValueRow {
+    height: auto;
+    min-height: 0;
+}
+
+DetailValueRow .detail-value-row-line {
+    height: 1;
+    min-height: 1;
+}
+
+DetailValueRow .detail-value-row-label {
+    color: $ds-text-muted;
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1 0 0;
+}
+
+DetailValueRow .detail-value-row-value {
+    color: $ds-text-primary;
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    text-align: right;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+DetailValueRow .detail-value-row-affordance {
+    color: $ds-text-disabled-readable;
+    width: 2;
+    min-width: 2;
+    height: 1;
+    text-align: right;
+    padding: 0 0 0 1;
+}
+
+/* schedules-redesign PR-3, Task 1: the affordance's live state. `:focus-
+ * within` covers both a row focused via spec §12's Up/Down traversal AND
+ * (once `begin_edit` mounts an editor into the row) the editor itself
+ * holding focus -- `has_focus_within` counts a widget's own focus as
+ * "within itself" too, so one selector covers both. `:hover` mirrors it
+ * for mouse users. Un-dimming to the same colour as the value tells a user
+ * "Enter/click acts on this row" without a new token. */
+DetailValueRow:focus-within .detail-value-row-affordance,
+DetailValueRow:hover .detail-value-row-affordance {
+    color: $ds-text-primary;
+}
+
+DetailValueRow .detail-value-row-error {
+    color: $ds-status-error-readable;
+    width: 1fr;
+    height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* schedules-redesign PR-3, Task 5: the Runs-on row's proactively-shown
+ * Cancel[/Retry] buttons -- a plain sibling `Horizontal` of the "Runs on"
+ * `DetailValueRow` inside its own `DetailGroup` (NOT nested inside the
+ * row itself: `begin_edit` would hide the row's own value `Static`,
+ * which the existing transfer-badge rendering pins verbatim -- see
+ * `task_detail.TaskDetail._configure_runs_on_row`'s docstring). Same
+ * compact single-row Button idiom `#scheduling-queue-chips .scheduling-
+ * queue-chip` already uses elsewhere in this file, so the row costs one
+ * line rather than a full 3-row Button box. Bare class selector (not
+ * scoped under `DetailValueRow`) since this widget lives outside it. */
+.detail-value-row-owner-actions {
+    /* `auto`, not a fixed `1` (final review M5): both buttons are
+     * `.display`-toggled and hidden in the overwhelmingly common
+     * no-transfer-in-flight case, but a fixed height still reserved a
+     * blank line inside the Details group of every reminder and every
+     * definition. `auto` measures 0 when both are hidden, 1 when either
+     * shows. */
+    height: auto;
+    align: right middle;
+}
+
+.detail-value-row-owner-actions .detail-owner-action-button {
+    height: 1;
+    min-width: 8;
+    border: none;
+    margin: 0 0 0 1;
+}
+
+/* 31712 AC#4: Textual's own `Collapsible`/`Contents` body chrome --
+ * `Collapsible`'s widget-tier `padding-bottom: 1`, the app-wide
+ * `Collapsible { margin-bottom: 1 }` / `Collapsible { border: tall
+ * $surface }` / `Collapsible > Contents { padding: 1 }` rules
+ * (`tldw_cli_modular.tcss`, "Collapsible styling enhancements") -- costs 5
+ * blank rows per EXPANDED group before a single row of real content is
+ * drawn (measured: a 4-row Frequency group rendered at height 13, only 4
+ * of those rows readable). The stray `border: tall` is the sneaky one:
+ * this rule already set `border-top` only, but CSS `border-top` never
+ * clears the other 3 edges, so the app-wide rule's bottom/left/right
+ * `tall` border kept bleeding through underneath a rule that reads as a
+ * full override -- an explicit `border: none;` before `border-top:` is
+ * what actually clears it. Same idiom `LibraryIngestCanvas Collapsible`/
+ * `Collapsible Contents` already uses for the same complaint (task-2043)
+ * -- scoped to `DetailGroup` only, not the app-wide type, so every other
+ * Collapsible in the app keeps its own spacing/border. */
+DetailGroup {
+    background: $ds-surface-panel;
+    border: none;
+    border-top: hkey $ds-grid-line;
+    padding-bottom: 0;
+    margin-bottom: 0;
+}
+
+DetailGroup Contents {
+    padding: 0 0 0 3;
+}
+
+/* redesign PR-4, Task 1: `WorkbenchHostScreen` (the narrow-layout/overlay
+ * push pattern, spec §11) hands the factory-built widget this class so it
+ * fills the space between the screen's `Header`/`Footer` regardless of
+ * whether the hosted widget sizes itself (`ConflictsTab` already does,
+ * via its own `BUNDLED_CSS` -- this covers the panes that don't, e.g.
+ * `TaskDetail`/`DefinitionDetail`, once later tasks push those). Bare
+ * class selector, carried only by whatever `WorkbenchHostScreen.compose`
+ * tags with it -- not ancestor-scoped, so it never counts against the
+ * bare-type fastpath ratchet (PR-3's `test_ancestor_scoped_bare_type_
+ * rule_count_is_a_ratchet`). */
+.workbench-host-body {
+    height: 1fr;
 }

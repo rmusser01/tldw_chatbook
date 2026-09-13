@@ -30,19 +30,42 @@ divergence the parity sweep normalizes away is also caught.
 
 UNIQUE-ness decisions (AC #2): the UNIQUE flag is pinned for ALL indexes via
 ``IndexPin.unique`` — losing UNIQUE silently legalizes duplicate rows that
-application code assumes cannot exist, so every one of the ten is treated as
-integrity-bearing:
+application code assumes cannot exist, so every one of the twenty-five is treated
+as integrity-bearing:
 
+* ``idx_canvas_revisions_canvas_sequence`` — one monotonic sequence position
+  per Canvas, including sibling branches.
+* ``character_conversation_search_one_ready_generation`` — at most one ready
+  character-search projection generation per data authority (partial).
+* ``uq_canvas_documents_id_conversation`` — supports the same-owner composite
+  foreign key used by local reopen hints.
+* ``uq_canvas_revisions_id_canvas`` — supports the same-Canvas composite parent
+  foreign key used by revision ancestry.
 * ``idx_message_trajectory_conv_seq`` — (conversation_id, seq) is the
   trajectory ledger's ordering identity; duplicate seq rows would corrupt
   replay order. Also pinned by a dedicated test below so a mechanical
   literal update cannot silently ride along with a schema downgrade.
+* ``idx_actor_pack_persona_intents_state`` — deterministic startup recovery
+  scans over unresolved Actor Pack Persona intents.
 * ``idx_messages_conversation_id_id`` — message identity within a
   conversation; backs keyset pagination over (conversation_id, id).
 * ``idx_notes_file_path_unique`` — at most one note per on-disk file path
   (the notes sync engine's file<->note mapping invariant; partial).
+* ``idx_persona_visual_assets_version_key`` — (pack_version_id, asset_key)
+  is an immutable visual-graph version's asset identity; duplicates would
+  let two different assets answer for the same manifest key.
+* ``idx_persona_visual_bindings_persona_active`` — at most one ACTIVE
+  persona-visual binding per persona (partial, WHERE status = 'active').
 * ``idx_visual_identity_bindings_actor_active`` — at most one ACTIVE visual
   identity binding per actor (partial, WHERE status = 'active').
+* ``idx_console_trace_owners_root_segment`` — one globally reserved root per
+  attached or detached trace owner; forks receive distinct child segments.
+* ``uq_console_trace_calls_idempotency`` — one durable call reservation per
+  idempotency identity.
+* ``uq_console_trace_calls_owner_sequence`` — one call at each ordered
+  owner/segment/turn/run sequence position.
+* ``uq_console_trace_semantic_revisions_live_message`` — at most one live
+  semantic revision locator per canonical message (partial).
 * ``rag_citation_traces_import_identity_uq`` /
   ``rag_citation_traces_server_identity_uq`` /
   ``rag_evidence_snapshots_content_dedupe_uq`` /
@@ -61,21 +84,22 @@ from typing import NamedTuple
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.ChaChaNotesDB.historical_bootstrap import (
     MINIMUM_BOOTSTRAP_VERSION,
     chachanotes_db_at_version,
+    open_current_chachanotes_from_legacy,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 _THIS_FILE = "Tests/ChaChaNotesDB/test_index_census.py"
 
 
 class IndexPin(NamedTuple):
-    """The pinned shape of one named index."""
+    """The pinned shape; expression key slots are reported as ``None``."""
 
     table: str
     unique: bool
-    columns: tuple[str, ...]
+    columns: tuple[str | None, ...]
 
 
 #: The full expected set of named (non-autoindex) indexes on a fully-migrated
@@ -83,6 +107,44 @@ class IndexPin(NamedTuple):
 #: it only as part of a deliberate schema change, in the same commit as the
 #: migration that adds, drops, renames, or reshapes an index. Sorted by name.
 EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
+    "character_conversation_search_dirty_authority_revision": IndexPin(
+        "character_conversation_search_dirty",
+        False,
+        ("data_authority_id", "source_revision"),
+    ),
+    "character_conversation_search_documents_character": IndexPin(
+        "character_conversation_search_documents",
+        False,
+        ("data_authority_id", "character_id", "generation_id", "conversation_id"),
+    ),
+    "character_conversation_search_documents_revision": IndexPin(
+        "character_conversation_search_documents",
+        False,
+        ("data_authority_id", "source_revision"),
+    ),
+    "character_conversation_search_generations_authority_status": IndexPin(
+        "character_conversation_search_generations",
+        False,
+        ("data_authority_id", "status"),
+    ),
+    "character_conversation_search_one_ready_generation": IndexPin(
+        "character_conversation_search_generations", True, ("data_authority_id",)
+    ),
+    "idx_actor_pack_persona_intents_state": IndexPin(
+        "actor_pack_persona_intents", False, ("state", "created_at", "intent_id")
+    ),
+    "idx_canvas_documents_conversation": IndexPin(
+        "canvas_documents", False, ("conversation_id", "deleted", "created_at", "id")
+    ),
+    "idx_canvas_revisions_canvas_sequence": IndexPin(
+        "canvas_revisions", True, ("canvas_id", "sequence")
+    ),
+    "idx_canvas_revisions_origin_message": IndexPin(
+        "canvas_revisions", False, ("origin_message_id", "canvas_id", "sequence")
+    ),
+    "idx_canvas_revisions_parent": IndexPin(
+        "canvas_revisions", False, ("canvas_id", "parent_revision_id", "sequence")
+    ),
     "idx_char_expr_images_char": IndexPin(
         "character_expression_images", False, ("character_id",)
     ),
@@ -93,6 +155,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_console_aux_attempts_conversation_started": IndexPin(
         "console_auxiliary_attempts", False, ("conversation_id", "started_at")
     ),
+    "idx_console_dispatch_checkpoint_conversation": IndexPin(
+        "console_dispatch_checkpoints", False, ("conversation_id",)
+    ),
     "idx_console_memories_boundary": IndexPin(
         "console_conversation_memories",
         False,
@@ -102,6 +167,107 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         "console_conversation_memories",
         False,
         ("conversation_id", "active", "created_at"),
+    ),
+    "idx_console_memories_id_conversation": IndexPin(
+        "console_conversation_memories", True, ("id", "conversation_id")
+    ),
+    "idx_console_memory_scopes_conversation_origin": IndexPin(
+        "console_conversation_memory_scopes",
+        False,
+        ("conversation_id", "origin_kind", "coverage_kind"),
+    ),
+    "idx_console_memory_selections_activation": IndexPin(
+        "console_conversation_memory_selections",
+        False,
+        ("conversation_id", "activation_message_id"),
+    ),
+    "idx_console_memory_selections_conversation_active_sequence": IndexPin(
+        "console_conversation_memory_selections",
+        False,
+        ("conversation_id", "active", "sequence"),
+    ),
+    "idx_console_trace_artifacts_identity": IndexPin(
+        "console_trace_artifacts",
+        False,
+        ("identity_digest", "media_type", "normalization_version"),
+    ),
+    "idx_console_trace_calls_owner_order": IndexPin(
+        "console_trace_calls",
+        False,
+        ("owner_id", "turn_id", "run_id", "call_sequence"),
+    ),
+    "idx_console_trace_calls_segment_order": IndexPin(
+        "console_trace_calls",
+        False,
+        ("segment_id", "turn_id", "run_id", "call_sequence"),
+    ),
+    "idx_console_trace_calls_surface_policy": IndexPin(
+        "console_trace_calls", False, ("surface_node_id", "policy_id")
+    ),
+    "idx_console_trace_events_call_order": IndexPin(
+        "console_trace_events", False, ("call_id", "sequence")
+    ),
+    "idx_console_trace_events_segment_order": IndexPin(
+        "console_trace_events", False, ("segment_id", "sequence")
+    ),
+    "idx_console_trace_header_components_artifact": IndexPin(
+        "console_trace_header_components", False, ("artifact_id", "header_id")
+    ),
+    "idx_console_trace_migration_status": IndexPin(
+        "console_trace_migration_state", False, ("status", "migration_name")
+    ),
+    "idx_console_trace_owners_root_segment": IndexPin(
+        "console_trace_owners", True, ("root_segment_id",)
+    ),
+    "idx_console_trace_redaction_artifact": IndexPin(
+        "console_trace_redaction_spans",
+        False,
+        ("artifact_id", "policy_id", "field_path", "start_codepoint"),
+    ),
+    "idx_console_trace_redaction_revision": IndexPin(
+        "console_trace_redaction_spans",
+        False,
+        ("semantic_revision_id", "policy_id", "field_path", "start_codepoint"),
+    ),
+    "idx_console_trace_retention_expiry": IndexPin(
+        "console_trace_retention_roots", False, (None, "entity_kind", "entity_id")
+    ),
+    "idx_console_trace_response_artifact": IndexPin(
+        "console_trace_response_links", False, ("artifact_id",)
+    ),
+    "idx_console_trace_response_revision": IndexPin(
+        "console_trace_response_links", False, ("semantic_revision_id",)
+    ),
+    "idx_console_trace_revision_bindings_artifact": IndexPin(
+        "console_trace_revision_bindings", False, ("artifact_id",)
+    ),
+    "idx_console_trace_segments_parent_boundary": IndexPin(
+        "console_trace_segments",
+        False,
+        (
+            "parent_segment_id",
+            "inherited_through_sequence",
+            "inherited_surface_head_id",
+        ),
+    ),
+    "idx_console_trace_semantic_revisions_source": IndexPin(
+        "console_trace_semantic_revisions",
+        False,
+        ("source_conversation_id", "source_message_id", "revision_sequence"),
+    ),
+    "idx_console_trace_surface_nodes_predecessor": IndexPin(
+        "console_trace_surface_nodes", False, ("predecessor_node_id", "segment_id")
+    ),
+    "idx_console_trace_surface_nodes_revision": IndexPin(
+        "console_trace_surface_nodes", False, ("semantic_revision_id", "node_id")
+    ),
+    "idx_console_trace_surface_nodes_segment_order": IndexPin(
+        "console_trace_surface_nodes", False, ("segment_id", "sequence")
+    ),
+    "idx_console_trace_surface_replacements_predecessor": IndexPin(
+        "console_trace_surface_replacements",
+        False,
+        ("segment_id", "predecessor_head_id"),
     ),
     "idx_conv_char": IndexPin("conversations", False, ("character_id",)),
     "idx_conversation_dictionaries_conv": IndexPin(
@@ -155,6 +321,12 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_message_attachments_message": IndexPin(
         "message_attachments", False, ("message_id",)
     ),
+    "idx_message_exchanges_message": IndexPin(
+        "message_exchanges", False, ("message_id",)
+    ),
+    "idx_message_exchanges_capture_detail": IndexPin(
+        "message_exchanges", False, ("capture_detail", "message_id")
+    ),
     "idx_message_trajectory_conv_seq": IndexPin(
         "message_trajectory_metadata", True, ("conversation_id", "seq")
     ),
@@ -202,13 +374,65 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_note_folders_active_parent": IndexPin(
         "note_folders", False, ("parent_id", "normalized_name")
     ),
+    "idx_note_sync_publication_intents_pending": IndexPin(
+        "note_sync_publication_intents",
+        False,
+        (
+            "server_profile_id",
+            "dataset_id",
+            "note_id",
+            "entity_version",
+            "intent_id",
+        ),
+    ),
+    "idx_notes_organization_adoption_reviews_open": IndexPin(
+        "notes_organization_adoption_reviews",
+        False,
+        ("server_profile_id", "dataset_id", "domain", "created_at"),
+    ),
+    "idx_notes_organization_heads_cursor": IndexPin(
+        "notes_organization_heads",
+        False,
+        ("server_profile_id", "dataset_id", "server_cursor"),
+    ),
+    "idx_notes_organization_heads_note_subject": IndexPin(
+        "notes_organization_heads",
+        False,
+        (None, "domain", "server_profile_id", "dataset_id", "object_id"),
+    ),
+    "idx_notes_organization_intents_note_subject_latest": IndexPin(
+        "notes_organization_sync_intents",
+        False,
+        (
+            None,
+            "server_profile_id",
+            "dataset_id",
+            "domain",
+            "object_id",
+            "intent_sequence",
+        ),
+    ),
+    "idx_notes_organization_intents_pending": IndexPin(
+        "notes_organization_sync_intents",
+        False,
+        ("server_profile_id", "dataset_id", "intent_sequence"),
+    ),
     "idx_notekw_kw": IndexPin("note_keywords", False, ("keyword_id",)),
+    "idx_note_links_target": IndexPin(
+        "note_links", False, ("target_note_id", "source_note_id")
+    ),
     "idx_notes_file_path": IndexPin("notes", False, ("file_path_on_disk",)),
     "idx_notes_file_path_unique": IndexPin("notes", True, ("file_path_on_disk",)),
     "idx_notes_is_synced": IndexPin("notes", False, ("is_externally_synced",)),
     "idx_notes_last_modified": IndexPin("notes", False, ("last_modified",)),
     "idx_notes_sync_excluded": IndexPin("notes", False, ("sync_excluded",)),
     "idx_notes_sync_root": IndexPin("notes", False, ("sync_root_folder",)),
+    "idx_persona_visual_assets_version_key": IndexPin(
+        "persona_visual_assets", True, ("pack_version_id", "asset_key")
+    ),
+    "idx_persona_visual_bindings_persona_active": IndexPin(
+        "persona_visual_bindings", True, ("persona_id",)
+    ),
     "idx_quiz_attempts_quiz_id": IndexPin("quiz_attempts", False, ("quiz_id",)),
     "idx_quiz_attempts_started_at": IndexPin("quiz_attempts", False, ("started_at",)),
     "idx_quiz_questions_order": IndexPin(
@@ -290,6 +514,27 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         True,
         ("profile_id", "message_id", "message_revision"),
     ),
+    "uq_canvas_documents_id_conversation": IndexPin(
+        "canvas_documents", True, ("id", "conversation_id")
+    ),
+    "uq_canvas_revisions_id_canvas": IndexPin(
+        "canvas_revisions", True, ("id", "canvas_id")
+    ),
+    "uq_keyword_collections_sync_id": IndexPin(
+        "keyword_collections", True, ("sync_id",)
+    ),
+    "uq_keywords_sync_id": IndexPin("keywords", True, ("sync_id",)),
+    "uq_console_trace_calls_idempotency": IndexPin(
+        "console_trace_calls", True, ("idempotency_key",)
+    ),
+    "uq_console_trace_calls_owner_sequence": IndexPin(
+        "console_trace_calls",
+        True,
+        ("owner_id", "segment_id", "turn_id", "run_id", "call_sequence"),
+    ),
+    "uq_console_trace_semantic_revisions_live_message": IndexPin(
+        "console_trace_semantic_revisions", True, ("live_message_id",)
+    ),
     "uq_note_folder_memberships_active_owner": IndexPin(
         "note_folder_memberships",
         True,
@@ -297,6 +542,10 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     ),
     "uq_note_folders_active_normalized_path": IndexPin(
         "note_folders", True, ("normalized_path",)
+    ),
+    "uq_note_folders_sync_id": IndexPin("note_folders", True, ("sync_id",)),
+    "uq_note_organization_receipts_unresolved_note": IndexPin(
+        "note_organization_receipts", True, ("note_id",)
     ),
 }
 
@@ -349,7 +598,7 @@ def live_index_census(request, tmp_path_factory) -> dict[str, IndexPin]:
     db_path = tmp_path_factory.mktemp("index_census") / "chain_migrated.sqlite"
     with chachanotes_db_at_version(db_path, MINIMUM_BOOTSTRAP_VERSION):
         pass  # bootstrap a genuinely-v4 DB, then close it
-    db = CharactersRAGDB(str(db_path), client_id="index-census-chain")
+    db = open_current_chachanotes_from_legacy(db_path, client_id="index-census-chain")
     try:
         return _census(db.get_connection())
     finally:

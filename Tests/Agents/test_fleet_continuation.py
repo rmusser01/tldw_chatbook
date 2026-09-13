@@ -47,8 +47,10 @@ from hypothesis import strategies as st
 from Tests.Agents.test_agent_service import fence
 from Tests.Agents.test_fleet_runtime import (
     _JOIN_TIMEOUT,
+    _fs_local_provider,
     _tool_results,
     _wait_until,
+    git_repo,  # noqa: F401  -- pytest fixture, resolved via this import
     make_fleet_service,
 )
 from tldw_chatbook.Agents.agent_models import (
@@ -70,7 +72,9 @@ from tldw_chatbook.Agents.agent_models import (
     ModelTurn,
     RunBudget,
     ToolCall,
+    ToolCatalogEntry,
     ToolResult,
+    ToolSchema,
     definition_fingerprint,
     format_steering_message,
 )
@@ -80,6 +84,7 @@ from tldw_chatbook.Agents.fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPTS,
     FleetCoordinator,
 )
+from tldw_chatbook.Chat.local_reasoning import EXCHANGE_CONTINUATION_KEY
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 # LoopDeps plumbing shared with the Task 1 suite (one `make_deps`, one
@@ -267,7 +272,22 @@ def test_property_final_messages_end_at_a_coherent_boundary(script_shape):
     final = outcome.final_messages
     _assert_coherent(final)
     boundary = seen[-1] if seen else [{"role": "user", "content": "hi"}]
-    if outcome.status == RUN_DONE:
+    # TASK-26001: budget exhaustion now makes one final tools-stripped
+    # wrap-up call whose input is the coherent prefix plus a single
+    # instruction message. That call is legitimately the model's last view,
+    # but the instruction never enters the retained transcript.
+    is_wrapup_view = (
+        outcome.status == RUN_STUCK
+        and boundary
+        and boundary[-1].get("role") == "user"
+        and "budget is exhausted" in str(boundary[-1].get("content", ""))
+    )
+    if is_wrapup_view:
+        assert final == boundary[:-1], (
+            "the wrap-up instruction must not be retained, and the wrap-up "
+            "input must be exactly the coherent prefix"
+        )
+    elif outcome.status == RUN_DONE:
         assert final == boundary + [
             {"role": "assistant", "content": outcome.final_text}
         ]
@@ -402,7 +422,7 @@ def test_delivered_steering_rides_the_coherent_transcript():
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": fence_text},
         {"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}calculator: 42"},
-        {"role": "user", "content": labeled},
+        {"role": "user", "content": labeled, EXCHANGE_CONTINUATION_KEY: True},
         {"role": "assistant", "content": "done."},
     ]
 
@@ -533,6 +553,17 @@ def test_retention_survives_prune_terminal_by_both_ids():
     assert c.get_retained(h.handle_id) is not None
     assert c.get_retained("run-xyz") is not None
     assert c.get_retained("run-xyz").run_id == "run-xyz"
+    assert c.durable_handle_map() == {h.handle_id: "run-xyz"}
+
+
+def test_pruned_handle_without_retention_has_no_false_durable_mapping():
+    c = _coord(retained_transcripts=0)
+    h = c.reserve(task="child", agent=None)
+    c.attach_run(h.handle_id, "run-not-retained")
+    c.finish(h.handle_id, RUN_DONE, result="r")
+    assert c.prune_terminal() == 1
+    assert c.get_retained(h.handle_id) is None
+    assert h.handle_id not in c.durable_handle_map()
 
 
 def test_get_retained_resolves_handle_id_before_a_colliding_run_id():
@@ -811,7 +842,7 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     resumed_payload = original_calls[2]["messages_payload"]
     assert resumed_payload[0]["role"] == "system"
     assert resumed_payload[1:] == retained_history + [
-        {"role": "user", "content": labeled}
+        {"role": "user", "content": labeled, EXCHANGE_CONTINUATION_KEY: True}
     ]
 
     # Lineage: a NEW row, resumed_from the OLD run, parented to the
@@ -821,8 +852,36 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     resumed_row = next(r for r in rows if r["id"] != old_run_id)
     assert resumed_row["resumed_from_run_id"] == old_run_id
     assert resumed_row["parent_run_id"] == run2
+    steering_step = next(
+        step
+        for step in db.get_run(run2)["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    assert resumed_row["spawn_event_id"] == (
+        f"agent-step:{run2}:{steering_step['index']}"
+    )
+    resumed_lifecycle = [
+        step
+        for step in resumed_row["steps"]
+        if step["kind"].startswith("agent_run_")
+    ]
+    assert [step["kind"] for step in resumed_lifecycle] == [
+        "agent_run_reserved",
+        "agent_run_created",
+        "agent_run_resumed",
+        "agent_run_started",
+        "agent_run_completed",
+    ]
+    resumed_event = next(
+        step
+        for step in resumed_lifecycle
+        if step["kind"] == "agent_run_resumed"
+    )
+    assert resumed_event["source_event_id"] == f"agent-run:{old_run_id}"
     old_row = next(r for r in rows if r["id"] == old_run_id)
     assert old_row["resumed_from_run_id"] is None
+
     assert old_row["parent_run_id"] == run1
     _wait_until(
         lambda: db.get_run_fresh(resumed_row["id"])["status"] == RUN_DONE,
@@ -833,10 +892,304 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     sends = _tool_results(db.get_run(run2), SEND_TO_AGENT_TOOL_NAME)
     assert sends and "ERROR" not in sends[0]
     assert "resumed" in sends[0] and "new run" in sends[0].lower()
+    assert holder["handle_id"] not in sends[0]
+    assert f"run:{old_run_id}" in sends[0]
     new_handle = next(
         h for h in coordinator.snapshot() if h.run_id == resumed_row["id"]
     )
-    assert new_handle.handle_id in sends[0]
+    assert new_handle.handle_id not in sends[0]
+    assert f"run:{resumed_row['id']}" in sends[0]
+
+
+#: Isolation-capable resume config: spawn + wait + resume, no fs tools
+#: needed (the child never writes -- this test only checks worktree
+#: ADMISSION happens again on resume, not diff content).
+ISO_RESUME_CFG = AgentConfig(
+    model="test-model",
+    system_prompt="You are helpful.",
+    allowed_tools=(SPAWN_TOOL_NAME, WAIT_AGENTS_TOOL_NAME, SEND_TO_AGENT_TOOL_NAME),
+    budget=RunBudget(max_steps=60, max_model_turns=60, max_subagents=4),
+)
+
+
+def test_resumed_worktree_isolated_child_gets_a_fresh_worktree(db, git_repo):
+    """Finding 7 (Qodo round): `RetainedTranscript` now threads the
+    original child's isolation flag through to a resume -- a resumed
+    isolation="worktree" child must get its OWN fresh worktree (a new
+    run_id, so a new admission is the correct outcome, per the T4
+    refusal machinery `_admit_agent_worktree` already covers), not
+    silently fall back to sharing the tree the way passing a literal
+    ``None`` for isolation used to.
+    """
+    provider = _fs_local_provider(git_repo)
+    holder: dict = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "keep going"},
+        )
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two answer",
+        ],
+        {"iso task": ["done once", "done twice"]},
+        providers=(provider,),
+    )
+    run1, outcome1 = _run(service, config=ISO_RESUME_CFG)
+    assert outcome1.status == RUN_DONE
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    _await_retained(coordinator, finished.handle_id)
+    retained = coordinator.get_retained(finished.handle_id)
+    assert retained.isolation == "worktree", (
+        "the original spawn's isolation was not recorded on retention"
+    )
+
+    run2, outcome2 = _run(service, config=ISO_RESUME_CFG)
+    assert outcome2.status == RUN_DONE
+
+    resumed_handle = next(
+        h for h in coordinator.snapshot() if h.handle_id != finished.handle_id
+    )
+    assert resumed_handle.handle_id in service._agent_worktrees, (
+        "the resumed isolated child never got a fresh worktree admission"
+    )
+
+
+def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
+    db, git_repo, monkeypatch
+):
+    """Finding 6 twin (Qodo round): the resume call site's own
+    child_allowed_tools composition (a deliberate duplicate of spawn's,
+    per this module's own "only the launch tail is shared" convention)
+    must exclude shell_exec/virtual_cli exactly like the spawn path does,
+    now that Finding 7 threads `retained.isolation` through instead of a
+    literal None.
+    """
+    from tldw_chatbook.Agents import agent_service as agent_service_module
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
+    from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+    captured_configs = []
+    real_agent_config = agent_service_module.AgentConfig
+
+    def _spy_agent_config(**kwargs):
+        cfg = real_agent_config(**kwargs)
+        captured_configs.append(cfg)
+        return cfg
+
+    monkeypatch.setattr(agent_service_module, "AgentConfig", _spy_agent_config)
+
+    provider = _fs_local_provider(git_repo)
+    shell_cli_resume_cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(
+            RAW_SHELL_TOOL_NAME,
+            VIRTUAL_CLI_TOOL_NAME,
+            SPAWN_TOOL_NAME,
+            WAIT_AGENTS_TOOL_NAME,
+            SEND_TO_AGENT_TOOL_NAME,
+        ),
+        budget=RunBudget(max_steps=60, max_model_turns=60, max_subagents=4),
+    )
+    holder: dict = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "keep going"},
+        )
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two answer",
+        ],
+        {"iso task": ["done once", "done twice"]},
+        providers=(provider,),
+    )
+    run1, outcome1 = _run(service, config=shell_cli_resume_cfg)
+    assert outcome1.status == RUN_DONE
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    _await_retained(coordinator, finished.handle_id)
+
+    run2, outcome2 = _run(service, config=shell_cli_resume_cfg)
+    assert outcome2.status == RUN_DONE
+
+    child_configs = [
+        cfg for cfg in captured_configs if cfg is not shell_cli_resume_cfg
+    ]
+    resumed_config = child_configs[-1]
+    assert RAW_SHELL_TOOL_NAME not in resumed_config.allowed_tools
+    assert VIRTUAL_CLI_TOOL_NAME not in resumed_config.allowed_tools
+
+
+class _AgentLessonsCatalogProvider:
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(
+                id=f"lesson:{name}",
+                name=name,
+                one_line_description=name,
+                source="lesson-test",
+            )
+            for name in (
+                "library_search_notes",
+                "library_get_note",
+                "library_save_note",
+            )
+        ]
+
+    def load_schema(self, tool_id):
+        name = str(tool_id).split(":", 1)[1]
+        return ToolSchema(tool_id, name, name, {"type": "object"})
+
+    def invoke(self, tool_id, args):
+        return ToolResult(ok=True, content=f"unused:{tool_id}")
+
+
+def test_resumed_fleet_child_recomputes_non_mutating_lesson_guidance(db):
+    holder: dict[str, str] = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "check newer evidence"},
+        )
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "inspect lessons"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one done",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two done",
+        ],
+        {"inspect lessons": ["draft one", "draft two"]},
+        providers=(_AgentLessonsCatalogProvider(),),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="primary",
+        allowed_tools=(
+            "library_search_notes",
+            "library_get_note",
+            "library_save_note",
+            SPAWN_TOOL_NAME,
+        ),
+        budget=RunBudget(max_steps=60, max_model_turns=60, max_subagents=4),
+    )
+
+    _run(service, config=config)
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    _await_retained(coordinator, finished.handle_id)
+    _run(service, config=config)
+
+    child_calls = chat.child_calls["inspect lessons"]
+    assert len(child_calls) == 2
+    for call in child_calls:
+        system = call["messages_payload"][0]["content"]
+        assert "Agent Lessons protocol" in system
+        assert "Do not call library_save_note" in system
+        assert "Do not mutate Notes" in system
+
+
+def test_resumed_lifecycle_capture_failure_starts_from_actual_diagnostic_after_reload(
+    db, monkeypatch
+):
+    holder: dict[str, str] = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "check again"},
+        )
+
+    original_insert = db.insert_steps_at_indices
+    failed = False
+
+    def fail_resumed_once(run_id, indexed_steps):
+        nonlocal failed
+        if not failed and any(
+            step["kind"] == "agent_run_resumed"
+            for _index, step in indexed_steps
+        ):
+            failed = True
+            raise RuntimeError("simulated resumed lifecycle failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_resumed_once)
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "inspect"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one done",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two done",
+        ],
+        {"inspect": ["first answer", "second answer"]},
+    )
+    _run(service)
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    old_run_id = finished.run_id
+    assert old_run_id
+    _await_retained(coordinator, finished.handle_id)
+    _run(service)
+    resumed_id = next(
+        row["id"]
+        for row in _subagent_rows(db)
+        if row["resumed_from_run_id"] == old_run_id
+    )
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="resumed-failure-reload")
+    row = reopened.get_run(resumed_id)
+    assert row["status"] == RUN_DONE
+    steps = row["steps"]
+    diagnostics = [step for step in steps if step["kind"] == "capture_failed"]
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    lifecycle_kinds = [
+        step["kind"] for step in steps if step["kind"].startswith("agent_run_")
+    ]
+    assert len(lifecycle_kinds) == len(set(lifecycle_kinds))
+    started = next(step for step in steps if step["kind"] == "agent_run_started")
+    diagnostic_id = f"agent-step:{resumed_id}:{diagnostic['index']}"
+    assert diagnostic["field_states"]["agent_run_resumed"] == "not_observed"
+    assert started["parent_event_id"] == diagnostic_id
+    assert not any(step["kind"] == "agent_run_resumed" for step in steps)
+    rows = reopened.list_runs("c", include_superseded=True)
+    event_ids = {
+        f"agent-step:{candidate['id']}:{step['index']}"
+        for candidate in rows
+        for step in candidate["steps"]
+    } | {f"agent-run:{candidate['id']}" for candidate in rows}
+    for step in steps:
+        assert step["parent_event_id"] in event_ids
+        assert step["source_event_id"] is None or step["source_event_id"] in event_ids
+    reopened.close()
 
 
 def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
@@ -1010,8 +1363,120 @@ def test_undelivered_queued_steering_rides_the_seed_with_original_labels(db):
     )
     # Original label, original position: queued remnant FIRST, the new
     # supervisor message LAST.
-    assert resumed_payload[-2] == {"role": "user", "content": user_labeled}
-    assert resumed_payload[-1] == {"role": "user", "content": supervisor_labeled}
+    assert resumed_payload[-2] == {
+        "role": "user",
+        "content": user_labeled,
+        EXCHANGE_CONTINUATION_KEY: True,
+    }
+    assert resumed_payload[-1] == {
+        "role": "user",
+        "content": supervisor_labeled,
+        EXCHANGE_CONTINUATION_KEY: True,
+    }
+
+
+def test_retained_live_send_preserves_its_cause_on_resumed_steering(db):
+    in_final_call = threading.Event()
+    release_final = threading.Event()
+    holder: dict[str, str] = {}
+
+    def gated_final():
+        in_final_call.set()
+        assert release_final.wait(_JOIN_TIMEOUT)
+        return "first run done"
+
+    def send_while_child_is_finishing():
+        assert in_final_call.wait(_JOIN_TIMEOUT)
+        handle = next(
+            candidate
+            for candidate in coordinator.snapshot()
+            if candidate.status == "running"
+        )
+        holder["handle_id"] = handle.handle_id
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": handle.handle_id, "message": "preserve this cause"},
+        )
+
+    def release_then_wait():
+        release_final.set()
+        return fence(WAIT_AGENTS_TOOL_NAME, {})
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "resume now"},
+        )
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "causal retained task"}),
+            send_while_child_is_finishing,
+            release_then_wait,
+            "turn one done",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two done",
+        ],
+        {"causal retained task": [gated_final, "resumed done"]},
+    )
+    run1, outcome1 = _run(service)
+    assert outcome1.status == RUN_DONE
+    _await_retained(coordinator, holder["handle_id"])
+    send_step = next(
+        step
+        for step in db.get_run(run1)["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    send_event_id = f"agent-step:{run1}:{send_step['index']}"
+    retained = coordinator.get_retained(holder["handle_id"])
+    assert retained.steering_with_causes == (
+        (STEERING_SOURCE_SUPERVISOR, "preserve this cause", send_event_id),
+    )
+
+    run2, outcome2 = _run(service)
+    assert outcome2.status == RUN_DONE
+    resume_send = next(
+        step
+        for step in db.get_run(run2)["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    resume_event_id = f"agent-step:{run2}:{resume_send['index']}"
+    resumed = next(
+        row
+        for row in _subagent_rows(db)
+        if row["resumed_from_run_id"] is not None
+    )
+    assert resumed["spawn_event_id"] == resume_event_id
+    reserved = next(
+        step for step in resumed["steps"] if step["kind"] == "agent_run_reserved"
+    )
+    assert reserved["parent_event_id"] == resume_event_id
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="retained-cause-reload")
+    reloaded = reopened.get_run(resumed["id"])
+    steering = next(
+        step
+        for step in reloaded["steps"]
+        if step["kind"] == "steering"
+        and step["source_event_id"] == send_event_id
+    )
+    assert steering["parent_event_id"] == send_event_id
+    all_rows = reopened.list_runs("c", include_superseded=True)
+    event_ids = {
+        f"agent-run:{row['id']}" for row in all_rows
+    } | {
+        f"agent-step:{row['id']}:{step['index']}"
+        for row in all_rows
+        for step in row["steps"]
+    }
+    assert steering["source_event_id"] in event_ids
+    assert steering["parent_event_id"] in event_ids
+    reopened.close()
 
 
 def test_a_resume_consumes_a_spawn_slot_and_refuses_at_the_budget(db):
@@ -1057,7 +1522,8 @@ def test_a_resume_consumes_a_spawn_slot_and_refuses_at_the_budget(db):
     assert all(row["resumed_from_run_id"] is None for row in rows)
 
 
-def test_a_live_cap_refusal_unwinds_the_resumes_spawn_slot(db):
+@pytest.mark.parametrize("capacity_scope", ["conversation", "runtime"])
+def test_a_live_cap_refusal_unwinds_the_resumes_spawn_slot(db, capacity_scope):
     """At the live cap the resume is refused with spawn's own retryable
     copy -- and, like spawn's cap refusal, it must NOT consume a slot: a
     later spawn in the same turn still fits the budget."""
@@ -1103,8 +1569,14 @@ def test_a_live_cap_refusal_unwinds_the_resumes_spawn_slot(db):
             "task b": [gated_b],
             "task c": ["c done"],
         },
-        max_live=1,
+        max_live=1 if capacity_scope == "conversation" else 3,
     )
+    if capacity_scope == "runtime":
+        from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+
+        service.runtime_capacity = RuntimeCapacity(
+            max_child_executions=1, reserved_manual_children=0
+        )
     run1, outcome1 = _run(service, config=TWO_SLOT_CFG)
     assert outcome1.status == RUN_DONE
     finished = _finished_child(coordinator)
@@ -1115,7 +1587,12 @@ def test_a_live_cap_refusal_unwinds_the_resumes_spawn_slot(db):
     assert outcome2.status == RUN_DONE
     sends = _tool_results(db.get_run(run2), SEND_TO_AGENT_TOOL_NAME)
     assert sends and "ERROR" in sends[0]
-    assert "live sub-agent limit reached" in sends[0]
+    expected = (
+        "live sub-agent limit reached"
+        if capacity_scope == "conversation"
+        else "runtime sub-agent limit reached"
+    )
+    assert expected in sends[0]
     rows = _subagent_rows(db)
     # A, B and C all exist; the refused resume created nothing.
     assert sorted(row["task"] for row in rows) == ["task a", "task b", "task c"]
@@ -1219,7 +1696,10 @@ def test_a_cancelled_child_draws_the_honest_not_retained_refusal_not_unknown(db)
     assert outcome.status == RUN_DONE
     sends = _tool_results(db.get_run(run1), SEND_TO_AGENT_TOOL_NAME)
     assert sends and "ERROR" in sends[0]
-    assert holder["handle_id"] in sends[0]
+    cancelled = coordinator.get(holder["handle_id"])
+    assert cancelled.run_id
+    assert holder["handle_id"] not in sends[0]
+    assert f"run:{cancelled.run_id}" in sends[0]
     assert "no retained transcript" in sends[0]
     assert "fresh sub-agent" in sends[0]
     # NEVER the unknown-id copy for a child that was real.
@@ -1231,8 +1711,6 @@ def test_after_a_restart_the_error_says_the_transcript_is_gone(db):
     """The spec's honest limit: retention is in-memory. A fresh
     coordinator (a restart) cannot resume -- the error says the transcript
     is gone and suggests a fresh spawn, NOT the unknown-id refusal."""
-    holder: dict = {}
-
     service, _chat, coordinator = make_fleet_service(
         db,
         [
@@ -1312,12 +1790,8 @@ def test_a_resumed_childs_spend_reaches_the_fleet_rollup_at_finish(db):
     coordinator's `snapshot()` copies -- asserted here at the coordinator
     seam with the exact same summation.
 
-    The audit's negative half -- a finished survivor's spend LEAVES that
-    sum at the next turn's `prune_terminal`, and a continued task's
-    aggregate (old + resumed run) is derivable from no surface (the DB
-    joins `resumed_from_run_id` lineage but persists no tokens) -- is
-    characterized at the tail, filed as TASK-18311, deliberately not
-    patched here (the plan's own scope pin).
+    TASK-18311: pruning still empties the live-only rollup; durable per-run
+    budget counters and continuation ancestry preserve the historical total.
     """
     holder: dict = {}
 
@@ -1374,11 +1848,15 @@ def test_a_resumed_childs_spend_reaches_the_fleet_rollup_at_finish(db):
     rollup = sum(h.total_tokens for h in coordinator.snapshot())
     assert rollup == old_spend + resumed_handle.total_tokens
 
-    # -- The honest gap, characterized (TASK-18311; do not "fix" this
-    # assertion without that task): the next turn's prune drops both
-    # terminal handles, so the rollup reads 0 -- the finished survivor's
-    # spend has left `fleet_snapshot`, and NO surface can reconstruct the
-    # continued task's old+new aggregate (the DB has the lineage join but
-    # no token column).
+    # History must survive prune without being reintroduced into the live
+    # cost-chip feed, whose provider usage has its own durable accounting.
     assert coordinator.prune_terminal() >= 2
     assert sum(h.total_tokens for h in coordinator.snapshot()) == 0
+    assert db.get_run(old_run_id)["budget_tokens"] == old_spend
+    assert db.get_run(resumed_row["id"])["budget_tokens"] == resumed_handle.total_tokens
+    assert db.continuation_budget("c", resumed_row["id"]) == {
+        "budget_tokens": rollup,
+        "run_count": 2,
+        "recorded_run_count": 2,
+        "complete": True,
+    }

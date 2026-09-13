@@ -21,7 +21,7 @@ baseline (``Tests/UI/test_console_shell_regions.py``) at all three sizes, so
 that placement is not a stylistic preference.
 
 **Naming**: the DOM here spells two things, an outer column and an inner
-framed region, and the whole column exists to hold the transcript — there is
+borderless region, and the whole column exists to hold the transcript — there is
 no other content in it. So the class is named for what the column is FOR
 (``ConsoleTranscriptRegion``) while the ids stay exactly as they are, the
 same judgement call ``ConsoleInspectorRail`` made when the plan's placeholder
@@ -90,6 +90,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -98,6 +99,45 @@ from textual.widget import Widget
 
 from ...Widgets.Console import ConsoleTranscript
 from .frame import frame_console_region
+
+
+class ConsoleChangeReviewProjection:
+    """Cache durable Change Review markers for transcript-only projection."""
+
+    def __init__(
+        self,
+        *,
+        runtime_accessor: Callable[[], Any],
+        conversation_id_accessor: Callable[[], str | None],
+    ) -> None:
+        self._runtime_accessor = runtime_accessor
+        self._conversation_id_accessor = conversation_id_accessor
+        self._key: tuple[str | None, int] | None = None
+        self._marker_blocks: list[Any] = []
+
+    def project(self, messages: list[Any]) -> list[Any]:
+        """Return messages with the current durable review markers injected."""
+        runtime = self._runtime_accessor()
+        coordinator = runtime.change_review_coordinator
+        if coordinator is None:
+            return messages
+        conversation_id = self._conversation_id_accessor()
+        key = (conversation_id, coordinator.publication_signal.snapshot().revision)
+        if key != self._key:
+            bridge = runtime.agent_bridge
+            self._marker_blocks = (
+                [
+                    block
+                    for block in bridge.change_review_marker_messages(conversation_id)
+                    if block[0] is not None
+                ]
+                if bridge is not None and conversation_id is not None
+                else []
+            )
+            self._key = key
+        from ...Chat.console_agent_bridge import inject_resume_agent_markers
+
+        return inject_resume_agent_markers(messages, self._marker_blocks)
 
 
 @dataclass(frozen=True)
@@ -116,7 +156,7 @@ class _ConsoleTranscriptReadingState:
 
 
 class ConsoleTranscriptRegion(Vertical):
-    """The Console shell's main column: the framed transcript surface.
+    """The Console shell's main column: the borderless transcript surface.
 
     Composes nothing of its own beyond the two containers the screen used to
     build inline; the transcript itself lives inside ``ConsoleSessionSurface``
@@ -156,20 +196,16 @@ class ConsoleTranscriptRegion(Vertical):
         self._session_surface_builder = session_surface_builder
 
     def compose(self) -> ComposeResult:
-        """Compose the framed transcript region and the session surface.
+        """Compose the borderless transcript region and the session surface.
 
         Returns:
-            The framed ``#console-transcript-region`` container holding the
-            Console session surface. ``top=False`` is deliberate: the control
-            bar directly above already paints that edge, so the transcript
-            reads as continuous with it instead of drawing a doubled rule.
+            The borderless ``#console-transcript-region`` container holding the
+            Console session surface. ``edges=()`` makes this child root own no
+            workspace shell edge.
         """
         transcript_region = frame_console_region(
             Vertical(id="console-transcript-region", classes="console-region"),
-            top=False,
-            # TASK-17651: the workspace grid's own bottom border is the
-            # bottom stack's single separator; the region ends flush.
-            bottom=False,
+            edges=(),
         )
         with transcript_region:
             yield self._session_surface_builder()

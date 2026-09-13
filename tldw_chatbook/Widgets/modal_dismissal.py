@@ -112,7 +112,7 @@ class _BackdropClickShield(Widget):
 
     can_focus = False
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     _BackdropClickShield {
         width: 1;
         height: 1;

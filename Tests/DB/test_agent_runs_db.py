@@ -6,7 +6,16 @@ from contextlib import contextmanager
 import pytest
 
 from tldw_chatbook.Agents.agent_models import AgentDefinition
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Chat.console_raw_cli import local_command_resume_marker
+from tldw_chatbook.DB.AgentRuns_DB import (
+    AgentRunsDB,
+    AgentStepConflictError,
+    ConsoleActivityReceiptsUnavailable,
+)
+from tldw_chatbook.Tools.raw_cli_executor import (
+    MAX_RAW_COMMAND_BYTES,
+    MAX_RAW_PREVIEW_BYTES,
+)
 
 
 @pytest.fixture()
@@ -70,6 +79,290 @@ def test_count_subagents_counts_only_subagent_kind(db):
         conversation_id="other", agent_kind="subagent", task="x", parent_run_id="zzz"
     )
     assert db.count_subagent_runs("c") == 3
+
+
+def test_local_command_kind_is_stored_but_ignored_by_agent_summaries(db):
+    primary = db.create_run(conversation_id="c", agent_kind="primary")
+    db.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        task="Local command",
+        assistant_message_id="leaf-1",
+    )
+
+    assert [row["agent_kind"] for row in db.list_runs("c")] == [
+        "local_command",
+        "primary",
+    ]
+    assert db.latest_primary_run("c")["id"] == primary
+    assert db.count_subagent_runs("c") == 0
+    assert db.count_subagents_by_conversation(["c"]) == {}
+
+
+def _local_command_steps(
+    *,
+    invocation_id: str,
+    command: str = "printf secret",
+    stdout_preview: str = "ok\n",
+    stderr_preview: str = "",
+    cleanup_proven: bool = True,
+    full_result: object = "full output",
+) -> list[dict]:
+    return [
+        {
+            "index": 0,
+            "kind": "tool_call",
+            "tool_name": "raw_cli",
+            "args": {
+                "command": command,
+                "shell": "auto",
+                "cwd": "/private/tmp",
+                "invocation_id": invocation_id,
+            },
+        },
+        {
+            "index": 1,
+            "kind": "tool_result",
+            "tool_name": "raw_cli",
+            "result": full_result,
+            "args": {
+                "invocation_id": invocation_id,
+                "shell": "/bin/zsh",
+                "cwd": "/private/tmp",
+                "stdout_preview": stdout_preview,
+                "stderr_preview": stderr_preview,
+                "elapsed_seconds": 0.25,
+                "exit_code": 0,
+                "terminal_state": "exited",
+                "truncated": False,
+                "cleanup_proven": cleanup_proven,
+            },
+            "status": "done",
+            "tool_outcome": "success",
+        },
+    ]
+
+
+def test_local_command_resume_projection_is_bounded_and_omits_full_result(db):
+    valid_id = db.create_run(
+        conversation_id="local-projection",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    full_result_secret = "FULL_RESULT_MUST_NOT_BE_PROJECTED_" + "x" * 1_000_000
+    db.append_steps(
+        valid_id,
+        _local_command_steps(
+            invocation_id="valid-invocation",
+            full_result={"nested": full_result_secret},
+        ),
+    )
+    db.set_status(valid_id, "done")
+
+    oversize_id = db.create_run(
+        conversation_id="local-projection",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        oversize_id,
+        _local_command_steps(
+            invocation_id="oversize-invocation",
+            command="x" * (MAX_RAW_COMMAND_BYTES + 1),
+        ),
+    )
+    db.set_status(oversize_id, "done")
+
+    preview_id = db.create_run(
+        conversation_id="local-projection",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        preview_id,
+        _local_command_steps(
+            invocation_id="preview-invocation",
+            stdout_preview="x" * MAX_RAW_PREVIEW_BYTES,
+            stderr_preview="y",
+        ),
+    )
+    db.set_status(preview_id, "done")
+
+    malformed_id = db.create_run(
+        conversation_id="local-projection",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    malformed_steps = _local_command_steps(invocation_id="malformed-invocation")
+    malformed_steps[1]["args"] = "not-a-mapping"
+    db.append_steps(malformed_id, malformed_steps)
+    db.set_status(malformed_id, "done")
+
+    primary_id = db.create_run(
+        conversation_id="local-projection",
+        agent_kind="primary",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        primary_id,
+        _local_command_steps(
+            invocation_id="primary-poison",
+            full_result=full_result_secret,
+        ),
+    )
+    db.set_status(primary_id, "done")
+
+    records = db.local_command_resume_records("local-projection")
+
+    assert [record["id"] for record in records] == [
+        valid_id,
+        oversize_id,
+        preview_id,
+    ]
+    assert records[0]["agent_kind"] == "local_command"
+    assert records[0]["assistant_message_id"] == "assistant-leaf"
+    assert "result" not in records[0]["steps"][1]
+    assert local_command_resume_marker(records[0]) is not None
+    assert local_command_resume_marker(records[1]) is None
+    assert local_command_resume_marker(records[2]) is None
+    projected = repr(records)
+    assert "FULL_RESULT_MUST_NOT_BE_PROJECTED" not in projected
+    assert len(projected.encode("utf-8")) < 100_000
+
+
+def test_local_command_resume_projection_bounds_raw_rows_before_json_projection(db):
+    run_id = db.create_run(
+        conversation_id="local-projection-shape",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        run_id,
+        _local_command_steps(
+            invocation_id="bounded-query",
+            full_result="UNPROJECTED_FULL_RESULT_" + "x" * 1_000_000,
+        ),
+    )
+    db.set_status(run_id, "done")
+
+    oversized_result_id = db.create_run(
+        conversation_id="local-projection-shape",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        oversized_result_id,
+        _local_command_steps(
+            invocation_id="oversized-result-payload",
+            full_result="x" * 10_000_000,
+        ),
+    )
+    db.set_status(oversized_result_id, "done")
+
+    oversized_metadata_id = db.create_run(
+        conversation_id="local-projection-shape",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        oversized_metadata_id,
+        _local_command_steps(invocation_id="oversized-metadata"),
+    )
+    db.set_status(oversized_metadata_id, "done")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE agent_runs SET status = ?, created_at = ? WHERE id = ?",
+            ("x" * 1_000, "y" * 1_000, oversized_metadata_id),
+        )
+
+    statements: list[str] = []
+    db._held_connection().set_trace_callback(statements.append)
+    assert [
+        row["id"] for row in db.local_command_resume_records("local-projection-shape")
+    ] == [run_id]
+
+    query = next(
+        statement
+        for statement in statements
+        if "agent_kind = 'local_command'" in statement
+    )
+    # SQL layout is incidental to the bounded-projection contract.
+    query = " ".join(query.split()).replace("( ", "(").replace(" )", ")")
+    eligibility = query.split("), projected AS", maxsplit=1)[0]
+    retained_columns = eligibility.split("SELECT", maxsplit=1)[1].split(
+        "FROM agent_runs", maxsplit=1
+    )[0]
+    assert "eligible_local_commands AS MATERIALIZED" in eligibility
+    assert "json_" not in eligibility
+    assert ".payload" not in retained_columns
+    assert "ar.steps" not in retained_columns
+    assert "length(CAST(ar.id AS BLOB))" in query
+    assert "length(CAST(ar.assistant_message_id AS BLOB))" in query
+    assert "length(CAST(ar.status AS BLOB))" in eligibility
+    assert "length(CAST(ar.created_at AS BLOB))" in eligibility
+    assert "length(CAST(ar.steps AS BLOB))" in eligibility
+    assert "length(CAST(call_step.payload AS BLOB))" in eligibility
+    assert "length(CAST(result_step.payload AS BLOB))" in eligibility
+
+
+def test_local_command_projection_bounds_args_then_uses_canonical_parser(db):
+    run_id = db.create_run(
+        conversation_id="local-projection-parser",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    steps = _local_command_steps(
+        invocation_id="malformed-exit-code",
+        full_result="UNPROJECTED_RESULT_" + "x" * 1_000_000,
+    )
+    steps[1]["args"]["exit_code"] = False
+    db.append_steps(run_id, steps)
+    db.set_status(run_id, "done")
+
+    statements: list[str] = []
+    db._held_connection().set_trace_callback(statements.append)
+    (record,) = db.local_command_resume_records("local-projection-parser")
+
+    assert record["id"] == run_id
+    assert "result" not in record["steps"][1]
+    assert local_command_resume_marker(record) is None
+    query = next(
+        statement
+        for statement in statements
+        if "agent_kind = 'local_command'" in statement
+    )
+    assert "AS call_args_json" in query
+    assert "AS result_args_json" in query
+    assert "$.args.command" not in query
+    assert "$.args.stdout_preview" not in query
+
+
+def test_local_command_resume_projection_drops_invalid_utf8_row_only(db):
+    valid_ids: list[str] = []
+    for invocation_id in ("valid-before", "poison", "valid-after"):
+        run_id = db.create_run(
+            conversation_id="local-projection-utf8",
+            agent_kind="local_command",
+            assistant_message_id="assistant-leaf",
+        )
+        db.append_steps(
+            run_id,
+            _local_command_steps(invocation_id=invocation_id),
+        )
+        db.set_status(run_id, "done")
+        if invocation_id == "poison":
+            with db.transaction() as conn:
+                conn.execute(
+                    "UPDATE agent_runs SET status = CAST(X'80' AS TEXT) WHERE id = ?",
+                    (run_id,),
+                )
+        else:
+            valid_ids.append(run_id)
+
+    records = db.local_command_resume_records("local-projection-utf8")
+
+    assert [record["id"] for record in records] == valid_ids
+    assert all(local_command_resume_marker(record) is not None for record in records)
 
 
 # --- Finding A: batched per-conversation sub-agent counts (single query,
@@ -139,6 +432,40 @@ def test_supersede_run_tree_marks_run_and_terminal_children(db):
     assert db.get_run(parent)["status"] == "superseded"
     assert db.get_run(child)["status"] == "superseded"
     assert db.get_run(other)["status"] == "running"
+
+
+def test_supersede_run_tree_leaves_parented_local_command_resumable(db):
+    parent = db.create_run(conversation_id="c", agent_kind="primary")
+    db.set_status(parent, "done")
+    child = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="child",
+        parent_run_id=parent,
+    )
+    db.set_status(child, "done")
+    local_command = db.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        task="Local command",
+        parent_run_id=parent,
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        local_command,
+        _local_command_steps(invocation_id="malformed-parent-local-command"),
+    )
+    db.set_status(local_command, "done")
+
+    changed = db.supersede_run_tree(parent)
+
+    assert changed == 2
+    assert db.get_run(parent)["status"] == "superseded"
+    assert db.get_run(child)["status"] == "superseded"
+    assert db.get_run(local_command)["status"] == "done"
+    assert [row["id"] for row in db.local_command_resume_records("c")] == [
+        local_command
+    ]
 
 
 def test_supersede_run_tree_leaves_live_child_untouched(db):
@@ -430,6 +757,219 @@ def test_reconcile_preserves_existing_result(request, tmp_path):
     row = db2.get_run(rid)
     assert row["status"] == "error"
     assert row["result"] == "partial output"  # COALESCE keeps it
+    diagnostics = [step for step in row["steps"] if step["kind"] == "capture_failed"]
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["status"] == "incomplete"
+    assert diagnostics[0]["parent_event_id"] == f"agent-run:{rid}"
+
+
+def test_reconcile_orphaned_run_publishes_failed_fleet_receipt(tmp_path):
+    db_path = tmp_path / "orphan-receipt.db"
+    setup = AgentRunsDB(db_path)
+    run_id = setup.create_run(
+        conversation_id="conversation-orphan",
+        agent_kind="subagent",
+        task="background task",
+        assistant_message_id="assistant-orphan",
+    )
+    setup.close()
+    AgentRunsDB._swept_paths.discard(str(db_path))
+
+    reopened = AgentRunsDB(db_path)
+
+    assert reopened.get_run(run_id)["status"] == "error"
+    receipts = reopened.list_unseen_console_activity()
+    assert len(receipts) == 1
+    assert receipts[0]["origin"] == "fleet_survivor"
+    assert receipts[0]["logical_outcome_id"] == f"fleet-run:{run_id}"
+    assert receipts[0]["status"] == "failed"
+    assert receipts[0]["conversation_id"] == "conversation-orphan"
+    assert receipts[0]["run_id"] == run_id
+    assert receipts[0]["assistant_message_id"] == "assistant-orphan"
+
+
+def test_reconcile_receipt_failure_rolls_back_orphan_repair(tmp_path, monkeypatch):
+    db_path = tmp_path / "orphan-receipt-atomic.db"
+    setup = AgentRunsDB(db_path)
+    run_id = setup.create_run(
+        conversation_id="conversation-atomic",
+        agent_kind="primary",
+    )
+    setup.close()
+    AgentRunsDB._swept_paths.discard(str(db_path))
+
+    real_publish = AgentRunsDB._publish_console_activity_in_transaction
+
+    def fail_receipt(self, conn, **kwargs):
+        raise sqlite3.OperationalError("injected receipt publication failure")
+
+    monkeypatch.setattr(
+        AgentRunsDB, "_publish_console_activity_in_transaction", fail_receipt
+    )
+    degraded = AgentRunsDB(db_path)
+
+    assert degraded.get_run(run_id)["status"] == "running"
+    assert degraded.get_run(run_id)["steps"] == []
+    assert str(db_path) not in AgentRunsDB._swept_paths
+
+    monkeypatch.setattr(
+        AgentRunsDB, "_publish_console_activity_in_transaction", real_publish
+    )
+    assert degraded.reconcile_orphaned_runs() == 1
+    assert degraded.get_run(run_id)["status"] == "error"
+    assert len(degraded.list_unseen_console_activity()) == 1
+
+
+def test_reconcile_local_commands_without_agent_lifecycle_diagnostics(tmp_path):
+    db_path = tmp_path / "local-command-reconcile.db"
+    setup = AgentRunsDB(db_path)
+    completed_id = setup.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    setup.append_steps(
+        completed_id,
+        _local_command_steps(invocation_id="completed-invocation"),
+    )
+    setup.set_status(completed_id, "done")
+    running_id = setup.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    setup.append_steps(
+        running_id,
+        [_local_command_steps(invocation_id="running-invocation")[0]],
+    )
+    setup.close()
+    AgentRunsDB._swept_paths.discard(str(db_path))
+
+    reopened = AgentRunsDB(db_path)
+
+    completed = reopened.get_run(completed_id)
+    running = reopened.get_run(running_id)
+    assert completed["status"] == "done"
+    assert [step["kind"] for step in completed["steps"]] == [
+        "tool_call",
+        "tool_result",
+    ]
+    assert running["status"] == "error"
+    assert running["result"] is None
+    assert [step["kind"] for step in running["steps"]] == ["tool_call"]
+    assert [record["id"] for record in reopened.local_command_resume_records("c")] == [
+        completed_id
+    ]
+
+
+def test_terminal_status_and_lifecycle_insert_are_atomic_on_fault(
+    tmp_path, monkeypatch
+):
+    db = AgentRunsDB(tmp_path / "atomic-terminal.db")
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    step = {
+        "index": 10_000_010,
+        "kind": "agent_run_completed",
+        "summary": "Agent run completed",
+        "created_at": "2026-08-22T00:00:00.000000Z",
+        "status": "done",
+        "owner_seq": 0,
+        "parent_event_id": f"agent-run:{run_id}",
+        "source_event_id": None,
+        "field_states": {"payload": "omitted"},
+        "sensitivity": "diagnostic",
+    }
+    real_transaction = db.transaction
+
+    class FaultAfterInsert:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def execute(self, sql, params=()):
+            if sql.startswith("UPDATE agent_runs SET status"):
+                raise sqlite3.OperationalError("injected after lifecycle insert")
+            return self.conn.execute(sql, params)
+
+    @contextmanager
+    def faulting_transaction():
+        with real_transaction() as conn:
+            yield FaultAfterInsert(conn)
+
+    monkeypatch.setattr(db, "transaction", faulting_transaction)
+    with pytest.raises(sqlite3.OperationalError):
+        db.set_terminal_with_step(run_id, "done", "answer", step, budget_tokens=23)
+
+    row = db.get_run(run_id)
+    assert row["status"] == "running"
+    assert row["result"] is None
+    assert row["budget_tokens"] is None
+    assert not any(step["kind"] == "agent_run_completed" for step in row["steps"])
+
+
+def test_terminal_status_result_and_lifecycle_are_first_writer_wins(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    completed = {
+        "index": 10_000_010,
+        "kind": "agent_run_completed",
+        "summary": "Agent run completed",
+        "created_at": "2026-08-22T00:00:00.000000Z",
+        "status": "done",
+        "owner_seq": 0,
+        "parent_event_id": f"agent-run:{run_id}",
+        "source_event_id": None,
+        "field_states": {"payload": "omitted"},
+        "sensitivity": "diagnostic",
+    }
+    failed = {**completed, "index": 10_000_014, "kind": "agent_run_failed"}
+
+    assert db.set_terminal_with_step(run_id, "done", "answer", completed) is True
+    assert db.set_terminal_with_step(run_id, "error", "late error", failed) is False
+    with pytest.raises(AgentStepConflictError):
+        db.set_terminal_with_step(
+            run_id,
+            "done",
+            "answer",
+            {**completed, "summary": "conflicting terminal observation"},
+        )
+
+    row = db.get_run(run_id)
+    assert row["status"] == "done"
+    assert row["result"] == "answer"
+    assert [step["kind"] for step in row["steps"]] == ["agent_run_completed"]
+
+
+def test_reconcile_marks_preexisting_split_terminal_row_as_incomplete(tmp_path):
+    db_path = tmp_path / "split-terminal.db"
+    setup = AgentRunsDB(db_path)
+    run_id = setup.create_run(conversation_id="c", agent_kind="primary")
+    setup.insert_steps_at_indices(
+        run_id,
+        [
+            (
+                0,
+                {
+                    "index": 0,
+                    "kind": "model_request_started",
+                    "summary": "Model request started",
+                    "owner_seq": 0,
+                    "parent_event_id": f"agent-run:{run_id}",
+                },
+            )
+        ],
+    )
+    assert setup.set_status(run_id, "done", "legacy answer") is True
+    setup.close()
+    AgentRunsDB._swept_paths.discard(str(db_path))
+
+    reopened = AgentRunsDB(db_path)
+    row = reopened.get_run(run_id)
+    assert row["status"] == "done"
+    assert row["result"] == "legacy answer"
+    diagnostic = next(step for step in row["steps"] if step["kind"] == "capture_failed")
+    assert diagnostic["status"] == "incomplete"
+    assert diagnostic["field_states"]["agent_run_completed"] == "not_observed"
+    assert diagnostic["parent_event_id"] == f"agent-step:{run_id}:0"
+    reopened.close()
 
 
 def test_reconcile_idempotent_same_process(request, tmp_path):
@@ -732,8 +1272,7 @@ def test_agent_runs_columns_backfilled_on_old_file(request, tmp_path):
     request.addfinalizer(db.close)
     with db.connection() as conn:
         columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+            row[1] for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
         }
     assert {"agent_definition", "definition_fingerprint"} <= columns
 
@@ -810,9 +1349,7 @@ def test_schema_version_constant_agrees_with_the_version_table(request, tmp_path
     db = AgentRunsDB(tmp_path / "fresh.db", client_id="test")
     request.addfinalizer(db.close)
     with db.connection() as conn:
-        recorded = conn.execute(
-            "SELECT MAX(version) FROM schema_version"
-        ).fetchone()[0]
+        recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION
 
 
@@ -845,8 +1382,7 @@ def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(request, tmp_path)
     assert first.get_run(run_id)["resumed_from_run_id"] == "prior-run"
     with first.connection() as conn:
         versions = {
-            row[0]
-            for row in conn.execute("SELECT version FROM schema_version")
+            row[0] for row in conn.execute("SELECT version FROM schema_version")
         }
     assert 11 in versions
 
@@ -873,3 +1409,373 @@ def test_create_run_resumed_from_run_id_round_trips_and_defaults_none(db):
     # The lineage flows through the list read too (SELECT * row dicts).
     listed = {row["id"]: row for row in db.list_runs("c")}
     assert listed[resumed]["resumed_from_run_id"] == origin
+
+
+def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
+    path = tmp_path / "legacy_pre_v14.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL);
+        INSERT INTO schema_version(version) VALUES
+            (4), (5), (6), (7), (8), (9), (10), (11), (12), (13);
+        CREATE TABLE agent_runs (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            parent_run_id TEXT,
+            agent_kind TEXT NOT NULL,
+            task TEXT,
+            status TEXT NOT NULL,
+            steps TEXT NOT NULL DEFAULT '[]',
+            result TEXT,
+            budget TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            assistant_message_id TEXT,
+            agent_definition TEXT,
+            definition_fingerprint TEXT,
+            wake_delivered_at TEXT,
+            resumed_from_run_id TEXT
+        );
+        """
+    )
+    conn.commit()
+    columns_before = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
+    conn.close()
+    assert "spawn_event_id" not in columns_before
+
+    first = AgentRunsDB(path, client_id="migrate-v14")
+    with first.connection() as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
+        recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+    assert "spawn_event_id" in columns
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 18
+    parent = first.create_run(conversation_id="c", agent_kind="primary")
+    child = first.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        parent_run_id=parent,
+        spawn_event_id=f"agent-step:{parent}:3",
+    )
+    assert first.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
+    first.close()
+
+    second = AgentRunsDB(path, client_id="reopen-v14")
+    assert second.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
+    second.close()
+
+
+def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
+    database = AgentRunsDB(tmp_path / "fresh-v15.db", client_id="receipt-shape")
+
+    with database.connection() as conn:
+        columns = {
+            row[1]: row
+            for row in conn.execute(
+                "PRAGMA table_info(console_activity_receipts)"
+            ).fetchall()
+        }
+        table_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'console_activity_receipts'"
+        ).fetchone()[0]
+        indexes = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA index_list(console_activity_receipts)"
+            ).fetchall()
+        }
+        recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+
+    assert tuple(columns) == (
+        "activity_id",
+        "origin",
+        "logical_outcome_id",
+        "transition_revision",
+        "session_id",
+        "conversation_id",
+        "run_id",
+        "assistant_message_id",
+        "status",
+        "created_at",
+        "acknowledged_at",
+        "superseded_at",
+    )
+    assert "CHECK(origin IN ('ordinary', 'fleet_survivor'))" in table_sql
+    assert "CHECK(transition_revision > 0)" in table_sql
+    assert "CHECK(session_id IS NOT NULL OR conversation_id IS NOT NULL)" in table_sql
+    assert "idx_console_activity_receipts_unseen" in indexes
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 18
+    assert database.receipt_capability_available is True
+
+
+def test_unseen_console_activity_query_uses_stats_free_keyset_index(tmp_path):
+    database = AgentRunsDB(tmp_path / "receipt-plan.db", client_id="receipt-plan")
+
+    with database.connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
+        plan = " | ".join(
+            row["detail"]
+            for row in conn.execute(
+                "EXPLAIN QUERY PLAN "
+                "SELECT * FROM console_activity_receipts "
+                "WHERE acknowledged_at IS NULL AND superseded_at IS NULL "
+                "ORDER BY created_at DESC, activity_id LIMIT ?",
+                (201,),
+            )
+        )
+
+    assert "idx_console_activity_receipts_unseen" in plan
+    assert "TEMP B-TREE" not in plan
+
+
+def test_pre_v15_receipt_migration_preserves_definitions_and_change_notes(tmp_path):
+    path = tmp_path / "pre-v15.db"
+    setup = AgentRunsDB(path, client_id="seed-v14")
+    definition_id = setup.create_agent_definition(_defn())
+    run_id = setup.create_run(conversation_id="conv-v14", agent_kind="primary")
+    setup.set_status(run_id, "done", result="preserved")
+    note_id = setup.add_change_note(
+        run_id=run_id,
+        root="/repo",
+        path="file.py",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-old\n+new",
+        note="Keep this note",
+    )
+    setup.close()
+
+    raw = sqlite3.connect(path)
+    raw.execute("DROP TABLE IF EXISTS console_activity_receipts")
+    raw.execute("DELETE FROM schema_version WHERE version = 15")
+    raw.commit()
+    assert (
+        raw.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'console_activity_receipts'"
+        ).fetchone()
+        is None
+    )
+    raw.close()
+
+    migrated = AgentRunsDB(path, client_id="migrate-v15")
+    assert migrated.get_agent_definition(definition_id)["name"] == "researcher"
+    assert migrated.notes_for_run(run_id)[0]["id"] == note_id
+    assert migrated.get_run(run_id)["result"] == "preserved"
+    assert migrated.receipt_capability_available is True
+    migrated.close()
+
+    reopened = AgentRunsDB(path, client_id="reopen-v15")
+    assert reopened.get_agent_definition(definition_id)["name"] == "researcher"
+    assert reopened.notes_for_run(run_id)[0]["note"] == "Keep this note"
+    reopened.close()
+
+
+def test_receipt_capability_ddl_failure_keeps_core_database_usable(tmp_path):
+    class ReceiptDDLFailureDB(AgentRunsDB):
+        def _create_console_activity_receipts_schema(self, conn):
+            raise sqlite3.OperationalError("injected receipt DDL failure")
+
+    database = ReceiptDDLFailureDB(
+        tmp_path / "receipt-degraded.db", client_id="receipt-degraded"
+    )
+
+    definition_id = database.create_agent_definition(_defn())
+    run_id = database.create_run(
+        conversation_id="core-still-works", agent_kind="primary"
+    )
+    database.set_status(run_id, "done", result="ok")
+
+    assert database.receipt_capability_available is False
+    assert database.get_agent_definition(definition_id)["name"] == "researcher"
+    assert database.get_run(run_id)["result"] == "ok"
+    with database.connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'console_activity_receipts'"
+            ).fetchone()
+            is None
+        )
+        assert (
+            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 18
+        )
+        assert (
+            conn.execute("SELECT 1 FROM schema_version WHERE version = 15").fetchone()
+            is None
+        )
+
+
+def test_activity_receipt_identical_restamp_is_idempotent(db):
+    first_id, first_created = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:42",
+        status="done",
+        session_id="session-1",
+        conversation_id="conversation-1",
+        assistant_message_id="assistant-1",
+    )
+    second_id, second_created = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:42",
+        status="done",
+        session_id="session-1",
+        conversation_id="conversation-1",
+        assistant_message_id="assistant-1",
+    )
+
+    assert second_id == first_id
+    assert first_created is True
+    assert second_created is False
+    unseen = db.list_unseen_console_activity()
+    assert [row["activity_id"] for row in unseen] == [first_id]
+    assert unseen[0]["transition_revision"] == 1
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected_revisions"),
+    [
+        (("failed", "done"), (1, 2)),
+        (("done", "failed", "done"), (1, 2, 3)),
+    ],
+)
+def test_activity_receipt_status_corrections_create_revision_chain(
+    db, statuses, expected_revisions
+):
+    activity_ids = []
+    for status in statuses:
+        activity_id, created = db.publish_console_activity(
+            origin="ordinary",
+            logical_outcome_id="turn:correction",
+            status=status,
+            session_id="session-correction",
+            conversation_id="conversation-correction",
+        )
+        activity_ids.append(activity_id)
+        assert created is True
+
+    with db.connection() as conn:
+        rows = conn.execute(
+            "SELECT activity_id, transition_revision, status, superseded_at "
+            "FROM console_activity_receipts "
+            "WHERE logical_outcome_id = ? ORDER BY transition_revision",
+            ("turn:correction",),
+        ).fetchall()
+
+    assert tuple(row["transition_revision"] for row in rows) == expected_revisions
+    assert tuple(row["status"] for row in rows) == statuses
+    assert all(row["superseded_at"] is not None for row in rows[:-1])
+    assert rows[-1]["superseded_at"] is None
+    assert [row["activity_id"] for row in db.list_unseen_console_activity()] == [
+        activity_ids[-1]
+    ]
+
+
+def test_acknowledging_superseded_activity_cannot_acknowledge_new_revision(db):
+    failed_id, _ = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:race",
+        status="failed",
+        session_id="session-race",
+        conversation_id="conversation-race",
+    )
+    done_id, _ = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:race",
+        status="done",
+        session_id="session-race",
+        conversation_id="conversation-race",
+    )
+
+    assert db.acknowledge_console_activity((failed_id,)) == 0
+    assert [row["activity_id"] for row in db.list_unseen_console_activity()] == [
+        done_id
+    ]
+
+
+def test_acknowledge_console_activity_updates_only_supplied_exact_ids(db):
+    done_id, _ = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:done",
+        status="done",
+        session_id="session-done",
+        conversation_id="conversation-mixed",
+    )
+    failed_id, _ = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:failed",
+        status="failed",
+        session_id="session-failed",
+        conversation_id="conversation-mixed",
+    )
+
+    assert db.acknowledge_console_activity((done_id,)) == 1
+    assert [row["activity_id"] for row in db.list_unseen_console_activity()] == [
+        failed_id
+    ]
+
+
+def test_count_unseen_fleet_activity_excludes_other_receipt_states(db):
+    superseded_id, _ = db.publish_console_activity(
+        origin="fleet_survivor",
+        logical_outcome_id="fleet-run:one",
+        status="failed",
+        session_id=None,
+        conversation_id="conversation-fleet",
+        run_id="one",
+    )
+    current_id, _ = db.publish_console_activity(
+        origin="fleet_survivor",
+        logical_outcome_id="fleet-run:one",
+        status="done",
+        session_id=None,
+        conversation_id="conversation-fleet",
+        run_id="one",
+    )
+    acknowledged_id, _ = db.publish_console_activity(
+        origin="fleet_survivor",
+        logical_outcome_id="fleet-run:two",
+        status="done",
+        session_id=None,
+        conversation_id="conversation-fleet",
+        run_id="two",
+    )
+    db.acknowledge_console_activity((acknowledged_id,))
+    db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:ordinary",
+        status="done",
+        session_id="session-ordinary",
+        conversation_id="conversation-fleet",
+    )
+    db.publish_console_activity(
+        origin="fleet_survivor",
+        logical_outcome_id="fleet-run:other-conversation",
+        status="done",
+        session_id=None,
+        conversation_id="conversation-other",
+        run_id="other-conversation",
+    )
+
+    assert superseded_id != current_id
+    assert db.count_unseen_fleet_activity("conversation-fleet") == 1
+
+
+def test_receipt_operations_raise_focused_error_when_capability_is_unavailable(
+    tmp_path,
+):
+    class ReceiptDDLFailureDB(AgentRunsDB):
+        def _create_console_activity_receipts_schema(self, conn):
+            raise sqlite3.OperationalError("injected receipt DDL failure")
+
+    database = ReceiptDDLFailureDB(tmp_path / "receipt-operation-degraded.db")
+
+    with pytest.raises(ConsoleActivityReceiptsUnavailable):
+        database.list_unseen_console_activity()

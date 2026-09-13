@@ -61,7 +61,7 @@ def _verify_snapshot_source(source, mode, archive_digest, archive=None):
 
 
 def _builtin_snapshot_target(original, proof, document, target, *, session=None):
-    """Reobserve only authenticated original builtin members for this operation."""
+    """Reobserve authenticated builtin/legacy persona trees for this operation."""
     from pydantic import TypeAdapter
 
     from tldw_chatbook.Persona_Visual.recovery import _Assets
@@ -71,20 +71,18 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
     from .owner_registry import install_adapters
     from .storage_admission import _digest_recovery_file, acquire_storage
 
-    owner_id = "persona.visual_identity_builtin"
     if original.target is None or target is None or not target.complete:
         raise ValueError("local_snapshot_preservation_unverified")
     originals = {item.logical_id: item for item in original.target.items}
     selected = {
         key: originals[key]
         for key in original.safety_scope
-        if key in originals and originals[key].owner == owner_id
+        if key in originals
+        and originals[key].owner
+        in {"persona.visual_identity_builtin", "persona.assets"}
     }
     if not selected:
         return target
-    owner = next((a for a in install_adapters() if a.owner_id == owner_id), None)
-    if type(owner) is not _Assets:
-        raise ValueError("local_snapshot_preservation_unverified")
     saved = {item.logical_id: item for item in proof.safety_sources}
     producers = {item.logical_id: item for item in document.producer_inventory}
     records = {
@@ -98,8 +96,8 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
             or record is None
             or producer is None
             or source is None
-            or source.owner_id != owner_id
-            or producer.owner_id != owner_id
+            or source.owner_id != item.owner
+            or producer.owner_id != item.owner
             or producer.status != item.status
             or set(producer.dependencies) != set(item.dependencies)
             or Path(source.source.path) != item.path
@@ -119,7 +117,15 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
     updated = list(target.items)
     observations = []
     for root in roots:
-        if owner._root({}) != root.path or root.status != "included_directory":
+        owner_id = root.owner
+        owner = next((a for a in install_adapters() if a.owner_id == owner_id), None)
+        if type(owner) is not _Assets:
+            raise ValueError("local_snapshot_preservation_unverified")
+        if (
+            owner_id == "persona.visual_identity_builtin"
+            and owner._root({}) != root.path
+            or root.status != "included_directory"
+        ):
             raise ValueError("local_snapshot_builtin_root_changed")
         members = [
             item
@@ -149,6 +155,14 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
             len(current_roots) != 1
             or current_roots[0].owner != owner_id
             or current_roots[0].status not in {"unused", "included_directory"}
+            or owner_id == "persona.assets"
+            and (
+                current_roots[0].status != "included_directory"
+                or current_roots[0].metadata is None
+                or current_roots[0].metadata.parent_id is not None
+                or current_roots[0].metadata.relative_path != ""
+                or current_roots[0].metadata.root_id != current_roots[0].logical_id
+            )
         ):
             raise ValueError("local_snapshot_builtin_conflict")
         lease = acquire_storage(root.path) if session is None else None
@@ -204,7 +218,9 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
                     item.metadata.relative_path
                     for item in members
                     if item.status == "included"
-                ),
+                )
+                if owner_id == "persona.visual_identity_builtin"
+                else None,
             )
             if {item.path for item in entries} != {
                 item.path for item in members
@@ -251,6 +267,10 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
                     for entry in updated
                     if entry.path == item.path or entry.logical_id == actual.logical_id
                 ]
+                # A replacement core may no longer reference retained legacy
+                # files. Reattach only authenticated old edges to this exact
+                # reobserved tree; config/core edges and new dependencies must
+                # still agree. Staging validates the old core against held bytes.
                 if current and (
                     len(current) != 1
                     or current[0].owner != owner_id
@@ -258,7 +278,22 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
                     or current[0].status != "unused"
                     and (
                         current[0].status != actual.status
-                        or set(current[0].dependencies) != set(actual.dependencies)
+                        or (
+                            set(current[0].dependencies) != set(actual.dependencies)
+                            and not (
+                                owner_id == "persona.assets"
+                                and item is root
+                                and set(current[0].dependencies)
+                                <= set(actual.dependencies)
+                                and set(actual.dependencies)
+                                - set(current[0].dependencies)
+                                <= {
+                                    row.logical_id
+                                    for row in mapped.values()
+                                    if row.status == "included"
+                                }
+                            )
+                        )
                     )
                 ):
                     raise ValueError("local_snapshot_builtin_conflict")
@@ -395,13 +430,13 @@ def _builtin_sources(plan):
     return tuple(
         item
         for item in plan.target.items
-        if item.owner == "persona.visual_identity_builtin"
+        if item.owner in {"persona.visual_identity_builtin", "persona.assets"}
         and item.logical_id in plan.safety_scope
     )
 
 
 def _stage_read_sources(plan):
-    """Read preserved builtin and exactly reviewed created-tree retirements."""
+    """Read preserved persona safety trees and reviewed created-tree retirements."""
     sources = {item.logical_id: item for item in _builtin_sources(plan)}
     retired = dict(plan.retire)
     roots = {
@@ -491,7 +526,7 @@ def _preserved_builtin_validation(
     items, candidates, observed = {}, {}, {}
     for key in selected:
         old = originals[key]
-        if old.owner != "persona.visual_identity_builtin":
+        if old.owner not in {"persona.visual_identity_builtin", "persona.assets"}:
             continue
         current = [
             item

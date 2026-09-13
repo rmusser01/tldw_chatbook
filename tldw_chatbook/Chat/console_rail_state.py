@@ -11,10 +11,16 @@ from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPS
 
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
+ENVIRONMENT_SECTION_ID = "environment"
+TASKS_SECTION_ID = "tasks"
 # Task-400: the "context" (staged sources) section moved from the left rail
 # into the Inspector rail, so it is no longer a collapsible left-rail section.
+# TASK-23199: "session" was retired. It rendered a header plus one row
+# naming the active chat, which the Conversations browser already shows as a
+# selected row marked "active session" -- a list with its current item marked
+# is one concept, not two. `session_open` survives ONLY as a legacy
+# migration seed in `coerce_console_rail_preferences`; see there.
 CONSOLE_RAIL_SECTION_IDS = (
-    "session",
     "workspace",
     "conversations",
     "model",
@@ -22,20 +28,35 @@ CONSOLE_RAIL_SECTION_IDS = (
     "agent",
     "character",
 )
+CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID = "inspector_more"
+# TASK-8 (Console Inspector environment redesign): Environment and Tasks are
+# Inspector-rail disclosures, not left-rail sections, so their ids join the
+# preference-disclosure tuple directly rather than CONSOLE_RAIL_SECTION_IDS
+# (that tuple is left-rail sections and other code iterates it).
+CONSOLE_ENVIRONMENT_DISCLOSURE_ID = "environment"
+CONSOLE_TASKS_DISCLOSURE_ID = "tasks"
+CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS = (
+    *CONSOLE_RAIL_SECTION_IDS,
+    CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
+    CONSOLE_ENVIRONMENT_DISCLOSURE_ID,
+    CONSOLE_TASKS_DISCLOSURE_ID,
+)
+CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL = "global"
+CONSOLE_RAIL_LAYOUT_SCOPE_WORKSPACE = "workspace"
+CONSOLE_RAIL_SHARED_LAYOUT_SCOPE = "shared-layout-v1"
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
-# TASK-2154.1/TASK-18913: default Context stays open at exactly 100 columns,
-# where the framed grid has 96 content columns and resolves as Context 30 +
-# main outer 55 + the horizontal Inspector handle 11. The existing main
-# min-width waiver permits that one-column yield; below 100, default Context
-# is force-collapsed as a rendering override without rewriting preference.
+# TASK-2154.1/TASK-19639 (formerly TASK-18913): default Context stays open at
+# exactly 100 columns. ADR-043 keeps that established policy threshold even
+# though the edge-owned workbench now exposes every terminal column; below
+# 100, default Context is force-collapsed without rewriting preference.
 # TASK-2154.2 (LY-11, ADR-043): eligible explicit opens below either compact
 # threshold receive the same layout-minimum waiver. ``compact_override`` is
 # only that layout authority, never persisted preference or explicit intent.
 CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS = 100
-# TASK-2154.1 (LY-08/LY-09): below this width even the collapsed-handle
-# layout fills the terminal (left handle 13 + main 56 + right handle 11 +
-# two borders + two horizontal-padding cells = 84). Below 84 the default
-# layout is transcript-only: both handles hide and the main minimum is waived.
+# TASK-2154.1 (LY-08/LY-09): ADR-043 keeps the established 84-column
+# single-pane threshold after edge ownership removed the former shell inset.
+# Below 84 the default layout is transcript-only: both handles hide and the
+# main minimum is waived.
 # Budget-eligible explicit rails may still render from their 70/74 floors
 # through 83 via compact override while the handles remain hidden.
 CONSOLE_SINGLE_PANE_COLUMNS = 84
@@ -65,6 +86,11 @@ CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
 #: right rail needs no marker because its closed default is distinguishable
 #: from an explicit ``right_open=True`` by value alone.
 CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY = "left_open_explicit"
+CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY = "right_open_explicit"
+#: TASK-31244: distinguishes a user's Character disclosure gesture from a
+#: first-use default.  Presence of the old Boolean without this marker is a
+#: legacy preference and must remain authoritative until the first toggle.
+CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY = "character_disclosure_explicit"
 
 _PERSISTENCE_PREFIX = "console_rail_state"
 _INVALID_KEY_RUN_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -118,13 +144,15 @@ class ConsoleRailPreferences:
 
     left_open: bool = CONSOLE_RAIL_LEFT_DEFAULT_OPEN
     right_open: bool = CONSOLE_RAIL_RIGHT_DEFAULT_OPEN
-    session_open: bool = True
-    workspace_open: bool = True
+    workspace_open: bool = False
     conversations_open: bool = True
-    model_open: bool = True
+    model_open: bool = False
     details_open: bool = False
     agent_open: bool = False
-    character_open: bool = True
+    character_open: bool = False
+    inspector_more_open: bool = False
+    environment_open: bool = True
+    tasks_open: bool = True
 
 
 @dataclass(frozen=True)
@@ -162,13 +190,15 @@ class ConsoleRailState:
     right_compact_override: bool = False
     left_compact_override: bool = False
     compact_override: bool = False
-    session_open: bool = True
-    workspace_open: bool = True
+    workspace_open: bool = False
     conversations_open: bool = True
-    model_open: bool = True
+    model_open: bool = False
     details_open: bool = False
     agent_open: bool = False
-    character_open: bool = True
+    character_open: bool = False
+    inspector_more_open: bool = False
+    environment_open: bool = True
+    tasks_open: bool = True
 
 
 def _sanitize_key_part(value: Any) -> str:
@@ -195,9 +225,26 @@ def _build_persistence_key(workspace_id: str, scope_id: str) -> str:
 #: entries per chat and reset a user's section layout on every new
 #: conversation (a toggle made moments earlier was gone after a workspace
 #: switch round-trip). Layout is a workspace-level preference.
-CONSOLE_RAIL_LAYOUT_SCOPE = "layout"
+_CONSOLE_RAIL_WORKSPACE_LAYOUT_SCOPE = "layout"
 #: Legacy no-conversation scope kept readable as a one-time migration source.
 _LEGACY_GLOBAL_SCOPE = "global"
+
+
+def normalize_console_rail_layout_scope(value: Any) -> str:
+    """Return the supported Console rail layout persistence scope.
+
+    Args:
+        value: The configured scope value.
+
+    Returns:
+        ``workspace`` when explicitly requested; otherwise ``global``.
+    """
+    if not isinstance(value, str):
+        return CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL
+    normalized = value.strip().lower()
+    if normalized == CONSOLE_RAIL_LAYOUT_SCOPE_WORKSPACE:
+        return CONSOLE_RAIL_LAYOUT_SCOPE_WORKSPACE
+    return CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL
 
 
 def build_console_rail_preference_key(
@@ -205,6 +252,7 @@ def build_console_rail_preference_key(
     workspace_id: Any = None,
     conversation_id: Any = None,
     session_id: Any = None,
+    layout_scope: Any = CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL,
 ) -> ConsoleRailPreferenceKey:
     """Build the deterministic persistence key for Console rail preferences.
 
@@ -213,18 +261,32 @@ def build_console_rail_preference_key(
         conversation_id: Accepted for API compatibility; no longer shapes the
             key (TASK-718 - preferences are per workspace).
         session_id: Accepted for API compatibility; no longer shapes the key.
+        layout_scope: ``global`` for one shared layout or ``workspace`` for
+            the active workspace's independent layout.
 
     Returns:
-        The per-workspace layout key, with the legacy ``:global`` key as the
-        read-only migration fallback (adopted by the caller's fallback
-        migration when the layout key has never been written).
+        The selected layout key. Global scope uses one reserved shared key;
+        workspace scope retains the legacy ``:global`` read fallback.
     """
     del conversation_id, session_id
+    if normalize_console_rail_layout_scope(layout_scope) == (
+        CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL
+    ):
+        return ConsoleRailPreferenceKey(
+            workspace_id=CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL,
+            scope_id=CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+            value=_build_persistence_key(
+                CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL,
+                CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+            ),
+        )
     workspace_scope = _sanitize_key_part(workspace_id)
     return ConsoleRailPreferenceKey(
         workspace_id=workspace_scope,
-        scope_id=CONSOLE_RAIL_LAYOUT_SCOPE,
-        value=_build_persistence_key(workspace_scope, CONSOLE_RAIL_LAYOUT_SCOPE),
+        scope_id=_CONSOLE_RAIL_WORKSPACE_LAYOUT_SCOPE,
+        value=_build_persistence_key(
+            workspace_scope, _CONSOLE_RAIL_WORKSPACE_LAYOUT_SCOPE
+        ),
         fallback_value=_build_persistence_key(workspace_scope, _LEGACY_GLOBAL_SCOPE),
     )
 
@@ -260,7 +322,11 @@ def collect_prunable_console_rail_keys(
         if len(parts) != 3 or parts[0] != _PERSISTENCE_PREFIX:
             continue
         scope_id = parts[2]
-        if scope_id in (CONSOLE_RAIL_LAYOUT_SCOPE, _LEGACY_GLOBAL_SCOPE):
+        if scope_id in (
+            _CONSOLE_RAIL_WORKSPACE_LAYOUT_SCOPE,
+            _LEGACY_GLOBAL_SCOPE,
+            CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+        ):
             continue
         prunable.append(key)
     return prunable
@@ -278,6 +344,28 @@ def _coerce_bool(value: Any, fallback: bool) -> bool:
         if normalized in _FALSE_STRINGS:
             return False
     return fallback
+
+
+def console_rail_right_open_explicit(stored_preferences: Any) -> bool:
+    """Return whether a stored payload marks ``right_open`` as user-toggled.
+
+    TASK-32328: mirrors ``console_rail_left_open_explicit`` (ADR-043's
+    marker pattern) for the Inspector rail. The 118-128-column auto-open
+    heuristic used to die on mere ``right_open`` KEY PRESENCE, so any
+    implicit writer that stored a preference permanently disabled it; with
+    this marker only an explicit user toggle does.
+
+    Args:
+        stored_preferences: Raw stored preference payload, if any.
+
+    Returns:
+        ``True`` only when the payload carries a truthy
+        ``right_open_explicit`` marker.
+    """
+    if not isinstance(stored_preferences, Mapping):
+        return False
+    value = stored_preferences.get(CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY)
+    return isinstance(value, bool) and value
 
 
 def console_rail_left_open_explicit(stored_preferences: Any) -> bool:
@@ -300,6 +388,14 @@ def console_rail_left_open_explicit(stored_preferences: Any) -> bool:
     )
 
 
+def console_character_disclosure_explicit(stored_preferences: Any) -> bool:
+    """Return whether Character openness came from an explicit user toggle."""
+
+    return isinstance(stored_preferences, Mapping) and _coerce_bool(
+        stored_preferences.get(CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY), False
+    )
+
+
 def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
     """Normalize stored Console rail preferences.
 
@@ -315,17 +411,36 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
     if not isinstance(raw, Mapping):
         return defaults
 
-    session_open = _coerce_bool(raw.get("session_open"), defaults.session_open)
+    # TASK-14810 split one mixed "Session" body into Sessions, Workspaces and
+    # Conversations, and used the stored `session_open` as the seed for all
+    # three. TASK-23199 then retired the Sessions section itself -- but a
+    # payload written before the 14810 split still carries only
+    # `session_open`, so it must keep seeding the two sections that outlived
+    # it. Read here, deliberately never stored: it is a migration input, not
+    # a preference this app writes any more.
+    legacy_seed = raw.get("session_open")
     return ConsoleRailPreferences(
         left_open=_coerce_bool(raw.get("left_open"), defaults.left_open),
         right_open=_coerce_bool(raw.get("right_open"), defaults.right_open),
-        session_open=session_open,
-        workspace_open=_coerce_bool(raw.get("workspace_open"), session_open),
-        conversations_open=_coerce_bool(raw.get("conversations_open"), session_open),
+        workspace_open=_coerce_bool(
+            raw.get("workspace_open"),
+            _coerce_bool(legacy_seed, defaults.workspace_open),
+        ),
+        conversations_open=_coerce_bool(
+            raw.get("conversations_open"),
+            _coerce_bool(legacy_seed, defaults.conversations_open),
+        ),
         model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
         agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
         character_open=_coerce_bool(raw.get("character_open"), defaults.character_open),
+        inspector_more_open=_coerce_bool(
+            raw.get("inspector_more_open"), defaults.inspector_more_open
+        ),
+        environment_open=_coerce_bool(
+            raw.get("environment_open"), defaults.environment_open
+        ),
+        tasks_open=_coerce_bool(raw.get("tasks_open"), defaults.tasks_open),
     )
 
 
@@ -338,22 +453,94 @@ def serialize_console_rail_preferences(
         preferences: Rail preferences to serialize.
 
     Returns:
-        Persistence dict with the left/right rail flags and the seven
+        Persistence dict with the left/right rail flags and the six
         left-rail section flags. TASK-14810 split the former mixed Session
-        body into Sessions, Workspaces, and Conversations while preserving
-        the existing section-persistence model.
+        body into Sessions, Workspaces and Conversations; TASK-23199 then
+        retired Sessions, so ``session_open`` is no longer written. It is
+        still READ on the way in as a legacy migration seed -- see
+        ``coerce_console_rail_preferences``.
     """
     return {
         "left_open": bool(preferences.left_open),
         "right_open": bool(preferences.right_open),
-        "session_open": bool(preferences.session_open),
         "workspace_open": bool(preferences.workspace_open),
         "conversations_open": bool(preferences.conversations_open),
         "model_open": bool(preferences.model_open),
         "details_open": bool(preferences.details_open),
         "agent_open": bool(preferences.agent_open),
         "character_open": bool(preferences.character_open),
+        "inspector_more_open": bool(preferences.inspector_more_open),
+        "environment_open": bool(preferences.environment_open),
+        "tasks_open": bool(preferences.tasks_open),
     }
+
+
+def serialize_console_rail_stored_preferences(raw: Any) -> dict[str, bool]:
+    """Validate stored preferences while retaining behavioral metadata.
+
+    Args:
+        raw: The untrusted stored preference payload.
+
+    Returns:
+        A normalized persistence dictionary.
+    """
+    serialized = serialize_console_rail_preferences(
+        coerce_console_rail_preferences(raw)
+    )
+    if not isinstance(raw, Mapping) or "right_open" not in raw:
+        serialized.pop("right_open")
+    # A genuinely absent record must stay distinguishable from an old record
+    # that explicitly stored the legacy Character Boolean.
+    if not console_character_disclosure_explicit(raw) and (
+        not isinstance(raw, Mapping) or "character_open" not in raw
+    ):
+        serialized.pop("character_open")
+    if console_rail_left_open_explicit(raw):
+        serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+    # Qodo 2614 #5: this is the config-file persistence boundary -- a
+    # marker that survives the updated-preferences serializer but not this
+    # one is dropped on save, and the auto-open check reads the stored
+    # payload back.
+    if console_rail_right_open_explicit(raw):
+        serialized[CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY] = True
+    if console_character_disclosure_explicit(raw):
+        serialized[CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY] = True
+    return serialized
+
+
+def serialize_console_rail_updated_preferences(
+    preferences: ConsoleRailPreferences,
+    prior_stored: Any,
+    *,
+    left_open: bool | None,
+    right_open: bool | None,
+    character_toggled: bool,
+    explicit_right_toggle: bool = True,
+) -> dict[str, bool]:
+    """Serialize a manual change while preserving untouched disclosure intent."""
+    serialized = serialize_console_rail_preferences(preferences)
+    if left_open is not None or console_rail_left_open_explicit(prior_stored):
+        serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+    # Qodo 2614 #2: the Context reveal path derives right_open=False to
+    # resolve the compact-width conflict -- that is not a user gesture
+    # toward the Inspector, so it must not record one (which would kill
+    # the 118-128 auto-open band). Only a DIRECT right-rail toggle (or a
+    # previously recorded marker) writes the marker.
+    if (right_open is not None and explicit_right_toggle) or (
+        console_rail_right_open_explicit(prior_stored)
+    ):
+        serialized[CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY] = True
+    if character_toggled or console_character_disclosure_explicit(prior_stored):
+        serialized[CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY] = True
+    elif not isinstance(prior_stored, Mapping) or "character_open" not in prior_stored:
+        serialized.pop("character_open", None)
+    if (
+        right_open is None
+        and isinstance(prior_stored, Mapping)
+        and "right_open" not in prior_stored
+    ):
+        serialized.pop("right_open")
+    return serialized
 
 
 def _coerce_non_negative_int(value: Any) -> int:
@@ -546,6 +733,34 @@ def _inspector_priority_width(available_columns: int | None) -> bool:
     )
 
 
+def console_auto_open_would_evict_context(
+    rail_state: ConsoleRailState,
+    available_columns: int | None,
+) -> bool:
+    """Return whether opening Inspector automatically would take Context away.
+
+    TASK-23197. ``resolve_console_rail_priority`` collapses Context whenever
+    both rails are open in compact geometry. That rule is fine for two
+    deliberate opens, but the Inspector also opens ITSELF between 118 and 128
+    columns -- so a user resizing from 129 to 128 lost the Context rail they
+    were using, in exchange for a panel they never asked for, with no
+    explanation. A 2026-08-29 UX audit measured the swap happening on a
+    single column of resize.
+
+    Callers use this to decline the automatic open instead. Nothing here
+    changes what happens when a user opens both rails themselves.
+
+    Args:
+        rail_state: Rail state as resolved before any automatic open.
+        available_columns: Current terminal width, when known.
+
+    Returns:
+        True when an automatic Inspector open would trip priority resolution
+        and collapse a Context rail that is currently open.
+    """
+    return bool(rail_state.left_open) and _inspector_priority_width(available_columns)
+
+
 def resolve_console_rail_priority(
     rail_state: ConsoleRailState,
     available_columns: int | None,
@@ -572,6 +787,12 @@ def resolve_console_rail_priority(
         left_compact_override=False,
         right_compact_override=True,
         compact_override=True,
+        # TASK-23197: record that the app took this rail away rather than
+        # the user closing it -- a distinction the ordinary collapsed state
+        # cannot express. Deliberately state only: rewriting the stub's
+        # badge here re-renders the handle and drops keyboard focus from
+        # the reveal button (caught by test_console_edge_rail_geometry).
+        left_forced_collapsed=True,
     )
 
 
@@ -639,6 +860,8 @@ def build_console_rail_state(
     approval_count: Any = 0,
     can_save_chatbook: bool = False,
     available_columns: int | None = None,
+    character_context_exists: bool = False,
+    character_return_reveal: bool = False,
 ) -> ConsoleRailState:
     """Build effective Console rail state without importing Textual.
 
@@ -673,6 +896,24 @@ def build_console_rail_state(
         mark persisted preference or explicit intent.
     """
     preferences = coerce_console_rail_preferences(stored_preferences)
+    # New scopes reveal useful Character context once. Explicit payloads and
+    # legacy Booleans both win; only total absence receives the first-use
+    # default. This decision is render-only and never writes on read/resize.
+    if not (
+        isinstance(stored_preferences, Mapping)
+        and (
+            console_character_disclosure_explicit(stored_preferences)
+            or "character_open" in stored_preferences
+        )
+    ):
+        preferences = replace(
+            preferences,
+            character_open=bool(character_context_exists),
+        )
+    if character_return_reveal:
+        preferences = replace(
+            preferences, left_open=True, right_open=False, character_open=True
+        )
     # TASK-2154.2 (LY-11, ADR-043): the compact-collapse rules below are the
     # responsive default. Explicit opens are honored while the 70/74-column
     # usable-transcript budgets permit, and receive the layout-minimum waiver;
@@ -694,33 +935,27 @@ def build_console_rail_state(
     #   (``CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY``, set by
     #   ``ChatScreen._set_console_rail_preference``) records it. Legacy
     #   payloads lack the marker and keep the force-collapse default.
-    explicit_left_open = console_rail_left_open_explicit(stored_preferences)
+    explicit_left_open = character_return_reveal or console_rail_left_open_explicit(
+        stored_preferences
+    )
     # task-18911: an explicit toggle is honored only while the viewport can
     # afford rail + a usable transcript (rail min + main floor). Below that
     # budget the collapse is a rendering override the explicit marker
     # cannot buy its way past -- the stored preference is untouched, so
     # widening back past the budget restores the explicit rail.
-    left_width_budget = (
-        CONSOLE_RAIL_LEFT_MIN_COLUMNS + CONSOLE_RAIL_MAIN_USABLE_COLUMNS
-    )
+    left_width_budget = CONSOLE_RAIL_LEFT_MIN_COLUMNS + CONSOLE_RAIL_MAIN_USABLE_COLUMNS
     right_width_budget = (
         CONSOLE_RAIL_RIGHT_MIN_COLUMNS + CONSOLE_RAIL_MAIN_USABLE_COLUMNS
     )
     right_forced_collapsed = (
         available_columns is not None
         and available_columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS
-        and (
-            not preferences.right_open
-            or available_columns < right_width_budget
-        )
+        and (not preferences.right_open or available_columns < right_width_budget)
     )
     left_forced_collapsed = (
         available_columns is not None
         and available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
-        and (
-            not explicit_left_open
-            or available_columns < left_width_budget
-        )
+        and (not explicit_left_open or available_columns < left_width_budget)
     )
     single_pane = (
         available_columns is not None
@@ -764,11 +999,13 @@ def build_console_rail_state(
         right_compact_override=right_compact_override,
         left_compact_override=left_compact_override,
         compact_override=right_compact_override or left_compact_override,
-        session_open=preferences.session_open,
         workspace_open=preferences.workspace_open,
         conversations_open=preferences.conversations_open,
         model_open=preferences.model_open,
         details_open=preferences.details_open,
         agent_open=preferences.agent_open,
         character_open=preferences.character_open,
+        inspector_more_open=preferences.inspector_more_open,
+        environment_open=preferences.environment_open,
+        tasks_open=preferences.tasks_open,
     )

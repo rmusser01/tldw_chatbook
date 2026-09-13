@@ -18,6 +18,7 @@ real stylesheet is loaded.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -1867,7 +1868,10 @@ async def test_add_from_picker_stages_a_row_and_save_persists_it(
 
         select = screen.query_one("#evals-bench-add-target", Select)
         select.value = addable_id
-        await pilot.click("#evals-bench-add-target-button")
+        # This test owns the editor mutation, not compositor hit-testing.
+        # Under a saturated xdist shard, a geometry-based Pilot click can
+        # retain the prior frame's coordinates and hit the global Home nav.
+        screen.query_one("#evals-bench-add-target-button", Button).press()
         await pilot.pause()
 
         # The staged row renders immediately, before Save, with the
@@ -2782,16 +2786,41 @@ async def test_is_dirty_flips_true_on_a_staged_target_add(
     async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
         await pilot.pause()
         evals_app.screen.select(kind="bench", id=task_id)
-        await pilot.pause()
         screen = evals_app.screen
-        editor = screen.query_one(BenchEditor)
+        deadline = asyncio.get_running_loop().time() + 30.0
+        editor = None
+        while editor is None:
+            editors = list(screen.query(BenchEditor))
+            if editors:
+                candidate = editors[0]
+                selects = list(candidate.query("#evals-bench-add-target"))
+                if (
+                    selects
+                    and selects[0].query("SelectOverlay")
+                    and not candidate.is_dirty()
+                ):
+                    editor = candidate
+                    break
+            if asyncio.get_running_loop().time() >= deadline:
+                raise AssertionError("Bench editor never reached its clean mounted state")
+            await pilot.pause(0.02)
         assert editor.is_dirty() is False
 
         select = screen.query_one("#evals-bench-add-target", Select)
         select.value = addable_id
-        await pilot.click("#evals-bench-add-target-button")
-        await pilot.pause()
-
+        # This assertion owns the editor mutation, not compositor hit-testing.
+        # A saturated shard can retain prior-frame coordinates and otherwise
+        # send this synthetic click to the global Home navigation.
+        screen.query_one("#evals-bench-add-target-button", Button).press()
+        deadline = asyncio.get_running_loop().time() + 30.0
+        while True:
+            live_editors = list(screen.query(BenchEditor))
+            if live_editors and live_editors[0].is_dirty():
+                editor = live_editors[0]
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                raise AssertionError("Bench editor never reflected the staged target")
+            await pilot.pause(0.02)
         assert editor.is_dirty() is True
 
 

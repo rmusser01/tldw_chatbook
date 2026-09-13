@@ -11,10 +11,6 @@ from tldw_chatbook.Feedback_Interop.local_feedback_service import LocalFeedbackS
 from tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service import (
     LocalChatGrammarsService,
 )
-from tldw_chatbook.Chunking.chunking_templates import (
-    ChunkingTemplate,
-    ChunkingTemplateManager,
-)
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root
 
 
@@ -74,38 +70,58 @@ def test_constructor_refuses_before_storage_read(tmp_path, local_root, service_t
             service_type(store_path=path)
     finally:
         pause.resume()
-
-
-def test_template_default_directory_not_created_while_paused(
-    tmp_path, local_root, monkeypatch
+@pytest.mark.parametrize("action", ["create", "update", "delete"])
+def test_database_chunking_templates_refuse_mutation_during_backup(
+    tmp_path, local_root, action
 ):
-    from tldw_chatbook import config
+    """The database replacement uses real admission in one stable config process."""
+    script = r"""
+import sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+bootstrap.default_bootstrap_root = lambda: Path(sys.argv[2])
+from tldw_chatbook.Chunking.chunking_interop_library import get_chunking_service
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
-    monkeypatch.setattr(config, "get_cli_data_dir", lambda: tmp_path / "new-data")
-    pause = storage._begin_local_pause()
-    try:
-        with pytest.raises(bootstrap.RecoveryRequired, match="storage_locally_paused"):
-            ChunkingTemplateManager()
-        assert not (tmp_path / "new-data").exists()
-    finally:
-        pause.resume()
-
-
-@pytest.mark.parametrize("user_template", [True, False])
-def test_template_selected_destination_refuses_while_paused(
-    tmp_path, local_root, user_template
-):
-    manager = ChunkingTemplateManager(
-        templates_dir=tmp_path, user_templates_dir=tmp_path
+database = MediaDatabase(Path(sys.argv[1]) / "media.db", "backup-templates")
+service = get_chunking_service(database)
+body = {"chunking": {"method": "words", "config": {"max_size": 100}}}
+try:
+    template_id = service.create_template(
+        name="retained", description="before", template_json=body
     )
-    template = ChunkingTemplate(name="new", pipeline=[])
+    before = service.get_template_by_id(template_id)
+    mutation = {
+        "create": lambda: service.create_template(
+            name="new", description="after", template_json=body
+        ),
+        "update": lambda: service.update_template(template_id, description="after"),
+        "delete": lambda: service.delete_template(template_id),
+    }[sys.argv[3]]
     pause = storage._begin_local_pause()
     try:
-        with pytest.raises(bootstrap.RecoveryRequired, match="storage_locally_paused"):
-            manager.save_template(template, user_template=user_template)
-        assert not (tmp_path / "new.json").exists()
+        try:
+            mutation()
+        except Exception as error:
+            assert "storage_locally_paused" in str(error), repr(error)
+        else:
+            raise AssertionError("template mutation entered during backup")
     finally:
         pause.resume()
+    assert service.get_template_by_id(template_id) == before
+    mutation()
+finally:
+    database.close()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), str(local_root), action],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=40,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_emoji_best_effort_refusal_has_no_directory_side_effect(
@@ -608,26 +624,6 @@ def test_native_uncertainty_retains_resources_and_excludes_independent_maintenan
         child.stderr.close()
 
 
-def test_custom_template_destinations_are_ordinary_not_installed_coverage(
-    tmp_path, local_root, monkeypatch
-):
-    from Tests.Backup_Recovery.config_test_support import install_config_source
-
-    install_config_source(monkeypatch)
-    from tldw_chatbook.Backup_Recovery import raw_participants as raw
-
-    user = tmp_path / "user-custom"
-    builtin = tmp_path / "builtin-custom"
-    user.mkdir()
-    builtin.mkdir()
-    manager = ChunkingTemplateManager(templates_dir=builtin, user_templates_dir=user)
-    with pytest.raises(bootstrap.RecoveryRequired, match="not_installed"):
-        raw._raw_participant(manager)
-    template = ChunkingTemplate(name="ordinary", pipeline=[])
-    manager.save_template(template)
-    manager.save_template(template, user_template=False)
-    assert json.loads((user / "ordinary.json").read_text())["name"] == "ordinary"
-    assert json.loads((builtin / "ordinary.json").read_text())["name"] == "ordinary"
 
 
 def test_parent_replaced_after_pin_refuses_file_and_preserves_both_directories(
@@ -765,22 +761,6 @@ async def test_existing_sidecar_is_preserved_and_not_claimed_by_new_mutation(
     assert service._records == [] and service._next_id == 1
 
 
-def test_hardlinked_selected_template_is_not_truncated_before_validation(
-    tmp_path, local_root, monkeypatch
-):
-    from Tests.Backup_Recovery.config_test_support import install_config_source
-
-    install_config_source(monkeypatch)
-    other = tmp_path / "unrelated"
-    other.write_text("preserve unrelated bytes")
-    target = tmp_path / "template.json"
-    target.hardlink_to(other)
-    manager = ChunkingTemplateManager(
-        templates_dir=tmp_path, user_templates_dir=tmp_path
-    )
-    with pytest.raises(ValueError, match="raw_not_regular"):
-        manager.save_template(ChunkingTemplate(name="template", pipeline=[]))
-    assert other.read_text() == target.read_text() == "preserve unrelated bytes"
 
 
 def test_selector_lookup_pending_before_pause_is_counted_and_cannot_mkdir(
@@ -1041,27 +1021,6 @@ async def test_portable_ordinary_service_reads_writes_and_retains_unqualified_le
         raw._raw_participant(service)
 
 
-def test_portable_template_default_mkdir_and_both_destinations_work(
-    tmp_path, local_root, portable_raw, monkeypatch
-):
-    from tldw_chatbook import config
-
-    monkeypatch.setattr(config, "get_cli_data_dir", lambda: tmp_path / "portable-data")
-    builtin = tmp_path / "builtin"
-    builtin.mkdir()
-    manager = ChunkingTemplateManager(templates_dir=builtin)
-    template = ChunkingTemplate(name="portable", pipeline=[])
-    manager.save_template(template)
-    manager.save_template(template, user_template=False)
-    assert (
-        manager._load_template_from_file(
-            manager.user_templates_dir / "portable.json"
-        ).name
-        == "portable"
-    )
-    assert (
-        manager._load_template_from_file(builtin / "portable.json").name == "portable"
-    )
 
 
 def test_portable_emoji_reads_and_writes_recents(

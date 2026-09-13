@@ -3,9 +3,16 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence, cast
 
 from tldw_chatbook.Backup_Recovery import chat_source_participants as _chat_sources
+from loguru import logger
+
+from tldw_chatbook.Chat.console_appearance import (
+    ConsoleConversationAppearance,
+    merge_console_conversation_appearance,
+    parse_console_conversation_appearance,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
 
 _ASSISTANT_AUTHORITY_UNSET = cast(str | None, object())
@@ -191,6 +198,9 @@ def normalize_message_row(
         "usage_json": message_row.get("usage_json"),
         "metadata_json": message_row.get("metadata_json"),
         "provider_continuation_json": message_row.get("provider_continuation_json"),
+        "assistant_generation_state": message_row.get(
+            "assistant_generation_state"
+        ),
         "topology": topology,
         "variant": variant,
     }
@@ -258,6 +268,7 @@ def normalize_conversation_row(
         "last_modified": conversation_row.get("last_modified"),
         "created_at": conversation_row.get("created_at"),
         "deleted": conversation_row.get("deleted"),
+        "archived": bool(conversation_row.get("archived", False)),
         "message_count": int(
             message_count
             if message_count is not None
@@ -273,6 +284,12 @@ def normalize_conversation_row(
     }
 
 
+#: One flat page covering any conversation the fork path copies (PR
+#: review #7/#12: replaces the recursive tree read; the ancestry walk is
+#: bounded by this single page, not by a root-window cap).
+FORK_READ_MAX_MESSAGES = 10_000
+
+
 class ChatConversationService:
     def __init__(
         self,
@@ -280,6 +297,7 @@ class ChatConversationService:
         *,
         rag_context_store_path: str | Path | None = None,
         citation_legacy_migration: "CitationLegacyMigrationService | None" = None,
+        organization_sync_service: Any = None,
     ):
         self.db = db
         self.rag_context_store_path = (
@@ -287,6 +305,7 @@ class ChatConversationService:
         )
         self._rag_context_store: dict[str, Any] | None = None
         self.citation_legacy_migration = citation_legacy_migration
+        self.organization_sync_service = organization_sync_service
 
     @_chat_sources.guarded
     def set_citation_legacy_migration(
@@ -519,6 +538,18 @@ class ChatConversationService:
         self, conversation_id: str, keywords: Iterable[Any]
     ) -> list[str]:
         normalized_keywords = _normalize_keywords(keywords)
+        if self.organization_sync_service is not None:
+            scope = self.organization_sync_service.resolve_profile_scope()
+            if scope is not None:
+                result = self.organization_sync_service.sync_subject_keywords(
+                    subject_type="conversation",
+                    subject_id=conversation_id,
+                    keywords=normalized_keywords,
+                    notes_db=self.db,
+                    **scope,
+                )
+                if result is not None:
+                    return result
         keyword_ids: list[int] = []
         for keyword_text in normalized_keywords:
             keyword_row = None
@@ -581,6 +612,110 @@ class ChatConversationService:
         return normalize_conversation_row(
             conversation_row, keywords=keywords, message_count=message_count
         )
+
+    def get_conversation_appearance(
+        self, conversation_id: str
+    ) -> ConsoleConversationAppearance:
+        """Read sanitized Console appearance metadata for one conversation.
+
+        task-31207: fails closed to "unset" for missing/deleted conversations
+        and malformed metadata (see ``Chat.console_appearance``).
+        """
+        if type(conversation_id) is not str or not conversation_id:
+            return ConsoleConversationAppearance()
+        record = self.db.get_conversation_by_id(conversation_id)
+        if record is None or record.get("deleted"):
+            return ConsoleConversationAppearance()
+        return parse_console_conversation_appearance(record.get("metadata"))
+
+    def get_conversation_appearances(
+        self, conversation_ids: Iterable[str]
+    ) -> dict[str, ConsoleConversationAppearance]:
+        """Batch-read sanitized appearance metadata keyed by conversation id.
+
+        task-31207: one batched SELECT (``get_conversations_metadata_by_ids``)
+        decorates every Console browser row at once instead of one read per
+        row; unknown, deleted, or malformed entries are simply absent or
+        unset.
+        """
+        get_metadata = getattr(self.db, "get_conversations_metadata_by_ids", None)
+        if not callable(get_metadata):
+            return {}
+        try:
+            raw_map = get_metadata(conversation_ids)
+        except Exception:
+            logger.debug(
+                "Unable to batch-read Console conversation appearances"
+            )
+            return {}
+        return {
+            str(conversation_id): parse_console_conversation_appearance(metadata)
+            for conversation_id, metadata in raw_map.items()
+        }
+
+    def update_conversation_appearance(
+        self,
+        *,
+        conversation_id: str,
+        appearance: ConsoleConversationAppearance,
+        expected_version: int,
+    ) -> bool:
+        """Merge appearance metadata using the caller's exact version.
+
+        Mirrors ``ChatPersistenceService.update_conversation_speech_preferences``:
+        the record is re-read, the caller's ``expected_version`` re-checked,
+        and only the ``console_appearance`` key replaced — sibling metadata
+        keys survive. Returns False on version conflict or missing row.
+        """
+        if type(expected_version) is not int or expected_version < 1:
+            return False
+        if not isinstance(conversation_id, str) or not conversation_id:
+            return False
+        record = self.db.get_conversation_by_id(conversation_id)
+        if record is None or record.get("deleted"):
+            return False
+        if record.get("version") != expected_version:
+            return False
+        metadata = merge_console_conversation_appearance(
+            record.get("metadata"), appearance
+        )
+        return bool(
+            self.db.update_conversation(
+                conversation_id,
+                {"metadata": json.dumps(metadata, sort_keys=True)},
+                expected_version=expected_version,
+            )
+        )
+
+    def set_conversation_appearance(
+        self,
+        *,
+        conversation_id: str,
+        appearance: ConsoleConversationAppearance,
+        max_attempts: int = 3,
+    ) -> bool:
+        """Write appearance with bounded optimistic-lock retries.
+
+        The UI write path (task-31207): a cosmetic update must not fail the
+        click just because the conversation version moved between the read
+        and the write (streaming replies bump it constantly). Each attempt
+        re-reads the current version and retries the versioned update; a
+        missing/deleted row fails immediately.
+        """
+        for _ in range(max(1, int(max_attempts))):
+            record = self.db.get_conversation_by_id(conversation_id)
+            if record is None or record.get("deleted"):
+                return False
+            version = record.get("version")
+            if type(version) is not int or isinstance(version, bool) or version < 1:
+                return False
+            if self.update_conversation_appearance(
+                conversation_id=conversation_id,
+                appearance=appearance,
+                expected_version=version,
+            ):
+                return True
+        return False
 
     def update_conversation_metadata(
         self,
@@ -656,6 +791,24 @@ class ChatConversationService:
             )
         )
 
+    def set_conversations_archived(
+        self,
+        conversation_ids: Iterable[str],
+        *,
+        archived: bool,
+        expected_versions: Mapping[str, int],
+    ) -> dict[str, Any]:
+        """Archive/restore exact local identities with version-checked receipts."""
+        return self.db.set_conversations_archived(
+            conversation_ids, archived=archived, expected_versions=expected_versions
+        )
+
+    def get_conversation_archive_states(
+        self, conversation_ids: Iterable[str]
+    ) -> dict[str, bool]:
+        """Return persisted archive flags, omitting missing/deleted IDs."""
+        return self.db.get_conversation_archive_states(conversation_ids)
+
     def list_conversations(
         self,
         query: str | None = None,
@@ -664,12 +817,61 @@ class ChatConversationService:
         offset: int = 0,
         scope_type: str | None = None,
         workspace_id: str | None = None,
+        workspace_ids: Sequence[str] | None = None,
+        include_global_scope: bool = False,
+        query_terms: Sequence[str] | None = None,
+        query_workspace_ids_by_term: Sequence[Sequence[str]] | None = None,
+        query_include_global_scope_by_term: Sequence[bool] | None = None,
+        archive_scope: str = "active",
         include_deleted: bool = False,
         deleted_only: bool = False,
         state: str | None = None,
         topic_label: str | None = None,
         character_id: int | None = None,
+        character_scope: str | None = None,
     ) -> dict[str, Any]:
+        """Return one normalized, bounded page of local conversations.
+
+        Args:
+            query: Optional literal title, identifier, or message-content query.
+            limit: Maximum number of conversations to return.
+            offset: Zero-based result offset.
+            scope_type: ``global``, ``workspace``, or the cross-scope ``all``
+                search seam.
+            workspace_id: Exact workspace for a workspace-scoped listing.
+            workspace_ids: Workspace IDs included in an ``all``-scope union.
+            include_global_scope: Whether an ``all``-scope union also includes
+                global conversations.
+            query_terms: Ordered literal terms that must each match at least one
+                approved conversation metadata field.
+            query_workspace_ids_by_term: Workspace-ID matches aligned one-to-one
+                with ``query_terms``.
+            query_include_global_scope_by_term: Global-scope matches aligned
+                one-to-one with ``query_terms``.
+            archive_scope: Conversation lifecycle scope: ``active`` (default),
+                ``archived``, or ``all``, applied before counts and pagination.
+            include_deleted: Whether soft-deleted conversations are eligible.
+            deleted_only: Whether only soft-deleted conversations are eligible.
+            state: Optional normalized conversation-state filter.
+            topic_label: Optional exact topic-label filter.
+            character_id: Optional exact character owner.
+            character_scope: Optional character-ownership class filter --
+                ``"character"`` (only character conversations), ``"generic"``
+                (only non-character conversations), or None for no filter.
+                Applied before counts and pagination, so lane owners can
+                exclude conversations they do not display without wasting
+                page slots on them.
+
+        Returns:
+            A mapping containing normalized ``items`` and a ``pagination``
+            envelope with limit, offset, total, and has-more state.
+
+        Raises:
+            ValueError: If page coordinates, scope, workspace, or state are
+                invalid.
+            InputError: If storage-level workspace or per-term query unions are
+                malformed or incompatible with the selected scope.
+        """
         if (
             isinstance(limit, bool)
             or not isinstance(limit, int)
@@ -704,11 +906,18 @@ class ChatConversationService:
             query,
             scope_type=normalized_scope,
             workspace_id=normalized_workspace_id,
+            workspace_ids=workspace_ids,
+            include_global_scope=include_global_scope,
+            query_terms=query_terms,
+            query_workspace_ids_by_term=query_workspace_ids_by_term,
+            query_include_global_scope_by_term=query_include_global_scope_by_term,
+            archive_scope=archive_scope,
             include_deleted=include_deleted,
             deleted_only=deleted_only,
             state=_normalize_state(state) if state is not None else None,
             topic_label=_clean_text(topic_label),
             character_id=character_id,
+            character_scope=character_scope,
             limit=limit,
             offset=offset,
         )
@@ -733,12 +942,36 @@ class ChatConversationService:
         limit: int = 20,
         scope_type: str | None = None,
         workspace_id: str | None = None,
+        archive_scope: str = "active",
         include_deleted: bool = False,
         deleted_only: bool = False,
         state: str | None = None,
         topic_label: str | None = None,
         character_id: int | None = None,
     ) -> dict[str, Any] | None:
+        """Locate an exact conversation within a filtered local result page.
+
+        Args:
+            conversation_id: Persisted conversation whose page should be located.
+            query: Optional literal search text.
+            limit: Required page size of 20.
+            scope_type: Global, workspace, or all ownership scope.
+            workspace_id: Exact workspace for a workspace-scoped listing.
+            archive_scope: ``active`` (default), ``archived``, or ``all``;
+                lifecycle filtering precedes counts and page location.
+            include_deleted: Whether soft-deleted conversations are eligible.
+            deleted_only: Whether only soft-deleted conversations are eligible.
+            state: Optional conversation workflow state.
+            topic_label: Optional exact topic label.
+            character_id: Optional exact character owner.
+
+        Returns:
+            The matching page and pagination metadata, or None if excluded or missing.
+
+        Raises:
+            ValueError: If limit is not exactly 20.
+            CharactersRAGDBError: If the local query fails or its filters are invalid.
+        """
         if isinstance(limit, bool) or not isinstance(limit, int) or limit != 20:
             raise ValueError("limit must be exactly 20.")
 
@@ -760,6 +993,7 @@ class ChatConversationService:
             query=query,
             scope_type=normalized_scope,
             workspace_id=normalized_workspace_id,
+            archive_scope=archive_scope,
             include_deleted=include_deleted,
             deleted_only=deleted_only,
             state=_normalize_state(state) if state is not None else None,
@@ -802,8 +1036,7 @@ class ChatConversationService:
         if (
             len(row_ids) != len(rows)
             or any(
-                not isinstance(row_id, str) or not row_id.strip()
-                for row_id in row_ids
+                not isinstance(row_id, str) or not row_id.strip() for row_id in row_ids
             )
             or len(set(row_ids)) != len(row_ids)
         ):
@@ -834,13 +1067,15 @@ class ChatConversationService:
     # carry ``include_rag_context: False``.
 
     def list_library_conversations(
-        self, *, limit: int = 20, offset: int = 0
+        self, *, limit: int = 20, offset: int = 0, archive_scope: str = "active"
     ) -> dict[str, Any]:
-        """Page active local conversations for Library agent tools.
+        """Page local conversations in the selected lifecycle scope for Library tools.
 
         Args:
             limit: Maximum number of conversations to return.
             offset: Number of conversations to skip.
+            archive_scope: ``active`` (default), ``archived``, or ``all``
+                non-deleted conversations; filtering precedes count and pagination.
 
         Returns:
             A bounded page containing items, exact total, offset, and limit.
@@ -848,7 +1083,9 @@ class ChatConversationService:
         Raises:
             CharactersRAGDBError: If the local conversation store cannot be read.
         """
-        payload = self.db.list_library_conversations_page(limit=limit, offset=offset)
+        payload = self.db.list_library_conversations_page(
+            limit=limit, offset=offset, archive_scope=archive_scope
+        )
         return {
             "items": payload["items"],
             "total": payload["total"],
@@ -857,14 +1094,21 @@ class ChatConversationService:
         }
 
     def search_library_conversations(
-        self, *, query: str, limit: int = 20, offset: int = 0
+        self,
+        *,
+        query: str,
+        limit: int = 20,
+        offset: int = 0,
+        archive_scope: str = "active",
     ) -> dict[str, Any]:
-        """Search active local conversations for Library agent tools.
+        """Search local conversations in the selected lifecycle scope for Library tools.
 
         Args:
             query: Literal case-insensitive search text.
             limit: Maximum number of conversations to return.
             offset: Number of matching conversations to skip.
+            archive_scope: ``active`` (default), ``archived``, or ``all``
+                non-deleted conversations; filtering precedes count and pagination.
 
         Returns:
             A bounded page with exact total and match evidence.
@@ -873,7 +1117,7 @@ class ChatConversationService:
             CharactersRAGDBError: If the local conversation store cannot be read.
         """
         payload = self.db.search_library_conversations_page(
-            query=query, limit=limit, offset=offset
+            query=query, limit=limit, offset=offset, archive_scope=archive_scope
         )
         return {
             "items": payload["items"],
@@ -892,9 +1136,9 @@ class ChatConversationService:
         message_id: str | None = None,
         char_start: int = 0,
     ) -> dict[str, Any] | None:
-        """Read a text-only, windowed message page for one active conversation.
+        """Read bounded text for one non-deleted conversation, including archives.
 
-        Returns None when no active conversation matches ``conversation_id``.
+        Returns None when no non-deleted conversation matches ``conversation_id``.
 
         Args:
             conversation_id: Stable conversation identifier.
@@ -942,25 +1186,43 @@ class ChatConversationService:
                 "depth_cap": depth_cap,
             }
 
-        total_root_threads = self.db.count_root_messages_for_conversation(
+        # TASK-22206: ONE conversation-scoped query (no BLOB hydration),
+        # then a purely in-memory, iterative tree assembly. The old shape
+        # issued one get_messages_for_conversation_by_parent_ids call per
+        # node -- each a full-conversation scan under the production query
+        # plan (sqlite_stat1 absent) -- and recursed once per message.
+        rows = self.db.get_message_tree_rows_for_conversation(
             conversation_id,
-            include_deleted_conversation=False,
-        )
-        root_rows = self.db.get_root_messages_for_conversation(
-            conversation_id,
-            limit=root_limit,
-            offset=root_offset,
             order_by_timestamp=order_by_timestamp,
             include_deleted_conversation=False,
         )
-        root_threads = self._build_message_tree(
-            conversation_id,
-            root_rows,
-            order_by_timestamp=order_by_timestamp,
+        children_by_parent: dict[Any, list[Mapping[str, Any]]] = {}
+        root_rows: list[Mapping[str, Any]] = []
+        for row in rows:
+            parent_id = row.get("parent_message_id")
+            if parent_id is None:
+                root_rows.append(row)
+            else:
+                children_by_parent.setdefault(parent_id, []).append(row)
+        # Same predicate the old COUNT query used, computed from the same
+        # fetch (conversation-scoped, live rows, live conversation).
+        total_root_threads = len(root_rows)
+        # Replicate SQL LIMIT/OFFSET semantics for non-positive inputs:
+        # a negative OFFSET is 0, a negative LIMIT means "no limit".
+        effective_offset = max(0, root_offset)
+        if root_limit < 0:
+            paged_root_rows = root_rows[effective_offset:]
+        else:
+            paged_root_rows = root_rows[
+                effective_offset : effective_offset + root_limit
+            ]
+
+        root_threads, image_pending = self._build_message_tree(
+            paged_root_rows,
+            children_by_parent,
             depth_cap=depth_cap,
-            depth=1,
-            seen_message_ids=set(),
         )
+        self._hydrate_tree_images(image_pending)
 
         return {
             "conversation": conversation,
@@ -969,9 +1231,126 @@ class ChatConversationService:
                 "limit": root_limit,
                 "offset": root_offset,
                 "total_root_threads": total_root_threads,
-                "has_more": root_offset + len(root_rows) < total_root_threads,
+                "has_more": root_offset + len(paged_root_rows) < total_root_threads,
             },
             "depth_cap": depth_cap,
+        }
+
+    def effective_active_leaf(self, conversation_id: str) -> str | None:
+        """Resolve the conversation's EFFECTIVE active-leaf message id.
+
+        The durable pointer when it references a live row; otherwise the
+        most-recent message by timestamp (conversations created outside the
+        Console carry no pointer). Shared by the fork executor (lineage
+        written at create time must reference a real row -- the column is
+        FK-enforced) and ``copy_conversation_active_path`` so both resolve
+        the same leaf.
+        """
+        rows = self.db.get_messages_for_conversation(
+            conversation_id, limit=FORK_READ_MAX_MESSAGES
+        )
+        if not rows:
+            return None
+        live_ids = {str(row["id"]) for row in rows}
+        leaf = self.db.get_conversation_active_leaf(conversation_id)
+        if leaf is not None and leaf in live_ids:
+            return leaf
+        latest = max(rows, key=lambda r: str(r.get("timestamp") or ""))
+        return str(latest["id"])
+
+    def copy_conversation_active_path(
+        self, source_conversation_id: str, target_conversation_id: str
+    ) -> dict[str, Any]:
+        """Copy the source conversation's active path into the target, verbatim.
+
+        Resolves the source's effective leaf (pointer, else latest message),
+        walks its parent ancestry, and re-inserts each message into the
+        target with fresh ids and remapped parents, preserving sender/role/
+        content, images, usage, metadata, provider-continuation payloads,
+        and timestamps. Reads ONE flat page of rows (no recursive tree
+        build, no root-window truncation: the ancestry walk covers any leaf
+        present in the page). Contentless scaffold rows (the in-flight
+        assistant placeholder) are skipped. The whole copy -- inserts AND
+        the target's active-leaf pointer -- commits in ONE transaction: a
+        failure anywhere leaves nothing behind.
+
+        Returns:
+            ``{"copied": <int>, "leaf_message_id": <new leaf>,
+            "source_leaf_message_id": <effective source leaf>}``
+
+        Raises:
+            ValueError: ``empty_history`` when the source has no messages.
+        """
+        rows = self.db.get_messages_for_conversation(
+            source_conversation_id, limit=FORK_READ_MAX_MESSAGES
+        )
+        if not rows:
+            raise ValueError("empty_history")
+        nodes = {str(row["id"]): row for row in rows}
+        leaf_id = self.effective_active_leaf(source_conversation_id)
+        if leaf_id is None or leaf_id not in nodes:
+            raise ValueError("empty_history")
+
+        path: list[dict[str, Any]] = []
+        cursor: str | None = leaf_id
+        while cursor is not None and cursor in nodes:
+            path.append(nodes[cursor])
+            cursor = nodes[cursor].get("parent_message_id")
+            if cursor is not None:
+                cursor = str(cursor)
+        path.reverse()
+
+        id_map: dict[str, str] = {}
+        copied = 0
+        last_new_id: str | None = None
+        with self.db.transaction():
+            for node in path:
+                content = node.get("content") or ""
+                image = node.get("image_data")
+                continuation = node.get("provider_continuation_json")
+                if not content and not image and not continuation:
+                    # Live-UAT defect (TASK-32482): the in-flight assistant
+                    # PLACEHOLDER (an empty content row the submit path
+                    # echoes before the first token) sits on the source's
+                    # active path at tool time. add_message refuses to
+                    # re-insert a contentless row, so the copy failed and
+                    # the orphan guard soft-deleted the whole fork. A
+                    # contentless scaffold carries nothing to fork -- skip
+                    # it rather than fail the copy.
+                    continue
+                old_id = str(node["id"])
+                new_id = self.db.add_message(
+                    {
+                        "conversation_id": target_conversation_id,
+                        "sender": node.get("sender") or node.get("role") or "user",
+                        "content": content,
+                        "role": node.get("role"),
+                        "parent_message_id": id_map.get(str(node.get("parent_message_id"))),
+                        "image_data": image,
+                        "image_mime_type": node.get("image_mime_type"),
+                        "timestamp": node.get("timestamp"),
+                        "usage_json": node.get("usage_json"),
+                        "metadata_json": node.get("metadata_json"),
+                        "provider_continuation_json": continuation,
+                    }
+                )
+                if new_id is None:
+                    raise RuntimeError("copy_active_path: message insert failed")
+                id_map[old_id] = str(new_id)
+                last_new_id = str(new_id)
+                copied += 1
+            if copied == 0:
+                raise ValueError("empty_history")
+            # The source leaf may itself be the skipped placeholder; point
+            # the fork's leaf at the last COPIED message. Inside the same
+            # transaction as the inserts: a pointer failure must roll the
+            # whole copy back, not strand message rows with no leaf.
+            new_leaf = id_map.get(str(leaf_id)) or last_new_id
+            self.db.set_conversation_active_leaf(target_conversation_id, new_leaf)
+        return {
+            "copied": copied,
+            "leaf_message_id": new_leaf,
+            "source_leaf_message_id": leaf_id,
         }
 
     @_chat_sources.guarded
@@ -1060,6 +1439,7 @@ class ChatConversationService:
         offset: int = 0,
         order_by_timestamp: str = "ASC",
         include_rag_context: bool = True,
+        read_only: bool = False,
         **_: Any,
     ) -> list[dict[str, Any]]:
         if not hasattr(self.db, "get_messages_for_conversation"):
@@ -1076,6 +1456,7 @@ class ChatConversationService:
             view = migration.read_conversation(
                 str(conversation_id),
                 verify_canonical=True,
+                **({"read_only": True} if read_only else {}),
             )
             conversation_store = view.records
             provenance_state = view.state.value
@@ -1139,50 +1520,98 @@ class ChatConversationService:
 
     def _build_message_tree(
         self,
-        conversation_id: str,
-        rows: Iterable[Mapping[str, Any]],
+        paged_root_rows: Sequence[Mapping[str, Any]],
+        children_by_parent: Mapping[Any, Sequence[Mapping[str, Any]]],
         *,
-        order_by_timestamp: str,
         depth_cap: int,
-        depth: int,
-        seen_message_ids: set[str],
-    ) -> list[dict[str, Any]]:
-        nodes: list[dict[str, Any]] = []
-        for row in rows:
+    ) -> tuple[list[dict[str, Any]], list[tuple[Any, dict[str, Any]]]]:
+        """Assemble nested tree nodes iteratively from one row fetch.
+
+        TASK-22206: replaces the recursive one-query-per-node walk (O(N^2)
+        row scans, RecursionError at ~1000-deep linear conversations).
+        Semantics preserved exactly: per-parent child order is the fetch's
+        timestamp order (a stable partition of one ``ORDER BY m.timestamp``
+        result); a node at ``depth >= depth_cap`` or whose id was already
+        visited keeps ``children=[]`` with ``truncated=True``; a row
+        ``normalize_message_row`` rejects is dropped along with its subtree;
+        a row without an id gets no children. The visited set is global
+        rather than the old per-path copy -- the two differ only on inputs a
+        real DB cannot produce (a duplicated primary key), and the global
+        set is what makes the walk O(N).
+
+        BLOB columns are never touched here: rows carry ``has_image`` and
+        image-bearing nodes are returned for one batched hydration pass
+        (``_hydrate_tree_images``).
+
+        Args:
+            paged_root_rows: The page of root rows, in fetch order.
+            children_by_parent: All non-root rows, bucketed by
+                ``parent_message_id``, each bucket in fetch order.
+            depth_cap: Maximum depth; roots are depth 1.
+
+        Returns:
+            The nested root nodes, and ``(message_id, node)`` pairs for
+            every node whose row carries an image.
+        """
+        roots: list[dict[str, Any]] = []
+        image_pending: list[tuple[Any, dict[str, Any]]] = []
+        seen_message_ids: set[Any] = set()
+        # (row, depth, parent's children list); explicit stack keeps
+        # arbitrary-depth conversations off the Python recursion limit.
+        stack: list[tuple[Mapping[str, Any], int, list[dict[str, Any]]]] = [
+            (row, 1, roots) for row in reversed(paged_root_rows)
+        ]
+        while stack:
+            row, depth, siblings = stack.pop()
             message_id = row.get("id")
             normalized_row = normalize_message_row(row)
             if normalized_row is None:
                 continue
+            if message_id is not None and row.get("has_image"):
+                image_pending.append((message_id, normalized_row))
             if message_id is not None and message_id in seen_message_ids:
                 normalized_row["children"] = []
                 normalized_row["truncated"] = True
-                nodes.append(normalized_row)
+                siblings.append(normalized_row)
                 continue
-
-            next_seen = set(seen_message_ids)
             if message_id is not None:
-                next_seen.add(message_id)
-
+                seen_message_ids.add(message_id)
             if depth >= depth_cap:
                 normalized_row["children"] = []
                 normalized_row["truncated"] = True
-                nodes.append(normalized_row)
+                siblings.append(normalized_row)
                 continue
-
-            child_rows = self.db.get_messages_for_conversation_by_parent_ids(
-                conversation_id,
-                [message_id] if message_id is not None else [],
-                order_by_timestamp=order_by_timestamp,
-                include_deleted_conversation=False,
-            )
-            normalized_row["children"] = self._build_message_tree(
-                conversation_id,
-                child_rows,
-                order_by_timestamp=order_by_timestamp,
-                depth_cap=depth_cap,
-                depth=depth + 1,
-                seen_message_ids=next_seen,
-            )
+            children: list[dict[str, Any]] = []
+            normalized_row["children"] = children
             normalized_row["truncated"] = False
-            nodes.append(normalized_row)
-        return nodes
+            siblings.append(normalized_row)
+            if message_id is not None:
+                for child_row in reversed(children_by_parent.get(message_id, ())):
+                    stack.append((child_row, depth + 1, children))
+        return roots, image_pending
+
+    def _hydrate_tree_images(
+        self, image_pending: Sequence[tuple[Any, dict[str, Any]]]
+    ) -> None:
+        """Fill image BLOBs into built tree nodes, one batched fetch.
+
+        TASK-22206: nodes leave ``_build_message_tree`` with
+        ``image_data=None``; the actual BLOBs are read here, once, only for
+        the messages that have one. A conversation without images performs
+        zero BLOB reads. Skipped silently for DB objects (test fakes) that
+        do not expose the batched fetch -- their rows carry ``image_data``
+        inline and ``normalize_message_row`` already passed it through.
+        """
+        if not image_pending:
+            return
+        fetcher = getattr(self.db, "get_message_images_by_ids", None)
+        if not callable(fetcher):
+            return
+        images = fetcher([message_id for message_id, _node in image_pending])
+        for message_id, node in image_pending:
+            image_row = images.get(message_id)
+            if image_row is None:
+                # Deleted between the two reads; the node keeps image_data
+                # None, matching a snapshot taken a moment later.
+                continue
+            node["image_data"] = image_row.get("image_data")

@@ -251,7 +251,9 @@ class SharingPanel(ScrollableContainer):
             )
 
     def on_mount(self) -> None:
-        self.run_worker(self.refresh_for_mode(), exclusive=True)
+        self.run_worker(
+            self.refresh_for_mode(), exclusive=True, group="sharing-refresh-for-mode"
+        )
 
     @staticmethod
     def _clean_string(value: Any) -> str:
@@ -310,67 +312,125 @@ class SharingPanel(ScrollableContainer):
 
     @on(Button.Pressed, "#sharing-create-workspace-share-btn")
     def handle_create_workspace_share(self) -> None:
-        self.run_worker(self.create_workspace_share(), exclusive=True)
+        self.run_worker(
+            self.create_workspace_share(),
+            exclusive=True,
+            group="sharing-create-workspace-share",
+        )
 
     @on(Button.Pressed, "#sharing-list-workspace-shares-btn")
     def handle_list_workspace_shares(self) -> None:
-        self.run_worker(self.list_workspace_shares(), exclusive=True)
+        self.run_worker(
+            self.list_workspace_shares(),
+            exclusive=True,
+            group="sharing-list-workspace-shares",
+        )
 
     @on(Button.Pressed, "#sharing-update-share-btn")
     def handle_update_share(self) -> None:
-        self.run_worker(self.update_share(), exclusive=True)
+        self.run_worker(
+            self.update_share(), exclusive=True, group="sharing-update-share"
+        )
 
     @on(Button.Pressed, "#sharing-revoke-share-btn")
     def handle_revoke_share(self) -> None:
-        self.run_worker(self.revoke_share(), exclusive=True)
+        self.run_worker(
+            self.revoke_share(), exclusive=True, group="sharing-revoke-share"
+        )
 
     @on(Button.Pressed, "#sharing-list-shared-with-me-btn")
     def handle_list_shared_with_me(self) -> None:
-        self.run_worker(self.list_shared_with_me(), exclusive=True)
+        self.run_worker(
+            self.list_shared_with_me(),
+            exclusive=True,
+            group="sharing-list-shared-with-me",
+        )
 
     @on(Button.Pressed, "#sharing-get-shared-workspace-btn")
     def handle_get_shared_workspace(self) -> None:
-        self.run_worker(self.get_shared_workspace(), exclusive=True)
+        self.run_worker(
+            self.get_shared_workspace(),
+            exclusive=True,
+            group="sharing-get-shared-workspace",
+        )
 
     @on(Button.Pressed, "#sharing-clone-btn")
     def handle_clone(self) -> None:
-        self.run_worker(self.clone_shared_workspace(), exclusive=True)
+        self.run_worker(
+            self.clone_shared_workspace(),
+            exclusive=True,
+            group="sharing-clone-shared-workspace",
+        )
 
     @on(Button.Pressed, "#sharing-list-sources-btn")
     def handle_list_sources(self) -> None:
-        self.run_worker(self.list_shared_workspace_sources(), exclusive=True)
+        self.run_worker(
+            self.list_shared_workspace_sources(),
+            exclusive=True,
+            group="sharing-list-workspace-sources",
+        )
 
     @on(Button.Pressed, "#sharing-get-media-btn")
     def handle_get_media(self) -> None:
-        self.run_worker(self.get_shared_workspace_media(), exclusive=True)
+        self.run_worker(
+            self.get_shared_workspace_media(),
+            exclusive=True,
+            group="sharing-get-workspace-media",
+        )
 
     @on(Button.Pressed, "#sharing-chat-btn")
     def handle_chat(self) -> None:
-        self.run_worker(self.chat_with_shared_workspace(), exclusive=True)
+        self.run_worker(
+            self.chat_with_shared_workspace(),
+            exclusive=True,
+            group="sharing-chat-with-workspace",
+        )
 
     @on(Button.Pressed, "#sharing-create-token-btn")
     def handle_create_token(self) -> None:
-        self.run_worker(self.create_share_token(), exclusive=True)
+        self.run_worker(
+            self.create_share_token(),
+            exclusive=True,
+            group="sharing-create-share-token",
+        )
 
     @on(Button.Pressed, "#sharing-list-tokens-btn")
     def handle_list_tokens(self) -> None:
-        self.run_worker(self.list_share_tokens(), exclusive=True)
+        self.run_worker(
+            self.list_share_tokens(), exclusive=True, group="sharing-list-share-tokens"
+        )
 
     @on(Button.Pressed, "#sharing-revoke-token-btn")
     def handle_revoke_token(self) -> None:
-        self.run_worker(self.revoke_share_token(), exclusive=True)
+        self.run_worker(
+            self.revoke_share_token(),
+            exclusive=True,
+            group="sharing-revoke-share-token",
+        )
 
     @on(Button.Pressed, "#sharing-preview-public-btn")
     def handle_preview_public(self) -> None:
-        self.run_worker(self.preview_public_share(), exclusive=True)
+        self.run_worker(
+            self.preview_public_share(),
+            exclusive=True,
+            group="sharing-preview-public-share",
+        )
 
     @on(Button.Pressed, "#sharing-verify-password-btn")
     def handle_verify_password(self) -> None:
-        self.run_worker(self.verify_public_share_password(), exclusive=True)
+        self.run_worker(
+            self.verify_public_share_password(),
+            exclusive=True,
+            group="sharing-verify-public-password",
+        )
 
     @on(Button.Pressed, "#sharing-import-public-btn")
     def handle_import_public(self) -> None:
-        self.run_worker(self.import_public_share(), exclusive=True)
+        self.run_worker(
+            self.import_public_share(),
+            exclusive=True,
+            group="sharing-import-public-share",
+        )
 
     async def create_workspace_share(self) -> None:
         await self._run_operation(

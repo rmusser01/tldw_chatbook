@@ -29,6 +29,13 @@ class StaticWatchlistsScopeService:
         self.calls.append(kwargs)
         return list(self.watch_items)
 
+    def create_form_source_types(self, *, runtime_backend=None):
+        return (
+            ("rss", "site", "forum")
+            if runtime_backend == "server"
+            else ("rss", "atom", "url")
+        )
+
 
 def _settings_without_splash(section, key=None, default=None):
     """Keep the full app deterministic without replacing its composition."""
@@ -69,6 +76,7 @@ class FullAppDestinationContext:
         if destination != "watchlists_collections":
             raise ValueError(f"Unsupported production destination: {destination}")
         self.app = app
+        self.route = destination
         self.context_screen = WatchlistsCollectionsScreen(app)
 
     @property
@@ -92,6 +100,16 @@ class FullAppDestinationContext:
             side_effect=_settings_without_splash,
         ):
             async with self.app.run_test(**kwargs) as pilot:
+                # TASK-32187: pushing the screen directly skips the app's
+                # navigation, and with it the seam that parses the route's
+                # screen-owned feature sheet
+                # (`TldwCli._SCREEN_OWNED_ROUTE_CSS`). Production reaches
+                # Watchlists through navigation and therefore HAS those
+                # rules; a harness that claims to mount the destination
+                # "with the production stylesheet" must load them too, or
+                # every geometry assertion here measures a screen the user
+                # never sees.
+                self.app._ensure_screen_owned_css(self.route)
                 await self.app.push_screen(self.context_screen)
                 await pilot.pause()
                 yield pilot

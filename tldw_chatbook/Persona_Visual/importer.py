@@ -33,8 +33,10 @@ from .assets import (
     validate_persona_visual_asset_set,
 )
 from .authoring import (
+    _MAX_DESCRIPTION,
     PersonaVisualAuthoringDraft,
     PersonaVisualDraftAsset,
+    _text,
     create_persona_visual_import_draft,
 )
 from .contracts import (
@@ -46,7 +48,6 @@ from .contracts import (
     MAX_FRAMES_PER_ANIMATION,
 )
 from .repository import PersonaVisualIdentity
-
 
 PERSONA_VISUAL_PACK_SCHEMA = "tldw.persona_visual_pack.v1"
 _REQUIRED_MEMBERS = frozenset(
@@ -125,6 +126,10 @@ class PersonaVisualImportReview:
     cleanup_candidate: str = field(repr=False)
     _candidate_name: str = field(repr=False)
     _candidate_identity: tuple[int, int] = field(repr=False)
+    #: Task 11 (workspace-assistant-defaults): number of narrowing-only
+    #: policy rules on the pack's optional carried persona record; ``0``
+    #: when the archive carries no persona record or no rules.
+    policy_rule_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,12 +190,7 @@ def import_persona_visual_pack(
         # Only memory is inspected between the independently admitted source read
         # and extraction. No destination exists before its finite names are fixed.
         with zipfile.ZipFile(BytesIO(source.data), "r") as archive:
-            members = _validated_members(archive)
-            outer = _json_member(archive, members, "manifest.json")
-            checksums = _checksums(_json_member(archive, members, "checksums/sha256.json"))
-            pack = _pack(_json_member(archive, members, "metadata/pack.json"))
-            asset_records = _assets(_json_member(archive, members, "metadata/assets.json"))
-            _validate_declarations(archive, members, outer, checksums, asset_records, cancelled)
+            members, pack, asset_records = _validated_archive(archive, cancelled)
             name = f".import-{uuid4().hex}"
             candidate_path = root / name
             names = tuple(f"{index:03d}{_FORMAT_BY_MIME[record['mime_type']][1]}" for index, record in enumerate(asset_records))
@@ -211,7 +211,8 @@ def import_persona_visual_pack(
                     draft = create_persona_visual_import_draft(
                         persona_id=persona_id, persona_revision=persona_revision,
                         expected_identity=expected_identity, title=pack["title"],
-                        description="Imported Persona Visual pack", manifest_json=manifest_json,
+                        description=pack.get("description", "Imported Persona Visual pack"), manifest_json=manifest_json,
+                        source_context=pack["source_context"],
                         assets=draft_assets,
                     )
                     _raise_if_cancelled(cancelled)
@@ -221,6 +222,7 @@ def import_persona_visual_pack(
                     native_scope.result = visual_lifetime.issue(PersonaVisualImportReview(
                         schema_version=PERSONA_VISUAL_PACK_SCHEMA,
                         archive_sha256=source.sha256, pack_title=draft.title,
+                        policy_rule_count=pack["policy_rule_count"],
                         asset_count=len(draft.assets), state_count=len(json.loads(draft.manifest_json)["states"]),
                         draft=draft, cleanup_candidate=candidate.capability,
                         _candidate_name=candidate.name, _candidate_identity=candidate.identity,
@@ -339,7 +341,11 @@ def _source_identity_current(
 
 def _validated_members(
     archive: zipfile.ZipFile,
+    *,
+    prefix: str = "",
 ) -> dict[str, zipfile.ZipInfo]:
+    if type(prefix) is not str or (prefix and _member_prefix(prefix) != prefix):
+        raise ValueError
     infos = archive.infolist()
     if len(infos) > _MAX_MEMBER_COUNT:
         raise ValueError
@@ -348,6 +354,14 @@ def _validated_members(
     total = 0
     for info in infos:
         raw = getattr(info, "orig_filename", info.filename)
+        if prefix:
+            if raw == prefix:
+                if not info.is_dir():
+                    raise ValueError
+                continue
+            if not raw.startswith(prefix):
+                raise ValueError
+            raw = raw[len(prefix) :]
         if info.is_dir():
             _member_name(raw.removesuffix("/"), directory=True)
             continue
@@ -375,6 +389,25 @@ def _validated_members(
     if not _REQUIRED_MEMBERS.issubset(members):
         raise ValueError
     return members
+
+
+def _member_prefix(value: object) -> str:
+    """Validate one optional shared top-level archive directory."""
+    if (
+        type(value) is not str
+        or not value.endswith("/")
+        or "/" in value[:-1]
+        or "\\" in value
+        or "\x00" in value
+        or not value[:-1]
+        or value[:-1] in {".", ".."}
+        or not value[:-1].isascii()
+        or ":" in value
+        or len(value[:-1].encode()) > 255
+        or value[:-1].rstrip(" .").split(".", 1)[0].upper() in _WINDOWS_DEVICES
+    ):
+        raise ValueError
+    return value
 
 
 def _member_name(value: object, *, directory: bool) -> str:
@@ -458,7 +491,35 @@ def _pack(value: object) -> dict[str, Any]:
     ):
         raise ValueError
     title.encode("utf-8")
-    return {"title": title, "visual_manifest": manifest}
+    # Task 11: tolerate an optional carried persona record; count its
+    # policy_rules (display-only review metadata — the rules themselves are
+    # never applied by import, they only surface for review).
+    policy_rules: object = None
+    persona: object = pack.get("persona")
+    if type(persona) is dict:
+        policy_rules = persona.get("policy_rules")
+    rule_count = len(policy_rules) if type(policy_rules) is list else 0
+    from .artwork import artwork_from_pack, encode_native_artwork
+    from .repository import _source_context_json
+
+    context = pack.get("source_context", {})
+    if type(context) is not dict:
+        raise ValueError
+    context = dict(context)
+    context.pop("tldw/artwork", None)
+    context["artwork"] = encode_native_artwork(artwork_from_pack(pack))
+    _source_context_json(context)
+    result = {
+        "title": title,
+        "visual_manifest": manifest,
+        "policy_rule_count": rule_count,
+        "source_context": context,
+    }
+    if "description" in pack:
+        result["description"] = _text(
+            pack["description"], _MAX_DESCRIPTION, allow_empty=True
+        )
+    return result
 
 
 def _assets(value: object) -> tuple[dict[str, Any], ...]:
@@ -586,6 +647,22 @@ def _validate_declarations(
             raise ValueError
 
 
+def _validated_archive(
+    archive: zipfile.ZipFile,
+    cancelled: Any,
+    *,
+    prefix: str = "",
+) -> tuple[dict[str, zipfile.ZipInfo], dict[str, Any], tuple[dict[str, Any], ...]]:
+    """Shared native declarations/checksum boundary for import and snapshots."""
+    members = _validated_members(archive, prefix=prefix)
+    outer = _json_member(archive, members, "manifest.json")
+    checksums = _checksums(_json_member(archive, members, "checksums/sha256.json"))
+    pack = _pack(_json_member(archive, members, "metadata/pack.json"))
+    records = _assets(_json_member(archive, members, "metadata/assets.json"))
+    _validate_declarations(archive, members, outer, checksums, records, cancelled)
+    return members, pack, records
+
+
 def _preflight_space(root: Path, members: Mapping[str, zipfile.ZipInfo]) -> None:
     required = sum(info.file_size for info in members.values()) + 1024 * 1024
     if shutil.disk_usage(root).free < required:
@@ -682,12 +759,15 @@ def _extract_assets(
     return tuple(draft_assets)
 
 
-def _inspect_image(path: Path, record: Mapping[str, Any]) -> tuple[int, int | None]:
-    descriptor = _native_open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    try:
-        data = _read_fd(descriptor, record["byte_count"])
-    finally:
-        _native_close(descriptor)
+def _inspect_image(path: Path | BytesIO, record: Mapping[str, Any]) -> tuple[int, int | None]:
+    if isinstance(path, BytesIO):
+        data = path.getvalue()
+    else:
+        descriptor = _native_open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            data = _read_fd(descriptor, record["byte_count"])
+        finally:
+            _native_close(descriptor)
     with Image.open(BytesIO(data)) as image:
         if (
             image.format != _FORMAT_BY_MIME[record["mime_type"]][0]

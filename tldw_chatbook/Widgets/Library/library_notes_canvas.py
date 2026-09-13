@@ -3,26 +3,39 @@ create mode (Blank note + template rows)."""
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
+from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from rich.markup import escape as escape_markup
+from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
+from textual.events import Focus, Resize
+from textual.message_pump import NoActiveAppError
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.Library.library_notes_state import (
     LibraryNoteSessionSnapshot,
     LibraryNotesListState,
+    LibraryNotesTrashState,
     build_library_note_template_rows,
     ellipsize_note_title_cells,
 )
-from tldw_chatbook.Library.library_notes_sync_state import (
-    LibraryNotesSyncState,
-    auto_sync_label,
-    sync_conflict_label,
-    sync_direction_label,
+from tldw_chatbook.Library.library_note_import_state import LibraryNoteImportSnapshot
+from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+    LibraryNotesLastingSyncSnapshot,
 )
+from tldw_chatbook.Notes.agent_lessons import (
+    AGENT_LESSONS_FOLDER,
+    AGENT_LESSONS_FOLDER_GLOSS,
+)
+from tldw_chatbook.Notes.note_import_plan_models import render_note_links
 from tldw_chatbook.Library.library_notes_tree_state import (
     LibraryNotesTreeProjection,
     LibraryNotesTreeRow,
@@ -30,26 +43,525 @@ from tldw_chatbook.Library.library_notes_tree_state import (
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_NOTES_SORT_FILTERED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
-from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
+from tldw_chatbook.Widgets.Library.library_rail import LibraryRailSearchInput
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+    library_row_button,
+)
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
+)
+from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
+    LibraryNoteImportCanvas,
+)
+from tldw_chatbook.Widgets.Library.library_notes_add_from_files_canvas import (
+    LibraryNotesAddFromFilesCanvas,
+)
+from tldw_chatbook.Widgets.Library.library_notes_sync_roots_canvas import (
+    LibraryNotesSyncRootsCanvas,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
-_COMPACT_SYNC_DIRECTION_LABELS = {
-    "bidirectional": "Both",
-    "disk_to_db": "Disk → Lib",
-    "db_to_disk": "Lib → Disk",
-}
-_COMPACT_SYNC_CONFLICT_LABELS = {
-    "newer_wins": "Newest",
-    "disk_wins": "Disk",
-    "db_wins": "Library",
-}
+
+
+def notes_sort_is_blocked(*, tree_projection: object, filter_value: str) -> bool:
+    """Whether Sort cannot own the rows currently projected (task-32172).
+
+    A filter window's rows come back from the FTS search seam in its own
+    order (grouped by folder path), so Sort is offered disabled there
+    rather than silently reordering nothing. Shared with the screen's
+    canvas-kwargs pass, which closes an OPEN chooser under exactly this
+    condition -- a chooser whose mode outlived what paints it left the
+    footer offering "choose sort" and spent the next Escape on nothing
+    (task-32128 review round 2).
+
+    Args:
+        tree_projection: The projection about to be rendered, if any.
+        filter_value: The current Notes filter text.
+
+    Returns:
+        Whether the Sort control must render blocked.
+    """
+    return bool(tree_projection is not None and filter_value.strip())
+
+#: Columns the list pane needs before the browse and transfer toolbars share
+#: one row. Under this width the merged row clips its last action off the
+#: pane, which is worse than the third row it saves (task-32127, review 1).
+#: Their widest composition is New (7), Sort (16), Select (10), Add from
+#: files… (19), Export (10), Manage sync folders (23), Last import (15),
+#: plus both toolbars' own padding -- 109 cells, measured button by button
+#: rather than estimated. task-32172 raised this from 100: Sort left the
+#: folder tree in task-32128 and this figure was re-derived without it (97),
+#: so putting Sort back pushed the widest frame 16 cells wider and "Last
+#: import" fell off the pane at every width from 100 to 108. Pinned at the
+#: threshold itself by test_notes_toolbar_fits_at_the_exact_width_it_starts_
+#: merging, since the widths pinned either side of it (137, 62, 38) all miss
+#: that band.
+_TOOLBAR_MERGE_MIN_WIDTH = 109
+
+#: Columns a single action group needs to stay on one row. The transfer group
+#: (Add from files…, Export, Last import) is 47 cells and the folder actions
+#: (New folder, Rename, Move, Remove) are 46, so at the 44-column pane a
+#: 130-column terminal gives the list beside an open note, "Last import" and
+#: "Remove" were painted past the pane's right edge and could not be pressed
+#: (task-32127, final review). Below this width each group stacks, the way the
+#: delete receipt already stacks its recovery actions (task-32123) -- Textual
+#: toolbars do not wrap. NOT in a compact shell: there the split screen sheet
+#: pins these rows to `height: 1; overflow-x: hidden`, so a stacked column
+#: would be clipped to its first button instead of merely running off-pane.
+_TOOLBAR_STACK_MIN_WIDTH = 48
+
+
+def _toolbar_shape(pane_width: int, compact: bool) -> tuple[bool, bool]:
+    """Return the two toolbar decisions one pane width drives.
+
+    A width of 0 means "not measured yet": the canvas is composed before the
+    reader shell it lives in exists, so the first frame of a Notes visit has
+    no resolved Items width. That frame takes the conservative shape -- one
+    row per group, neither merged nor stacked -- which is what the list
+    rendered before either threshold existed; the first state sync then
+    composes at the real width (task-32127, review round 2).
+
+    Args:
+        pane_width: Columns the list pane has, or 0 when unmeasured.
+        compact: Whether the compact shell pins the toolbars to one row.
+
+    Returns:
+        ``(merged, stacked)`` -- whether the browse and transfer groups
+        share a row, and whether a group stacks its actions vertically.
+    """
+    return (
+        pane_width >= _TOOLBAR_MERGE_MIN_WIDTH,
+        0 < pane_width < _TOOLBAR_STACK_MIN_WIDTH and not compact,
+    )
+
+
+#: Cells a compact toolbar Button costs beyond its own label: the compact
+#: sheet's ``padding: 0 1`` (2) plus its ``margin: 0 1 0 0`` (1), plus the
+#: cell Textual's Button reserves for its own edge. MEASURED at 60x24, where
+#: the three browse actions resolved regions of 7, 16 and 10 cells for the
+#: 3-, 12- and 6-character labels "New", "Sort: Newest" and "Select".
+_TOOLBAR_ACTION_CHROME = 4
+
+#: Terminal columns below which the Notes canvas drops its authority prefix
+#: (review F1). The guide's own narrow-stage threshold: above it the line
+#: has room for the noun, below it the compact sheet's two-row cap does not.
+_AUTHORITY_PREFIX_MIN_WIDTH = 64
+
+
+#: Review F5: cells of slack a SPLIT browse row must regain before it
+#: rejoins. Splitting costs a line, which can bring a scrollbar into the
+#: pane and shave it -- without this the answer would flip straight back
+#: and `on_resize` would recompose for ever.
+_TOOLBAR_SPLIT_HYSTERESIS = 2
+
+#: task-32143: terminal columns below which the editor chrome strip drops
+#: its facts cell. The save state owns that row alone on a narrow terminal,
+#: where the compact sheet already caps it at one ellipsized line.
+NOTE_CHROME_FACTS_MIN_WIDTH = 80
+
+
+def library_note_chrome_facts(word_count: int, row: int, column: int) -> str:
+    """The editor chrome strip's right-hand facts (task-32143).
+
+    Args:
+        word_count: Words in the body draft, counted by the controller for
+            the meta line it already builds every keystroke.
+        row: Zero-based caret row, as ``TextArea.cursor_location`` reports it.
+        column: Zero-based caret column, likewise.
+
+    Returns:
+        ``"N words · L:C"`` with a one-based caret -- what every other
+        editor's status line means by "line 3, column 14".
+    """
+    words = "1 word" if word_count == 1 else f"{word_count:,} words"
+    return f"{words} · {row + 1}:{column + 1}"
+
+
+def browse_row_width(labels: tuple[str, ...]) -> int:
+    """Cells the browse toolbar row needs to paint these labels.
+
+    Measured from the labels ABOUT to be rendered rather than from a width
+    constant, because a disabled action grows a "○ " marker (2 more cells)
+    that a constant cannot see.
+
+    Args:
+        labels: The rendered action labels, disabled markers included, in
+            the order they are composed.
+
+    Returns:
+        Total terminal cells the row needs: every label plus the
+        per-Button chrome the compact sheet gives it.
+    """
+    return sum(len(label) + _TOOLBAR_ACTION_CHROME for label in labels)
+
+
+def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -> bool:
+    """Whether these actions cannot all be painted on one row of the pane.
+
+    task-32360 AC#2 (critique #10, handed over from the layout branch): at
+    60 columns the Notes list pane resolves to 32 cells and the three browse
+    actions need 33, so the compact sheet's ``overflow-x: hidden`` cropped
+    the last one to "Sel" -- a half word, which is exactly what that AC
+    forbids.
+
+    Args:
+        pane_width: Columns the list pane has, or 0 when unmeasured (the
+            first frame of a visit, before the reader shell resolves) --
+            which keeps the single-row shape it has always had.
+        needed: Cells the row needs (``browse_row_width``).
+        already_split: Whether the row is split right now. A split row only
+            rejoins with ``_TOOLBAR_SPLIT_HYSTERESIS`` cells to spare, so
+            the line the split itself costs cannot flip the answer back.
+
+    Returns:
+        ``True`` when the row needs more cells than the pane can give it.
+    """
+    if pane_width <= 0:
+        return False
+    return needed > pane_width - (_TOOLBAR_SPLIT_HYSTERESIS if already_split else 0)
+
+
+def render_preview_source(body: str) -> str:
+    """Return the note body as the Markdown Preview should render it.
+
+    ONE home for the order, because Preview renders from two places -- the
+    compose that mounts the widget and the in-place sync that refreshes it --
+    and the sync's staleness check compares against what compose produced. Two
+    call sites spelling the rewrites differently is a re-render on every sync
+    at best and a stale Preview at worst.
+
+    Args:
+        body: The note's stored Markdown source.
+
+    Returns:
+        The source with imported `[[Title]](note://<id>)` links reduced to
+        their display text (task-32263) and Obsidian callout headers turned
+        into plain blockquote headers (task-32249).
+    """
+    # Lazy, like the parser factory below it: this module is on the Library
+    # route's pre-import path (Tests/Performance/test_screen_preimport_payload_budget.py).
+    from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
+
+    return render_obsidian_callouts(render_note_links(body))
+
+
+def compose_note_row_label(
+    title: str,
+    *,
+    folder_label: str = "",
+    age_label: str = "",
+    tiebreak_label: str = "",
+) -> str:
+    """Render one Notes list row label: title, folder, age, tie-break.
+
+    The one renderer both list paths call (task-32137). The flat list used
+    to put the age on a second line of its own -- a branch nothing reached
+    once a folder tree existed -- while the tree rows carried no age at all,
+    so two notes titled "Reading list" rendered as identical rows.
+
+    Calling it is not the same as feeding it: only the TREE path passes
+    ``folder_label`` and ``tiebreak_label``, so only the tree path tells
+    duplicates apart. The flat fallback runs solely when there is no tree
+    projection at all, and its row records carry neither a folder nor a
+    clock to disambiguate WITH -- widening it would mean widening
+    ``LibraryNotesListRow`` for a path no live visit reaches, so the flat
+    path deliberately keeps title-and-age (task-32254).
+
+    Args:
+        title: The note title, already markup-escaped.
+        folder_label: The row's parent folder ("Unfiled", "Work / Q3"),
+            included only when the row needs telling apart from a sibling
+            with the same title, or when a filter has scattered the rows.
+        age_label: Relative age of the note ("3m", "1d"), if known.
+        tiebreak_label: The third key (task-32254) -- a modified time of
+            day ("14:05") or a short id ("#0f3a") -- present ONLY for rows
+            that would otherwise be byte-identical to another row.
+
+    Returns:
+        The row label, its present parts joined with " · ".
+    """
+    return " · ".join(
+        part for part in (title, folder_label, age_label, tiebreak_label) if part
+    )
+
+
+def note_row_tiebreak_labels(
+    rows: Sequence[LibraryNotesTreeRow],
+) -> dict[str, str]:
+    """Return a third key per placement, for rows that still collide.
+
+    task-32254: task-32137's folder-then-age discriminator is a no-op in
+    the case it is most needed -- two notes titled "Reading list", both
+    unfiled, both minutes old, render as the same string, and
+    unfiled-and-recent is exactly the state of two notes a user has just
+    made twice. The remedy is a THIRD key, and only for the rows that
+    actually tie: everything else keeps the label 32137 shipped.
+
+    The preferred key is the modified time of day, which answers "which
+    one did I just touch?". Notes written in the same minute (a duplicate
+    made by a script or a double press) share that too, so such a group
+    falls back to a short, stable id -- ugly, but it is an identity, and
+    two rows that cannot be told apart at all are worse.
+
+    Args:
+        rows: The projection's rows, note and non-note alike.
+
+    Returns:
+        ``placement_id -> label``, holding only the colliding rows.
+    """
+    groups: dict[tuple[str, str, str], list[LibraryNotesTreeRow]] = defaultdict(list)
+    for row in rows:
+        if row.kind == "note":
+            groups[(row.folder_id or "", row.label, row.age_label)].append(row)
+    tiebreakers: dict[str, str] = {}
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        clocks = [row.clock_label for row in group]
+        if all(clocks) and len(set(clocks)) == len(group):
+            for row, clock in zip(group, clocks, strict=True):
+                tiebreakers[row.placement_id] = clock
+            continue
+        for row in group:
+            tiebreakers[row.placement_id] = f"#{str(row.note_id or '')[:4]}"
+    return tiebreakers
+
+
+#: Backlink rows Info renders at most (task-32145). The loader asks for one
+#: more than this so an over-cap result can say "50+" rather than claim an
+#: exact 50 that is not the real number.
+LIBRARY_NOTE_BACKLINK_DISPLAY_CAP = 50
+
+
+def library_note_backlink_header(
+    backlinks: tuple[tuple[str, str], ...],
+    status: str = "ready",
+) -> str:
+    """The "Linked from" heading for one note's inbound links.
+
+    Args:
+        backlinks: ``(note_id, title)`` rows, possibly one over the display
+            cap (see ``LIBRARY_NOTE_BACKLINK_DISPLAY_CAP``).
+        status: ``"loading"``, ``"ready"`` or ``"failed"`` -- the count is
+            only claimed once the query has actually answered, so a pending
+            or failed lookup never reads as a verified zero.
+
+    Returns:
+        The heading, which names the count and, when there are none, says
+        so in words rather than leaving a bare ``(0)`` to be read as a
+        failed load.
+    """
+    if status == "loading":
+        return "Linked from — checking…"
+    if status == "failed":
+        return "Linked from — couldn't check"
+    if not backlinks:
+        return "Linked from (0) — no notes link here yet"
+    if len(backlinks) > LIBRARY_NOTE_BACKLINK_DISPLAY_CAP:
+        return f"Linked from ({LIBRARY_NOTE_BACKLINK_DISPLAY_CAP}+)"
+    return f"Linked from ({len(backlinks)})"
+
+
+def _library_note_back_label(compact: bool) -> str:
+    """The single Back wording (task-32139), sized by ``compact``.
+
+    PR #2547 review (Qodo finding 1): compose time and state-apply time
+    each inlined this same ternary; a wording change could update one
+    rendering path and leave the other stale. One function, both callers.
+    """
+    return "‹ Back to list" if compact else "‹ Notes"
+
+
+#: The storage authority every Database Notes surface answers to. Painted once
+#: per screen: the mounted list pane owns it, and a work pane beside it drops
+#: it rather than repeating the same sentence (task-32063).
+#:
+#: task-32218: ONE noun for this source. It used to read "Library notes ·
+#: Library database", and three sibling sites said "Database Notes · Library
+#: database" -- five names for two sources across one journey, so the word a
+#: reader clicked in the strip ("Library notes") never reappeared where they
+#: landed. The source strip's own label is the noun; everything else here
+#: quotes it.
+NOTES_AUTHORITY_PREFIX = "Library notes"
+
+#: Every control a reader types a note into. A refresh that would recompose
+#: this canvas while one of them has focus is deferred instead (task-32062).
+#: The keyword boxes belong here for the same reason the title does -- review
+#: of PR #2531: both are live ``Input``s, and only one of the two is mounted
+#: visible at a time (wide editor vs. context region).
+_NOTE_EDITOR_INPUT_IDS = frozenset(
+    {
+        "library-note-title",
+        "library-note-body",
+        "library-note-keywords",
+        "library-note-context-keywords",
+    }
+)
+
+
+#: task-32106 AC#1: shared by every field of the note editor -- see
+#: ``NoteEditorInput`` below for the mechanism and the measurement.
+_NOTE_FIELD_TAB_BINDINGS = [
+    Binding("tab", "screen.focus_next", show=False, priority=True),
+    Binding("shift+tab", "screen.focus_previous", show=False, priority=True),
+]
+
+#: task-32247: the note body's own keys, on top of the shared Tab pair --
+#: see ``NoteEditorTextArea`` for why Textual supplies neither.
+_NOTE_BODY_BINDINGS = [
+    *_NOTE_FIELD_TAB_BINDINGS,
+    Binding("ctrl+end", "cursor_document_end", "End of note", show=False),
+    Binding("ctrl+home", "cursor_document_start", "Start of note", show=False),
+]
+
+
+class NoteEditorInput(Input):
+    """A note field whose Tab moves focus BEFORE the next key is forwarded.
+
+    task-32253: it also does NOT select its content on focus, and parks the
+    caret at the end instead. Textual's ``Input`` default is select-on-focus
+    -- browser behaviour, and right for a query box you are about to
+    replace. It is wrong for the one field on this screen whose content must
+    not be destroyed: live at dev 4a14b3f36f, Shift+Tab out of the body into
+    the Title selected "Ideas for study decks" whole, one "!" replaced it,
+    and autosave committed the loss a second later ("Saved 15:23"). Textual's
+    ``Input`` has no undo, so nothing could bring the title back. The keyword
+    boxes share this class and the same rule for the same reason; the path
+    fields that genuinely WANT select-on-focus are a different widget
+    (task-32251).
+
+    task-32106 AC#1: ``Screen.BINDINGS``' ``Binding("tab", "app.focus_next")``
+    is not ``priority=True``, so ``Key(tab)`` is posted to the focused
+    ``Input`` and has to bubble one message-queue hop per ancestor up to the
+    Screen -- while the App keeps dequeuing the following keys and forwarding
+    each to ``self.focused``, which is still this field. Typed fast enough
+    (one terminal read, or a message queue backed up behind a busy Library
+    screen) the body lands in the title. Reproduced in stock Textual 8 with
+    nothing from this repo in it:
+
+        pilot  elapsed=1268.9ms  title='My first note'      body='hello'
+        burst  elapsed=   0.2ms  title='My first notehello' body=''
+
+    A priority binding makes the App resolve the focus move before it
+    forwards the next key. The action is namespaced to the SCREEN so it
+    resolves to ``LibraryScreen.action_focus_next``, which cycles inside
+    ``#screen-content`` (task-32052 AC#3) -- ``app.focus_next`` would walk
+    the nav bar instead, and a bare ``focus_next`` resolves against this
+    ``Input``, which has no such action, so the binding never fires.
+    """
+
+    BINDINGS = _NOTE_FIELD_TAB_BINDINGS
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Build the field with select-on-focus off unless asked otherwise."""
+        kwargs.setdefault("select_on_focus", False)
+        super().__init__(*args, **kwargs)
+
+    def _on_focus(self, event: Focus) -> None:
+        super()._on_focus(event)
+        if not self.select_on_focus:
+            # Textual leaves the caret wherever it was (position 0 on a
+            # fresh field), which reads as "type here and push the title
+            # along". End-of-text is where a reader arriving by Shift+Tab
+            # means to continue.
+            self.action_end()
+
+
+class NoteEditorTextArea(TextArea):
+    """The note body, with the same synchronous Tab as the fields around it.
+
+    task-32247: it also carries the document-end and document-start keys.
+    Textual 8.2.8's ``TextArea`` binds ``home``/``end`` to the LINE ends and
+    defines neither a ``ctrl+end`` binding nor a ``cursor_document_end``
+    action at all -- so on a 35 KB note, Ctrl+End (in every encoding: the
+    named key, ``\\x1b[1;5F``, ``\\x1bOF``-style variants all resolve to the
+    one key name ``ctrl+end``) was not swallowed by anything upstream, as
+    the report inferred; there was simply no key to swallow, and typing
+    after it landed at character 0. Editing near the end of a long note was
+    unreachable by keyboard.
+
+    The body has the identical defect one widget over (coordinator addendum
+    from a peer session): bursting ``hello`` + Tab + ``world`` into it left
+    BOTH words in the body -- measured here as
+    ``'helloworldalpha budget line'`` -- because Tab's focus move landed
+    after the burst.
+
+    Safe only while ``tab_behavior`` is ``"focus"`` -- Textual's default,
+    and what this editor wants: the body is prose, not code, and Tab is how
+    a reader leaves it. Under ``"indent"`` this binding would steal the key
+    the ``TextArea`` needs, so the pin asserts that behaviour rather than
+    trusting the default.
+    """
+
+    BINDINGS = _NOTE_BODY_BINDINGS
+
+    def action_cursor_document_end(self) -> None:
+        """Move the caret to the end of the note body."""
+        self.move_cursor(self.document.end)
+
+    def action_cursor_document_start(self) -> None:
+        """Move the caret to the start of the note body."""
+        self.move_cursor((0, 0))
+
+
+@dataclass(frozen=True)
+class NotesStatusChannels:
+    """Independent Notes header channels with one optional recovery action."""
+
+    content_recovery: str
+    authority_git: str
+    safe_next_action: str | None = None
+
+
+def resolve_database_note_status_channels(
+    *,
+    conflict: bool = False,
+    unavailable: bool = False,
+    read_only: bool = False,
+    save_failed: bool = False,
+    saving: bool = False,
+    dirty: bool = False,
+) -> NotesStatusChannels:
+    """Resolve Database Notes status in the approved deterministic order.
+
+    Args:
+        conflict: Whether the database note and editor draft conflict.
+        unavailable: Whether the Library database cannot currently be reached.
+        read_only: Whether the active note cannot be edited.
+        save_failed: Whether the latest save attempt failed.
+        saving: Whether a save is currently running.
+        dirty: Whether the editor contains unsaved changes.
+
+    Returns:
+        The independent content, authority, and safe-action status channels.
+    """
+    if conflict:
+        content = "Conflict — the note changed elsewhere; your draft is preserved."
+        safe = "Review recovery"
+    elif unavailable:
+        content = (
+            "Unavailable — the database cannot be reached; your draft is preserved."
+        )
+        safe = "Retry when storage is available"
+    elif read_only:
+        content = "Read-only — this note cannot be changed; your draft is preserved."
+        safe = "Keep the draft"
+    elif save_failed:
+        content = "Save failed — your draft remains in the editor."
+        safe = "Retry Save"
+    elif saving:
+        content, safe = "Saving…", None
+    elif dirty:
+        content, safe = "Unsaved changes", None
+    else:
+        content, safe = "Saved", None
+    return NotesStatusChannels(content, NOTES_AUTHORITY_PREFIX, safe)
 
 
 @dataclass(frozen=True)
@@ -75,6 +587,38 @@ class LibraryNotePresentationState:
     discard_new_note: bool = False
     transfer_status: str = ""
     transfer_running: bool = False
+    bulk_read_only: bool = False
+    bulk_included: bool = False
+    status_channels: NotesStatusChannels | None = None
+    #: ``(note_id, title)`` for each note linking to this one (task-32145).
+    backlinks: tuple[tuple[str, str], ...] = ()
+    #: Whether the backlink query has answered yet -- see
+    #: ``library_note_backlink_header``.
+    backlinks_status: str = "loading"
+    #: Words in the draft body, for the editor chrome strip (task-32143).
+    #: The controller counts this for ``metadata_line`` anyway; carrying the
+    #: number instead of the sentence keeps the strip off a second scan.
+    word_count: int = 0
+
+
+class _LibraryNotesTreePagerButton(Button):
+    """Keep semantic focus during an inert loading-state replacement."""
+
+    _retain_disabled_focus = False
+
+    @property
+    def focusable(self) -> bool:
+        """Allow only the recompose restorer to retain disabled focus."""
+        return self._retain_disabled_focus or super().focusable
+
+    def retain_semantic_focus(self) -> None:
+        """Restore focus without making a disabled pager activatable."""
+        self._retain_disabled_focus = True
+        self.focus()
+        self.app.call_later(self._clear_disabled_focus_override)
+
+    def _clear_disabled_focus_override(self) -> None:
+        self._retain_disabled_focus = False
 
 
 class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
@@ -92,13 +636,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             note editor for ``presentation_state``; ``"create"`` renders the
             Blank note / template picker reached from the rail's Create > New
             note row; ``"sync"`` renders the in-canvas notes sync panel for
-            ``sync_panel_state``.
         presentation_state: Canonical snapshot plus presentation-only state.
             Required when ``mode == "editor"``.
-        sync_panel_state: The sync panel's display state. Required when
-            ``mode == "sync"``. This deliberately does not use the name
-            ``sync_state`` because that name belongs to the mounted canvas's
-            targeted update hook.
+        import_snapshot: Reviewed one-time import presentation state. Required
+            when ``mode == "import"``.
+        import_receipt_available: Whether the latest same-session receipt can
+            reopen from list mode.
         title_placeholder_only: When ``True`` (editor mode only), the title
             ``Input`` renders empty with an "Untitled" placeholder instead
             of a literal editable "Untitled" value -- LIB-14's fix for a
@@ -110,7 +653,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             after. The screen sets this only while the open note is still
             its own pristine "Blank note" (the same condition that also
             arms it for GC-on-exit -- see
-            ``_library_note_pending_blank_gc_id``); it never applies to a
+            ``_notes_state.pending_blank_gc_id``); it never applies to a
             note whose title happens to equal the word "Untitled" by the
             user's own choice.
         compact: Whether compact, 60-column-safe action labels are active.
@@ -126,19 +669,24 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         filter_value: str = "",
         mode: str = "list",
         presentation_state: LibraryNotePresentationState | None = None,
-        sync_panel_state: LibraryNotesSyncState | None = None,
+        import_snapshot: LibraryNoteImportSnapshot | None = None,
+        import_receipt_available: bool = False,
+        lasting_sync_snapshot: LibraryNotesLastingSyncSnapshot | None = None,
         tree_projection: LibraryNotesTreeProjection | None = None,
         tree_selected_placement_id: str = "",
         tree_deleted_folder_available: bool = False,
+        trash: LibraryNotesTrashState | None = None,
         title_placeholder_only: bool = False,
         compact: bool = False,
+        pane_width: int = 0,
         create_running: bool = False,
         create_status: str = "",
         load_state: str = "loading",
         load_message: str = "",
+        authority_id: str = "library-notes-authority",
         **kwargs: Any,
     ) -> None:
-        """Initialize one list, editor, create, or sync canvas.
+        """Initialize one list, editor, create, sync, or import canvas.
 
         Args:
             list_state: List-mode rows, counts, selection, and empty-state copy.
@@ -147,13 +695,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             mode: Canvas surface to compose: list, loading, editor, create,
                 or sync.
             presentation_state: Canonical editor snapshot and UI-only flags.
-            sync_panel_state: Display state for the sync surface.
+            import_snapshot: Display state for the one-time import surface.
             tree_projection: Placement-aware folder rows for list mode.
             tree_selected_placement_id: Context row for folder actions.
             tree_deleted_folder_available: Whether Undo folder removal is available.
             title_placeholder_only: Render an empty title with an Untitled
                 placeholder for a pristine newly-created note.
             compact: Whether 60-column-safe controls and labels are active.
+            pane_width: Columns the mounted list pane has, from the resolved
+                reader layout. Only the toolbar reads it, to decide whether
+                one row can hold both action groups; ``0`` (unknown) keeps
+                them on their own rows.
             create_running: Whether note creation is in progress.
             create_status: Visible creation completion or recovery status.
             load_state: Editor-load state (``"loading"`` or ``"failed"``).
@@ -166,16 +718,44 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.filter_value = filter_value
         self.mode = mode
         self.presentation_state = presentation_state
-        self.sync_panel_state = sync_panel_state
+        self.import_snapshot = import_snapshot
+        self.import_receipt_available = import_receipt_available
+        self.lasting_sync_snapshot = lasting_sync_snapshot
         self.tree_projection = tree_projection
         self.tree_selected_placement_id = tree_selected_placement_id
         self.tree_deleted_folder_available = tree_deleted_folder_available
+        self.trash = trash
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
+        self.pane_width = pane_width
         self.create_running = create_running
         self.create_status = create_status
         self.load_state = load_state
         self.load_message = load_message
+        self.authority_id = authority_id
+        #: task-32360: cells the browse toolbar row needed the last time it
+        #: was composed, so ``on_resize`` can re-decide the row split once
+        #: this pane's real width is known, and that measured width.
+        self._browse_row_needed = 0
+        self._browse_overflow = False
+        self._measured_width = 0
+        #: task-32356: create mode's template disclosure. Canvas-local on
+        #: purpose -- nothing outside this widget reads or writes it, so it
+        #: needs no ``LibraryNotesState`` field and no kwargs plumbing. It
+        #: resets whenever the canvas leaves create mode (``sync_state``),
+        #: so arriving at Create always shows the one folded row.
+        self.templates_open = False
+        self._tree_pager_focus_id: str | None = None
+        self._tree_pager_focus_guard: Callable[[], bool] | None = None
+        self._tree_pager_focus_generation = 0
+        #: Which backlink rows the mounted Info panel currently holds, so a
+        #: sync only remounts them when the set actually changed (task-32145).
+        self._rendered_backlinks: tuple[tuple[str, str], ...] = ()
+        #: Last word count the controller fed the chrome strip (task-32143).
+        #: Caret moves and resizes repaint from this instead of re-scanning
+        #: a body the controller already counted.
+        self._note_chrome_word_count = 0
+        self._tree_focus_intent_generation: Callable[[], int] | None = None
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
@@ -195,8 +775,93 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         ``then=`` that focused a control saw its pre-compact label.
         """
         self._apply_post_compose_state()
+        focus_id = self._tree_pager_focus_id
+        guard = self._tree_pager_focus_guard
+        generation = self._tree_pager_focus_generation
+        self._tree_pager_focus_id = None
+        self._tree_pager_focus_guard = None
+        if not focus_id or not self._tree_pager_authority_is_current(guard, generation):
+            return
+        matches = self.query(f"#{focus_id}")
+        if not matches:
+            return
+        pager = matches.first(_LibraryNotesTreePagerButton)
+        if pager.disabled:
+            self.call_after_refresh(
+                self._retain_tree_pager_focus,
+                pager,
+                guard,
+                generation,
+            )
+        elif self._tree_pager_authority_is_current(guard, generation):
+            pager.focus()
+
+    def _tree_pager_authority_is_current(
+        self,
+        guard: Callable[[], bool] | None,
+        generation: int,
+    ) -> bool:
+        """Return whether one sync still owns semantic pager focus."""
+        return generation == self._tree_pager_focus_generation and (
+            guard is None or guard()
+        )
+
+    def _retain_tree_pager_focus(
+        self,
+        pager: _LibraryNotesTreePagerButton,
+        guard: Callable[[], bool] | None,
+        generation: int,
+    ) -> None:
+        """Retain disabled pager focus only for the originating sync."""
+        if not self._tree_pager_authority_is_current(guard, generation):
+            return
+        if not pager.is_attached:
+            return
+        pager.retain_semantic_focus()
+
+    async def recompose(self) -> None:
+        """Preserve a newer in-canvas focus when pager authority expires."""
+        newest_focus_id: str | None = None
+        focus_generation = self._tree_pager_focus_generation
+        focus_intent_generation: int | None = None
+        focus_intent_generation_getter = self._tree_focus_intent_generation
+        pager_focus_id = self._tree_pager_focus_id
+        if pager_focus_id and not self._tree_pager_authority_is_current(
+            self._tree_pager_focus_guard,
+            self._tree_pager_focus_generation,
+        ):
+            focused = self.app.focused
+            if (
+                focused is not None
+                and focused.id
+                and focused.id != pager_focus_id
+                and self in focused.ancestors_with_self
+            ):
+                newest_focus_id = focused.id
+                if focus_intent_generation_getter is not None:
+                    focus_intent_generation = focus_intent_generation_getter()
+        await super().recompose()
+        if (
+            not newest_focus_id
+            or not self.is_attached
+            or focus_generation != self._tree_pager_focus_generation
+            or (
+                focus_intent_generation is not None
+                and focus_intent_generation_getter is not None
+                and focus_intent_generation_getter() != focus_intent_generation
+            )
+        ):
+            return
+        matches = self.query(f"#{newest_focus_id}")
+        if matches:
+            matches.first().screen.set_focus(matches.first())
 
     def compose(self) -> ComposeResult:
+        yield Static(
+            self._authority_copy(),
+            id=self.authority_id,
+            markup=False,
+        )
         if self.mode == "loading":
             yield from self._compose_loading()
             return
@@ -206,10 +871,253 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if self.mode == "create":
             yield from self._compose_create()
             return
-        if self.mode == "sync":
-            yield from self._compose_sync()
+        if self.mode == "trash":
+            yield from self._compose_trash()
+            return
+        if self.mode == "import":
+            if self.import_snapshot is not None:
+                yield LibraryNoteImportCanvas(
+                    self.import_snapshot,
+                    compact=self.compact,
+                    id="library-note-import-canvas",
+                )
+            yield Button(
+                "Back to Notes",
+                id="library-notes-import-back",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            return
+        if self.mode == "lasting_add":
+            if self.lasting_sync_snapshot is not None:
+                yield LibraryNotesAddFromFilesCanvas(
+                    self.lasting_sync_snapshot,
+                    id="library-notes-lasting-add-canvas",
+                )
+            return
+        if self.mode == "lasting_roots":
+            if self.lasting_sync_snapshot is not None:
+                yield LibraryNotesSyncRootsCanvas(
+                    self.lasting_sync_snapshot,
+                    id="library-notes-lasting-roots-canvas",
+                )
             return
         yield from self._compose_list()
+
+    def _authority_prefix(self) -> str:
+        """Return the authority this canvas names before its own status.
+
+        Subclasses that render beside a pane already naming the authority
+        return ``""`` -- see ``LibraryNoteWorkPane`` (task-32063).
+
+        task-32360 AC#2 (critique #10): the compact sheet caps this line at
+        two rows, and at 60 columns the pane is 32 cells wide, where the
+        full line takes three -- so "files." was simply cut off the bottom,
+        with no ellipsis and no way to know something was missing. The
+        narrow stage drops the prefix instead: the source strip directly
+        above already says "Library notes | Folder files", so the authority
+        is named on screen either way, and what is left ("Ready · Next:
+        Create a note or add from files.") fits the two rows whole.
+
+        Review F1: gated on ``compact`` alone this dropped the noun on
+        EVERY terminal under 120 columns (``LIBRARY_NOTES_COMPACT_BREAKPOINT``)
+        -- including the standard 100-column stage, where the line has room
+        and nothing clips, and where the guide's own "narrower than 64
+        columns" then described something the app did not do. The threshold
+        is the one the guide states, measured off the terminal the stage is
+        resolved from rather than off this pane (at 100 columns the Items
+        pane is only 42 cells, so a pane-width test would drop it there
+        too). A widget with no live app keeps the prefix: that is the
+        answer that loses nothing.
+        """
+        try:
+            narrow_stage = self.compact and self.app.size.width < _AUTHORITY_PREFIX_MIN_WIDTH
+        except Exception:
+            narrow_stage = False
+        return "" if narrow_stage else NOTES_AUTHORITY_PREFIX
+
+    def _authority_copy(self) -> str:
+        """Describe Library storage, current status, and the next action."""
+        prefix = self._authority_prefix()
+        def line(*parts: str) -> str:
+            """Join the non-empty clauses this state actually has."""
+            return " · ".join(part for part in (prefix, *parts) if part)
+
+        if self.mode == "loading":
+            if self.load_state == "failed":
+                status = self.load_message or "Could not load note."
+                return line(status, "Next: Retry loading.")
+            # task-32063: a "Next:" clause names a control the reader can
+            # press. "Wait for loading to finish" names none, so this state
+            # ends at its status.
+            return line("Loading note…")
+        if self.mode == "editor":
+            state = self.presentation_state
+            if state is None:
+                return line("Editor unavailable", "Next: Back to notes.")
+            status = state.status_line or "Ready"
+            transfer = (
+                f" · {state.transfer_status}"
+                if state.transfer_status and state.transfer_status != status
+                else ""
+            )
+            if state.conflict:
+                next_action = "Resolve the conflict or reload the note."
+            elif state.snapshot.saving or state.transfer_running:
+                next_action = ""
+            elif "failed" in f"{status} {state.transfer_status}".lower():
+                next_action = "Review the error, then keep editing."
+            elif state.presentation == "preview":
+                # task-32249: Preview is read-only, so "changes save
+                # automatically" named a behaviour this surface does not
+                # have. Name the control that gets the reader back to the
+                # one that does.
+                next_action = "Press Edit to change this note."
+            elif not state.snapshot.body:
+                # Review F4: "Keep editing" presumes editing has started.
+                # The brief's "Start typing" belongs here -- this is the
+                # surface with the empty box on it.
+                next_action = "Start typing."
+            else:
+                next_action = "Keep editing; changes save automatically."
+            return line(
+                f"{status}{transfer}",
+                f"Next: {next_action}" if next_action else "",
+            )
+        if self.mode == "create":
+            status = self.create_status or (
+                "Creating note…" if self.create_running else "Ready"
+            )
+            next_action = (
+                ""
+                if self.create_running
+                # task-32356: Blank note is the answer nearly every time,
+                # so the line names it as the default rather than posing
+                # the nine-way question the canvas no longer asks.
+                # Review F4: it names the two controls that are ON this
+                # canvas -- the brief's "Start typing" was written for the
+                # editor the key now goes to, and there is no box to type
+                # in here.
+                else "Press Blank note, or choose a template."
+            )
+            return line(status, f"Next: {next_action}" if next_action else "")
+        if self.mode == "import":
+            state = self.import_snapshot
+            status = "Import unavailable" if state is None else state.status_line
+            return line("Import once", status, "Next: Review the import workflow.")
+        if self.mode in {"lasting_add", "lasting_roots"}:
+            state = self.lasting_sync_snapshot
+            status = "Unavailable" if state is None else state.status_line
+            if state is not None and state.phase == "choose":
+                # task-32125: naming one of the two relationships before the
+                # reader has picked either presumed the answer.
+                return line(
+                    "Add from files",
+                    status,
+                    "Next: Choose Import once or Keep a folder synced.",
+                )
+            next_action = (
+                "Use Import once."
+                if state is None or not state.lasting_available
+                else "Review the current lasting-sync step."
+            )
+            return line("Lasting sync", status, f"Next: {next_action}")
+        state = self.list_state
+        status = state.operation_status if state is not None else ""
+        running = state is not None and state.operation_running
+        status = status or ("Updating notes…" if running else "Ready")
+        next_action = "" if running else "Create a note or add from files."
+        return line(status, f"Next: {next_action}" if next_action else "")
+
+    def _effective_pane_width(self) -> int:
+        """The width the toolbar shapes itself to.
+
+        ``pane_width`` is the screen's contract -- the Items pane width the
+        reader layout resolved -- and wins whenever it has arrived. It is
+        ``0`` on a canvas composed before its shell exists, and task-32360
+        AC#2 measured a narrow route where no later sync ever carried the
+        real one, leaving the width-aware toolbar (task-32127) permanently
+        on its "not measured yet" shape. This widget's OWN rendered width
+        is the honest fallback for exactly that case.
+        """
+        return self.pane_width or self._measured_width
+
+    def _toolbar_decisions(self, width: int) -> tuple[bool, bool, bool]:
+        """The three width-driven shape answers for one pane width."""
+        merged, stacked = _toolbar_shape(width, self.compact)
+        overflow = browse_row_overflows(
+            width, self._browse_row_needed, already_split=self._browse_overflow
+        )
+        return merged, stacked, overflow
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-decide the toolbar's shape once this pane has a real width.
+
+        Recomposing only when an answer actually flips keeps this from
+        looping: the decisions are a pure function of the width. It never
+        writes ``pane_width`` -- that attribute is the screen's contract and
+        is asserted against the resolved layout (``test_list_toolbar_uses_
+        the_width_the_pane_has_after_a_round_trip``); the canvas is a few
+        cells narrower than the pane that holds it at wide sizes.
+
+        Args:
+            event: Textual's resize event, carrying this canvas's own size.
+        """
+        if self.mode != "list":
+            return
+        width = event.size.width
+        if width <= 0 or width == self._measured_width:
+            return
+        before = self._toolbar_decisions(self._effective_pane_width())
+        self._measured_width = width
+        if before != self._toolbar_decisions(self._effective_pane_width()):
+            self.refresh(recompose=True)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Refuse row/action presses while this canvas is resident but hidden.
+
+        Phase C keeps both browse canvases mounted and toggles ``display``
+        (``UI/Library_Modules/library_browse_route_swap.py``). Textual 8.2.8's
+        ``Button.press()`` consults the BUTTON's own ``disabled``/``display``
+        and nothing above it, so a press aimed at a hidden canvas's row still
+        bubbles to the screen and would act on a route the user has left --
+        the design record's verified finding #3. Stop it here, at the canvas
+        that owns the residency state, rather than in each of the screen's
+        row handlers.
+
+        **Scope, stated because it is narrower than it looks.** This gates
+        ``Button.Pressed`` and nothing else. Still ungated, deliberately:
+        ``Input.Changed`` / ``Input.Submitted`` (a hidden widget is not in the
+        focus chain, so a user cannot type into one, and no code drives these
+        programmatically off-route). Unlike ``LibraryMediaCanvas``, this
+        canvas has no row-geometry message of its own -- there is no Notes
+        analogue of ``LibraryMediaRowGeometryChanged`` to gate or fence
+        (verified: that message is defined and posted only in
+        ``library_media_canvas.py``). If a future change makes a hidden
+        canvas focusable, drives its Inputs from code, or adds a Notes
+        geometry message, this gate does NOT cover it.
+
+        Args:
+            event: The bubbling press.
+
+        Returns:
+            None.
+        """
+        if not self.display:
+            event.stop()
+            event.prevent_default()
+            return
+        # task-32356: the create canvas's template disclosure. Handled here
+        # rather than on the screen because nothing outside this widget reads
+        # the open/closed state -- same reason it is not a canvas kwarg.
+        if event.button.id == "library-note-from-template":
+            event.stop()
+            self.templates_open = True
+            # Without this the recompose drops focus out of the canvas
+            # entirely (measured: onto the Items pane grip), so a keyboard
+            # user who opened the templates could not then walk into them.
+            self.preserve_same_id_focus_after_recompose()
+            self.refresh(recompose=True)
 
     def sync_state(
         self,
@@ -219,24 +1127,29 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         filter_value: str,
         mode: str,
         presentation_state: LibraryNotePresentationState | None,
-        sync_panel_state: LibraryNotesSyncState | None,
+        import_snapshot: LibraryNoteImportSnapshot | None = None,
+        import_receipt_available: bool = False,
+        lasting_sync_snapshot: LibraryNotesLastingSyncSnapshot | None = None,
         tree_projection: LibraryNotesTreeProjection | None,
         tree_selected_placement_id: str,
         tree_deleted_folder_available: bool,
+        trash: LibraryNotesTrashState | None = None,
         title_placeholder_only: bool,
         compact: bool,
+        pane_width: int = 0,
         create_running: bool,
         create_status: str,
         load_state: str,
         load_message: str,
+        deferred_guard: Callable[[], bool] | None = None,
+        focus_intent_generation: Callable[[], int] | None = None,
     ) -> None:
         """Apply a complete screen-owned snapshot within this canvas only.
 
-        The method intentionally replaces every compose input before asking
-        Textual to rebuild this widget's children. Keeping the update complete
-        prevents list/editor/sync conditionals from retaining values from the
-        previous surface while the Library shell, rail, and footer retain
-        identity.
+        The method replaces every compose input before updating the visible
+        surface. A retained import child accepts same-route snapshots directly
+        so active text input keeps identity; other routes rebuild this widget's
+        children.
 
         Args:
             list_state: Notes list snapshot, or ``None`` outside list mode.
@@ -244,44 +1157,152 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             filter_value: Current Notes filter text.
             mode: Canvas surface to render.
             presentation_state: Note editor/create presentation snapshot.
-            sync_panel_state: Notes folder-sync panel snapshot.
+            import_snapshot: Reviewed one-time import presentation snapshot.
+            import_receipt_available: Whether the latest same-session receipt can reopen.
             tree_projection: Placement-aware folder rows for list mode.
             tree_selected_placement_id: Context row for folder actions.
             tree_deleted_folder_available: Whether Undo folder removal is available.
             title_placeholder_only: Whether the title is placeholder-only.
             compact: Whether compact editor controls are enabled.
+            pane_width: Columns the mounted list pane has (see ``__init__``).
+                Defaults to the same ``0`` the constructor uses for "not
+                measured yet", so a caller outside the screen's reader
+                layout gets the conservative toolbar shape rather than a
+                ``TypeError`` (PR #2549 review, finding 6).
             create_running: Whether note creation is in progress.
             create_status: Current note-creation status copy.
             load_state: Current note-loading state identifier.
             load_message: Current note-loading status or error copy.
+            deferred_guard: Authority predicate for pager focus restoration
+                scheduled by this exact sync.
+            focus_intent_generation: Current screen focus-intent generation,
+                read before and after an awaited recompose.
         """
         previous_mode = self.mode
+        focused = self.app.focused
+        self._tree_pager_focus_generation += 1
+        self._tree_focus_intent_generation = focus_intent_generation
+        if (
+            focused is not None
+            and focused.id
+            and focused.has_class("library-notes-tree-pager")
+            and self in focused.ancestors_with_self
+        ):
+            self._tree_pager_focus_id = focused.id
+            self._tree_pager_focus_guard = deferred_guard
+        else:
+            self._tree_pager_focus_id = None
+            self._tree_pager_focus_guard = None
         self.list_state = list_state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
         self.mode = mode
         self.presentation_state = presentation_state
-        self.sync_panel_state = sync_panel_state
+        self.import_snapshot = import_snapshot
+        self.import_receipt_available = import_receipt_available
+        self.lasting_sync_snapshot = lasting_sync_snapshot
         self.tree_projection = tree_projection
         self.tree_selected_placement_id = tree_selected_placement_id
         self.tree_deleted_folder_available = tree_deleted_folder_available
+        self.trash = trash
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
+        self.pane_width = pane_width
         self.create_running = create_running
         self.create_status = create_status
         self.load_state = load_state
         self.load_message = load_message
+        if mode != "create":
+            # task-32356: arriving at Create always shows the one folded row.
+            self.templates_open = False
         if previous_mode != mode:
             self.remove_class(f"library-notes-mode-{previous_mode}")
             self.add_class(f"library-notes-mode-{mode}")
+        import_canvases = self.query("#library-note-import-canvas")
+        if (
+            previous_mode == mode == "import"
+            and import_snapshot is not None
+            and import_canvases
+        ):
+            authority = self.query(f"#{self.authority_id}")
+            if authority:
+                authority.first(Static).update(self._authority_copy())
+            child = import_canvases.first(LibraryNoteImportCanvas)
+            child.compact = compact
+            callback = self._post_recompose_callback
+            self._post_recompose_callback = None
+            child.queue_after_recompose(callback)
+            child.sync_state(import_snapshot)
+            if not getattr(child, "_recompose_required", False):
+                child.queue_after_recompose(None)
+                if callback is not None:
+                    self.call_after_refresh(callback)
+            return
+        lasting_canvases = self.query("#library-notes-lasting-add-canvas")
+        if (
+            previous_mode == mode == "lasting_add"
+            and lasting_sync_snapshot is not None
+            and lasting_canvases
+        ):
+            authority = self.query(f"#{self.authority_id}")
+            if authority:
+                authority.first(Static).update(self._authority_copy())
+            lasting_canvases.first(LibraryNotesAddFromFilesCanvas).sync_state(
+                lasting_sync_snapshot
+            )
+            return
+        if previous_mode == mode and self.editor_has_focus():
+            # task-32062: a Notes refresh (a save landing, the first note
+            # reaching the list, an evidence-driven reload) recomposed the
+            # surface the reader was typing into: the title Input and body
+            # TextArea were rebuilt and focus fell onto the list grip, so the
+            # next keystrokes went somewhere else. Reported as a title that
+            # swallowed the body. Every compose input above is already stored,
+            # so the next refresh from outside the field paints this state --
+            # only the rebuild is skipped, and only while the surface is
+            # STAYING put: a mode change is a navigation the reader asked for
+            # and must paint immediately.
+            #
+            # Known ceiling: a banner this recompose would have painted (the
+            # "changed elsewhere" conflict, say) waits for the next refresh
+            # that arrives with the reader's hands off the field. Interrupting
+            # a sentence to show it costs them their keystrokes, which is the
+            # worse half of the trade.
+            #
+            # The caller must not queue a post-recompose follow-up for a
+            # rebuild that is not happening -- see the `notes_editor_owned`
+            # guard in ``canvas_sync._sync_library_canvas``, without which the
+            # Notes focus restore sat here and fired at the NEXT recompose,
+            # dragging focus back out of whatever field the reader moved to.
+            return
         self.refresh(recompose=True)
+
+    def editor_has_focus(self) -> bool:
+        """Whether a field of THIS canvas's note editor currently has focus.
+
+        Returns:
+            ``True`` while the focused widget is one of this canvas's own
+            editable note fields (title, body, or either keyword box).
+        """
+        try:
+            focused = self.app.focused
+        except Exception:
+            return False
+        if focused is None or focused.id not in _NOTE_EDITOR_INPUT_IDS:
+            return False
+        try:
+            return self in focused.ancestors_with_self
+        except Exception:
+            return False
 
     def _compose_loading(self) -> ComposeResult:
         """Render the existing note-loading/retry surface inside the canvas."""
         with Vertical(id="library-note-load-state"):
             with Horizontal(id="library-note-load-heading"):
+                # task-32177: this view's Back was left out of task-32139's
+                # unification and stayed hard-coded "‹ Notes" at every width.
                 yield Button(
-                    "‹ Notes",
+                    _library_note_back_label(self.compact),
                     id="library-note-back",
                     classes="library-canvas-action",
                     compact=True,
@@ -319,12 +1340,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             classes="destination-section",
             markup=False,
         )
-        # Database mode persists notes in the Library; Files edits a folder
-        # directly, while Sync mirrors a folder into this database.
+        # Database mode persists notes in the Library; Folder files edits a
+        # folder directly, while Add from files owns import/sync setup.
         database_purpose = Static(
             "These notes live in the Library's own database — for notes "
-            "that live in a folder on disk, switch to Files, or use Sync "
-            "to mirror one in.",
+            "that live in a folder on disk, switch to Folder files. To copy "
+            "or keep a folder synced, choose Add from files.",
             id="library-notes-database-purpose",
             markup=False,
         )
@@ -332,10 +1353,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         yield database_purpose
         with Horizontal(id="library-notes-filter-row"):
             yield Static("Filter", id="library-notes-filter-label", markup=False)
-            yield Input(
+            # task-32131: a plain ``Input`` here let a SECOND "/" -- pressed
+            # while the filter already had focus -- insert a literal slash
+            # (Screen.on_key's "/" handling bails as soon as an Input owns
+            # focus, so it never gets a chance to redirect). Reuse the rail
+            # search box's widget instead of re-solving it -- but with
+            # ``swallow_slash_on_focus=False`` (fix round 1 Important 4,
+            # controller ruling): notes filter content can legitimately
+            # contain "/" (folder-style filters like "Work/Q3"), so once
+            # this box has focus "/" must be a plain typeable character,
+            # not an accelerator that swallows it. The screen-level "/"
+            # handler already only fires while this box is NOT focused.
+            yield LibraryRailSearchInput(
                 placeholder="Filter notes… (Enter)",
                 id="library-notes-filter",
                 value=self.filter_value,
+                swallow_slash_on_focus=False,
             )
         select_mode = list_state.select_mode
         # Gate/label off the RENDERED rows, not any total-count field -- only
@@ -364,12 +1397,30 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # ``library-toolbar-count`` class (css/components/
                 # _agentic_terminal.tcss's ``width: auto``) rather than a
                 # per-canvas one-off.
-                yield Static(
+                in_row_count = Static(
                     f"{list_state.selected_count} selected",
                     id="library-notes-selected-count",
-                    classes="library-toolbar-count",
+                    classes="library-toolbar-count library-notes-selection-count",
                     markup=False,
                 )
+                # task-32261 AC#1: this counter costs 11 of the 42 columns a
+                # 100x30 terminal gives the list pane, which is what pushed
+                # "Export selected" off the right edge -- the strip painted
+                # "0 selected  Done  All 10  Clear" and the guide's fifth
+                # action was unreachable.
+                #
+                # Hiding it is only safe because task-32272 made the count a
+                # CLASS the patcher writes to (``library-notes-selection-
+                # count``, above): ``_apply_library_row_toggle`` now updates
+                # every renderer wearing it, hidden ones included, so the
+                # line below this strip tracks the selection instead of
+                # keeping the compose-time number. The first round of this
+                # branch hid the only patched widget and shipped a stale
+                # "0 selected" over a checked row -- pinned now by
+                # ``test_the_compact_select_strip_counts_the_row_the_reader_
+                # just_checked``.
+                in_row_count.display = not self.compact
+                yield in_row_count
                 yield Button(
                     "Done",
                     id="library-notes-select-toggle",
@@ -399,12 +1450,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # label stashed for `_apply_library_row_toggle`'s
                     # in-place patch (compact and full spellings differ,
                     # so the patcher must not hard-code either).
-                    library_disabled_action_label(export_base, export_disabled),
+                    # task-31959: the enabled spelling reserves the
+                    # marker's own width, so the word holds its column
+                    # when the first selection enables this in place.
+                    library_disabled_action_label(
+                        export_base, export_disabled, align=True
+                    ),
                     id="library-notes-export-selected",
                     classes="library-canvas-action",
                     compact=True,
                 )
                 export_selected._library_disabled_marker_base = export_base
+                export_selected._library_disabled_marker_align = True
                 export_selected.disabled = export_disabled
                 # F-018: a disabled action says why.
                 export_selected.tooltip = (
@@ -416,39 +1473,76 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             yield Static(
                 f"{list_state.selected_count} selected",
                 id="library-notes-selection-status",
+                # task-32272: the class, not the id, is what the in-place
+                # toggle patcher looks for -- a new count renderer opts in
+                # by wearing it rather than by someone remembering that
+                # `_apply_library_row_toggle` exists.
+                classes="library-notes-selection-count",
                 markup=False,
             )
         else:
-            browse_actions = Horizontal(
-                id="library-notes-browse-actions", classes="ds-toolbar"
+            # task-4023 AC#1 (RC-07): every disabled toolbar action carries
+            # the non-colour "○" marker plus an F-018 reason.
+            running = list_state.operation_running
+            running_tooltip = "Wait for the running notes operation to finish."
+            # task-32128 removed Sort from the folder tree because the
+            # tree's row order was a hard-coded repository contract.
+            # task-32172 made that order a parameter of BOTH the pager and
+            # the deep-link locator's rank, so the control is back and
+            # really re-pages. The one thing it still cannot own is the
+            # filter window: those rows come from the FTS search seam,
+            # ranked by folder path, so Sort is blocked there with a reason
+            # rather than silently reordering nothing.
+            sort_blocked = notes_sort_is_blocked(
+                tree_projection=self.tree_projection, filter_value=self.filter_value
             )
-            browse_actions.styles.height = "auto"
-            browse_actions.display = not list_state.sort_choices_visible
-            with browse_actions:
-                # task-4023 AC#1 (RC-07): every disabled toolbar action
-                # carries the non-colour "○" marker plus an F-018 reason.
-                running = list_state.operation_running
-                running_tooltip = "Wait for the running notes operation to finish."
-                yield Button(
-                    library_disabled_action_label("New", running),
-                    id="library-notes-new",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=running,
-                    tooltip=running_tooltip if running else None,
+            sort_choices_visible = (
+                not sort_blocked and list_state.sort_choices_visible
+            )
+            # task-32127: the browse and transfer actions share ONE row, so
+            # the toolbar is two rows rather than three -- but only where the
+            # pane can hold both groups. Below the threshold the merged row
+            # clipped its last action off the pane, which is worse than the
+            # third row it saves (review round 1).
+            pane_width = self._effective_pane_width()
+            merged, stacked = _toolbar_shape(pane_width, self.compact)
+            action_rows: Horizontal | None = None
+            if merged:
+                action_rows = Horizontal(id="library-notes-action-rows")
+                action_rows.styles.height = "auto"
+            with action_rows or nullcontext():
+                browse_actions = Horizontal(
+                    id="library-notes-browse-actions", classes="ds-toolbar"
                 )
+                browse_actions.styles.height = "auto"
+                if action_rows is not None:
+                    browse_actions.styles.width = "auto"
+                browse_actions.display = not sort_choices_visible
+                new_label = library_disabled_action_label("New", running)
                 sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
-                yield Button(
-                    library_disabled_action_label(sort_base, running),
-                    id="library-notes-sort",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=running,
-                    tooltip=running_tooltip if running else None,
-                )
+                sort_disabled = running or sort_blocked
+                sort_label = library_disabled_action_label(sort_base, sort_disabled)
                 select_disabled = rendered_count == 0 or running
-                yield Button(
-                    library_disabled_action_label("Select", select_disabled),
+                select_label = library_disabled_action_label(
+                    "Select", select_disabled
+                )
+                # task-32360 AC#2: three actions need 33 cells and the
+                # narrow pane has 32, so the last one used to be cropped
+                # mid-word ("Sel"). It moves to a row of its own instead --
+                # the same "one group per row" shape ``stacked`` already
+                # uses for a narrow pane, which the compact sheet's
+                # height-1 toolbar pin rules out for a single row.
+                self._browse_row_needed = browse_row_width(
+                    (new_label, sort_label, select_label)
+                )
+                browse_overflow = browse_row_overflows(
+                    pane_width,
+                    self._browse_row_needed,
+                    already_split=self._browse_overflow,
+                )
+                self._browse_overflow = browse_overflow
+                select_button = Button(
+                    select_label,
                     id="library-notes-select-toggle",
                     classes="library-canvas-action",
                     compact=True,
@@ -463,37 +1557,102 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         else None
                     ),
                 )
-            if list_state.sort_choices_visible:
-                # task-14902: composed through the ONE shared strip builder
-                # (this control is the pattern's precedent; the media type /
-                # prompts sort / skills sort / export quality strips share
-                # the same mechanism).
-                yield from compose_library_choice_strip(
-                    strip_id="library-notes-sort-choices",
-                    choice_class="library-notes-sort-choice",
-                    options=tuple(
-                        (f"library-notes-sort-{mode}", mode, label)
-                        for mode, label in _SORT_LABELS.items()
-                    ),
-                    active_value=self.sort_mode,
-                )
-            transfer_actions = Horizontal(
-                id="library-notes-transfer-actions", classes="ds-toolbar"
-            )
-            transfer_actions.styles.height = "auto"
-            with transfer_actions:
-                for label, button_id in (
-                    ("Sync", "library-notes-sync-open"),
-                    ("Import", "library-notes-import"),
-                    ("Export", "library-notes-export"),
-                ):
+                with browse_actions:
                     yield Button(
-                        label,
-                        id=button_id,
+                        new_label,
+                        id="library-notes-new",
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=list_state.operation_running,
+                        disabled=running,
+                        tooltip=running_tooltip if running else None,
                     )
+                    yield Button(
+                        sort_label,
+                        id="library-notes-sort",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=sort_disabled,
+                        tooltip=(
+                            running_tooltip
+                            if running
+                            else LIBRARY_NOTES_SORT_FILTERED_TOOLTIP
+                            if sort_blocked
+                            else None
+                        ),
+                    )
+                    if not browse_overflow:
+                        yield select_button
+                if browse_overflow:
+                    browse_overflow_row = Horizontal(
+                        id="library-notes-browse-actions-overflow",
+                        classes="ds-toolbar",
+                    )
+                    browse_overflow_row.styles.height = "auto"
+                    browse_overflow_row.display = not sort_choices_visible
+                    with browse_overflow_row:
+                        yield select_button
+                if sort_choices_visible:
+                    # task-14902: composed through the ONE shared strip builder
+                    # (this control is the pattern's precedent; the media type /
+                    # prompts sort / skills sort / export quality strips share
+                    # the same mechanism).
+                    yield from compose_library_choice_strip(
+                        strip_id="library-notes-sort-choices",
+                        choice_class="library-notes-sort-choice",
+                        options=tuple(
+                            (f"library-notes-sort-{mode}", mode, label)
+                            for mode, label in _SORT_LABELS.items()
+                        ),
+                        active_value=self.sort_mode,
+                    )
+                import_phase = (
+                    self.import_snapshot.phase
+                    if self.import_snapshot is not None
+                    else ""
+                )
+                transfer_actions = (Vertical if stacked else Horizontal)(
+                    id="library-notes-transfer-actions", classes="ds-toolbar"
+                )
+                transfer_actions.styles.height = "auto"
+                with transfer_actions:
+                    for label, button_id in (
+                        ("Add from files…", "library-notes-add-from-files"),
+                        ("Export", "library-notes-export"),
+                    ):
+                        view_import = (
+                            button_id == "library-notes-add-from-files"
+                            and import_phase == "importing"
+                        )
+                        disabled = list_state.operation_running and not view_import
+                        yield Button(
+                            library_disabled_action_label(
+                                "View import" if view_import else label, disabled
+                            ),
+                            id=button_id,
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=disabled,
+                            tooltip=running_tooltip if disabled else None,
+                        )
+                    if self.lasting_sync_snapshot is not None and (
+                        self.lasting_sync_snapshot.roots
+                        or self.lasting_sync_snapshot.root_page_count > 1
+                    ):
+                        yield Button(
+                            "Manage sync folders",
+                            id="library-notes-manage-sync-folders",
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=list_state.operation_running,
+                        )
+                    if self.import_receipt_available:
+                        yield Button(
+                            "Last import",
+                            id="library-notes-import-receipt",
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=list_state.operation_running,
+                        )
             if self.tree_projection is not None:
                 yield from self._compose_tree_actions(
                     operation_running=list_state.operation_running
@@ -521,7 +1680,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             title = ellipsize_note_title_cells(
                 receipt.title or "Untitled", 18 if self.compact else 42
             )
-            receipt_row = Horizontal(
+            # task-32123: the copy and the two recovery actions are stacked,
+            # not laid side by side. A one-row receipt needed the title's 42
+            # cells PLUS both buttons, so in a narrow list pane Undo -- the
+            # only recovery path there is, with no Trash browser -- was
+            # painted past the pane edge and could not be pressed.
+            receipt_row = Vertical(
                 id="library-notes-delete-receipt", classes="ds-toolbar"
             )
             receipt_row.styles.height = "auto"
@@ -532,25 +1696,33 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-toolbar-count",
                     markup=False,
                 )
-                yield Button(
-                    "Undo",
-                    id="library-notes-delete-undo",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=list_state.operation_running,
+                receipt_actions = Horizontal(
+                    id="library-notes-delete-receipt-actions"
                 )
-                yield Button(
-                    "Dismiss",
-                    id="library-notes-delete-receipt-dismiss",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=list_state.operation_running,
-                )
+                receipt_actions.styles.height = "auto"
+                with receipt_actions:
+                    yield Button(
+                        "Undo",
+                        id="library-notes-delete-undo",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=list_state.operation_running,
+                    )
+                    yield Button(
+                        "Dismiss",
+                        id="library-notes-delete-receipt-dismiss",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=list_state.operation_running,
+                    )
         if self.tree_projection is not None:
+            # The opener is the row list's last row -- see
+            # ``_compose_trash_opener``.
             yield from self._compose_tree_rows(list_state)
             return
         if not list_state.rows:
             yield Static(list_state.empty_copy, id="library-notes-empty", markup=False)
+            yield from self._compose_trash_opener()
             return
         with Vertical(id="library-notes-list"):
             for index, row in enumerate(list_state.rows):
@@ -560,25 +1732,23 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # (or crashing on an unmatched closing tag) -- the same
                 # fix class as the escaped search-history Button labels.
                 title = escape_markup(row.title)
+                label_rest = compose_note_row_label(title, age_label=row.age_label)
                 if select_mode:
                     # Notes rows had no marker at all before select mode
                     # existed -- normal mode keeps that markerless label
-                    # (no ``▸``, unlike the media/conversations rows). The 2-col
-                    # glyph shifts line 1, so indent the age line by 2 to keep it
-                    # aligned under the title rather than under the checkbox.
+                    # (no ``▸``, unlike the media/conversations rows).
                     glyph = "☑ " if row.checked else "☐ "
-                    label_rest = (
-                        f"{title}\n  {row.age_label}" if row.age_label else title
-                    )
                     label = f"{glyph}{label_rest}"
                 else:
-                    label_rest = f"{title}\n{row.age_label}" if row.age_label else title
                     label = label_rest
-                button = Button(
+                # task-31945: shared row press behaviour (no 0.2s flash
+                # swallowing the next click on the same row).
+                button = library_row_button(
                     label,
                     id=f"library-notes-row-{index}",
                     classes="library-notes-row",
                     compact=True,
+                    disabled=list_state.operation_running,
                 )
                 button.note_id = row.note_id
                 # task-281 (PR #665 review): raw marker-less label for the
@@ -586,6 +1756,98 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # user titles).
                 button._library_row_label_rest = label_rest
                 yield button
+            yield from self._compose_trash_opener()
+
+    def _compose_trash_opener(self) -> ComposeResult:
+        """Name the Trash under the tree, and only while it holds something.
+
+        task-32144: the delete receipt was the ONLY way back from a delete,
+        so dismissing it stranded the note. This row is the standing second
+        net; at zero it is absent rather than disabled -- an empty Trash has
+        nothing to say and a dead affordance is worse than none.
+
+        Composed as the row list's LAST ROW, not as a sibling after it: the
+        list is ``height: 1fr``, so a sibling docked to the foot of the pane
+        with a dozen blank rows between it and the tree (measured live at
+        235x52) -- the same detached-affordance shape task-28015 fixed in the
+        Media Trash. Every path that has no row list yields it directly.
+        """
+        trash = self.trash
+        if trash is None or trash.total <= 0:
+            return
+        yield Button(
+            f"Recently deleted ({trash.total})",
+            id="library-notes-trash-open",
+            classes="library-canvas-action",
+            compact=True,
+        )
+
+    def _compose_trash(self) -> ComposeResult:
+        """Render the soft-deleted notes with one Restore each, and no more.
+
+        Restore is the only mutation this view offers: it commits through
+        the same ``_undo_library_note_delete`` seam the receipt's Undo uses,
+        so the row returns to its folder (or Unfiled) and the rail count
+        moves exactly as an Undo would. There is deliberately no permanent
+        delete here -- ADR-055 keeps destruction behind its own receipt, and
+        this surface exists to recover.
+        """
+        trash = self.trash or LibraryNotesTrashState()
+        yield Static(
+            "Recently deleted",
+            id="library-notes-trash-header",
+            classes="destination-section",
+            markup=False,
+        )
+        yield Static(
+            "Deleted notes stay here until you restore them. Restore puts a "
+            "note back where it was; nothing is removed for good from here.",
+            id="library-notes-trash-purpose",
+            markup=False,
+        )
+        yield Button(
+            _library_note_back_label(self.compact),
+            id="library-notes-trash-back",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        if not trash.rows:
+            yield Static(
+                "Nothing deleted recently. Deleted notes appear here — press "
+                "Escape to go back to the list.",
+                id="library-notes-trash-empty",
+                markup=False,
+            )
+            return
+        with Vertical(id="library-notes-trash-list"):
+            for index, row in enumerate(trash.rows):
+                trash_row = Horizontal(classes="library-notes-trash-row")
+                trash_row.styles.height = "auto"
+                with trash_row:
+                    yield Static(
+                        compose_note_row_label(row.title, age_label=row.age_label),
+                        classes="library-notes-trash-row-copy",
+                        markup=False,
+                    )
+                    button = Button(
+                        "Restore",
+                        id=f"library-notes-trash-restore-{index}",
+                        classes=(
+                            "library-canvas-action library-notes-trash-restore"
+                        ),
+                        compact=True,
+                    )
+                    button.note_id = row.note_id
+                    button.note_title = row.title
+                    button.note_version = row.version
+                    yield button
+        if trash.total > len(trash.rows):
+            yield Static(
+                f"Showing the {len(trash.rows)} most recently deleted of "
+                f"{trash.total}. Restore one to see the rest.",
+                id="library-notes-trash-more",
+                markup=False,
+            )
 
     def _compose_tree_rows(self, list_state: LibraryNotesListState) -> ComposeResult:
         """Render placement-aware rows while retaining legacy note handlers."""
@@ -598,14 +1860,85 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-notes-empty",
                 markup=False,
             )
+            yield from self._compose_trash_opener()
             return
+        # task-32126: a seeded folder (Agent_Lessons) gives the tree
+        # projection rows even when the library holds zero notes, so the
+        # "no rows" check above never fires and the empty state never
+        # renders. Render it above the tree whenever the library itself is
+        # empty, independent of whether the projection has folder rows.
+        # PR #2538 review (Qodo finding 5): a fresh visit renders with
+        # empty_kind == "source-empty" before the bulk source-count lookup
+        # resolves, while the tree's own root "folders"/"placements" slices
+        # are still loading (a loading pager row, not an empty projection).
+        # Skip the banner while any row is still in flight so a user who
+        # does have notes never sees "No notes yet" flash ahead of the
+        # load result.
+        if list_state.empty_kind == "source-empty" and not any(
+            row.loading for row in projection.rows
+        ):
+            yield Static(
+                list_state.empty_copy,
+                id="library-notes-empty",
+                markup=False,
+            )
         checked_ids = {row.note_id for row in list_state.rows if row.checked}
+        # task-32137: only a title that repeats under the SAME parent earns
+        # a folder suffix -- two rows with one title in two folders already
+        # sit under their own folder rows, and spending the width there
+        # ellipsized the semantic sync status instead.
+        sibling_counts = Counter(
+            (row.folder_id or "", row.label)
+            for row in projection.rows
+            if row.kind == "note"
+        )
+        duplicate_siblings = {
+            sibling for sibling, count in sibling_counts.items() if count > 1
+        }
+        # task-32254: folder+age still ties for two unfiled notes of the
+        # same age -- the case it was needed for most -- so those rows earn
+        # a third key.
+        tiebreak_labels = note_row_tiebreak_labels(projection.rows)
         with Vertical(id="library-notes-list", classes="library-notes-tree"):
             for index, row in enumerate(projection.rows):
                 indent = "  " * row.depth
+                if row.kind == "pager":
+                    button = _LibraryNotesTreePagerButton(
+                        Text(f"{indent}{row.label}"),
+                        id=row.focus_id,
+                        classes="library-notes-tree-pager library-canvas-action",
+                        compact=True,
+                        disabled=row.disabled,
+                    )
+                    button.placement_id = row.placement_id
+                    button.parent_folder_id = row.parent_folder_id
+                    button.content_kind = row.content_kind
+                    button.paging_action = row.paging_action
+                    button.retry_direction = row.retry_direction
+                    button.range_copy = row.range_copy
+                    button.pager_status = row.status_text
+                    button.action_copy = row.action_copy
+                    button.paging_loading = row.loading
+                    yield button
+                    continue
                 if row.kind in {"folder", "unfiled"}:
                     glyph = "▾" if row.expanded else "▸"
                     label = f"{indent}{glyph} {escape_markup(row.label)}"
+                    # task-32126: gloss the seeded Agent_Lessons folder while
+                    # the library holds zero notes -- a first-time user's
+                    # first question is what this folder is and whether they
+                    # made it themselves.
+                    # ponytail: keyed off "the whole library is empty"
+                    # rather than "this folder has no children" (no per-
+                    # folder note count is loaded for a collapsed row) --
+                    # exactly the scoped scenario this task covers; widen to
+                    # a real per-folder empty check if Agent_Lessons ever
+                    # needs the gloss while sibling notes exist elsewhere.
+                    if (
+                        row.label == AGENT_LESSONS_FOLDER
+                        and list_state.empty_kind == "source-empty"
+                    ):
+                        label = f"{label} — {AGENT_LESSONS_FOLDER_GLOSS} (empty)"
                     if row.status_text:
                         label = f"{label}  {row.status_text}"
                     classes = "library-notes-folder-row"
@@ -613,7 +1946,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         classes += " library-notes-tree-connected"
                     elif row.semantic_status == "needs_attention":
                         classes += " library-notes-tree-needs-attention"
-                    button = Button(
+                    button = library_row_button(
                         label,
                         id=f"library-notes-tree-folder-{index}",
                         classes=classes,
@@ -626,10 +1959,24 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     yield button
                     continue
 
-                title = f"{indent}{escape_markup(row.label)}"
-                if self.filter_value and row.breadcrumb:
-                    parent_breadcrumb = row.breadcrumb.rsplit(" / ", 1)[0]
-                    title = f"{title}  — {escape_markup(parent_breadcrumb)}"
+                # A filter scatters rows out of their folders, and a
+                # repeated title is otherwise an identical row: both name
+                # their folder (task-32137).
+                folder_label = (
+                    row.breadcrumb.rsplit(" / ", 1)[0]
+                    if row.breadcrumb
+                    and (
+                        self.filter_value
+                        or (row.folder_id or "", row.label) in duplicate_siblings
+                    )
+                    else ""
+                )
+                title = indent + compose_note_row_label(
+                    escape_markup(row.label),
+                    folder_label=escape_markup(folder_label),
+                    age_label=row.age_label,
+                    tiebreak_label=tiebreak_labels.get(row.placement_id, ""),
+                )
                 if row.status_text:
                     title = f"{title}  {row.status_text}"
                 if list_state.select_mode:
@@ -644,25 +1991,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes += " library-notes-tree-connected"
                 elif row.semantic_status == "needs_attention":
                     classes += " library-notes-tree-needs-attention"
-                button = Button(
+                button = library_row_button(
                     label,
                     id=f"library-notes-tree-note-{index}",
                     classes=classes,
                     compact=True,
                     tooltip=row.breadcrumb,
+                    disabled=list_state.operation_running,
                 )
                 if row.placement_id == self.tree_selected_placement_id:
                     button.add_class("is-selected")
                 self._set_tree_row_metadata(button, row)
                 button._library_row_label_rest = label_rest
                 yield button
-        if projection.has_more:
-            yield Button(
-                "Load more folder contents",
-                id="library-notes-tree-more",
-                classes="library-canvas-action",
-                compact=True,
-            )
+            yield from self._compose_trash_opener()
 
     def _compose_tree_actions(self, *, operation_running: bool) -> ComposeResult:
         """Render actions appropriate to the selected folder-tree placement."""
@@ -675,17 +2017,34 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         selected_folder_protected = bool(
             selected is not None and selected.kind == "folder" and selected.protected
         )
+        selected_branch_stale = bool(
+            selected is not None and selected.unsafe_mutation_disabled
+        )
         protected_reason = (
             "This folder is managed by sync; change its sync root instead."
         )
-        with Horizontal(id="library-notes-tree-actions", classes="ds-toolbar"):
+        stale_reason = "This branch may be out of date; retry it before changing it."
+        _, stacked = _toolbar_shape(self._effective_pane_width(), self.compact)
+        with (Vertical if stacked else Horizontal)(
+            id="library-notes-tree-actions", classes="ds-toolbar"
+        ):
             yield Button(
                 "New folder",
                 id="library-notes-folder-new",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=operation_running or selected_folder_protected,
-                tooltip=(protected_reason if selected_folder_protected else None),
+                disabled=(
+                    operation_running
+                    or selected_folder_protected
+                    or selected_branch_stale
+                ),
+                tooltip=(
+                    stale_reason
+                    if selected_branch_stale
+                    else protected_reason
+                    if selected_folder_protected
+                    else None
+                ),
             )
             if selected is not None and selected.kind == "folder":
                 for label, button_id in (
@@ -698,8 +2057,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         id=button_id,
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=operation_running or selected.protected,
-                        tooltip=protected_reason if selected.protected else None,
+                        disabled=(
+                            operation_running
+                            or selected.protected
+                            or selected_branch_stale
+                        ),
+                        tooltip=(
+                            stale_reason
+                            if selected_branch_stale
+                            else protected_reason
+                            if selected.protected
+                            else None
+                        ),
                     )
             elif selected is not None and selected.kind == "note":
                 protected = selected.protected
@@ -711,15 +2080,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     id="library-notes-placement-add",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=operation_running,
+                    disabled=operation_running or selected_branch_stale,
+                    tooltip=stale_reason if selected_branch_stale else None,
                 )
                 yield Button(
                     "Move note",
                     id="library-notes-placement-move",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=operation_running or protected,
-                    tooltip=protected_placement_reason if protected else None,
+                    disabled=operation_running or protected or selected_branch_stale,
+                    tooltip=(
+                        stale_reason
+                        if selected_branch_stale
+                        else protected_placement_reason
+                        if protected
+                        else None
+                    ),
                 )
                 yield Button(
                     "Remove placement",
@@ -727,15 +2103,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-canvas-action",
                     compact=True,
                     disabled=(
-                        operation_running or protected or not selected.membership_id
+                        operation_running
+                        or protected
+                        or selected_branch_stale
+                        or not selected.membership_id
                     ),
                     tooltip=(
-                        protected_placement_reason
-                        if protected
+                        stale_reason
+                        if selected_branch_stale
                         else (
-                            "Unfiled is shown automatically; move the note into a folder."
-                            if not selected.membership_id
-                            else None
+                            protected_placement_reason
+                            if protected
+                            else (
+                                "Unfiled is shown automatically; move the note into a folder."
+                                if not selected.membership_id
+                                else None
+                            )
                         )
                     ),
                 )
@@ -747,6 +2130,34 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                     disabled=operation_running,
                 )
+
+    @staticmethod
+    def _backlink_buttons(
+        backlinks: tuple[tuple[str, str], ...],
+    ) -> list[Button]:
+        """Build one activatable row per inbound link (task-32145).
+
+        The single renderer for both paths -- compose, and the remount in
+        ``apply_session_state`` for backlinks that arrive after the editor
+        is already on screen (their loader runs after the note opens, and a
+        recompose is deferred while the reader is typing).
+
+        Args:
+            backlinks: ``(note_id, title)`` rows, possibly one over the cap.
+
+        Returns:
+            Row buttons carrying their own ``note_id``, capped for display.
+        """
+        buttons: list[Button] = []
+        for note_id, title in backlinks[:LIBRARY_NOTE_BACKLINK_DISPLAY_CAP]:
+            button = library_row_button(
+                escape_markup(ellipsize_note_title_cells(title, 60) or "Untitled"),
+                classes="library-canvas-action library-note-backlink",
+                compact=True,
+            )
+            button.note_id = note_id
+            buttons.append(button)
+        return buttons
 
     @staticmethod
     def _set_tree_row_metadata(button: Button, row: LibraryNotesTreeRow) -> None:
@@ -773,26 +2184,36 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         keywords_text = snapshot.keywords_text
         metadata_line = presentation_state.metadata_line
         status_line = presentation_state.status_line
+        channels = presentation_state.status_channels or NotesStatusChannels(
+            status_line or "Saved",
+            NOTES_AUTHORITY_PREFIX,
+        )
 
         # File-synced notes may carry YAML front matter; consume it instead
         # of rendering the delimiter block as note content.
         from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
 
+        # task-32139: Edit/Preview said "‹ Notes", Info said "‹ Note" (two
+        # wordings for the identical Back action, live-caught at 235x52),
+        # and BOTH said "‹ Notes" on a compact terminal where the guide
+        # documents "‹ Back to list" (60x24). One label now, sized by
+        # ``self.compact`` like the guide's own compact-vs-wide split.
+        back_label = _library_note_back_label(self.compact)
         with Horizontal(id="library-note-heading"):
             yield Button(
-                "‹ Notes",
+                back_label,
                 id="library-note-back",
                 classes="library-canvas-action",
                 compact=True,
             )
             yield Button(
-                "‹ Note",
+                back_label,
                 id="library-note-context-back",
                 classes="library-canvas-action",
                 compact=True,
             )
             yield Static(
-                "Edit note",
+                ellipsize_note_title_cells(title, 72),
                 id="library-note-editor-title",
                 markup=False,
             )
@@ -806,49 +2227,143 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-context-title",
                 markup=False,
             )
+            yield Static(
+                channels.authority_git,
+                id="library-note-authority-git-status",
+                markup=False,
+            )
+        yield Static(
+            "Included in bulk selection"
+            if presentation_state.bulk_included
+            else "Not included in bulk selection",
+            id="library-note-bulk-status",
+            classes="destination-purpose",
+            markup=False,
+        )
+        with Horizontal(id="library-note-header-second-row"):
+            yield Static(
+                channels.content_recovery,
+                id="library-note-status",
+                markup=False,
+            )
+            primary_actions = Horizontal(
+                id="library-note-primary-actions", classes="ds-toolbar"
+            )
+            primary_actions.styles.height = "auto"
+            with primary_actions:
+                with Horizontal(id="library-note-mode-controls", classes="ds-toolbar"):
+                    yield Button(
+                        "Edit",
+                        id="library-note-edit",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Preview",
+                        id="library-note-preview",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Info",
+                        id="library-note-context",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                with Horizontal(id="library-note-task-actions", classes="ds-toolbar"):
+                    yield Button(
+                        "Save",
+                        id="library-note-save",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Use in Console",
+                        id="library-note-use-in-console",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    discard_new = Button(
+                        "Discard" if self.compact else "Discard new note",
+                        id="library-note-discard-new",
+                        classes="library-canvas-action library-media-action-danger",
+                        compact=True,
+                    )
+                    discard_new.display = presentation_state.discard_new_note
+                    discard_new.disabled = presentation_state.destructive_running
+                    yield discard_new
         with Vertical(id="library-note-editor-region"):
             with Horizontal(id="library-note-title-row"):
                 yield Static("Title", id="library-note-title-label", markup=False)
-                yield Input(
+                yield NoteEditorInput(
                     value="" if self.title_placeholder_only else title,
                     placeholder="Untitled" if self.title_placeholder_only else "",
                     id="library-note-title",
                 )
             yield Static("Body", id="library-note-body-label", markup=False)
-            yield TextArea(content, id="library-note-body")
+            yield NoteEditorTextArea(content, id="library-note-body")
 
         with VerticalScroll(id="library-note-preview-region", can_focus=True):
+            # task-32142 AC#1: the shared heading row's title Static (above)
+            # sits in a crowded strip with the mode buttons and Back --
+            # easy to miss, and NOT part of the scrolling content, so it
+            # never reads as the document's own title the way Edit's Title
+            # field does. This one renders INSIDE the preview, immediately
+            # above the rendered body, like a document heading.
+            yield Static(
+                ellipsize_note_title_cells(title, 72),
+                id="library-note-preview-body-title",
+                classes="destination-section",
+                markup=False,
+            )
             yield Markdown(
-                content,
+                render_preview_source(content),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
-        yield Static(
-            status_line,
-            id="library-note-context-status",
-            markup=False,
-        )
         with VerticalScroll(id="library-note-context-region", can_focus=True):
             yield Static("Properties", classes="destination-section", markup=False)
             with Horizontal(id="library-note-context-keywords-row"):
                 yield Static(
                     "Keywords", id="library-note-context-keywords-label", markup=False
                 )
-                yield Input(
+                yield NoteEditorInput(
                     value=keywords_text,
                     placeholder="Comma-separated keywords",
                     id="library-note-context-keywords",
                 )
-            yield Static("Metadata", classes="destination-section", markup=False)
             yield Static(metadata_line, id="library-note-context-meta", markup=False)
-            yield Static("Chatbook", classes="destination-section", markup=False)
-            yield Button(
+            backlinks = (
+                presentation_state.backlinks if presentation_state is not None else ()
+            )
+            self._rendered_backlinks = tuple(backlinks)
+            yield Static(
+                library_note_backlink_header(
+                    self._rendered_backlinks,
+                    presentation_state.backlinks_status
+                    if presentation_state is not None
+                    else "loading",
+                ),
+                id="library-note-context-backlinks-title",
+                markup=False,
+            )
+            backlink_rows = Vertical(id="library-note-context-backlinks")
+            # Auto height or the empty container claims the whole Info
+            # scroll region and pushes Reuse & Export off the pane.
+            backlink_rows.styles.height = "auto"
+            with backlink_rows:
+                yield from self._backlink_buttons(self._rendered_backlinks)
+            yield Static("Reuse & Export", classes="destination-section", markup=False)
+            legacy_use_in_console = Button(
                 "Use in Console",
                 id="library-note-context-use-in-console",
                 classes="library-canvas-action",
                 compact=True,
             )
-            yield Static("Utilities", classes="destination-section", markup=False)
+            # Retain the incumbent selector/handler for compatibility while the
+            # single visible affordance lives in the primary task group.
+            legacy_use_in_console.display = False
+            yield legacy_use_in_console
             yield Button(
                 "Copy",
                 id="library-note-context-copy",
@@ -874,47 +2389,41 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-context-transfer-status",
                 markup=False,
             )
-            yield Static("Danger zone", classes="destination-section", markup=False)
+            yield Static("Danger", classes="destination-section", markup=False)
             yield Button(
                 "Delete",
                 id="library-note-context-delete",
                 classes="library-canvas-action library-media-action-danger",
                 compact=True,
             )
-        yield Static(status_line, id="library-note-status", markup=False)
-
-        primary_actions = Horizontal(
-            id="library-note-primary-actions", classes="ds-toolbar"
+            # task-32268: the prompt belongs to the button above it. It used
+            # to compose as a sibling of every region, below the (hidden)
+            # wide utilities and the conflict callout -- live at dev
+            # 4a14b3f36f it painted five rows under Delete and OUTSIDE the
+            # Info border, which closed above it, so the guide's "renders
+            # where Delete was pressed" was not what the screen showed. It is
+            # the next child of Danger now, which is also the only place it
+            # can be: Delete is reachable from Info alone (task-32132), and
+            # ``apply_session_state`` keeps Info open while confirming.
+            yield from self._compose_delete_confirmation()
+        # task-32143: the editor chrome strip. One row at the bottom of the
+        # body, where a terminal reader looks for a status line, carrying
+        # the two facts the critique found nowhere on the editing surface:
+        # the word count (it lived only under Info) and the caret's line and
+        # column (it existed nowhere at all).
+        #
+        # It does NOT carry the save state, even though the design sketch
+        # asked for it: ``apply_compact_presentation`` sets the save state's
+        # width/height/wrap as INLINE styles that assume it sits in
+        # ``#library-note-header-second-row`` (whose own ``min_height`` is
+        # pinned to 3 there), so relocating it means rewriting that shared
+        # compact block and re-pinning five deliberate tests -- see
+        # task-32143's Implementation Notes.
+        yield Static(
+            library_note_chrome_facts(0, 0, 0),
+            id="library-note-chrome-facts",
+            markup=False,
         )
-        primary_actions.styles.height = "auto"
-        with primary_actions:
-            yield Button(
-                "Save",
-                id="library-note-save",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Edit" if presentation_state.presentation == "preview" else "Preview",
-                id="library-note-preview",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Context",
-                id="library-note-context",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            discard_new = Button(
-                "Discard new note",
-                id="library-note-discard-new",
-                classes="library-canvas-action library-media-action-danger",
-                compact=True,
-            )
-            discard_new.display = presentation_state.discard_new_note
-            discard_new.disabled = presentation_state.destructive_running
-            yield discard_new
         yield Static(
             presentation_state.transfer_status,
             id="library-note-transfer-status",
@@ -923,21 +2432,23 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         with Vertical(id="library-note-wide-utilities"):
             yield Static("Keywords", id="library-note-keywords-label", markup=False)
-            yield Input(
+            yield NoteEditorInput(
                 value=keywords_text,
                 placeholder="Comma-separated keywords",
                 id="library-note-keywords",
             )
-            yield Static(metadata_line, id="library-note-meta", markup=False)
+            # task-32143 AC#2: `#library-note-meta` used to render the
+            # Created/Modified/version/word-count line here. Its container
+            # has been `display = False` unconditionally since the utilities
+            # moved into Info (see ``apply_session_state``), so it was
+            # composed and re-rendered on every state apply and never seen.
+            # Info's `#library-note-context-meta` is the one that is read,
+            # and the word count it carried now also reads on the chrome
+            # strip under the body. Removed rather than left as a second,
+            # invisible home for the same sentence.
             wide_actions = Horizontal(classes="ds-toolbar")
             wide_actions.styles.height = "auto"
             with wide_actions:
-                yield Button(
-                    "Use in Console",
-                    id="library-note-use-in-console",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
                 yield Button(
                     "Export Markdown",
                     id="library-note-export-md",
@@ -989,6 +2500,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                 )
 
+    def _compose_delete_confirmation(self) -> ComposeResult:
+        """Mount the delete prompt where task-32268 requires it: in Danger."""
         with Vertical(id="library-note-delete-confirmation"):
             yield Static(
                 "Delete this note? Undo will be available in the Notes list.",
@@ -1016,6 +2529,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def on_mount(self) -> None:
         """Apply initial visibility after the stable editor subtree mounts."""
         self._apply_post_compose_state()
+        if self.mode == "lasting_add":
+            self.call_after_refresh(self._focus_initial_lasting_sync_control)
+
+    def _focus_initial_lasting_sync_control(self) -> None:
+        """Focus the safe first control once, after the wrapper initially mounts."""
+
+        canvases = self.query("#library-notes-lasting-add-canvas")
+        if canvases:
+            canvases.first(LibraryNotesAddFromFilesCanvas).focus_first_safe_control()
 
     def _apply_post_compose_state(self) -> None:
         """Post-compose wiring shared by ``on_mount`` and ``_after_recompose``.
@@ -1043,6 +2565,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def apply_compact_presentation(self, compact: bool) -> None:
         """Update responsive copy without remounting the canvas."""
         self.compact = compact
+        self.styles.min_width = 0 if compact else 40
         if not self.is_mounted:
             return
         if self.mode == "list" and self.list_state is not None:
@@ -1050,6 +2573,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if database_purpose:
                 database_purpose.first(Static).display = not compact
             rendered_count = len(self.list_state.rows)
+            # task-32261 AC#1: the in-strip counter's compact hide flips on a
+            # breakpoint crossing, like the two labels below -- this method
+            # is the canvas's whole in-place responsive path.
+            in_row_count = self.query("#library-notes-selected-count")
+            if in_row_count:
+                in_row_count.first(Static).display = not compact
             select_all = self.query("#library-notes-select-all")
             if select_all:
                 select_all.first(Button).label = (
@@ -1070,37 +2599,73 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 export_base = "Export" if compact else "Export selected"
                 button._library_disabled_marker_base = export_base
                 button.label = library_disabled_action_label(
-                    export_base, button.disabled
+                    export_base, button.disabled, align=True
                 )
             return
-        if self.mode != "sync" or self.sync_panel_state is None:
-            return
-        for value in ("bidirectional", "disk_to_db", "db_to_disk"):
-            label = (
-                _COMPACT_SYNC_DIRECTION_LABELS[value]
-                if compact
-                else sync_direction_label(value)
+        header_rows = self.query("#library-note-header-second-row")
+        if header_rows:
+            heading = self.query_one("#library-note-heading")
+            second_row = header_rows.first(Horizontal)
+            status = self.query_one("#library-note-status", Static)
+            authority = self.query_one("#library-note-authority-git-status", Static)
+            primary = self.query_one("#library-note-primary-actions", Horizontal)
+            mode_controls = self.query_one("#library-note-mode-controls", Horizontal)
+            task_actions = self.query_one("#library-note-task-actions", Horizontal)
+            heading.styles.layout = "horizontal"
+            heading.styles.height = 1 if compact else 3
+            heading.styles.min_height = 1 if compact else 3
+            heading.styles.max_height = 1 if compact else 3
+            second_row.styles.layout = "vertical" if compact else "horizontal"
+            second_row.styles.height = "auto" if compact else 3
+            second_row.styles.min_height = 3
+            second_row.styles.max_height = 5 if compact else 3
+            status.styles.width = "1fr"
+            status.styles.height = "auto" if compact else 3
+            status.styles.min_height = 1 if compact else 3
+            status.styles.max_height = 3
+            status.styles.text_wrap = "wrap"
+            status.styles.text_overflow = "clip"
+            primary.styles.layout = "vertical" if compact else "horizontal"
+            primary.styles.width = "100%" if compact else "auto"
+            primary.styles.height = 2 if compact else 3
+            primary.styles.min_height = 2 if compact else 3
+            primary.styles.max_height = 2 if compact else 3
+            for actions in (mode_controls, task_actions):
+                actions.styles.width = "100%" if compact else "auto"
+                actions.styles.height = 1 if compact else 3
+                actions.styles.min_height = 1 if compact else 3
+                actions.styles.max_height = 1 if compact else 3
+            authority.styles.width = 18 if compact else "auto"
+            authority.styles.min_width = 12 if compact else 0
+            authority.styles.max_width = 18 if compact else None
+            authority.styles.height = 1 if compact else 3
+            authority.styles.text_wrap = "nowrap" if compact else "wrap"
+            authority.styles.text_overflow = "ellipsis" if compact else "clip"
+            for button in primary.query(Button):
+                button.styles.width = "auto"
+                button.styles.height = 1 if compact else 3
+                button.styles.min_height = 1 if compact else 3
+                button.styles.max_height = 1 if compact else 3
+        discard_new = self.query("#library-note-discard-new")
+        if discard_new:
+            discard_new.first(Button).label = (
+                "Discard" if compact else "Discard new note"
             )
-            prefix = "✓ " if value == self.sync_panel_state.direction else ""
-            choices = self.query(f"#library-notes-sync-direction-{value}")
-            if choices:
-                choices.first(Button).label = f"{prefix}{label}"
-        for value in ("newer_wins", "disk_wins", "db_wins"):
-            label = (
-                _COMPACT_SYNC_CONFLICT_LABELS[value]
-                if compact
-                else sync_conflict_label(value)
-            )
-            prefix = "✓ " if value == self.sync_panel_state.conflict else ""
-            choices = self.query(f"#library-notes-sync-conflict-{value}")
-            if choices:
-                choices.first(Button).label = f"{prefix}{label}"
-        auto_label = auto_sync_label(self.sync_panel_state.auto_sync)
-        if compact:
-            auto_label = auto_label.replace("auto-sync: every ", "Auto ", 1)
-        auto = self.query("#library-notes-sync-auto")
-        if auto:
-            auto.first(Button).label = auto_label
+        # PR #2555 review (Qodo finding 2): the New-note and load-retry views
+        # pick their Back wording at compose time only, and crossing the
+        # compact breakpoint re-runs this method instead of recomposing them
+        # -- so without this they keep the previous width's wording. (The
+        # editor's own #library-note-back/#library-note-context-back are
+        # rewritten from the snapshot in ``apply_session_state``, which calls
+        # this method first, so a stale value there is corrected either way.)
+        back_label = _library_note_back_label(compact)
+        for selector in ("#library-note-back", "#library-notes-create-back"):
+            found = self.query(selector)
+            if not found:
+                continue
+            button = found.first(Button)
+            if str(button.label) != back_label:
+                button.label = back_label
 
     @staticmethod
     def _static_text(widget: Static) -> str:
@@ -1120,13 +2685,53 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         self.presentation_state = state
         self.compact = state.compact
+        # Second half of the early-out above: a MOUNTED pane whose CHILDREN
+        # are between removal and remount has none of the surfaces below, and
+        # `query_one` raised `NoMatches` on the first of them. The backlinks
+        # loader reaches here from a WORKER, whose default
+        # `exit_on_error=True` turns that into a dead process rather than a
+        # skipped paint (task-32467, reproduced twice live on dev).
+        #
+        # Guarded HERE, not at a caller: several callers reach this method
+        # directly, and returning before it would also discard the
+        # `title_placeholder_only` and stage-visibility work the controller
+        # does around this call. `_apply_post_compose_state` guards the same
+        # shape for its own call and documents the sequence that produces it.
+        #
+        # Returning is complete, not lossy: the state is stored above and
+        # `_apply_post_compose_state` re-applies it the moment the recompose
+        # that removed these children mounts the new ones.
+        authority_matches = self.query(f"#{self.authority_id}")
+        if not authority_matches or not self.query("#library-note-title"):
+            return
+        authority = authority_matches.first(Static)
+        authority_copy = self._authority_copy()
+        if self._static_text(authority) != authority_copy:
+            authority.update(authority_copy)
         snapshot = state.snapshot
         conflict = state.conflict
         confirming_delete = state.confirming_delete and not conflict
+        bulk_read_only = state.bulk_read_only
+        # task-32132: Delete is only reachable from the Info Danger section
+        # (the Edit pane's own Delete lives in ``library-note-wide-
+        # utilities``, permanently hidden below). Confirming used to force
+        # ``show_context`` off unconditionally, snapping the pane to Edit --
+        # "delete this note?" painted 14 rows away, under a body editor the
+        # user never opened. Info stays put while confirming; only Preview
+        # (which never hosts a Delete button) still yields to Edit.
+        # task-32268: the prompt is now a child of Info's Danger section, so
+        # Info has to be the surface whenever it is up -- otherwise a
+        # confirmation could be raised into a hidden pane. In production this
+        # is what already happened (Delete is Info-only), and task-32132's
+        # own rule was "Info stays put while confirming"; stating it as a
+        # condition makes the invariant the prompt's placement depends on
+        # explicit rather than incidental.
         show_context = (
-            state.region == "context" and not conflict and not confirming_delete
+            (state.region == "context" or confirming_delete)
+            and not conflict
+            and not bulk_read_only
         )
-        show_preview = (
+        show_preview = bulk_read_only or (
             not show_context
             and not conflict
             and not confirming_delete
@@ -1139,23 +2744,45 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         wide_keywords = self.query_one("#library-note-keywords", Input)
         context_keywords = self.query_one("#library-note-context-keywords", Input)
         presented_title = "" if self.title_placeholder_only else snapshot.title
-        if title_input.value != presented_title:
+        # task-32062: the field the reader is typing in is its OWN authority.
+        # This patch used to overwrite it from a snapshot that could be one
+        # keystroke behind -- and assigning `Input.value` clamps the cursor to
+        # the shorter text, so the rest of the sentence was then inserted at
+        # that stale position. Live: "My first note", Tab, a body typed within
+        # ~0.4 s stored the title "Mhello from jordan, testing the libraryy
+        # first note" with an empty body. A focused field is skipped; its own
+        # Changed events are what the snapshot is built from anyway.
+        if title_input.value != presented_title and not title_input.has_focus:
             with title_input.prevent(Input.Changed):
                 title_input.value = presented_title
         title_input.placeholder = "Untitled" if self.title_placeholder_only else ""
-        if body_input.text != snapshot.body:
+        if body_input.text != snapshot.body and not body_input.has_focus:
             with body_input.prevent(TextArea.Changed):
                 body_input.text = snapshot.body
-        if wide_keywords.value != snapshot.keywords_text:
+        # Same rule as the title above: a keyword box the reader is typing in
+        # is its own authority, and the snapshot is built from its own Changed
+        # events anyway (review of PR #2531).
+        if (
+            wide_keywords.value != snapshot.keywords_text
+            and not wide_keywords.has_focus
+        ):
             with wide_keywords.prevent(Input.Changed):
                 wide_keywords.value = snapshot.keywords_text
-        if context_keywords.value != snapshot.keywords_text:
+        if (
+            context_keywords.value != snapshot.keywords_text
+            and not context_keywords.has_focus
+        ):
             with context_keywords.prevent(Input.Changed):
                 context_keywords.value = snapshot.keywords_text
 
         title_width = 52 if state.compact else 72
         title = ellipsize_note_title_cells(snapshot.title, title_width)
-        for selector in ("#library-note-preview-title", "#library-note-context-title"):
+        for selector in (
+            "#library-note-editor-title",
+            "#library-note-preview-title",
+            "#library-note-context-title",
+            "#library-note-preview-body-title",
+        ):
             widget = self.query_one(selector, Static)
             if self._static_text(widget) != title:
                 widget.update(title)
@@ -1165,21 +2792,59 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # hidden Preview stale while typing, then perform one canonical update
         # when Preview becomes the active surface so edits cannot queue an
         # unbounded hidden-render backlog.
-        if show_preview and preview_body.source != snapshot.body:
-            preview_body.update(snapshot.body)
-        compact_status = (
-            state.transfer_status
-            if state.compact and state.transfer_status
-            else state.status_line
+        #
+        # task-32263: an imported body stores its links as
+        # `[[Title]](note://<id>)` -- a working Obsidian link this module's own
+        # parser reads back. Markdown does not know that spelling, so Preview
+        # renders the display text and leaves the identifier behind the link.
+        # task-32249: and an Obsidian callout header renders as a callout
+        # rather than printing its `[!note]` marker. Both rewrites run at
+        # compose time too, so the staleness comparison below has to be
+        # against the SAME rendered source -- comparing the raw body would
+        # re-render every sync on any note carrying a link or a callout.
+        preview_source = render_preview_source(snapshot.body)
+        if show_preview and preview_body.source != preview_source:
+            preview_body.update(preview_source)
+        channels = state.status_channels or NotesStatusChannels(
+            state.status_line or "Saved",
+            NOTES_AUTHORITY_PREFIX,
         )
-        for selector in ("#library-note-status", "#library-note-context-status"):
-            widget = self.query_one(selector, Static)
-            if self._static_text(widget) != compact_status:
-                widget.update(compact_status)
-        for selector in ("#library-note-meta", "#library-note-context-meta"):
-            widget = self.query_one(selector, Static)
-            if self._static_text(widget) != state.metadata_line:
-                widget.update(state.metadata_line)
+        content_copy = channels.content_recovery
+        if channels.safe_next_action:
+            content_copy = f"{content_copy} Next: {channels.safe_next_action}."
+        status_widget = self.query_one("#library-note-status", Static)
+        if self._static_text(status_widget) != content_copy:
+            status_widget.update(content_copy)
+        authority_status = self.query_one("#library-note-authority-git-status", Static)
+        if self._static_text(authority_status) != channels.authority_git:
+            authority_status.update(channels.authority_git)
+        # task-32143 AC#2: was a two-selector loop -- the second home,
+        # `#library-note-meta`, was never displayed. One meta line now.
+        context_meta = self.query_one("#library-note-context-meta", Static)
+        if self._static_text(context_meta) != state.metadata_line:
+            context_meta.update(state.metadata_line)
+        # task-32145: backlinks are loaded by their own worker AFTER the note
+        # opens, so they land on an editor that is already composed -- and a
+        # recompose is deferred for as long as the reader owns a field
+        # (task-32062). Reconciling them here is what makes them appear at
+        # all: switching Edit -> Info is a `display` flip on this same
+        # composition, not a rebuild.
+        backlinks = tuple(state.backlinks)
+        if backlinks != self._rendered_backlinks:
+            self._rendered_backlinks = backlinks
+            container = self.query_one("#library-note-context-backlinks", Vertical)
+            container.remove_children()
+            rows = self._backlink_buttons(backlinks)
+            if rows:
+                container.mount_all(rows)
+        backlink_title = self.query_one(
+            "#library-note-context-backlinks-title", Static
+        )
+        backlink_copy = library_note_backlink_header(
+            backlinks, state.backlinks_status
+        )
+        if self._static_text(backlink_title) != backlink_copy:
+            backlink_title.update(backlink_copy)
         for selector in (
             "#library-note-transfer-status",
             "#library-note-context-transfer-status",
@@ -1191,31 +2856,66 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         self.apply_compact_presentation(state.compact)
         self.set_class(state.validation, "library-note-validation")
-        self.query_one("#library-note-back").display = not show_context
-        self.query_one("#library-note-context-back").display = show_context
-        self.query_one("#library-note-editor-title").display = (
-            show_editor and state.compact
-        )
+        # task-32139: one Back label, sized by compact -- see the matching
+        # compose-time comment above.
+        back_label = _library_note_back_label(state.compact)
+        back_button = self.query_one("#library-note-back", Button)
+        if str(back_button.label) != back_label:
+            back_button.label = back_label
+        back_button.display = not show_context and not bulk_read_only
+        back_button.disabled = confirming_delete
+        context_back_button = self.query_one("#library-note-context-back", Button)
+        if str(context_back_button.label) != back_label:
+            context_back_button.label = back_label
+        context_back_button.display = show_context
+        # PR #2547 review (Qodo finding 4): Back was left out of the
+        # disabled-selector loops below, so it stayed live behind the
+        # confirmation prompt. A press ran the Back handler, which clears
+        # ``_library_note_context`` without cancelling the pending
+        # admission -- displacing the prompt instead of leaving Info in
+        # place like every other Danger/Reuse & Export action.
+        context_back_button.disabled = confirming_delete
+        self.query_one("#library-note-editor-title").display = show_editor
         self.query_one("#library-note-preview-title").display = show_preview
         self.query_one("#library-note-context-title").display = show_context
+        bulk_status = self.query_one("#library-note-bulk-status", Static)
+        bulk_status.display = bulk_read_only
+        bulk_copy = (
+            "Read-only preview · Included in bulk selection"
+            if state.bulk_included
+            else "Read-only preview · Not included in bulk selection"
+        )
+        if self._static_text(bulk_status) != bulk_copy:
+            bulk_status.update(bulk_copy)
         self.query_one("#library-note-editor-region").display = show_editor
         self.query_one("#library-note-preview-region").display = show_preview
-        self.query_one("#library-note-context-status").display = show_context
         self.query_one("#library-note-context-region").display = show_context
-        self.query_one("#library-note-status").display = not show_context
+        self.query_one("#library-note-edit", Button).set_class(show_editor, "is-active")
+        self.query_one("#library-note-preview", Button).set_class(
+            show_preview and not bulk_read_only, "is-active"
+        )
+        self.query_one("#library-note-context", Button).set_class(
+            show_context, "is-active"
+        )
         self.query_one("#library-note-primary-actions").display = (
-            not show_context and not conflict and not confirming_delete
+            not conflict and not confirming_delete
         )
-        self.query_one("#library-note-wide-utilities").display = (
-            not state.compact
-            and not show_context
-            and not conflict
-            and not confirming_delete
-        )
+        self.query_one("#library-note-wide-utilities").display = False
         self.query_one("#library-note-conflict-region").display = conflict
         self.query_one("#library-note-delete-confirmation").display = confirming_delete
 
-        locked = confirming_delete or state.destructive_running
+        locked = confirming_delete or state.destructive_running or bulk_read_only
+        # task-32106 (PR #2571 re-review, NEW-2): DISABLED, not read-only,
+        # is load-bearing while ``confirming_delete``. These four fields
+        # carry a PRIORITY tab binding (``NoteEditorInput`` /
+        # ``NoteEditorTextArea``), which ``App._check_bindings`` resolves
+        # before ``LibraryScreen.on_key`` -- and ``on_key`` is where the
+        # delete prompt's Tab trap lives. Textual blurs a widget when it
+        # becomes disabled and drops it from ``focusable``, so no note field
+        # can be in the binding chain while the prompt is open and the trap
+        # holds. Keep one of these live behind the prompt and Tab would walk
+        # straight out of it; ``test_delete_confirmation_traps_tab_between_
+        # cancel_and_delete`` asserts the disabled state for that reason.
         title_input.disabled = not show_editor or locked
         body_input.disabled = not show_editor or locked
         wide_keywords.disabled = state.compact or show_context or locked
@@ -1224,12 +2924,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.query_one("#library-note-preview-region").can_focus = show_preview
         self.query_one("#library-note-context-region").can_focus = show_context
 
-        preview_button = self.query_one("#library-note-preview", Button)
-        preview_label = "Edit" if state.presentation == "preview" else "Preview"
-        if str(preview_button.label) != preview_label:
-            preview_button.label = preview_label
-
         for selector in (
+            "#library-note-edit",
             "#library-note-save",
             "#library-note-preview",
             "#library-note-context",
@@ -1244,7 +2940,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-context-copy",
             "#library-note-context-delete",
         ):
-            self.query_one(selector, Button).disabled = state.destructive_running
+            self.query_one(selector, Button).disabled = (
+                state.destructive_running or bulk_read_only or confirming_delete
+            )
         for selector in (
             "#library-note-use-in-console",
             "#library-note-export-md",
@@ -1256,11 +2954,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-context-copy",
         ):
             self.query_one(selector, Button).disabled = (
-                state.destructive_running or state.transfer_running
+                state.destructive_running
+                or state.transfer_running
+                or bulk_read_only
+                # task-32132 fix round 1 Important 5: Info stays visible
+                # while confirming (this fix's own AC#1), so its Danger/
+                # Reuse & Export buttons -- Delete, Copy, Export, Use in
+                # Console -- were still live behind the confirmation
+                # prompt; a press could navigate away (Use in Console) or
+                # mutate (Copy/Export) with the delete admission still
+                # pending.
+                or confirming_delete
             )
         discard_new = self.query_one("#library-note-discard-new", Button)
         discard_new.display = state.discard_new_note
-        discard_new.disabled = state.destructive_running
+        discard_new.disabled = state.destructive_running or bulk_read_only
         for selector in (
             "#library-note-conflict-overwrite",
             "#library-note-conflict-reload",
@@ -1273,6 +2981,85 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-delete-cancel",
         ):
             self.query_one(selector, Button).disabled = state.destructive_running
+        self.update_note_chrome_facts(state.word_count)
+
+    # --- editor chrome strip (task-32143) ---------------------------------
+
+    def update_note_chrome_facts(
+        self,
+        word_count: int | None = None,
+        body: TextArea | None = None,
+    ) -> None:
+        """Repaint the chrome strip's facts cell from the live editor.
+
+        Counts nothing: the controller already scans the body for the meta
+        line on every change, so the number arrives with the presentation
+        state, and the caret comes off the ``TextArea``. Nothing here reads
+        the database.
+
+        It is not free, though, and this docstring used to imply it was
+        (review F3). The cost was never the format -- it was the lookups,
+        and specifically ``if not self.query("#id")``: truth-testing a
+        ``DOMQuery`` walks the whole subtree, where ``query_one`` on an id
+        does not. Measured per call on a 35,310-byte note in the real
+        editor route: the old four-lookup sequence **263.6 us**, the two
+        lookups that replace it **0.7 us**, and the whole-body
+        ``len(text.split())`` the design ruled out **80.4 us**. So the
+        repaint had been costing ~3x the banned scan, and now costs ~1% of
+        it. The caret handler hands in the ``TextArea`` its own event
+        already carries; the rest share one ``try``. No debounce needed at
+        0.7 us -- add one only if this ever grows a real scan back.
+
+        Args:
+            word_count: The controller's count. Omitted by the caret and
+                resize handlers, which repaint from the last one fed in.
+            body: The editor body, when the caller already holds it (the
+                ``SelectionChanged`` event carries it). Looked up otherwise.
+        """
+        if word_count is not None:
+            self._note_chrome_word_count = word_count
+        try:
+            facts = self.query_one("#library-note-chrome-facts", Static)
+            editing = bool(self.query_one("#library-note-editor-region").display)
+            if body is None:
+                body = self.query_one("#library-note-body", TextArea)
+        except NoMatches:
+            # Any mode but the editor, and the editor before it composes.
+            return
+        try:
+            wide = self.app.size.width >= NOTE_CHROME_FACTS_MIN_WIDTH
+        except NoActiveAppError:
+            # Same answer as ``_authority_prefix`` (:769), which reads this
+            # same ``self.app.size.width`` under its own guard and documents
+            # the choice as "a widget with no live app keeps the prefix:
+            # that is the answer that loses nothing". It catches ``Exception``
+            # where this catches the one error ``self.app`` actually raises.
+            wide = True
+        # Preview and Info have no caret to report, and a narrow terminal
+        # has no room -- the save state owns the row alone in both cases.
+        facts.display = editing and wide
+        if not facts.display:
+            return
+        row, column = body.cursor_location
+        copy = library_note_chrome_facts(self._note_chrome_word_count, row, column)
+        if self._static_text(facts) != copy:
+            facts.update(copy)
+
+    @on(TextArea.SelectionChanged, "#library-note-body")
+    def _note_chrome_follows_caret(self, event: TextArea.SelectionChanged) -> None:
+        """Follow the caret: arrow keys never reach the presentation state."""
+        self.update_note_chrome_facts(body=event.text_area)
+
+    @on(Resize)
+    def _note_chrome_follows_width(self, event: Resize) -> None:
+        """Re-decide the 80-column gate; the compact flag only flips at 120.
+
+        Load-bearing for any resize that does not also cross 120 -- a
+        breakpoint crossing re-runs ``apply_session_state``, which decides
+        the gate anyway. Pinned by the 100 -> 79 -> 100 walk in
+        ``test_the_strip_is_hidden_off_the_editor_and_below_eighty_columns``.
+        """
+        self.update_note_chrome_facts()
 
     def _compose_create(self) -> ComposeResult:
         """Render the notes canvas in create mode: Blank note + template rows.
@@ -1296,8 +3083,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         needs the key and a human label, never the raw title/content.
         """
         with Horizontal(id="library-notes-create-heading"):
+            # task-32177: this view's Back was also left out of task-32139's
+            # unification and stayed hard-coded "‹ Notes" at every width.
             yield Button(
-                "‹ Notes",
+                _library_note_back_label(self.compact),
                 id="library-notes-create-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1317,184 +3106,44 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 compact=True,
                 disabled=self.create_running,
             )
-            from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
-
-            # The pure builder excludes the "blank" template (it duplicates the
-            # Blank note action above) and pre-resolves each template's title so
-            # the row's muted secondary line shows the exact title the created
-            # note will get (date placeholders already substituted).
-            rows = build_library_note_template_rows(NOTE_TEMPLATES)
-            yield Static(
-                "From a template",
-                id="library-notes-template-section",
-                classes="destination-section",
-                markup=False,
+            # task-32356 (critique #10, A cap 10): the eight dated templates
+            # used to stand open under Blank note, so every new note cost a
+            # read of nine rows at the moment of lowest patience. They fold
+            # behind one row now -- and ``ctrl+n``/``n`` skip this canvas
+            # entirely for the blank answer (``action_library_notes_new``).
+            yield Button(
+                "From a template…",
+                id="library-note-from-template",
+                classes="library-notes-create-row",
+                compact=True,
+                disabled=self.create_running,
             )
-            for index, row in enumerate(rows):
-                label = (
-                    f"{row.label}\n{row.resolved_title}"
-                    if row.resolved_title
-                    else row.label
-                )
-                button = Button(
-                    label,
-                    id=f"library-notes-template-{index}",
-                    classes="library-notes-create-row library-notes-template-row",
-                    compact=True,
-                )
-                button.template_key = row.template_key
-                button.disabled = self.create_running
-                yield button
+            if self.templates_open:
+                from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+
+                # The pure builder excludes the "blank" template (it
+                # duplicates the Blank note action above) and pre-resolves
+                # each template's title so the row's muted secondary line
+                # shows the exact title the created note will get (date
+                # placeholders already substituted).
+                rows = build_library_note_template_rows(NOTE_TEMPLATES)
+                for index, row in enumerate(rows):
+                    label = (
+                        f"{row.label}\n{row.resolved_title}"
+                        if row.resolved_title
+                        else row.label
+                    )
+                    button = Button(
+                        label,
+                        id=f"library-notes-template-{index}",
+                        classes="library-notes-create-row library-notes-template-row",
+                        compact=True,
+                    )
+                    button.template_key = row.template_key
+                    button.disabled = self.create_running
+                    yield button
             yield Static(
                 self.create_status,
                 id="library-notes-create-status",
-                markup=False,
-            )
-
-    def _compose_sync(self) -> ComposeResult:
-        """Render the notes sync panel: folder, direction, conflicts, activity.
-
-        Direction and conflict policy use explicit compact choice groups so
-        every available value and the current selection remain visible.
-        Auto-sync stays a direct toggle button. All mutable controls are
-        disabled while a sync run is active.
-        """
-        sync_state = self.sync_panel_state
-        if sync_state is None:
-            return
-        with Horizontal(id="library-notes-sync-heading"):
-            yield Button(
-                "‹ Notes",
-                id="library-notes-sync-back",
-                classes="library-canvas-action",
-                compact=True,
-                disabled=sync_state.running,
-            )
-            yield Static(
-                "Notes sync",
-                id="library-notes-sync-header",
-                classes="destination-section",
-                markup=False,
-            )
-        with VerticalScroll(id="library-notes-sync-viewport"):
-            yield Static(
-                "Mirror notes between a folder on disk and the Library — "
-                "unlike Files mode, which edits that folder directly without "
-                "mirroring it in.",
-                id="library-notes-sync-purpose",
-                markup=False,
-            )
-            with Horizontal(id="library-notes-sync-folder-row"):
-                yield Static(
-                    "Folder", id="library-notes-sync-folder-label", markup=False
-                )
-                yield Input(
-                    value=sync_state.folder,
-                    placeholder="Folder to sync…",
-                    id="library-notes-sync-folder",
-                    disabled=sync_state.running,
-                )
-                yield Button(
-                    "Browse…",
-                    id="library-notes-sync-browse",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=sync_state.running,
-                )
-            with Horizontal(id="library-notes-sync-direction-row"):
-                yield Static(
-                    "Direction", id="library-notes-sync-direction-label", markup=False
-                )
-                direction_choices = Horizontal(
-                    id="library-notes-sync-direction-choices", classes="ds-toolbar"
-                )
-                direction_choices.styles.height = "auto"
-                with direction_choices:
-                    for value in ("bidirectional", "disk_to_db", "db_to_disk"):
-                        label = (
-                            _COMPACT_SYNC_DIRECTION_LABELS[value]
-                            if self.compact
-                            else sync_direction_label(value)
-                        )
-                        button = Button(
-                            f"{'✓ ' if value == sync_state.direction else ''}{label}",
-                            id=f"library-notes-sync-direction-{value}",
-                            classes=(
-                                "library-canvas-action "
-                                "library-notes-sync-direction-choice"
-                            ),
-                            compact=True,
-                            disabled=sync_state.running,
-                        )
-                        button.choice_value = value
-                        yield button
-            with Horizontal(id="library-notes-sync-conflict-row"):
-                yield Static(
-                    "Conflicts", id="library-notes-sync-conflict-label", markup=False
-                )
-                conflict_choices = Horizontal(
-                    id="library-notes-sync-conflict-choices", classes="ds-toolbar"
-                )
-                conflict_choices.styles.height = "auto"
-                with conflict_choices:
-                    for value in ("newer_wins", "disk_wins", "db_wins"):
-                        label = (
-                            _COMPACT_SYNC_CONFLICT_LABELS[value]
-                            if self.compact
-                            else sync_conflict_label(value)
-                        )
-                        button = Button(
-                            f"{'✓ ' if value == sync_state.conflict else ''}{label}",
-                            id=f"library-notes-sync-conflict-{value}",
-                            classes=(
-                                "library-canvas-action "
-                                "library-notes-sync-conflict-choice"
-                            ),
-                            compact=True,
-                            disabled=sync_state.running,
-                        )
-                        button.choice_value = value
-                        yield button
-            with Horizontal(id="library-notes-sync-actions"):
-                auto_label = auto_sync_label(sync_state.auto_sync)
-                if self.compact:
-                    auto_label = auto_label.replace("auto-sync: every ", "Auto ", 1)
-                yield Button(
-                    auto_label,
-                    id="library-notes-sync-auto",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=sync_state.running,
-                )
-                yield Button(
-                    "Syncing…" if sync_state.running else "Sync now",
-                    id="library-notes-sync-run",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=sync_state.running,
-                )
-            yield Button(
-                "Review recovered pairing…",
-                id="library-notes-sync-review",
-                classes="library-canvas-action",
-                compact=True,
-                disabled=sync_state.running,
-            )
-            # ``sync_status_line``'s own tested contract is that a failed status
-            # always starts with the literal prefix "failed" -- safe to key the
-            # error styling off that prefix here.
-            yield Static(
-                sync_state.status_line,
-                id="library-notes-sync-status",
-                classes=(
-                    "library-notes-sync-status-failed"
-                    if sync_state.status_line.startswith("failed")
-                    else ""
-                ),
-                markup=False,
-            )
-            yield Static(
-                "\n".join(sync_state.activity_lines),
-                id="library-notes-sync-activity",
                 markup=False,
             )

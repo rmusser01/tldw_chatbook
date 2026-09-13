@@ -249,6 +249,45 @@ async def test_confirm_and_cancel_return_decisions(tmp_path: Path) -> None:
         assert decisions == [True, False]
 
 
+@pytest.mark.asyncio
+async def test_runtime_choice_modal_explains_and_returns_explicit_provider() -> None:
+    """Runtime handoff is an informed choice and cannot start a server itself."""
+    from tldw_chatbook.Widgets.ModelArtifacts import ManagedGGUFRuntimeChoiceModal
+
+    app = _ModalApp()
+    decisions: list[str | None] = []
+    async with app.run_test() as pilot:
+        await app.push_screen(ManagedGGUFRuntimeChoiceModal(), decisions.append)
+        await pilot.pause()
+
+        painted = "\n".join(
+            str(item.renderable) for item in app.screen.query(Static)
+        )
+        assert "Llama.cpp" in str(
+            app.screen.query_one("#managed-gguf-runtime-llamacpp", Button).label
+        )
+        assert "Llamafile" in str(
+            app.screen.query_one("#managed-gguf-runtime-llamafile", Button).label
+        )
+        assert "does not activate it or start a server" in painted
+        assert app.focused is app.screen.query_one(
+            "#managed-gguf-runtime-llamacpp", Button
+        )
+
+        await pilot.click("#managed-gguf-runtime-llamacpp")
+        await pilot.pause()
+
+        await app.push_screen(ManagedGGUFRuntimeChoiceModal(), decisions.append)
+        await pilot.click("#managed-gguf-runtime-llamafile")
+        await pilot.pause()
+
+        await app.push_screen(ManagedGGUFRuntimeChoiceModal(), decisions.append)
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert decisions == ["llamacpp", "llamafile", None]
+
+
 @pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
 @pytest.mark.asyncio
 async def test_model_install_library_modal_contract_exact_negative_once(

@@ -5,9 +5,8 @@ Covers:
   * the five `[console] agent_max_*` keys resolve config -> default, read
     fresh on every call so a Settings save applies to the next run (AC#2);
   * the shipped defaults are the ones the owner specified (AC#3);
-  * floors and fallbacks: a below-floor, unparsable, or hostile value falls
-    back to the shipped default instead of breaking a run, and there is no
-    upper ceiling (AC#4);
+  * floors and fallbacks: a below-floor, above-safe-ceiling, unparsable, or
+    hostile value falls back to the shipped default instead of breaking a run;
   * the engine's own RunBudget defaults are untouched (AC#5);
   * the bridge's mirrored literals cannot drift from config's (the
     duplication that exists only because this module may not import config
@@ -22,7 +21,14 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook import config as config_module
-from tldw_chatbook.Agents.agent_models import RunBudget
+from tldw_chatbook.Agents.agent_models import (
+    AGENT_LIFECYCLE_INDEX_BASE,
+    CONTROL_CAPTURE_INDEX_BASE,
+    MAX_RUN_CONTROL_STEPS,
+    TRACE_CAPTURE_INDEX_BASE,
+    TRACE_STEP_INDEX_BASE,
+    RunBudget,
+)
 from tldw_chatbook.Chat.console_agent_bridge import (
     DEFAULT_CONSOLE_MAX_MODEL_TURNS,
     DEFAULT_CONSOLE_MAX_STEPS,
@@ -115,6 +121,8 @@ def test_every_key_is_configurable(monkeypatch):
             "agent_max_wall_seconds": 90.5,
             "agent_max_total_tokens": 1234,
             "agent_max_tool_call_seconds": 11.0,
+            "agent_max_model_retries": 4,
+            "agent_budget_warning_fraction": 0.5,
         },
     )
     budget = console_run_budget()
@@ -123,6 +131,38 @@ def test_every_key_is_configurable(monkeypatch):
     assert budget.max_wall_seconds == 90.5
     assert budget.max_total_tokens == 1234
     assert budget.max_tool_call_seconds == 11.0
+    assert budget.max_model_retries == 4
+    assert budget.budget_warning_fraction == 0.5
+
+
+def test_budget_warning_fraction_is_clamped_to_one(monkeypatch):
+    """Review A-5: an inert or typo'd key name would be invisible without a
+    real-config test -- the exact defect class (C3a) that reopened 25902.
+    A fraction above 1.0 clamps rather than disabling exhaustion handling."""
+    _pin_console(monkeypatch, {"agent_budget_warning_fraction": 3.5})
+
+    assert console_run_budget().budget_warning_fraction == 1.0
+
+
+def test_budget_warning_fraction_rejects_garbage(monkeypatch):
+    _pin_console(monkeypatch, {"agent_budget_warning_fraction": "soon"})
+
+    assert console_run_budget().budget_warning_fraction == 0.8
+
+
+def test_step_limit_is_capped_below_the_trace_storage_band(monkeypatch):
+    assert config_module.MAX_CONSOLE_AGENT_MAX_STEPS == MAX_RUN_CONTROL_STEPS
+    assert (
+        TRACE_STEP_INDEX_BASE
+        < TRACE_CAPTURE_INDEX_BASE
+        < CONTROL_CAPTURE_INDEX_BASE
+        < AGENT_LIFECYCLE_INDEX_BASE
+    )
+    assert TRACE_STEP_INDEX_BASE + (5 * MAX_RUN_CONTROL_STEPS) + 2 < (
+        TRACE_CAPTURE_INDEX_BASE
+    )
+    _pin_console(monkeypatch, {"agent_max_steps": MAX_RUN_CONTROL_STEPS + 1})
+    assert console_run_budget().max_steps == DEFAULT_CONSOLE_MAX_STEPS
 
 
 def test_config_is_re_read_on_every_call(monkeypatch):
@@ -143,7 +183,6 @@ def test_unconfigured_fields_keep_their_engine_shape(monkeypatch):
     budget = console_run_budget()
     engine = RunBudget()
     assert budget.max_subagents == engine.max_subagents
-    assert budget.max_active_tools == engine.max_active_tools
     assert budget.max_tool_result_chars == engine.max_tool_result_chars
     assert budget.max_subagent_result_chars == engine.max_subagent_result_chars
 

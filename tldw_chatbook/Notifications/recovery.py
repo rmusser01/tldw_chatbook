@@ -128,6 +128,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             (1,),
             _NOTIFICATIONS_SCHEMA,
             (),
+            optional_default=True,
         ),
         _EventsAdapter(
             "runtime.event_state",
@@ -136,5 +137,6 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             (1,),
             _EVENTS_SCHEMA,
             (),
+            optional_default=True,
         ),
     )

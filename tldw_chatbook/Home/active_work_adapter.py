@@ -224,6 +224,8 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         runtime_policy: Any | None = None,
         flashcards_due_provider: Callable[[], int | None] | None = None,
         ingest_jobs_provider: Callable[[], tuple[LibraryIngestJob, ...]] | None = None,
+        eval_open_runs_provider: Callable[[], Mapping[str, int]] | None = None,
+        read_later_count_provider: Callable[[], int | None] | None = None,
     ) -> None:
         super().__init__(runtime_policy=runtime_policy)
         self.notification_service = notification_service
@@ -232,9 +234,15 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         self.server_event_service = server_event_service
         self.flashcards_due_provider = flashcards_due_provider
         self.ingest_jobs_provider = ingest_jobs_provider
+        self.eval_open_runs_provider = eval_open_runs_provider
+        self.read_later_count_provider = read_later_count_provider
         self._chatbook_artifact_snapshot: tuple[Mapping[str, Any], ...] = ()
         self._chatbook_artifact_snapshot_lock = RLock()
         self._flashcards_due_count: int = 0
+        # Open-task queue counts (spec §4), refreshed off the compose path
+        # like the flashcards count and read by build_dashboard_input.
+        self._eval_open_counts: Mapping[str, int] = {"pending": 0, "failed": 0}
+        self._read_later_count: int | None = None
         # B3 (task-282): cache for the watchlist-run/notification/server-event
         # seam queries. This adapter instance lives on the app (not the
         # per-visit HomeScreen), so unlike HomeScreen's own
@@ -266,6 +274,33 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         except Exception as e:
             logger.debug(f"Failed to fetch due-flashcards count for Home: {e}")
             self._flashcards_due_count = 0
+
+    def refresh_open_tasks_snapshot(self) -> None:
+        """Refresh cached open-task queue counts off the Home compose path.
+
+        Same degrade pattern as ``refresh_flashcards_due_snapshot``: a
+        missing provider, a bad result, or any exception leaves the counts
+        at their no-suggestion defaults (eval zeros, read-later None).
+        """
+        if callable(self.eval_open_runs_provider):
+            try:
+                counts = self.eval_open_runs_provider() or {}
+                self._eval_open_counts = {
+                    "pending": max(0, int(counts.get("pending", 0) or 0)),
+                    "failed": max(0, int(counts.get("failed", 0) or 0)),
+                }
+            except Exception as e:
+                logger.debug(f"Failed to fetch eval run counts for Home: {e}")
+                self._eval_open_counts = {"pending": 0, "failed": 0}
+        if callable(self.read_later_count_provider):
+            try:
+                count = self.read_later_count_provider()
+                self._read_later_count = (
+                    max(0, int(count)) if count is not None else None
+                )
+            except Exception as e:
+                logger.debug(f"Failed to fetch read-it-later count for Home: {e}")
+                self._read_later_count = None
 
     def refresh_chatbook_artifact_snapshot(self, *, limit: int = 20) -> None:
         """Refresh cached local Chatbook artifacts off the Home compose path."""
@@ -319,6 +354,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             ),
             recent_work_items=self._local_recent_work_items(runs),
             flashcards_due_count=self._flashcards_due_count,
+            pending_eval_run_count=self._eval_open_counts.get("pending", 0),
+            failed_eval_run_count=self._eval_open_counts.get("failed", 0),
+            read_later_count=self._read_later_count,
         )
 
     def handle_control(

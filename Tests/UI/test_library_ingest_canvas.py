@@ -11,6 +11,7 @@ import asyncio
 from copy import deepcopy
 import inspect
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -19,8 +20,8 @@ from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.app import App, ComposeResult
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from textual.app import ComposeResult
 from textual.widgets import (
     Button,
     Checkbox,
@@ -40,6 +41,7 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _wait_for_library_shell,
     _wait_for_selector,
+    wire_bypass_ingest_controller,
 )
 from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST
 from tldw_chatbook.Library.ingest_types import PreflightResult
@@ -57,6 +59,7 @@ from tldw_chatbook.Library.library_ingest_state import (
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import (
+    LibraryIngestState,
     LibraryScreen,
     _LibraryIngestStartConsent,
 )
@@ -90,15 +93,46 @@ class _CanvasHost(ConsolidatedCSSApp):
         yield LibraryIngestCanvas(self._state, **kwargs)
 
 
+@pytest.mark.asyncio
+async def test_chunking_template_save_invalidates_mounted_picker_cache():
+    from tldw_chatbook.UI.Chunking_Lab_Modules import ChunkingTemplatesChanged
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        INGEST_CHUNK_TEMPLATE_PICKER_ID,
+    )
+
+    assert hasattr(LibraryIngestCanvas, "invalidate_chunk_templates")
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    host = _CanvasHost(state)
+    names = ["before"]
+
+    class Catalog:
+        async def list_templates(self, *, mode):
+            assert mode == "local"
+            return [{"name": name} for name in names]
+
+    host.rag_admin_scope_service = Catalog()
+    async with host.run_test() as pilot:
+        canvas = host.query_one(LibraryIngestCanvas)
+        await canvas._fetch_chunk_templates()
+        picker = canvas.query_one(f"#{INGEST_CHUNK_TEMPLATE_PICKER_ID}", Select)
+        picker.value = "before"
+        await pilot.pause()
+        names.append("after")
+        canvas.post_message(ChunkingTemplatesChanged(1, 2))
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        assert canvas._chunk_template_names == ["before", "after"]
+        assert picker.value == "before"
+        picker.value = "after"
+        await pilot.pause()
+        assert picker.value == "after"
+
+
 class _QueuePanelHost(ConsolidatedCSSApp):
     """Mount only the real queue panel with the shipped app stylesheet."""
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    # Queue rules live in the lazy Library sheet, not the boot bundle alone.
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, state: LibraryIngestCanvasState) -> None:
         super().__init__()
@@ -477,7 +511,9 @@ async def test_type_group_panels_render_for_detected_groups():
             assert "PDF documents" in str(pdf_panel.title)
             assert str(pdf_panel.title) == "PDF documents"
             assert "Import behavior" in str(generic_panel.title)
-            assert str(generic_panel.title) == "Import behavior"
+            # (task-28007 AC#6) The collapsed header states the analysis
+            # state the fold hides; the default is off.
+            assert str(generic_panel.title) == "Import behavior · analysis off"
 
             scope = pilot.app.query_one(
                 "#type-group-pdf .type-group-scope", Static
@@ -1064,7 +1100,7 @@ async def test_active_confirm_update_preserves_start_input_focus_cursor_and_scro
         assert start_region.height > 0
         assert "Start import" in painted_start
 
-        screen._library_ingest_start_consent = _LibraryIngestStartConsent(
+        screen._ingest_state.start_consent = _LibraryIngestStartConsent(
             fingerprint="active-test",
             admission_scope=build_active_ingest_consent_scope(
                 [str(tmp_path / "active.txt")],
@@ -1135,13 +1171,36 @@ async def test_show_details_button_renders_for_error_detail():
 
 
 @pytest.mark.asyncio
-async def test_show_details_button_absent_without_error_detail():
-    """A failed job without error detail does not render Show details."""
+async def test_show_details_button_present_without_structured_error_detail():
+    """A failed job still offers Show details for its raw error (task-32054).
+
+    REVERSED pin: this used to assert the button was ABSENT without an
+    ``error_detail``. Critique #8 found that gate hid the underlying text on
+    exactly the failure that carries no structured detail -- a parse pool
+    that never started -- so the row said "[Errno 28] No space left on
+    device" with nothing to expand and no way to learn more.
+    """
     job = LibraryIngestJob(
         job_id="ingest-job-1",
         source_path="/tmp/report.txt",
         state=IngestJobState.FAILED,
         error="Bad codec",
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        btn = pilot.app.query_one("#library-ingest-details-ingest-job-1", Button)
+        assert "Show details" in str(btn.label)
+
+
+@pytest.mark.asyncio
+async def test_show_details_button_absent_without_any_error_text():
+    """Nothing to expand means no action offered."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.FAILED,
+        error="",
     )
     state = build_library_ingest_state((job,), form=_default_form())
     app = _CanvasHost(state)
@@ -1216,6 +1275,36 @@ async def test_transcribe_cpp_failure_renders_only_eligible_recovery_actions():
         assert "Choose another GGUF" in str(choose.label)
         assert str(retry.label) == "Retry with faster-whisper"
         assert not list(pilot.app.query("#library-ingest-retry-ingest-job-1"))
+
+
+@pytest.mark.asyncio
+async def test_research_failure_renders_only_honest_catalog_retry_action():
+    """Research ownership suppresses provider overrides that bypass its receipt."""
+
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/private/voice.wav",
+        state=IngestJobState.FAILED,
+        error="The selected GGUF cannot be used by transcribe.cpp.",
+        permanent=False,
+        error_detail={
+            "category": "stt_failure",
+            "code": "artifact_incompatible",
+            "message": "The selected GGUF cannot be used by transcribe.cpp.",
+            "actions": ["choose_another_gguf", "retry_faster_whisper"],
+        },
+        research_source_operation_id="source-op-retry-library-row",
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+
+    async with app.run_test() as pilot:
+        retry = pilot.app.query_one("#library-ingest-retry-ingest-job-1", Button)
+        assert str(retry.label) == "Retry Research source"
+        assert not list(
+            pilot.app.query("#library-ingest-retry-faster-whisper-ingest-job-1")
+        )
+        assert not list(pilot.app.query("#library-ingest-choose-gguf-ingest-job-1"))
 
 
 @pytest.mark.asyncio
@@ -1629,8 +1718,10 @@ async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
     fake_app = MagicMock()
     monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = MagicMock()
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         type_options={
             "audio_video": {
                 "transcription_provider": "parakeet-onnx",
@@ -1638,7 +1729,7 @@ async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
             }
         }
     )
-    prior = deepcopy(screen._library_ingest_form.type_options)
+    prior = deepcopy(screen._ingest_state.form.type_options)
     event = SimpleNamespace(
         group="audio_video",
         name="transcription_model_dir",
@@ -1655,7 +1746,7 @@ async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
     selected.mkdir()
     await callback(selected)
 
-    assert screen._library_ingest_form.type_options == {
+    assert screen._ingest_state.form.type_options == {
         **prior,
         "audio_video": {
             **prior["audio_video"],
@@ -1703,10 +1794,10 @@ async def test_idle_external_fence_preserves_focused_form_input(
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_ingest_form.title == "Atlas notes"
-        assert screen._library_ingest_form.type_options["pdf"]["ocr_language"] == "fr"
+        assert screen._ingest_state.form.title == "Atlas notes"
+        assert screen._ingest_state.form.type_options["pdf"]["ocr_language"] == "fr"
         assert (
-            screen._library_ingest_form.type_options["generic"]["chunk_size"]
+            screen._ingest_state.form.type_options["generic"]["chunk_size"]
             == "2048"
         )
         assert screen.query_one("#library-ingest-title", Input) is title
@@ -1729,8 +1820,8 @@ async def test_library_screen_multiline_prompt_typing_preserves_widget_and_focus
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
-    screen._library_ingest_form.analyze = True
-    screen._library_ingest_form.expanded_type_groups.add("generic")
+    screen._ingest_state.form.analyze = True
+    screen._ingest_state.form.expanded_type_groups.add("generic")
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -1748,51 +1839,241 @@ async def test_library_screen_multiline_prompt_typing_preserves_widget_and_focus
         assert screen.app.focused is prompt
 
 
-@pytest.mark.asyncio
-@pytest.mark.allow_network
-async def test_local_prompt_receipt_hides_retained_server_only_keep_original_file(
-    monkeypatch: pytest.MonkeyPatch,
+async def _wait_for_thread_signal(
+    signal: threading.Event,
+    pilot,
+    *,
+    what: str,
 ) -> None:
-    """A Local textarea edit cannot disclose a Server-only retained option."""
-    backend = {"value": "server"}
-    monkeypatch.setattr(
-        library_screen_module, "get_cli_setting", lambda *_args, **_kwargs: None
-    )
-    monkeypatch.setattr(
-        library_screen_module,
-        "save_setting_to_cli_config",
-        lambda _section, _key, value: backend.__setitem__("value", value) or True,
-    )
-    app = _build_test_app()
+    """Bound a mounted wait for one production thread-worker checkpoint."""
+
+    for _ in range(200):
+        if signal.is_set():
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def _backend_switch_screen(app, backend: dict[str, str]) -> LibraryScreen:
+    """Build the real mounted ingest canvas around a controllable owner."""
+
     app._resolve_ingest_backend = lambda: backend["value"]
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
     screen._build_library_ingest_state = lambda: build_library_ingest_state(
-        (), form=screen._library_ingest_form, ingest_backend=backend["value"],
-        runtime_source="server", server_ingest_available=True,
+        (),
+        form=screen._ingest_state.form,
+        ingest_backend=backend["value"],
+        runtime_source="server",
+        server_ingest_available=True,
     )
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
-    screen._library_ingest_form.analyze = True
-    screen._library_ingest_form.expanded_type_groups.add("generic")
+    screen._ingest_state.form.analyze = True
+    screen._ingest_state.form.expanded_type_groups.add("generic")
+    return screen
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_backend_switch_repaints_after_delayed_persistence_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed Server-to-Local save removes Server-only controls."""
+
+    backend = {"value": "server"}
+    save_entered = threading.Event()
+    release_save = threading.Event()
+    real_save = library_screen_module.save_setting_to_cli_config
+
+    def delayed_save(section: str, key: str, target: str) -> bool:
+        if (section, key) != ("library.ingest", "backend"):
+            return real_save(section, key, target)
+        save_entered.set()
+        assert release_save.wait(5.0), "test never released backend persistence"
+        backend["value"] = target
+        return True
+
+    app = _build_test_app()
+    screen = _backend_switch_screen(app, backend)
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", delayed_save
+    )
     host = LibraryHarness(app, screen=screen)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
 
-        screen.query_one("#opt-generic-keep_original_file", Checkbox).value = True
-        await pilot.pause()
-        screen.query_one("#library-ingest-backend-switch", Button).press()
-        await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
+            screen.query_one("#library-ingest-backend-switch", Button).press()
+            await _wait_for_thread_signal(
+                save_entered, pilot, what="backend persistence start"
+            )
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+            await pilot.pause()
+            assert screen.query_one("#opt-generic-keep_original_file", Checkbox)
+            release_save.set()
+            for _ in range(200):
+                if (
+                    backend["value"] == "local"
+                    and screen._ingest_state.backend_target is None
+                    and len(screen.query("#opt-generic-keep_original_file")) == 0
+                ):
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError("backend persistence never completed")
+            await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
 
-        prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)
-        prompt.text = "Summarize this import."
-        await pilot.pause()
+            prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)
+            prompt.text = "Summarize this import."
+            await pilot.pause()
 
-        title = str(screen.query_one("#type-group-generic", Collapsible).title)
-        assert backend["value"] == "local"
-        assert "Keep original file" not in title
+            title = str(screen.query_one("#type-group-generic", Collapsible).title)
+            assert "Keep original file" not in title
+    finally:
+        release_save.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_backend_switch_failure_restores_persisted_server_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed Local preference save repaints the persisted owner."""
+
+    backend = {"value": "server"}
+    save_entered = threading.Event()
+    release_save = threading.Event()
+    real_save = library_screen_module.save_setting_to_cli_config
+
+    def failing_save(section: str, key: str, target: str) -> bool:
+        if (section, key) != ("library.ingest", "backend"):
+            return real_save(section, key, target)
+        save_entered.set()
+        assert release_save.wait(5.0), "test never released backend persistence"
+        raise OSError("private fixture detail")
+
+    app = _build_test_app()
+    screen = _backend_switch_screen(app, backend)
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", failing_save
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+
+            screen.query_one("#library-ingest-backend-switch", Button).press()
+            await _wait_for_thread_signal(
+                save_entered, pilot, what="failing backend persistence start"
+            )
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+            await pilot.pause()
+            persisted_control = screen.query_one(
+                "#opt-generic-keep_original_file", Checkbox
+            )
+
+            release_save.set()
+            for _ in range(200):
+                controls = screen.query("#opt-generic-keep_original_file")
+                if (
+                    screen._ingest_state.backend_target is None
+                    and len(controls) == 1
+                    and controls.first() is not persisted_control
+                ):
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError("failed preference never repainted owner state")
+            assert backend["value"] == "server"
+    finally:
+        release_save.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_rapid_backend_switch_keeps_latest_server_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale Local completion cannot repaint or outlast a newer Server choice."""
+
+    backend = {"value": "server"}
+    entered = {"local": threading.Event(), "server": threading.Event()}
+    release = {"local": threading.Event(), "server": threading.Event()}
+    saves: list[str] = []
+    real_save = library_screen_module.save_setting_to_cli_config
+
+    def delayed_save(section: str, key: str, target: str) -> bool:
+        if (section, key) != ("library.ingest", "backend"):
+            return real_save(section, key, target)
+        saves.append(target)
+        entered[target].set()
+        assert release[target].wait(5.0), f"test never released {target} save"
+        backend["value"] = target
+        return True
+
+    app = _build_test_app()
+    screen = _backend_switch_screen(app, backend)
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", delayed_save
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+
+            screen.query_one("#library-ingest-backend-switch", Button).press()
+            await _wait_for_thread_signal(
+                entered["local"], pilot, what="first Local preference save"
+            )
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+            await pilot.pause()
+
+            screen.query_one("#library-ingest-backend-switch", Button).press()
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+            await pilot.pause()
+            latest_pending_control = screen.query_one(
+                "#opt-generic-keep_original_file", Checkbox
+            )
+
+            release["local"].set()
+            await _wait_for_thread_signal(
+                entered["server"], pilot, what="latest Server preference save"
+            )
+            assert backend["value"] == "local"
+            await pilot.pause()
+            assert (
+                screen.query_one("#opt-generic-keep_original_file", Checkbox)
+                is latest_pending_control
+            )
+
+            release["server"].set()
+            for _ in range(200):
+                controls = screen.query("#opt-generic-keep_original_file")
+                if (
+                    backend["value"] == "server"
+                    and screen._ingest_state.backend_target is None
+                    and len(controls) == 1
+                    and controls.first() is not latest_pending_control
+                ):
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError("latest Server preference never persisted")
+            await pilot.pause()
+            assert saves == ["local", "server"]
+            assert screen.query_one("#opt-generic-keep_original_file", Checkbox)
+    finally:
+        release["local"].set()
+        release["server"].set()
 
 
 @pytest.mark.asyncio
@@ -1811,10 +2092,10 @@ async def test_library_screen_ingest_layout_contains_metadata_and_start_for_loca
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
-    screen._library_ingest_form.path = "/tmp/notes.txt"
-    screen._library_ingest_form.analyze = True
-    screen._library_ingest_form.expanded_type_groups.add("generic")
-    screen._library_ingest_form.type_options = {
+    screen._ingest_state.form.path = "/tmp/notes.txt"
+    screen._ingest_state.form.analyze = True
+    screen._ingest_state.form.expanded_type_groups.add("generic")
+    screen._ingest_state.form.type_options = {
         "generic": {"custom_prompt": "Keep headings.\nPreserve citations."}
     }
     host = LibraryHarness(app, screen=screen)
@@ -1845,13 +2126,15 @@ async def test_library_screen_ingest_layout_contains_metadata_and_start_for_loca
 
 def test_external_override_defers_submit_until_preparation_finishes() -> None:
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     submit = MagicMock()
     source_service = MagicMock()
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: source_service,
     )
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         path="/tmp/speech.wav",
         type_options={
             "audio_video": {
@@ -1952,6 +2235,8 @@ def test_external_prepare_retains_before_enqueue(
         lambda: SimpleNamespace(is_cancelled=False),
     )
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     # task-15470: the actual write moved into a `@work(thread=True)`
     # instance method (`_save_library_ingest_options`), which needs a real
     # running app to dispatch through `run_worker` -- `fake_app` above is a
@@ -1965,7 +2250,7 @@ def test_external_prepare_retains_before_enqueue(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
     )
-    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+    screen._ingest_state.form = LibraryIngestFormState(path="/tmp/speech.wav")
     screen._library_external_submit_generation = 1
     screen._library_external_submit_scope_id = "library-external-scope"
     screen._library_external_submit_worker = None
@@ -2018,12 +2303,14 @@ def test_external_vad_plan_is_exact_and_cancel_releases_without_jobs(
     service = MagicMock()
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
     )
-    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
-    prior = deepcopy(screen._library_ingest_form)
+    screen._ingest_state.form = LibraryIngestFormState(path="/tmp/speech.wav")
+    prior = deepcopy(screen._ingest_state.form)
     screen._library_external_submit_generation = 4
     screen._library_external_submit_scope_id = "library-external-vad"
     screen._library_external_submit_worker = None
@@ -2045,7 +2332,7 @@ def test_external_vad_plan_is_exact_and_cancel_releases_without_jobs(
     assert {entry.ref for entry in modal.report.entries} == {report.root}
     callback(False)
     service.release_scope.assert_called_once_with("library-external-vad")
-    assert screen._library_ingest_form == prior
+    assert screen._ingest_state.form == prior
     submit.assert_not_called()
 
 
@@ -2063,6 +2350,8 @@ def test_external_vad_plan_rejects_any_non_vad_entry(
     monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
     service = MagicMock()
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=MagicMock(),
         _ensure_parakeet_source_service=lambda: service,
@@ -2099,6 +2388,8 @@ def test_stale_external_result_releases_scope_without_enqueue(
     service = MagicMock()
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2129,13 +2420,15 @@ def test_external_validation_failure_releases_and_preserves_form(
     service = MagicMock()
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
         notify=MagicMock(),
     )
-    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
-    prior = deepcopy(screen._library_ingest_form)
+    screen._ingest_state.form = LibraryIngestFormState(path="/tmp/speech.wav")
+    prior = deepcopy(screen._ingest_state.form)
     screen._library_external_submit_generation = 3
     screen._library_external_submit_scope_id = "library-external-failed"
     screen._library_external_submit_worker = MagicMock()
@@ -2153,7 +2446,7 @@ def test_external_validation_failure_releases_and_preserves_form(
     )
 
     service.release_scope.assert_called_once_with("library-external-failed")
-    assert screen._library_ingest_form == prior
+    assert screen._ingest_state.form == prior
     assert screen._library_external_submit_busy is False
     assert screen._library_external_submit_status.startswith(
         "Directory verification failed."
@@ -2171,13 +2464,15 @@ def test_external_submit_exception_releases_before_any_registry_job(
     registry.jobs.return_value = ()
     submit = MagicMock(side_effect=RuntimeError("submit failed"))
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
         notify=MagicMock(),
     )
-    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
-    prior = deepcopy(screen._library_ingest_form)
+    screen._ingest_state.form = LibraryIngestFormState(path="/tmp/speech.wav")
+    prior = deepcopy(screen._ingest_state.form)
     screen._library_ingest_registry = lambda: registry
     screen._library_external_submit_generation = 5
     screen._library_external_submit_scope_id = "library-external-submit-error"
@@ -2197,7 +2492,7 @@ def test_external_submit_exception_releases_before_any_registry_job(
 
     service.release_scope.assert_called_once_with("library-external-submit-error")
     assert registry.jobs.call_count == 2
-    assert screen._library_ingest_form == prior
+    assert screen._ingest_state.form == prior
     assert screen._library_external_submit_busy is False
     assert screen._library_external_submit_status.startswith("Queueing failed.")
 
@@ -2206,12 +2501,14 @@ def test_external_override_is_not_prepared_for_server_backend() -> None:
     submit = MagicMock()
     service = MagicMock()
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
         _resolve_ingest_backend=lambda: "server",
     )
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         type_options={
             "audio_video": {
                 "transcription_provider": "parakeet-onnx",
@@ -2240,12 +2537,14 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
     service = MagicMock()
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
         _resolve_ingest_backend=lambda: backend["value"],
     )
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         type_options={
             "audio_video": {
                 "transcription_provider": "parakeet-onnx",
@@ -2257,11 +2556,12 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
     screen._library_external_submit_generation = 0
     screen._library_external_submit_scope_id = None
     screen._library_external_submit_worker = None
+    screen._ingest_state.start_consent = None
     worker = MagicMock(is_finished=False)
     screen._prepare_library_external_submission = MagicMock(return_value=worker)
     screen.refresh = MagicMock()
 
-    def save_backend(target: str) -> None:
+    def save_backend(target: str, _generation: int) -> None:
         backend["value"] = target
 
     # task-15470: the actual persistence call moved into a
@@ -2305,12 +2605,14 @@ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
     service = MagicMock()
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
         _resolve_ingest_backend=lambda: "local",
     )
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         path="/tmp/speech.wav",
         type_options={
             "audio_video": {
@@ -2355,8 +2657,8 @@ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
         None,
     )
 
-    assert screen._library_ingest_form.path == "/tmp/speech.wav"
-    assert screen._library_ingest_form.type_options["audio_video"] == {}
+    assert screen._ingest_state.form.path == "/tmp/speech.wav"
+    assert screen._ingest_state.form.type_options["audio_video"] == {}
     submit.assert_not_called()
     service.release_scope.assert_any_call(scope_id)
 
@@ -2385,6 +2687,8 @@ async def test_external_vad_worker_cancellation_reaches_underlying_install(
     service = MagicMock()
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2421,12 +2725,14 @@ def test_vad_install_failure_has_exact_zero_job_copy_and_recovery() -> None:
     notify = MagicMock()
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
         notify=notify,
     )
-    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+    screen._ingest_state.form = LibraryIngestFormState(path="/tmp/speech.wav")
     screen._library_external_submit_generation = 2
     screen._library_external_submit_scope_id = "library-external-vad-failed"
     screen._library_external_submit_worker = MagicMock()
@@ -2462,6 +2768,8 @@ def test_external_invalidation_clears_busy_status_and_shared_vad_progress() -> N
     progress_widget = SimpleNamespace(display=True)
     worker = MagicMock(is_finished=False)
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         _ensure_parakeet_source_service=lambda: service,
     )
@@ -2490,10 +2798,12 @@ def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
     service = MagicMock()
     worker = MagicMock(is_finished=False)
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         _ensure_parakeet_source_service=lambda: service,
     )
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         path="/tmp/speech.wav",
         type_options={
             "audio_video": {
@@ -2502,7 +2812,7 @@ def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
             }
         },
     )
-    prior = deepcopy(screen._library_ingest_form)
+    prior = deepcopy(screen._ingest_state.form)
     screen._library_external_submit_generation = 1
     screen._library_external_submit_scope_id = "library-external-cancel"
     screen._library_external_submit_worker = worker
@@ -2515,7 +2825,7 @@ def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
     event.stop.assert_called_once_with()
     worker.cancel.assert_called_once_with()
     service.release_scope.assert_called_once_with("library-external-cancel")
-    assert screen._library_ingest_form == prior
+    assert screen._ingest_state.form == prior
     assert screen._library_external_submit_busy is False
     assert screen._library_external_submit_status == (
         "External preparation cancelled; no import was queued."
@@ -2527,6 +2837,8 @@ def test_external_vad_progress_is_generation_fenced_and_labeled() -> None:
     label = MagicMock()
     progress = MagicMock()
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(_resolve_ingest_backend=lambda: "local")
     screen._library_external_submit_generation = 7
     screen._library_external_submit_scope_id = "library-external-progress"
@@ -3150,7 +3462,7 @@ async def test_severity_colour_supplements_glyphs_and_invalid_field_marked() -> 
         # Glyph + word survive alongside the colour (monochrome contract).
         by_id = {row.job_id: row for row in state.queue_rows}
         assert by_id["ingest-job-1"].line.startswith("✗ failed")
-        assert by_id["ingest-job-2"].line.startswith("○ skipped")
+        assert by_id["ingest-job-2"].line.startswith("– skipped")
 
         invalid = pilot.app.query_one("#opt-generic-chunk_size", Input)
         assert invalid.has_class("-ingest-option-invalid"), (
@@ -3398,7 +3710,18 @@ async def test_every_select_renders_human_labels_never_raw_tokens():
                 _, group, name = widget_id.split("-", 2)
                 seen_groups.add(group)
                 cap = get_capabilities(group)
-                field = next(f for f in cap.fields if f.name == name)
+                field = next(
+                    (f for f in cap.fields if f.name == name),
+                    None,
+                )
+                if field is None:
+                    # (task 11) The chunking-template picker is an opt-*
+                    # select with NO schema field: its values ARE the
+                    # user-facing template names (not internal tokens), and
+                    # its default option is the spec §9.3 None label. The
+                    # token-label rule below is a schema-select contract.
+                    assert name == "chunk_template" and group == "generic"
+                    continue
                 rendered = [
                     (str(prompt), value)
                     for prompt, value in select._options
@@ -4508,3 +4831,82 @@ async def test_a_single_install_command_yields_a_single_copy_control():
         buttons[0].press()
         await pilot.pause()
     assert copied == ['pip install -e ".[extra0]"'], copied
+
+
+# --- task-31635 Task 3 (critique #5 item 15) ---------------------------------
+
+
+class _FieldIdiomHost(ConsolidatedCSSApp):
+    """Mount the real Import form with the shipped stylesheet sequence."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+    def compose(self) -> ComposeResult:
+        yield LibraryIngestCanvas(
+            build_library_ingest_state(
+                (),
+                form=LibraryIngestFormState(path="/tmp/report.txt", title="T"),
+            ),
+            id="library-ingest-canvas",
+        )
+
+
+def _painted_rows(app, region) -> list[str]:
+    strips = list(app.screen._compositor.render_strips())
+    return [
+        strips[y].crop(region.x, region.right).text
+        for y in range(region.y, min(region.bottom, len(strips)))
+    ]
+
+
+def _edge_glyphs(app, widget) -> tuple[str, str, str]:
+    """The three border glyphs a field paints: top-left, left, bottom-left."""
+    rows = _painted_rows(app, widget.region)
+    return (rows[0][0], rows[1][0], rows[2][0])
+
+
+@pytest.mark.asyncio
+async def test_import_form_fields_share_one_border_idiom():
+    """Item 15 (declined): the path field's thick box IS its focus cue.
+
+    The critique read the Import form as mixing two idioms -- a thick box
+    around the path field, thin ``▊…▎`` bars around the metadata fields.
+    They are the same idiom: all four carry ``.library-ingest-field``'s
+    ``border: tall``, and the box is ``outline: heavy`` from
+    ``.library-ingest-field:focus`` (task-3302 / MI-05, DESIGN.md's focus
+    contract -- before it, focus on these fields was colour-only and the
+    form rendered byte-identical in monochrome). The Import canvas focuses
+    the path field on entry, which is the whole of the difference.
+
+    Declining trades an inconsistency the user saw for the focus cue the
+    whole form depends on: pinning ``▊…▎`` on the focused path field would
+    restore task-3302's defect, and giving every metadata field the box
+    permanently would erase the cue outright.
+    """
+    app = _FieldIdiomHost()
+    async with app.run_test(size=(120, 45)) as pilot:
+        await pilot.pause()
+        path = app.query_one("#library-ingest-path", Input)
+        title = app.query_one("#library-ingest-title", Input)
+        author = app.query_one("#library-ingest-author", Input)
+
+        # Unfocused, all four fields paint the same edge.
+        assert app.focused is not path
+        thin = ("▊", "▊", "▊")  # ▊ on every row of `tall`
+        assert _edge_glyphs(app, path) == thin
+        assert _edge_glyphs(app, title) == thin
+        assert _edge_glyphs(app, author) == thin
+        assert _painted_rows(app, path.region)[0][1] == "▔"  # ▔
+
+        # Focus is the ONLY thing that swaps the glyph set, and it swaps it
+        # for a metadata field exactly as it does for the path field.
+        path.focus()
+        await pilot.pause()
+        heavy = ("┏", "┃", "┗")  # ┏ ┃ ┗
+        assert _edge_glyphs(app, path) == heavy
+        assert _edge_glyphs(app, title) == thin
+
+        title.focus()
+        await pilot.pause()
+        assert _edge_glyphs(app, title) == heavy
+        assert _edge_glyphs(app, path) == thin

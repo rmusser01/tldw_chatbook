@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import tldw_chatbook.UI.CCP_Modules as CCP_Modules
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 
@@ -19,6 +20,8 @@ RETIRED_MODULES = (
     # The Personas "prompts" mode chip is retired (Task 7): prompt handling
     # moved entirely into Library, so CCPPromptHandler is dead code.
     "tldw_chatbook.UI.CCP_Modules.ccp_prompt_handler",
+    "tldw_chatbook.UI.CCP_Modules.ccp_conversation_handler",
+    "tldw_chatbook.UI.CCP_Modules.ccp_dictionary_handler",
     # task-412: ChatWindow was never instantiated in production (the app uses
     # ChatWindowEnhanced) and its right-sidebar composers created the only
     # widgets that ever bore id="chat-right-sidebar".
@@ -102,6 +105,8 @@ RETIRED_FILES = (
     "tldw_chatbook/UI/Conv_Char_Window.py",
     "tldw_chatbook/UI/Conv_Char_Window.py.backup",
     "tldw_chatbook/UI/CCP_Modules/ccp_prompt_handler.py",
+    "tldw_chatbook/UI/CCP_Modules/ccp_conversation_handler.py",
+    "tldw_chatbook/UI/CCP_Modules/ccp_dictionary_handler.py",
     # task-412
     "tldw_chatbook/UI/Chat_Window.py",
     "tldw_chatbook/Widgets/Chat_Widgets/chat_right_sidebar.py",
@@ -150,8 +155,7 @@ RETIRED_FILES = (
 
 CCP_HANDLER_FILES = (
     "tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py",
-    "tldw_chatbook/UI/CCP_Modules/ccp_conversation_handler.py",
-    "tldw_chatbook/UI/CCP_Modules/ccp_dictionary_handler.py",
+    "tldw_chatbook/UI/CCP_Modules/ccp_persona_handler.py",
     "tldw_chatbook/UI/CCP_Modules/ccp_message_manager.py",
 )
 
@@ -173,6 +177,13 @@ def test_retired_legacy_entrypoint_files_are_removed():
     """Verify retired legacy source files are absent from the tree."""
     for relative_path in RETIRED_FILES:
         assert not (PROJECT_ROOT / relative_path).exists(), relative_path
+
+
+def test_retired_ccp_handlers_are_not_package_exports():
+    """Verify retired handlers are absent from the CCP package surface."""
+    for name in ("CCPConversationHandler", "CCPDictionaryHandler"):
+        assert name not in CCP_Modules.__all__
+        assert not hasattr(CCP_Modules, name)
 
 
 def test_ccp_handlers_type_check_against_personas_screen():

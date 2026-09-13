@@ -30,6 +30,7 @@ from tldw_chatbook.TTS import (
     ProfileRepositoryState,
     STTSPlaygroundRequest,
 )
+from tldw_chatbook.TTS import profile_repository as profile_repository_module
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS.adapter_types import ProgressSink, TTSProgress
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
@@ -140,7 +141,7 @@ def test_tts_package_exports_profile_repository_owner() -> None:
     assert tts_package.TTSProfileRepository is TTSProfileRepository
 
 
-def test_app_constructs_one_closed_pure_profile_repository(
+def test_app_captures_profile_repository_path_without_constructing_owner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -159,7 +160,7 @@ def test_app_constructs_one_closed_pure_profile_repository(
         raising=False,
     )
     monkeypatch.setattr(
-        app_module,
+        profile_repository_module,
         "TTSProfileRepository",
         build_repository,
         raising=False,
@@ -174,16 +175,109 @@ def test_app_constructs_one_closed_pure_profile_repository(
 
     app = _build_test_app()
 
-    assert repositories == [app._tts_profile_repository]
-    assert app._tts_profile_repository.state is ProfileRepositoryState.CLOSED
-    assert app._tts_profile_repository.generation == 0
-    assert app._tts_profile_repository.terminal is False
-    assert app._tts_profile_repository._executor is None
-    assert app._tts_profile_repository._connection is None
-    assert app._tts_profile_repository._lease is None
+    assert repositories == []
+    assert app._tts_profile_repository is None
+    assert app._tts_profile_repository_path == database_path
+    assert app._tts_profile_repository_close_requested is False
     assert app._tts_profile_repository_open_task is None
     assert app._tts_profile_repository_close_task is None
     assert not database_path.parent.exists()
+
+
+@pytest.mark.asyncio
+async def test_profile_repository_concurrent_first_use_constructs_one_captured_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "captured" / "profiles.sqlite"
+    open_started = asyncio.Event()
+    allow_open = asyncio.Event()
+
+    class BlockingRepository:
+        state = ProfileRepositoryState.CLOSED
+        open_calls = 0
+
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        async def open(self) -> None:
+            self.open_calls += 1
+            open_started.set()
+            await allow_open.wait()
+            self.state = ProfileRepositoryState.OPEN
+
+    repositories: list[BlockingRepository] = []
+
+    def build_repository(path: Path) -> BlockingRepository:
+        repository = BlockingRepository(path)
+        repositories.append(repository)
+        return repository
+
+    monkeypatch.setattr(
+        profile_repository_module,
+        "TTSProfileRepository",
+        build_repository,
+    )
+    owner = SimpleNamespace(
+        _tts_profile_repository=None,
+        _tts_profile_repository_path=database_path,
+        _tts_profile_repository_close_requested=False,
+        _tts_profile_repository_open_task=None,
+        _tts_profile_repository_close_task=None,
+        loguru_logger=Mock(),
+    )
+
+    first = asyncio.create_task(TldwCli._ensure_tts_profile_repository(owner))
+    second = asyncio.create_task(TldwCli._ensure_tts_profile_repository(owner))
+    await asyncio.sleep(0)
+
+    assert len(repositories) == 1
+    repository = repositories[0]
+    assert repository.path == database_path
+    await open_started.wait()
+    first.cancel("one first-use waiter stopped")
+    await asyncio.sleep(0)
+    assert second.done() is False
+
+    allow_open.set()
+    with pytest.raises(asyncio.CancelledError, match="one first-use waiter stopped"):
+        await first
+    assert await second is repository
+    assert owner._tts_profile_repository is repository
+    assert repository.open_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_profile_repository_close_before_first_use_latches_construction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    constructions: list[Path] = []
+
+    def unexpected_repository(path: Path) -> object:
+        constructions.append(path)
+        return object()
+
+    monkeypatch.setattr(
+        profile_repository_module,
+        "TTSProfileRepository",
+        unexpected_repository,
+    )
+    owner = SimpleNamespace(
+        _tts_profile_repository=None,
+        _tts_profile_repository_path=tmp_path / "profiles.sqlite",
+        _tts_profile_repository_close_requested=False,
+        _tts_profile_repository_open_task=None,
+        _tts_profile_repository_close_task=None,
+        loguru_logger=Mock(),
+    )
+
+    await TldwCli._close_tts_profile_repository(owner)
+    ensured = await TldwCli._ensure_tts_profile_repository(owner)
+
+    assert owner._tts_profile_repository_close_requested is True
+    assert ensured is None
+    assert constructions == []
 
 
 @pytest.mark.asyncio
@@ -824,6 +918,8 @@ def test_removal_settings_inputs_prefer_exact_detached_typed_draft() -> None:
         "semantic_vad",
         "0.5",
         "500",
+        "",
+        False,
     )
 
     def snapshot(model_id: str) -> SpeechTTSPanelDraftSnapshot:
@@ -895,7 +991,7 @@ def test_removal_settings_inputs_treat_missing_stored_draft_as_no_draft() -> Non
 
 
 @pytest.mark.asyncio
-async def test_app_lifecycle_shutdown_drains_artifact_coordinator_first() -> None:
+async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> None:
     calls: list[str] = []
 
     class Coordinator:
@@ -909,13 +1005,42 @@ async def test_app_lifecycle_shutdown_drains_artifact_coordinator_first() -> Non
     async def image_shutdown() -> None:
         calls.append("image")
 
+    async def collections_capture_shutdown() -> None:
+        calls.append("collections-capture")
+
     async def console_runtime_shutdown() -> None:
         # TASK-18609: production drains the Console runtime between the
-        # image-edit and file-notes owners (app.py
+        # Console settings and change-review owners (app.py
         # `_shutdown_app_owned_lifecycles`); the double drifted when the
         # call was added and the test died on the missing attribute instead
         # of asserting the ordering it exists for.
         calls.append("console-runtime")
+
+    async def raw_cli_shutdown() -> None:
+        calls.append("raw-cli")
+
+    async def terminal_session_shutdown() -> None:
+        calls.append("terminal-session")
+
+    async def console_settings_shutdown() -> None:
+        calls.append("console-settings")
+
+    async def notes_sync_shutdown() -> None:
+        calls.append("notes-sync")
+
+    async def actor_pack_import_shutdown() -> None:
+        calls.append("actor-pack-import")
+
+    async def actor_pack_export_shutdown() -> None:
+        calls.append("actor-pack-export")
+
+    async def persona_buddy_shutdown() -> None:
+        calls.append("persona-buddy")
+
+    class ChangeReviewOwner:
+        def shutdown(self, *, timeout: float) -> None:
+            assert timeout == 1.0
+            calls.append("change-review")
 
     async def notes_shutdown() -> None:
         calls.append("notes")
@@ -923,18 +1048,37 @@ async def test_app_lifecycle_shutdown_drains_artifact_coordinator_first() -> Non
     owner = SimpleNamespace(
         _audio_cpp_artifact_lease_coordinator=Coordinator(),
         audio_cpp_model_install_owner=InstallOwner(),
+        _shutdown_collections_capture_runtime=collections_capture_shutdown,
+        _shutdown_notes_sync_runtime=notes_sync_shutdown,
+        _shutdown_actor_pack_import=actor_pack_import_shutdown,
+        _shutdown_actor_pack_export=actor_pack_export_shutdown,
+        _shutdown_raw_cli_runtime=raw_cli_shutdown,
+        _shutdown_terminal_session_manager=terminal_session_shutdown,
+        _shutdown_console_settings_durability=console_settings_shutdown,
         _shutdown_console_image_edits=image_shutdown,
         _shutdown_console_runtime=console_runtime_shutdown,
+        _shutdown_persona_buddy=persona_buddy_shutdown,
+        change_review_consent_service=ChangeReviewOwner(),
+        _meeting_session_owner=None,
         _shutdown_file_notes_session_owner=notes_shutdown,
     )
 
     await TldwCli._shutdown_app_owned_lifecycles(owner)
 
     assert calls == [
+        "collections-capture",
+        "notes-sync",
+        "actor-pack-import",
+        "actor-pack-export",
+        "raw-cli",
+        "terminal-session",
+        "console-settings",
+        "console-runtime",
+        "change-review",
+        "persona-buddy",
         "coordinator",
         "install",
         "image",
-        "console-runtime",
         "notes",
     ]
 
@@ -1224,7 +1368,9 @@ def test_app_forwards_provider_configuration_change_to_stts_handler() -> None:
 def test_existing_mount_binds_before_screen_work() -> None:
     method = _method_node(REPO_ROOT / "tldw_chatbook/app.py", "TldwCli", "on_mount")
     bind_calls = _self_method_calls(method, "_bind_tts_service")
-    restore_calls = _self_method_calls(method, "_restore_ingest_jobs")
+    restore_calls = _self_method_calls(
+        method, "_restore_ingest_jobs_and_schedule_research_sources"
+    )
 
     assert len(bind_calls) == 1
     assert len(restore_calls) == 1
@@ -1310,7 +1456,16 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
         constructed.append((root, repo, dependency))
         return portability
 
-    monkeypatch.setattr(app_module, "TTSVoiceBundlePortabilityService", build)
+    # TASK-21108: `app.py` imports the portability class function-locally
+    # inside `_ensure_tts_voice_bundle_service` (the 1,857-line module is off
+    # the boot path now), so the substitution has to land on the defining
+    # module -- there is no `app_module.TTSVoiceBundlePortabilityService` to
+    # patch, and patching one would not be read by the deferred import.
+    import tldw_chatbook.TTS.voice_bundle_service as voice_bundle_module
+
+    monkeypatch.setattr(
+        voice_bundle_module, "TTSVoiceBundlePortabilityService", build
+    )
     monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
     owner = SimpleNamespace(
         _tts_voice_bundle_service=None,

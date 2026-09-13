@@ -224,3 +224,74 @@ def test_preview_rejects_source_change_and_removes_private_copy(tmp_path, monkey
         assert not list(temporary.iterdir())
     assert changed
     assert not temporary.exists()
+
+
+@pytest.mark.parametrize("journal_mode", ["DELETE", "WAL"])
+def test_preview_reuses_verified_snapshot_across_owner_reads(tmp_path, journal_mode):
+    import sqlite3
+    from contextlib import closing
+    from pathlib import Path
+
+    from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    source = tmp_path / "source.db"
+    with closing(sqlite3.connect(source)) as writer:
+        writer.execute(
+            {"DELETE": "PRAGMA journal_mode=DELETE", "WAL": "PRAGMA journal_mode=WAL"}[
+                journal_mode
+            ]
+        )
+        writer.execute("CREATE TABLE fixture(value)")
+        writer.execute("INSERT INTO fixture VALUES ('before')")
+        writer.commit()
+        source.chmod(0o600)
+        with _preview_reads():
+            with closing(
+                connect_private_sqlite(
+                    "recovery.core.chachanotes", source, read_only=True
+                )
+            ) as first:
+                assert first.execute("SELECT value FROM fixture").fetchone() == (
+                    "before",
+                )
+                copied = Path(first.execute("PRAGMA database_list").fetchone()[2])
+            writer.execute("UPDATE fixture SET value='after'")
+            writer.commit()
+            with closing(
+                connect_private_sqlite("recovery.files.persona", source, read_only=True)
+            ) as second:
+                assert second.execute("SELECT value FROM fixture").fetchone() == (
+                    "before",
+                )
+                assert (
+                    Path(second.execute("PRAGMA database_list").fetchone()[2]) == copied
+                )
+        assert not copied.exists()
+        with _preview_reads(), closing(
+            connect_private_sqlite("recovery.files.persona", source, read_only=True)
+        ) as fresh:
+            assert fresh.execute("SELECT value FROM fixture").fetchone() == ("after",)
+
+
+def test_preview_cached_snapshot_rejects_replaced_source_path(tmp_path):
+    import sqlite3
+    from contextlib import closing
+
+    from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    source = tmp_path / "source.db"
+    replacement = tmp_path / "replacement.db"
+    for path in (source, replacement):
+        with closing(sqlite3.connect(path)) as writer:
+            writer.execute("CREATE TABLE fixture(value)")
+        path.chmod(0o600)
+    with _preview_reads():
+        with closing(
+            connect_private_sqlite("recovery.core.chachanotes", source, read_only=True)
+        ) as first:
+            first.execute("SELECT value FROM fixture").fetchall()
+        replacement.replace(source)
+        with pytest.raises(ValueError, match="preview_sqlite_changed"):
+            connect_private_sqlite("recovery.files.persona", source, read_only=True)

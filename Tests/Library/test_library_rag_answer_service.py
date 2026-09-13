@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Library.library_rag_answer_service import (
     ANSWER_MAX_TOKENS,
+    ANSWER_REASONING_MAX_TOKENS,
     ANSWER_STATUS_ABSTAINED,
     ANSWER_STATUS_FAILED,
     ANSWER_STATUS_NO_EVIDENCE,
@@ -1232,3 +1233,82 @@ def test_provider_gate_accepts_a_keyless_dispatchable_endpoint_spelling(monkeypa
 
     assert gate.provider == "custom-openai-api"
     assert gate.credential_recovery == ""
+
+
+# --- TASK-21515: reasoning-aware completion budget (answer side) -------------
+#
+# Same defect family the briefing service hit: the DeepSeek handler's
+# ``max_tokens`` is reasoning-inclusive with no effort lever, so a
+# reasoning-typed default model spends the plain 1200-token budget on
+# thinking and returns an empty completion, failing the answer with
+# EMPTY_ANSWER_ERROR.
+
+
+async def test_a_reasoning_typed_deepseek_answer_gets_a_larger_completion_budget():
+    chat = _FakeChat()
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert chat.calls[0]["max_tokens"] == ANSWER_REASONING_MAX_TOKENS == 6000
+
+
+async def test_a_plain_deepseek_chat_answer_keeps_the_plain_completion_budget():
+    chat = _FakeChat()
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="deepseek",
+        model="deepseek-chat",
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert chat.calls[0]["max_tokens"] == ANSWER_MAX_TOKENS == 1200
+
+
+def test_answer_effective_max_tokens_gates_on_the_deepseek_endpoint_and_model():
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    helper = library_rag_answer_service._effective_max_tokens
+    assert helper("deepseek", "deepseek-v4-flash") == ANSWER_REASONING_MAX_TOKENS
+    assert helper("DeepSeek", "deepseek-v4-flash") == ANSWER_REASONING_MAX_TOKENS
+    assert helper("openai", "deepseek-v4-flash") == ANSWER_MAX_TOKENS
+    assert helper("deepseek", "deepseek-chat") == ANSWER_MAX_TOKENS
+
+
+@pytest.mark.parametrize(
+    ("resolved_default", "expected"),
+    [
+        # Qodo #7/#8: Library RAG resolves no model of its own
+        # (`resolve_library_rag_answer_provider` returns model=None), so a
+        # deepseek-endpoint answer runs the handler's configured default --
+        # reasoning-typed unless configured to deepseek-chat -- and the gate
+        # must resolve it rather than test the literal None.
+        ("deepseek-v4-flash", ANSWER_REASONING_MAX_TOKENS),
+        ("deepseek-reasoner", ANSWER_REASONING_MAX_TOKENS),
+        ("deepseek-chat", ANSWER_MAX_TOKENS),
+    ],
+)
+def test_answer_effective_max_tokens_resolves_the_deepseek_default_when_model_is_none(
+    monkeypatch, resolved_default, expected
+):
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    monkeypatch.setattr(
+        library_rag_answer_service,
+        "resolve_deepseek_effective_model",
+        lambda m: resolved_default,
+    )
+    assert (
+        library_rag_answer_service._effective_max_tokens("deepseek", None) == expected
+    )

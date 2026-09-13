@@ -8,6 +8,7 @@ gates the transient current-model option.
 
 import pytest
 
+from tldw_chatbook.UI.Screens import provider_model_resolution
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import SELECTOR_MERGE_CAP
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
@@ -49,6 +50,24 @@ async def test_cloud_catalog_excludes_saved_only_models_and_keeps_live_label():
     assert "runtime discovered" in options[0].label
 
 
+@pytest.mark.asyncio
+async def test_cloud_catalog_provenance_never_claims_the_exact_endpoint() -> None:
+    """A provider-only cache cannot prove an unsaved draft endpoint served a model."""
+    options = await resolve_provider_model_options(
+        {"OpenAI": ["saved-old"]},
+        _FakeScope(_entries("OpenAI", ["catalog-current"])),
+        provider="OpenAI",
+    )
+
+    assert hasattr(provider_model_resolution, "ConsoleModelProvenance")
+    provenance = provider_model_resolution.ConsoleModelProvenance
+    assert [(item.model_id, item.provenance) for item in options] == [
+        ("catalog-current", provenance.CURRENT_CATALOG),
+    ]
+    assert options[0].verified_for_connection is False
+    assert options[0].provenance is not provenance.SERVED_NOW
+
+
 class _EmptySnapshotScope:
     async def merge_saved_and_discovered_models(self, **_kwargs):
         return ()
@@ -79,6 +98,22 @@ async def test_empty_cloud_snapshot_preserves_current_model_as_unlisted():
 
     assert [option.model_id for option in options] == ["retired-model"]
     assert options[0].source == "current_unlisted"
+
+
+@pytest.mark.asyncio
+async def test_current_unlisted_model_has_custom_unverified_provenance() -> None:
+    options = await resolve_provider_model_options(
+        {"Anthropic": ["retired-model"]},
+        _EmptySnapshotScope(),
+        provider="Anthropic",
+        current_model="session-only",
+    )
+
+    assert hasattr(provider_model_resolution, "ConsoleModelProvenance")
+    provenance = provider_model_resolution.ConsoleModelProvenance
+    assert options[0].model_id == "session-only"
+    assert options[0].provenance is provenance.CUSTOM_UNVERIFIED
+    assert options[0].verified_for_connection is False
 
 
 @pytest.mark.asyncio

@@ -131,6 +131,11 @@ class _DeterministicGateway:
         self.answer = answer
 
     async def resolve_for_send(self, _selection: Any) -> Any:
+        from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+            ConsoleEgressClass,
+            ConsoleResolvedDestination,
+        )
+
         return SimpleNamespace(
             ready=True,
             provider=MOCK_PROVIDER,
@@ -138,6 +143,12 @@ class _DeterministicGateway:
             base_url=None,
             max_tokens=64,
             visible_copy="",
+            resolved_destination=ConsoleResolvedDestination(
+                provider=MOCK_PROVIDER,
+                model="deterministic-v1",
+                endpoint_identity="mock-local/deterministic",
+                egress_class=ConsoleEgressClass.ON_DEVICE,
+            ),
         )
 
     async def stream_chat(self, _resolution: Any, _messages: Any, **_kwargs: Any) -> Any:
@@ -831,6 +842,7 @@ async def _measure_console_ttfb_once(
     persistence = _SQLiteConsolePersistence(db_path)
     gateway = _DeterministicGateway(answer)
     store = ConsoleChatStore(persistence=persistence)
+    store.create_session(ephemeral=True)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,

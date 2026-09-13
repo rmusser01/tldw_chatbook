@@ -22,13 +22,21 @@ from tldw_chatbook.Agents.agent_models import (
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
     SKILL_FILE_TOOL_NAME,
+    FORK_CHAT_TOOL_NAME,
+    NEW_CHAT_TOOL_NAME,
     AgentConfig,
     ModelTurn,
     RUN_DONE,
     RunBudget,
     ToolCatalogEntry,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
+    READ_AGENT_MESSAGES_TOOL_NAME,
+    REPORT_TO_SUPERVISOR_TOOL_NAME,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+    DISCARD_AGENT_WORKTREE_TOOL_NAME,
+    MERGE_AGENT_WORKTREE_TOOL_NAME,
 )
 from tldw_chatbook.Agents.tool_catalog import INSTALL_SKILL_TOOL_SCHEMA
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
@@ -38,7 +46,14 @@ from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 def test_install_skill_name_in_runtime_tool_names():
     assert INSTALL_SKILL_TOOL_NAME == "install_skill"
-    assert RUNTIME_TOOL_NAMES == {
+    assert RUNTIME_TOOL_NAMES == {        # ADR-150 chat fork/spawn + dev-baseline completion (fleet message/
+        # worktree constants were in RUNTIME_TOOL_NAMES but unlisted here).
+        MERGE_AGENT_WORKTREE_TOOL_NAME,
+        DISCARD_AGENT_WORKTREE_TOOL_NAME,
+        PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+        REPORT_TO_SUPERVISOR_TOOL_NAME,
+        READ_AGENT_MESSAGES_TOOL_NAME,
+
         SPAWN_TOOL_NAME,
         FIND_TOOLS_NAME,
         LOAD_TOOLS_NAME,
@@ -51,6 +66,8 @@ def test_install_skill_name_in_runtime_tool_names():
         WAIT_AGENTS_TOOL_NAME,
         CHECK_AGENTS_TOOL_NAME,
         SEND_TO_AGENT_TOOL_NAME,
+        FORK_CHAT_TOOL_NAME,
+        NEW_CHAT_TOOL_NAME,
     }
 
 
@@ -86,7 +103,7 @@ def _deps(turns, *, install_skill=None, invoke=None):
         invoke_tool=invoke or (lambda c: ToolResult(ok=False, error=f"Tool not permitted: {c.name}")),
         spawn=lambda task: ToolResult(ok=True, content="sub"),
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=lambda: False,
         clock=lambda: 0.0,
         install_skill=install_skill,

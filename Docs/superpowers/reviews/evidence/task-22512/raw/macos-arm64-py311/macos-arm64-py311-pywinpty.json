@@ -1,0 +1,134 @@
+{
+  "collection_command": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/common.py",
+      "collect-row",
+      "--row-dir",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py311.I529w4",
+      "--evidence-root",
+      "Docs/superpowers/reviews/evidence/task-22512/raw",
+      "--replace"
+    ],
+    "working_directory": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-22512-persistent-terminal"
+  },
+  "command": {
+    "argv": [
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py311.I529w4/venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/pywinpty_probe.py",
+      "--artifact-manifest",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py311.I529w4/artifacts.json",
+      "--json-out",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py311.I529w4/pywinpty.json"
+    ],
+    "working_directory": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-22512-persistent-terminal"
+  },
+  "completed_at_utc": "2026-08-29T07:35:07.016379+00:00",
+  "elapsed_seconds": 8.2e-05,
+  "generation_id": "2238b1be6b07472dadb7ab3ee0256818",
+  "mandatory": true,
+  "measurements": {
+    "current_rss_bytes": null,
+    "peak_rss_bytes": 28033024
+  },
+  "platform": {
+    "architecture": "arm64",
+    "os": "Darwin",
+    "os_release": "24.6.0",
+    "os_version": "Darwin Kernel Version 24.6.0: Mon Jul 14 11:30:40 PDT 2025; root:xnu-11417.140.69~1/RELEASE_ARM64_T6041",
+    "python_executable_name": "python",
+    "python_implementation": "CPython",
+    "python_version": "3.11.13"
+  },
+  "probe": "pywinpty",
+  "reason_category": "native-windows-host-required",
+  "row_id": "macos-arm64-py311",
+  "rows": [
+    {
+      "id": "package-pywinpty-3.0.5",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-platform-floor",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-low-level-api",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-conpty-only",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-job-admission-membership",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-handle-inheritance",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-one-credit-bounded-read",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-concurrent-io-close",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-profile-module-discovery",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-unicode-alternate-screen",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-app-crash-descendant-cleanup",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-eof-output-integrity",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "four-session-managed-rss",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    }
+  ],
+  "runtime": {
+    "kind": "host"
+  },
+  "schema_version": 1,
+  "started_at_utc": "2026-08-29T07:35:07.016209+00:00",
+  "status": "UNSUPPORTED_FAIL_CLOSED"
+}

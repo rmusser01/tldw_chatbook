@@ -12,14 +12,13 @@ survived to render.
 """
 
 import pytest
-
-pytestmark = pytest.mark.unit
-
 from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
 from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import (
     _snapshot_body,
     _snapshot_header,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def test_snapshot_header_humanizes_created_at():

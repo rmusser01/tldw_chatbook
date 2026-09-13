@@ -20,26 +20,40 @@ def _validate_sqlite(
     *,
     version_query: str = "PRAGMA user_version",
 ) -> tuple[str, ...]:
-    connection.execute("PRAGMA trusted_schema=OFF")
-    version = connection.execute(version_query).fetchone()[0]
-    if version not in versions:
-        return ("unsupported_schema_version",)
-    actual = tuple(
-        row[0]
-        for row in connection.execute(
-            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
-        )
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+        _canvas_payload_issues,
+        _canvas_schema_access,
+        _catalog,
+        _current_restrictions,
+        _restrict_connection,
     )
-    if not any(
-        known_version == version and actual == schema
-        for known_version, schema in schemas
+
+    restrictions = _current_restrictions(connection)
+    if any(
+        "canvas_revision_payload_valid" in sql
+        for _, schema in schemas
+        for sql in schema
     ):
+        if restrictions is None:
+            restrictions = _restrict_connection(connection)
+    else:
+        connection.execute("PRAGMA trusted_schema=OFF")
+    actual = tuple(row[3] for row in _catalog(connection) if row[3] is not None)
+    matched = tuple(known for known, schema in schemas if actual == schema)
+    if not matched:
         return ("unsupported_schema",)
-    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-        return ("invalid_domain_reference",)
-    if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-        return ("invalid_sqlite_integrity",)
-    return ()
+    version = connection.execute(version_query).fetchone()[0]
+    if version not in versions or version not in matched:
+        return ("unsupported_schema_version",)
+    with _canvas_schema_access(connection, actual, restrictions):
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            return ("invalid_domain_reference",)
+        payload_issues = _canvas_payload_issues(connection, restrictions)
+        if payload_issues:
+            return payload_issues
+        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+            return ("invalid_sqlite_integrity",)
+        return ()
 
 
 @contextmanager

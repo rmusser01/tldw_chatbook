@@ -2015,7 +2015,7 @@ class MediaViewerPanel(Container):
         if 0 <= self.current_analysis_index < len(self.all_analyses):
             self._run_delete_confirmation()
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="media-viewer-delete-confirmation")
     async def _run_delete_confirmation(self) -> None:
         """Show confirmation dialog and handle deletion."""
         if not self.media_data or len(self.all_analyses) == 0:

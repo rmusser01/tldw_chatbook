@@ -82,5 +82,8 @@ class _KanbanAdapter(_SQLiteDeclaration):
 
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
     return (
-        _KanbanAdapter("kanban.local", None, "tldw_chatbook_kanban.db", (1,), _SCHEMA),
+        _KanbanAdapter(
+            "kanban.local", None, "tldw_chatbook_kanban.db", (1,), _SCHEMA,
+            optional_default=True,
+        ),
     )

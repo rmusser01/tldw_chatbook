@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import contextlib
 import threading
-
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -19,17 +18,39 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.MCP.permission_store import (
+    _DEFAULT_PROFILE_ID,
     BUILTIN_TOOL_SERVER_KEY,
     EffectiveToolState,
     GatedToolRef,
-    _DEFAULT_PROFILE_ID,
     _as_mapping,
     resolve_builtin_state,
 )
+from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 from tldw_chatbook.Tools.tool_executor import Tool
 
 #: Stamp values that permit execution for this turn.
 _PERMITTING = {"approve_once", "approve_session", "always_allow"}
+
+
+#: What the MODEL is told after a user denies a call. Stating the denial alone
+#: left the obvious next move open, so a model would rephrase the same call and
+#: re-ask -- costing turns and putting a second approval card in front of a user
+#: who already decided. All three refusal sites share this one constant: the
+#: wording is deliberately kept in sync across the MCP provider, this gate and
+#: the console review hook, and three copies would drift.
+#:
+#: Kept separate from the refusal text itself so a user-authored denial reason
+#: (TASK-18920) can be shown alongside it without the model reading the user's
+#: words as system policy, or vice versa.
+DENIAL_POLICY = (
+    "Do not retry this call, do not rephrase it, and do not pursue the same "
+    "outcome by another route. Ask the user what to do instead."
+)
+
+
+def user_denial_refusal(tool_name: str) -> str:
+    """The model-facing result for an explicit user denial of ``tool_name``."""
+    return f"tool call denied by the user: {tool_name}. {DENIAL_POLICY}"
 
 
 def tool_ref(tool: Tool) -> GatedToolRef:
@@ -74,8 +95,9 @@ class BuiltinToolGate:
     concurrent children safe.
     """
 
-    def __init__(self, service: Any | None) -> None:
+    def __init__(self, service: Any | None, *, profile_id: str = "default") -> None:
         self._service = service
+        self._profile_id = profile_id
         # CONFIG, not per-run state: the permission-store payload is the
         # same for every run in the tree (one file, one profile), so it
         # stays a single shared cache rather than being keyed by run id.
@@ -217,7 +239,11 @@ class BuiltinToolGate:
             approve = getattr(self._service, "approve_for_session", None)
             if approve is not None:
                 try:
-                    approve(BUILTIN_TOOL_SERVER_KEY, tool_name)
+                    approve(
+                        BUILTIN_TOOL_SERVER_KEY,
+                        tool_name,
+                        profile_id=self._profile_id,
+                    )
                 except Exception as exc:  # noqa: BLE001 — best effort
                     logger.warning(f"builtin session approval failed: {exc}")
 
@@ -254,8 +280,14 @@ class BuiltinToolGate:
             return self._payload
 
     def resolve(self, tool: Tool) -> EffectiveToolState:
-        """Resolve ``tool``'s effective state (no stamps, no kill switch)."""
-        return resolve_builtin_state(self._load_payload(), tool_ref(tool))
+        """Resolve ``tool``'s effective state (no stamps, no kill switch).
+
+        The gate captures one permission profile at construction and uses
+        that exact id for every resolution and session-approval path.
+        """
+        return resolve_builtin_state(
+            self._load_payload(), tool_ref(tool), profile_id=self._profile_id
+        )
 
     def _kill_switch(self) -> bool:
         if self._service is None:
@@ -277,7 +309,13 @@ class BuiltinToolGate:
         if checker is None:
             return False
         try:
-            return bool(checker(BUILTIN_TOOL_SERVER_KEY, tool_name))
+            return bool(
+                checker(
+                    BUILTIN_TOOL_SERVER_KEY,
+                    tool_name,
+                    profile_id=self._profile_id,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"session approval read failed: {exc}")
             return False
@@ -301,6 +339,64 @@ class BuiltinToolGate:
         use.
         """
         return self._session_approved(tool_name)
+
+    def list_session_approvals(self) -> list[tuple[str, str]]:
+        """Live session approvals for THIS gate's built-ins (task-32291).
+
+        The built-in half of the review surface. Session grants all live in
+        the control-plane service's one set (``stamp()`` above writes there
+        under ``BUILTIN_TOOL_SERVER_KEY``), so this is a scoped read of
+        that: only this gate's captured profile, only built-in tools -- an
+        MCP server's grant is not the built-in gate's to report.
+
+        Returns:
+            Sorted ``(server_key, tool_name)`` pairs, always with
+            ``server_key == BUILTIN_TOOL_SERVER_KEY``. Empty for a
+            service-less gate or a failed read -- same fail-soft contract
+            as ``_session_approved`` above.
+        """
+        if self._service is None:
+            return []
+        lister = getattr(self._service, "list_session_approvals", None)
+        if lister is None:
+            return []
+        try:
+            approvals = lister(profile_id=self._profile_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"session approval list failed: {exc}")
+            return []
+        return [
+            (server_key, tool_name)
+            for server_key, tool_name in approvals
+            if server_key == BUILTIN_TOOL_SERVER_KEY
+        ]
+
+    def revoke_session_approval(self, server_key: str, tool_name: str) -> bool:
+        """Drop one built-in session approval (task-32291).
+
+        Scoped the same way ``list_session_approvals`` is: a non-built-in
+        ``server_key`` is refused here rather than forwarded, so the
+        built-in facade can never revoke an MCP server's grant.
+
+        Args:
+            server_key: Must be ``BUILTIN_TOOL_SERVER_KEY``.
+            tool_name: The built-in tool's LLM-facing name.
+
+        Returns:
+            ``True`` if a grant was held and is now gone; ``False``
+            otherwise (no service, wrong server key, nothing granted, or a
+            failed call).
+        """
+        if self._service is None or server_key != BUILTIN_TOOL_SERVER_KEY:
+            return False
+        revoke = getattr(self._service, "revoke_session_approval", None)
+        if revoke is None:
+            return False
+        try:
+            return bool(revoke(server_key, tool_name, profile_id=self._profile_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"session approval revoke failed: {exc}")
+            return False
 
     def check(self, tool: Tool, run_id: str) -> str | None:
         """Execution-time verdict for ``run_id``'s call to ``tool``.
@@ -327,7 +423,11 @@ class BuiltinToolGate:
             ``BuiltinToolProvider.invoke``).
         """
         if self._kill_switch():
-            return "tool execution is disabled by the kill switch"
+            # task-32285 (Qodo #2597 #2): the sentence has ONE definition,
+            # `Agents.tool_refusals.TOOL_KILL_SWITCH_REFUSAL` -- this was
+            # a raw literal, and the other four sites each had their own
+            # copy, while downstream classifiers key on the wording.
+            return TOOL_KILL_SWITCH_REFUSAL
 
         # An effective `deny` (the user set the tool -- or its server
         # default -- to "Off") is absolute: it must be consulted BEFORE
@@ -346,7 +446,7 @@ class BuiltinToolGate:
 
         stamp = self.stamped(run_id, tool.name)
         if stamp == "deny":
-            return f"tool call denied by the user: {tool.name}"
+            return user_denial_refusal(tool.name)
         if stamp in _PERMITTING:
             return None
 
@@ -360,7 +460,9 @@ class BuiltinToolGate:
         return f"tool requires approval and none was granted: {tool.name}"
 
 
-def build_builtin_gate(service: Any | None = None) -> BuiltinToolGate:
+def build_builtin_gate(
+    service: Any | None = None, *, profile_id: str = "default"
+) -> BuiltinToolGate:
     """Construct the real gate.
 
     No app-discovery sketch here: `self.app.unified_mcp_service` (the
@@ -382,11 +484,12 @@ def build_builtin_gate(service: Any | None = None) -> BuiltinToolGate:
             `approve_for_session` the gate reads and calls. `None` builds
             a service-less gate that still gates (fail-closed), not an
             ungated one.
+        profile_id: Exact permission profile captured by the gate.
 
     Returns:
         A `BuiltinToolGate` wired to `service`.
     """
-    return BuiltinToolGate(service)
+    return BuiltinToolGate(service, profile_id=profile_id)
 
 
 # --- task-627 (P2 Task 2): settings-time enumeration ------------------------
@@ -523,8 +626,13 @@ class ToolGate:
         key: The config key within ``section``.
         tool_name: The LLM-facing tool name -- or, for the local group's
             master switch (which gates a GROUP, not a single tool), the
-            config key itself, doubling as its label.
-        description: One-line description for display.
+            config key itself.
+        title: Plain-language display name (task-32284). For a
+            ``_GATEABLE_BUILTINS`` row it IS that row's ``title``, so the
+            MCP hub and the first-run wizard cannot name the same gate
+            differently; the hand-listed local gates carry theirs below.
+        description: One-line description for display (the hub renders it
+            as the row's tooltip).
         enabled: The gate's current state, read through
             ``coerce_bool_setting`` -- never raw truthiness (task-3240's
             Critical prerequisite fixed the identical bug one layer down,
@@ -533,14 +641,28 @@ class ToolGate:
         group: ``"builtin"`` (the ``_GATEABLE_BUILTINS`` rows) or ``
             "local"`` (the local-workspace-tool group: its master switch
             plus ``web_deep_search``, which shares the group it masters).
+        restart_required: True only when the gate ALSO decides something
+            built once per process start, so THAT half cannot pick the
+            change up until a relaunch (task-32284). Every provider behind
+            this pane is rebuilt per Console agent run
+            (``Chat/console_agent_bridge.py``'s
+            ``_compose_run_registry_and_allowed`` constructs
+            ``BuiltinToolProvider``; ``console_chat_controller.py``'s
+            ``_compose_local_provider`` constructs ``LocalToolProvider``),
+            so the agent half of every gate applies on the next run -- the
+            flag is about external MCP publication (only reached at all
+            when ``[mcp] expose_local_tools`` is on), whose tool list
+            ``MCPServer`` builds when it starts.
     """
 
     section: str
     key: str
     tool_name: str
+    title: str
     description: str
     enabled: bool
     group: str
+    restart_required: bool = False
 
 
 #: The local group's master-switch config key, named so it isn't re-typed
@@ -548,6 +670,16 @@ class ToolGate:
 #: the Servers-mode UI's master-vs-dependent branching).
 LOCAL_TOOLS_MASTER_KEY = "local_tools_enabled"
 LOCAL_TOOLS_DEFAULT_ENABLED = True
+
+#: task-32284: the master switch's display name -- the raw config key is
+#: unreadable as a label. Lives here, beside the enumerator that hands it
+#: out, rather than in the one UI that happened to need it first.
+LOCAL_TOOLS_MASTER_TITLE = "Local workspace, web, and Watchlists tools (master switch)"
+
+#: task-32284: where the Tool gates pane actually is. Shared by the
+#: Permissions legend's breadcrumb so the count never points at a place
+#: the user has to guess ("the built-in server detail" named no pane).
+TOOL_GATES_PANE_PATH = "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
 
 #: Hand-written description for the local group's master switch -- it has
 #: no corresponding Tool instance to read a description off of (it gates a
@@ -573,7 +705,17 @@ _LOCAL_TOOLS_MASTER_DESCRIPTION = (
 #: WEB_DEEP_SEARCH_GATE_KEY's own docstring in local_tool_provider.py).
 _WEB_DEEP_SEARCH_DESCRIPTION = (
     "Multi-query web research; costs real money on paid providers. "
-    "Requires an app restart to take effect."
+    "Applies to the next Console agent run; its publication to external "
+    "MCP clients applies on their next client launch."
+)
+
+#: PRD Feature A (A12): hand-written like web_deep_search's -- ask_user is a
+#: LocalToolSpec, not a Tool ABC subclass. Default ON (see ASK_USER_GATE_KEY).
+_ASK_USER_DESCRIPTION = (
+    "Lets an agent ask you up to four multiple-choice questions on a card "
+    "above the Console transcript. On by default: it touches only your "
+    "attention, never your data. Turn it off to remove the tool from every "
+    "agent."
 )
 
 
@@ -591,35 +733,34 @@ def all_tool_gates() -> list[ToolGate]:
     docstring); this enumerator is a new, independent consumer of the same
     underlying config keys.
 
-    A builtin row's ``description`` is read off a real, constructed Tool
-    instance (mirrors ``Tools_Settings_Window._compose_tool_settings``'s
-    own precedent) -- construction failure degrades that one row's
-    description rather than the whole enumeration (mirrors
-    ``BuiltinToolProvider.__init__``'s own per-entry try/except).
+    A builtin row's ``title``/``description`` come from its
+    ``_GATEABLE_BUILTINS`` row (task-32284), not from a constructed Tool
+    instance: the user-facing copy lives in ONE table that the first-run
+    wizard renders too, and reading it needs no tool import -- which also
+    retires the "Unavailable on this system." degrade path this used to
+    need when an optional tool would not construct.
 
     Returns:
         Every gate in the order described above (the `_GATEABLE_BUILTINS`
         rows, then the local group's two).
     """
     from ..config import coerce_bool_setting, get_cli_setting
-    from .local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
-    from .tool_catalog import _GATEABLE_BUILTINS, build_gateable_tool
+    from .local_tool_provider import (
+        ASK_USER_DEFAULT_ENABLED,
+        ASK_USER_GATE_KEY,
+        WEB_DEEP_SEARCH_GATE_KEY,
+    )
+    from .tool_catalog import _GATEABLE_BUILTINS
 
     gates: list[ToolGate] = []
     for entry in _GATEABLE_BUILTINS:
-        try:
-            description = build_gateable_tool(entry).description
-        except Exception as exc:  # noqa: BLE001 — degrade the row, not the enumerator
-            logger.opt(exception=True).warning(
-                f"Could not describe gateable tool {entry.factory_name}: {exc}"
-            )
-            description = "Unavailable on this system."
         gates.append(
             ToolGate(
                 section="tools",
                 key=entry.gate_key,
                 tool_name=entry.tool_name,
-                description=description,
+                title=entry.title,
+                description=entry.blurb,
                 enabled=coerce_bool_setting(
                     get_cli_setting("tools", entry.gate_key, False), False
                 ),
@@ -632,6 +773,7 @@ def all_tool_gates() -> list[ToolGate]:
             section="console",
             key=LOCAL_TOOLS_MASTER_KEY,
             tool_name=LOCAL_TOOLS_MASTER_KEY,
+            title=LOCAL_TOOLS_MASTER_TITLE,
             description=_LOCAL_TOOLS_MASTER_DESCRIPTION,
             enabled=coerce_bool_setting(
                 get_cli_setting(
@@ -647,9 +789,31 @@ def all_tool_gates() -> list[ToolGate]:
             section="tools",
             key=WEB_DEEP_SEARCH_GATE_KEY,
             tool_name="web_deep_search",
+            title="Deep web research (web_deep_search)",
             description=_WEB_DEEP_SEARCH_DESCRIPTION,
             enabled=coerce_bool_setting(
                 get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+            ),
+            group="local",
+            # The one gate here that also decides what the built-in MCP
+            # SERVER publishes: `build_server_local_provider()` filters
+            # `_default_specs()` for CONSOLE_AND_EXTERNAL_MCP exposure once,
+            # when that server starts (MCP/server.py), so external clients
+            # see the change only on their next launch. The Console/agent
+            # half applies on the next run like every other gate.
+            restart_required=True,
+        )
+    )
+    gates.append(
+        ToolGate(
+            section="tools",
+            key=ASK_USER_GATE_KEY,
+            tool_name="ask_user",
+            title="Ask you a question (ask_user)",
+            description=_ASK_USER_DESCRIPTION,
+            enabled=coerce_bool_setting(
+                get_cli_setting("tools", ASK_USER_GATE_KEY, ASK_USER_DEFAULT_ENABLED),
+                ASK_USER_DEFAULT_ENABLED,
             ),
             group="local",
         )
@@ -661,7 +825,10 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     """Every gate's (section, key), in enumeration order, WITHOUT
     constructing any Tool — the cheap skeleton `all_tool_gates()` and the
     count path share so the key set can never drift between them."""
-    from .local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+    from .local_tool_provider import (
+        ASK_USER_GATE_KEY,
+        WEB_DEEP_SEARCH_GATE_KEY,
+    )
     from .tool_catalog import _GATEABLE_BUILTINS
 
     pairs: list[tuple[str, str]] = [
@@ -669,6 +836,7 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     ]
     pairs.append(("console", LOCAL_TOOLS_MASTER_KEY))
     pairs.append(("tools", WEB_DEEP_SEARCH_GATE_KEY))
+    pairs.append(("tools", ASK_USER_GATE_KEY))
     return pairs
 
 
@@ -680,15 +848,18 @@ def _off_tool_gate_status() -> tuple[int, bool]:
         gate is disabled.
     """
     from ..config import coerce_bool_setting, get_cli_setting
+    from .local_tool_provider import ASK_USER_DEFAULT_ENABLED, ASK_USER_GATE_KEY
 
     off = 0
     local_master_off = False
     for section, key in _gate_key_pairs():
-        default = (
-            LOCAL_TOOLS_DEFAULT_ENABLED
-            if section == "console" and key == LOCAL_TOOLS_MASTER_KEY
-            else False
-        )
+        if section == "console" and key == LOCAL_TOOLS_MASTER_KEY:
+            default = LOCAL_TOOLS_DEFAULT_ENABLED
+        elif section == "tools" and key == ASK_USER_GATE_KEY:
+            # PRD A12: the one [tools] gate that defaults ON.
+            default = ASK_USER_DEFAULT_ENABLED
+        else:
+            default = False
         enabled = coerce_bool_setting(get_cli_setting(section, key, default), default)
         if enabled:
             continue
@@ -735,10 +906,11 @@ def tool_gate_breadcrumb(gates: list[ToolGate] | None = None) -> str | None:
             "Workspace, web, and Watchlists tools are off. Enable 'Local "
             "workspace, web, and Watchlists tools' in Tools mode; the next "
             "Console agent run will use it. "
-            f"{off} tool gate(s) are off in total."
+            f"{off} tool gate(s) are off in total — the rest are under "
+            f"{TOOL_GATES_PANE_PATH}."
         )
     return (
         f"{off} tool gate(s) are off. Configure the workspace, web, and "
         "Watchlists master switch in Tools mode; other registration gates "
-        "remain in the built-in server detail."
+        f"are under {TOOL_GATES_PANE_PATH}."
     )

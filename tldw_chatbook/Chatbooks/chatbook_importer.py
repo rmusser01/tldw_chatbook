@@ -10,6 +10,8 @@ Handles the import and validation of chatbooks into the application.
 
 from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call, own_database
 
+import codecs
+import hashlib
 import heapq
 import json
 import os
@@ -17,15 +19,33 @@ import re
 import shutil
 import stat
 import tempfile
+import unicodedata
 import uuid
 import zipfile
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import List, Dict, Any, Optional, Tuple, Mapping
-from loguru import logger
+from typing import Any, BinaryIO, Dict, List, Mapping, Optional, Tuple
 
-from .chatbook_models import ChatbookManifest, ContentType, ChatbookVersion
-from .conflict_resolver import ConflictResolver, ConflictResolution
+from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field
+
+from ..Canvas.archive import (
+    CANVAS_ARCHIVE_IO_CHUNK_BYTES,
+    MAX_DURABLE_SOURCE_BYTES_PER_REVISION,
+    CanvasArchiveValidationError,
+)
+from ..Canvas.repository import (
+    CanvasImportBatch,
+    CanvasImportDocument,
+    CanvasImportRevision,
+    CanvasRepository,
+)
+from ..Character_Chat.character_card_formats import detect_and_parse_character_card
+from ..Chat.assistant_generation_state import (
+    AssistantGenerationState,
+    normalize_assistant_generation_state,
+)
 from ..Chat.chat_conversation_service import ChatConversationService
 from ..Chat.citation_service_factory import (
     build_local_citation_conversation_service,
@@ -33,36 +53,172 @@ from ..Chat.citation_service_factory import (
 from ..Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
+    parse_provider_continuation_json,
     read_provider_continuation_json,
 )
-from ..model_capabilities import moonshot_model_returns_reasoning_content
+from ..Chat.thinking_blocks import (
+    preflight_thinking_history_policy,
+    thinking_exchange_to_json,
+)
+from ..config import load_console_library_migration_seed
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
+from ..model_capabilities import moonshot_model_returns_reasoning_content
 from ..Prompt_Management.prompt_chatbook_record import (
     PromptChatbookRecordError,
     decode_chatbook_prompt_record,
 )
-from ..Character_Chat.character_card_formats import detect_and_parse_character_card
-from ..Utils.path_validation import validate_filename
+from ..Utils.path_validation import validate_filename, validate_path_simple
 from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
-
+from .chatbook_models import ChatbookManifest, ChatbookVersion, ContentType
+from .conflict_resolver import ConflictResolution, ConflictResolver
 
 _PROMPT_ARCHIVE_ITEM_ID = re.compile(r"(?:[1-9][0-9]*|item-[0-9]{6,})\Z")
 _MAX_ARCHIVE_MEMBERS = 10_000
 _MAX_ARCHIVE_MEMBER_BYTES = 128 * 1024 * 1024
 _MAX_ARCHIVE_TOTAL_BYTES = 512 * 1024 * 1024
+_MAX_ARCHIVE_TOTAL_COMPRESSED_BYTES = 512 * 1024 * 1024
 _MAX_ARCHIVE_COMPRESSION_RATIO = 1_000
+_MAX_ARCHIVE_CONTAINER_BYTES = _MAX_ARCHIVE_TOTAL_COMPRESSED_BYTES + 16 * 1024 * 1024
+_MAX_ARCHIVE_PATH_BYTES = 1_024
+_MAX_ARCHIVE_PATH_DEPTH = 32
+_MAX_ARCHIVE_PATH_COMPONENT_BYTES = 255
 _ARCHIVE_COPY_CHUNK_BYTES = 64 * 1024
 _ARCHIVE_LIMIT_ERROR = "Chatbook archive exceeds safety limits."
+_ARCHIVE_SOURCE_PATH_ERROR = "Invalid chatbook source path."
 _MAX_V2_GRAPH_MESSAGES = 10_000
 _MAX_V2_MESSAGE_ID_CHARS = 256
 _MAX_V2_TOTAL_ID_CHARS = 1024 * 1024
 _MAX_V2_MESSAGE_CONTENT_CHARS = 1024 * 1024
 _MAX_V2_TOTAL_CONTENT_CHARS = 16 * 1024 * 1024
 _MAX_V2_TOTAL_PRIVATE_BYTES = 16 * 1024 * 1024
+_MAX_V2_TOTAL_THINKING_BYTES = 16 * 1024 * 1024
 _MAX_V2_GRAPH_DEPTH = 2_048
+_MAX_IMPORT_ERROR_CHARS = 512
+
+
+class _SameIdentityConversationEnvelope(BaseModel):
+    """Bound comparison shapes before graph validation and exact projection."""
+
+    model_config = ConfigDict(strict=True, extra="allow")
+    messages: list[dict[str, Any]] = Field(max_length=_MAX_V2_GRAPH_MESSAGES)
+
+
+def _bounded_error_text(error: BaseException) -> str:
+    """Return a log/status-safe exception summary without unbounded payloads."""
+
+    value = str(error)
+    if len(value) <= _MAX_IMPORT_ERROR_CHARS:
+        return value
+    return value[: _MAX_IMPORT_ERROR_CHARS - 3] + "..."
+
+
+# Outcome vocabulary shared by ``ImportTypeResult`` and ``ImportStatus``
+# (task-19734). These name what actually happened, so a caller can never read
+# "the import ran" as "items were imported".
+IMPORT_OUTCOME_NONE = "none"  # this type was not part of the import at all
+IMPORT_OUTCOME_EXCLUDED = "excluded"  # present in the chatbook, not attempted
+IMPORT_OUTCOME_EMPTY = "empty"  # nothing to import (an empty chatbook)
+IMPORT_OUTCOME_IMPORTED = "imported"  # every attempted item landed
+IMPORT_OUTCOME_PARTIAL = "partial"  # some landed, some did not
+IMPORT_OUTCOME_SKIPPED = "skipped"  # nothing landed; everything already present
+IMPORT_OUTCOME_FAILED = "failed"  # nothing landed and something went wrong
+#
+# ``empty`` is a claim about the FILE and ``excluded`` a claim about the RUN,
+# and they must never be swapped (Qodo review of PR #1945): making
+# ``total_items`` count only what the run attempts meant a chatbook whose
+# items were all opted out of, or all of types this importer cannot write,
+# reported "this chatbook contained no items" -- false, and contradicted by
+# the per-type rows and warnings the same run produced.
+
+# The two reasons an item present in a chatbook is never attempted. Defined
+# once here so the importer's return message and the wizard's banner name them
+# with the same words (task-19734).
+LEFT_OUT_BY_OPTIONS_NOUN = "left out by your import options"
+UNSUPPORTED_BY_IMPORTER_NOUN = "not supported by this importer"
+
+# The content types this importer can actually write, in dispatch order.
+# Anything else in a chatbook's selections is reported as unsupported rather
+# than silently inflating the totals (task-19734).
+_IMPORTABLE_CONTENT_TYPES: Tuple["ContentType", ...] = (
+    ContentType.CHARACTER,
+    ContentType.CONVERSATION,
+    ContentType.NOTE,
+    ContentType.PROMPT,
+    ContentType.MEDIA,
+    ContentType.KEPT_BRIEFING,
+)
+
+
+class ImportTypeResult:
+    """Per-content-type outcome counters for a single import run.
+
+    ``attempted`` is how many items of this type the import was asked to
+    write; the other three are what actually happened to them. Nothing here
+    is ever derived from a manifest's advertised totals -- that is the whole
+    point (task-19734): the UI used to tick "✓ Imported conversations" off a
+    manifest count, which stays true even when every item was skipped.
+    """
+
+    def __init__(self, content_type: "ContentType"):
+        self.content_type = content_type
+        self.attempted = 0
+        self.excluded = 0
+        self.unsupported = 0
+        self.successful = 0
+        self.skipped = 0
+        self.failed = 0
+
+    @property
+    def accounted(self) -> int:
+        """Items whose fate is known (some paths can bail before recording)."""
+        return self.successful + self.skipped + self.failed
+
+    @property
+    def left_out(self) -> int:
+        """Items present in the chatbook that this run never attempted.
+
+        Two different reasons, deliberately counted apart: ``excluded`` is the
+        user's own choice and ``unsupported`` is this importer's limit. They
+        must not be reported with each other's words.
+        """
+        return self.excluded + self.unsupported
+
+    @property
+    def outcome(self) -> str:
+        """What actually happened to this content type.
+
+        An attempted type that recorded no successes and no skips is
+        ``failed``, not ``imported``: an early return (a missing database
+        path, say) leaves every counter at zero, and silence must not read
+        as success.
+        """
+        if self.attempted <= 0:
+            if self.left_out > 0:
+                return IMPORT_OUTCOME_EXCLUDED
+            return IMPORT_OUTCOME_NONE
+        if self.successful <= 0:
+            if self.failed > 0 or self.skipped <= 0:
+                return IMPORT_OUTCOME_FAILED
+            return IMPORT_OUTCOME_SKIPPED
+        if self.successful >= self.attempted:
+            return IMPORT_OUTCOME_IMPORTED
+        return IMPORT_OUTCOME_PARTIAL
+
+    def to_dict(self) -> dict:
+        """Convert this type's result to a dictionary."""
+        return {
+            "content_type": self.content_type.value,
+            "attempted": self.attempted,
+            "excluded": self.excluded,
+            "unsupported": self.unsupported,
+            "successful": self.successful,
+            "skipped": self.skipped,
+            "failed": self.failed,
+            "outcome": self.outcome,
+        }
 
 
 def _content_sources(values):
@@ -83,6 +239,140 @@ class ImportStatus:
         self.skipped_items = 0
         self.errors: List[str] = []
         self.warnings: List[str] = []
+        # Per-content-type results, keyed by ``ContentType`` (task-19734).
+        self.by_type: Dict["ContentType", ImportTypeResult] = {}
+
+    def result_for(self, content_type: "ContentType") -> ImportTypeResult:
+        """Return (creating if needed) the result record for one content type."""
+        result = self.by_type.get(content_type)
+        if result is None:
+            result = ImportTypeResult(content_type)
+            self.by_type[content_type] = result
+        return result
+
+    def result_snapshot(self, content_type: "ContentType") -> ImportTypeResult:
+        """Read one type's result without adding it to this run's records."""
+        return self.by_type.get(content_type) or ImportTypeResult(content_type)
+
+    def plan(self, content_type: "ContentType", attempted: int) -> ImportTypeResult:
+        """Record how many items of ``content_type`` this run will attempt."""
+        result = self.result_for(content_type)
+        result.attempted += max(0, int(attempted))
+        return result
+
+    def exclude(self, content_type: "ContentType", count: int) -> ImportTypeResult:
+        """Record items present in the chatbook that the user opted out of."""
+        result = self.result_for(content_type)
+        result.excluded += max(0, int(count))
+        return result
+
+    def mark_unsupported(
+        self, content_type: "ContentType", count: int
+    ) -> ImportTypeResult:
+        """Record items of a type this importer cannot write.
+
+        Counted, not just warned about: these items were in the chatbook and
+        did not arrive, and a run that attempted nothing else must be able to
+        say so rather than calling the chatbook empty (task-19734).
+        """
+        result = self.result_for(content_type)
+        result.unsupported += max(0, int(count))
+        return result
+
+    def record_processed(self, content_type: "ContentType") -> None:
+        """Count one item of ``content_type`` as having been reached."""
+        self.processed_items += 1
+        self.result_for(content_type)
+
+    def record_success(self, content_type: "ContentType") -> None:
+        """Count one successfully imported item of ``content_type``."""
+        self.successful_items += 1
+        self.result_for(content_type).successful += 1
+
+    def record_skipped(self, content_type: "ContentType") -> None:
+        """Count one skipped (already present) item of ``content_type``."""
+        self.skipped_items += 1
+        self.result_for(content_type).skipped += 1
+
+    def record_failure(self, content_type: "ContentType") -> None:
+        """Count one failed item of ``content_type``."""
+        self.failed_items += 1
+        self.result_for(content_type).failed += 1
+
+    @property
+    def planned_items(self) -> int:
+        """Total items the run was asked to attempt, summed over types."""
+        return sum(result.attempted for result in self.by_type.values())
+
+    @property
+    def excluded_items(self) -> int:
+        """Items the user's own options kept out of this run."""
+        return sum(result.excluded for result in self.by_type.values())
+
+    @property
+    def unsupported_items(self) -> int:
+        """Items of a type this importer cannot write."""
+        return sum(result.unsupported for result in self.by_type.values())
+
+    @property
+    def left_out_items(self) -> int:
+        """Items the chatbook contained and this run never attempted."""
+        return self.excluded_items + self.unsupported_items
+
+    def left_out_detail(self) -> str:
+        """Name why items were left out, in the words both surfaces use."""
+        parts = [
+            (self.excluded_items, LEFT_OUT_BY_OPTIONS_NOUN),
+            (self.unsupported_items, UNSUPPORTED_BY_IMPORTER_NOUN),
+        ]
+        return ", ".join(f"{count} {noun}" for count, noun in parts if count > 0)
+
+    @property
+    def accounted_items(self) -> int:
+        """Items whose fate this run actually recorded."""
+        return self.successful_items + self.skipped_items + self.failed_items
+
+    @property
+    def attempted_items(self) -> int:
+        """Items this run was asked to import, however it found out."""
+        return max(self.planned_items, self.total_items, self.accounted_items)
+
+    @property
+    def unaccounted_items(self) -> int:
+        """Attempted items whose fate was never recorded.
+
+        Non-zero when a content type bails out before recording anything (a
+        missing database path, say). The completion panel has to say so:
+        otherwise Total silently exceeds Imported + Skipped + Failed and the
+        summary reads "0 failed" for items that never landed (task-19734).
+        """
+        return self.attempted_items - self.accounted_items
+
+    @property
+    def outcome(self) -> str:
+        """What actually happened across the whole import.
+
+        Mirrors :attr:`ImportTypeResult.outcome`, so a run and each of its
+        types are described in the same vocabulary.
+
+        ``EMPTY`` is reserved for a chatbook that held nothing at all.  A
+        chatbook that held items this run never attempted -- media the user
+        opted out of, or types this importer cannot write -- is ``EXCLUDED``:
+        "there was nothing" and "there was something and we attempted none of
+        it" are different facts, and only one of them is about the file.
+        """
+        attempted = self.attempted_items
+        if attempted <= 0:
+            if self.left_out_items > 0:
+                return IMPORT_OUTCOME_EXCLUDED
+            return IMPORT_OUTCOME_EMPTY
+        if self.successful_items <= 0:
+            if self.failed_items > 0 or self.skipped_items <= 0:
+                return IMPORT_OUTCOME_FAILED
+            return IMPORT_OUTCOME_SKIPPED
+        if self.successful_items >= attempted:
+            return IMPORT_OUTCOME_IMPORTED
+        return IMPORT_OUTCOME_PARTIAL
 
     def add_error(self, error: str):
         """Add an error message."""
@@ -100,6 +390,13 @@ class ImportStatus:
             "successful_items": self.successful_items,
             "failed_items": self.failed_items,
             "skipped_items": self.skipped_items,
+            "excluded_items": self.excluded_items,
+            "unsupported_items": self.unsupported_items,
+            "outcome": self.outcome,
+            "by_type": {
+                content_type.value: result.to_dict()
+                for content_type, result in self.by_type.items()
+            },
             "errors": self.errors,
             "warnings": self.warnings,
         }
@@ -135,31 +432,294 @@ class ChatbookImporter:
 
         filename = member.filename
         if not filename or "\x00" in filename or "\\" in filename:
-            raise ValueError(f"Unsafe archive member path: {filename!r}")
+            raise ValueError("Unsafe archive member path.")
+        try:
+            filename_bytes = filename.encode("utf-8", "strict")
+        except UnicodeEncodeError:
+            raise ValueError("Unsafe archive member path.") from None
         relative = PurePosixPath(filename)
         parts = relative.parts
         if (
             relative.is_absolute()
             or not parts
+            or len(filename_bytes) > _MAX_ARCHIVE_PATH_BYTES
+            or len(parts) > _MAX_ARCHIVE_PATH_DEPTH
+            or any(
+                len(part.encode("utf-8")) > _MAX_ARCHIVE_PATH_COMPONENT_BYTES
+                for part in parts
+            )
             or any(part in {"", ".", ".."} for part in parts)
             or parts[0].endswith(":")
         ):
-            raise ValueError(f"Unsafe archive member path: {filename!r}")
+            raise ValueError("Unsafe archive member path.")
 
         archived_mode = member.external_attr >> 16
         archived_type = stat.S_IFMT(archived_mode)
         if archived_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
-            raise ValueError(f"Unsupported archive member type: {filename!r}")
+            raise ValueError("Unsupported archive member type.")
         return parts
+
+    def _preflight_archive(
+        self, chatbook_source: Path | BinaryIO
+    ) -> tuple[ChatbookManifest, dict[str, Any]]:
+        """Validate all ZIP bytes and Canvas identities before extraction."""
+
+        try:
+            archive_context = (
+                nullcontext(chatbook_source)
+                if hasattr(chatbook_source, "infolist")
+                else zipfile.ZipFile(chatbook_source, "r")
+            )
+            with archive_context as archive:
+                members = archive.infolist()
+                if len(members) > _MAX_ARCHIVE_MEMBERS:
+                    raise ValueError(_ARCHIVE_LIMIT_ERROR)
+                by_name: dict[str, zipfile.ZipInfo] = {}
+                normalized_names: set[str] = set()
+                ambiguous_names: set[str] = set()
+                declared_total = 0
+                compressed_total = 0
+                for member in members:
+                    parts = self._validated_archive_parts(member)
+                    canonical = "/".join(parts) + ("/" if member.is_dir() else "")
+                    normalized = unicodedata.normalize("NFC", "/".join(parts))
+                    ambiguous = normalized.casefold()
+                    archived_type = stat.S_IFMT(member.external_attr >> 16)
+                    if (
+                        member.filename != canonical
+                        or member.filename in by_name
+                        or normalized in normalized_names
+                        or ambiguous in ambiguous_names
+                        or member.flag_bits & 0x1
+                        or (archived_type == stat.S_IFDIR and not member.is_dir())
+                        or (archived_type == stat.S_IFREG and member.is_dir())
+                    ):
+                        raise ValueError("Unsafe or duplicate archive member path.")
+                    by_name[member.filename] = member
+                    normalized_names.add(normalized)
+                    ambiguous_names.add(ambiguous)
+                    declared_total += member.file_size
+                    compressed_total += member.compress_size
+                    if (
+                        member.file_size > _MAX_ARCHIVE_MEMBER_BYTES
+                        or declared_total > _MAX_ARCHIVE_TOTAL_BYTES
+                        or compressed_total > _MAX_ARCHIVE_TOTAL_COMPRESSED_BYTES
+                        or member.file_size
+                        > max(member.compress_size, 1) * _MAX_ARCHIVE_COMPRESSION_RATIO
+                    ):
+                        raise ValueError(_ARCHIVE_LIMIT_ERROR)
+
+                path_kinds = {
+                    unicodedata.normalize(
+                        "NFC", "/".join(self._validated_archive_parts(member))
+                    ).casefold(): member.is_dir()
+                    for member in members
+                }
+                for normalized_path in path_kinds:
+                    components = normalized_path.split("/")
+                    for depth in range(1, len(components)):
+                        parent = "/".join(components[:depth])
+                        if parent in path_kinds and not path_kinds[parent]:
+                            raise ValueError("Unsafe or duplicate archive member path.")
+
+                manifest_member = by_name.get("manifest.json")
+                if manifest_member is None or manifest_member.is_dir():
+                    raise ValueError("Invalid chatbook: manifest.json not found")
+                manifest_bytes = self._stream_member_bytes(
+                    archive, manifest_member, maximum=_MAX_ARCHIVE_MEMBER_BYTES
+                )
+                try:
+                    manifest_data = self._strict_archive_json(manifest_bytes)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    raise ValueError("Invalid chatbook manifest.") from None
+                try:
+                    manifest = ChatbookManifest.from_dict(manifest_data)
+                except CanvasArchiveValidationError:
+                    raise
+                except (KeyError, TypeError, ValueError):
+                    raise ValueError("Invalid chatbook manifest.") from None
+
+                canvas_sources = {}
+                if manifest.canvas_archive is not None:
+                    canvas_sources = {
+                        revision.source_path: revision
+                        for document in manifest.canvas_archive.documents
+                        for revision in document.revisions
+                    }
+                    present_canvas = {
+                        name
+                        for name, member in by_name.items()
+                        if name.startswith("canvas/") and not member.is_dir()
+                    }
+                    if present_canvas != set(canvas_sources):
+                        raise CanvasArchiveValidationError("source_entry_set_mismatch")
+
+                actual_total = 0
+                for member in members:
+                    if member.is_dir():
+                        continue
+                    expected = canvas_sources.get(member.filename)
+                    digest = hashlib.sha256() if expected is not None else None
+                    decoder = (
+                        codecs.getincrementaldecoder("utf-8")("strict")
+                        if expected is not None
+                        else None
+                    )
+                    actual = 0
+                    with archive.open(member, "r") as source:
+                        while chunk := source.read(_ARCHIVE_COPY_CHUNK_BYTES):
+                            actual += len(chunk)
+                            actual_total += len(chunk)
+                            if (
+                                actual > member.file_size
+                                or actual > _MAX_ARCHIVE_MEMBER_BYTES
+                                or actual_total > _MAX_ARCHIVE_TOTAL_BYTES
+                                or actual
+                                > max(member.compress_size, 1)
+                                * _MAX_ARCHIVE_COMPRESSION_RATIO
+                            ):
+                                raise ValueError(_ARCHIVE_LIMIT_ERROR)
+                            if digest is not None and decoder is not None:
+                                digest.update(chunk)
+                                try:
+                                    decoder.decode(chunk, final=False)
+                                except UnicodeDecodeError:
+                                    raise CanvasArchiveValidationError(
+                                        "invalid_source_utf8"
+                                    ) from None
+                    if actual != member.file_size:
+                        raise ValueError(_ARCHIVE_LIMIT_ERROR)
+                    if (
+                        expected is not None
+                        and digest is not None
+                        and decoder is not None
+                    ):
+                        try:
+                            decoder.decode(b"", final=True)
+                        except UnicodeDecodeError:
+                            raise CanvasArchiveValidationError(
+                                "invalid_source_utf8"
+                            ) from None
+                        if (
+                            actual != expected.source_bytes
+                            or digest.hexdigest() != expected.content_sha256
+                        ):
+                            raise CanvasArchiveValidationError(
+                                "source_identity_mismatch"
+                            )
+
+                self._preflight_canvas_origins(archive, by_name, manifest)
+                return manifest, manifest_data
+        except (zipfile.BadZipFile, RuntimeError, OSError):
+            raise ValueError("Invalid ZIP chatbook archive.") from None
+
+    @staticmethod
+    def _strict_archive_json(payload: bytes) -> Any:
+        """Decode bounded archive JSON while rejecting duplicate object keys."""
+
+        def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("Invalid chatbook JSON.")
+                result[key] = value
+            return result
+
+        def reject_constant(_value: str) -> None:
+            raise ValueError("Invalid chatbook JSON.")
+
+        try:
+            return json.loads(
+                payload.decode("utf-8", "strict"),
+                object_pairs_hook=unique_object,
+                parse_constant=reject_constant,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ValueError("Invalid chatbook JSON.") from None
+
+    @staticmethod
+    def _stream_member_bytes(
+        archive: zipfile.ZipFile,
+        member: zipfile.ZipInfo,
+        *,
+        maximum: int,
+    ) -> bytes:
+        """Read a bounded metadata member without ``ZipFile.read``."""
+
+        chunks: list[bytes] = []
+        total = 0
+        with archive.open(member, "r") as source:
+            while chunk := source.read(_ARCHIVE_COPY_CHUNK_BYTES):
+                total += len(chunk)
+                if total > maximum or total > member.file_size:
+                    raise ValueError(_ARCHIVE_LIMIT_ERROR)
+                chunks.append(chunk)
+        if total != member.file_size:
+            raise ValueError(_ARCHIVE_LIMIT_ERROR)
+        return b"".join(chunks)
+
+    def _preflight_canvas_origins(
+        self,
+        archive: zipfile.ZipFile,
+        by_name: Mapping[str, zipfile.ZipInfo],
+        manifest: ChatbookManifest,
+    ) -> None:
+        """Validate every Canvas origin against its owning archived graph."""
+
+        canvas = manifest.canvas_archive
+        if canvas is None:
+            return
+        owner_ids = {document.conversation_id for document in canvas.documents}
+        items = {}
+        for item in manifest.content_items:
+            if item.type is not ContentType.CONVERSATION or item.id not in owner_ids:
+                continue
+            if item.id in items:
+                raise CanvasArchiveValidationError(
+                    "duplicate_conversation_content_item"
+                )
+            items[item.id] = item
+        for conversation_id in sorted(owner_ids):
+            item = items.get(conversation_id)
+            if item is None or not item.file_path:
+                raise CanvasArchiveValidationError("conversation_not_found")
+            member = by_name.get(item.file_path)
+            if member is None or member.is_dir():
+                raise CanvasArchiveValidationError("conversation_not_found")
+            payload = self._stream_member_bytes(
+                archive, member, maximum=_MAX_V2_TOTAL_CONTENT_CHARS
+            )
+            try:
+                conversation = self._strict_archive_json(payload)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise CanvasArchiveValidationError("invalid_conversation") from None
+            if (
+                not isinstance(conversation, dict)
+                or conversation.get("id") != conversation_id
+            ):
+                raise CanvasArchiveValidationError("conversation_owner_mismatch")
+            graph = self._validate_v2_conversation_graph(conversation)
+            message_ids = {str(message["id"]) for message in graph}
+            for document in canvas.documents:
+                if document.conversation_id != conversation_id:
+                    continue
+                for revision in document.revisions:
+                    if revision.origin_message_id not in message_ids:
+                        raise CanvasArchiveValidationError("origin_message_not_found")
 
     def _extract_private_archive(
         self,
-        chatbook_path: Path,
+        chatbook_source: Path | BinaryIO,
         extract_dir: Path,
     ) -> None:
         """Extract regular ZIP members with owner-only permissions."""
 
-        with zipfile.ZipFile(chatbook_path, "r") as archive:
+        archive_context = (
+            nullcontext(chatbook_source)
+            if hasattr(chatbook_source, "infolist")
+            else zipfile.ZipFile(chatbook_source, "r")
+        )
+        with archive_context as archive:
             members = archive.infolist()
             if len(members) > _MAX_ARCHIVE_MEMBERS:
                 raise ValueError(_ARCHIVE_LIMIT_ERROR)
@@ -233,29 +793,35 @@ class ChatbookImporter:
         """
         extract_dir: Optional[Path] = None
         try:
+            try:
+                chatbook_path = validate_path_simple(
+                    chatbook_path, probe_existing=False
+                )
+            except ValueError:
+                return None, _ARCHIVE_SOURCE_PATH_ERROR
             if chatbook_path.suffix != ".zip":
                 return (
                     None,
                     "Unsupported chatbook format. Only ZIP files are supported.",
                 )
-            extract_dir = self._create_extract_dir("preview_")
-            self._extract_private_archive(chatbook_path, extract_dir)
-
-            # Load manifest
-            manifest_path = extract_dir / "manifest.json"
-            if not manifest_path.exists():
-                return None, "Invalid chatbook: manifest.json not found"
-
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                manifest_data = json.load(f)
-
-            manifest = ChatbookManifest.from_dict(manifest_data)
-
-            return manifest, None
+            with chatbook_path.open("rb") as archive_source:
+                if (
+                    os.fstat(archive_source.fileno()).st_size
+                    > _MAX_ARCHIVE_CONTAINER_BYTES
+                ):
+                    raise ValueError(_ARCHIVE_LIMIT_ERROR)
+                with zipfile.ZipFile(archive_source, "r") as archive:
+                    self._preflight_archive(archive)
+                    extract_dir = self._create_extract_dir("preview_")
+                    self._extract_private_archive(archive, extract_dir)
+            with (extract_dir / "manifest.json").open("r", encoding="utf-8") as handle:
+                manifest_data = json.load(handle)
+            return ChatbookManifest.from_dict(manifest_data), None
 
         except Exception as e:
-            logger.error(f"Error previewing chatbook: {e}")
-            return None, f"Error previewing chatbook: {str(e)}"
+            error_text = _bounded_error_text(e)
+            logger.error(f"Error previewing chatbook: {error_text}")
+            return None, f"Error previewing chatbook: {error_text}"
         finally:
             if extract_dir is not None:
                 shutil.rmtree(extract_dir, ignore_errors=True)
@@ -286,24 +852,40 @@ class ChatbookImporter:
         Returns:
             Tuple of (success, message)
         """
-        logger.info(
-            f"ChatbookImporter.import_chatbook: Starting import of {chatbook_path}"
-        )
-        logger.info(
-            f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}, import_embeddings={import_embeddings}"
-        )
         status = import_status if import_status else ImportStatus()
         extract_dir: Optional[Path] = None
 
         try:
+            try:
+                chatbook_path = validate_path_simple(
+                    chatbook_path, probe_existing=False
+                )
+            except ValueError:
+                status.add_error(_ARCHIVE_SOURCE_PATH_ERROR)
+                return False, _ARCHIVE_SOURCE_PATH_ERROR
+
+            logger.info(
+                f"ChatbookImporter.import_chatbook: Starting import of {chatbook_path}"
+            )
+            logger.info(
+                f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}, import_embeddings={import_embeddings}"
+            )
             logger.info(f"Importing chatbook from {chatbook_path}")
 
             if chatbook_path.suffix != ".zip":
                 error_msg = "Unsupported chatbook format. Only ZIP files are supported."
                 status.add_error(error_msg)
                 return False, error_msg
-            extract_dir = self._create_extract_dir("import_")
-            self._extract_private_archive(chatbook_path, extract_dir)
+            with chatbook_path.open("rb") as archive_source:
+                if (
+                    os.fstat(archive_source.fileno()).st_size
+                    > _MAX_ARCHIVE_CONTAINER_BYTES
+                ):
+                    raise ValueError(_ARCHIVE_LIMIT_ERROR)
+                with zipfile.ZipFile(archive_source, "r") as archive:
+                    manifest, manifest_data = self._preflight_archive(archive)
+                    extract_dir = self._create_extract_dir("import_")
+                    self._extract_private_archive(archive, extract_dir)
 
             # Load manifest
             manifest_path = extract_dir / "manifest.json"
@@ -318,19 +900,20 @@ class ChatbookImporter:
                 status.add_error(error_msg)
                 return False, error_msg
 
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                manifest_data = json.load(f)
             logger.info(
                 f"ChatbookImporter.import_chatbook: Loaded manifest with {len(manifest_data.get('content', {}))} content types"
             )
 
-            manifest = ChatbookManifest.from_dict(manifest_data)
             logger.info(
                 f"ChatbookImporter.import_chatbook: Manifest - version {manifest.version}, {manifest.total_conversations} conversations, {manifest.total_notes} notes, {manifest.total_characters} characters, {manifest.total_media_items} media"
             )
 
             # Check version compatibility
-            if manifest.version not in {ChatbookVersion.V1, ChatbookVersion.V2}:
+            if manifest.version not in {
+                ChatbookVersion.V1,
+                ChatbookVersion.V2,
+                ChatbookVersion.V3,
+            }:
                 status.add_warning(
                     f"Chatbook version {manifest.version.value} may not be fully compatible"
                 )
@@ -344,8 +927,47 @@ class ChatbookImporter:
                         content_selections[item.type] = []
                     content_selections[item.type].append(item.id)
 
-            # Count total items to import
-            status.total_items = sum(len(ids) for ids in content_selections.values())
+            # Record what each content type was asked to do BEFORE any of it
+            # runs, so a type that dies before recording a single item still
+            # reads as "attempted and produced nothing" rather than as absent
+            # (task-19734). Media only counts as attempted when it is actually
+            # going to be imported, and a content type this importer cannot
+            # write is never counted as attempted -- otherwise the totals
+            # carry a permanent unexplained shortfall.
+            for planned_type in _IMPORTABLE_CONTENT_TYPES:
+                if planned_type not in content_selections:
+                    continue
+                if planned_type is ContentType.MEDIA and not import_media:
+                    status.exclude(
+                        ContentType.MEDIA, len(content_selections[ContentType.MEDIA])
+                    )
+                    continue
+                status.plan(planned_type, len(content_selections[planned_type]))
+
+            for unsupported_type, unsupported_ids in content_selections.items():
+                if unsupported_type in _IMPORTABLE_CONTENT_TYPES or not unsupported_ids:
+                    continue
+                status.mark_unsupported(unsupported_type, len(unsupported_ids))
+                status.add_warning(
+                    f"{len(unsupported_ids)} {unsupported_type.value} item(s) in this "
+                    "chatbook are not supported by the importer and were not imported"
+                )
+
+            # Total items to import: what the run will actually attempt.
+            status.total_items = status.planned_items
+
+            idempotent_canvas_conversations: frozenset[str] = frozenset()
+            if (
+                manifest.canvas_archive is not None
+                and ContentType.CONVERSATION in content_selections
+            ):
+                idempotent_canvas_conversations = (
+                    self._preflight_canvas_target_conflicts(
+                        extract_dir,
+                        manifest,
+                        content_selections[ContentType.CONVERSATION],
+                    )
+                )
 
             # Import each content type
             if ContentType.CHARACTER in content_selections:
@@ -367,6 +989,7 @@ class ChatbookImporter:
                     conflict_resolution,
                     prefix_imported,
                     status,
+                    idempotent_canvas_conversations=idempotent_canvas_conversations,
                 )
 
             if ContentType.NOTE in content_selections:
@@ -406,39 +1029,71 @@ class ChatbookImporter:
                     status,
                 )
 
-            # Success if we processed items without fatal errors
-            # This includes both imported and skipped items
-            success = (
-                status.successful_items + status.skipped_items
-            ) > 0 or status.total_items == 0
+            # The run succeeded unless nothing landed and something went wrong
+            # (task-19734). A skip is not a success: an all-skipped re-import
+            # returns True here because it is not an *error*, but its message
+            # says in words that nothing was imported, and callers that need
+            # to branch on what happened read ``status.outcome`` rather than
+            # inferring an import from this boolean.
+            outcome = status.outcome
+            success = outcome != IMPORT_OUTCOME_FAILED
 
-            if success:
-                if status.successful_items > 0:
-                    details = []
-                    if status.skipped_items > 0:
-                        details.append(f"{status.skipped_items} skipped")
-                    if status.failed_items > 0:
-                        details.append(f"{status.failed_items} failed")
+            # Items this importer cannot write are named in every message, not
+            # only logged into ``warnings`` -- otherwise a chatbook of 8 items
+            # of which 2 are importable reports "Successfully imported 2/2"
+            # and the other 6 vanish without a word (task-19734).
+            unsupported_note = (
+                f"{status.unsupported_items} {UNSUPPORTED_BY_IMPORTER_NOUN}"
+                if status.unsupported_items > 0
+                else ""
+            )
 
-                    message = f"Successfully imported {status.successful_items}/{status.total_items} items"
-                    if details:
-                        message += f" ({', '.join(details)})"
-                elif status.skipped_items > 0:
-                    message = f"Skipped {status.skipped_items}/{status.total_items} items due to conflicts"
-                    if status.failed_items > 0:
-                        message += f" ({status.failed_items} failed)"
-                else:
-                    message = "No items to import"
-                logger.info(message)
+            if outcome == IMPORT_OUTCOME_EMPTY:
+                message = "No items to import"
+            elif outcome == IMPORT_OUTCOME_EXCLUDED:
+                # Not "no items": the chatbook had items and this run
+                # attempted none of them.
+                message = (
+                    "No items were imported: none of the "
+                    f"{status.left_out_items} item(s) in this chatbook were "
+                    f"attempted ({status.left_out_detail()})"
+                )
+            elif outcome in (IMPORT_OUTCOME_IMPORTED, IMPORT_OUTCOME_PARTIAL):
+                details = []
+                if status.skipped_items > 0:
+                    details.append(f"{status.skipped_items} skipped")
+                if status.failed_items > 0:
+                    details.append(f"{status.failed_items} failed")
+                if unsupported_note:
+                    details.append(unsupported_note)
+
+                message = f"Successfully imported {status.successful_items}/{status.total_items} items"
+                if details:
+                    message += f" ({', '.join(details)})"
+            elif outcome == IMPORT_OUTCOME_SKIPPED:
+                message = (
+                    "No items were imported: "
+                    f"{status.skipped_items}/{status.total_items} items were already "
+                    "present and were skipped"
+                )
+                if unsupported_note:
+                    message += f" ({unsupported_note})"
             else:
                 message = "Failed to import any items from chatbook"
+                if unsupported_note:
+                    message += f" ({unsupported_note})"
+
+            if success:
+                logger.info(message)
+            else:
                 logger.error(message)
 
             return success, message
 
         except Exception as e:
-            error_msg = f"Fatal error: {str(e)}"
-            logger.error(f"Error importing chatbook: {e}")
+            error_text = _bounded_error_text(e)
+            error_msg = f"Fatal error: {error_text}"
+            logger.error(f"Error importing chatbook: {error_text}")
             status.add_error(error_msg)
             return False, error_msg
         finally:
@@ -454,6 +1109,8 @@ class ChatbookImporter:
         conflict_resolution: ConflictResolution,
         prefix_imported: bool,
         status: ImportStatus,
+        *,
+        idempotent_canvas_conversations: frozenset[str] = frozenset(),
     ) -> None:
         """Import conversations."""
         logger.info(
@@ -467,24 +1124,72 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = own_database(CharactersRAGDB(db_path, "chatbook_importer"))
-        conversation_service, _, _ = build_local_citation_conversation_service(
-            db,
-            sidecar_path=get_user_data_dir()
-            / "tldw_chatbook_chat_rag_context.json",
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
         )
+        try:
+            self._import_conversations_with_database(
+                extract_dir,
+                manifest,
+                conversation_ids,
+                conflict_resolution,
+                prefix_imported,
+                status,
+                idempotent_canvas_conversations=idempotent_canvas_conversations,
+                db=db,
+            )
+        finally:
+            db.close_connection()
+
+    def _import_conversations_with_database(
+        self,
+        extract_dir: Path,
+        manifest: ChatbookManifest,
+        conversation_ids: list[str],
+        conflict_resolution: ConflictResolution,
+        prefix_imported: bool,
+        status: ImportStatus,
+        *,
+        idempotent_canvas_conversations: frozenset[str],
+        db: CharactersRAGDB,
+    ) -> None:
+        """Import conversations through one caller-owned database handle."""
+
+        conversation_service = None
         conv_dir = extract_dir / "content" / "conversations"
         logger.info(
             f"ChatbookImporter._import_conversations: Looking for conversations in {conv_dir}"
         )
 
         for conv_id in conversation_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.CONVERSATION)
             logger.info(
                 f"ChatbookImporter._import_conversations: Processing conversation {conv_id} ({status.processed_items}/{len(conversation_ids)})"
             )
 
             try:
+                if conv_id in idempotent_canvas_conversations:
+                    with db.transaction(immediate=True):
+                        confirmed = self._preflight_canvas_target_conflicts(
+                            extract_dir,
+                            manifest,
+                            [conv_id],
+                            target_db=db,
+                        )
+                    if conv_id not in confirmed:
+                        raise CanvasArchiveValidationError("same_identity_conflict")
+                    status.record_skipped(ContentType.CONVERSATION)
+                    continue
+                if conversation_service is None:
+                    conversation_service, _, _ = (
+                        build_local_citation_conversation_service(
+                            db,
+                            sidecar_path=get_user_data_dir()
+                            / "tldw_chatbook_chat_rag_context.json",
+                        )
+                    )
                 # Find conversation file
                 conv_file = self._conversation_file_path(
                     extract_dir, conv_dir, manifest, conv_id
@@ -494,7 +1199,7 @@ class ChatbookImporter:
                         f"ChatbookImporter._import_conversations: Conversation file not found: {conv_file.name}"
                     )
                     status.add_warning(f"Conversation file not found: {conv_file.name}")
-                    status.failed_items += 1
+                    status.record_failure(ContentType.CONVERSATION)
                     continue
 
                 # Load conversation data
@@ -502,7 +1207,7 @@ class ChatbookImporter:
                     conv_data = json.load(f)
 
                 graph_messages = None
-                if manifest.version == ChatbookVersion.V2:
+                if manifest.version in {ChatbookVersion.V2, ChatbookVersion.V3}:
                     if (
                         not isinstance(conv_data, dict)
                         or type(conv_id) is not str
@@ -513,6 +1218,13 @@ class ChatbookImporter:
                     ):
                         raise ValueError("Invalid V2 conversation identity.")
                     graph_messages = self._validate_v2_conversation_graph(conv_data)
+                    thinking_policy, policy_warning = preflight_thinking_history_policy(
+                        conv_data.get("thinking_history_policy")
+                    )
+                    if policy_warning is not None:
+                        status.add_warning(policy_warning)
+                else:
+                    thinking_policy = "auto"
 
                 # Check for existing conversation with same name
                 conv_name = conv_data["name"]
@@ -520,7 +1232,9 @@ class ChatbookImporter:
                     conv_name = f"[Imported] {conv_name}"
 
                 # Check for existing conversations with same name
-                existing_conversations = db.get_conversation_by_name(conv_name)
+                existing_conversations = db.get_conversation_by_name(
+                    conv_name, archive_scope="all"
+                )
                 logger.info(
                     f"ChatbookImporter._import_conversations: Found {len(existing_conversations) if existing_conversations else 0} existing conversations with name '{conv_name}'"
                 )
@@ -536,7 +1250,7 @@ class ChatbookImporter:
                         logger.info(
                             "ChatbookImporter._import_conversations: Skipping conversation due to conflict resolution"
                         )
-                        status.skipped_items += 1
+                        status.record_skipped(ContentType.CONVERSATION)
                         continue
                     elif resolution == ConflictResolution.RENAME:
                         old_name = conv_name
@@ -548,6 +1262,7 @@ class ChatbookImporter:
                 # Create conversation
                 character_id = conv_data.get("character_id")
                 conv_dict = {
+                    "id": str(uuid.uuid4()),
                     "title": conv_name,
                     "created_at": conv_data.get(
                         "created_at", datetime.now().isoformat()
@@ -558,6 +1273,7 @@ class ChatbookImporter:
                     "character_id": character_id,
                     "assistant_authority_id": None,
                     "root_id": f"imported_{conv_data.get('id', 'unknown')}",
+                    "thinking_history_policy": thinking_policy,
                 }
                 # Stage all filesystem work FIRST (attachment byte loads),
                 # so the transaction below holds the write lock only for
@@ -591,8 +1307,26 @@ class ChatbookImporter:
                 # after commit, so it neither extends the transaction nor
                 # records context for rows that get rolled back.
                 imported_message_context: list[tuple[str, str, dict]] = []
-                new_conv_id = None
-                with db.transaction() as connection:
+                new_conv_id = str(conv_dict["id"])
+                message_id_map: dict[str, str] = {}
+                if graph_messages is not None:
+                    message_id_map = {
+                        str(msg["id"]): str(
+                            uuid.uuid5(
+                                uuid.NAMESPACE_URL,
+                                f"chatbook:{new_conv_id}:{msg['id']}",
+                            )
+                        )
+                        for msg in graph_messages
+                    }
+                canvas_batch = self._load_canvas_import_batch(
+                    extract_dir=extract_dir,
+                    manifest=manifest,
+                    source_conversation_id=conv_id,
+                    target_conversation_id=new_conv_id,
+                    message_id_map=message_id_map,
+                )
+                with db.transaction(immediate=True) as connection:
                     new_conv_id = db.add_conversation(conv_dict)
                     logger.info(
                         f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}"
@@ -602,17 +1336,6 @@ class ChatbookImporter:
                         logger.info(
                             f"ChatbookImporter._import_conversations: Importing {len(staged_messages)} messages"
                         )
-                        message_id_map: dict[str, str] = {}
-                        if graph_messages is not None:
-                            message_id_map = {
-                                str(msg["id"]): str(
-                                    uuid.uuid5(
-                                        uuid.NAMESPACE_URL,
-                                        f"chatbook:{new_conv_id}:{msg['id']}",
-                                    )
-                                )
-                                for msg in graph_messages
-                            }
                         for ordinal, (
                             msg,
                             image_kwargs,
@@ -649,13 +1372,58 @@ class ChatbookImporter:
                                     msg_dict["provider_continuation_json"] = (
                                         continuation
                                     )
+                                thinking_json = msg.get("_thinking_canonical_json")
+                                if thinking_json is not None:
+                                    msg_dict["thinking_blocks_json"] = thinking_json
+                                continuation_checkpoint = (
+                                    parse_provider_continuation_json(continuation)
+                                    if continuation is not None
+                                    else None
+                                )
+                                raw_state = msg.get("assistant_generation_state")
+                                try:
+                                    generation_state = (
+                                        normalize_assistant_generation_state(
+                                            role=msg["role"],
+                                            raw_state=raw_state,
+                                            has_valid_active_continuation=(
+                                                continuation_checkpoint is not None
+                                                and continuation_checkpoint.state
+                                                == "active"
+                                            ),
+                                        )
+                                    )
+                                except ValueError:
+                                    raise ValueError(
+                                        "Invalid V2 conversation graph."
+                                    ) from None
+                                if (
+                                    generation_state
+                                    is AssistantGenerationState.CONTINUATION_ACTIVE
+                                    and (
+                                        continuation_checkpoint is None
+                                        or continuation_checkpoint.state != "active"
+                                    )
+                                ):
+                                    raise ValueError("Invalid V2 conversation graph.")
+                                msg_dict["assistant_generation_state"] = (
+                                    generation_state.value
+                                    if generation_state is not None
+                                    else None
+                                )
                             elif msg.get("_private") is not None:
                                 status.add_warning(
                                     "Exact tool continuation was discarded for "
                                     f"message {ordinal}."
                                 )
                             msg_dict.update(image_kwargs)
-                            new_message_id = db.add_message(msg_dict)
+                            if attachment_rows:
+                                new_message_id = db.add_message_with_semantic_sidecars(
+                                    msg_dict,
+                                    attachments=attachment_rows,
+                                )
+                            else:
+                                new_message_id = db.add_message(msg_dict)
                             if new_message_id:
                                 if graph_messages is not None:
                                     variant_of = msg.get("variant_of")
@@ -676,10 +1444,6 @@ class ChatbookImporter:
                                             new_message_id,
                                         ),
                                     )
-                                if attachment_rows:
-                                    db.set_message_attachments(
-                                        str(new_message_id), attachment_rows
-                                    )
                                 imported_message_context.append(
                                     (str(new_conv_id), str(new_message_id), msg)
                                 )
@@ -689,6 +1453,10 @@ class ChatbookImporter:
                                 "UPDATE conversations SET active_leaf_message_id = ? "
                                 "WHERE id = ?",
                                 (message_id_map.get(active_leaf), new_conv_id),
+                            )
+                        if canvas_batch is not None:
+                            CanvasRepository.import_batch_in_transaction(
+                                connection, canvas_batch
                             )
 
                 if new_conv_id:
@@ -703,24 +1471,412 @@ class ChatbookImporter:
                             context_message_id,
                             msg,
                         )
-                    status.successful_items += 1
+                    status.record_success(ContentType.CONVERSATION)
                     logger.info(
                         f"ChatbookImporter._import_conversations: Successfully imported conversation: {conv_name}"
                     )
                 else:
-                    status.failed_items += 1
+                    status.record_failure(ContentType.CONVERSATION)
                     status.add_error(f"Failed to create conversation: {conv_name}")
                     logger.error(
                         f"ChatbookImporter._import_conversations: Failed to create conversation: {conv_name}"
                     )
 
             except Exception as e:
-                status.failed_items += 1
-                status.add_error(f"Error importing conversation {conv_id}: {str(e)}")
+                status.record_failure(ContentType.CONVERSATION)
+                status.add_error(
+                    f"Error importing conversation {conv_id}: {_bounded_error_text(e)}"
+                )
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_conversations: Error importing conversation {}",
                     conv_id,
                 )
+
+    def _preflight_canvas_target_conflicts(
+        self,
+        extract_dir: Path,
+        manifest: ChatbookManifest,
+        conversation_ids: list[str],
+        *,
+        target_db: CharactersRAGDB | None = None,
+    ) -> frozenset[str]:
+        """Refuse conflicting same-owner graphs before any archive mutation."""
+
+        db_path = self.db_paths.get("ChaChaNotes")
+        if not db_path or manifest.canvas_archive is None:
+            return frozenset()
+        owns_db = target_db is None
+        db = target_db or CharactersRAGDB(
+            db_path,
+            "chatbook_canvas_conflict_preflight",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
+        if owns_db:
+            try:
+                with db.transaction(immediate=True):
+                    return ChatbookImporter._preflight_canvas_target_conflicts(
+                        self,
+                        extract_dir,
+                        manifest,
+                        conversation_ids,
+                        target_db=db,
+                    )
+            finally:
+                db.close_connection()
+        connection = db.get_connection()
+        idempotent: set[str] = set()
+        try:
+            for conversation_id in conversation_ids:
+                documents = tuple(
+                    document
+                    for document in manifest.canvas_archive.documents
+                    if document.conversation_id == conversation_id
+                )
+                if not documents:
+                    continue
+                exists = connection.execute(
+                    "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
+                ).fetchone()
+                if exists is None:
+                    continue
+                self._validate_same_identity_conversation(
+                    db,
+                    extract_dir,
+                    manifest,
+                    conversation_id,
+                )
+                expected_documents = {
+                    document.canvas_id: document for document in documents
+                }
+                stored_documents = connection.execute(
+                    "SELECT id, created_at, deleted_at FROM canvas_documents "
+                    "WHERE conversation_id = ? ORDER BY id",
+                    (conversation_id,),
+                ).fetchall()
+                if set(expected_documents) != {str(row[0]) for row in stored_documents}:
+                    raise CanvasArchiveValidationError("same_identity_conflict")
+                for row in stored_documents:
+                    document = expected_documents[str(row[0])]
+                    if (str(row[1]), row[2]) != (
+                        document.created_at,
+                        document.deleted_at,
+                    ):
+                        raise CanvasArchiveValidationError("same_identity_conflict")
+                    stored_revisions = connection.execute(
+                        "SELECT id, parent_revision_id, sequence, title, runtime_profile, "
+                        "html, content_sha256, html_bytes, actor_kind, origin_message_id, "
+                        "origin_turn_id, created_at, deleted_at FROM canvas_revisions "
+                        "WHERE canvas_id = ? ORDER BY sequence",
+                        (document.canvas_id,),
+                    ).fetchall()
+                    if len(stored_revisions) != len(document.revisions):
+                        raise CanvasArchiveValidationError("same_identity_conflict")
+                    expected_revisions = sorted(
+                        document.revisions, key=lambda revision: revision.sequence
+                    )
+                    for stored, revision in zip(
+                        stored_revisions, expected_revisions, strict=True
+                    ):
+                        source = self._read_canvas_source(
+                            extract_dir / revision.source_path,
+                            expected_bytes=revision.source_bytes,
+                            expected_digest=revision.content_sha256,
+                        )
+                        expected = (
+                            revision.revision_id,
+                            revision.parent_revision_id,
+                            revision.sequence,
+                            revision.title,
+                            revision.runtime_profile,
+                            source,
+                            revision.content_sha256,
+                            revision.source_bytes,
+                            revision.actor_kind,
+                            revision.origin_message_id,
+                            revision.origin_turn_id,
+                            revision.created_at,
+                            revision.deleted_at,
+                        )
+                        if tuple(stored) != expected:
+                            raise CanvasArchiveValidationError("same_identity_conflict")
+                stored_hint = connection.execute(
+                    "SELECT last_canvas_id FROM canvas_conversation_hints "
+                    "WHERE conversation_id = ?",
+                    (conversation_id,),
+                ).fetchone()
+                expected_hints = [
+                    hint.canvas_id
+                    for hint in manifest.canvas_archive.reopen_hints
+                    if hint.conversation_id == conversation_id
+                ]
+                if (str(stored_hint[0]) if stored_hint is not None else None) != (
+                    expected_hints[0] if expected_hints else None
+                ):
+                    raise CanvasArchiveValidationError("same_identity_conflict")
+                idempotent.add(conversation_id)
+        finally:
+            if owns_db:
+                db.close_connection()
+        return frozenset(idempotent)
+
+    def _validate_same_identity_conversation(
+        self,
+        db: CharactersRAGDB,
+        extract_dir: Path,
+        manifest: ChatbookManifest,
+        conversation_id: str,
+    ) -> None:
+        """Compare the canonical archive projection using the locked target DB."""
+        from ..Chat.citation_provenance_runtime import CitationProvenanceRuntimePolicy
+        from ..Chat.citation_trace_identity import KeyringCitationFingerprintKeyProvider
+        from ..Chat.citation_trace_repository import (
+            CitationPersistenceUnavailable,
+            CitationTraceRepository,
+            load_local_citation_identity_context,
+        )
+        from ..Chat.thinking_blocks import normalize_thinking_history_policy
+        from .chatbook_creator import ChatbookCreator
+
+        path = self._conversation_file_path(
+            extract_dir,
+            extract_dir / "content" / "conversations",
+            manifest,
+            conversation_id,
+        )
+        expected = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            _SameIdentityConversationEnvelope.model_validate(expected)
+            self._validate_v2_conversation_graph(expected)
+        except (TypeError, ValueError):
+            raise CanvasArchiveValidationError("same_identity_conflict") from None
+        conversation = db.get_conversation_by_id(conversation_id)
+        if not conversation:
+            raise CanvasArchiveValidationError("same_identity_conflict")
+        actual = {
+            "id": str(conversation["id"]),
+            "name": conversation.get(
+                "title", conversation.get("conversation_name", "Untitled")
+            ),
+            "created_at": conversation["created_at"],
+            "updated_at": conversation.get("last_modified", conversation["created_at"]),
+            "character_id": conversation.get("character_id"),
+            "thinking_history_policy": normalize_thinking_history_policy(
+                conversation.get("thinking_history_policy")
+            ),
+            "active_leaf_message_id": db.get_conversation_active_leaf(conversation_id),
+        }
+        for key, value in actual.items():
+            if hasattr(value, "isoformat"):
+                value = value.isoformat()
+            if expected.get(key) != value:
+                raise CanvasArchiveValidationError("same_identity_conflict")
+        rows = ChatbookCreator._conversation_graph_messages(
+            db, conversation_id, limit=_MAX_V2_GRAPH_MESSAGES + 1
+        )
+        if len(rows) > _MAX_V2_GRAPH_MESSAGES:
+            raise CanvasArchiveValidationError("same_identity_conflict")
+        expected_messages = expected.get("messages", [])
+        if len(rows) != len(expected_messages):
+            raise CanvasArchiveValidationError("same_identity_conflict")
+        # Inject a read-existing-key repository so comparison cannot provision
+        # credentials or update identity state through the writable factory.
+        repository = CitationTraceRepository.from_key_provider(
+            db,
+            policy=CitationProvenanceRuntimePolicy.from_config(),
+            identity_context=load_local_citation_identity_context(db),
+            key_provider=KeyringCitationFingerprintKeyProvider(),
+        )
+        conversation_service, _, _ = build_local_citation_conversation_service(
+            db,
+            sidecar_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
+            repository=repository,
+        )
+        try:
+            # Preserve the exporter's default first-100 visible-message context
+            # projection; its graph rows remain the SQL-bounded rows above.
+            context = conversation_service.get_messages_with_context(
+                conversation_id,
+                read_only=True,
+            )
+        except CitationPersistenceUnavailable:
+            raise CanvasArchiveValidationError("same_identity_conflict") from None
+        rows = ChatbookCreator._merge_message_context(rows, context)
+        projected: list[dict[str, Any]] = []
+        # Reuse export normalization over the caller-owned rows and attachments.
+        with tempfile.TemporaryDirectory(prefix="canvas-restore-compare-") as temporary:
+            root = Path(temporary)
+            conv_dir = root / "content" / "conversations"
+            conv_dir.mkdir(parents=True)
+            for start in range(0, len(rows), ChatbookCreator._ATTACHMENT_FETCH_CHUNK):
+                chunk = rows[start : start + ChatbookCreator._ATTACHMENT_FETCH_CHUNK]
+                attachments = db.get_attachments_for_messages(
+                    [str(row["id"]) for row in chunk]
+                )
+                ChatbookCreator._export_message_chunk(
+                    chunk, attachments, conv_dir, projected, []
+                )
+                for index in range(start, len(projected)):
+                    message = projected[index]
+                    archived = expected_messages[index]
+                    if message != archived:
+                        raise CanvasArchiveValidationError("same_identity_conflict")
+                    for attachment in message.get("attachments", []):
+                        relative = attachment["file"]
+                        with (
+                            (root / relative).open("rb") as stored,
+                            (extract_dir / relative).open("rb") as incoming,
+                        ):
+                            while True:
+                                block = stored.read(_ARCHIVE_COPY_CHUNK_BYTES)
+                                if block != incoming.read(_ARCHIVE_COPY_CHUNK_BYTES):
+                                    raise CanvasArchiveValidationError(
+                                        "same_identity_conflict"
+                                    )
+                                if not block:
+                                    break
+            if expected.get(
+                "selected_path_message_ids"
+            ) != ChatbookCreator._selected_path_ids(
+                projected,
+                actual["active_leaf_message_id"],
+            ):
+                raise CanvasArchiveValidationError("same_identity_conflict")
+
+    @staticmethod
+    def _load_canvas_import_batch(
+        *,
+        extract_dir: Path,
+        manifest: ChatbookManifest,
+        source_conversation_id: str,
+        target_conversation_id: str,
+        message_id_map: Mapping[str, str],
+    ) -> CanvasImportBatch | None:
+        """Precompute and validate one complete remapped Canvas graph."""
+
+        archive = manifest.canvas_archive
+        if archive is None:
+            return None
+        documents = tuple(
+            document
+            for document in archive.documents
+            if document.conversation_id == source_conversation_id
+        )
+        if not documents:
+            return None
+
+        canvas_id_map = {
+            document.canvas_id: str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"chatbook:{target_conversation_id}:canvas:{document.canvas_id}",
+                )
+            )
+            for document in documents
+        }
+        revision_id_map = {
+            revision.revision_id: str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"chatbook:{target_conversation_id}:revision:{revision.revision_id}",
+                )
+            )
+            for document in documents
+            for revision in document.revisions
+        }
+        origin_turn_id_map = {
+            revision.origin_turn_id: str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"chatbook:{target_conversation_id}:turn:{revision.origin_turn_id}",
+                )
+            )
+            for document in documents
+            for revision in document.revisions
+        }
+        imported_documents = tuple(
+            CanvasImportDocument(
+                canvas_id=canvas_id_map[document.canvas_id],
+                conversation_id=target_conversation_id,
+                created_at=document.created_at,
+                deleted_at=document.deleted_at,
+            )
+            for document in documents
+        )
+        imported_revisions: list[CanvasImportRevision] = []
+        for document in documents:
+            for revision in document.revisions:
+                mapped_origin = message_id_map.get(revision.origin_message_id)
+                if mapped_origin is None:
+                    raise CanvasArchiveValidationError("origin_message_not_found")
+                source = ChatbookImporter._read_canvas_source(
+                    extract_dir / revision.source_path,
+                    expected_bytes=revision.source_bytes,
+                    expected_digest=revision.content_sha256,
+                )
+                imported_revisions.append(
+                    CanvasImportRevision(
+                        revision_id=revision_id_map[revision.revision_id],
+                        canvas_id=canvas_id_map[document.canvas_id],
+                        parent_revision_id=(
+                            revision_id_map[revision.parent_revision_id]
+                            if revision.parent_revision_id is not None
+                            else None
+                        ),
+                        sequence=revision.sequence,
+                        title=revision.title,
+                        runtime_profile=revision.runtime_profile,
+                        source=source,
+                        content_sha256=revision.content_sha256,
+                        source_bytes=revision.source_bytes,
+                        actor_kind=revision.actor_kind,
+                        origin_message_id=mapped_origin,
+                        origin_turn_id=origin_turn_id_map[revision.origin_turn_id],
+                        created_at=revision.created_at,
+                        deleted_at=revision.deleted_at,
+                    )
+                )
+        reopen_ids = {
+            hint.canvas_id
+            for hint in archive.reopen_hints
+            if hint.conversation_id == source_conversation_id
+        }
+        if len(reopen_ids) > 1:
+            raise CanvasArchiveValidationError("duplicate_reopen_hint")
+        reopen_canvas_id = canvas_id_map[next(iter(reopen_ids))] if reopen_ids else None
+        return CanvasImportBatch(
+            conversation_id=target_conversation_id,
+            documents=imported_documents,
+            revisions=tuple(imported_revisions),
+            reopen_canvas_id=reopen_canvas_id,
+        )
+
+    @staticmethod
+    def _read_canvas_source(
+        path: Path, *, expected_bytes: int, expected_digest: str
+    ) -> str:
+        """Read one inert source entry with bounded streaming identity checks."""
+
+        decoder = codecs.getincrementaldecoder("utf-8")("strict")
+        digest = hashlib.sha256()
+        parts: list[str] = []
+        total = 0
+        try:
+            with path.open("rb") as source:
+                while chunk := source.read(CANVAS_ARCHIVE_IO_CHUNK_BYTES):
+                    total += len(chunk)
+                    if (
+                        total > expected_bytes
+                        or total > MAX_DURABLE_SOURCE_BYTES_PER_REVISION
+                    ):
+                        raise CanvasArchiveValidationError("source_byte_count_mismatch")
+                    digest.update(chunk)
+                    parts.append(decoder.decode(chunk, final=False))
+                parts.append(decoder.decode(b"", final=True))
+        except (OSError, UnicodeDecodeError):
+            raise CanvasArchiveValidationError("invalid_source_entry") from None
+        if total != expected_bytes or digest.hexdigest() != expected_digest:
+            raise CanvasArchiveValidationError("source_identity_mismatch")
+        return "".join(parts)
 
     @staticmethod
     def _validate_v2_conversation_graph(
@@ -741,6 +1897,7 @@ class ChatbookImporter:
         total_id_chars = 0
         total_content_chars = 0
         total_private_bytes = 0
+        total_thinking_bytes = 0
         for raw in raw_messages:
             if not isinstance(raw, dict):
                 raise ValueError("Invalid V2 conversation graph.")
@@ -782,8 +1939,21 @@ class ChatbookImporter:
                 or total_content_chars > _MAX_V2_TOTAL_CONTENT_CHARS
             ):
                 raise ValueError("Invalid V2 conversation graph.")
-            item = raw
+            item = dict(raw)
+            if "_thinking" in raw:
+                thinking = raw["_thinking"]
+                if role != "assistant" or raw["deleted"]:
+                    raise ValueError("Invalid V2 conversation graph.")
+                try:
+                    canonical_thinking = thinking_exchange_to_json(thinking)
+                except ValueError:
+                    raise ValueError("Invalid V2 conversation graph.") from None
+                total_thinking_bytes += len(canonical_thinking.encode("utf-8"))
+                if total_thinking_bytes > _MAX_V2_TOTAL_THINKING_BYTES:
+                    raise ValueError("Invalid V2 conversation graph.")
+                item["_thinking_canonical_json"] = canonical_thinking
             private = raw.get("_private")
+            checkpoint = None
             if (
                 isinstance(private, dict)
                 and set(private) == {"provider_continuation"}
@@ -801,10 +1971,30 @@ class ChatbookImporter:
                         total_private_bytes + private_bytes
                         > _MAX_V2_TOTAL_PRIVATE_BYTES
                     ):
-                        item = dict(raw)
                         item["_private"] = {"provider_continuation": None}
+                        checkpoint = None
                     else:
                         total_private_bytes += private_bytes
+            raw_state = raw.get("assistant_generation_state")
+            if raw_state is not None and role != "assistant":
+                raise ValueError("Invalid V2 conversation graph.")
+            try:
+                generation_state = normalize_assistant_generation_state(
+                    role=role,
+                    raw_state=raw_state,
+                    has_valid_active_continuation=(
+                        checkpoint is not None and checkpoint.state == "active"
+                    ),
+                )
+            except ValueError:
+                raise ValueError("Invalid V2 conversation graph.") from None
+            if generation_state is AssistantGenerationState.CONTINUATION_ACTIVE and (
+                checkpoint is None or checkpoint.state != "active"
+            ):
+                raise ValueError("Invalid V2 conversation graph.")
+            item["assistant_generation_state"] = (
+                generation_state.value if generation_state is not None else None
+            )
             messages.append(item)
             by_id[message_id] = item
             orders.add(order)
@@ -921,9 +2111,7 @@ class ChatbookImporter:
             for dependent in dependents[message_id]:
                 indegrees[dependent] -= 1
                 if indegrees[dependent] == 0:
-                    heapq.heappush(
-                        ready, (int(by_id[dependent]["order"]), dependent)
-                    )
+                    heapq.heappush(ready, (int(by_id[dependent]["order"]), dependent))
         if len(ordered) != len(messages):
             raise ValueError("Invalid V2 conversation graph.")
         return ordered
@@ -1133,12 +2321,16 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = own_database(CharactersRAGDB(db_path, "chatbook_importer"))
+        db = own_database(CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        ))
         notes_dir = extract_dir / "content" / "notes"
         logger.info(f"ChatbookImporter._import_notes: Looking for notes in {notes_dir}")
 
         for note_id in note_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.NOTE)
             logger.info(
                 f"ChatbookImporter._import_notes: Processing note {note_id} ({status.processed_items}/{len(note_ids)})"
             )
@@ -1156,7 +2348,7 @@ class ChatbookImporter:
                         f"ChatbookImporter._import_notes: Note metadata not found for ID: {note_id}"
                     )
                     status.add_warning(f"Note metadata not found for ID: {note_id}")
-                    status.failed_items += 1
+                    status.record_failure(ContentType.NOTE)
                     continue
 
                 # Load note file
@@ -1169,7 +2361,7 @@ class ChatbookImporter:
                         f"ChatbookImporter._import_notes: Note file not found: {note_file}"
                     )
                     status.add_warning(f"Note file not found: {note_file}")
-                    status.failed_items += 1
+                    status.record_failure(ContentType.NOTE)
                     continue
 
                 # Parse markdown with frontmatter
@@ -1205,7 +2397,7 @@ class ChatbookImporter:
                     )
 
                     if resolution == ConflictResolution.SKIP:
-                        status.skipped_items += 1
+                        status.record_skipped(ContentType.NOTE)
                         continue
                     elif resolution == ConflictResolution.RENAME:
                         note_title = self._generate_unique_note_title(note_title, db)
@@ -1215,14 +2407,14 @@ class ChatbookImporter:
                 new_note_id = db.add_note(title=note_title, content=note_content)
 
                 if new_note_id:
-                    status.successful_items += 1
+                    status.record_success(ContentType.NOTE)
                     logger.info(f"Imported note: {note_title}")
                 else:
-                    status.failed_items += 1
+                    status.record_failure(ContentType.NOTE)
                     status.add_error(f"Failed to create note: {note_title}")
 
             except Exception as e:
-                status.failed_items += 1
+                status.record_failure(ContentType.NOTE)
                 status.add_error(f"Error importing note {note_id}: {str(e)}")
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_notes: Error importing note {}",
@@ -1251,14 +2443,18 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = own_database(CharactersRAGDB(db_path, "chatbook_importer"))
+        db = own_database(CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        ))
         chars_dir = extract_dir / "content" / "characters"
         logger.info(
             f"ChatbookImporter._import_characters: Looking for characters in {chars_dir}"
         )
 
         for char_id in character_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.CHARACTER)
             logger.info(
                 f"ChatbookImporter._import_characters: Processing character {char_id} ({status.processed_items}/{len(character_ids)})"
             )
@@ -1271,7 +2467,7 @@ class ChatbookImporter:
                         f"ChatbookImporter._import_characters: Character file not found: {char_file.name}"
                     )
                     status.add_warning(f"Character file not found: {char_file.name}")
-                    status.failed_items += 1
+                    status.record_failure(ContentType.CHARACTER)
                     continue
 
                 # Load character data
@@ -1292,7 +2488,7 @@ class ChatbookImporter:
                     status.add_error(
                         f"Failed to parse character card for {char_id} (format: {format_name})"
                     )
-                    status.failed_items += 1
+                    status.record_failure(ContentType.CHARACTER)
                     continue
 
                 # Log the detected format
@@ -1324,7 +2520,7 @@ class ChatbookImporter:
                         logger.info(
                             "ChatbookImporter._import_characters: Skipping character due to conflict resolution"
                         )
-                        status.skipped_items += 1
+                        status.record_skipped(ContentType.CHARACTER)
                         continue
                     elif resolution == ConflictResolution.RENAME:
                         old_name = char_name
@@ -1370,19 +2566,19 @@ class ChatbookImporter:
                 )
 
                 if new_char_id:
-                    status.successful_items += 1
+                    status.record_success(ContentType.CHARACTER)
                     logger.info(
                         f"ChatbookImporter._import_characters: Successfully imported character: {char_name}"
                     )
                 else:
-                    status.failed_items += 1
+                    status.record_failure(ContentType.CHARACTER)
                     status.add_error(f"Failed to create character: {char_name}")
                     logger.error(
                         f"ChatbookImporter._import_characters: Failed to create character: {char_name}"
                     )
 
             except Exception as e:
-                status.failed_items += 1
+                status.record_failure(ContentType.CHARACTER)
                 status.add_error(f"Error importing character {char_id}: {str(e)}")
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_characters: Error importing character {}",
@@ -1411,8 +2607,8 @@ class ChatbookImporter:
                 not isinstance(prompt_id, str)
                 or _PROMPT_ARCHIVE_ITEM_ID.fullmatch(prompt_id) is None
             ):
-                status.processed_items += 1
-                status.failed_items += 1
+                status.record_processed(ContentType.PROMPT)
+                status.record_failure(ContentType.PROMPT)
                 status.add_error("Unable to import Prompt item.")
                 logger.error(
                     "ChatbookImporter._import_prompts: Prompt import failed "
@@ -1427,8 +2623,8 @@ class ChatbookImporter:
             db = own_database(PromptsDatabase(db_path, "chatbook_importer"))
         except Exception:
             for prompt_id in valid_prompt_ids:
-                status.processed_items += 1
-                status.failed_items += 1
+                status.record_processed(ContentType.PROMPT)
+                status.record_failure(ContentType.PROMPT)
                 status.add_error("Unable to import Prompt item.")
                 logger.error(
                     "ChatbookImporter._import_prompts: Prompt import failed "
@@ -1439,14 +2635,14 @@ class ChatbookImporter:
         prompts_dir = extract_dir / "content" / "prompts"
 
         for prompt_id in valid_prompt_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.PROMPT)
 
             try:
                 # Find prompt file
                 prompt_file = prompts_dir / f"prompt_{prompt_id}.json"
                 if not prompt_file.exists():
                     status.add_error("Unable to import Prompt item.")
-                    status.failed_items += 1
+                    status.record_failure(ContentType.PROMPT)
                     logger.error(
                         "ChatbookImporter._import_prompts: Prompt import failed "
                         "item={} category=missing",
@@ -1478,14 +2674,14 @@ class ChatbookImporter:
                 new_prompt_id = result[0] if result else None
 
                 if new_prompt_id:
-                    status.successful_items += 1
+                    status.record_success(ContentType.PROMPT)
                     logger.info(
                         "ChatbookImporter._import_prompts: Prompt imported "
                         "item={} category=success",
                         prompt_id,
                     )
                 else:
-                    status.failed_items += 1
+                    status.record_failure(ContentType.PROMPT)
                     status.add_error("Unable to import Prompt item.")
                     logger.error(
                         "ChatbookImporter._import_prompts: Prompt import failed "
@@ -1494,7 +2690,7 @@ class ChatbookImporter:
                     )
 
             except Exception as exc:
-                status.failed_items += 1
+                status.record_failure(ContentType.PROMPT)
                 status.add_error("Unable to import Prompt item.")
                 category = (
                     exc.category
@@ -1531,7 +2727,7 @@ class ChatbookImporter:
         metadata_dir = media_dir / "metadata"
 
         for media_id in media_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.MEDIA)
 
             try:
                 # Find media metadata file
@@ -1540,7 +2736,7 @@ class ChatbookImporter:
                     status.add_warning(
                         f"Media metadata file not found: {metadata_file.name}"
                     )
-                    status.failed_items += 1
+                    status.record_failure(ContentType.MEDIA)
                     continue
 
                 # Load media metadata
@@ -1559,7 +2755,7 @@ class ChatbookImporter:
                 if existing:
                     # Handle conflict
                     if conflict_resolution == ConflictResolution.SKIP:
-                        status.skipped_items += 1
+                        status.record_skipped(ContentType.MEDIA)
                         logger.info(f"Skipped existing media: {title}")
                         continue
                     elif conflict_resolution == ConflictResolution.RENAME:
@@ -1623,20 +2819,20 @@ class ChatbookImporter:
                     )
 
                     if new_media_id:
-                        status.successful_items += 1
+                        status.record_success(ContentType.MEDIA)
                         logger.info(f"Imported media: {title}")
                     else:
-                        status.failed_items += 1
+                        status.record_failure(ContentType.MEDIA)
                         status.add_error(f"Failed to create media: {title}")
 
                 except Exception as e:
-                    status.failed_items += 1
+                    status.record_failure(ContentType.MEDIA)
                     status.add_error(
                         f"Database error importing media '{title}': {str(e)}"
                     )
 
             except Exception as e:
-                status.failed_items += 1
+                status.record_failure(ContentType.MEDIA)
                 status.add_error(f"Error importing media {media_id}: {str(e)}")
                 logger.error(f"Error importing media {media_id}: {e}")
 
@@ -1709,12 +2905,17 @@ class ChatbookImporter:
         different moments must still skip as already-present rather than
         spam a conflict.
         """
-        plain_fields = ("preset_name", "roster_snapshot_json", "turns_json", "model_used")
+        plain_fields = (
+            "preset_name",
+            "roster_snapshot_json",
+            "turns_json",
+            "model_used",
+        )
         if any(existing.get(f) != payload.get(f) for f in plain_fields):
             return False
-        return cls._kept_dt_key(existing.get("original_created_at")) == cls._kept_dt_key(
-            payload.get("original_created_at")
-        )
+        return cls._kept_dt_key(
+            existing.get("original_created_at")
+        ) == cls._kept_dt_key(payload.get("original_created_at"))
 
     @staticmethod
     def _kept_briefing_file_path(
@@ -1773,11 +2974,15 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = own_database(CharactersRAGDB(db_path, "chatbook_importer"))
+        db = own_database(CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        ))
         kept_dir = extract_dir / "content" / "kept_briefings"
 
         for kept_id in kept_briefing_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.KEPT_BRIEFING)
             try:
                 kept_file = self._kept_briefing_file_path(
                     extract_dir, kept_dir, manifest, kept_id
@@ -1786,7 +2991,7 @@ class ChatbookImporter:
                     status.add_warning(
                         f"Kept briefing file not found: {kept_file.name}"
                     )
-                    status.failed_items += 1
+                    status.record_failure(ContentType.KEPT_BRIEFING)
                     continue
 
                 with open(kept_file, "r", encoding="utf-8") as f:
@@ -1802,9 +3007,7 @@ class ChatbookImporter:
                         source_briefing_id=source_briefing_id,
                         watchlist_name=payload.get("watchlist_name"),
                         body_markdown=payload["body_markdown"],
-                        covers_through_item_id=payload.get(
-                            "covers_through_item_id"
-                        ),
+                        covers_through_item_id=payload.get("covers_through_item_id"),
                         covers_from_ts=payload.get("covers_from_ts"),
                         selection_mode=payload.get("selection_mode"),
                         model_used=payload.get("model_used"),
@@ -1822,7 +3025,7 @@ class ChatbookImporter:
                         # Lost a race with another writer between the
                         # failed insert and this read -- a hard failure
                         # rather than a guess.
-                        status.failed_items += 1
+                        status.record_failure(ContentType.KEPT_BRIEFING)
                         status.add_error(
                             "Kept briefing conflict for "
                             f"source_briefing_id={source_briefing_id} could not "
@@ -1841,9 +3044,9 @@ class ChatbookImporter:
                 # count (task-1870 fix-wave F5 -- see the per-item try
                 # around `_import_kept_scripts`).
                 if newly_inserted:
-                    status.successful_items += 1
+                    status.record_success(ContentType.KEPT_BRIEFING)
                 else:
-                    status.skipped_items += 1
+                    status.record_skipped(ContentType.KEPT_BRIEFING)
                     if conflict:
                         status.add_warning(
                             "Kept briefing conflict: source_briefing_id="
@@ -1908,10 +3111,8 @@ class ChatbookImporter:
                 )
 
             except Exception as e:
-                status.failed_items += 1
-                status.add_error(
-                    f"Error importing kept briefing {kept_id}: {str(e)}"
-                )
+                status.record_failure(ContentType.KEPT_BRIEFING)
+                status.add_error(f"Error importing kept briefing {kept_id}: {str(e)}")
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_kept_briefings: Error importing kept briefing {}",
                     kept_id,
@@ -2027,7 +3228,7 @@ class ChatbookImporter:
         while True:
             new_name = f"{base_name} ({counter})"
             # Check if any conversations exist with this name
-            if not db.get_conversation_by_name(new_name):  # Empty list is falsy
+            if not db.get_conversation_by_name(new_name, archive_scope="all"):
                 return new_name
             counter += 1
 

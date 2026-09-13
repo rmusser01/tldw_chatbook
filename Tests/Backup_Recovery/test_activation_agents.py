@@ -3,6 +3,7 @@
 import pytest
 
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
+from Tests.Backup_Recovery.test_mcp_recovery_review import _SETUP as _MCP_SETUP
 
 _SCRIPT = r"""
 import os, sys, types
@@ -284,22 +285,32 @@ def test_console_provider_scope_lasts_until_actual_completion(tmp_path, route):
 
 
 _PERMISSION = (
-    _SCRIPT.split("effects=[]")[0]
+    _MCP_SETUP.replace(
+        "('config','mcp.local','mcp.permissions','mcp.context','mcp.targets')",
+        "('config','mcp.local','mcp.permissions','mcp.context','mcp.targets',"
+        "'db.agent_runs','agents.history','db.workspaces','db.chachanotes.primary')",
+    )
     + r"""
 from Tests.Chat.test_console_agent_bridge import _bridge_with_gateway, _run as run_bridge, _ChunkGateway
-from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
-from tldw_chatbook.MCP.permission_store import MCPPermissionStore
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
-plane=UnifiedMCPControlPlaneService(target_store=None,context_store=None,local_service=None,server_service=None)
-plane._permission_store=MCPPermissionStore(data/'imported_permissions.json')
-plane._permission_store.set_global_default('allow')
+for owner in ('config','db.agent_runs','agents.history','db.workspaces','db.chachanotes.primary'):
+ activation.approve(witness['generation'],owner)
+plane=plane()
+assert plane.permission_store.get_global_default()=='ask'
 gate=BuiltinToolGate(plane)
 gateway = _ChunkGateway([['answer']])
-bridge, bridge_db, chat_store, session, aid = _bridge_with_gateway(data/'bridge', gateway)
+bridge, bridge_db, chat_store, session, aid = _bridge_with_gateway(user/'bridge', gateway)
 try: run_bridge(bridge,chat_store,session,aid,builtin_gate=gate)
 except PermissionError as exc: assert str(exc) == 'agent_activation_required'
 else: raise AssertionError('unreviewed imported tool permissions activated Console agent')
-assert not bridge_db.list_runs('conv-1')
+assert not bridge_db.list_runs('conv-1') and not gateway.messages_seen
+assert all((user/name).read_bytes()==value for name,value in history.items())
+# The exact current MCP review, after the other owners are approved, reopens it.
+plane.approve_recovery_review(plane.capture_recovery_review())
+from tldw_chatbook.Agents.activation import execution, _permission_sources
+with execution(bridge,sources=_permission_sources(gate)):
+ assert not gateway.messages_seen
+assert all((user/name).read_bytes()==value for name,value in history.items())
 bridge_db.close()
 assert not blocked_attempts()
 print('retired and reopened')
@@ -429,8 +440,11 @@ run_id, outcome=service.run_turn(conversation_id='conversation', messages=[{'rol
 assert outcome.status == RUN_DONE, outcome
 assert not chat.child_calls
 handles=service.fleet_snapshot()
-assert len(handles)==1 and handles[0].status=='error' and handles[0].error=='agent_activation_required'
-assert len(db.list_runs('conversation'))==1
+assert len(handles)==1 and handles[0].status=='error' and 'agent_activation_required' in handles[0].error, handles
+rows=db.list_runs('conversation')
+assert len(rows)==2, rows
+child=next(row for row in rows if row['id']==handles[0].run_id)
+assert child['status']=='error', child
 db.close()
 assert not blocked_attempts()
 print('retired and reopened')
@@ -438,7 +452,7 @@ print('retired and reopened')
 )
 
 
-def test_paused_child_intake_settles_handle_without_creating_run(tmp_path):
+def test_paused_child_intake_settles_precreated_run_without_execution(tmp_path):
     _run(tmp_path, "child_pause", "approved", script=_CHILD_PAUSE)
 
 

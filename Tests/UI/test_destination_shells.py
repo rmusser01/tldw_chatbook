@@ -10,11 +10,12 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import ComposeResult
+from textual.containers import Horizontal
+from textual.widgets import Button, Checkbox, Select, Static
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Checkbox, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
@@ -27,6 +28,11 @@ from tldw_chatbook.MCP.unified_control_models import (
     ServerAccessContext,
     UnifiedMCPContext,
 )
+from tldw_chatbook.Notes.note_folder_models import (
+    NoteFolderChildPage,
+    NotePlacementPage,
+    NotePlacementRecord,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
@@ -37,8 +43,14 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
 from tldw_chatbook.UI.Screens.destination_recovery import DestinationRecoveryState
+from tldw_chatbook.UI.destination_recovery import (
+    load_failure_callout,
+    load_failure_recovery_state,
+    sync_load_failure_callout,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+from tldw_chatbook.UI.Screens.meetings_screen import MeetingsScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
@@ -57,6 +69,7 @@ SCREEN_BY_ROUTE = {
     "library": LibraryScreen,
     "artifacts": ArtifactsScreen,
     "personas": PersonasScreen,
+    "meetings": MeetingsScreen,
     "watchlists_collections": WatchlistsCollectionsScreen,
     "schedules": SchedulesWorkbench,
     "workflows": WorkflowsScreen,
@@ -140,6 +153,7 @@ class StaticLibraryNotesScopeService:
         self.notes = tuple(notes)
         self.calls = []
         self.count_calls = []
+        self.backlink_calls = []
         self.search_calls = []
         self.detail_calls = []
         self.save_calls = []
@@ -152,11 +166,71 @@ class StaticLibraryNotesScopeService:
         self.calls.append(kwargs)
         return {"items": list(self.notes), "pagination": {"total": len(self.notes)}}
 
+    async def page_note_folder_children(self, **kwargs):
+        """Expose an empty root folder page through the current Notes seam."""
+        offset = kwargs["offset"]
+        return NoteFolderChildPage(
+            folders=(),
+            total_folders=0,
+            start_offset=offset,
+            previous_offset=None,
+            next_offset=None,
+        )
+
+    async def page_note_placements(self, **kwargs):
+        """Page the fixture's unfiled notes through the production contract."""
+        offset = kwargs["offset"]
+        limit = kwargs["limit"]
+        placements = tuple(
+            NotePlacementRecord(note=dict(note), folder_id=None, membership=None)
+            for note in self.notes[offset : offset + limit]
+        )
+        previous_offset = max(0, offset - limit) if offset else None
+        next_offset = offset + len(placements)
+        if next_offset >= len(self.notes):
+            next_offset = None
+        return NotePlacementPage(
+            placements=placements,
+            total_placements=len(self.notes),
+            start_offset=offset,
+            previous_offset=previous_offset,
+            next_offset=next_offset,
+        )
+
     async def count_notes(self, *, scope, user_id=None, **kwargs):
         """Mirror ``NotesScopeService.count_notes``'s local-scope signature
         and return value (an ``int``, not an envelope)."""
         self.count_calls.append({"scope": scope, "user_id": user_id, **kwargs})
         return len(self.notes)
+
+    async def list_note_backlinks(
+        self, *, scope, note_id, user_id=None, limit=50, **kwargs
+    ):
+        """Mirror ``NotesScopeService.list_note_backlinks`` (task-32145).
+
+        Same keyword-only signature, same return shape (a plain list of
+        ``{"id", "title"}`` rows ordered by title), and the same containment
+        rule the real SQL applies -- the body carries the exact
+        ``(note://<id>)`` token the Obsidian importer writes.
+        """
+        self.backlink_calls.append(
+            {
+                "scope": scope,
+                "note_id": note_id,
+                "user_id": user_id,
+                "limit": limit,
+                **kwargs,
+            }
+        )
+        token = f"(note://{note_id})"
+        rows = [
+            {"id": str(note.get("id")), "title": str(note.get("title") or "")}
+            for note in self.notes
+            if str(note.get("id")) != str(note_id)
+            and token in str(note.get("content") or "")
+        ]
+        rows.sort(key=lambda row: (row["title"].lower(), row["id"]))
+        return rows[: max(0, int(limit))]
 
     async def search_notes(
         self, *, scope, query, limit=None, user_id=None, offset=0, **kwargs
@@ -721,7 +795,18 @@ class PolicyDeniedLibraryNotesScopeService:
         )
 
 
-class StaticWatchlistsScopeService:
+class _WatchlistsScopeContract:
+    """Shared create-form capability required by the Watchlists screen."""
+
+    def create_form_source_types(self, *, runtime_backend=None):
+        return (
+            ("rss", "site", "forum")
+            if runtime_backend == "server"
+            else ("rss", "atom", "url")
+        )
+
+
+class StaticWatchlistsScopeService(_WatchlistsScopeContract):
     def __init__(self, watch_items):
         self.watch_items = tuple(watch_items)
         self.calls = []
@@ -731,12 +816,12 @@ class StaticWatchlistsScopeService:
         return list(self.watch_items)
 
 
-class RaisingWatchlistsScopeService:
+class RaisingWatchlistsScopeService(_WatchlistsScopeContract):
     async def list_watch_items(self, **kwargs):
         raise RuntimeError("watchlists unavailable")
 
 
-class PolicyDeniedWatchlistsScopeService:
+class PolicyDeniedWatchlistsScopeService(_WatchlistsScopeContract):
     def __init__(
         self,
         *,
@@ -760,7 +845,7 @@ class PolicyDeniedWatchlistsScopeService:
         )
 
 
-class HangingWatchlistsScopeService:
+class HangingWatchlistsScopeService(_WatchlistsScopeContract):
     async def list_watch_items(self, **kwargs):
         await asyncio.sleep(10)
         return []
@@ -896,11 +981,18 @@ class StaticHomeActiveWorkAdapter:
 
 
 class DestinationHarness(ConsolidatedCSSApp):
-    def __init__(self, app_instance, route, seen_routes=None, restored_state=None):
+    def __init__(
+        self, app_instance, route, seen_routes=None, restored_state=None,
+        seen_contexts=None,
+    ):
         super().__init__()
         self.app_instance = app_instance
         self.route = route
         self.seen_routes = seen_routes if seen_routes is not None else []
+        # TASK-21514: NavigateToScreen's screen_context (deep-link payload)
+        # recorded alongside seen_routes, so a test can assert not just the
+        # destination but the exact context keys it was handed.
+        self.seen_contexts = seen_contexts if seen_contexts is not None else []
         self.restored_state = restored_state
 
     async def on_mount(self) -> None:
@@ -911,6 +1003,7 @@ class DestinationHarness(ConsolidatedCSSApp):
 
     def on_navigate_to_screen(self, message) -> None:
         self.seen_routes.append(message.screen_name)
+        self.seen_contexts.append(getattr(message, "screen_context", None))
 
 
 def _active_destination_screen(host: DestinationHarness):
@@ -1149,6 +1242,7 @@ def _custom_policy_recovery_state(
         ("library", "#library-header-line", "pick a section"),
         ("artifacts", "#artifacts-title", "generated"),
         ("personas", "#personas-header", "who the ai plays"),
+        ("meetings", "#meetings-title", "record a call"),
     ],
 )
 @pytest.mark.asyncio
@@ -1190,6 +1284,50 @@ async def test_watchlists_collections_uses_compact_title_and_clear_sections():
         visible_text = _visible_text(screen)
         assert "Watchlists" in visible_text
         assert "Collections" not in visible_text
+
+
+def test_watchlists_help_and_footer_bindings_only_advertise_live_pane_actions():
+    bindings = {binding[0]: binding for binding in WatchlistsCollectionsScreen.BINDINGS}
+
+    assert bindings["z"][2] == "Toggle focused side pane"
+    assert bindings["Z"][2] == "Article Focus (Read only)"
+    assert bindings["left_square_bracket"][2] == "Navigation"
+    assert bindings["right_square_bracket"][2] == "Inspector"
+    assert not (
+        {
+            "ctrl+c",
+            "ctrl+v",
+            "ctrl+x",
+            "ctrl+s",
+            "ctrl+d",
+            "ctrl+z",
+            "ctrl+a",
+            "ctrl+r",
+            "ctrl+w",
+            "ctrl+p",
+            "ctrl+q",
+            "f1",
+            "f6",
+        }
+        & set(bindings)
+    )
+
+
+def test_watchlists_context_help_names_permanent_reader_and_side_pane_actions():
+    app = _build_test_app()
+    app.notify = Mock()
+    screen = WatchlistsCollectionsScreen(app)
+
+    screen.action_show_help()
+
+    copy = str(app.notify.call_args.args[0])
+    assert "z=toggle focused side pane" in copy
+    assert "Z=Article Focus (Read only)" in copy
+    assert "[=Navigation ]=Inspector" in copy
+    assert "Reader is permanent" in copy
+    assert "solo" not in copy.lower()
+    assert "Expand" not in copy
+    assert "collapsed header" not in copy.lower()
 
 
 @pytest.mark.asyncio
@@ -3744,6 +3882,57 @@ async def test_skills_destination_uses_three_column_workbench_contract():
         assert screen.query_one("#skills-detail-inspector-divider")
 
 
+class _CssTrueDestinationHarness(DestinationHarness):
+    """``DestinationHarness`` that ALSO loads the real app CSS bundle.
+
+    ``DestinationHarness``/``ConsolidatedCSSApp``'s own ``CSS_PATH`` is only
+    the lifted screen/modal sheets (``screen_css_scoped``/``screen_css_self``)
+    plus the split-out widget-defaults sheets -- never
+    ``tldw_cli_modular.tcss``, where ``.ds-panel``, ``.destination-workbench``,
+    and every ``#<screen>-workbench`` ID-scoped height override actually live
+    (confirmed: none of those three selectors appear in any generated file
+    except the monolithic bundle). Textual's OWN built-in
+    ``Horizontal { height: 1fr }`` default then makes a workbench measured
+    under the plain ``DestinationHarness`` look correctly sized by
+    COINCIDENCE even with the real override missing entirely -- verified
+    while writing this test: reverting the ``#meetings-workbench`` fix and
+    rebuilding the bundle left a plain-``DestinationHarness`` measurement of
+    this exact region completely unchanged, because it never loads the file
+    that changed. Only this subclass, with the bundle spliced into its
+    ``CSS_PATH`` the same way ``_CssTrueConsoleHarness``
+    (``test_console_composer_overflow.py``) does for Console, can see the
+    bug -- see the "shared UI harness never loads the app stylesheet" entry
+    in ``backlog/docs/lessons-testing-evidence.md``.
+    """
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+
+@pytest.mark.asyncio
+async def test_meetings_workbench_and_transcript_pane_have_real_height():
+    # TASK-31551 task-13 fix round: pins the CSS-collapse regression found
+    # live (no #meetings-workbench height:1fr override -- .ds-panel's own
+    # height:auto/min-height:3 won by default, so the rail and canvas
+    # painted zero rows in the real app despite every mounted pilot test
+    # elsewhere staying green). Must use `_CssTrueDestinationHarness` (see
+    # its docstring) -- the plain `DestinationHarness` never loads the
+    # bundle this bug and fix live in, so it cannot see either state.
+    app = _build_test_app()
+    host = _CssTrueDestinationHarness(app, "meetings")
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#meetings-workbench").region.height >= 20
+        assert screen.query_one("#meetings-transcript").region.height > 0
+
+
 @pytest.mark.asyncio
 async def test_skills_destination_service_failure_uses_recovery_copy():
     app = _build_test_app()
@@ -4212,3 +4401,183 @@ async def test_models_shell_keeps_external_paths_inside_the_dedicated_edit_view(
         assert len(path_nodes) == 1
         assert "external-model-path" in path_nodes[0].classes
         assert external in path_nodes[0].ancestors
+
+
+# --- PR M carry I1/M2/M3: the ONE load-failure callout builder --------------
+
+
+class _LoadFailureCalloutHost(ConsolidatedCSSApp):
+    """Mounts one callout built by the shared builder."""
+
+    def __init__(self, callout) -> None:
+        super().__init__()
+        self._callout = callout
+
+    def compose(self) -> ComposeResult:
+        yield self._callout
+
+
+def _media_load_failure(kind: str = "error") -> DestinationRecoveryState:
+    return load_failure_recovery_state(
+        what="Couldn't load media",
+        reason="database is locked",
+        retry_id="library-media-retry",
+        stable_selector="#library-media-load-failure",
+        kind=kind,
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_failure_callout_builds_one_shape_for_every_surface():
+    """PR M carry I1: three copies of this callout had already diverged (the
+    browse row's lost the tint refresh its siblings had). One builder now
+    serves the landing hub, the browse row and the Media canvas -- the reason
+    (1fr, wrapping) beside a Retry that keeps its content width.
+    """
+    failure = _media_load_failure()
+    callout = load_failure_callout(
+        failure,
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+    )
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        assert isinstance(callout, Horizontal)
+        assert callout.has_class("ds-recovery-callout")
+        # A hard failure carries the error tint...
+        assert callout.has_class("is-blocked")
+        copy = callout.query_one("#surface-load-failure-copy", Static)
+        assert _static_text(copy) == failure.message
+        retry = callout.query_one(Button)
+        # ...and the state's own Retry id wins over the caller's fallback.
+        assert retry.id == "library-media-retry"
+        assert str(retry.label) == "Retry"
+        assert str(retry.tooltip) == failure.disabled_tooltip
+        assert "console-action-subdued" in retry.classes
+        assert retry in list(callout.query(Button))
+
+
+@pytest.mark.asyncio
+async def test_load_failure_callout_takes_a_timeout_tint_a_fallback_id_and_a_gate():
+    """The per-surface knobs: a timeout is a warning (no ``is-blocked``), a
+    state with no Retry id of its own takes the caller's, and the Media
+    canvas's own button class and write-in-flight gate still apply.
+    """
+    failure = replace(_media_load_failure(kind="timeout"), retry_id="")
+    gated: list[str] = []
+
+    def gate(button: Button, base_label: str) -> Button:
+        gated.append(base_label)
+        button.disabled = True
+        return button
+
+    callout = load_failure_callout(
+        failure,
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+        retry_classes="library-canvas-action",
+        gate=gate,
+    )
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        assert not callout.has_class("is-blocked")
+        retry = callout.query_one(Button)
+        assert retry.id == "fallback-retry"
+        assert "library-canvas-action" in retry.classes
+        assert gated == ["Retry"]
+        assert retry.disabled
+
+
+@pytest.mark.asyncio
+async def test_sync_load_failure_callout_repaints_the_copy_and_the_tint():
+    """PR M carry M2: the in-place refresh must move the TINT too. A Retry
+    can turn a timeout (warning) into a hard failure (error), and repainting
+    only the sentence left an amber callout reading a hard failure.
+    """
+    warning = _media_load_failure(kind="timeout")
+    callout = load_failure_callout(
+        warning,
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+    )
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        copy = callout.query_one("#surface-load-failure-copy", Static)
+        assert not callout.has_class("is-blocked")
+
+        hard = _media_load_failure()
+        assert sync_load_failure_callout(callout, hard) is True
+        assert _static_text(copy) == hard.message
+        assert callout.has_class("is-blocked")
+
+        # ...and back down again, so a recovered severity is not sticky.
+        assert sync_load_failure_callout(callout, warning) is True
+        assert _static_text(copy) == warning.message
+        assert not callout.has_class("is-blocked")
+
+
+@pytest.mark.asyncio
+async def test_sync_load_failure_callout_repaints_the_retry_tooltip():
+    """A repaint must move the Retry's tooltip too, not just the copy and the
+    tint -- a shape-preserving reason change (same Retry id, a timeout's
+    "waited 5 s" turning into a hard failure's "database is locked")
+    otherwise leaves the tooltip naming the OLD reason while the sentence
+    beside it already names the new one.
+    """
+    warning = load_failure_recovery_state(
+        what="Couldn't load media",
+        reason="waited 5 s",
+        retry_id="library-media-retry",
+        stable_selector="#library-media-load-failure",
+        kind="timeout",
+    )
+    callout = load_failure_callout(
+        warning,
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+    )
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        retry = callout.query_one(Button)
+        assert str(retry.tooltip) == warning.disabled_tooltip
+
+        hard = load_failure_recovery_state(
+            what="Couldn't load media",
+            reason="database is locked",
+            retry_id="library-media-retry",
+            stable_selector="#library-media-load-failure",
+            kind="error",
+        )
+        assert sync_load_failure_callout(callout, hard) is True
+        assert str(retry.tooltip) == hard.disabled_tooltip
+
+
+@pytest.mark.asyncio
+async def test_sync_load_failure_callout_refuses_a_shape_it_did_not_build():
+    """PR M carry M3: a failure with no Retry paints a BARE Static, so the
+    in-place sync must report "remount me" rather than silently no-op when
+    the mounted node is the other shape (either direction).
+    """
+    callout = load_failure_callout(
+        _media_load_failure(),
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+    )
+    bare = Static("Library source services unavailable.", id="surface-load-failure")
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        # A bare Static is not this callout...
+        assert sync_load_failure_callout(bare, _media_load_failure()) is False
+        # ...and a failure with no callout of its own cannot repaint one.
+        assert sync_load_failure_callout(callout, None) is False
+        assert sync_load_failure_callout(None, _media_load_failure()) is False

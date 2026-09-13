@@ -236,6 +236,7 @@ def _cache_names(source):
     if name == "LocalCharacterPersonaService":
         return (
             "_persona_profiles",
+            "_persona_store_extras",
             "_persona_exemplars",
             "_character_exemplars",
             "_chat_settings",

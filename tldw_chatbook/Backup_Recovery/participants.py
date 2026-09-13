@@ -64,6 +64,10 @@ def _retire_current_thread_caches(pause) -> None:
         "db.rag_indexing": "close",
         "notifications.client": "close",
         "notes.file_notes": "close",
+        "writing.local": None,
+        "research.local": None,
+        "runtime.event_state": None,
+        "notes.sync_state": None,
     }
     types = _repository_types()
     with storage._lock:
@@ -92,7 +96,74 @@ def _retire_current_thread_caches(pause) -> None:
                 continue
         # Original owner API clears its own cache only after native close. Its
         # _core_closing check retains transactions and uncertain retirement.
-        getattr(type(repository), closers[participant.owner_id])(repository)
+        closer = closers[participant.owner_id]
+        if closer is None:
+            _retire_service_thread_cache(repository, participant.owner_id)
+        else:
+            getattr(type(repository), closer)(repository)
+
+
+def _retire_service_thread_cache(repository, owner_id):
+    """Retire a new held service cache without revoking foreign-thread borrowers."""
+    if owner_id in {"writing.local", "research.local"}:
+        with repository._lifecycle:
+            connection = repository._connections.get(threading.get_ident())
+    elif owner_id == "runtime.event_state":
+        with repository._held_lock:
+            entry = repository._held.get(threading.get_ident())
+            connection = None if entry is None or entry.depth else entry.conn
+    else:
+        connection = getattr(repository._thread_local, "connection", None)
+    if connection is None:
+        return
+    with _core_closing(repository, connection) as allowed:
+        if allowed:
+            connection.close()
+    # Getters clear the source cache only after the native wrapper proves close.
+    # A failed close retains the original reference and its outstanding lease.
+
+
+def _close_settled_core_cache(repository):
+    """Use an owner's explicit close only after its native borrowers settle.
+
+    Runtime producers call this on their existing worker after draining intake.
+    Fence the source while taking the census and closing, but never hold the
+    coordinator lock across native close. Ordinary owner close semantics stay
+    unchanged, and a failed native close remains visible to the storage gate.
+    """
+    if repository.is_memory_db:
+        return True
+    from . import storage_admission as storage
+
+    participant = _repository_participant(repository)
+    with storage._lock:
+        if (
+            participant.closed
+            or participant.retiring_threads
+            or storage._pause is not None
+            or any(
+                operation.participant is participant
+                for operation in storage._operations
+            )
+        ):
+            return False
+        participant.closed = True
+        connections = tuple(participant.connections)
+    try:
+        for connection in connections:
+            try:
+                if connection.in_transaction:
+                    return False
+            except sqlite3.ProgrammingError:
+                pass  # Already-closed handles can be cleared by their owner.
+        type(repository).close(repository)
+        with storage._lock:
+            return not participant.connections
+    finally:
+        with storage._changed:
+            if storage._pause is None:
+                participant.closed = False
+            storage._changed.notify_all()
 
 
 class _RepositoryParticipant:
@@ -182,8 +253,8 @@ def _repository_types():
             "notes.file_notes",
         ),
         (
-            "tldw_chatbook.Notes.note_import_receipts",
-            "NoteImportReceiptRepository",
+            "tldw_chatbook.Notes.notes_device_state_store",
+            "NotesDeviceStateStore",
             "notes.sync_state",
         ),
         (
@@ -389,13 +460,14 @@ def _register_core_connection(repository, connection):
                 "db.agent_runs",
                 "notifications.client",
                 "db.scheduled_tasks",
-                "runtime.event_state",
                 "runtime.sync_state",
             }
             else participant.owner_id
         )
         if participant.owner_id == "notes.file_notes":
             policy_id = "notes.file_notes_replica"
+        if participant.owner_id == "runtime.event_state":
+            policy_id = "notifications.event_state"
         if participant.owner_id == "db.subscriptions":
             policy_id = (
                 "db.subscriptions.agent_read" if participant.read_only else "db.base"

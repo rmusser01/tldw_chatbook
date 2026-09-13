@@ -76,8 +76,11 @@ class LogsScreen(BaseAppScreen):
             )
 
     def on_unmount(self) -> None:
-        """When the logs screen is unmounted, clear the widget reference."""
-        super().on_unmount()
+        """When the logs screen is unmounted, clear the widget reference.
+
+        No super().on_unmount(): the dispatcher already invokes
+        BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
+        """
         if hasattr(self.app_instance, "_current_logs_window"):
             self.app_instance._current_logs_window = None
         # Clear the current log widget reference

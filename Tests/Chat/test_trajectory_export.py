@@ -20,6 +20,11 @@ from tldw_chatbook.Chat.console_context_repository import (
     AuxiliaryAttemptStatus,
     ConsoleContextRepository,
 )
+from tldw_chatbook.Chat.library_activity import (
+    LibraryActivityEvent,
+    LibraryActivitySourceRef,
+    encode_library_activity_event,
+)
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.Chat.trajectory_export import (
@@ -207,6 +212,80 @@ def _snapshot_from_export(payload: dict):
     )
 
 
+def _seed_library_activity(database: CharactersRAGDB, conversation_id: str) -> None:
+    user_id = database.get_messages_for_conversation(
+        conversation_id, limit=100, include_image_data=False
+    )[0]["id"]
+    event = LibraryActivityEvent(
+        version=1,
+        event_id="event-activity-1",
+        attempt_id="attempt-activity-1",
+        run_id="run-activity-1",
+        actor_kind="primary",
+        parent_run_id=None,
+        library_provider="direct",
+        operation="library_search_notes",
+        status="succeeded",
+        result_count=1,
+        query_preview="private bounded query",
+        source_refs=(
+            LibraryActivitySourceRef("note", "note-secret-id", "Private title"),
+        ),
+        error_code=None,
+        error_summary=None,
+    )
+    database.upsert_trajectory_rows(
+        [
+            TrajectoryRowWrite(
+                message_id=user_id,
+                conversation_id=conversation_id,
+                turn_id=user_id,
+                seq=None,
+                event_kind="library_activity",
+                step_started_at=1_755_165_601.0,
+                payload_json=encode_library_activity_event(event),
+            )
+        ]
+    )
+
+
+def test_library_activity_export_defaults_to_outcome_only_and_full_is_bounded(db):
+    conversation_id = _seed_conversation(db)
+    _seed_library_activity(db, conversation_id)
+
+    default = build_trajectory_export(db, conversation_id)
+    default_row = next(
+        row
+        for row in default["trajectory_rows"]
+        if row["event_kind"] == "library_activity"
+    )
+    default_activity = json.loads(default_row["payload_json"])
+    assert default_activity == {
+        "version": 1,
+        "operation": "library_search_notes",
+        "status": "succeeded",
+        "result_count": 1,
+        "source_types": ["note"],
+        "error_code": None,
+    }
+    assert "private bounded query" not in json.dumps(default)
+    assert "note-secret-id" not in json.dumps(default)
+    assert "Private title" not in json.dumps(default)
+
+    full = build_trajectory_export(db, conversation_id, include_payloads=True)
+    full_row = next(
+        row
+        for row in full["trajectory_rows"]
+        if row["event_kind"] == "library_activity"
+    )
+    full_activity = json.loads(full_row["payload_json"])
+    assert full_activity["query_preview"] == "private bounded query"
+    assert full_activity["source_refs"] == [
+        {"type": "note", "id": "note-secret-id", "title": "Private title"}
+    ]
+    assert len(full_row["payload_json"].encode("utf-8")) <= 8192
+
+
 # ---------------------------------------------------------------------------
 # Round trip
 # ---------------------------------------------------------------------------
@@ -274,6 +353,7 @@ def test_export_omits_image_blobs_and_message_keys(db) -> None:
         "timestamp",
         "parent_message_id",
         "usage_json",
+        "assistant_generation_state",
     }
     assert "image_data" not in payload["messages"][0]
 
@@ -396,6 +476,65 @@ def test_validator_normalizes_optional_sections(db) -> None:
     assert normalized["compaction_records"] == []
     assert normalized["variants"] == []
     assert normalized["active_leaf_message_id"] is None
+
+
+@pytest.mark.parametrize(
+    "reserved_field",
+    ["_thinking", "thinking_blocks", "thinking_blocks_json"],
+)
+@pytest.mark.parametrize(
+    "location",
+    ["top-level", "message", "variant-set", "variant-value"],
+)
+def test_validator_rejects_reserved_thinking_extensions_without_echoing_content(
+    db, reserved_field: str, location: str
+) -> None:
+    payload = _valid_payload(db)
+    private_canary = "TRAJECTORY-PRIVATE-THINKING-CANARY"
+    payload["variants"] = [
+        {
+            "turn_id": "t1",
+            "variants": ["answer variant"],
+            "selected_index": 0,
+        }
+    ]
+    if location == "top-level":
+        payload[reserved_field] = private_canary
+    elif location == "message":
+        payload["messages"][0][reserved_field] = private_canary
+    elif location == "variant-set":
+        payload["variants"][0][reserved_field] = private_canary
+    else:
+        payload["variants"][0]["variants"] = [
+            {"content": "answer variant", reserved_field: private_canary}
+        ]
+
+    with pytest.raises(
+        TrajectoryExportError, match="reserved thinking field"
+    ) as caught:
+        validate_trajectory_export(payload)
+
+    assert private_canary not in str(caught.value)
+
+
+def test_validator_keeps_general_additive_field_compatibility(db) -> None:
+    payload = _valid_payload(db)
+    payload["future_top_level"] = {"accepted": True}
+    payload["messages"][0]["future_message_field"] = "accepted"
+    payload["variants"] = [
+        {
+            "turn_id": "t1",
+            "variants": ["answer variant"],
+            "selected_index": 0,
+            "future_variant_field": "accepted",
+        }
+    ]
+
+    normalized = validate_trajectory_export(payload)
+
+    assert normalized["future_top_level"] == {"accepted": True}
+    assert normalized["messages"][0]["future_message_field"] == "accepted"
+    assert normalized["variants"][0]["future_variant_field"] == "accepted"
 
 
 # ---------------------------------------------------------------------------

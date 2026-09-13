@@ -48,6 +48,10 @@ from tldw_chatbook.Utils.token_counter import estimate_tokens
 
 UNKNOWN_MODEL_CONTEXT_CAP_TOKENS = 32_768
 _OUTPUT_ENVELOPE_ALLOWANCE_TOKENS = 1_024
+#: The default rewrite template asks for a 3-5x expansion of the source, so
+#: the output budget must scale with the source instead of only covering a
+#: same-length rewrite plus the JSON envelope.
+_OUTPUT_EXPANSION_FACTOR = 5
 _ADDITIONAL_CONTEXT_PREFIX = "additional-context"
 
 
@@ -418,6 +422,7 @@ class PromptImprovementService:
         )
         output_estimate = (
             self._token_estimator(message_texts[-1], model, provider)
+            * _OUTPUT_EXPANSION_FACTOR
             + _OUTPUT_ENVELOPE_ALLOWANCE_TOKENS
         )
         advertised_output = _valid_limit(self._output_limit_resolver(provider, model))
@@ -444,7 +449,7 @@ class PromptImprovementService:
 
         request = build_auxiliary_request(snapshot, max_output_tokens=output_allowance)
         try:
-            result = await self._gateway.complete_auxiliary(request)
+            result = await self._gateway.complete_auxiliary(request, route=None)
         except asyncio.CancelledError:
             return self._emit(
                 snapshot,

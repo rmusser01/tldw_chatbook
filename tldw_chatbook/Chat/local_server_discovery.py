@@ -25,12 +25,16 @@ from urllib.parse import urlparse
 
 import httpx
 
-from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    DEFAULT_LLAMACPP_BASE_URL,
+    safe_endpoint_display,
+)
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     normalize_provider_key_for_contract,
     resolve_provider_endpoint,
 )
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 
 DISCOVERY_PROBE_TIMEOUT_SECONDS = 2.5
 MODEL_PROBE_RESPONSE_MAX_BYTES = 1024 * 1024
@@ -228,7 +232,12 @@ def build_local_server_candidates(
             LocalServerCandidate(provider_key=provider_key, base_url=normalized)
         )
 
+    # Two well-known llama.cpp candidates when nothing is configured: the
+    # stock `llama-server` default port (8080), then the port Chatbook's docs
+    # and defaults teach (9099). Configured endpoints are appended below and
+    # deduped, so a user running either convention is found on first run.
     _add("llama_cpp", DEFAULT_LLAMACPP_DISCOVERY_URL)
+    _add("llama_cpp", DEFAULT_LLAMACPP_BASE_URL)
     _add("ollama", DEFAULT_OLLAMA_DISCOVERY_URL)
 
     api_settings = (
@@ -498,7 +507,7 @@ async def probe_models_endpoint(
         )
     display = endpoint_display(normalized)
     owns_client = http_client is None
-    client = http_client or httpx.AsyncClient(timeout=timeout)
+    client = http_client or build_httpx_async_client(timeout=timeout)
     try:
         model_ids, detail = await _get_models_payload(
             client,
@@ -549,7 +558,7 @@ async def discover_local_servers(
     if not candidates:
         return ()
     owns_client = http_client is None
-    client = http_client or httpx.AsyncClient(timeout=timeout)
+    client = http_client or build_httpx_async_client(timeout=timeout)
     try:
         results = await asyncio.gather(
             *(

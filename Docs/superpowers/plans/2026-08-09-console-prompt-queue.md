@@ -23,9 +23,9 @@ dataclasses, pytest/pytest-asyncio, Ruff.
 
 **ADR required:** yes
 
-**ADR path:** `backlog/decisions/046-visible-bounded-console-prompt-queue.md`
+**ADR path:** `backlog/decisions/098-visible-bounded-console-prompt-queue.md`
 
-**Reason:** ADR-046 already accepts the bounded visible queue, controller
+**Reason:** ADR-098 already accepts the bounded visible queue, controller
 ownership, context epoch, turn-context boundary, lifecycle guards, and
 process-memory scope. This plan implements that decision; it does not introduce a
 new architecture choice. ADR-033 and ADR-031 remain binding for application-state

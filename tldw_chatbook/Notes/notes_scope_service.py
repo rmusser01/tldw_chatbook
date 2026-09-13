@@ -5,7 +5,8 @@ Scope-aware routing for local notes, server notes, and workspace notes.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from contextlib import nullcontext
 from enum import Enum
 from functools import partial
 from typing import Any, NoReturn, Optional
@@ -19,9 +20,13 @@ from tldw_chatbook.Notes.note_folder_models import (
     FolderMutationResult,
     NoteFolder,
     NoteFolderCapability,
+    NoteFolderChildPage,
     NoteFolderMembership,
     NoteFolderPage,
+    NotePlacementPage,
     RestoredManagedMembershipReview,
+    NoteTreeLocation,
+    NoteTreeMutationContext,
 )
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
@@ -93,6 +98,7 @@ class NotesScopeService:
         sync_scope_service: Any = None,
         sync_v2_notes_producer: Any = None,
         folder_repository: Any | None = None,
+        organization_sync_service: Any | None = None,
     ):
         self.local_notes_service = local_notes_service
         self.server_service = server_service
@@ -100,6 +106,7 @@ class NotesScopeService:
         self.sync_scope_service = sync_scope_service
         self.sync_v2_notes_producer = sync_v2_notes_producer
         self.folder_repository = folder_repository
+        self.organization_sync_service = organization_sync_service
 
     def _normalize_scope(self, scope: ScopeType | str) -> ScopeType:
         if isinstance(scope, ScopeType):
@@ -120,6 +127,16 @@ class NotesScopeService:
         if self.sync_scope_service is None:
             raise ValueError("Sync scope service is unavailable.")
         return self.sync_scope_service
+
+    def _organization_profile_scope(
+        self, explicit: Optional[Mapping[str, Any]]
+    ) -> dict[str, Any] | None:
+        if self.organization_sync_service is None:
+            return self._sync_v2_profile_scope(explicit)
+        normalized = self._sync_v2_profile_scope(explicit) if explicit is not None else None
+        if explicit is not None and normalized is None:
+            raise ValueError("Invalid Sync v2 profile scope.")
+        return self.organization_sync_service.resolve_profile_scope(normalized)
 
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -217,6 +234,229 @@ class NotesScopeService:
         return await self._run_folder_repository(
             repository.list_children,
             parent_id=parent_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def page_note_folder_children(
+        self,
+        *,
+        scope: ScopeType | str,
+        parent_id: str | None,
+        limit: int,
+        offset: int,
+        user_id: str | None = None,
+    ) -> NoteFolderChildPage:
+        """Page direct child folders through the local repository boundary.
+
+        Args:
+            scope: Note scope to query.
+            parent_id: Exact parent identifier, or ``None`` for root folders.
+            limit: Maximum folders to return.
+            offset: Zero-based folder offset.
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact child-folder page.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.page_child_folders,
+            parent_id=parent_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def page_note_placements(
+        self,
+        *,
+        scope: ScopeType | str,
+        parent_id: str | None,
+        limit: int,
+        offset: int,
+        user_id: str | None = None,
+        order: str = "title",
+    ) -> NotePlacementPage:
+        """Page note placements through the local repository boundary.
+
+        Args:
+            scope: Note scope to query.
+            parent_id: Exact folder identifier, or ``None`` for Unfiled notes.
+            limit: Maximum placements to return.
+            offset: Zero-based placement offset.
+            user_id: Local database user identifier.
+            order: Placement order the caller is browsing in (task-32172).
+
+        Returns:
+            The repository's exact placement page.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.page_note_placements,
+            parent_id=parent_id,
+            limit=limit,
+            offset=offset,
+            order=order,
+        )
+
+    async def locate_note_tree_folder(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        page_size: int,
+        user_id: str | None = None,
+    ) -> NoteTreeLocation | None:
+        """Locate one folder in the exact paged note tree.
+
+        Args:
+            scope: Note scope to query.
+            folder_id: Exact active folder identifier.
+            page_size: Folder page size used by the tree.
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact tree location, or ``None`` when absent.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.locate_note_tree_folder,
+            folder_id=folder_id,
+            page_size=page_size,
+        )
+
+    async def locate_note_tree_placement(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: str,
+        page_size: int,
+        preferred_folder_id: str | None = None,
+        preferred_membership_id: str | None = None,
+        user_id: str | None = None,
+        order: str = "title",
+    ) -> NoteTreeLocation | None:
+        """Locate one preferred note placement in the exact paged tree.
+
+        Args:
+            scope: Note scope to query.
+            note_id: Exact active note identifier.
+            page_size: Placement page size used by the tree.
+            preferred_folder_id: Folder to prefer after exact membership lookup.
+            preferred_membership_id: Exact surviving membership to prefer.
+            user_id: Local database user identifier.
+            order: Placement order the tree is paging in; the returned
+                offset is ranked in it (task-32172).
+
+        Returns:
+            The repository's exact tree location, or ``None`` when absent.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.locate_note_tree_placement,
+            note_id=note_id,
+            page_size=page_size,
+            preferred_folder_id=preferred_folder_id,
+            preferred_membership_id=preferred_membership_id,
+            order=order,
+        )
+
+    async def load_note_tree_mutation_context(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_ids: Iterable[str] = (),
+        note_ids: Iterable[str] = (),
+        include_folder_subtrees: bool = False,
+        user_id: str | None = None,
+    ) -> NoteTreeMutationContext:
+        """Load folder branches affected by note-tree mutations.
+
+        Args:
+            scope: Note scope to query.
+            folder_ids: Active or recently changed folder identifiers.
+            note_ids: Notes whose active placement parents are needed.
+            include_folder_subtrees: Whether affected subtrees are included.
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact mutation context.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.load_note_tree_mutation_context,
+            folder_ids=folder_ids,
+            note_ids=note_ids,
+            include_folder_subtrees=include_folder_subtrees,
+        )
+
+    async def search_note_tree_placements(
+        self,
+        *,
+        scope: ScopeType | str,
+        query: str,
+        limit: int,
+        offset: int,
+        user_id: str | None = None,
+    ) -> NotePlacementPage:
+        """Search exact paged note placements through the local repository.
+
+        Args:
+            scope: Note scope to query.
+            query: Plain text matched against notes and folder paths.
+            limit: Maximum placements to return.
+            offset: Zero-based placement offset.
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact matching placement page.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.search_note_tree_placements,
+            query=query,
             limit=limit,
             offset=offset,
         )
@@ -321,14 +561,157 @@ class NotesScopeService:
         name: str,
         parent_id: str | None,
         user_id: str | None = None,
+        sync_v2_profile: Mapping[str, Any] | None = None,
     ) -> NoteFolder:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="create", operation="create"
+        )
+        if self.organization_sync_service is not None:
+            profile_scope = self._organization_profile_scope(sync_v2_profile)
+            if profile_scope is not None:
+                return await self._run_folder_repository(
+                    self.organization_sync_service.create_folder,
+                    folder_repository=repository,
+                    name=name,
+                    parent_id=parent_id,
+                    **profile_scope,
+                )
+        return await self._run_folder_repository(
+            repository.create_folder, name=name, parent_id=parent_id
+        )
+
+    async def get_note_folder_by_path_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        path_segments: Sequence[str],
+        user_id: str | None = None,
+    ) -> NoteFolder | None:
+        """Read one exact active local folder for lasting-sync recovery."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.get_folder_by_path,
+            tuple(path_segments),
+        )
+
+    async def get_note_folder_by_id_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        include_deleted: bool = True,
+        user_id: str | None = None,
+    ) -> NoteFolder | None:
+        """Read one exact local folder ID, including tombstones when requested."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.get_folder,
+            folder_id,
+            include_deleted=include_deleted,
+        )
+
+    async def has_managed_note_folder_ownership_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        user_id: str | None = None,
+    ) -> bool:
+        """Classify one exact local folder as manual or sync-managed."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.has_managed_folder_ownership,
+            folder_id,
+        )
+
+    async def create_manual_note_folder_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        name: str,
+        parent_id: str | None,
+        user_id: str | None = None,
+    ) -> NoteFolder:
+        """Create one caller-identified local manual folder for recovery."""
+
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="create", operation="create"
         )
         return await self._run_folder_repository(
             repository.create_folder,
+            folder_id=folder_id,
             name=name,
             parent_id=parent_id,
+        )
+
+    async def get_manual_note_placement_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        note_id: str,
+        include_deleted: bool = True,
+        user_id: str | None = None,
+    ) -> tuple[NoteFolderMembership, bool] | None:
+        """Read one exact local manual placement and its deletion state."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="membership"
+        )
+        return await self._run_folder_repository(
+            repository.get_exact_manual_membership,
+            folder_id=folder_id,
+            note_id=note_id,
+            include_deleted=include_deleted,
+        )
+
+    async def list_note_placements_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: str,
+        user_id: str | None = None,
+    ) -> tuple[NoteFolderMembership, ...]:
+        """Read every active local placement for one conflict-copy note."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="membership"
+        )
+        return await self._run_folder_repository(
+            repository.list_memberships,
+            note_ids=(note_id,),
+            include_inactive=True,
+        )
+
+    async def create_manual_note_placement_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        note_id: str,
+        expected_note_version: int,
+        user_id: str | None = None,
+    ) -> NoteFolderMembership:
+        """Create one exact active manual placement for lasting-sync recovery."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="update", operation="membership"
+        )
+        return await self._run_folder_repository(
+            repository.attach_manual,
+            folder_id=folder_id,
+            note_id=note_id,
+            expected_note_version=expected_note_version,
         )
 
     async def load_note_folder_search(
@@ -357,13 +740,16 @@ class NotesScopeService:
         name: str,
         expected_version: int,
         user_id: str | None = None,
+        sync_v2_profile: Mapping[str, Any] | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="rename"
         )
-        return await self._run_folder_repository(
-            repository.rename_folder,
-            folder_id,
+        return await self._run_organization_folder_mutation(
+            repository=repository,
+            service_method="rename_folder",
+            sync_v2_profile=sync_v2_profile,
+            folder_id=folder_id,
             name=name,
             expected_version=expected_version,
         )
@@ -376,13 +762,16 @@ class NotesScopeService:
         parent_id: str | None,
         expected_version: int,
         user_id: str | None = None,
+        sync_v2_profile: Mapping[str, Any] | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="move"
         )
-        return await self._run_folder_repository(
-            repository.move_folder,
-            folder_id,
+        return await self._run_organization_folder_mutation(
+            repository=repository,
+            service_method="move_folder",
+            sync_v2_profile=sync_v2_profile,
+            folder_id=folder_id,
             parent_id=parent_id,
             expected_version=expected_version,
         )
@@ -394,13 +783,16 @@ class NotesScopeService:
         folder_id: str,
         expected_version: int,
         user_id: str | None = None,
+        sync_v2_profile: Mapping[str, Any] | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="delete", operation="delete"
         )
-        return await self._run_folder_repository(
-            repository.soft_delete_folder,
-            folder_id,
+        return await self._run_organization_folder_mutation(
+            repository=repository,
+            service_method="delete_folder",
+            sync_v2_profile=sync_v2_profile,
+            folder_id=folder_id,
             expected_version=expected_version,
         )
 
@@ -411,14 +803,53 @@ class NotesScopeService:
         folder_id: str,
         expected_version: int,
         user_id: str | None = None,
+        sync_v2_profile: Mapping[str, Any] | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="restore"
         )
-        return await self._run_folder_repository(
-            repository.restore_folder,
-            folder_id,
+        return await self._run_organization_folder_mutation(
+            repository=repository,
+            service_method="restore_folder",
+            sync_v2_profile=sync_v2_profile,
+            folder_id=folder_id,
             expected_version=expected_version,
+        )
+
+    async def _run_organization_folder_mutation(
+        self,
+        *,
+        repository: Any,
+        service_method: str,
+        sync_v2_profile: Mapping[str, Any] | None,
+        **arguments: Any,
+    ) -> Any:
+        if self.organization_sync_service is None:
+            repository_method = {
+                "rename_folder": "rename_folder",
+                "move_folder": "move_folder",
+                "delete_folder": "soft_delete_folder",
+                "restore_folder": "restore_folder",
+            }[service_method]
+            return await self._run_folder_repository(
+                getattr(repository, repository_method), **arguments
+            )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if profile_scope is None:
+            repository_method = {
+                "rename_folder": "rename_folder",
+                "move_folder": "move_folder",
+                "delete_folder": "soft_delete_folder",
+                "restore_folder": "restore_folder",
+            }[service_method]
+            return await self._run_folder_repository(
+                getattr(repository, repository_method), **arguments
+            )
+        return await self._run_folder_repository(
+            getattr(self.organization_sync_service, service_method),
+            folder_repository=repository,
+            **profile_scope,
+            **arguments,
         )
 
     async def attach_note_to_folder(
@@ -428,15 +859,21 @@ class NotesScopeService:
         folder_id: str,
         note_id: str,
         user_id: str | None = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
     ) -> NoteFolderMembership:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
         )
-        return await self._run_folder_repository(
-            repository.attach_manual,
-            folder_id=folder_id,
-            note_id=note_id,
-        )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            return await self._run_folder_repository(
+                self.organization_sync_service.attach_folder_link,
+                folder_repository=repository,
+                folder_id=folder_id,
+                note_id=note_id,
+                **profile_scope,
+            )
+        return await self._run_folder_repository(repository.attach_manual, folder_id=folder_id, note_id=note_id)
 
     async def detach_note_from_folder(
         self,
@@ -446,16 +883,22 @@ class NotesScopeService:
         note_id: str,
         expected_version: int,
         user_id: str | None = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
     ) -> bool:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
         )
-        return await self._run_folder_repository(
-            repository.detach_manual,
-            folder_id=folder_id,
-            note_id=note_id,
-            expected_version=expected_version,
-        )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            return await self._run_folder_repository(
+                self.organization_sync_service.detach_folder_link,
+                folder_repository=repository,
+                folder_id=folder_id,
+                note_id=note_id,
+                expected_version=expected_version,
+                **profile_scope,
+            )
+        return await self._run_folder_repository(repository.detach_manual, folder_id=folder_id, note_id=note_id, expected_version=expected_version)
 
     async def convert_note_folder_owner_to_manual(
         self,
@@ -463,14 +906,21 @@ class NotesScopeService:
         scope: ScopeType | str,
         owner_id: str,
         user_id: str | None = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
     ) -> int:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
         )
-        return await self._run_folder_repository(
-            repository.convert_owner_to_manual,
-            owner_id=owner_id,
-        )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            return await self._run_folder_repository(
+                self.organization_sync_service.mutate_managed_folder_links,
+                folder_repository=repository,
+                mutation_method="convert_owner_to_manual",
+                owner_id=owner_id,
+                **profile_scope,
+            )
+        return await self._run_folder_repository(repository.convert_owner_to_manual, owner_id=owner_id)
 
     async def remove_note_folder_owner_memberships(
         self,
@@ -478,14 +928,21 @@ class NotesScopeService:
         scope: ScopeType | str,
         owner_id: str,
         user_id: str | None = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
     ) -> int:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
         )
-        return await self._run_folder_repository(
-            repository.remove_owner_memberships,
-            owner_id=owner_id,
-        )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            return await self._run_folder_repository(
+                self.organization_sync_service.mutate_managed_folder_links,
+                folder_repository=repository,
+                mutation_method="remove_owner_memberships",
+                owner_id=owner_id,
+                **profile_scope,
+            )
+        return await self._run_folder_repository(repository.remove_owner_memberships, owner_id=owner_id)
 
     async def list_note_folder_restore_reviews(
         self,
@@ -497,6 +954,35 @@ class NotesScopeService:
             scope=scope, user_id=user_id, action="list", operation="membership"
         )
         return await self._run_folder_repository(repository.list_restore_reviews)
+
+    async def reconcile_note_folder_owner_memberships(
+        self,
+        *,
+        scope: ScopeType | str,
+        owner_id: str,
+        desired: Sequence[tuple[str, str]],
+        user_id: str | None = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
+    ) -> tuple[NoteFolderMembership, ...]:
+        """Converge one lasting-sync owner's managed memberships."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope,
+            user_id=user_id,
+            action="update",
+            operation="membership",
+        )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            return await self._run_folder_repository(
+                self.organization_sync_service.mutate_managed_folder_links,
+                folder_repository=repository,
+                mutation_method="reconcile_managed",
+                owner_id=owner_id,
+                desired=tuple(desired),
+                **profile_scope,
+            )
+        return await self._run_folder_repository(repository.reconcile_managed, owner_id=owner_id, desired=tuple(desired))
 
     def record_sync_mirror_report(
         self,
@@ -556,8 +1042,24 @@ class NotesScopeService:
         user_id: str,
         note_id: Any,
         keywords: Optional[Sequence[str]],
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
+        cursor: Any = None,
     ) -> list[str]:
         normalized_keywords = self._normalize_keywords(keywords)
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            notes_db_getter = getattr(self.local_notes_service, "notes_db", None)
+            notes_db = notes_db_getter(user_id) if callable(notes_db_getter) else None
+            result = self.organization_sync_service.sync_subject_keywords(
+                subject_type="note",
+                subject_id=str(note_id),
+                keywords=normalized_keywords,
+                notes_db=notes_db,
+                cursor=cursor,
+                **profile_scope,
+            )
+            if result is not None:
+                return result
         service = self.local_notes_service
         required_methods = (
             "get_keywords_for_note",
@@ -584,12 +1086,12 @@ class NotesScopeService:
         for keyword_key, keyword_text in requested_keyword_map.items():
             if keyword_key in existing_keyword_map:
                 continue
-            keyword_row = service.get_keyword_by_text(user_id, keyword_key)
+            keyword_row = service.get_keyword_by_text(user_id, keyword_text)
             keyword_id = (
                 keyword_row.get("id") if isinstance(keyword_row, dict) else None
             )
             if keyword_id is None:
-                keyword_id = service.add_keyword(user_id, keyword_key)
+                keyword_id = service.add_keyword(user_id, keyword_text)
             if keyword_id is not None:
                 service.link_note_to_keyword(user_id, note_id, keyword_id)
 
@@ -828,8 +1330,26 @@ class NotesScopeService:
         workspace_id: Optional[str] = None,
         keywords: Optional[Sequence[str]] = None,
         sync_v2_profile: Optional[Mapping[str, Any]] = None,
+        create_note_id: Optional[str] = None,
+        internal_research_owner_proof: Optional[str] = None,
     ) -> Any:
         normalized_scope = self._normalize_scope(scope)
+        if create_note_id is not None:
+            if normalized_scope != ScopeType.LOCAL_NOTE or note_id is not None:
+                raise ValueError(
+                    "create_note_id is only valid for new Local Notes records"
+                )
+            if not isinstance(create_note_id, str) or not create_note_id.strip():
+                raise ValueError("create_note_id must be non-blank text")
+            create_note_id = create_note_id.strip()
+        if internal_research_owner_proof is not None and (
+            normalized_scope != ScopeType.LOCAL_NOTE
+            or note_id is not None
+            or create_note_id is None
+        ):
+            raise ValueError(
+                "Internal Research ownership is only valid for an explicit Local Note create."
+            )
         self._enforce_policy(
             self._note_action_id(
                 normalized_scope,
@@ -838,13 +1358,31 @@ class NotesScopeService:
         )
         if normalized_scope == ScopeType.LOCAL_NOTE:
             local_user_id = self._require_user_id(user_id)
+            transaction_factory = getattr(
+                self.local_notes_service, "note_transaction", None
+            )
+            owner_transaction = (
+                transaction_factory(local_user_id)
+                if callable(transaction_factory)
+                else nullcontext()
+            )
             if note_id:
-                updated = self.local_notes_service.update_note(
-                    local_user_id,
-                    note_id,
-                    {"title": title, "content": content},
-                    version,
-                )
+                keyword_result: list[str] | None = None
+                with owner_transaction as owner_cursor:
+                    updated = self.local_notes_service.update_note(
+                        local_user_id,
+                        note_id,
+                        {"title": title, "content": content},
+                        version,
+                    )
+                    if updated and keywords is not None:
+                        keyword_result = self._sync_local_note_keywords(
+                            user_id=local_user_id,
+                            note_id=note_id,
+                            keywords=keywords,
+                            sync_v2_profile=sync_v2_profile,
+                            cursor=owner_cursor,
+                        )
                 if updated:
                     self._enqueue_local_note_upsert(
                         sync_v2_profile=sync_v2_profile,
@@ -865,18 +1403,42 @@ class NotesScopeService:
                     "version": (version + 1) if version is not None else None,
                     "title": title,
                     "content": content,
-                    "keywords": self._sync_local_note_keywords(
-                        user_id=local_user_id,
-                        note_id=note_id,
-                        keywords=keywords,
-                    ),
+                    "keywords": keyword_result or [],
                 }
-            created_note_id = self.local_notes_service.add_note(
-                local_user_id,
-                title,
-                content,
-                note_id=note_id,
-            )
+            keyword_result = None
+            with owner_transaction as owner_cursor:
+                created_note_id = self.local_notes_service.add_note(
+                    local_user_id,
+                    title,
+                    content,
+                    note_id=create_note_id,
+                )
+                if created_note_id and keywords is not None:
+                    keyword_result = self._sync_local_note_keywords(
+                        user_id=local_user_id,
+                        note_id=created_note_id,
+                        keywords=keywords,
+                        sync_v2_profile=sync_v2_profile,
+                        cursor=owner_cursor,
+                    )
+                if created_note_id and internal_research_owner_proof is not None:
+                    add_private_proof = getattr(
+                        self.local_notes_service,
+                        "add_internal_research_quick_note_owner_proof",
+                        None,
+                    )
+                    if not callable(add_private_proof):
+                        raise ValueError(
+                            "Local Notes private Research ownership is unavailable."
+                        )
+                    if not add_private_proof(
+                        local_user_id,
+                        str(created_note_id),
+                        internal_research_owner_proof,
+                    ):
+                        raise ValueError(
+                            "Local Notes private Research ownership did not settle."
+                        )
             if not created_note_id:
                 return created_note_id
             self._enqueue_local_note_upsert(
@@ -896,11 +1458,7 @@ class NotesScopeService:
                 "version": 1,
                 "title": title,
                 "content": content,
-                "keywords": self._sync_local_note_keywords(
-                    user_id=local_user_id,
-                    note_id=created_note_id,
-                    keywords=keywords,
-                ),
+                "keywords": keyword_result or [],
             }
 
         if normalized_scope == ScopeType.SERVER_NOTE:
@@ -920,6 +1478,152 @@ class NotesScopeService:
             keywords=keywords,
             version=version,
         )
+
+    async def get_note_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        user_id: str | None = None,
+    ) -> Mapping[str, Any]:
+        """Read one local note through the normalized sync authority seam."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise RuntimeError("server_contract_missing")
+        self._enforce_policy(self._note_action_id(normalized_scope, "detail"))
+        record = self.local_notes_service.get_note_by_id(
+            self._require_user_id(user_id),
+            note_id,
+        )
+        if not isinstance(record, Mapping):
+            raise RuntimeError("note_missing")
+        return dict(record)
+
+    async def get_note_version_states_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_ids: Sequence[Any],
+        user_id: str | None = None,
+    ) -> Mapping[str, Mapping[str, Any]]:
+        """Read only (version, deleted) per note id through the sync seam.
+
+        TASK-23027: one narrow bulk read that lets the lasting-sync observer
+        decide which bound notes changed without re-selecting every full row.
+        Same scope and policy gate as :meth:`get_note_for_sync`. A backing
+        service without the bulk projection is served per-note through
+        ``get_note_by_id`` (identical answers, original cost).
+        """
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise RuntimeError("server_contract_missing")
+        self._enforce_policy(self._note_action_id(normalized_scope, "detail"))
+        local_user_id = self._require_user_id(user_id)
+        bulk_read = getattr(self.local_notes_service, "get_note_version_states", None)
+        if callable(bulk_read):
+            states = bulk_read(local_user_id, [str(n) for n in note_ids])
+            return {str(key): dict(value) for key, value in states.items()}
+        result: dict[str, Mapping[str, Any]] = {}
+        for note_id in note_ids:
+            record = self.local_notes_service.get_note_by_id(
+                local_user_id, str(note_id)
+            )
+            if isinstance(record, Mapping) and "version" in record:
+                result[str(note_id)] = {
+                    "version": record["version"],
+                    "deleted": bool(record.get("deleted", False)),
+                }
+        return result
+
+    async def replace_note_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        title: str,
+        content: str,
+        expected_version: int,
+        user_id: str | None = None,
+    ) -> Mapping[str, Any]:
+        """Optimistically replace one local note and read back its fresh state."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise RuntimeError("server_contract_missing")
+        self._enforce_policy(self._note_action_id(normalized_scope, "update"))
+        local_user_id = self._require_user_id(user_id)
+        updated = self.local_notes_service.update_note(
+            local_user_id,
+            note_id,
+            {"title": title, "content": content},
+            expected_version,
+        )
+        if not updated:
+            raise RuntimeError("stale_note")
+        record = self.local_notes_service.get_note_by_id(local_user_id, note_id)
+        if not isinstance(record, Mapping):
+            raise RuntimeError("note_verification_failed")
+        return dict(record)
+
+    async def create_note_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        title: str,
+        content: str,
+        user_id: str | None = None,
+    ) -> Mapping[str, Any]:
+        """Create one caller-identified local note and verify its authority."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise RuntimeError("server_contract_missing")
+        self._enforce_policy(self._note_action_id(normalized_scope, "create"))
+        local_user_id = self._require_user_id(user_id)
+        created = self.local_notes_service.add_note(
+            local_user_id,
+            title,
+            content,
+            note_id=note_id,
+        )
+        if str(created or "") != str(note_id):
+            raise RuntimeError("note_identity_changed")
+        record = self.local_notes_service.get_note_by_id(local_user_id, note_id)
+        if not isinstance(record, Mapping):
+            raise RuntimeError("note_verification_failed")
+        return dict(record)
+
+    async def delete_note_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        expected_version: int,
+        user_id: str | None = None,
+    ) -> Mapping[str, Any]:
+        """Optimistically soft-delete one local sync note and verify its tombstone."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise RuntimeError("server_contract_missing")
+        local_user_id = self._require_user_id(user_id)
+        deleted = await self.delete_note(
+            scope=normalized_scope,
+            note_id=note_id,
+            version=expected_version,
+            user_id=local_user_id,
+        )
+        if not deleted:
+            raise RuntimeError("stale_note")
+        record = self.local_notes_service.get_note_by_id(local_user_id, note_id)
+        if record is None:
+            return {"id": str(note_id), "deleted": True}
+        if not isinstance(record, Mapping) or not record.get("deleted"):
+            raise RuntimeError("note_verification_failed")
+        return dict(record)
 
     async def delete_note(
         self,
@@ -1251,6 +1955,87 @@ class NotesScopeService:
             )
         raise ValueError("Workspace notes require a selected workspace context.")
 
+    async def list_deleted_notes(
+        self,
+        *,
+        scope: ScopeType | str,
+        limit: int = 20,
+        offset: int = 0,
+        user_id: Optional[str] = None,
+    ) -> Mapping[str, Any]:
+        """Page the soft-deleted notes the Library Trash view restores from.
+
+        Local-only for the same reason ``restore_note`` is: the Trash view is
+        backed by the local ChaChaNotes tombstone contract, and no server or
+        workspace backend exposes a deleted-notes seam. Runtime policy treats
+        the read as an ordinary local ``list``.
+
+        Args:
+            scope: Note scope; only ``local_note`` is supported.
+            limit: Maximum rows in the returned page.
+            offset: Rows to skip before the page.
+            user_id: Local Notes user identity.
+
+        Returns:
+            ``{"items": [...], "total": int}`` -- each item carries the note
+            id, title, deletion timestamp and its tombstone ``version``.
+
+        Raises:
+            ValueError: If the scope is not local or ``user_id`` is missing.
+        """
+        normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise ValueError(
+                "Deleted notes are only listed for local notes."
+            )
+        return await asyncio.to_thread(
+            self.local_notes_service.list_deleted_notes,
+            self._require_user_id(user_id),
+            limit,
+            offset,
+        )
+
+    async def list_note_backlinks(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: str,
+        user_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List the notes whose body links to ``note_id`` (task-32145).
+
+        Args:
+            scope: The note scope to read; only ``ScopeType.LOCAL_NOTE``
+                carries the ``note://`` link form the Obsidian importer
+                writes.
+            note_id: The linked-to note.
+            user_id: The local user whose database to read.
+            limit: Maximum rows to return.
+
+        Returns:
+            ``{"id", "title"}`` rows for the linking notes, ordered by title.
+
+        Raises:
+            ValueError: If the scope is not local -- the same refusal
+                ``list_deleted_notes`` gives, and for the same reason. An
+                empty list would reach Info as "(0) — no notes link here
+                yet", which asserts something this service never checked;
+                raising lands in the caller's ``failed`` path, where the
+                header honestly reads "couldn't check".
+        """
+        normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise ValueError("Backlinks are only listed for local notes.")
+        return await asyncio.to_thread(
+            self.local_notes_service.get_notes_linking_to,
+            self._require_user_id(user_id),
+            note_id,
+            limit,
+        )
+
     async def count_notes(
         self,
         *,
@@ -1503,6 +2288,89 @@ class NotesScopeService:
             if str(note.get("id")) == str(note_id):
                 return note
         return None
+
+    async def get_note_keywords(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        user_id: Optional[str] = None,
+        include_internal: bool = False,
+    ) -> list[str]:
+        """Return canonical Local Note keywords; recovery proofs are not keywords."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Direct note keyword reads are Local Notes only.")
+        if type(include_internal) is not bool:
+            raise TypeError("include_internal must be a bool")
+        service = self.local_notes_service
+        local_user_id = self._require_user_id(user_id)
+        rows = service.get_keywords_for_note(local_user_id, str(note_id))
+        if not isinstance(rows, list):
+            raise ValueError("Local Notes returned invalid keywords.")
+        keywords = [
+            str(row.get("keyword") or "").strip()
+            for row in rows
+            if isinstance(row, Mapping) and str(row.get("keyword") or "").strip()
+        ]
+        return keywords
+
+    async def has_internal_research_quick_note_owner_proof(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        owner_proof: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Verify exact private Local Note recovery ownership."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Private Research ownership is Local Notes only.")
+        verify = getattr(
+            self.local_notes_service,
+            "has_internal_research_quick_note_owner_proof",
+            None,
+        )
+        if not callable(verify):
+            raise ValueError("Local Notes private Research ownership is unavailable.")
+        return bool(
+            verify(
+                self._require_user_id(user_id),
+                str(note_id),
+                owner_proof,
+            )
+        )
+
+    async def remove_internal_research_quick_note_owner_proof(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        owner_proof: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Remove exact private Local Note recovery ownership."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Private Research ownership is Local Notes only.")
+        remove = getattr(
+            self.local_notes_service,
+            "remove_internal_research_quick_note_owner_proof",
+            None,
+        )
+        if not callable(remove):
+            raise ValueError("Local Notes private Research ownership is unavailable.")
+        return bool(
+            remove(
+                self._require_user_id(user_id),
+                str(note_id),
+                owner_proof,
+            )
+        )
 
     async def load_workspace_context(
         self,

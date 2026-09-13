@@ -4,18 +4,21 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.app import App, ComposeResult
+from rich.text import Text
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     MCPPermissionsMode,
+    PermissionProfileContext,
     PermRow,
+    ToolPolicyProfileOption,
     format_tool_state_label,
     state_text,
     tool_state_kind,
@@ -24,6 +27,65 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
 _AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
+
+
+@pytest.mark.asyncio
+async def test_matrix_events_capture_exact_profile_context():
+    app = PermissionsModeApp()
+    context = PermissionProfileContext("research", 4, "a" * 64, 2)
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()],
+            kill_switch=False,
+            preview="",
+            profile_context=context,
+        )
+        await pilot.pause()
+        messages: list[MCPPermissionsMode.StateCycleRequested] = []
+        original_post_message = canvas.post_message
+        canvas.post_message = messages.append
+        try:
+            canvas.action_cycle_state()
+        finally:
+            canvas.post_message = original_post_message
+        assert messages[0].profile_context == context
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_selector_marks_unavailable_profile_and_hides_no_rows():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        canvas.update_tool_policy_profiles(
+            [
+                ToolPolicyProfileOption("default", "local"),
+                ToolPolicyProfileOption("broken", "local", False),
+            ],
+            selected_id="default",
+        )
+        await pilot.pause()
+        selector = app.query_one("#mcp-perm-tool-profile", Select)
+        labels = [str(label) for label, _value in selector._options]
+        assert any("broken" in label and "unavailable" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_selector_renders_untrusted_profile_ids_as_plain_text():
+    app = PermissionsModeApp()
+    profile_id = "[bold]not markup[/bold]"
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        canvas.update_tool_policy_profiles(
+            [ToolPolicyProfileOption(profile_id, "local")],
+            selected_id=profile_id,
+        )
+        await pilot.pause()
+        selector = app.query_one("#mcp-perm-tool-profile", Select)
+        label, value = selector._options[0]
+        assert isinstance(label, Text)
+        assert label.plain == f"{profile_id} · local"
+        assert value == profile_id
 
 
 def _row(
@@ -286,14 +348,23 @@ async def test_kill_switch_button_default_label_reads_off():
 
 @pytest.mark.asyncio
 async def test_kill_switch_scope_hint_states_built_in_blast_radius():
-    """task-2242: the kill switch's blast radius (it also disables the
-    built-in tools, not just MCP-sourced ones) is stated persistently on a
-    hint line under the toggle -- not hidden in a tooltip."""
+    """task-2242/task-32285: the kill switch's blast radius (it also
+    disables the built-in tools, not just MCP-sourced ones) is stated
+    persistently on a hint line under the toggle -- not hidden in a
+    tooltip. Pinned exactly (task-32285): the old copy named only
+    "calculator, date/time" -- the switch's real reach is every chat tool
+    call, including the file/note built-ins and local workspace tools
+    (`BuiltinToolGate._kill_switch()` and `LocalToolProvider`'s own kill-
+    switch check share the same `service.get_kill_switch()` read this
+    button drives), so the hint now names that too."""
     app = PermissionsModeApp()
     async with app.run_test():
         hint = app.query_one("#mcp-perm-kill-switch-hint", Static)
         text = str(hint.renderable)
-        assert "built-in tools" in text
+        assert text == (
+            "Also blocks the app's own built-in tools (calculator, "
+            "date/time, file and note tools)."
+        )
 
 
 @pytest.mark.asyncio
@@ -358,8 +429,9 @@ async def test_space_on_tool_row_posts_next_state_per_cycle_helper():
         assert event.row_kind == "tool"
         assert event.server_key == "local:docs"
         assert event.tool_name == "search"
-        # cycle_ui_state(None) == "allow"
-        assert event.new_state == "allow"
+        # Wave B: cycle_ui_state(None) == "ask" (Allow is a deliberate
+        # second press, never the first stop from Inherit)
+        assert event.new_state == "ask"
 
 
 @pytest.mark.asyncio
@@ -626,7 +698,9 @@ async def test_legend_line_renders_fixed_marker_key():
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
-            "Space cycles Inherit → Allow → Ask → Off"
+            "≡ exact-input allows · "
+            "(session) approved until Chatbook exits · "
+            "Space cycles Inherit → Ask → Allow → Off"
         )
 
 
@@ -673,7 +747,52 @@ async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
-            "Space cycles Inherit → Allow → Ask → Off"
+            "≡ exact-input allows · "
+            "(session) approved until Chatbook exits · "
+            "Space cycles Inherit → Ask → Allow → Off"
+        )
+
+
+@pytest.mark.asyncio
+async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns():
+    """task-32285: live evidence at 250x50 showed the legend + gate
+    breadcrumb clipping mid-sentence ("... in Tools mode; other" then the
+    pane border). Both `#mcp-perm-legend` and `#mcp-perm-kill-switch-hint`
+    are `height: auto` (mcp_permissions_mode.py's own `BUNDLED_CSS`) --
+    this exercises that under the REAL bundled stylesheet
+    (`PermissionsModeAppWithBundledCSS`, mirrors
+    `test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css`
+    just above), so a bundle-tier rule that outranks the widget's own
+    DEFAULT_CSS regardless of specificity (see that test's own docstring
+    for why the two tiers must both be checked) cannot silently re-cap
+    either Static back to one line."""
+    app = PermissionsModeAppWithBundledCSS()
+    async with app.run_test(size=(100, 50)) as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        breadcrumb = (
+            "3 tool gate(s) are off. Configure the workspace, web, and "
+            "Watchlists master switch in Tools mode; other registration "
+            "gates are under MCP ▸ Servers ▸ built-in row ▸ Tool gates."
+        )
+        await canvas.update_matrix(
+            [_global_row()],
+            kill_switch=False,
+            preview="global default: ask",
+            gate_breadcrumb=breadcrumb,
+        )
+        await pilot.pause()
+
+        legend = app.query_one("#mcp-perm-legend", Static)
+        # At 100 columns each line (161 and 175 chars) needs its own wrap,
+        # so a correctly-sized Static is at least 2 lines tall -- a
+        # height-1 cap would silently truncate mid-sentence instead.
+        assert legend.size.height >= 2, (
+            f"legend collapsed to height {legend.size.height} at 100 columns "
+            "-- text is being clipped, not wrapped"
+        )
+        rendered = str(legend.renderable)
+        assert rendered.endswith(
+            "are under MCP ▸ Servers ▸ built-in row ▸ Tool gates."
         )
 
 
@@ -1189,7 +1308,7 @@ async def _type_filter(pilot, text: str) -> None:
 @pytest.mark.asyncio
 async def test_filter_input_is_present_above_the_matrix_with_placeholder():
     app = PermissionsModeApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         filter_input = app.query_one("#mcp-perm-filter-text", Input)
         assert filter_input.placeholder == "Filter tool or server…"
 
@@ -1477,3 +1596,71 @@ async def test_filter_input_has_nonzero_geometry_with_bundled_css():
         assert filter_input.outer_size.height > 0, (
             "filter Input collapsed to zero height under bundled CSS"
         )
+
+
+# -- Wave C (2026-09-11 MCP Hub UX program): flow fixes ---------------------
+
+
+def test_undiscovered_servers_hint_names_zero_tool_servers():
+    """C2/F3: local servers that are KNOWN but have no discovered tools are
+    invisible in the matrix (registration/discovery precedes permission) --
+    the hint line names them so "where is docs?" has an answer at the point
+    of confusion. Discovered servers and the built-in row are never named."""
+    from tldw_chatbook.MCP.readiness import ReadinessState, ReadinessSnapshot
+    from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
+        _undiscovered_servers_hint,
+    )
+
+    def _snap(key, label, source, tool_count):
+        return ReadinessSnapshot(
+            server_key=key,
+            label=label,
+            source=source,
+            state=ReadinessState.READY,
+            reasons=(),
+            message="",
+            tool_count=tool_count,
+        )
+
+    snapshots = [
+        _snap("local:docs", "docs", "local", None),
+        _snap("local:web", "web", "local", 0),
+        _snap("local:ok", "ok", "local", 3),
+        _snap("builtin:tldw_chatbook", "tldw_chatbook (built-in)", "builtin", None),
+    ]
+    hint = _undiscovered_servers_hint(snapshots)
+    assert hint is not None
+    assert "docs" in hint and "web" in hint
+    assert "ok" not in hint
+    assert "built-in" not in hint
+    assert "Servers" in hint
+
+    # Everything discovered (or nothing known): no hint at all.
+    assert _undiscovered_servers_hint(snapshots[2:]) is None
+    assert _undiscovered_servers_hint([]) is None
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_renders_discovery_hint_line():
+    """C2/F3: the discovery hint renders as its own dim line under the
+    legend (same slot family as the gate breadcrumb), and clears on the
+    next ordinary render that passes no hint."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()],
+            kill_switch=False,
+            preview="global default: ask",
+            discovery_hint="docs · web: no tools yet — connect in Servers mode.",
+        )
+        await pilot.pause()
+        legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
+        assert "no tools yet" in legend
+
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview="global default: ask"
+        )
+        await pilot.pause()
+        legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
+        assert "no tools yet" not in legend

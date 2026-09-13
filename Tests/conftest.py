@@ -16,6 +16,9 @@ _SANDBOXED_ENV_NAMES = (
     "XDG_DATA_HOME",
     "XDG_CONFIG_HOME",
     "TLDW_CONFIG_PATH",
+    "PYTHON_KEYRING_BACKEND",
+    "HF_HUB_OFFLINE",
+    "TIKTOKEN_CACHE_DIR",
     _TEST_CONFIG_ROOT_ENV,
     _TEST_CONFIG_OWNER_ENV,
 )
@@ -59,6 +62,59 @@ os.environ["USERPROFILE"] = str(_BOOTSTRAP_HOME)
 os.environ["XDG_DATA_HOME"] = str(_BOOTSTRAP_DATA_HOME)
 os.environ["XDG_CONFIG_HOME"] = str(_BOOTSTRAP_CONFIG_PATH.parent)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
+# TASK-19570 finding A: every mounted-app test reaches the real OS credential
+# subsystem. `TldwCli.__init__` calls `_wire_server_context_provider()` ->
+# `build_default_server_credential_store()` -> `keyring.get_keyring()`
+# (app.py:5811, runtime_policy/server_credentials.py:296-298), unconditionally
+# and with no test seam -- `Tests/UI/app_factory.py` contains no `keyring`
+# string at all. On macOS the first read can raise a Keychain consent dialog or
+# block on a locked keychain, which under `timeout_method="thread"` kills the
+# whole run rather than one test. The risk was already known here:
+# `Tests/Packaging/` sets exactly this backend for the subprocesses it spawns,
+# but the awareness never reached the shared in-process app-construction seam.
+#
+# Set unconditionally rather than only when unset: an ambient value pointing at
+# a real backend is precisely the case this must override. No test needs a live
+# backend -- the one suite that is *about* keyring
+# (`Tests/Skills/test_skill_trust_keyring_autounlock.py`) injects its own
+# `FakeSecureKeyring()`, and no test calls `keyring.get_password`/`set_password`
+# unpatched. `TLDW_TEST_REAL_KEYRING=1` is the deliberate opt-out.
+if os.environ.get("TLDW_TEST_REAL_KEYRING") != "1":
+    os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
+
+# TASK-21562: no test downloads a model. `huggingface_hub` freezes
+# `constants.HF_HUB_OFFLINE` at ITS import time, so this has to be written here
+# -- in the pre-import bootstrap -- to be read at all; an env var set from a
+# fixture arrives far too late (the measurement is in
+# `Tests/RAG_Eval/conftest.py`'s offline-latch comment).
+#
+# Why globally, when two sub-conftests already do it for their own scope: the
+# HF cache resolves INTO this sandbox (`.../home/.cache/huggingface/hub`), which
+# never exists, so any code path reaching the hub attempts a real download. That
+# is invisible on a developer machine -- whatever triggers it locally is not
+# triggered -- and very visible in CI, where one core shard alone recorded 188
+# egress-blocked errors against `huggingface.co:443` and a CDN address, each one
+# `huggingface_hub` retrying five times before the guard's record failed the
+# test at teardown. Offline turns that into an immediate, deterministic, local
+# failure instead of a slow CI-only one.
+#
+# `TLDW_TEST_ALLOW_HF_DOWNLOADS=1` opts out, for a test that genuinely needs a
+# live fetch.
+# Truthy, not `== "1"`. `Tests/RAG_Search/conftest.py` already reads this same
+# flag as `.strip().lower() in {"1","true","yes","on"}`, so an exact-match test
+# here meant `TLDW_TEST_ALLOW_HF_DOWNLOADS=true` opted out there and stayed
+# offline here -- one flag, two answers (TASK-21562.1).
+_HF_DOWNLOAD_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _hf_downloads_allowed() -> bool:
+    """Whether this session opted into real HuggingFace downloads."""
+    raw = os.environ.get("TLDW_TEST_ALLOW_HF_DOWNLOADS", "")
+    return raw.strip().lower() in _HF_DOWNLOAD_TRUTHY
+
+
+if not _hf_downloads_allowed():
+    os.environ["HF_HUB_OFFLINE"] = "1"
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
@@ -475,6 +531,56 @@ def fd_leak_sentinel() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _huggingface_hub_is_offline(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Close the other half of the offline latch (TASK-21562).
+
+    The bootstrap above sets ``HF_HUB_OFFLINE`` before anything imports
+    ``huggingface_hub``, which is the case that matters and the cheap one. This
+    covers the case where the module was somehow imported first: its
+    ``constants.HF_HUB_OFFLINE`` is frozen at import, so the env var would have
+    been read before we wrote it, while ``is_offline_mode()`` consults the
+    constant on every request and therefore still honours a write here.
+
+    Looked up through ``sys.modules`` rather than imported. Importing
+    ``huggingface_hub`` in every test session to assert a property of sessions
+    that never touch it would cost more than the guard is worth, and would drag
+    the whole hub stack into the import closure of the entire suite.
+
+    ``monkeypatch.setattr`` rather than assignment, so a session that opted out
+    per-test is restored -- the same reasoning as
+    ``Tests/RAG_Eval/conftest.py``'s fixture, which does this for its own scope.
+
+    TASK-21592: the latch is also re-asserted at teardown. It is the single
+    condition standing between the suite and the failure class this fixture was
+    written for -- a real hub fetch, five blocked retries on a worker thread,
+    and teardown errors landing on unrelated passing tests. A test that turns
+    the latch back off (directly, or by reloading ``huggingface_hub.constants``)
+    would otherwise re-arm that class silently for everything that follows it in
+    the process.
+
+    Yields:
+        None. The offline latch is re-asserted at teardown.
+    """
+    if _hf_downloads_allowed():
+        yield
+        return
+    constants = sys.modules.get("huggingface_hub.constants")
+    if constants is not None:
+        monkeypatch.setattr(constants, "HF_HUB_OFFLINE", True, raising=False)
+    yield
+    # Looked up again rather than reusing `constants`: a test that imports the
+    # hub for the first time is exactly the case where setup found nothing and
+    # teardown is the only place the latch can be checked at all.
+    still_loaded = sys.modules.get("huggingface_hub.constants")
+    assert still_loaded is None or getattr(still_loaded, "HF_HUB_OFFLINE", False), (
+        "huggingface_hub's offline latch was turned off during this test; the "
+        "next test to reach the hub will make a real request, retry it five "
+        "times on a worker thread, and fail an unrelated later test at teardown "
+        "(TASK-21592). Set TLDW_TEST_ALLOW_HF_DOWNLOADS=1 to opt the session out."
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_real_audio_device(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """No test opens real audio hardware unless it explicitly opts in.
 
@@ -498,13 +604,32 @@ def _no_real_audio_device(request: pytest.FixtureRequest, monkeypatch: pytest.Mo
     This is the backstop; file-local guards (e.g.
     `Tests/TTS/test_console_audio_cpp_native.py`'s own
     `_sink_unavailable_by_default`) still document intent at their point
-    of use and are not replaced by this.
+    of use and are not replaced by this. Since the meeting-transcription work
+    it also stubs `AudioRecordingService._recording_loop` so no test opens
+    a microphone.
     """
     if request.node.get_closest_marker("real_audio_device"):
         return
     import tldw_chatbook.Audio.streaming_sink as streaming_sink
 
     monkeypatch.setattr(streaming_sink, "_import_sounddevice", lambda: None)
+
+    # Meeting transcription (2026-09-04): the same backstop for the INPUT
+    # side. `AudioRecordingService.start_recording` only spawns a thread
+    # running `_recording_loop`, which is where the backend opens the
+    # device -- so stubbing the loop is the single chokepoint. Tests that
+    # exercise `_pyaudio_recording_loop` / `_sounddevice_recording_loop`
+    # directly with mocked backends are unaffected.
+    import tldw_chatbook.Audio.recording_service as recording_service
+
+    def _guarded_recording_loop(self) -> None:
+        self.is_recording = False
+
+    monkeypatch.setattr(
+        recording_service.AudioRecordingService,
+        "_recording_loop",
+        _guarded_recording_loop,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -542,18 +667,19 @@ def _no_network_io(request: pytest.FixtureRequest) -> Iterator[None]:
         )
     except ValueError as exc:
         pytest.fail(f"conflicting network markers: {exc}", pytrace=False)
-    network_guard.drain_blocked_attempts()
+    network_guard.drain_blocked_attempts()  # also clears the thread record
     network_guard.set_mode(mode)
     try:
         yield
     finally:
         network_guard.set_mode(network_guard.NetworkMode.BLOCKED)
+        # Threads first: draining the attempts clears both records.
+        threads = network_guard.drain_blocked_attempt_threads()
         attempts = network_guard.drain_blocked_attempts()
     if attempts:
-        detail = ", ".join(f"{call} -> {address}" for call, address in attempts)
         raise AssertionError(
             "test attempted network egress (blocked): "
-            + detail
+            + network_guard.describe_blocked_attempts(attempts, threads)
             + " — stub the client seam, use @pytest.mark.loopback_network for "
             "an owned numeric loopback listener, or use "
             "@pytest.mark.allow_network for unrestricted sockets."
@@ -850,7 +976,24 @@ def anyio_backend():
 
 
 def _close_database_instance(db_instance):
-    """Best-effort close for a database object cached by application config."""
+    """Close every registered handle for a database cached by test config.
+
+    ChaChaNotesDB owns thread-local connections created by Textual workers, so
+    closing only the fixture teardown thread's handle leaves those worker-owned
+    SQLite descriptors open. Its quiescence boundary drains and closes the full
+    same-file registry; simpler database doubles keep the legacy ``close`` path.
+    """
+    quiesce_connections = getattr(db_instance, "quiesce_connections", None)
+    if callable(quiesce_connections):
+        try:
+            with quiesce_connections(timeout_seconds=2.0):
+                pass
+            return
+        except (RuntimeError, TimeoutError) as exc:
+            logger.warning(
+                "Failed to quiesce cached test database: "
+                f"exception_type={type(exc).__name__}"
+            )
     close_db = getattr(db_instance, "close", None)
     if not callable(close_db):
         return

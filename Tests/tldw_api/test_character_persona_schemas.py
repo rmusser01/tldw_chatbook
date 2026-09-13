@@ -77,10 +77,12 @@ SERVER_PERSONA_RESPONSE_FIELDS = {
 LOCAL_PERSONA_CREATE_FIELDS = SERVER_PERSONA_CREATE_FIELDS | {
     "description",
     "personality_traits",
+    "policy_rules",
 }
 LOCAL_PERSONA_UPDATE_FIELDS = SERVER_PERSONA_UPDATE_FIELDS | {
     "description",
     "personality_traits",
+    "policy_rules",
 }
 
 

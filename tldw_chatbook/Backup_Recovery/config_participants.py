@@ -11,12 +11,16 @@ ROUTES = {
     "config",
     "config_snapshot",
     "config_data",
+    "config_data_lock",
+    "config_default_root",
     "config_chat_dicts",
     "config_models",
 }
 _STATE_NAMES = (
     "_CONFIG_CACHE",
     "_CONFIG_CACHE_SOURCE",
+    "_CONFIG_FILE_STAMP",
+    "_CONFIG_STAT_CHECKED_MONOTONIC",
     "_SETTINGS_CACHE",
     "_SETTINGS_CACHE_SOURCE",
     "settings",
@@ -50,9 +54,26 @@ def selection(source, route, target):
         ):
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
         return selected, installed, False
+    if route == "config_data_lock":
+        lock_path = profile_paths.lexical_path(
+            profile_paths.default_base_data_dir().parents[2] / ".tldw_cli-data-root.lock"
+        )
+        if target is not None and profile_paths.lexical_path(target) != lock_path:
+            raise bootstrap.RecoveryRequired("config_directory_selection_changed")
+        return lock_path, installed, False
     data = source._CONFIG_CACHE
     if data is None or source._CONFIG_CACHE_SOURCE != selected:
         raise bootstrap.RecoveryRequired("config_directory_selection_unavailable")
+    if route == "config_default_root":
+        configured = profile_paths.setting(data, "paths", "data_dir")
+        if configured is None:
+            configured = profile_paths.setting(data, "Paths", "data_dir")
+        conventional = profile_paths.lexical_path(profile_paths.default_base_data_dir())
+        fallback = conventional.parents[2] / profile_paths.DEFAULT_DATA_FALLBACK_DIRECTORY
+        selected_root = profile_paths.lexical_path(target)
+        if configured or selected_root not in {conventional, fallback}:
+            raise bootstrap.RecoveryRequired("config_directory_selection_changed")
+        return selected_root, installed, True
     directory = profile_paths.user_data_dir(data)
     if route == "config_chat_dicts":
         directory /= "chat_dicts"
@@ -173,6 +194,7 @@ def guarded(function):
     """Enclose the actual config reader/cache bodies, including direct helpers."""
     allowed = {
         "load_settings",
+        "_load_settings_uncached",
         "_load_cli_config_bootstrap",
         "_load_cli_config_bootstrap_unlocked",
         "_read_raw_cli_config_unlocked",

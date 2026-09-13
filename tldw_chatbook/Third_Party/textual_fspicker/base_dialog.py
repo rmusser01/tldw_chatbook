@@ -30,6 +30,97 @@ from textual.widgets import Button, Label, Input, ListView, ListItem, Static
 # Local imports.
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
 from .parts import DirectoryNavigation, DriveNavigation
+from .path_maker import MakePath
+
+
+##############################################################################
+def resolve_default_location(location: Union[str, Path]) -> Union[str, Path]:
+    """Swap the bare "." default for the user's home directory.
+
+    A raw ``FileSystemPickerScreen`` subclass with no other location logic
+    of its own (``FileOpen``, ``SelectDirectory``) otherwise opens wherever
+    the process happened to be launched from -- an implementation detail
+    no user picked (task-32122 Step 4: "Import once" opened at the process
+    cwd). Scoped to those two callers rather than ``FileSystemPickerScreen.
+    __init__`` itself: ``EnhancedFileDialog`` already resolves its own
+    start location (a per-context remembered directory, see
+    ``resolve_file_picker_start`` in ``enhanced_file_picker.py``) before
+    calling super().__init__, and several of ITS tests rely on a literal
+    "." reaching ``DirectoryNavigation`` unchanged (it means "the actual
+    process cwd" there, e.g. a ``monkeypatch.chdir(tmp_path)`` fixture) --
+    resolving "." at the shared base broke those.
+
+    Args:
+        location: The caller's requested starting location, ``str`` or
+            ``Path``. Only the bare current-directory spelling (``"."``,
+            the ``__init__`` default) is special-cased.
+
+    Returns:
+        ``Path.home()`` when ``location`` is exactly ``"."``; otherwise
+        ``location`` unchanged, same type and value as passed in (a
+        non-default string stays a string, a ``Path`` stays a ``Path``).
+    """
+    return Path.home() if Path(location) == Path(".") else location
+
+
+##############################################################################
+def resolve_typed_directory(value: str, current: Path) -> Union[Path, str]:
+    """Resolve a typed field value to an absolute directory, or an error.
+
+    The single validation block shared by every folder-picker Select action:
+    Enter-to-navigate and Select-to-confirm across ``EnhancedSelectDirectory``
+    (``enhanced_file_picker.py``), the vendored ``SelectDirectory``, and
+    ``FileOpen(offer_select_folder=True)`` all call this one function
+    (task-32122 round 2) instead of keeping three copies that had already
+    drifted -- one resolved a relative path against the process cwd instead
+    of the browsed directory, one dropped the NUL-byte guard, and the
+    caught-exception width differed between them.
+
+    Args:
+        value: The raw field text, used exactly as typed -- leading and
+            trailing spaces are significant and valid in POSIX folder
+            names (Qodo review round 4), so only a *whitespace-only* value
+            is treated as "nothing typed"; a genuinely padded name is kept
+            intact for comparison and path construction. Callers that need
+            to first decide whether a non-empty value should even count as
+            "typed" (e.g. it merely echoes a just-clicked file's name) do
+            that before calling this.
+        current: The directory currently being browsed -- the fallback for
+            an empty/unchanged value, and the base a relative typed value
+            resolves against.
+
+    Returns:
+        The resolved absolute ``Path`` when it names an existing directory,
+        or an error string ready for ``_set_error`` when it does not.
+    """
+    if not value.strip() or value == str(current):
+        # Unchanged from what's being browsed: return the exact object,
+        # not a re-resolved reconstruction (macOS "/tmp" -> "/private/tmp"
+        # would otherwise change the result of a plain, no-typing Select).
+        return current
+    if "\x00" in value:
+        return "Path cannot contain null characters."
+    try:
+        target = MakePath.of(value).expanduser()
+        if not target.is_absolute():
+            target = current / target
+        target = target.resolve()
+    except PermissionError:
+        # A friendly, errno-free message (matches
+        # FileSystemPickerScreen.ERROR_PERMISSION_ERROR) -- the generic
+        # `str(error)` branch below would otherwise leak a raw
+        # "[Errno 13] Permission denied: ..." to the user.
+        return FileSystemPickerScreen.ERROR_PERMISSION_ERROR
+    except (RuntimeError, OSError, ValueError) as error:
+        return str(error)
+    if target.is_dir():
+        return target
+    if target.exists():
+        # A real path that is not a directory is a different mistake than
+        # a nonexistent one; the vendored SelectDirectory distinguishes
+        # them too.
+        return f"Not a directory: {target.name}"
+    return f"Path not found: {value}"
 
 
 ##############################################################################
@@ -65,6 +156,79 @@ class Dialog(Vertical):
 ##############################################################################
 class InputBar(Horizontal):
     """The input bar area of the dialog."""
+
+
+##############################################################################
+class PathInput(Input):
+    """A path/file-name field that behaves like a shell's path prompt.
+
+    Every path field in these dialogs arrives PRE-FILLED with the
+    directory being browsed, so the two things a user does to it -- click
+    into it, or select everything and retype -- have to replace that
+    pre-fill rather than append to it (task-32251).
+
+    Two behaviours, both absent from Textual's ``Input``:
+
+    * ``ctrl+a`` selects the field. Textual binds ``home,ctrl+a`` to "go
+      to start", and a focused widget's own bindings beat the screen's,
+      so the terminal-standard "select everything I typed" is only
+      reachable from a subclass (task-32229, which introduced this class
+      as ``FileNameInput`` for the one field ``BaseFileDialog`` owns).
+    * The click that FOCUSES the field selects all of it. ``Input``
+      already selects on focus (``select_on_focus``, default on), but
+      ``_on_mouse_down`` then collapses that selection to the click
+      point -- so click-then-type concatenated the typed path onto the
+      pre-filled one and produced `/Users/me/Users/me/notes`
+      (reproduced live; the resulting "Path not found" was painted into
+      the dialog's bottom border). A click on an ALREADY focused field
+      still positions the cursor, which is what a second click is for.
+    """
+
+    BINDINGS = [Binding("ctrl+a", "select_all", show=False)]
+
+    #: Armed by the ``Focus`` event and consumed by the next ``MouseDown``.
+    #: ``Screen._forward_event`` focuses a widget BEFORE forwarding the
+    #: mouse-down to it, and ``set_focus`` only posts ``Focus`` when focus
+    #: actually moves, so the focusing click always arrives as ``Focus``
+    #: then ``MouseDown``. That ORDER is necessary but not sufficient: the
+    #: flag is sticky, so without the disarms below, a ``Focus`` from Tab
+    #: and a much later deliberate click-to-place-the-caret look the same
+    #: (review F2 reproduced exactly that: Tab in, click at offset 3, the
+    #: whole path selected, next keystroke wipes it).
+    #:
+    #: Two disarms narrow it to the real thing. A keystroke means the user
+    #: is typing, not pointing. A ``MouseMove`` means the pointer has
+    #: crossed the field since the focus -- which a deliberate click needs
+    #: and a genuine click-to-focus does not, because there the move
+    #: PRECEDES the focus (Textual forwards ``MouseMove`` without touching
+    #: focus; only ``MouseDown`` focuses).
+    #:
+    #: Residual, accepted: a pointer already resting on the field when Tab
+    #: focuses it, clicked without moving, still re-selects. That needs a
+    #: hover-position check the terminal does not reliably give us.
+    _select_on_focusing_click: bool = False
+
+    # NOTE for all three handlers: Textual dispatches `_on_*` to EVERY class
+    # in the MRO that defines it, most-derived first -- so `Input`'s own
+    # handler runs for the same event whether or not this one calls `super()`
+    # (calling it would simply run it twice), and it runs AFTER this one.
+    # That is why the select-all below is deferred rather than done inline:
+    # `Input._on_mouse_down` collapses the selection to the click point, and
+    # it has the last word inside the dispatch.
+
+    def _on_focus(self, event: Any) -> None:
+        self._select_on_focusing_click = True
+
+    async def _on_key(self, event: Any) -> None:
+        self._select_on_focusing_click = False
+
+    async def _on_mouse_move(self, event: Any) -> None:
+        self._select_on_focusing_click = False
+
+    async def _on_mouse_down(self, event: Any) -> None:
+        if self._select_on_focusing_click and self.value:
+            self.call_next(self.action_select_all)
+        self._select_on_focusing_click = False
 
 
 ##############################################################################
@@ -201,6 +365,28 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
                 margin-left: 1;
             }
         }
+
+        /* task-32122 Step 3: SelectDirectory/FileOpen(offer_select_folder)
+           had no on-screen Enter-vs-Select hint at all -- only the
+           EnhancedFileDialog family had one, and neither of those two
+           pickers uses it. Empty text (the default -- see _hint_text())
+           renders as a blank line, so compose() only yields this when a
+           dialog overrides _hint_text() to return something. */
+        #picker-hint-line {
+            height: 1;
+            padding: 0 1;
+            color: $text-muted;
+            text-style: italic;
+        }
+
+        /* task-32251 AC#2: the refusal reason, on its own row under the
+           input bar rather than inside the dialog's bottom border. */
+        #picker-error-line {
+            height: auto;
+            padding: 0 1;
+            color: $error;
+            text-style: bold;
+        }
     }
     """
 
@@ -257,6 +443,22 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         """Provide any widgets for the input bar, before the buttons."""
         yield from ()
 
+    def _hint_text(self) -> str:
+        """One-line Enter-vs-Select hint shown above the input bar.
+
+        Empty by default: most ``FileSystemPickerScreen`` dialogs (a plain
+        file-only ``FileOpen``, ``FileSave``) have no folder-selection
+        ambiguity to clarify, and this line simply isn't yielded in
+        ``compose()`` when it returns "" -- so callers unrelated to
+        task-32122 (character import, skill-folder import, TTS model
+        directories, ...) render exactly as before. ``SelectDirectory`` and
+        ``FileOpen(offer_select_folder=True)`` override this: both let
+        Enter descend into a directory while a separate action confirms
+        "use this one", and neither dialog had any on-screen hint for that
+        at all.
+        """
+        return ""
+
     @staticmethod
     def _label(label: ButtonLabel, default: str) -> str:
         """Create a label for use with a button.
@@ -294,7 +496,7 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
 
             # Path input field (hidden by default, shown with Ctrl+L)
             with Horizontal(id="path-input-container", classes="hidden"):
-                yield Input(placeholder="Enter path...", id="path-input")
+                yield PathInput(placeholder="Enter path...", id="path-input")
                 yield Button("Go", id="go-to-path", variant="primary")
                 yield Button("Cancel", id="cancel-path-input", variant="default")
 
@@ -314,6 +516,9 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
                     yield DriveNavigation(self._location)
                 yield DirectoryNavigation(self._location)
 
+            if hint_text := self._hint_text():
+                yield Static(hint_text, id="picker-hint-line")
+
             # Input bar with buttons
             with InputBar():
                 yield from self._input_bar()
@@ -327,6 +532,14 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
                         "Select folder", id="select-current-folder"
                     )
                 yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
+
+            # task-32251 AC#2: the refusal used to be the Dialog's
+            # border_subtitle -- painted INTO the bottom border rule, where
+            # nobody reads it. It belongs on its own row under the field it
+            # is about. Always mounted, display-toggled by `_set_error`.
+            error_line = Static("", id="picker-error-line", markup=False)
+            error_line.display = False
+            yield error_line
 
     def on_mount(self) -> None:
         """Focus the initial widget on mount and set the initial path."""
@@ -365,12 +578,22 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         self.query_one(DirectoryNavigation).focus()
 
     def _set_error(self, message: str = "") -> None:
-        """Set or clear the error message.
+        """Set or clear the error message on the row under the input bar.
+
+        task-32251 AC#2: this used to write ``Dialog.border_subtitle``,
+        which renders the reason inside the dialog's bottom border rule
+        (reproduced live: ``+-- Path not found: ... -+``). The border is
+        left clean and the reason gets a row of its own.
 
         Args:
             message: Optional message to show as an error.
         """
-        self.query_one(Dialog).border_subtitle = message
+        # `EnhancedFileDialog` mirrors this layout with its own `#error-line`
+        # and overrides `_set_error`; it reaches this body only as a fallback,
+        # where there is nothing to write to.
+        for line in self.query("#picker-error-line"):
+            line.update(message)
+            line.display = bool(message)
 
     @on(DriveNavigation.DriveSelected)
     def _change_drive(self, event: DriveNavigation.DriveSelected) -> None:
@@ -425,23 +648,78 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             return None
         return super().check_action(action, parameters)
 
+    def _resolve_select_folder_target(self) -> Union[Path, str]:
+        """Resolve the input bar's typed field, else the directory being viewed.
+
+        Used to always dismiss with ``DirectoryNavigation.location`` -- the
+        directory merely being browsed -- silently discarding a path the
+        user typed into the "File name" field but never pressed Enter on
+        (task-32122 AC#1). The field lives in ``BaseFileDialog._input_bar``
+        (``file_dialog.py``), not here, so it's read generically via
+        ``InputBar``'s one ``Input`` child rather than importing that
+        module (this base is shared by ``SelectDirectory`` too, which has
+        its own differently-shaped input bar and never sets
+        ``_offer_select_folder``, so this path never runs for it).
+
+        Returns:
+            The resolved absolute ``Path`` when the field is empty or
+            names an existing directory, or an error string ready for
+            ``_set_error`` when it names something else.
+        """
+        dir_nav = self.query_one(DirectoryNavigation)
+        try:
+            field = self.query_one(InputBar).query_one(Input)
+            raw_value = field.value
+        except Exception:
+            raw_value = ""
+        value = raw_value.strip()
+        if value and raw_value == getattr(self, "_select_folder_click_fill", None):
+            # A single click on a file fills this field with its basename
+            # (file_dialog.py's _select_file, so a click-then-Open flow
+            # works) -- that is not the user typing a folder path, so
+            # Select folder must not mistake it for one and error with
+            # "Not a directory: <file>" (review round 2, Important 1).
+            # ``_select_folder_click_fill`` (set/cleared by _select_file /
+            # _update_field_label) is the click-provenance flag itself --
+            # NOT "does the value match whatever's highlighted": that
+            # earlier approach falsely swallowed a typed, never-clicked
+            # ".." too, since DirectoryNavigation defaults `highlighted`
+            # to 0 on every repopulate and ".." is always option 0 in a
+            # non-root directory (review round 3).
+            value = ""
+        return resolve_typed_directory(value, dir_nav.location)
+
+    def _confirm_select_folder(self) -> None:
+        """Resolve the typed field first, then the directory being viewed.
+
+        "Open" keeps descending into directories; this returns the one on
+        screen (or the one typed), which is how every OS folder picker
+        behaves (task-2222, task-32122).
+        """
+        result = self._resolve_select_folder_target()
+        if isinstance(result, Path):
+            self.dismiss(result)
+            return
+        self._set_error(result)
+        try:
+            self.query_one(InputBar).query_one(Input).focus()
+        except Exception:
+            pass
+
     def action_select_current_folder(self) -> None:
         """Keyboard route to the folder affordance (task-2222)."""
         if getattr(self, "_offer_select_folder", False):
-            self.dismiss(self.query_one(DirectoryNavigation).location)
+            self._confirm_select_folder()
 
     @on(Button.Pressed, "#select-current-folder")
     def _select_current_folder(self, event: Button.Pressed) -> None:
-        """Return the directory currently being viewed (task-2222).
-
-        "Open" keeps descending into directories; this returns the one on
-        screen, which is how every OS folder picker behaves.
+        """Handle the "Select folder" button (task-2222).
 
         Args:
             event: The button press event.
         """
         event.stop()
-        self.dismiss(self.query_one(DirectoryNavigation).location)
+        self._confirm_select_folder()
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         """Peel transient surfaces for Escape, otherwise cancel immediately."""

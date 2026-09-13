@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
+import tldw_chatbook.Agents.tool_catalog as tool_catalog
+
 from tldw_chatbook.Agents.agent_models import (
-    DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
-    RunBudget,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
     ToolResult,
@@ -24,7 +24,6 @@ from tldw_chatbook.Agents.tool_catalog import (
     PathAwareToolProvider,
     ToolCatalogRegistry,
     ToolPathTarget,
-    initial_disclosure,
 )
 
 
@@ -109,19 +108,22 @@ def test_path_target_contract_is_immutable_and_runtime_checkable(tmp_path):
     assert isinstance(BuiltinToolProvider(), PathAwareToolProvider)
 
 
-class FakeBigProvider:
-    """A provider with more tools than the threshold."""
+class FakeCatalogProvider:
+    """A deterministic provider with configurable cheap metadata."""
 
-    def list_catalog(self):
-        return [
+    def __init__(self, entries=None, *, count=0):
+        self._entries = entries or [
             ToolCatalogEntry(
                 id=f"fake:t{i}",
                 name=f"t{i}",
                 one_line_description=f"tool {i}",
                 source="fake",
             )
-            for i in range(DIRECT_DISCLOSE_THRESHOLD + 3)
+            for i in range(count)
         ]
+
+    def list_catalog(self):
+        return list(self._entries)
 
     def load_schema(self, tool_id):
         return ToolSchema(
@@ -135,22 +137,125 @@ class FakeBigProvider:
         return ToolResult(ok=True, content="fake")
 
 
-def test_initial_disclosure_small_catalog_direct_discloses():
-    schemas, offer_find_load = initial_disclosure(registry(), RunBudget())
-    assert offer_find_load is False
-    assert {s.name for s in schemas} >= {"calculator", "get_current_datetime"}
+def test_probe_initial_catalog_uses_schema_cost_not_catalog_count():
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(count=25))
+    allowed = frozenset(f"t{i}" for i in range(25))
+
+    schemas = tool_catalog.probe_initial_catalog(
+        reg,
+        allowed,
+        max_schema_tokens=100,
+        measure_schema_set=lambda candidate: 99,
+    )
+
+    assert schemas is not None
+    assert len(schemas) == 25
 
 
-def test_initial_disclosure_large_catalog_defers_to_find_load():
-    reg = registry()
-    reg.register_provider(FakeBigProvider())
-    schemas, offer_find_load = initial_disclosure(reg, RunBudget())
-    assert offer_find_load is True and schemas == []
+def test_probe_initial_catalog_defers_fewer_large_schemas_by_cost():
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(count=5))
+
+    schemas = tool_catalog.probe_initial_catalog(
+        reg,
+        frozenset(f"t{i}" for i in range(5)),
+        max_schema_tokens=100,
+        measure_schema_set=lambda candidate: 101,
+    )
+
+    assert schemas is None
 
 
-def test_initial_disclosure_respects_max_active_tools():
-    schemas, _ = initial_disclosure(registry(), RunBudget(max_active_tools=1))
-    assert len(schemas) == 1
+def test_probe_initial_catalog_filters_disallowed_before_measurement():
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(count=4))
+    measured_names = []
+
+    def measure(candidate):
+        measured_names.append(tuple(schema.name for schema in candidate))
+        return len(candidate)
+
+    schemas = tool_catalog.probe_initial_catalog(
+        reg,
+        frozenset({"t1", "t3"}),
+        max_schema_tokens=10,
+        measure_schema_set=measure,
+    )
+
+    assert tuple(schema.name for schema in schemas or ()) == ("t1", "t3")
+    assert measured_names == [("t1",), ("t1", "t3")]
+
+
+@pytest.mark.parametrize("measured", [0, -1])
+def test_probe_initial_catalog_defers_non_positive_measurements(measured):
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(count=1))
+
+    assert (
+        tool_catalog.probe_initial_catalog(
+            reg,
+            frozenset({"t0"}),
+            max_schema_tokens=100,
+            measure_schema_set=lambda candidate: measured,
+        )
+        is None
+    )
+
+
+def test_probe_initial_catalog_defers_measurement_failures():
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(count=1))
+
+    def explode(candidate):
+        raise RuntimeError("estimator unavailable")
+
+    assert (
+        tool_catalog.probe_initial_catalog(
+            reg,
+            frozenset({"t0"}),
+            max_schema_tokens=100,
+            measure_schema_set=explode,
+        )
+        is None
+    )
+
+
+def test_find_ranks_relevance_independent_of_registration_order():
+    entries = [
+        ToolCatalogEntry("p:timezone", "timezone_lookup", "clock conversion", "p"),
+        ToolCatalogEntry("p:wall", "wall_clock", "wall time", "p"),
+        ToolCatalogEntry("p:sync", "clock_sync", "synchronize", "p"),
+        ToolCatalogEntry("p:clock", "clock", "current time", "p"),
+    ]
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(entries))
+
+    found = reg.find("clock", allowed_names=frozenset(entry.name for entry in entries))
+
+    assert [entry.name for entry in found] == [
+        "clock",
+        "clock_sync",
+        "wall_clock",
+        "timezone_lookup",
+    ]
+
+
+def test_find_filters_allow_list_before_eight_result_slice():
+    entries = [
+        ToolCatalogEntry("p:tool", "tool", "exact but denied", "p"),
+        *[
+            ToolCatalogEntry(f"p:m{i}", f"match_{i}", "tool helper", "p")
+            for i in range(10)
+        ],
+    ]
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(entries))
+    allowed = frozenset(f"match_{i}" for i in range(1, 10))
+
+    found = reg.find("tool", allowed_names=allowed)
+
+    assert [entry.name for entry in found] == [f"match_{i}" for i in range(1, 9)]
 
 
 class VanishingProvider:
@@ -216,6 +321,7 @@ def test_builtin_provider_refuses_when_gate_denies():
     )
     assert out.ok is False
     assert "nope" in out.error
+    assert out.outcome == "blocked"
 
 
 def test_builtin_provider_runs_when_gate_permits():
@@ -383,3 +489,123 @@ def test_registration_read_coerces_quoted_true_to_registered(monkeypatch):
     monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
     provider = BuiltinToolProvider()
     assert target.tool_name in provider._tools
+
+
+# --- TASK-26007: fuzzy ranking + deferred-tool listing ----------------------
+
+
+def _paraphrase_registry():
+    entries = [
+        ToolCatalogEntry(
+            "p:glob",
+            "fs_glob",
+            "Match files under the workspace with a glob pattern, "
+            "newest-mtime first, workspace-relative paths.",
+            "p",
+        ),
+        ToolCatalogEntry("p:read", "fs_read", "Read one workspace file.", "p"),
+        ToolCatalogEntry("p:clock", "clock", "current time", "p"),
+    ]
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(entries))
+    return reg
+
+
+def test_paraphrased_query_matches_without_a_literal_substring():
+    """AC#1/#6: 'find files by name' shares no substring with fs_glob's
+    name or description, yet token overlap surfaces it."""
+    reg = _paraphrase_registry()
+
+    found = [entry.name for entry in reg.find("find files by name")]
+
+    assert "fs_glob" in found
+    assert "clock" not in found, "zero-overlap tools must not ride along"
+
+
+def test_fuzzy_ranking_is_deterministic_and_below_substring_tiers():
+    """AC#4/#5."""
+    reg = _paraphrase_registry()
+
+    first = [entry.name for entry in reg.find("read workspace files")]
+    second = [entry.name for entry in reg.find("read workspace files")]
+    assert first == second, "same query must return the same order"
+
+    # 'read' is a name-substring of fs_read (tier 2); fs_glob only matches
+    # by token overlap (tier 4) -- the substring tier must rank first.
+    ranked = [entry.name for entry in reg.find("read")]
+    assert ranked.index("fs_read") == 0
+
+
+def test_find_tools_schema_embeds_a_bounded_listing():
+    """AC#2/#3."""
+    from tldw_chatbook.Agents.tool_catalog import (
+        FIND_TOOLS_SCHEMA,
+        build_find_tools_schema,
+    )
+
+    small = build_find_tools_schema(["fs_read", "fs_glob", "clock"])
+    assert "fs_glob" in small.description
+    assert "clock" in small.description
+    assert small.name == FIND_TOOLS_SCHEMA.name
+
+    many = build_find_tools_schema(
+        [f"fs_{'x' * 30}_{i}" for i in range(40)]
+        + [f"git_{'y' * 30}_{i}" for i in range(40)]
+    )
+    assert len(many.description) < len(FIND_TOOLS_SCHEMA.description) + 900
+    assert "fs_*" in many.description and "git_*" in many.description, (
+        "an oversized list must degrade to group names, not vanish"
+    )
+
+    empty = build_find_tools_schema([])
+    assert empty is FIND_TOOLS_SCHEMA
+
+
+def test_deferred_disclosure_plan_lists_available_tools():
+    """AC#6: when the catalog is deferred, find_tools' own description
+    names what exists so the model cannot conclude absence."""
+    from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget
+    from tldw_chatbook.Agents.agent_service import (
+        build_first_request_schema_plan,
+    )
+
+    entries = [
+        ToolCatalogEntry("p:glob", "fs_glob", "Match files with a glob.", "p"),
+        *[
+            ToolCatalogEntry(
+                f"p:pad{i}", f"pad_tool_{i}", "padding description " * 40, "p"
+            )
+            for i in range(300)
+        ],
+    ]
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(entries))
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        provider="llama_cpp",
+        budget=RunBudget(max_steps=5),
+    )
+    plan = build_first_request_schema_plan(
+        reg,
+        tuple(entry.name for entry in entries),
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "hi"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+    )
+
+    assert plan.offer_find_load, "300 padded tools must defer disclosure"
+    find_schema = next(
+        schema
+        for schema in plan.runtime_schemas
+        if schema.name == "find_tools"
+    )
+    # 301 tools exceed the name-listing bound, so the surface degrades to
+    # groups (AC#3) -- and the fs group is still named, so the capability
+    # is visibly present (AC#2).
+    assert "fs_*" in find_schema.description
+    assert "pad_* (300)" in find_schema.description

@@ -19,6 +19,8 @@ from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Static
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Character_Chat.visual_identity import (
     SAMIRA_EXPRESSION_KEYS,
     SAMIRA_REACTION_LABELS,
@@ -31,9 +33,6 @@ from tldw_chatbook.UI.Console_Modules.reaction_preview import (
     get_console_reaction_preview_coordinator,
 )
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-from tldw_chatbook.Widgets.Console.console_inspector_section import (
-    ConsoleInspectorSectionState,
-)
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     FILTER_INPUT_ID,
     PREVIEW_ID,
@@ -68,7 +67,7 @@ def _samira_options() -> tuple[ReactionOption, ...]:
     )
 
 
-class PickerHarness(App[None]):
+class PickerHarness(ConsolidatedCSSApp):
     def __init__(
         self,
         options: tuple[ReactionOption, ...],
@@ -755,11 +754,12 @@ class RailHarness(App[None]):
             fleet_line="",
             agent_status_line="Idle",
             agent_steps_text="",
-            agent_fleet_section_state=ConsoleInspectorSectionState(rows=(), summary=""),
             agent_drilldown_active=False,
             agent_full_log_available=False,
             show_character_section=True,
-            character_avatar_widget_builder=lambda: Static("avatar"),
+            character_avatar_widget_builder=(
+                lambda _box=None, **_kwargs: Static("avatar")
+            ),
             character_avatar_name="Samira",
             manual_reaction_label=self._manual_label,
         )
@@ -779,15 +779,18 @@ async def test_character_rail_shows_reaction_action_and_visible_manual_state(
 ) -> None:
     app = RailHarness(manual_label)
 
-    async with app.run_test(size=(100, 40)) as pilot:
+    async with app.run_test(size=(100, 42)) as pilot:
+        await pilot.pause()
+        outer = app.screen.query_one("#console-left-rail-body", VerticalScroll)
+        outer.scroll_end(animate=False)
         await pilot.pause()
         button = app.screen.query_one("#console-character-reaction-open", Button)
-        button.scroll_visible(animate=False)
+        button.scroll_visible(animate=False, force=True)
         await pilot.pause()
         state = app.screen.query_one("#console-character-reaction-state", Static)
         assert str(state.renderable) == expected
         assert str(button.label) == "Reaction…"
-        await pilot.click(button)
+        assert await pilot.click(button)
         await pilot.pause()
 
     assert app.requests == 1
@@ -1151,7 +1154,10 @@ async def test_new_screen_waits_for_cancelled_old_screen_preview_to_drain(
     option = ReactionOption("custom:alarm", "Alarm", "image/webp", False)
     barrier = _BlockedPreviewDecode()
     app = SimpleNamespace()
-    coordinator_accessor = lambda: get_console_reaction_preview_coordinator(app)
+
+    def coordinator_accessor():
+        return get_console_reaction_preview_coordinator(app)
+
     controller, first_screen = _preview_controller(
         monkeypatch,
         (option,),

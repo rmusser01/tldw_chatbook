@@ -1,0 +1,547 @@
+"""Secure device wrapping and staged integrity-key custody for first link."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import secrets
+from typing import Any, Protocol
+
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+from tldw_chatbook.runtime_policy.server_credentials import is_secure_keyring_backend
+
+from .key_protector import ProfileLockedError
+
+
+_KEYRING_SERVICE = "tldw_chatbook.personal_context.link"
+_WRAPPING_KEY_NAME = "device-wrapping-rsa-v1"
+_WRAPPING_PREFIX = "rsa-private-pkcs8-v1:"
+_STAGED_PREFIX = "staged-integrity-v1:"
+_STORAGE_PREFIX = "dataset-staging-v1:"
+
+
+class PersonalContextWrappingKeyProvider(Protocol):
+    """Provide a registered RSA key without exposing its private material."""
+
+    @property
+    def public_key_pem(self) -> str:
+        """Return the registered public wrapping key in PEM form.
+
+        Returns:
+            PEM-encoded RSA public key.
+
+        Raises:
+            ProfileLockedError: If secure private-key custody is unavailable.
+        """
+
+        ...
+
+    def unwrap_integrity_key(
+        self, wrapped_key_blob: str, *, integrity_key_id: str
+    ) -> bytes:
+        """Unwrap one server integrity key under its exact key identity.
+
+        Args:
+            wrapped_key_blob: RSA-OAEP wrapped server key.
+            integrity_key_id: Server key identity bound into OAEP.
+
+        Returns:
+            Validated 32-byte integrity key.
+
+        Raises:
+            ValueError: If the wrapper or binding is invalid.
+            ProfileLockedError: If secure private-key custody is unavailable.
+        """
+
+        ...
+
+
+class PersonalContextLinkKeyCustodian(Protocol):
+    """Hold an unactivated server integrity key under one exact link binding."""
+
+    def stage(self, *, integrity_key: bytes, **binding: str) -> None:
+        """Stage one integrity key under a complete first-link binding.
+
+        Args:
+            integrity_key: Validated 32-byte server integrity key.
+            **binding: Exact server, dataset, device, profile, and key identities.
+
+        Raises:
+            ValueError: If the key or binding is invalid.
+            ProfileLockedError: If secure key custody is unavailable.
+        """
+
+        ...
+
+    def load(self, **binding: str) -> bytes:
+        """Load the staged integrity key for an exact first-link binding.
+
+        Args:
+            **binding: Exact server, dataset, device, profile, and key identities.
+
+        Returns:
+            Validated 32-byte staged integrity key.
+
+        Raises:
+            ValueError: If the binding is invalid or has no matching staged key.
+            ProfileLockedError: If secure key custody is unavailable.
+        """
+
+        ...
+
+    def delete(self, **binding: str) -> None:
+        """Delete the staged integrity key for an exact first-link binding.
+
+        Args:
+            **binding: Exact server, dataset, device, profile, and key identities.
+
+        Raises:
+            ValueError: If the binding is invalid.
+            ProfileLockedError: If secure key custody is unavailable.
+        """
+
+        ...
+
+    def load_or_create_storage_key(self, **binding: str) -> bytes:
+        """Load or create the staging key for a server/dataset/device binding.
+
+        Args:
+            **binding: Complete first-link binding used to derive storage identity.
+
+        Returns:
+            Dataset-bound 32-byte staging key.
+
+        Raises:
+            ValueError: If the binding or stored key is invalid.
+            ProfileLockedError: If secure key custody is unavailable.
+        """
+
+        ...
+
+    def load_storage_key(self, **binding: str) -> bytes:
+        """Load the existing staging key for a server/dataset/device binding.
+
+        Args:
+            **binding: Complete first-link binding used to derive storage identity.
+
+        Returns:
+            Dataset-bound 32-byte staging key.
+
+        Raises:
+            ValueError: If the binding is invalid or no staging key exists.
+            ProfileLockedError: If secure key custody is unavailable.
+        """
+
+        ...
+
+
+def _validate_integrity_key(value: bytes) -> bytes:
+    if not isinstance(value, bytes) or len(value) != 32:
+        raise ValueError("wrapped_integrity_key_invalid")
+    return value
+
+
+def _unwrap(private_key: rsa.RSAPrivateKey, blob: str, key_id: str) -> bytes:
+    if not isinstance(blob, str) or not blob.startswith("rsa-oaep-sha256:"):
+        raise ValueError("wrapped_integrity_key_invalid")
+    try:
+        ciphertext = base64.urlsafe_b64decode(blob.split(":", 1)[1])
+        plaintext = private_key.decrypt(
+            ciphertext,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=f"personal-context:{key_id}".encode(),
+            ),
+        )
+    except Exception as exc:
+        raise ValueError("wrapped_integrity_key_invalid") from exc
+    return _validate_integrity_key(plaintext)
+
+
+class InMemoryPersonalContextWrappingKeyProvider:
+    """Volatile wrapping-key provider for tests and memory-only operation."""
+
+    def __init__(self) -> None:
+        self._private_key = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048
+        )
+
+    @property
+    def public_key_pem(self) -> str:
+        """Return the volatile RSA public key in PEM form.
+
+        Returns:
+            PEM-encoded RSA public key.
+        """
+
+        return self._private_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("ascii")
+
+    def unwrap_integrity_key(
+        self, wrapped_key_blob: str, *, integrity_key_id: str
+    ) -> bytes:
+        """Unwrap a key using the volatile RSA private key.
+
+        Args:
+            wrapped_key_blob: RSA-OAEP wrapped server key.
+            integrity_key_id: Server key identity bound into OAEP.
+
+        Returns:
+            Validated 32-byte integrity key.
+
+        Raises:
+            ValueError: If the wrapper or binding is invalid.
+        """
+
+        return _unwrap(self._private_key, wrapped_key_blob, integrity_key_id)
+
+
+class KeyringPersonalContextWrappingKeyProvider:
+    """Keep the device RSA private key only in a verified OS keyring."""
+
+    def __init__(self, keyring_backend: Any | None = None) -> None:
+        if keyring_backend is None:
+            import keyring
+
+            keyring_backend = keyring.get_keyring()
+        get_keyring = getattr(keyring_backend, "get_keyring", None)
+        if callable(get_keyring):
+            keyring_backend = get_keyring()
+        if not is_secure_keyring_backend(keyring_backend):
+            raise ProfileLockedError("No secure device keyring is available.")
+        self._keyring = keyring_backend
+
+    def _private(self) -> rsa.RSAPrivateKey:
+        try:
+            stored = self._keyring.get_password(_KEYRING_SERVICE, _WRAPPING_KEY_NAME)
+            if stored is None:
+                private_key = rsa.generate_private_key(
+                    public_exponent=65537, key_size=2048
+                )
+                encoded = private_key.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                )
+                self._keyring.set_password(
+                    _KEYRING_SERVICE,
+                    _WRAPPING_KEY_NAME,
+                    _WRAPPING_PREFIX + base64.b64encode(encoded).decode("ascii"),
+                )
+                return private_key
+            if not stored.startswith(_WRAPPING_PREFIX):
+                raise ValueError("invalid wrapper")
+            loaded = serialization.load_pem_private_key(
+                base64.b64decode(stored.removeprefix(_WRAPPING_PREFIX), validate=True),
+                password=None,
+            )
+            if not isinstance(loaded, rsa.RSAPrivateKey) or loaded.key_size < 2048:
+                raise ValueError("invalid RSA key")
+            return loaded
+        except Exception as exc:
+            raise ProfileLockedError("The secure device keyring is unavailable.") from exc
+
+    @property
+    def public_key_pem(self) -> str:
+        """Return the keyring-backed RSA public key in PEM form.
+
+        Returns:
+            PEM-encoded RSA public key.
+
+        Raises:
+            ProfileLockedError: If the secure device keyring is unavailable.
+        """
+
+        return self._private().public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("ascii")
+
+    def unwrap_integrity_key(
+        self, wrapped_key_blob: str, *, integrity_key_id: str
+    ) -> bytes:
+        """Unwrap a key using the keyring-backed RSA private key.
+
+        Args:
+            wrapped_key_blob: RSA-OAEP wrapped server key.
+            integrity_key_id: Server key identity bound into OAEP.
+
+        Returns:
+            Validated 32-byte integrity key.
+
+        Raises:
+            ValueError: If the wrapper or binding is invalid.
+            ProfileLockedError: If the secure device keyring is unavailable.
+        """
+
+        return _unwrap(self._private(), wrapped_key_blob, integrity_key_id)
+
+
+def _binding_name(binding: dict[str, str]) -> str:
+    required = {
+        "server_profile_id",
+        "dataset_id",
+        "device_id",
+        "profile_id",
+        "integrity_key_id",
+        "key_record_id",
+    }
+    if set(binding) != required or any(
+        not isinstance(value, str) or not value for value in binding.values()
+    ):
+        raise ValueError("staged_integrity_key_binding_invalid")
+    payload = json.dumps(binding, sort_keys=True, separators=(",", ":")).encode()
+    return "staged:" + hashlib.sha256(payload).hexdigest()
+
+
+def _storage_name(binding: dict[str, str]) -> str:
+    _binding_name(binding)
+    payload = json.dumps(
+        {
+            key: binding[key]
+            for key in ("server_profile_id", "dataset_id", "device_id")
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return "storage:" + hashlib.sha256(payload).hexdigest()
+
+
+class InMemoryPersonalContextLinkKeyCustodian:
+    """Volatile staged custody used only by explicit tests."""
+
+    def __init__(self) -> None:
+        self._staged: dict[str, bytes] = {}
+        self._storage: dict[str, bytes] = {}
+
+    def stage(self, *, integrity_key: bytes, **binding: str) -> None:
+        """Stage a key in volatile memory under an exact binding.
+
+        Args:
+            integrity_key: Validated 32-byte server integrity key.
+            **binding: Complete first-link binding.
+
+        Raises:
+            ValueError: If the key or binding is invalid.
+        """
+
+        self._staged[_binding_name(binding)] = _validate_integrity_key(integrity_key)
+
+    def load(self, **binding: str) -> bytes:
+        """Load a volatile staged key for an exact binding.
+
+        Args:
+            **binding: Complete first-link binding.
+
+        Returns:
+            Validated 32-byte staged integrity key.
+
+        Raises:
+            ValueError: If the binding is invalid or has no matching key.
+        """
+
+        try:
+            return self._staged[_binding_name(binding)]
+        except KeyError:
+            raise ValueError("staged_integrity_key_binding_mismatch") from None
+
+    def delete(self, **binding: str) -> None:
+        """Delete a volatile staged key for an exact binding.
+
+        Args:
+            **binding: Complete first-link binding.
+
+        Raises:
+            ValueError: If the binding is invalid.
+        """
+
+        self._staged.pop(_binding_name(binding), None)
+
+    def load_or_create_storage_key(self, **binding: str) -> bytes:
+        """Load or create a volatile dataset staging key.
+
+        Args:
+            **binding: Complete first-link binding.
+
+        Returns:
+            Dataset-bound 32-byte staging key.
+
+        Raises:
+            ValueError: If the binding is invalid.
+        """
+
+        name = _storage_name(binding)
+        return self._storage.setdefault(name, secrets.token_bytes(32))
+
+    def load_storage_key(self, **binding: str) -> bytes:
+        """Load an existing volatile dataset staging key.
+
+        Args:
+            **binding: Complete first-link binding.
+
+        Returns:
+            Dataset-bound 32-byte staging key.
+
+        Raises:
+            ValueError: If the binding is invalid or no staging key exists.
+        """
+
+        try:
+            return self._storage[_storage_name(binding)]
+        except KeyError:
+            raise ValueError("personal_context_staging_key_unavailable") from None
+
+
+class KeyringPersonalContextLinkKeyCustodian:
+    """Stage an integrity key only in a verified secure OS keyring."""
+
+    def __init__(self, keyring_backend: Any | None = None) -> None:
+        if keyring_backend is None:
+            import keyring
+
+            keyring_backend = keyring.get_keyring()
+        get_keyring = getattr(keyring_backend, "get_keyring", None)
+        if callable(get_keyring):
+            keyring_backend = get_keyring()
+        if not is_secure_keyring_backend(keyring_backend):
+            raise ProfileLockedError("No secure link keyring is available.")
+        self._keyring = keyring_backend
+
+    def stage(self, *, integrity_key: bytes, **binding: str) -> None:
+        """Stage a key in the secure keyring under an exact binding.
+
+        Args:
+            integrity_key: Validated 32-byte server integrity key.
+            **binding: Complete first-link binding.
+
+        Raises:
+            ValueError: If the key or binding is invalid.
+            ProfileLockedError: If the secure link keyring is unavailable.
+        """
+
+        name = _binding_name(binding)
+        value = _STAGED_PREFIX + base64.b64encode(
+            _validate_integrity_key(integrity_key)
+        ).decode("ascii")
+        try:
+            self._keyring.set_password(_KEYRING_SERVICE, name, value)
+        except Exception as exc:
+            raise ProfileLockedError("The secure link keyring is unavailable.") from exc
+
+    def load(self, **binding: str) -> bytes:
+        """Load a keyring-backed staged key for an exact binding.
+
+        Args:
+            **binding: Complete first-link binding.
+
+        Returns:
+            Validated 32-byte staged integrity key.
+
+        Raises:
+            ValueError: If the binding or stored key is invalid.
+            ProfileLockedError: If the secure link keyring is unavailable.
+        """
+
+        try:
+            stored = self._keyring.get_password(_KEYRING_SERVICE, _binding_name(binding))
+            if not isinstance(stored, str) or not stored.startswith(_STAGED_PREFIX):
+                raise ValueError("staged_integrity_key_binding_mismatch")
+            return _validate_integrity_key(
+                base64.b64decode(stored.removeprefix(_STAGED_PREFIX), validate=True)
+            )
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ProfileLockedError("The secure link keyring is unavailable.") from exc
+
+    def delete(self, **binding: str) -> None:
+        """Delete a keyring-backed staged key for an exact binding.
+
+        Args:
+            **binding: Complete first-link binding.
+
+        Raises:
+            ValueError: If the binding is invalid.
+            ProfileLockedError: If the secure link keyring is unavailable.
+        """
+
+        name = _binding_name(binding)
+        try:
+            if self._keyring.get_password(_KEYRING_SERVICE, name) is not None:
+                self._keyring.delete_password(_KEYRING_SERVICE, name)
+        except Exception as exc:
+            raise ProfileLockedError("The secure link keyring is unavailable.") from exc
+
+    def load_or_create_storage_key(self, **binding: str) -> bytes:
+        """Load or create a keyring-backed dataset staging key.
+
+        Args:
+            **binding: Complete first-link binding.
+
+        Returns:
+            Dataset-bound 32-byte staging key.
+
+        Raises:
+            ValueError: If the binding or stored key is invalid.
+            ProfileLockedError: If the secure link keyring is unavailable.
+        """
+
+        name = _storage_name(binding)
+        try:
+            stored = self._keyring.get_password(_KEYRING_SERVICE, name)
+            if stored is None:
+                key = secrets.token_bytes(32)
+                self._keyring.set_password(
+                    _KEYRING_SERVICE,
+                    name,
+                    _STORAGE_PREFIX + base64.b64encode(key).decode("ascii"),
+                )
+                return key
+            if not isinstance(stored, str) or not stored.startswith(_STORAGE_PREFIX):
+                raise ValueError("personal_context_staging_key_invalid")
+            key = base64.b64decode(
+                stored.removeprefix(_STORAGE_PREFIX), validate=True
+            )
+            if len(key) != 32:
+                raise ValueError("personal_context_staging_key_invalid")
+            return key
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ProfileLockedError("The secure link keyring is unavailable.") from exc
+
+    def load_storage_key(self, **binding: str) -> bytes:
+        """Load an existing keyring-backed dataset staging key.
+
+        Args:
+            **binding: Complete first-link binding.
+
+        Returns:
+            Dataset-bound 32-byte staging key.
+
+        Raises:
+            ValueError: If the binding is invalid or no staging key exists.
+            ProfileLockedError: If the secure link keyring is unavailable.
+        """
+
+        name = _storage_name(binding)
+        try:
+            stored = self._keyring.get_password(_KEYRING_SERVICE, name)
+            if not isinstance(stored, str) or not stored.startswith(_STORAGE_PREFIX):
+                raise ValueError("personal_context_staging_key_unavailable")
+            key = base64.b64decode(
+                stored.removeprefix(_STORAGE_PREFIX), validate=True
+            )
+            if len(key) != 32:
+                raise ValueError("personal_context_staging_key_unavailable")
+            return key
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ProfileLockedError("The secure link keyring is unavailable.") from exc

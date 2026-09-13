@@ -15,13 +15,15 @@ from tldw_chatbook.Agents.agent_models import (
     ContinuationEventContext,
     FinalContinuation,
     ModelTurn,
+    RunBudget,
     ToolBatchReady,
     ToolCall,
     ToolCallExecuting,
     ToolCallFinished,
+    ToolLoadSelection,
+    ToolRecordProjection,
     ToolResult,
     ToolSchema,
-    RunBudget,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Chat.provider_continuation import (
@@ -31,7 +33,6 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ProviderContinuationCheckpoint,
 )
-
 
 CALCULATOR = ToolSchema(
     id="builtin:calculator",
@@ -121,6 +122,7 @@ def _deps(
     cancel=lambda: False,
     on_record=None,
     expand=None,
+    before_dispatch=None,
 ) -> LoopDeps:
     script = iter(turns)
 
@@ -133,10 +135,11 @@ def _deps(
         invoke_tool=invoke,
         spawn=lambda task: ToolResult(ok=True, content="spawned"),
         find_tools=lambda query: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=cancel,
         clock=lambda: 0.0,
         review_tool_calls=review,
+        before_tool_dispatch=before_dispatch,
         on_step=lambda step: order.append(f"step:{step.kind}"),
         continuation_context=context
         or ContinuationEventContext(
@@ -205,6 +208,186 @@ def test_barriers_precede_all_observable_runtime_hooks(turn_kind: str) -> None:
     assert order.index("ToolCallExecuting") < order.index("record:tool_call")
     assert order.index("ToolCallExecuting") < order.index("step:tool_call")
     assert order.index("ToolCallExecuting") < order.index("invoke")
+
+
+def test_continuation_checkpoint_uses_the_continuation_projection() -> None:
+    """A persisted continuation must not retain a Canvas-like argument body."""
+    raw = '<canvas-html-argument>'
+    raw_arguments = json.dumps({"html": raw}, separators=(",", ":"))
+    call = ToolCall("calculator", {"html": raw}, "call-1", raw_arguments)
+    checkpoint = _checkpoint(
+        ContinuationCall("call-1", "calculator", raw_arguments, "pending"),
+    )
+    events = []
+    turn = _native_turn((call,), checkpoint)
+    deps = _deps(
+        [turn],
+        order=[],
+        persist=events.append,
+        invoke=lambda _call: ToolResult(ok=True, content="unused"),
+        cancel=lambda: bool(events),
+    )
+    deps.project_tool_record = lambda audience, _call, result=None: ToolRecordProjection(
+        arguments={"canvas_id": "canvas-1"} if audience == "continuation" else {},
+        content="revision-1",
+        error="safe-error",
+        ok=result.ok if result is not None else None,
+    )
+    deps.has_tool_record_projection = lambda _call: True
+
+    outcome = run_agent_loop(CONFIG, [], [CALCULATOR], deps)
+
+    assert outcome.status == "cancelled"
+    batch = next(event for event in events if isinstance(event, ToolBatchReady))
+    stored = batch.checkpoint.rounds[0]
+    assert raw not in stored.calls[0].arguments
+    assert json.loads(stored.calls[0].arguments) == {"canvas_id": "canvas-1"}
+
+
+def test_ordinary_continuation_checkpoint_preserves_raw_round_bytes() -> None:
+    raw = '{ "z": 1, "expression" : "2+2" }'
+    call = ToolCall(
+        "calculator",
+        {"z": 1, "expression": "2+2"},
+        "call-1",
+        raw,
+    )
+    checkpoint = _checkpoint(
+        ContinuationCall("call-1", "calculator", raw, "pending"),
+        assistant_content="Exact ordinary assistant content.",
+    )
+    turn = _native_turn((call,), checkpoint)
+    turn = replace(
+        turn,
+        text="Exact ordinary assistant content.",
+        assistant_message={
+            **turn.assistant_message,
+            "content": "Exact ordinary assistant content.",
+        },
+    )
+    events = []
+    deps = _deps(
+        [turn],
+        order=[],
+        persist=events.append,
+        invoke=lambda _call: ToolResult(ok=True, content="unused"),
+        cancel=lambda: bool(events),
+    )
+    deps.has_tool_record_projection = lambda _call: False
+
+    assert run_agent_loop(CONFIG, [], [CALCULATOR], deps).status == "cancelled"
+
+    stored = next(
+        event.checkpoint for event in events if isinstance(event, ToolBatchReady)
+    )
+    assert stored == checkpoint
+    assert stored.rounds[0].calls[0].arguments == raw
+    assert stored.rounds[0].assistant_content == "Exact ordinary assistant content."
+
+
+def test_mixed_continuation_projects_only_opted_in_call() -> None:
+    ordinary_raw = '{ "expression" : "2+2", "z": 1 }'
+    private_raw = '{"html":"PRIVATE-CANARY"}'
+    ordinary = ToolCall(
+        "calculator",
+        {"expression": "2+2", "z": 1},
+        "ordinary",
+        ordinary_raw,
+    )
+    sensitive = ToolCall(
+        "calculator", {"html": "PRIVATE-CANARY"}, "sensitive", private_raw
+    )
+    checkpoint = _checkpoint(
+        ContinuationCall("ordinary", "calculator", ordinary_raw, "pending"),
+        ContinuationCall("sensitive", "calculator", private_raw, "pending"),
+        assistant_content="provider-owned mixed round",
+    )
+    turn = _native_turn((ordinary, sensitive), checkpoint)
+    turn = replace(
+        turn,
+        text="provider-owned mixed round",
+        assistant_message={
+            **turn.assistant_message,
+            "content": "provider-owned mixed round",
+        },
+    )
+    events = []
+    deps = _deps(
+        [turn],
+        order=[],
+        persist=events.append,
+        invoke=lambda _call: ToolResult(ok=True, content="unused"),
+        cancel=lambda: bool(events),
+    )
+    deps.has_tool_record_projection = lambda call: call.call_id == "sensitive"
+    deps.project_tool_record = lambda audience, call, result=None: ToolRecordProjection(
+        arguments={"canvas_id": "canvas-1"},
+        content="revision-1",
+        error="safe-error",
+        ok=result.ok if result is not None else None,
+    )
+
+    assert run_agent_loop(CONFIG, [], [CALCULATOR], deps).status == "cancelled"
+
+    stored = next(
+        event.checkpoint for event in events if isinstance(event, ToolBatchReady)
+    )
+    assert stored.rounds[0].calls[0] == checkpoint.rounds[0].calls[0]
+    assert "PRIVATE-CANARY" not in stored.rounds[0].calls[1].arguments
+    assert json.loads(stored.rounds[0].calls[1].arguments) == {"canvas_id": "canvas-1"}
+
+
+def test_ordinary_final_continuation_preserves_exact_checkpoint() -> None:
+    raw = '{"z":1, "expression":"2+2"}'
+    call = ToolCall("calculator", {"z": 1, "expression": "2+2"}, "call-1", raw)
+    pending_round = ContinuationRound(
+        assistant_content="",
+        reasoning_blocks=("private",),
+        calls=(ContinuationCall("call-1", "calculator", raw, "pending"),),
+    )
+    completed_round = replace(
+        pending_round,
+        calls=(
+            ContinuationCall(
+                "call-1",
+                "calculator",
+                raw,
+                "completed",
+                ContinuationResult("4"),
+            ),
+        ),
+    )
+    initial = _kimi_checkpoint(revision=1, state="active", rounds=(pending_round,))
+    final_checkpoint = _kimi_checkpoint(
+        revision=4,
+        state="complete",
+        rounds=(
+            completed_round,
+            ContinuationRound(
+                assistant_content="Exact final assistant content.",
+                reasoning_blocks=("final private",),
+                calls=(),
+            ),
+        ),
+    )
+    events = []
+    deps = _deps(
+        [
+            _native_turn((call,), initial),
+            ModelTurn(
+                text="Exact final assistant content.",
+                provider_continuation=final_checkpoint,
+            ),
+        ],
+        order=[],
+        persist=events.append,
+        invoke=lambda _call: ToolResult(ok=True, content="4"),
+    )
+    deps.has_tool_record_projection = lambda _call: False
+
+    assert run_agent_loop(CONFIG, [], [CALCULATOR], deps).status == RUN_DONE
+    final = next(event for event in events if isinstance(event, FinalContinuation))
+    assert final.checkpoint == final_checkpoint
 
 
 def test_executing_failure_emits_no_later_step_record_or_dispatch() -> None:
@@ -337,7 +520,10 @@ def test_common_executing_barrier_dominates_every_dispatch_branch(
     if dependency == "find_tools":
         deps.find_tools = lambda query: order.append("dispatch") or []
     elif dependency == "load_schemas":
-        deps.load_schemas = lambda ids: order.append("dispatch") or []
+        deps.load_schemas = (
+            lambda ids, _messages, _call: order.append("dispatch")
+            or ToolLoadSelection()
+        )
     else:
         setattr(deps, dependency, dispatch_result)
 
@@ -975,6 +1161,12 @@ def test_cycle_4c_pending_resume_requires_fresh_review_then_barrier() -> None:
     assert events[-1].expected_checkpoint_revision == 1
     assert events[-1].target_state == "failed"
     assert events[-1].result == ContinuationResult("fresh refusal")
+    assert (
+        next(
+            step for step in outcome.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "blocked"
+    )
 
 
 def test_refusal_finished_failure_leaves_pending_without_executing_or_observability() -> (
@@ -1024,6 +1216,7 @@ def test_continuation_review_exception_fails_closed_without_logging_or_dispatch(
     )
     events = []
     invoked = []
+    gated = []
 
     def review(batch):
         raise RuntimeError("PRIVATE-REVIEW-CANARY")
@@ -1036,6 +1229,9 @@ def test_continuation_review_exception_fails_closed_without_logging_or_dispatch(
         invoke=lambda actual: invoked.append(actual) or ToolResult(ok=True),
         review=review,
         expand=(lambda actual: []) if restored else None,
+        before_dispatch=lambda batch, _pure: gated.extend(
+            call.name for call in batch
+        ),
     )
     kwargs = (
         {
@@ -1055,6 +1251,7 @@ def test_continuation_review_exception_fails_closed_without_logging_or_dispatch(
 
     assert outcome.status == RUN_ERROR
     assert [type(event) for event in events] == ([] if restored else [ToolBatchReady])
+    assert gated == []
     assert invoked == []
     captured = capfd.readouterr()
     assert "PRIVATE-REVIEW-CANARY" not in captured.out + captured.err
@@ -1540,3 +1737,421 @@ def test_cycle_4d_raised_final_persistence_stops_safely() -> None:
     )
     assert outcome.status == RUN_ERROR
     assert "PRIVATE-CANARY" not in outcome.steps[-1].summary
+
+
+@pytest.mark.parametrize("name", ["report_to_supervisor", "read_agent_messages"])
+def test_restored_pending_message_call_refuses_before_execution(name):
+    from tldw_chatbook.Agents.fleet_message_tools import collect
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+
+    store = MessageStore()
+    store.open_inbox("c")
+    store.close_inbox("c")
+    inbox = store.open_inbox("c")
+    sender = inbox.sender(MessageIdentity("h", "child", "parent", None, "child"))
+    sender.send("replacement report must remain queued")
+    reader = inbox.reader("new-primary", chain_id=None, automatic=False)
+    invoked, events = [], []
+    deps = _deps(
+        [],
+        order=[],
+        persist=events.append,
+        invoke=lambda c: pytest.fail("catalog invocation"),
+        expand=lambda checkpoint: [],
+        cancel=lambda: bool(events),
+    )
+    deps.read_agent_messages = lambda args: (
+        invoked.append(args) or collect(reader, args, 8000)
+    )
+    deps.report_to_supervisor = lambda args: invoked.append(args) or ToolResult(True)
+    outcome = run_agent_loop(
+        CONFIG,
+        [],
+        [],
+        deps,
+        restore_provider_continuation=_checkpoint(_pending_call(name=name, args={})),
+        restore_provider_target=ContinuationRestoreTarget(
+            "deepseek", "deepseek-v4-flash", "responses", "https://api.deepseek.com/v1"
+        ),
+        resume_provider_continuation=True,
+    )
+    assert outcome.status == "cancelled"
+    assert invoked == []
+    assert [type(event) for event in events] == [ToolCallFinished]
+    assert events[0].target_state == "failed"
+    assert events[0].result.value == "ERROR: restored_pending"
+    assert len(inbox.snapshot()) == 1
+
+
+@pytest.mark.parametrize("fail_at", ["executing", "result", None])
+def test_reader_native_barriers_preserve_private_content_and_never_retry(fail_at):
+    from tldw_chatbook.Agents.fleet_message_tools import collect
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+
+    secret = "a private report body"
+    inbox = MessageStore().open_inbox("c")
+    inbox.sender(MessageIdentity("h", "child", "parent", None, "child")).send(secret)
+    reader = inbox.reader("primary", chain_id=None, automatic=False)
+    events, calls, records = [], [], []
+    call = ToolCall("read_agent_messages", {}, "read-1", "{}")
+    checkpoint = _checkpoint(_pending_call("read-1", name=call.name, args={}))
+
+    def persist(event):
+        events.append(event)
+        if (fail_at == "executing" and isinstance(event, ToolCallExecuting)) or (
+            fail_at == "result" and isinstance(event, ToolCallFinished)
+        ):
+            raise OSError("write failed")
+
+    deps = _deps(
+        [_native_turn((call,), checkpoint)],
+        order=[],
+        persist=persist,
+        invoke=lambda c: pytest.fail("catalog invocation"),
+        cancel=lambda: len(events) >= 3,
+    )
+    deps.read_agent_messages = lambda args: (
+        calls.append(args) or collect(reader, args, 8000)
+    )
+    deps.on_step = records.append
+    outcome = run_agent_loop(CONFIG, [], [], deps)
+    assert outcome.status == ("error" if fail_at else "cancelled")
+    assert len(calls) == (0 if fail_at == "executing" else 1)
+    assert len(inbox.snapshot()) == (1 if fail_at == "executing" else 0)
+    assert secret not in repr(records)
+    if fail_at != "executing":
+        assert secret in events[-1].result.value
+
+
+def test_collected_body_reaches_native_payload_and_private_db_with_capture_off():
+    from tldw_chatbook.Agents.fleet_message_tools import collect
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_agent_bridge import format_agent_step_marker
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    database = CharactersRAGDB(":memory:", "progress-continuation-test")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="Progress")
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="go", persist=True
+        )
+        owner = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        inbox = MessageStore().open_inbox("c")
+        secret = "PRIVATE-PROGRESS-BODY"
+        inbox.sender(MessageIdentity("h", "child", "parent", None, "child")).send(
+            secret
+        )
+        reader = inbox.reader("run", chain_id=None, automatic=False)
+        call = ToolCall("read_agent_messages", {}, "read-1", "{}")
+        first = _native_turn(
+            (call,), _checkpoint(_pending_call("read-1", name=call.name, args={}))
+        )
+        seen = []
+
+        def call_model(messages, active):
+            seen.append(list(messages))
+            if len(seen) == 1:
+                return first
+            checkpoint = store.get_message(owner.id).provider_continuation
+            return ModelTurn(
+                text="done",
+                provider_continuation=replace(
+                    checkpoint, checkpoint_revision=4, state="complete"
+                ),
+            )
+
+        deps = _deps(
+            [],
+            order=[],
+            persist=store.persist_provider_continuation_event,
+            invoke=lambda c: pytest.fail("catalog dispatch"),
+            context=ContinuationEventContext(owner.id, "run", "primary", "persistent"),
+        )
+        deps.call_model = call_model
+        deps.read_agent_messages = lambda args: collect(reader, args, 8000)
+        assert deps.on_record is None
+        outcome = run_agent_loop(CONFIG, [], [], deps)
+        assert outcome.status == "done", outcome.steps
+        result_row = seen[1][-1]
+        assert result_row["role"] == "tool" and result_row["tool_call_id"] == "read-1"
+        assert json.loads(result_row["content"])["messages"][0]["body"] == secret
+        persisted_owner = store.get_message(owner.id)
+        row = database.get_message_by_id(persisted_owner.persisted_message_id)
+        assert secret in row["provider_continuation_json"]
+        assert secret not in repr(outcome.steps)
+        assert secret not in repr(
+            [format_agent_step_marker(step) for step in outcome.steps]
+        )
+        assert inbox.snapshot() == ()
+    finally:
+        database.close_connection()
+
+
+def test_committed_reader_replay_does_not_consume_a_new_report():
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+
+    inbox = MessageStore().open_inbox("c")
+    inbox.sender(MessageIdentity("h", "child", "parent", None, "child")).send(
+        "new report"
+    )
+    checkpoint = _checkpoint(
+        ContinuationCall(
+            "read-1",
+            "read_agent_messages",
+            "{}",
+            "completed",
+            ContinuationResult("exact old collected report"),
+        ),
+        revision=3,
+    )
+    seen = []
+    deps = _deps(
+        [],
+        order=[],
+        persist=lambda event: None,
+        invoke=lambda c: pytest.fail("catalog dispatch"),
+        expand=lambda actual: [
+            {
+                "role": "tool",
+                "tool_call_id": "read-1",
+                "content": actual.rounds[0].calls[0].result.value,
+            }
+        ],
+    )
+    deps.read_agent_messages = lambda args: pytest.fail(
+        "committed reader must never redispatch"
+    )
+
+    def call_model(messages, active):
+        seen.extend(messages)
+        return ModelTurn(
+            text="done",
+            provider_continuation=replace(
+                checkpoint, checkpoint_revision=4, state="complete"
+            ),
+        )
+
+    deps.call_model = call_model
+    outcome = run_agent_loop(
+        CONFIG,
+        [],
+        [],
+        deps,
+        restore_provider_continuation=checkpoint,
+        restore_provider_target=ContinuationRestoreTarget(
+            "deepseek", "deepseek-v4-flash", "responses", "https://api.deepseek.com/v1"
+        ),
+        resume_provider_continuation=True,
+    )
+    assert outcome.status == "done"
+    assert seen == [
+        {
+            "role": "tool",
+            "tool_call_id": "read-1",
+            "content": "exact old collected report",
+        }
+    ]
+    assert len(inbox.snapshot()) == 1
+
+
+@pytest.mark.parametrize(
+    "restored", [False, True], ids=["native-review-refused", "restored-pending-refused"]
+)
+def test_refused_reader_keeps_cycle_protection_after_continuation_barrier(restored):
+    from tldw_chatbook.Agents.fleet_message_tools import collect
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+
+    inbox = MessageStore().open_inbox("c")
+    inbox.sender(MessageIdentity("h", "child", "parent", None, "child")).send(
+        "keep queued"
+    )
+    reader = inbox.reader("primary", chain_id=None, automatic=False)
+    events, invoked, seen = [], [], []
+    name = "read_agent_messages"
+    seed = _checkpoint(_pending_call("read-1", name=name, args={}))
+    next_number = 2 if restored else 1
+
+    def call_model(messages, active, checkpoint):
+        nonlocal next_number
+        seen.append(list(messages))
+        if next_number > 4:
+            return ModelTurn(
+                text="done",
+                provider_continuation=replace(
+                    checkpoint,
+                    checkpoint_revision=checkpoint.checkpoint_revision + 1,
+                    state="complete",
+                ),
+            )
+        call_id = f"read-{next_number}"
+        next_number += 1
+        call = ToolCall(name, {}, call_id, "{}")
+        round_ = ContinuationRound(
+            "", (), (_pending_call(call_id, name=name, args={}),)
+        )
+        candidate = (
+            _checkpoint(*round_.calls)
+            if checkpoint is None
+            else replace(
+                checkpoint,
+                checkpoint_revision=checkpoint.checkpoint_revision + 1,
+                rounds=checkpoint.rounds + (round_,),
+            )
+        )
+        return _native_turn((call,), candidate)
+
+    def expand(checkpoint):
+        return [
+            {"role": "tool", "tool_call_id": call.call_id, "content": call.result.value}
+            for round_ in checkpoint.rounds
+            for call in round_.calls
+            if call.result is not None
+        ]
+
+    deps = _deps(
+        [],
+        order=[],
+        persist=events.append,
+        invoke=lambda call: pytest.fail("catalog dispatch"),
+        review=lambda calls: {call.call_id: "denied" for call in calls},
+        expand=expand,
+    )
+    deps.call_model_with_continuation = call_model
+    deps.read_agent_messages = lambda args: (
+        invoked.append(args) or collect(reader, args, 8000)
+    )
+    restore = (
+        {}
+        if not restored
+        else {
+            "restore_provider_continuation": seed,
+            "restore_provider_target": ContinuationRestoreTarget(
+                "deepseek",
+                "deepseek-v4-flash",
+                "responses",
+                "https://api.deepseek.com/v1",
+            ),
+            "resume_provider_continuation": True,
+        }
+    )
+    outcome = run_agent_loop(
+        replace(CONFIG, budget=RunBudget(max_steps=40, max_model_turns=20)),
+        [],
+        [],
+        deps,
+        **restore,
+    )
+    assert outcome.status == "stuck"
+    assert invoked == [] and [message.body for message in inbox.snapshot()] == [
+        "keep queued"
+    ]
+    finished = [event for event in events if isinstance(event, ToolCallFinished)]
+    assert len(finished) == 3
+    assert all(event.target_state == "failed" for event in finished)
+    assert not any(isinstance(event, ToolCallExecuting) for event in events)
+    assert finished[0].result.value == (
+        "ERROR: restored_pending" if restored else "denied"
+    )
+    assert finished[-1].call_id == "read-3"
+    # Stop only after the third refusal is durably paired; never issue a fourth call.
+    assert len(seen) == (2 if restored else 3)
+    assert [row["tool_call_id"] for row in seen[-1] if row.get("role") == "tool"] == [
+        "read-1",
+        "read-2",
+    ]
+    assert [
+        row["tool_call_id"]
+        for row in outcome.final_messages
+        if row.get("role") == "tool"
+    ] == ["read-1", "read-2"]
+
+
+def test_mixed_native_refusals_stop_on_reader_boundary_without_another_model_call():
+    from tldw_chatbook.Agents.fleet_message_tools import collect
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+
+    inbox = MessageStore().open_inbox("c")
+    inbox.sender(MessageIdentity("h", "child", "parent", None, "child")).send(
+        "keep queued"
+    )
+    reader = inbox.reader("primary", chain_id=None, automatic=False)
+    events, invoked, seen = [], [], []
+
+    def call_model(messages, active, checkpoint):
+        seen.append(list(messages))
+        number = len(seen)
+        if number > 6:
+            return ModelTurn(
+                text="done",
+                provider_continuation=replace(
+                    checkpoint,
+                    checkpoint_revision=checkpoint.checkpoint_revision + 1,
+                    state="complete",
+                ),
+            )
+        name = "calculator" if number % 2 else "read_agent_messages"
+        call = ToolCall(name, {}, f"call-{number}", "{}")
+        pending = _pending_call(call.call_id, name=name, args={})
+        candidate = (
+            _checkpoint(pending)
+            if checkpoint is None
+            else replace(
+                checkpoint,
+                checkpoint_revision=checkpoint.checkpoint_revision + 1,
+                rounds=checkpoint.rounds + (ContinuationRound("", (), (pending,)),),
+            )
+        )
+        return _native_turn((call,), candidate)
+
+    deps = _deps(
+        [],
+        order=[],
+        persist=events.append,
+        invoke=lambda call: invoked.append(call) or ToolResult(True),
+        review=lambda calls: {call.call_id: "denied" for call in calls},
+    )
+    deps.call_model_with_continuation = call_model
+    deps.read_agent_messages = lambda args: (
+        invoked.append(args) or collect(reader, args, 8000)
+    )
+    outcome = run_agent_loop(
+        replace(CONFIG, budget=RunBudget(max_steps=40, max_model_turns=20)),
+        [],
+        [],
+        deps,
+    )
+    assert outcome.status == "stuck"
+    assert len(seen) == 4
+    assert invoked == [] and len(inbox.snapshot()) == 1
+    finished = [event for event in events if isinstance(event, ToolCallFinished)]
+    assert len(finished) == 4 and finished[-1].call_id == "call-4"
+    assert all(event.target_state == "failed" for event in finished)
+    assert not any(isinstance(event, ToolCallExecuting) for event in events)
+    assert [
+        row["tool_call_id"]
+        for row in outcome.final_messages
+        if row.get("role") == "tool"
+    ] == ["call-1", "call-2", "call-3"]
+
+
+def test_continuation_post_tool_hook_receives_uncapped_dispatched_result():
+    """Continuation capture must retain the result before history truncation."""
+    call = ToolCall("calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}')
+    checkpoint = _checkpoint(_pending_call())
+    raw_result = "result" * 4000
+    fired = []
+    deps = _deps(
+        [_native_turn((call,), checkpoint), ModelTurn(text="done")],
+        order=[], persist=lambda event: None,
+        invoke=lambda c: ToolResult(ok=True, content=raw_result),
+    )
+    deps.post_tool_call = lambda *args: fired.append(args)
+    outcome = run_agent_loop(CONFIG, [], [CALCULATOR], deps)
+    assert fired, outcome.steps
+    assert fired == [("calculator", "call-1", {"expression": "2+2"}, raw_result, True)]

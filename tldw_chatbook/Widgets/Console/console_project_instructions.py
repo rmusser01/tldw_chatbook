@@ -19,6 +19,8 @@ from textual.widget import Widget
 from textual.widgets import Button, Footer, Static
 from textual.css.query import QueryError
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 from ...Chat.console_chat_controller import (
     ProjectInstructionBindingRecovery,
     ProjectInstructionDispatchNotice,
@@ -271,7 +273,7 @@ def sync_project_instruction_status_for_screen(screen: Any) -> None:
 class ConsoleProjectInstructionStatusRow(Widget):
     """Compact Inspector authority row that opens the shared Context surface."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleProjectInstructionStatusRow {
         width: 100%;
         height: 1;
@@ -299,6 +301,9 @@ class ConsoleProjectInstructionStatusRow(Widget):
         yield Button(
             f"{self._state.status} · Project",
             id="console-project-instruction-status-button",
+            # `console-rail-focus-carrier` keys the focus-edge rule
+            # (TASK-31663); see `console_inspector_section.py`'s toggle.
+            classes="console-rail-focus-carrier",
             compact=True,
         )
 
@@ -318,7 +323,7 @@ class ConsoleProjectInstructionStatusRow(Widget):
 class ConsoleProjectInstructionContextPanel(VerticalScroll):
     """Metadata-only Project Instructions section for Context."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleProjectInstructionContextPanel {
         width: 100%;
         height: auto;
@@ -461,10 +466,12 @@ class ConsoleProjectInstructionContextPanel(VerticalScroll):
         self.refresh(recompose=True)
 
 
-class ProjectInstructionSetupModal(ModalScreen[ProjectInstructionSetupResult]):
+class ProjectInstructionSetupModal(
+    SafeModalDismissMixin, ModalScreen[ProjectInstructionSetupResult]
+):
     """Choose one eligible binding, disable the feature, or cancel."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ProjectInstructionSetupModal { align: center middle; }
     #console-project-setup-modal {
         width: 90%;
@@ -481,8 +488,9 @@ class ProjectInstructionSetupModal(ModalScreen[ProjectInstructionSetupResult]):
     #console-project-setup-actions { height: 1; margin-top: 1; }
     """
 
+    SAFE_MODAL_CONTENT = "#console-project-setup-modal"
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
+        ("escape", "request_safe_cancel", "Cancel"),
         ("d", "disable", "Disable"),
         ("c", "cancel", "Cancel"),
     ]
@@ -522,6 +530,9 @@ class ProjectInstructionSetupModal(ModalScreen[ProjectInstructionSetupResult]):
             yield Footer()
 
     def on_mount(self) -> None:
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         for button in self.query("Button.console-project-binding-option"):
             if not button.disabled:
                 button.focus()
@@ -534,13 +545,19 @@ class ProjectInstructionSetupModal(ModalScreen[ProjectInstructionSetupResult]):
         index = int(event.button.id.rsplit("-", 1)[-1])
         option = self._options[index]
         if option.eligible:
-            self.dismiss(ProjectInstructionSetupResult("select", option.binding_id))
+            self.dismiss_safe_once(
+                ProjectInstructionSetupResult("select", option.binding_id)
+            )
 
     def action_disable(self) -> None:
-        self.dismiss(ProjectInstructionSetupResult("disable"))
+        self.dismiss_safe_once(ProjectInstructionSetupResult("disable"))
 
     def action_cancel(self) -> None:
-        self.dismiss(ProjectInstructionSetupResult("cancel"))
+        self.dismiss_safe_once(ProjectInstructionSetupResult("cancel"))
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        self.dismiss_safe_once(ProjectInstructionSetupResult("cancel"))
 
     @on(Button.Pressed, "#console-project-setup-disable")
     def _disable(self, event: Button.Pressed) -> None:
@@ -553,10 +570,10 @@ class ProjectInstructionSetupModal(ModalScreen[ProjectInstructionSetupResult]):
         self.action_cancel()
 
 
-class ProjectInstructionNoticeModal(ModalScreen[str]):
+class ProjectInstructionNoticeModal(SafeModalDismissMixin, ModalScreen[str]):
     """First-use disclosure for one session and sanitized provider destination."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ProjectInstructionNoticeModal { align: center middle; }
     #console-project-notice-modal {
         width: 90%;
@@ -571,8 +588,9 @@ class ProjectInstructionNoticeModal(ModalScreen[str]):
     #console-project-notice-actions { height: 1; margin-top: 1; }
     """
 
+    SAFE_MODAL_CONTENT = "#console-project-notice-modal"
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
+        ("escape", "request_safe_cancel", "Cancel"),
         ("p", "proceed", "Proceed"),
         ("c", "cancel", "Cancel"),
         ("d", "disable", "Disable"),
@@ -633,13 +651,17 @@ class ProjectInstructionNoticeModal(ModalScreen[str]):
             yield Footer()
 
     def action_proceed(self) -> None:
-        self.dismiss("proceed")
+        self.dismiss_safe_once("proceed")
 
     def action_cancel(self) -> None:
-        self.dismiss("cancel")
+        self.dismiss_safe_once("cancel")
 
     def action_disable(self) -> None:
-        self.dismiss("disable")
+        self.dismiss_safe_once("disable")
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        self.dismiss_safe_once("cancel")
 
     @on(Button.Pressed, "#console-project-notice-proceed")
     def _proceed(self, event: Button.Pressed) -> None:

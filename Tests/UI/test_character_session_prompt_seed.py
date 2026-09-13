@@ -25,7 +25,7 @@ from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.UI.Screens.chat_screen import _character_session_prompt_seed
+from tldw_chatbook.UI.Console_Modules.session import _character_session_prompt_seed
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterChoice,
@@ -84,9 +84,7 @@ def test_character_alias_macros_resolve_to_character_name():
 
 def test_empty_card_falls_back_to_defaults():
     """An empty card yields the name hint, default prompt, and no greeting."""
-    seed = _character_session_prompt_seed(
-        {}, name_hint="Hinted"
-    )
+    seed = _character_session_prompt_seed({}, name_hint="Hinted")
 
     assert seed.name == "Hinted"
     assert seed.system_template == "Stay in character."
@@ -276,9 +274,11 @@ async def test_character_picker_new_chat_seeds_template_provenance(monkeypatch):
     """The picker-new path must not fall back to ordinary eager greeting text."""
     card = _roleplay_card()
     screen = _character_screen(monkeypatch, card)
-    monkeypatch.setattr(screen, "_fetch_character_card_for_avatar", lambda _id: card)
+    monkeypatch.setattr(
+        screen._character, "_fetch_character_card_for_avatar", lambda _id: card
+    )
 
-    await screen._apply_console_character_choice_async(
+    await screen._character._apply_console_character_choice_async(
         ConsoleCharacterChoice(character_id=7, name="Alraune", placement="new")
     )
 
@@ -292,15 +292,19 @@ async def test_character_picker_new_chat_seeds_template_provenance(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_character_picker_keeps_raw_identity_but_sanitizes_notification(monkeypatch):
+async def test_character_picker_keeps_raw_identity_but_sanitizes_notification(
+    monkeypatch,
+):
     raw_name = "Nyx\n\tAdmin\x00[/bold]"
     card = _roleplay_card(name=raw_name)
     screen = _character_screen(monkeypatch, card)
-    monkeypatch.setattr(screen, "_fetch_character_card_for_avatar", lambda _id: card)
+    monkeypatch.setattr(
+        screen._character, "_fetch_character_card_for_avatar", lambda _id: card
+    )
     notify = MagicMock()
     monkeypatch.setattr(screen.app_instance, "notify", notify)
 
-    await screen._apply_console_character_choice_async(
+    await screen._character._apply_console_character_choice_async(
         ConsoleCharacterChoice(character_id=7, name=raw_name, placement="new")
     )
 
@@ -325,7 +329,9 @@ async def test_character_picker_swap_uses_override_and_only_greets_empty_chat(
     cards = {7: first_card, 8: second_card}
     screen = _character_screen(monkeypatch, first_card)
     monkeypatch.setattr(
-        screen, "_fetch_character_card_for_avatar", lambda card_id: cards[card_id]
+        screen._character,
+        "_fetch_character_card_for_avatar",
+        lambda card_id: cards[card_id],
     )
     store = screen._ensure_console_chat_store()
     session = store.ensure_session(
@@ -337,15 +343,15 @@ async def test_character_picker_swap_uses_override_and_only_greets_empty_chat(
         global_default="Captain Rowan",
     )
 
-    await screen._apply_console_character_choice_async(
-        ConsoleCharacterChoice(character_id=7, name="Alraune", placement="current")
+    await screen._character._apply_console_character_choice_async(
+        ConsoleCharacterChoice(character_id=7, name="Alraune", placement="swap")
     )
     first_messages = store.messages_for_session(session.id)
     assert [message.content for message in first_messages] == ["Hello, Per Chat."]
     assert first_messages[0].metadata.template_source == "Hello, {{user}}."
 
-    await screen._apply_console_character_choice_async(
-        ConsoleCharacterChoice(character_id=8, name="Brynn", placement="current")
+    await screen._character._apply_console_character_choice_async(
+        ConsoleCharacterChoice(character_id=8, name="Brynn", placement="swap")
     )
 
     assert session.character_name == "Brynn"

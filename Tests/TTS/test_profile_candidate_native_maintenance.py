@@ -130,7 +130,11 @@ def _candidate_child(root, mode, after=False):
                     os.fstat(fd).st_ino
                     == (source if mode == "source_fd" else snapshot).stat().st_ino
                 )
-            assert calls.count(fd) == 1
+            if mode in ("connection", "read_connection"):
+                assert calls.count(fd) == 0
+                assert os.fstat(fd).st_ino == snapshot.stat().st_ino
+            else:
+                assert calls.count(fd) == 1
             assert storage._raw_operations, "native source job lost its strong owner"
             retained = set(storage._raw_operations)
             schema._close_candidate_fd = actual_close

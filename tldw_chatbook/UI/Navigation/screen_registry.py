@@ -7,7 +7,7 @@ from importlib import import_module
 
 from loguru import logger
 
-from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP
+from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_MEETINGS, TAB_RESEARCH_WORKSPACE
 from .shell_destinations import resolve_shell_route
 
 
@@ -20,6 +20,19 @@ class ScreenRoute:
     module_path: str
     class_name: str
     dependency_check: str | None = None
+    #: TASK-24452: opt-in screen-instance reuse. A reusable route's screen is
+    #: constructed once, installed (``App.install_screen``), and re-switched
+    #: to on every later visit -- Textual SUSPENDS an installed screen
+    #: instead of unmounting it, so the widget tree survives and warm visits
+    #: skip construction/mount entirely (measured: Home-class screens drop
+    #: from hundreds of ms of CPU per visit to tens). Opt-in per route
+    #: because reuse changes lifecycle semantics: ``on_mount``/``on_unmount``
+    #: fire once per app run instead of once per visit, so a route may only
+    #: set this after auditing that (a) per-visit refresh work runs from
+    #: ``on_screen_resume``, and (b) nothing load-bearing lives in
+    #: ``on_unmount`` teardown (see ``_create_navigation_screen``'s history
+    #: of why UNINSTALLED instances must never be reused).
+    reusable: bool = False
 
     def dependencies_available(self) -> bool:
         """Return whether optional dependencies for this route are available."""
@@ -53,14 +66,52 @@ class ScreenRoute:
 
 
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
+    "chunking_lab": ScreenRoute(
+        "chunking_lab", "library",
+        "tldw_chatbook.UI.Screens.chunking_lab_screen", "ChunkingLabScreen",
+    ),
     "home": ScreenRoute(
-        "home", "home", "tldw_chatbook.UI.Screens.home_screen", "HomeScreen"
+        "home",
+        "home",
+        "tldw_chatbook.UI.Screens.home_screen",
+        "HomeScreen",
+        # TASK-24452 first enablement: Home has no ``on_unmount`` teardown,
+        # no timers, and its per-visit refresh workers are re-triggered from
+        # ``on_screen_resume`` (all ``exclusive=True`` groups, so the
+        # first-visit mount+resume double-fire coalesces).
+        reusable=True,
     ),
     "chat": ScreenRoute(
-        "chat", "chat", "tldw_chatbook.UI.Screens.chat_screen", "ChatScreen"
+        "chat",
+        "chat",
+        "tldw_chatbook.UI.Screens.chat_screen",
+        "ChatScreen",
+        # TASK-31520 (audited 2026-09-04, 19-step on_unmount disposition):
+        # per-visit timers stop and live audio abandons in
+        # `on_screen_suspend`; auto-speak/sync-timer/survivor-tick re-arm
+        # in `on_screen_resume`. The runtime view stays ATTACHED across a
+        # suspend -- runs and parked approvals survive navigation (the
+        # `confirm_navigation` gate is retired accordingly; quit still
+        # confirms). `on_unmount`'s remaining teardown (video drain,
+        # roleplay abandon, store-tap uninstall, runtime leave) now runs
+        # at true teardown only -- each was audited as breaking its
+        # feature if wired to suspend.
+        reusable=True,
     ),
     "library": ScreenRoute(
-        "library", "library", "tldw_chatbook.UI.Screens.library_screen", "LibraryScreen"
+        "library",
+        "library",
+        "tldw_chatbook.UI.Screens.library_screen",
+        "LibraryScreen",
+        # TASK-31521 (audited 2026-09-04, 28-row on_unmount disposition):
+        # per-visit surface refresh runs from `on_screen_resume`; armed
+        # debounce timers stop in `on_screen_suspend` (Textual only
+        # auto-cancels timers on real removal); ingest-listener DOM/DB
+        # branches gate on the suspended flag with one resume-time
+        # reconciliation. `on_unmount`'s persistence drains and the
+        # file-notes DB-replica close now run at true teardown only --
+        # the per-visit connection churn reuse exists to retire.
+        reusable=True,
     ),
     "artifacts": ScreenRoute(
         "artifacts",
@@ -91,6 +142,9 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "workflows",
         "tldw_chatbook.UI.Screens.workflows_screen",
         "WorkflowsScreen",
+    ),
+    TAB_MEETINGS: ScreenRoute(
+        "meetings", TAB_MEETINGS, "tldw_chatbook.UI.Screens.meetings_screen", "MeetingsScreen"
     ),
     "mcp": ScreenRoute(
         "mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
@@ -156,6 +210,15 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     # (UI/Workbench/route_inventory.py).
     "research": ScreenRoute(
         "research", "research", "tldw_chatbook.UI.Screens.research_screen", "ResearchScreen"
+    ),
+    # Task 1 records the lazy route contract. The screen module is created by
+    # the dedicated screen task, so this metadata is intentionally not
+    # importable yet.
+    "research_workspace": ScreenRoute(
+        "research_workspace",
+        TAB_RESEARCH_WORKSPACE,
+        "tldw_chatbook.UI.Screens.research_workspace_screen",
+        "ResearchWorkspaceScreen",
     ),
     "chatbooks": ScreenRoute(
         "chatbooks",
@@ -298,6 +361,32 @@ def resolve_screen_target(target: str) -> tuple[str, str, type | None]:
     if route is None:
         return route_id, route_id, None
     return route.screen_name, route.canonical_tab, route.load_screen_class()
+
+
+def resolve_screen_route(target: str) -> ScreenRoute | None:
+    """Resolve a navigation target to its ``ScreenRoute`` WITHOUT importing it.
+
+    ``resolve_screen_target()`` answers the same question but calls
+    ``load_screen_class()`` as part of answering it, which is precisely the
+    synchronous import a caller wanting the *metadata* is trying to avoid.
+    This exposes the already-existing lazy lookup (aliases, then direct
+    routes, then the shell destination model -- identical resolution, same
+    helper) so a caller can decide what to import before importing it.
+
+    task-21110: ``app.py`` uses this to learn which module the initial screen
+    will need while the splash is still on screen, then warms it on the
+    background thread the screen pre-importer already owns.
+
+    Args:
+        target: The requested route id or alias.
+
+    Returns:
+        The resolved ``ScreenRoute``, or ``None`` when the target is not
+        routable (the same miss that ``resolve_screen_target()`` reports as a
+        ``None`` screen class).
+    """
+
+    return _lookup_route(target)[1]
 
 
 def _lookup_route(target: str) -> tuple[str, ScreenRoute | None]:

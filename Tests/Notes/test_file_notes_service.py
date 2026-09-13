@@ -29,7 +29,9 @@ from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     LARGE_FILE_EXCERPT_CHARS,
     MAX_FILE_BYTES,
     MAX_FILE_CHARS,
+    SCAN_PROGRESS_INTERVAL,
     FileNotesService,
+    ScanCancelled,
 )
 
 
@@ -1251,10 +1253,10 @@ def test_close_waits_for_active_operation_before_closing_replica(
     release_scan = Event()
     real_walk = service._walk_candidates
 
-    def delayed_walk():
+    def delayed_walk(**kwargs):
         scan_started.set()
         release_scan.wait(5)
-        return real_walk()
+        return real_walk(**kwargs)
 
     monkeypatch.setattr(service, "_walk_candidates", delayed_walk)
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -1268,3 +1270,129 @@ def test_close_waits_for_active_operation_before_closing_replica(
 
     with pytest.raises(sqlite3.ProgrammingError):
         replica.list_deleted(str(root.resolve()))
+
+
+def _wide_tree(root: Path, directories: int, files_per_directory: int) -> int:
+    """Create a tree and return how many entries a walk will report."""
+    root.mkdir(parents=True, exist_ok=True)
+    entries = directories
+    for directory in range(directories):
+        child = root / f"dir{directory:03d}"
+        child.mkdir()
+        for index in range(files_per_directory):
+            (child / f"note{index:03d}.md").write_text("body", encoding="utf-8")
+        entries += files_per_directory
+    return entries
+
+
+def test_scan_stops_between_directories_and_releases_the_lock(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32121: an abandoned scan must let go of the operation lock.
+
+    Holding it to the end of an accidental home-directory scan is what
+    wedged every later folder change for the rest of the session.
+    """
+    root = tmp_path / "notes"
+    _wide_tree(root, directories=5, files_per_directory=2)
+    service = FileNotesService(root, replica)
+
+    with pytest.raises(ScanCancelled):
+        service.scan(should_cancel=lambda: True)
+
+    assert service._operation_lock.acquire(blocking=False)
+    service._operation_lock.release()
+    # Uncancelled, the same service still scans normally.
+    assert len(service.scan().entries) == 10
+
+
+def test_scan_reports_the_entries_it_has_walked(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32121: the busy row's count comes from here."""
+    root = tmp_path / "notes"
+    expected = _wide_tree(root, directories=3, files_per_directory=100)
+    service = FileNotesService(root, replica)
+
+    seen: list[int] = []
+    result = service.scan(on_progress=seen.append)
+
+    assert result.status == "ok"
+    assert seen, "a scan of 300+ entries reported no progress at all"
+    assert seen == sorted(seen)
+    assert seen[-1] == expected
+    assert max(seen) >= SCAN_PROGRESS_INTERVAL
+
+
+def test_scan_stops_between_files_in_one_flat_directory(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """task-32121 (review): a flat folder is a single ``os.walk`` yield.
+
+    Checking only between directories leaves the per-file metadata work --
+    the slow half for a folder with thousands of files in it -- running
+    with the operation lock held, so Cancel could not free the next folder
+    change until the whole directory had been examined.
+    """
+    root = tmp_path / "flat"
+    root.mkdir()
+    for index in range(200):
+        (root / f"note{index:03d}.md").write_text("body", encoding="utf-8")
+    service = FileNotesService(root, replica)
+
+    examined = 0
+    original_is_symlink = service_module._is_symlink
+
+    def counting_is_symlink(path: Path) -> bool:
+        nonlocal examined
+        examined += 1
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(service_module, "_is_symlink", counting_is_symlink)
+
+    checks = 0
+
+    def should_cancel() -> bool:
+        nonlocal checks
+        checks += 1
+        # The directory-level check passes, so the walk is already inside
+        # the one directory when the user abandons the scan.
+        return checks > 1
+
+    with pytest.raises(ScanCancelled):
+        service.scan(should_cancel=should_cancel)
+
+    assert examined <= 1, (
+        f"the cancelled scan still examined {examined} of 200 files"
+    )
+    assert service._operation_lock.acquire(blocking=False)
+    service._operation_lock.release()
+
+
+# --- task-32264: the editor hides frontmatter it is preserving --------------
+
+
+def test_frontmatter_lines_counts_only_the_hidden_block(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """The fact the editor needs to say what it is not showing."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "props.md").write_bytes(
+        b"\xef\xbb\xbf---\ntitle: Exact\ntags: [a]\n---\nbody\n"
+    )
+    (root / "bom-only.md").write_bytes(b"\xef\xbb\xbfbody\n")
+    (root / "plain.md").write_bytes(b"body\n")
+    (root / "unclosed.md").write_bytes(b"---\ntitle: Open\nbody")
+    service = FileNotesService(root, replica)
+
+    assert service.open_file("props.md").frontmatter_lines == 4
+    assert service.open_file("bom-only.md").frontmatter_lines == 0
+    assert service.open_file("plain.md").frontmatter_lines == 0
+    # An unterminated block is not frontmatter -- it stays in the body.
+    assert service.open_file("unclosed.md").frontmatter_lines == 0

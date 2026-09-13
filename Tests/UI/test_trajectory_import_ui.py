@@ -21,9 +21,10 @@ from tldw_chatbook.Chat.trajectory_export import (
     write_trajectory_export,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 from Tests.Chat.test_trajectory_export import _seed_conversation
-from Tests.UI.test_trajectory_screen import base_snapshot
+from Tests.UI.test_trajectory_screen import base_snapshot, _record_key_for_seq
 
 
 class _Harness(App[None]):
@@ -85,11 +86,17 @@ async def test_o_mounts_imported_readonly_screen_with_records(tmp_path) -> None:
         assert isinstance(imported, TrajectoryScreen)
         assert imported is not screen  # a NEW screen, not a mutation
         title = str(imported.query_one("#trajectory-title", Static).render())
-        assert "Imported trace — shared-trace (read-only)" in title
-        # The seeded conversation renders: 7 records + 2 turn-header rows.
+        assert "Trace · Shared trace — shared-trace" in title
+        state = str(imported.query_one("#trajectory-state", Static).render())
+        assert "READ-ONLY SHARED TRACE" in state
+        # The seeded v1 conversation plus an inspectable ephemeral import
+        # operation renders: 8 records + 3 turn-header rows.
         table = imported.query_one("#trajectory-table", DataTable)
-        assert table.row_count == 9
-        assert table.get_row_index("7") is not None  # compaction record
+        assert table.row_count == 11
+        assert table.get_row_index(_record_key_for_seq(imported, 7)) is not None
+        assert "DIGEST NOT PROVIDED (v1)" in state
+        assert "SOURCE NOT AUTHENTICATED" in state
+        assert "NOT SAVED" in state
 
 
 @pytest.mark.asyncio
@@ -114,7 +121,7 @@ async def test_imported_screen_has_no_live_polling(tmp_path) -> None:
         assert len(imported._timers) == len(screen._timers)
         hints = str(imported.query_one("#trajectory-hints", Static).render())
         assert "follow" not in hints  # live-only action never advertised
-        assert "open" in hints  # 1:1 governance: o is advertised
+        assert "import" in hints  # 1:1 governance: o is advertised
 
 
 @pytest.mark.asyncio
@@ -188,6 +195,7 @@ def _row_counts(database: CharactersRAGDB) -> dict[str, int]:
         "messages",
         "message_trajectory_metadata",
         "console_auxiliary_attempts",
+        "transcript_annotations",
     ):
         counts[table] = database.execute_query(
             f"SELECT COUNT(*) FROM {table}"  # noqa: S608 - static table name
@@ -206,8 +214,12 @@ async def test_import_through_the_screen_never_writes_the_db(tmp_path) -> None:
     """
     db = CharactersRAGDB(tmp_path / "local-app.db", client_id="local")
     _seed_conversation(db)  # local app data the import must not touch
+    agent_runs_path = tmp_path / "local-agent-runs.db"
+    agent_runs = AgentRunsDB(agent_runs_path, client_id="local")
+    agent_runs.close()
     trace = _build_trace(tmp_path)  # from its own separate source DB
     before = _row_counts(db)
+    agent_runs_before = agent_runs_path.read_bytes()
     assert before["messages"] > 0
     assert before["message_trajectory_metadata"] > 0
 
@@ -220,7 +232,8 @@ async def test_import_through_the_screen_never_writes_the_db(tmp_path) -> None:
         await pilot.press("o")
         await pilot.pause()
         # The imported view really rendered someone else's trace.
-        title = str(app.screen.query_one("#trajectory-title", Static).render())
-        assert "read-only" in title
+        state = str(app.screen.query_one("#trajectory-state", Static).render())
+        assert "READ-ONLY SHARED TRACE" in state
 
     assert _row_counts(db) == before
+    assert agent_runs_path.read_bytes() == agent_runs_before

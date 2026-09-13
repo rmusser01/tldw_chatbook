@@ -168,8 +168,9 @@ def headless(app,*args,**kwargs):
       (Path.home()/'probe-result.json').write_text(json.dumps({'checkpoint':'preview','refusal':text}))
       return
      await asyncio.sleep(.03)
-   safety_keys=set(saved['builtin_safety'])
-   assert safety_keys
+   current_plan=screen._restore_plan
+   safety_keys={item.logical_id for item in current_plan.target.items if item.owner in {'persona.assets','persona.visual_identity_builtin'} and item.status in {'included','included_directory'} and (item.logical_id,item.path) in current_plan.preserve}
+   assert {'persona.assets','persona.visual_identity_builtin'} <= {key.split(':')[2] for key in safety_keys}
    boxes=list(screen.query('.backup-safety-member'))
    by_key={box.name:box for box in boxes}
    assert safety_keys <= by_key.keys(),safety_keys-by_key.keys()
@@ -177,7 +178,7 @@ def headless(app,*args,**kwargs):
    for key in safety_keys:by_key[key].value=True
    await pilot.pause()
    assert screen.query_one('#backup-start-restore',Button).disabled
-   print('EXPLICIT_BUILTIN_SAFETY_SELECTION',len(safety_keys),flush=True)
+   print('EXPLICIT_PERSONA_SAFETY_SELECTION',len(safety_keys),flush=True)
    screen.query_one('#backup-review-restore',Button).focus();await pilot.press('enter')
    async with asyncio.timeout(180 if sys.platform=='win32' else 25):
     while screen.query_one('#backup-start-restore',Button).disabled:
@@ -313,7 +314,7 @@ from textual.widgets import Input,Button,Select
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery import recovery_restart
 from tldw_chatbook.Utils import terminal_utils
-(home/'probe-mapping.json').write_text(json.dumps({'mapping':{key:str(path) for key,path in mapping.items()},'name':name,'package':str(installed),'test_root':os.environ['TLDW_TEST_ROOT'],'builtin_safety':[item.logical_id for item in target.items if item.owner=='persona.visual_identity_builtin' and item.status in {'included','included_directory'}]}))
+(home/'probe-mapping.json').write_text(json.dumps({'mapping':{key:str(path) for key,path in mapping.items()},'name':name,'package':str(installed),'test_root':os.environ['TLDW_TEST_ROOT']}))
 original_run=TldwCli.run
 async def drive(pilot):
  app=pilot.app

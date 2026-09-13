@@ -32,6 +32,19 @@ REQUIRED_NODES = (
     "Tests/UI/test_model_installed_view.py::test_import_lane_disables_every_lifecycle_action_at_80_columns",
 )
 EXPECTED_OSES = ("ubuntu-latest", "macos-latest", "windows-latest")
+EXPECTED_PULL_REQUEST_PATHS = (
+    ".github/workflows/task-2062-1-gguf-import-evidence.yml",
+    "pyproject.toml",
+    "tldw_chatbook/app.py",
+    "tldw_chatbook/css/**",
+    "tldw_chatbook/Model_Artifacts/**",
+    "tldw_chatbook/UI/Screens/model_installed_view.py",
+    "Tests/conftest.py",
+    "Tests/Model_Artifacts/**",
+    "Tests/UI/conftest.py",
+    "Tests/UI/consolidated_css.py",
+    "Tests/UI/test_model_installed_view.py",
+)
 ASYNC_EVIDENCE_FUNCTIONS = {
     "Tests/UI/test_model_installed_view.py": {
         "test_tldwcli_css_finish_slice_restores_terminal_import_focus",
@@ -70,7 +83,10 @@ def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
     triggers = workflow.get("on", workflow.get(True))
     assert isinstance(triggers, dict)
     assert set(triggers) == {"pull_request", "workflow_dispatch"}
-    assert triggers["pull_request"] == {"branches": ["dev"]}
+    assert triggers["pull_request"] == {
+        "branches": ["dev"],
+        "paths": list(EXPECTED_PULL_REQUEST_PATHS),
+    }
     assert workflow.get("permissions") == {"contents": "read"}
 
     jobs = workflow.get("jobs")

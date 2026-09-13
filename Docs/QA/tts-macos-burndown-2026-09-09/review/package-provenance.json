@@ -1,0 +1,468 @@
+{
+  "artifacts": [
+    {
+      "path": "checks/qodo-language-red.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-language-red.log",
+      "original_sha256": "e0f5c4ccec5a95b89fa011ad8b9a9a2d27484b14e9e67a5403bc91bd07b53bf1",
+      "packaged_sha256": "e0f5c4ccec5a95b89fa011ad8b9a9a2d27484b14e9e67a5403bc91bd07b53bf1",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-language-green.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-language-green.log",
+      "original_sha256": "592af202ddddaf4999049093b226232b61ed9a5cbcc5ea419c95beff832c09b1",
+      "packaged_sha256": "592af202ddddaf4999049093b226232b61ed9a5cbcc5ea419c95beff832c09b1",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-provider-red.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-provider-red.log",
+      "original_sha256": "b85cf2aafebc6cfac037c4786a3886ba7bfa0416e132b8a286ffb5fbdb51fd16",
+      "packaged_sha256": "b85cf2aafebc6cfac037c4786a3886ba7bfa0416e132b8a286ffb5fbdb51fd16",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-provider-green.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-provider-green.log",
+      "original_sha256": "8de0fa10985f0392d193e1331958dc223e6a7c75cb11aafd40b1e7922e8e59ba",
+      "packaged_sha256": "8de0fa10985f0392d193e1331958dc223e6a7c75cb11aafd40b1e7922e8e59ba",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-provider-green-02.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-provider-green-02.log",
+      "original_sha256": "b5a419e227c07230a8322a87d2ca11235b59f7c10f10f27bdb9f825d0389993d",
+      "packaged_sha256": "b5a419e227c07230a8322a87d2ca11235b59f7c10f10f27bdb9f825d0389993d",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-harness-red.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-harness-red.log",
+      "original_sha256": "664fbc71708d1d80caeb788c349b0e28d0fb7070ad60e15d5279101f51f4784d",
+      "packaged_sha256": "664fbc71708d1d80caeb788c349b0e28d0fb7070ad60e15d5279101f51f4784d",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-harness-green.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-harness-green.log",
+      "original_sha256": "fac70975ce14bd7b58d5549092656ad014684642f93ec7d18b8b073662a62a50",
+      "packaged_sha256": "fac70975ce14bd7b58d5549092656ad014684642f93ec7d18b8b073662a62a50",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-targeted-final.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-targeted-final.log",
+      "original_sha256": "986c8613308c76b019502f77a7998d6802547a3504b8924b018af3332929dfdf",
+      "packaged_sha256": "986c8613308c76b019502f77a7998d6802547a3504b8924b018af3332929dfdf",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-asr-profile-red.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-asr-profile-red.log",
+      "original_sha256": "a5230ef64de2cff57ec9c4d5e734f65ab86b9e1711262bd425c35281aa9867cc",
+      "packaged_sha256": "a5230ef64de2cff57ec9c4d5e734f65ab86b9e1711262bd425c35281aa9867cc",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-harness-green-02.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-harness-green-02.log",
+      "original_sha256": "1cac69b96e65881ae1d30d9a89552524b51dc8e4667a77678816a5a63325d8a2",
+      "packaged_sha256": "1cac69b96e65881ae1d30d9a89552524b51dc8e4667a77678816a5a63325d8a2",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-targeted-final-02.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-targeted-final-02.log",
+      "original_sha256": "58ec2fd5f0f91f4c119b15b6b4cf68d38fe44d5b65f897f2af434e3b4347eaf0",
+      "packaged_sha256": "58ec2fd5f0f91f4c119b15b6b4cf68d38fe44d5b65f897f2af434e3b4347eaf0",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-post-rebase-targeted.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-post-rebase-targeted.log",
+      "original_sha256": "56065dfec1e50687bd185ce13b0693b84193595288d108a7f99f4a6469133f52",
+      "packaged_sha256": "56065dfec1e50687bd185ce13b0693b84193595288d108a7f99f4a6469133f52",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-alltalk-resolution-final.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-alltalk-resolution-final.log",
+      "original_sha256": "d017b8f0b7b0b66df6248dedf547150f260ad06785f7292057855d5d213018d5",
+      "packaged_sha256": "d017b8f0b7b0b66df6248dedf547150f260ad06785f7292057855d5d213018d5",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-ruff-final.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-ruff-final.log",
+      "original_sha256": "135c185304e81185f49019a86c34e1fa38947050b174c76f0663f25b659216ad",
+      "packaged_sha256": "135c185304e81185f49019a86c34e1fa38947050b174c76f0663f25b659216ad",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-format-final.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-format-final.log",
+      "original_sha256": "177f260a5645724013185e4b140c7045cc39e56c0c97b120f5cb23599f85f0de",
+      "packaged_sha256": "177f260a5645724013185e4b140c7045cc39e56c0c97b120f5cb23599f85f0de",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-post-rebase-diagnostic-check.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-post-rebase-diagnostic-check.log",
+      "original_sha256": "308235b497accfbd7d321509eda0958d418d6d96f69e1b8ac1259daeb4a1001a",
+      "packaged_sha256": "308235b497accfbd7d321509eda0958d418d6d96f69e1b8ac1259daeb4a1001a",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-ruff-baseline-comparison.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-ruff-baseline-comparison.json",
+      "original_sha256": "3587c8113b64189175eac3bb22ae5e6d59c13078dfd38c61854c6f6b907100d5",
+      "packaged_sha256": "3587c8113b64189175eac3bb22ae5e6d59c13078dfd38c61854c6f6b907100d5",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-ruff-disposition.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-ruff-disposition.json",
+      "original_sha256": "4967375cdfb71313b0498f66cc142c7d3b6a70434e3848a45a16bbdc3ebb9eb8",
+      "packaged_sha256": "4967375cdfb71313b0498f66cc142c7d3b6a70434e3848a45a16bbdc3ebb9eb8",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-diagnostic-statements-reviewed.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-diagnostic-statements-reviewed.txt",
+      "original_sha256": "f648cb9aec21d2957e7bd449a902909d22e4ac3c229770940bd35ae07af60537",
+      "packaged_sha256": "f648cb9aec21d2957e7bd449a902909d22e4ac3c229770940bd35ae07af60537",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "checks/qodo-task-closeout.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-task-closeout.json",
+      "original_sha256": "f95335da4215e044ebcd009563fb942ca1f4e2455545722cd573330a291a3cfe",
+      "packaged_sha256": "f95335da4215e044ebcd009563fb942ca1f4e2455545722cd573330a291a3cfe",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/qodo-clean-complete-wheel-identity.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-complete-wheel-identity.json",
+      "original_sha256": "2f86ac68b096e3385b56018801c91bb83b61ba8bc0c8d41d950fce785be7ce53",
+      "packaged_sha256": "2f86ac68b096e3385b56018801c91bb83b61ba8bc0c8d41d950fce785be7ce53",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/qodo-clean-wheel-identity.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-wheel-identity.json",
+      "original_sha256": "f39798d55e70a5c17ec17630631157cd897dd103fdb2931a6d82b20af096c701",
+      "packaged_sha256": "f39798d55e70a5c17ec17630631157cd897dd103fdb2931a6d82b20af096c701",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/qodo-clean-installed-wheel-matrix.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel-matrix.json",
+      "original_sha256": "de958b822d3b174736cd10beed6e14e34656ea487dd49ce1eeb2b4672e024248",
+      "packaged_sha256": "de958b822d3b174736cd10beed6e14e34656ea487dd49ce1eeb2b4672e024248",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/qodo-clean-installed-wheel-matrix.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel-matrix.log",
+      "original_sha256": "afc5e00b321ba93449ea912a159ebfa9c75cb4133a046b27fb9e26fe61d4a1c1",
+      "packaged_sha256": "afc5e00b321ba93449ea912a159ebfa9c75cb4133a046b27fb9e26fe61d4a1c1",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/qodo-clean-ownership-release.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-ownership-release.json",
+      "original_sha256": "1670f75491fc9ad49719d5d8a9f0fee5a44ac518a29731346bbf1ef4db1534ca",
+      "packaged_sha256": "1670f75491fc9ad49719d5d8a9f0fee5a44ac518a29731346bbf1ef4db1534ca",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/qodo-clean-user-config-before.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-user-config-before.json",
+      "original_sha256": "7d11223ac8ba13fc37b8897676245abb7b6772161a0d5cdb632a25671f50193c",
+      "packaged_sha256": "7d11223ac8ba13fc37b8897676245abb7b6772161a0d5cdb632a25671f50193c",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/qodo-clean-user-config-after.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-user-config-after.json",
+      "original_sha256": "c41914bdcfa0c98b9d212e916a7af67fbed9855bb271e2497cf57b4fab1a96e0",
+      "packaged_sha256": "c41914bdcfa0c98b9d212e916a7af67fbed9855bb271e2497cf57b4fab1a96e0",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/qodo-clean-build.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-build.log",
+      "original_sha256": "dff414af1e2f11e78a3d2f36962586f27b9e375004ab81efd7473437ac0fa031",
+      "packaged_sha256": "dff414af1e2f11e78a3d2f36962586f27b9e375004ab81efd7473437ac0fa031",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/qodo-clean-wheel-install.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-wheel-install.log",
+      "original_sha256": "27d82e3513178832c12e18ad59e59958052ef72d13c469aedecc5e39e2e55b63",
+      "packaged_sha256": "27d82e3513178832c12e18ad59e59958052ef72d13c469aedecc5e39e2e55b63",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/controller.py.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/run_qodo_clean_installed_wheel.py",
+      "original_sha256": "2428aa35999fd09c5e95d327d30e6e76b340e3ba213593e80590c16359872d65",
+      "packaged_sha256": "2428aa35999fd09c5e95d327d30e6e76b340e3ba213593e80590c16359872d65",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "excluded/qodo-stale-wheel-exclusion.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-stale-wheel-exclusion.json",
+      "original_sha256": "daaab077cb99656c82652f1b9f72c4b9ff2af495c4477b1055436d0ae5ba3bd8",
+      "packaged_sha256": "daaab077cb99656c82652f1b9f72c4b9ff2af495c4477b1055436d0ae5ba3bd8",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "excluded/qodo-installed-wheel-matrix.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-installed-wheel-matrix.json",
+      "original_sha256": "ca8c7eb0e661bd583539efc3ccc85d9c67540bcc0e1f37140807e732696e9a40",
+      "packaged_sha256": "ca8c7eb0e661bd583539efc3ccc85d9c67540bcc0e1f37140807e732696e9a40",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "excluded/qodo-installed-wheel-matrix.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-installed-wheel-matrix.log",
+      "original_sha256": "3f92fcc34f3eea4c45eae3453b359790d35524ab4997f16d58716c35cb605523",
+      "packaged_sha256": "3f92fcc34f3eea4c45eae3453b359790d35524ab4997f16d58716c35cb605523",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav-en-us/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-cpu-wav-en-us/evidence.json",
+      "original_sha256": "a8881d10e609b232531263720f840bad305307c024de839490d55dbf253f5686",
+      "packaged_sha256": "505c23eb4e7d287ea86685779818fa003693246785e0b14897939d9b34ba5dbf",
+      "method": "lossless JSON map factoring"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav-en-us/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-cpu-wav-en-us/content.json",
+      "original_sha256": "85dc0c3ad2e53be3e9b5599e9d90b1830589a56055f02e15176b3f3a7db7ff26",
+      "packaged_sha256": "85dc0c3ad2e53be3e9b5599e9d90b1830589a56055f02e15176b3f3a7db7ff26",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav-en-us/content.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-cpu-wav-en-us/content.log",
+      "original_sha256": "0eb8523e95f1da2d8a0aca021509e333c99f8e98057cef9322693ad64e55aad1",
+      "packaged_sha256": "0eb8523e95f1da2d8a0aca021509e333c99f8e98057cef9322693ad64e55aad1",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav-en-us/worker.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-cpu-wav-en-us/worker.log",
+      "original_sha256": "917b774a4919f67a7c2469f5d9383f9631d8bb4adc3a5562be7a23fb65d5b509",
+      "packaged_sha256": "917b774a4919f67a7c2469f5d9383f9631d8bb4adc3a5562be7a23fb65d5b509",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav-en-us/application.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-cpu-wav-en-us/application.log",
+      "original_sha256": "e57b5240d2720c32d272df3c70202176961dff06179c83c49a883721a1a66532",
+      "packaged_sha256": "e57b5240d2720c32d272df3c70202176961dff06179c83c49a883721a1a66532",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav-en-us/parent.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-cpu-wav-en-us-parent.log",
+      "original_sha256": "84d16296703afc01c24956fd46670dc97f9e58147ee580a2b604a84239cf673c",
+      "packaged_sha256": "84d16296703afc01c24956fd46670dc97f9e58147ee580a2b604a84239cf673c",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav-en-us/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-mps-wav-en-us/evidence.json",
+      "original_sha256": "93abf5c68f13ff80aed24622b479fdd3c837a740f59711a44fc323222f898f8c",
+      "packaged_sha256": "617132b63b62db75885673164ba8245fb51e07943550d22a7851bf6b8c768f4c",
+      "method": "lossless JSON map factoring"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav-en-us/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-mps-wav-en-us/content.json",
+      "original_sha256": "c022b129478b063b482772e6a732c50b822ee2fb5df68e8fdb9226af6df1b26f",
+      "packaged_sha256": "c022b129478b063b482772e6a732c50b822ee2fb5df68e8fdb9226af6df1b26f",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav-en-us/content.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-mps-wav-en-us/content.log",
+      "original_sha256": "5c92303d15ebd210b859b932ae4aa527e5e3c55ea0890f33e15797e1eb83a344",
+      "packaged_sha256": "5c92303d15ebd210b859b932ae4aa527e5e3c55ea0890f33e15797e1eb83a344",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav-en-us/worker.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-mps-wav-en-us/worker.log",
+      "original_sha256": "c760b28b646ca03f5f96bb145bd30828afabb80b7e15f2a8206d9f7458875adf",
+      "packaged_sha256": "c760b28b646ca03f5f96bb145bd30828afabb80b7e15f2a8206d9f7458875adf",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav-en-us/application.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-mps-wav-en-us/application.log",
+      "original_sha256": "a417b09eda4e4af9621aea415ef4e945371e85fe456938d859a96413db032d0b",
+      "packaged_sha256": "a417b09eda4e4af9621aea415ef4e945371e85fe456938d859a96413db032d0b",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav-en-us/parent.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-mps-wav-en-us-parent.log",
+      "original_sha256": "33680290b42af52a324013cab92014fadf1e6d2871fb4e13ee97cee3adc4c392",
+      "packaged_sha256": "33680290b42af52a324013cab92014fadf1e6d2871fb4e13ee97cee3adc4c392",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3-en-us/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/evidence.json",
+      "original_sha256": "6d6abbc544cf2276465a7525f21002a6fbb8412183521aa0dabeaf0422f8e77a",
+      "packaged_sha256": "4f810cdeaa0e78edef50ba573f96c913d465589f641591b0b906b3890ef8bb1f",
+      "method": "lossless JSON map factoring"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3-en-us/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/content.json",
+      "original_sha256": "281442c4e8f15a48b75108d144276a7fbfaf407f310551393677bd4540634324",
+      "packaged_sha256": "281442c4e8f15a48b75108d144276a7fbfaf407f310551393677bd4540634324",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3-en-us/content.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/content.log",
+      "original_sha256": "49d5bfa8e8424191dcbe23640b6c82aceb3077c3a3fadc30f4a147bb032dcd5d",
+      "packaged_sha256": "49d5bfa8e8424191dcbe23640b6c82aceb3077c3a3fadc30f4a147bb032dcd5d",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3-en-us/worker.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/worker.log",
+      "original_sha256": "ac28ca172b0ed0dd256479fbd088a81bf5c6eb04dc968dca7a4a4895d60744cb",
+      "packaged_sha256": "ac28ca172b0ed0dd256479fbd088a81bf5c6eb04dc968dca7a4a4895d60744cb",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3-en-us/application.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/application.log",
+      "original_sha256": "65a1c5da1968e2e953e4b3f9b21021fdcb16aa24018f9a75b6ac9e82b130ad19",
+      "packaged_sha256": "65a1c5da1968e2e953e4b3f9b21021fdcb16aa24018f9a75b6ac9e82b130ad19",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3-en-us/parent.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us-parent.log",
+      "original_sha256": "1f1eea894151a11711dfef6bff3254305775fa43e8b99ff39359124588385a77",
+      "packaged_sha256": "1f1eea894151a11711dfef6bff3254305775fa43e8b99ff39359124588385a77",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-ja/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-ja/evidence.json",
+      "original_sha256": "9a63df42cb69b86dd58c5480f3279b09d9ae7d776dcd6c14e2b188ca55cf6ef3",
+      "packaged_sha256": "e05cd20725cabf1aad17dab1a66e25344ecec5f9e8bb3218657b7c612bfbde4c",
+      "method": "lossless JSON map factoring"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-ja/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-ja/content.json",
+      "original_sha256": "d38c0821dc9b873ba300929c0e7622969e6471ab052514eae8720a6690a6cabc",
+      "packaged_sha256": "d38c0821dc9b873ba300929c0e7622969e6471ab052514eae8720a6690a6cabc",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-ja/content.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-ja/content.log",
+      "original_sha256": "43dc4e61a7c6dd1a2bc35386265a2b6132d54ac3ca31016c49b906315bd5f51b",
+      "packaged_sha256": "43dc4e61a7c6dd1a2bc35386265a2b6132d54ac3ca31016c49b906315bd5f51b",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-ja/worker.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-ja/worker.log",
+      "original_sha256": "aeede4e75893f55b16741cd246cc93701f3184eb72f1754abe683e41d16ff554",
+      "packaged_sha256": "aeede4e75893f55b16741cd246cc93701f3184eb72f1754abe683e41d16ff554",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-ja/application.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-ja/application.log",
+      "original_sha256": "068109b559c12dffa8938c0cc4acc08bbc4ec70091b75e5163f9d20eba002cb9",
+      "packaged_sha256": "068109b559c12dffa8938c0cc4acc08bbc4ec70091b75e5163f9d20eba002cb9",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-ja/parent.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-ja-parent.log",
+      "original_sha256": "e5e8f9b7775f6b26a82d949e3d8cd142e42a1d04a3309d3c202bab768ad29e26",
+      "packaged_sha256": "e5e8f9b7775f6b26a82d949e3d8cd142e42a1d04a3309d3c202bab768ad29e26",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-zh/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-zh/evidence.json",
+      "original_sha256": "11243ddb9041751d162e49ad1c7fae823e4017a2bba7f93adcd922d347b07b9c",
+      "packaged_sha256": "186d2222d0e3de3511451f4156d264674fc3ccda48437ccd4f7ea694fb44f9c2",
+      "method": "lossless JSON map factoring"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-zh/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-zh/content.json",
+      "original_sha256": "9000787e9d2179223079f1cb5ca5eb1f10834e543689e9087838f0a400836921",
+      "packaged_sha256": "9000787e9d2179223079f1cb5ca5eb1f10834e543689e9087838f0a400836921",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-zh/content.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-zh/content.log",
+      "original_sha256": "b5af7dc4fc56a5d985f17d47c3765384fb78048d9a007165c90f238306e01962",
+      "packaged_sha256": "b5af7dc4fc56a5d985f17d47c3765384fb78048d9a007165c90f238306e01962",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-zh/worker.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-zh/worker.log",
+      "original_sha256": "9782abd19d9e32e0ce3d43bf9398373d1e88e1c8f8bf686697e0eea687b53aea",
+      "packaged_sha256": "9782abd19d9e32e0ce3d43bf9398373d1e88e1c8f8bf686697e0eea687b53aea",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-zh/application.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-zh/application.log",
+      "original_sha256": "9e02b26eacf996458ece7eb14cc756a9e0c3ab268ac244d735de9d88ec9c9b8e",
+      "packaged_sha256": "9e02b26eacf996458ece7eb14cc756a9e0c3ab268ac244d735de9d88ec9c9b8e",
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-zh/parent.log",
+      "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-zh-parent.log",
+      "original_sha256": "0a575772cd38ac24f144dc89e09844500a8879d66b2bb92a05ccc912796bc48d",
+      "packaged_sha256": "0a575772cd38ac24f144dc89e09844500a8879d66b2bb92a05ccc912796bc48d",
+      "method": "byte-preserving copy"
+    }
+  ],
+  "factored_json_round_trips": [
+    {
+      "path": "wheel/runs/pytorch-cpu-wav-en-us/evidence.json",
+      "equal": true
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav-en-us/evidence.json",
+      "equal": true
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3-en-us/evidence.json",
+      "equal": true
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-ja/evidence.json",
+      "equal": true
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-wav-zh/evidence.json",
+      "equal": true
+    }
+  ],
+  "scope": "No audio, binaries, models, private profile contents or credentials included. Absolute evidence paths identify task-local originals."
+}

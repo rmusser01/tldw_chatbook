@@ -24,7 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 ALREADY_RUNNING_COPY = "A run is already running in this tab."
 
 
-def _build_screen():
+def _build_screen(*, with_persona_buddy: bool = False):
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -35,6 +35,8 @@ def _build_screen():
     }
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
+    if with_persona_buddy:
+        assert app.ensure_persona_buddy_controller() is not None
     screen = ChatScreen(app)
     return app, screen
 
@@ -82,6 +84,98 @@ def _start_fake_run(screen) -> None:
     controller._set_run_state(
         ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
     )
+
+
+@pytest.mark.unit
+def test_persona_buddy_run_and_approval_states_drive_real_controller_producers():
+    """The real controller callbacks publish and settle exact Buddy owners."""
+    app, screen = _build_screen(with_persona_buddy=True)
+    controller = screen._ensure_console_chat_controller()
+    buddy = app.persona_buddy_controller
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
+    )
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING), session_id="session-a"
+    )
+    assert buddy.snapshot().state == "speaking"
+
+    controller.add_pending_round("session-a", "round-1")
+    controller.add_pending_round("session-a", "round-2")
+    assert buddy.snapshot().state == "approval_needed"
+    controller.discard_pending_round("session-a", "round-1")
+    assert buddy.snapshot().state == "approval_needed"
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED), session_id="session-a"
+    )
+    assert buddy.snapshot().state == "idle"
+
+
+@pytest.mark.unit
+def test_persona_buddy_missing_controller_sink_is_noop():
+    """Controller-only construction remains valid when no Buddy sink exists."""
+    _app, screen = _build_screen()
+    controller = screen._ensure_console_chat_controller()
+    controller._buddy_sink = None
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
+    )
+    controller.add_pending_round("session-a", "round-1")
+    controller.discard_pending_round("session-a", "round-1")
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED), session_id="session-a"
+    )
+
+
+@pytest.mark.asyncio
+async def test_persona_buddy_stale_run_terminal_cannot_release_replacement():
+    """Each actual run task carries the exact owner captured at validation."""
+    app, screen = _build_screen(with_persona_buddy=True)
+    controller = screen._ensure_console_chat_controller()
+    old_validating = asyncio.Event()
+    release_old = asyncio.Event()
+    new_validating = asyncio.Event()
+    release_new = asyncio.Event()
+
+    async def old_run() -> None:
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
+        )
+        old_validating.set()
+        await release_old.wait()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED), session_id="session-a"
+        )
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.IDLE), session_id="session-a"
+        )
+
+    async def new_run() -> None:
+        await old_validating.wait()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
+        )
+        new_validating.set()
+        await release_new.wait()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED), session_id="session-a"
+        )
+
+    old_task = asyncio.create_task(old_run())
+    new_task = asyncio.create_task(new_run())
+    await new_validating.wait()
+    release_old.set()
+    await old_task
+
+    assert app.persona_buddy_controller.snapshot().state == "thinking"
+    assert controller._buddy_sink.active_owner_count("console-run") == 1
+
+    release_new.set()
+    await new_task
+    assert app.persona_buddy_controller.snapshot().state == "idle"
 
 
 @pytest.mark.asyncio

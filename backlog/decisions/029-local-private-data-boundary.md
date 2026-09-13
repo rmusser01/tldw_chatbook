@@ -1,6 +1,6 @@
 # ADR-029: Local Private Data Boundary
 
-Status: Accepted (amended 2026-07-28 for operational metadata events — TASK-1240)
+Status: Accepted (amended 2026-09-08 for credential/PII-only application logging — TASK-32047)
 Date: 2026-07-23
 Related Tasks: [TASK-943](../tasks/task-943%20-%20Establish-private-path-boundary-and-harden-config-bootstrap.md), [TASK-489](../tasks/task-489%20-%20Apply-private-storage-boundary-to-every-SQLite-owner-and-backup.md), [TASK-490](../tasks/task-490%20-%20Harden-persistent-log-and-tool-cache-file-lifecycles.md), [TASK-491](../tasks/task-491%20-%20Make-config-persistence-use-one-effective-path-and-live-runtime-boundary.md), [TASK-492](../tasks/task-492%20-%20Remove-private-payloads-from-persistent-diagnostics-and-tool-history.md), [TASK-493](../tasks/task-493%20-%20Contain-legacy-Notes-sync-paths-and-preserve-file-modes.md), [TASK-494](../tasks/task-494%20-%20Complete-metadata-only-boundary-across-remaining-production-diagnostics.md)
 Supersedes: N/A
@@ -82,7 +82,29 @@ Known residual gap, not resolved by this amendment: no test composes a real prod
 with a real installed sink (see [TASK-1330](../tasks/task-1330%20-%20Prove-app_started-is-never-emitted-before-the-persistent-sink-installs.md)).
 Full design and test rationale: [Design spec](../../Docs/superpowers/specs/2026-07-28-persistent-operational-diagnostics-design.md).
 
-## Context
+## Amendment (2026-09-08, TASK-32047) — application log readability
+
+The owner explicitly directs application logs to redact **credentials and PII
+only**. This supersedes this ADR's metadata-only restrictions for the application
+log file, in-app Logs view and both copy actions. Ordinary diagnostic messages,
+exception messages and stack frames remain available after targeted redaction.
+Passwords, API keys, authentication tokens and recognizable personal identifiers
+are masked; a record is not discarded or replaced just because it contains
+free-form text. Timestamps, software versions, correlation IDs, provider/model
+names, ordinary file names and non-secret diagnostic keys remain readable.
+
+All these application log surfaces use the same redaction policy. Existing
+retention bounds and private-file ownership/permission checks still apply.
+Pattern-based PII recognition does not identify every possible personal name or
+free-form identifier; documentation must describe the recognized categories
+without claiming universal anonymization. This amendment does not alter stored
+Console trace projections, trace capture policy or MCP execution-record schemas.
+
+The incident was a shared Console failure log in which Copy all replaced every
+ordinary application message with `***REDACTED***`. Only explicitly admitted
+metadata events remained, hiding the context needed to investigate the failure.
+
+## Original context
 
 The verified audit reproduced several violations of the intended local privacy
 boundary:
@@ -171,3 +193,37 @@ return.
 - [ADR-006: Provider-Aware Generation Settings](006-provider-aware-generation-settings.md)
 - [ADR-012: Provider Credential Settings Boundary](012-provider-credential-settings-boundary.md)
 - [ADR-021: File-Backed Notes Disk Authority and Recovery Replica](021-file-backed-notes-disk-authority-and-recovery.md)
+
+## Amendment (2026-09-07, TASK-31977) — Console send and refresh diagnostics
+
+The owner approved extending the existing diagnostic system after a blocked-send /
+rapid-refresh report produced only launcher start/end markers. Admit
+`console_send_stage`, `ui_refresh_churn`, and `diagnostic_events_dropped` as
+operational events through the existing persistent schema and Logs collector.
+Console stages use fixed phase/status/category tokens, exception class names,
+numeric SQLite error codes, elapsed durations, a random diagnostic attempt token
+(unrelated to conversation/message/workspace identities), capture-enabled state,
+and application/Python/SQLite version tokens. No exception messages, traceback
+locals, private IDs, paths, or provider payloads are admitted.
+
+Reuse the responsiveness monitor's background drain for these events, with a
+bounded nonblocking queue. Diagnostic delivery is best effort, must not change
+send admission or recovery, and must never perform file writes on the UI loop.
+Send attempts have a bounded event allowance; overflow is disclosed without
+recording discarded payloads. Monitor teardown drains with a bounded wait off the
+UI loop. No new file, database, export surface or retention policy is introduced.
+
+The monitor records excessive Console-sync or screen-recompose activity over
+heartbeat windows even when heartbeat lag is below the stall threshold. Emit
+once per continuous excessive-activity episode, rearming after a quiet window;
+ordinary polling and token streaming are not per-frame log events. These are
+observations, not authorization to cancel providers or suppress application
+state updates. Fixes to the actual refresh loop require separate causal evidence.
+
+**TASK-31977.1 field correction (2026-09-07).** Emit the random diagnostic
+correlation value as `attempt_id`, replacing `attempt_token`. The live Logs
+redactor treats an unquoted `*_token` assignment as a credential through the
+end of the line, which removed approved phase and failure fields. The new
+spelling carries exactly the same random value through send and refresh events.
+Credential redaction, metadata admission, retention and excluded data are
+unchanged; no log record receives a redaction exemption.

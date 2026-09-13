@@ -27,7 +27,6 @@ from textual.widgets import Button, Select
 from textual.widgets._select import SelectCurrent, SelectOverlay
 
 from Tests.UI.full_app_destination_context import (
-    StaticWatchlistsScopeService,
     active_destination_screen as _active_destination_screen,
     full_app_destination_context as _visual_destination_harness,
     wait_for_selector as _wait_for_selector,
@@ -49,7 +48,6 @@ UAT_SIZE = (235, 52)
 
 def _watchlists_host():
     app = _build_test_app()
-    app.watchlist_scope_service = StaticWatchlistsScopeService([])
     return _visual_destination_harness(app, "watchlists_collections")
 
 
@@ -99,19 +97,27 @@ async def test_items_status_filter_paints_every_status_option():
     async with host.run_test(size=UAT_SIZE) as pilot:
         screen = _active_destination_screen(host)
         screen.active_section = "items"
-        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#items-status-select", timeout=5.0)
+        for _ in range(120):
+            await pilot.pause()
+            if (
+                screen._rendered_section == "items"
+                and not screen._surface_refresh_draining
+            ):
+                break
 
         select = screen.query_one("#items-status-select", Select)
         select.expanded = True
-        await pilot.pause()
-        await pilot.pause()
+        expected = [label for label, _value in ArticleListPane._FILTER_OPTIONS]
+        for _ in range(120):
+            await pilot.pause()
+            if _painted_option_labels(screen, select) == expected:
+                break
 
         assert select.query_one(SelectOverlay).option_count == len(
             ArticleListPane._FILTER_OPTIONS
         )
         painted = _painted_option_labels(screen, select)
-        expected = [label for label, _value in ArticleListPane._FILTER_OPTIONS]
         assert painted == expected, (
             "every status option must reach the screen intact; the overlay "
             f"painted {painted!r}"
@@ -507,10 +513,13 @@ async def test_a_borderless_compact_select_has_a_visible_focus_cue(select_id):
     host = _watchlists_host()
     async with host.run_test(size=UAT_SIZE) as pilot:
         screen = _active_destination_screen(host)
-        screen.active_section = "items"
+        screen.active_section = (
+            "items" if select_id == "#items-status-select" else "sources"
+        )
         await pilot.pause()
         await _wait_for_selector(screen, pilot, select_id, timeout=5.0)
         select = screen.query_one(select_id, Select)
+        assert not select.disabled, "focus contrast must be measured on a focusable control"
 
         rest = _rendered_background(screen, select.region)
         select.focus()

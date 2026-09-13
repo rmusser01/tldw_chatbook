@@ -1,0 +1,182 @@
+name: Publish Python package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and check distributions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release-version.outputs.version }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "setuptools>=77.0"
+          python -m pip install -e ".[dev]"
+
+      - name: Build distributions
+        run: |
+          rm -rf dist
+          python -m build --sdist --wheel --no-isolation --outdir dist
+
+      - name: Verify release version
+        id: release-version
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import tomllib
+
+          from Packaging.check_pypi_release import write_github_output
+
+          with Path("pyproject.toml").open("rb") as handle:
+              project_version = tomllib.load(handle)["project"]["version"]
+
+          dist = Path("dist")
+          sdists = sorted(dist.glob("*.tar.gz"))
+          wheels = sorted(dist.glob("*.whl"))
+          if len(sdists) != 1 or len(wheels) != 1:
+              raise SystemExit("expected exactly one sdist and one wheel")
+
+          wheel_version = next(
+              part
+              for part in wheels[0].name.split("-")
+              if part and part[0].isdigit()
+          )
+          sdist_stem = sdists[0].name.removesuffix(".tar.gz")
+          sdist_version = sdist_stem.rsplit("-", 1)[1]
+          if project_version != wheel_version:
+              raise SystemExit(f"wheel version {wheel_version} != project version {project_version}")
+          if project_version != sdist_version:
+              raise SystemExit(f"sdist version {sdist_version} != project version {project_version}")
+
+          write_github_output("version", project_version)
+
+          print(f"project_version={project_version}")
+          print(f"wheel={wheels[0].name}")
+          print(f"sdist={sdists[0].name}")
+          PY
+
+      - name: Check package metadata
+        run: python -m twine check dist/*
+
+      - name: Check artifact contents
+        run: python Packaging/check_manifest.py dist
+
+      - name: Run release metadata tests
+        run: python -m pytest Tests/Packaging/test_release_metadata.py -q
+
+      - name: Run installed distribution regression
+        run: python -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' && github.ref_protected
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/tldw-chatbook/
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist
+
+      - name: Publish distributions to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  check_pypi_release:
+    name: Check PyPI release status
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      release_exists: ${{ steps.check.outputs.release_exists }}
+      latest_version: ${{ steps.check.outputs.latest_version }}
+      publish_release: ${{ steps.check.outputs.publish_release }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install output path validation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install loguru packaging psutil pydantic
+
+      - name: Check whether version should be published to PyPI
+        id: check
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          # `python Packaging/check_pypi_release.py` puts Packaging/ (not the
+          # repo root) at sys.path[0], and the job never installs the package,
+          # so the script's `from tldw_chatbook.Utils...` import needs the repo
+          # root on PYTHONPATH. Broke main's first two publish runs on
+          # 2026-09-04; hotfixed there as 943a0ef1f4 — this is that same line,
+          # backported so the dev→main merge hunk resolves without losing it.
+          PYTHONPATH: ${{ github.workspace }}
+        run: python Packaging/check_pypi_release.py "$RELEASE_VERSION"
+
+  publish-pypi:
+    name: Publish to PyPI
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.ref_protected && needs.check_pypi_release.outputs.publish_release == 'true'
+    needs: [build, check_pypi_release]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/tldw-chatbook/
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

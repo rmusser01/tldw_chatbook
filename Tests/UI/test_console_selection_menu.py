@@ -16,6 +16,8 @@ from textual.events import MouseDown, MouseMove, MouseUp
 from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -39,15 +41,25 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 
 async def _wait_for_menu(app, pilot, predicate):
     deadline = asyncio.get_running_loop().time() + 30.0
+    last_observed = "no menu mounted"
     while asyncio.get_running_loop().time() < deadline:
         menus = list(app.query(ConsoleSelectionMenu))
         if menus and predicate(menus[0]):
             return menus[0]
+        if menus:
+            menu = menus[0]
+            last_observed = (
+                f"classes={sorted(menu.classes)!r}, region={menu.region!r}, "
+                f"display={menu.display!r}"
+            )
         await pilot.pause(0.02)
-    raise AssertionError("Selection menu never reached the expected geometry")
+    raise AssertionError(
+        "Selection menu never reached the expected geometry; "
+        f"last observed {last_observed}"
+    )
 
 
-class _MenuApp(App[None]):
+class _MenuApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.add_to_chat_events: list[ConsoleSelectionMenu.AddToChat] = []
@@ -83,19 +95,21 @@ async def test_menu_offers_add_to_chat_and_posts_message():
 
 
 @pytest.mark.asyncio
-async def test_menu_offers_three_stacked_options_in_order():
-    """Phase 2: Add to chat, More Details, Ask in Side Chat stack in order."""
+async def test_menu_offers_copy_before_conversation_actions():
+    """Copy is the first action for mouse and keyboard selections."""
     app = _MenuApp()
     async with app.run_test() as pilot:
         del pilot
         buttons = app.query_one(ConsoleSelectionMenu).query("Button")
         assert [button.id for button in buttons] == [
+            "console-selection-copy",
             "console-selection-add-to-chat",
             "console-selection-more-details",
             "console-selection-ask-side-chat",
             "console-selection-create-note",
         ]
         assert [str(button.label) for button in buttons] == [
+            "Copy selection",
             "Add to chat",
             "More Details",
             "Ask in Side Chat",
@@ -147,7 +161,7 @@ async def test_click_inside_menu_does_not_propagate():
         assert len(app.quote_requests) == 1
 
 
-class _TranscriptMenuApp(App[None]):
+class _TranscriptMenuApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.quote_requests: list[ConsoleSelectionQuoteRequested] = []
@@ -203,11 +217,10 @@ async def _real_drag(pilot, selector: str) -> None:
 
 @pytest.mark.asyncio
 async def test_consecutive_selections_remount_exactly_one_menu():
-    """Regression: remounting over a still-pruning menu must not hit DuplicateIds.
+    """Settled consecutive drags remount exactly one selection menu.
 
-    ``Widget.remove()`` only SCHEDULES removal; a synchronous same-id remount
-    before the prune completes raises Textual's DuplicateIds (app-fatal), so a
-    second selection right after the first used to crash the app.
+    The pilot pauses after each real drag, so this covers the ordinary settled
+    interaction path while the no-yield pruning race has a dedicated test.
     """
     app = _TranscriptMenuApp()
     body = "#console-message-m1 .console-transcript-message-body"
@@ -217,6 +230,46 @@ async def test_consecutive_selections_remount_exactly_one_menu():
         await _real_drag(pilot, body)
         assert len(app.query(ConsoleSelectionMenu)) == 1
         assert app.is_running  # no app-fatal DuplicateIds
+
+
+@pytest.mark.asyncio
+async def test_pruning_menu_is_awaited_before_same_id_remount():
+    app = _TranscriptMenuApp()
+    async with app.run_test() as pilot:
+        await _finish_drag_selection(pilot)
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m1", ConsoleTranscriptMessage)
+        old_menu = app.query_one(ConsoleSelectionMenu)
+
+        old_menu.remove()
+        assert old_menu.is_attached
+        assert old_menu._pruning is True
+        assert old_menu not in transcript._attached_selection_menus()
+        assert old_menu in transcript.screen.query(ConsoleSelectionMenu)
+
+        selection = TextSelection(row.id, 0, 5)
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        transcript.selection_manager.finish_drag()
+        await transcript._text_selected(
+            ConsoleTranscript.TranscriptTextSelected(
+                selection=selection,
+                screen_x=4,
+                screen_y=6,
+            )
+        )
+
+        assert not old_menu.is_attached
+        menus = list(transcript.screen.query(ConsoleSelectionMenu))
+        assert len(menus) == 1
+        replacement = menus[0]
+        assert replacement is not old_menu
+        assert replacement._pruning is False
+        assert app.is_running
+        await pilot.pause()
+        assert app.query_one(ConsoleSelectionMenu) is replacement
+        assert app.is_running
 
 
 @pytest.mark.asyncio
@@ -379,7 +432,7 @@ async def test_side_chat_quote_is_capped_ask():
         )
 
 
-class _TallTranscriptMenuApp(App[None]):
+class _TallTranscriptMenuApp(ConsolidatedCSSApp):
     CSS = """
     ConsoleTranscript {
         height: 100%;
@@ -513,7 +566,7 @@ async def test_last_row_release_keeps_menu_within_transcript_not_composer():
         assert menu.region.bottom <= region.bottom
 
 
-class _TinyTranscriptFeedbackApp(App[None]):
+class _TinyTranscriptFeedbackApp(ConsolidatedCSSApp):
     """Transcript box (7 rows) shorter than the compact feedback menu.
 
     Clamp-fix review: on 24-30 row terminals the transcript box can be
@@ -547,16 +600,17 @@ class _TinyTranscriptFeedbackApp(App[None]):
 
 
 @pytest.mark.asyncio
-async def test_short_owner_box_shrinks_menu_and_keeps_containment():
+@pytest.mark.parametrize("ansi_color", [False, True])
+async def test_short_owner_box_shrinks_menu_and_keeps_containment(ansi_color):
     """Shrink guard: a box shorter than even the compact feedback menu drops
     the container border and hint line (no actions hidden), and the
     re-measured menu stays inside the transcript box."""
-    app = _TinyTranscriptFeedbackApp()
+    app = _TinyTranscriptFeedbackApp(ansi_color=ansi_color)
     async with app.run_test(size=(80, 32)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
         row = app.query_one("#console-message-m0")
         region = transcript.region
-        assert region.height == 7  # box shorter than the 10-row compact menu
+        assert region.height == 7  # box shorter than the 11-row compact menu
         transcript.selection_manager.begin_drag(row.id, 0)
         transcript.selection_manager.extend_drag(row.id, 5)
         row.set_selection_range(0, 5)
@@ -576,12 +630,137 @@ async def test_short_owner_box_shrinks_menu_and_keeps_containment():
         )
         assert menu.has_class("shrunk-for-short-owner")
         assert not menu.query_one("#console-selection-feedback-hint").display
-        # All six actions stay mounted and displayed (no action-hiding).
-        assert len([b for b in menu.query("Button") if b.display]) == 7
+        # All actions remain available, scrolling when they cannot all fit.
+        assert len([b for b in menu.query("Button") if b.display]) == 8
         assert menu.region.height <= region.height
         assert menu.region.bottom <= region.bottom
         assert menu.region.x >= region.x
         assert menu.region.right <= region.right
+
+        copy = menu.query_one("#console-selection-copy", Button)
+        assert menu.region.contains_region(copy.region)
+        assert "Copy selection" in copy.render_line(0).text
+        await pilot.press("up")  # wrap from Copy to the off-screen Comment
+        await pilot.pause()
+        comment = menu.query_one("#console-selection-comment", Button)
+        assert app.focused is comment
+        assert menu.region.contains_region(comment.region)
+        assert "Comment" in comment.render_line(0).text
+        assert menu.region.bottom <= region.bottom
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is copy
+        assert menu.region.contains_region(copy.region)
+
+
+class ResizableTranscriptFeedbackApp(_TinyTranscriptFeedbackApp):
+    CSS = """
+    ConsoleTranscript { height: 1fr; }
+    #composer-standin { height: 25; }
+    """
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ansi_color", [False, True])
+@pytest.mark.parametrize("resize_target", ["terminal", "transcript"])
+async def test_open_menu_recovers_after_owner_shrink_and_growth(
+    ansi_color, resize_target
+):
+    app = ResizableTranscriptFeedbackApp(ansi_color=ansi_color)
+    async with app.run_test(size=(80, 32)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m0")
+        assert transcript.region.height == 7
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        selection = transcript.selection_manager.finish_drag()
+        assert selection is not None
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(selection, 4, 6)
+        )
+        menu = await _wait_for_menu(
+            app,
+            pilot,
+            lambda candidate: (
+                candidate.has_class("shrunk-for-short-owner")
+                and transcript.region.contains_region(candidate.region)
+            ),
+        )
+        await pilot.press("up")  # preserve the focused last action while growing
+        comment = menu.query_one("#console-selection-comment", Button)
+        assert app.focused is comment
+
+        for owner_height in (20, 7, 20):
+            if resize_target == "terminal":
+                await pilot.resize_terminal(80, owner_height + 25)
+            else:
+                app.query_one("#composer-standin").styles.height = 32 - owner_height
+            await pilot.pause()
+            assert transcript.region.height == owner_height
+            assert app.query_one(ConsoleSelectionMenu) is menu
+            assert app.focused is comment
+            if owner_height == 20:
+                assert menu.query_one("#console-selection-feedback-hint").display
+                assert not menu.has_class("shrunk-for-short-owner")
+                assert all(
+                    menu.region.contains_region(button.region)
+                    for button in menu.query(Button)
+                )
+            else:
+                assert menu.has_class("shrunk-for-short-owner")
+                await pilot.press("down", "up")
+                assert app.focused is comment
+                assert menu.region.contains_region(comment.region)
+            assert transcript.region.contains_region(menu.region)
+            assert row.get_selection_text() == "answe"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ansi_color", [False, True])
+@pytest.mark.parametrize("resize_target", ["terminal", "transcript"])
+async def test_open_menu_repositions_when_resizing_without_compacting(
+    ansi_color, resize_target
+):
+    app = ResizableTranscriptFeedbackApp(ansi_color=ansi_color)
+    async with app.run_test(size=(80, 45)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m0")
+        assert transcript.region.height == 20
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        selection = transcript.selection_manager.finish_drag()
+        assert selection is not None
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(selection, 4, 8)
+        )
+        menu = await _wait_for_menu(
+            app,
+            pilot,
+            lambda candidate: transcript.region.contains_region(candidate.region),
+        )
+        assert menu.region.bottom == transcript.region.bottom
+        height = menu.region.height
+        for owner_height in (19, 18):
+            if resize_target == "terminal":
+                await pilot.resize_terminal(80, owner_height + 25)
+            else:
+                app.query_one("#composer-standin").styles.height = 45 - owner_height
+            await pilot.pause()
+            await _wait_for_menu(
+                app,
+                pilot,
+                lambda candidate: candidate.region.bottom == transcript.region.bottom,
+            )
+            assert transcript.region.height == owner_height
+            assert menu.region.height == height
+            assert not menu.has_class("shrunk-for-short-owner")
+            assert transcript.region.contains_region(menu.region)
+            assert menu.region.bottom == transcript.region.bottom
+        await pilot.click(menu.query_one("#console-selection-copy", Button))
+        await pilot.pause()
+        assert app.clipboard == "answe"
 
 
 @pytest.mark.asyncio
@@ -668,7 +847,9 @@ async def test_top_row_selection_bottom_overflow_pins_to_box_bottom():
         transcript.selection_manager.extend_drag(row.id, 5)
         row.set_selection_range(0, 5)
         transcript.selection_manager.finish_drag()
-        transcript.post_message(
+        # This is a geometry test, so await the handler that mounts the menu;
+        # leaving the message queued makes compositor load part of the setup.
+        await transcript._text_selected(
             ConsoleTranscript.TranscriptTextSelected(
                 selection=TextSelection(row.id, 0, 5),
                 screen_x=region.x + 4,
@@ -731,7 +912,7 @@ async def test_null_selection_row_region_selection_top_none_no_crash_keeps_conta
         assert menu.region.right <= region.right
 
 
-class _GeometryOwnerApp(App[None]):
+class _GeometryOwnerApp(ConsolidatedCSSApp):
     """Short owner box for direct clamp-geometry tests (no transcript).
 
     The owner is a plain 10-row Vertical at the screen top; the base menu
@@ -777,10 +958,10 @@ async def test_touching_above_row_when_gap_does_not_fit():
     for the menu itself must ABDUT the selected row (touching placement)
     rather than pin to the box bottom and land on top of the highlight --
     the reachable corner on small terminals (box <= ~2x menu height)."""
-    # selection_top tracks the menu's grown height (4 actions -> 6 rows):
-    # the gap row still does not fit (needs top >= 7) but the menu itself
+    # selection_top tracks the menu's grown height (5 actions -> 7 rows):
+    # the gap row still does not fit (needs top >= 8) but the menu itself
     # exactly does (top == height), which is this test's whole scenario.
-    app = _GeometryOwnerApp(selection_top=6, screen_y=10)
+    app = _GeometryOwnerApp(selection_top=7, screen_y=10)
     async with app.run_test(size=(80, 24)) as pilot:
         owner = app.query_one("#owner")
         await pilot.pause()  # owner lays out before the menu mounts
@@ -789,11 +970,11 @@ async def test_touching_above_row_when_gap_does_not_fit():
         await pilot.pause()
         await pilot.pause()  # measured clamp settles
         box = owner.region
-        assert menu.region.height == 6  # base-menu geometry pin (4 actions + border)
-        # Menu occupies rows 0..5: no gap row, but the row at y6 (and its
+        assert menu.region.height == 7  # base-menu geometry pin (5 actions + border)
+        # Menu occupies rows 0..6: no gap row, but the row at y7 (and its
         # highlight strip) stays visible below the menu.
         assert menu.region.y == 0
-        assert menu.region.bottom == 6
+        assert menu.region.bottom == 7
         assert box.contains_region(menu.region)
 
 
@@ -812,7 +993,7 @@ async def test_selection_top_below_box_keeps_menu_contained():
         await pilot.pause()
         await pilot.pause()  # measured clamp settles
         box = owner.region
-        assert menu.region.height == 6  # base-menu geometry pin (4 actions + border)
+        assert menu.region.height == 7  # base-menu geometry pin (5 actions + border)
         assert box.contains_region(menu.region)
         assert menu.region.bottom <= box.bottom
 
@@ -853,7 +1034,7 @@ async def test_far_right_release_keeps_menu_inside_transcript():
         assert menu.region.bottom <= region.bottom
 
 
-class _FrFlowApp(App[None]):
+class _FrFlowApp(ConsolidatedCSSApp):
     """Minimal screen-shaped app: docked navbar/footer around a 1fr content
     container, mirroring BaseAppScreen's arrangement.
 
@@ -1076,7 +1257,7 @@ async def test_escape_returns_focus_to_previously_focused_transcript():
         await pilot.pause()
         await _finish_drag_selection(pilot)
         menu = app.query_one(ConsoleSelectionMenu)
-        assert app.focused is app.query_one("#console-selection-add-to-chat")  # first button focused for keyboard nav
+        assert app.focused is app.query_one("#console-selection-copy")
         assert menu._previous_focus is transcript  # captured before the grab
 
         await pilot.press("escape")
@@ -1110,6 +1291,7 @@ async def test_escape_with_composer_focus_still_restores_composer():
 NO_RUN_HINT = "No active run — start a run to send review feedback"
 
 _FEEDBACK_BUTTON_IDS = [
+    "console-selection-copy",
     "console-selection-add-to-chat",
     "console-selection-more-details",
     "console-selection-ask-side-chat",
@@ -1120,7 +1302,7 @@ _FEEDBACK_BUTTON_IDS = [
 ]
 
 
-class _FeedbackMenuApp(App[None]):
+class _FeedbackMenuApp(ConsolidatedCSSApp):
     """Menu harness with the phase-3 feedback ctor knobs + event capture."""
 
     def __init__(
@@ -1162,14 +1344,14 @@ async def test_compact_menu_fits_height_budget():
     The 3-row library Button chrome (line-pad + tall border) stacked the
     feedback variant to ~24 rows -- taller than a short transcript's whole
     box on 24-30 row terminals, so even the owner-box clamp bled the menu
-    over the composer. Compact form: feedback variant <= 10 rows (6
+    over the composer. Compact form: feedback variant <= 11 rows (8
     single-row buttons + 1-row hint + container border), base <= 8.
     """
     app = _FeedbackMenuApp(feedback_available=True, run_active=False)
     async with app.run_test(size=(80, 40)) as pilot:
         del pilot
         menu = app.query_one(ConsoleSelectionMenu)
-        assert menu.region.height <= 10
+        assert menu.region.height <= 11
     app = _FeedbackMenuApp(feedback_available=False, run_active=True)
     async with app.run_test(size=(80, 40)) as pilot:
         del pilot
@@ -1177,7 +1359,7 @@ async def test_compact_menu_fits_height_budget():
         assert menu.region.height <= 8
 
 
-class _AnsiFeedbackMenuApp(App[None]):
+class _AnsiFeedbackMenuApp(ConsolidatedCSSApp):
     """Feedback menu harness with native ANSI color mode pinned ON.
 
     Increment review of e2dc272e4: textual 8.2.8's ANSI-mode
@@ -1212,7 +1394,7 @@ async def test_ansi_mode_disabled_buttons_stay_borderless_with_labels():
         del pilot
         assert app.native_ansi_color is True  # ANSI mode really pinned
         menu = app.query_one(ConsoleSelectionMenu)
-        assert menu.region.height <= 10  # height budget holds in ANSI mode
+        assert menu.region.height <= 11  # height budget holds in ANSI mode
         for selector, label in (
             ("#console-selection-request-changes", "Request changes"),
             ("#console-selection-lgm", "LGTM"),
@@ -1229,10 +1411,10 @@ async def test_ansi_mode_disabled_buttons_stay_borderless_with_labels():
 
 @pytest.mark.asyncio
 async def test_feedback_buttons_absent_without_availability():
-    """feedback_available=False: only the three base buttons, no hint.
+    """feedback_available=False: only the base buttons, no hint.
 
     (The default-ctor case is guarded by the pre-existing
-    ``test_menu_offers_three_stacked_options_in_order``.)
+    ``test_menu_offers_copy_before_conversation_actions``.)
     """
     app = _FeedbackMenuApp(feedback_available=False, run_active=True)
     async with app.run_test(size=(80, 40)) as pilot:
@@ -1240,6 +1422,7 @@ async def test_feedback_buttons_absent_without_availability():
         menu = app.query_one(ConsoleSelectionMenu)
         ids = [b.id for b in menu.query("Button")]
         assert ids == [
+            "console-selection-copy",
             "console-selection-add-to-chat",
             "console-selection-more-details",
             "console-selection-ask-side-chat",
@@ -1319,6 +1502,7 @@ async def test_key_navigation_down_cycle_skips_disabled_buttons():
             assert not focused.disabled, f"focus landed on disabled {focused.id}"
             focused_ids.add(focused.id)
         assert focused_ids == {
+            "console-selection-copy",
             "console-selection-add-to-chat",
             "console-selection-more-details",
             "console-selection-ask-side-chat",
@@ -1336,7 +1520,7 @@ async def test_key_navigation_up_wrap_skips_disabled_buttons():
         menu = app.query_one(ConsoleSelectionMenu)
         del menu
         await pilot.pause()
-        assert app.focused.id == "console-selection-add-to-chat"  # mount focuses first
+        assert app.focused.id == "console-selection-copy"  # mount focuses first
         await pilot.press("up")
         await pilot.pause()
         assert app.focused.id == "console-selection-comment"
@@ -1408,7 +1592,7 @@ class _OwnerCapture(Widget):
         self.received.append(("comment", event))
 
 
-class _OwnerMenuApp(App[None]):
+class _OwnerMenuApp(ConsolidatedCSSApp):
     """Mounts the menu with an explicit owner (transcript-like routing)."""
 
     def __init__(self, *, run_active: bool = True) -> None:

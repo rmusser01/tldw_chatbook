@@ -28,28 +28,109 @@ and_resume.py``) without also removing the now-orphaned widget code;
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
+import math
 import re
+import time
 from typing import Any, Mapping, Sequence
 
+from rich.markup import escape
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Button, Select, Static
+from textual.timer import Timer
+from textual.widgets import Button, Select, Static, TextArea
 
 from tldw_chatbook.MCP.redaction import redact_mapping
+from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
+
+_APPROVE_ONCE_LABEL = "Approve once"
+_DENY_LABEL = "Deny"
+_RAW_APPROVE_ONCE_LABEL = "Run once"
+_FAST_APPROVE_CLASS = "approval-row-fast-approve"
+_FAST_DENY_CLASS = "approval-row-fast-deny"
+_FAST_APPROVE_TOOLTIP = (
+    "Approve once and resume immediately (skips Select + Submit)."
+)
+_FAST_DENY_TOOLTIP = "Deny and resume immediately (skips Select + Submit)."
 
 #: Per-row decision options, in display order. Values are the exact
 #: decision strings `MCPToolProvider._apply_verdict` consumes.
+#:
+#: task-32278: the labels are what the CLOSED `Select` paints, and it does
+#: not ellipsize -- `SelectCurrent` is `height: auto` with a wrapping
+#: `Static#label`, so an over-long label grew the control instead
+#: ("Approve for session" rendered as "Approve for", "Always allow this
+#: exact input" wrapped to four lines). They are kept short here and the
+#: scope each one carries is spelled out on the row's own line instead --
+#: see `DECISION_SCOPE_COPY`. Budget: `.approval-row-decision`'s width
+#: minus 8 cells of Textual chrome (see the stylesheet rule).
 _DECISION_OPTIONS: list[tuple[str, str]] = [
-    ("Approve once", "approve_once"),
-    ("Approve for session", "approve_session"),
-    ("Always allow", "always_allow"),
-    ("Deny", "deny"),
+    ("Once", "approve_once"),
+    ("This session", "approve_session"),
+    # TASK-26012: persists an allow scoped to EXACTLY the arguments shown
+    # on this card (AC#3: the rule is created from what the user read);
+    # the same tool with different arguments still asks.
+    ("Always · these args", "allow_matching"),
+    ("Always", "always_allow"),
+    (_DENY_LABEL, "deny"),
 ]
+
+#: task-32278 AC#2: what the highlighted decision actually commits the user
+#: to, and where a remembered one is undone. Rendered under each row's
+#: controls and re-rendered on every `Select.Changed`, because the labels
+#: above are far too short to carry it. Keyed by decision VALUE, so a row
+#: with a narrowed option set needs no separate table.
+DECISION_SCOPE_COPY: dict[str, str] = {
+    "approve_once": "This call only.",
+    "approve_session": "Every call to this tool until Chatbook exits.",
+    "allow_matching": (
+        "Remembered for exactly these arguments. Remove it under "
+        "MCP ▸ Tools ▸ this tool."
+    ),
+    "always_allow": "Remembered for this tool. Change it under MCP ▸ Permissions.",
+    "deny": "This call only; the model is told not to retry.",
+}
 _DEFAULT_DECISION = "approve_once"
+_RAW_SHELL_SERVER_KEY = "local:__local__"
+_RAW_SHELL_TOOL_NAME = "shell_exec"
+_RAW_SHELL_DECISION_OPTIONS: list[tuple[str, str]] = [
+    (_RAW_APPROVE_ONCE_LABEL, "approve_once"),
+    ("All shell · session", "approve_session"),
+    (_DENY_LABEL, "deny"),
+]
+_RAW_SHELL_COPY_LIMIT = 2048
+
+
+def _is_raw_shell_row(call: Mapping[str, Any]) -> bool:
+    """Return whether a row is the reserved model raw-shell capability."""
+    return (
+        call.get("server_key") == _RAW_SHELL_SERVER_KEY
+        and call.get("tool_name") == _RAW_SHELL_TOOL_NAME
+    )
+
+_EFFECT_LABELS: dict[str, str] = {
+    "private_read": "may read private local data",
+    "mutates_local": "may modify local data",
+    "network": "may access the network",
+    "llm_spend": "may incur LLM usage costs",
+}
+
+
+def format_approval_effects(entry: Mapping[str, Any]) -> str:
+    """Render code-owned effects for an approval row without inspecting args."""
+    effects = entry.get("effects")
+    if not isinstance(effects, (list, tuple)):
+        return ""
+    labels = [
+        _EFFECT_LABELS[str(effect)]
+        for effect in effects
+        if str(effect) in _EFFECT_LABELS
+    ]
+    return f"Effects: {'; '.join(labels)}" if labels else ""
 
 
 def _options_for_row(call: Mapping[str, Any]) -> list[tuple[str, str]]:
@@ -62,6 +143,8 @@ def _options_for_row(call: Mapping[str, Any]) -> list[tuple[str, str]]:
     and an empty result falls back to the full set rather than rendering
     an unusable empty ``Select``.
     """
+    if _is_raw_shell_row(call):
+        return _RAW_SHELL_DECISION_OPTIONS
     requested = call.get("options") if isinstance(call, Mapping) else None
     if not isinstance(requested, (list, tuple)) or not requested:
         return _DECISION_OPTIONS
@@ -70,38 +153,82 @@ def _options_for_row(call: Mapping[str, Any]) -> list[tuple[str, str]]:
     return narrowed or _DECISION_OPTIONS
 
 
+def _default_decision_for_row(
+    call: Mapping[str, Any], row_values: Sequence[str]
+) -> str:
+    """Choose Deny for raw shell and preserve Approve once everywhere else."""
+    preferred = "deny" if _is_raw_shell_row(call) else _DEFAULT_DECISION
+    return preferred if preferred in row_values else row_values[0]
+
+
+def _bounded_text(value: Any, byte_limit: int) -> str:
+    """Return a UTF-8-safe bounded string for one optional approval field."""
+    text = value if isinstance(value, str) else str(value or "")
+    encoded = text.encode("utf-8")
+    if len(encoded) <= byte_limit:
+        return text
+    return encoded[:byte_limit].decode("utf-8", errors="ignore")
+
+
+def _raw_shell_metadata(entry: Mapping[str, Any]) -> str:
+    """Render the validated shell selector, directory, and timeout literally."""
+    arguments = entry.get("arguments")
+    args = arguments if isinstance(arguments, Mapping) else {}
+    return (
+        f"Shell: {args.get('shell', 'auto')}\n"
+        f"Directory: {args.get('initial_directory', '')}\n"
+        f"Timeout: {args.get('timeout_seconds', '')} seconds"
+    )
+
+
 #: Reason-badge suffixes appended to a row's header line.
 _REASON_SUFFIXES: dict[str, str] = {
     "config_changed": " (definition changed)",
     "risk_floored": " (high risk)",
 }
 
-#: Fleet-UX expert review F5/F7 (task-1234, item g): "(high risk)" on a
-#: plain read (e.g. `read_file`) reads as alarmist with no explanation --
-#: this is the row header's tooltip, a why-affordance for the badge alone.
-#: `config_changed` isn't included: its badge already names the concrete
-#: fact ("definition changed") and needs no further explanation.
-_REASON_TOOLTIPS: dict[str, str] = {
-    "risk_floored": (
-        "Reads can exfiltrate file contents; built-in file tools always "
-        "ask before running."
+#: task-32278 AC#3: why this row is asking. Fleet-UX expert review F5/F7
+#: (task-1234, item g) first put this on the header as a TOOLTIP -- a
+#: hover-only explanation of "(high risk)", which on a terminal is no
+#: explanation at all, and which said "reads" for a `write_file` call too.
+#: It is a visible row line now, and `config_changed` (whose badge names a
+#: fact but not what to do about it) gets one as well.
+_REASON_COPY: dict[str, str] = {
+    "risk_floored": "High risk: this tool reads local data and always asks first.",
+    "config_changed": (
+        "Definition changed since you last allowed it; review the arguments."
     ),
 }
 
+#: The `risk_floored` variant for a tool whose code-owned effects declare a
+#: local mutation. Same floor, opposite blast radius.
+_RISK_FLOORED_MUTATES_COPY = (
+    "High risk: this tool changes local data and always asks first."
+)
 
-def _row_header_tooltip(entry: Mapping[str, Any]) -> str:
-    """Return the row header's why-affordance tooltip, or ``""`` for none.
+
+def format_approval_reason(entry: Mapping[str, Any]) -> str:
+    """Return the visible explanation for a row's reason badge, or ``""``.
 
     Args:
         entry: One collapsed pending-call entry (see
             ``_collapse_pending_calls``).
 
     Returns:
-        The tooltip text for ``entry``'s reason code, or ``""`` when that
-        code carries no explanation (e.g. no reason at all, or
-        ``config_changed``, whose badge is already self-explanatory).
+        The sentence explaining ``entry``'s reason code -- the mutation
+        wording when a risk-floored tool's ``effects`` declare
+        ``mutates_local`` -- or ``""`` when the code carries no explanation
+        (no reason at all, or a plain ``ask``).
     """
-    return _REASON_TOOLTIPS.get(str(entry.get("reason", "") or ""), "")
+    reason = str(entry.get("reason", "") or "")
+    if reason == "risk_floored":
+        effects = entry.get("effects")
+        if isinstance(effects, (list, tuple)) and any(
+            str(effect) == "mutates_local" for effect in effects
+        ):
+            return _RISK_FLOORED_MUTATES_COPY
+    return _REASON_COPY.get(reason, "")
+
 
 #: TASK-1231/F3 AC2: appended (in addition to any `_REASON_SUFFIXES` badge)
 #: when the row's `path_precheck_failed` flag is set -- a file tool
@@ -112,24 +239,27 @@ def _row_header_tooltip(entry: Mapping[str, Any]) -> str:
 #: recovery-route error `validate_path_multi` raises at dispatch).
 _PATH_PRECHECK_SUFFIX = " -- path outside allowed folders; will fail even if approved"
 
-_ARGS_SUMMARY_LIMIT = 80
-
-#: TASK-695: per-VALUE budget inside the summary above. Without it a single
-#: bulk argument (a `write_file` body, a pasted document) consumes the whole
-#: line and every other argument -- including the destination the decision
-#: turns on -- is clipped away. Sized so a typical path survives intact
-#: while a payload is obviously abbreviated.
-_ARGS_VALUE_LIMIT = 34
-
-#: Floor for a shared value budget: below this a value is all ellipsis and
-#: tells the reader nothing, so it is better to overflow the line cap (which
-#: clips the tail) than to render every argument as noise.
-_ARGS_MIN_VALUE_LIMIT = 10
-
 #: TASK-1845: needs-decision was a border + 10% tint with no text change, so
 #: the state vanished in monochrome. PRODUCT.md: "colour must never be the
 #: only carrier of meaning."
 NEEDS_DECISION_PREFIX = "needs decision · "
+
+
+def _coerce_timeout_total(timeout_seconds: float | None) -> int:
+    """Return `timeout_seconds` as a whole-second count, or 0 when unarmed.
+
+    Shared by `format_approval_deadline` (render) and `ChatApprovalCard.
+    set_batch`/`_render_deadline` (arm and tick) so both agree on what
+    counts as "no deadline" (non-numeric, None, or <= 0) and use `ceil`
+    rather than truncation -- a countdown armed for 90s must still read
+    "1:30" the instant it is armed, not "1:29" from the microseconds of
+    call overhead between capturing `time.monotonic()` and this render.
+    """
+    try:
+        value = float(timeout_seconds or 0)
+    except (TypeError, ValueError):
+        return 0
+    return math.ceil(value) if value > 0 else 0
 
 
 def format_approval_deadline(timeout_seconds: float | None) -> str:
@@ -138,20 +268,19 @@ def format_approval_deadline(timeout_seconds: float | None) -> str:
     TASK-1844: `set_batch` accepted `timeout_seconds` and never read it,
     while its own docstring claimed the value was "surfaced on the card".
     The controller arms a 120s auto-deny, so a clock the user could not see
-    was making the decision for them.
+    was making the decision for them. TASK-32288: the card now re-renders
+    this every second from a locally tracked deadline -- see
+    `ChatApprovalCard._render_deadline`.
 
     Args:
-        timeout_seconds: The round's approval timeout, or None/0 when no
-            deadline is armed.
+        timeout_seconds: The round's approval timeout (or remaining
+            seconds, mid-countdown), or None/0 when no deadline is armed.
 
     Returns:
         "Auto-denies in M:SS", or "" when nothing is armed -- say nothing
         rather than invent a number.
     """
-    try:
-        total = int(timeout_seconds or 0)
-    except (TypeError, ValueError):
-        return ""
+    total = _coerce_timeout_total(timeout_seconds)
     if total <= 0:
         return ""
     return f"Auto-denies in {total // 60}:{total % 60:02d}"
@@ -174,6 +303,9 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
 
     Each entry carries ``count`` (for the "×N" suffix) and ``all_arguments``
     (every grouped call's arguments, so a count never conceals a target).
+    ADR-090 (task 5): each entry also carries the group's first non-empty
+    ``rationale`` (the row's advisory context line) and ``description``
+    (the tool definition's own text, for the external summarizer).
     """
     grouped: dict[str, dict[str, Any]] = {}
     order: list[str] = []
@@ -191,13 +323,22 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
             # reads of three different files rendered as one, so the user
             # approved three things having seen one.
             entry["all_arguments"] = [call.get("arguments")]
+            # ADR-090 (task 5): seed the group's advisory-context slots so
+            # every entry carries them; the fill-in below lets the first
+            # NON-EMPTY value win even when it arrives on a later call.
+            entry.setdefault("rationale", "")
+            entry.setdefault("description", "")
             grouped[name] = entry
             order.append(name)
         else:
             grouped[name]["count"] += 1
-            grouped[name].setdefault("all_arguments", []).append(
-                call.get("arguments")
-            )
+            grouped[name].setdefault("all_arguments", []).append(call.get("arguments"))
+        # ADR-090 (task 5): first non-empty wins -- a blank rationale on an
+        # earlier call must not mask a real reason stated on a later one.
+        if call.get("rationale") and not grouped[name].get("rationale"):
+            grouped[name]["rationale"] = str(call.get("rationale"))
+        if call.get("description") and not grouped[name].get("description"):
+            grouped[name]["description"] = str(call.get("description"))
     return [grouped[name] for name in order]
 
 
@@ -214,9 +355,6 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
     server_label = str(entry.get("server_label", "") or "")
     tool_name = str(entry.get("tool_name", "") or entry.get("llm_name", "") or "")
     header = f"{server_label} · {tool_name}" if server_label else tool_name
-    # TASK-1845: carry the needs-decision state in TEXT, not colour alone.
-    if entry.get("needs_decision"):
-        header = f"{NEEDS_DECISION_PREFIX}{header}"
     count = int(entry.get("count", 1) or 1)
     if count > 1:
         header += f" ×{count}"
@@ -225,6 +363,41 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
         header += _PATH_PRECHECK_SUFFIX
     return header
 
+
+# ---------------------------------------------------------------------------
+# Shared display helpers (ADR-090). These lived in a dedicated module
+# (``tldw_chatbook.Chat.approval_display``) earlier in this PR; that module
+# pushed the ``_ui_ready`` module census one over its never-rises ratchet
+# (ADR-097 / TASK-23029), so they are folded back into this -- already
+# mount-leg-resident -- module, their original pre-PR home. The public
+# names stay importable from here for the summarizer service and the
+# pending-row producers.
+# ---------------------------------------------------------------------------
+
+#: ADR-090: display cap for one advisory line (tail-biased).
+RATIONALE_DISPLAY_CAP = 240
+CONTEXT_LABEL = "Model context:"
+SUMMARY_LABEL = "Summary:"
+
+#: ADR-090 (Qodo review #7): single named cap for tool-description capture
+#: at the three pending-row producers (MCP, local, builtin) and the
+#: summarizer prompt -- one constant so the egress bound cannot drift
+#: between tool owners.
+TOOL_DESCRIPTION_CAPTURE_CAP = 300
+
+_ARGS_SUMMARY_LIMIT = 80
+
+#: TASK-695: per-VALUE budget inside the summary above. Without it a single
+#: bulk argument (a `write_file` body, a pasted document) consumes the whole
+#: line and every other argument -- including the destination the decision
+#: turns on -- is clipped away. Sized so a typical path survives intact
+#: while a payload is obviously abbreviated.
+_ARGS_VALUE_LIMIT = 34
+
+#: Floor for a shared value budget: below this a value is all ellipsis and
+#: tells the reader nothing, so it is better to overflow the line cap (which
+#: clips the tail) than to render every argument as noise.
+_ARGS_MIN_VALUE_LIMIT = 10
 
 #: TASK-695: argument names that say WHERE a call acts. Matched as whole
 #: tokens (see `_is_destination_key`), so `profile` is not a file and
@@ -286,7 +459,7 @@ def _is_destination_key(key: Any) -> bool:
     return bool(tokens & _DESTINATION_TOKENS)
 
 
-def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
+def summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     """Return ONE payload as a compact, ``markup=False``-safe summary.
 
     TASK-695: the summary used to be one ``json.dumps`` blob clipped at
@@ -309,7 +482,7 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     try:
         redacted = redact_mapping(dict(arguments or {}))
     except Exception:  # noqa: BLE001 -- a bad arg must never crash rendering
-        return str(arguments or {})[: _ARGS_SUMMARY_LIMIT]
+        return str(arguments or {})[:_ARGS_SUMMARY_LIMIT]
     if not redacted:
         return "{}"
 
@@ -337,7 +510,9 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     share = _ARGS_VALUE_LIMIT
     if payloads:
         remaining = _ARGS_SUMMARY_LIMIT - overhead - spent
-        share = max(_ARGS_MIN_VALUE_LIMIT, min(_ARGS_VALUE_LIMIT, remaining // len(payloads)))
+        share = max(
+            _ARGS_MIN_VALUE_LIMIT, min(_ARGS_VALUE_LIMIT, remaining // len(payloads))
+        )
 
     parts = [
         f"{json.dumps(str(key))}:"
@@ -350,7 +525,7 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     return text
 
 
-def _summarize_row_arguments(entry: Mapping[str, Any]) -> str:
+def summarize_row_arguments(entry: Mapping[str, Any]) -> str:
     """Return the summary for one COLLAPSED row -- every call's arguments.
 
     TASK-1845: a row that says "x3" must show all three targets or the count
@@ -369,14 +544,35 @@ def _summarize_row_arguments(entry: Mapping[str, Any]) -> str:
     if not sets:
         # Not a collapsed entry (or a row with no arguments at all): fall
         # back to the single payload so a caller can never render nothing.
-        return _summarize_arguments(entry.get("arguments"))
-    rendered = [_summarize_arguments(payload) for payload in sets]
+        return summarize_arguments(entry.get("arguments"))
+    rendered = [summarize_arguments(payload) for payload in sets]
     # De-duplicate identical payloads while preserving order: N identical
     # calls are one decision with one target, and repeating it N times
     # would bury a genuinely different target further down.
     seen: set[str] = set()
     unique = [r for r in rendered if not (r in seen or seen.add(r))]
     return "\n".join(unique)
+
+
+# Historical underscore names this module's own code and the existing
+# suites import.
+_summarize_arguments = summarize_arguments
+_summarize_row_arguments = summarize_row_arguments
+
+
+def format_context_line(text: object, cap: int = RATIONALE_DISPLAY_CAP) -> str:
+    """Tail-biased display clip for one advisory context/summary line.
+
+    Args:
+        text: Raw advisory text (model rationale or summarizer output).
+        cap: Maximum rendered length including the ellipsis.
+
+    Returns:
+        The clipped line, or "" for blank/absent input.
+    """
+    from tldw_chatbook.Agents.agent_models import normalize_rationale
+
+    return normalize_rationale(text, cap=cap)
 
 
 class ChatApprovalCard(Container):
@@ -408,6 +604,8 @@ class ChatApprovalCard(Container):
             The row's decision Select when there is one to decide, else the
             card's own container id -- never the Submit button.
         """
+        if self._batch_phase == "finishing":
+            return "chat-approval-card"
         try:
             selects = self.query(".approval-row-decision")
         except Exception:
@@ -423,13 +621,17 @@ class ChatApprovalCard(Container):
         The single seam both review entry points use, so a third caller
         cannot reintroduce a focus target that commits on Enter.
         """
+        if self._batch_phase == "finishing":
+            self.focus()
+            return
         try:
             selects = list(self.query(".approval-row-decision"))
         except Exception:
             selects = []
-        if selects:
-            selects[0].focus()
-            return
+        for select in selects:
+            if not select.disabled and select.can_focus:
+                select.focus()
+                return
         # No rows to decide (card shown for a batch that has since resolved):
         # focus the card itself rather than an action button.
         try:
@@ -468,6 +670,18 @@ class ChatApprovalCard(Container):
         self._batch_selects: list[Select] = []
         self._batch_legal_values: list[list[str]] = []
         self._batch_rows: list[Vertical] = []
+        #: task-32278: each row's scope line, index-parallel to
+        #: `_batch_rows`/`_batch_selects`; re-rendered from
+        #: `DECISION_SCOPE_COPY` on every `Select.Changed`.
+        self._batch_scope_statics: list[Static] = []
+        #: task-32282: index-parallel to `_batch_rows` -- whether that row
+        #: is the reserved raw-shell row (`_is_raw_shell_row`), and the
+        #: header text it renders when NOT flagged needs-decision. A bulk
+        #: action that skips a raw-shell row restores this exact text
+        #: (never a `_format_row_header` re-render, so a row's ×N/badge
+        #: suffixes survive a mark/clear cycle unchanged).
+        self._batch_is_raw_shell: list[bool] = []
+        self._batch_base_headers: list[str] = []
         #: The current batch's fast-approval buttons (task-1234 review
         #: round 1), if any -- membership-guards `on_button_pressed`
         #: against a stale press the same way `_on_batch_row_select_
@@ -479,6 +693,23 @@ class ChatApprovalCard(Container):
         #: whenever no batch (or a caller that predates round ids) is
         #: showing.
         self._batch_round_id: str | None = None
+        self._batch_phase = "approval"
+        self._batch_calls_snapshot: list[dict[str, Any]] = []
+        #: ADR-090 (task 5): the current batch's advisory summary (payload
+        #: carriage on ``set_batch``, patchable in place via ``set_summary``
+        #: for a matching round), re-rendered by ``_render_summary_line``.
+        self._batch_summary: str | None = None
+        #: TASK-32288: the current round's absolute deadline, a LOCAL
+        #: `time.monotonic()` timestamp captured once in `set_batch` -- this
+        #: card has no access to the controller's own auto-deny clock, so it
+        #: counts down its own copy instead. `None` while no deadline is
+        #: armed.
+        self._deadline_at: float | None = None
+        #: TASK-32288: the interval driving `_tick_deadline`, or `None` when
+        #: no deadline is armed / the card is hidden -- `_stop_deadline_
+        #: timer` is the only place that clears it, so a batch clear or
+        #: re-arm can never leave a previous round's interval running.
+        self._deadline_timer: Timer | None = None
         # task-17500: the initial hide is CONSTRUCTION state, never deferred
         # mount work. This used to live in `on_mount` (`self.display =
         # False` plus a `call_after_refresh(_hide_batch_body)` for the batch
@@ -498,6 +729,14 @@ class ChatApprovalCard(Container):
         deadline = Static("", id="approval-deadline", markup=False)
         deadline.display = False
         yield deadline
+        # ADR-090 (task 5): the batch-level advisory summary line, built
+        # hidden like the deadline above (task-17500 pattern -- see
+        # __init__). markup=True because the dim/italic styling requires
+        # markup; the payload text goes through rich's ``escape()`` before
+        # it lands here, so brackets in model output cannot inject tags.
+        summary = Static("", id="approval-summary", markup=True)
+        summary.display = False
+        yield summary
         # task-17500: built hidden, like the deadline above -- see __init__.
         batch_body = Container(id="approval-batch-body")
         batch_body.display = False
@@ -530,11 +769,18 @@ class ChatApprovalCard(Container):
         *,
         timeout_seconds: float,
         round_id: str | None = None,
+        phase: str = "approval",
+        summary: str | None = None,
     ) -> None:
         """Render one row per unique ``llm_name`` in ``calls``.
 
         Synchronous throughout -- see the module docstring for why this
-        cannot ``await``. Old rows are pruned via a fire-and-forget
+        cannot ``await``. Repeated resume-state syncs for one unchanged,
+        identified round preserve its mounted controls. After the first
+        ordinary one-row round is mounted, later ordinary rows with the same
+        detail shape reuse its non-committing widgets; the Select and fast
+        buttons remain generation-scoped. Other changed rounds, calls, or phases
+        prune old rows via a fire-and-forget
         ``remove_children()`` (Textual 8.2.7 defers the actual detachment
         to the next event-loop tick -- see ``Widget.remove_children``'s
         ``AwaitRemove``/``App._prune``), while every new row gets an id
@@ -553,6 +799,8 @@ class ChatApprovalCard(Container):
                 resolve THIS exact round rather than guessing from
                 whichever session happens to be active when the decision
                 is delivered.
+            summary: ADR-090 advisory batch summary carried by the
+                payload, re-rendered on every remount.
 
         Raises:
             NoMatches: When the card's composed containers are not attached
@@ -563,27 +811,63 @@ class ChatApprovalCard(Container):
                 title-only card -- the same user-visible state as the
                 mount-ordering bug, through a different writer.
         """
+        normalized_phase = "finishing" if phase == "finishing" else "approval"
+        if (
+            round_id is not None
+            and round_id == self._batch_round_id
+            and normalized_phase == self._batch_phase
+            and calls == self._batch_calls_snapshot
+        ):
+            return
+
         # task-17500: all-or-nothing -- resolve every container this method
         # writes to before mutating anything, including the round-id stash.
+        title = self.query_one("#approval-title", Static)
         batch_body = self.query_one("#approval-batch-body")
         rows_container = self.query_one("#approval-batch-rows", Vertical)
         self._batch_round_id = round_id
-        # TASK-1844: actually surface the deadline the docstring promised.
+        self._batch_phase = normalized_phase
+        self._batch_calls_snapshot = deepcopy(calls)
+        finishing = self._batch_phase == "finishing"
+        # A finishing card is status, not a decision form. Keep the existing
+        # card container as its keyboard inspection target while every
+        # decision control is disabled.
+        self.can_focus = finishing
+        title.update(
+            "Finishing — Stop will not cancel" if finishing else "Approval required"
+        )
+        # ADR-090 (task 5): stash the payload-carried summary so any remount
+        # re-renders it (a live `set_summary` patch is for THIS mount only).
+        self._batch_summary = format_context_line(summary) if summary else None
+        # TASK-1844/32288: surface the deadline AND keep it ticking -- see
+        # `_render_deadline`'s docstring for why the remaining time is a
+        # LOCAL `time.monotonic()` computation rather than a read-back of
+        # the controller's own auto-deny clock. Every call that reaches
+        # here (the unchanged-round guard above already returned for a mere
+        # re-sync) is either a genuinely new/changed round or a clear, so
+        # re-arming unconditionally is correct.
         try:
-            deadline = self.query_one("#approval-deadline", Static)
-            text = format_approval_deadline(timeout_seconds)
-            deadline.update(text)
-            deadline.display = bool(text)
+            deadline_static = self.query_one("#approval-deadline", Static)
         except NoMatches:
-            pass
+            deadline_static = None
+        if deadline_static is not None:
+            self._stop_deadline_timer()
+            total = _coerce_timeout_total(timeout_seconds) if calls else 0
+            self._deadline_at = time.monotonic() + total if total > 0 else None
+            self._render_deadline(deadline_static)
+        self._render_summary_line()
         if not calls:
             self.display = False
+            self.can_focus = False
             batch_body.display = False
             self._batch_names = []
             self._batch_selects = []
             self._batch_legal_values = []
             self._batch_rows = []
+            self._batch_scope_statics = []
             self._batch_fast_buttons = []
+            self._batch_is_raw_shell = []
+            self._batch_base_headers = []
             return
 
         self.display = True
@@ -594,14 +878,30 @@ class ChatApprovalCard(Container):
         # A NEW batch must start every submitting control re-enabled,
         # otherwise a round whose PREDECESSOR was resolved via Submit would
         # render with a permanently-disabled Submit button.
-        try:
-            self.query_one("#approval-submit", Button).disabled = False
-        except NoMatches:
-            pass
+        for button_id in (
+            "#approval-approve-all",
+            "#approval-submit",
+            "#approval-deny-all",
+        ):
+            try:
+                self.query_one(button_id, Button).disabled = finishing
+            except NoMatches:
+                pass
 
         grouped = _collapse_pending_calls(calls)
         self._batch_generation += 1
         generation = self._batch_generation
+        if (
+            len(grouped) == 1
+            and not _is_raw_shell_row(grouped[0])
+            and self._update_mounted_single_row(
+                grouped[0],
+                rows_container=rows_container,
+                generation=generation,
+                finishing=finishing,
+            )
+        ):
+            return
         # Fleet-UX expert review F5 (task-1234): a single-decision card
         # still forced a two-step Select-then-Submit commit. Both fast
         # decisions ("approve_once"/"deny") are legal for EVERY row this
@@ -616,40 +916,53 @@ class ChatApprovalCard(Container):
         selects: list[Select] = []
         legal_values: list[list[str]] = []
         rows: list[Vertical] = []
+        scope_statics: list[Static] = []
         fast_buttons: list[Button] = []
+        is_raw_shell: list[bool] = []
+        base_headers: list[str] = []
         for index, entry in enumerate(grouped):
             # The verdict key must match what the RUNTIME looks up, and it
             # looks up `call_id` first, then name. Emitting the name here
             # while grouping rows per call would give the user a per-call
             # decision the runtime then applies to every same-name call.
-            names.append(
-                str(entry.get("call_id", "") or entry.get("llm_name", ""))
-            )
+            names.append(str(entry.get("call_id", "") or entry.get("llm_name", "")))
             row_options = _options_for_row(entry)
             row_values = [value for _label, value in row_options]
-            default_value = (
-                _DEFAULT_DECISION
-                if _DEFAULT_DECISION in row_values
-                else row_options[0][1]
-            )
+            default_value = _default_decision_for_row(entry, row_values)
             select = Select(
                 row_options,
                 value=default_value,
                 allow_blank=False,
+                id=f"approval-row-decision-{generation}-{index}",
                 classes="approval-row-decision",
             )
+            select.disabled = finishing
             selects.append(select)
             legal_values.append(row_values)
+            base_header = _format_row_header(entry)
+            base_headers.append(base_header)
+            is_raw_shell.append(_is_raw_shell_row(entry))
             header_static = Static(
-                _format_row_header(entry),
+                base_header,
                 markup=False,
                 classes="approval-row-header",
             )
-            header_tooltip = _row_header_tooltip(entry)
-            if header_tooltip:
-                header_static.tooltip = header_tooltip
-            # TASK-1846 AC#2: the controls are FIXED width (26 + 14 + 14 =
-            # 54 cells), so sharing one line with the text left the arguments
+            # task-32278 AC#3: the badge's explanation is a line on the row,
+            # directly under the header it explains, not a hover tooltip.
+            reason_copy = format_approval_reason(entry)
+            reason_children: list[Any] = (
+                [
+                    Static(
+                        reason_copy,
+                        markup=False,
+                        classes="approval-row-reason",
+                    )
+                ]
+                if reason_copy
+                else []
+            )
+            # TASK-1846 AC#2: the controls are FIXED width (27 + 14 + 14 =
+            # 55 cells), so sharing one line with the text left the arguments
             # 10 cells on an 80-column terminal -- `{"path":"~/` of
             # `{"path":"~/notes/secrets.md"}`. Since TASK-1861 the card offers
             # one decision per TARGET, so telling those apart IS the row's
@@ -657,51 +970,142 @@ class ChatApprovalCard(Container):
             # width line.
             #
             # Keeping the header BESIDE the controls was tried and is wrong:
-            # in the Console's ~52-cell chat pane those 54 fixed cells starve
+            # in the Console's ~52-cell chat pane those fixed cells starve
             # the header to ONE cell, which wraps to nine lines and pushes the
             # arguments out of the card entirely -- worse than the layout it
             # replaced. Only a real terminal showed that; every mounted-widget
             # measurement at 80/120/212 looked fine.
+            #
+            # task-32278 added two more full-width lines to the same stack:
+            # the reason line (under the header it explains) and the scope
+            # line (under the controls it annotates).
             control_children: list[Any] = [select]
-            args_static = Static(
-                _summarize_row_arguments(entry),
-                markup=False,
-                classes="approval-row-args",
-            )
+            detail_children: list[Any]
+            if _is_raw_shell_row(entry):
+                full_command = entry.get("full_command")
+                if not isinstance(full_command, str):
+                    arguments = entry.get("arguments")
+                    args = arguments if isinstance(arguments, Mapping) else {}
+                    full_command = str(args.get("command", "") or "")
+                detail_children = [
+                    Static(
+                        "Complete command:",
+                        markup=False,
+                        classes="approval-row-raw-label",
+                    ),
+                    TextArea(
+                        _bounded_text(full_command, MAX_RAW_COMMAND_BYTES),
+                        read_only=True,
+                        show_line_numbers=False,
+                        classes="approval-row-full-command",
+                    ),
+                    Static(
+                        _raw_shell_metadata(entry),
+                        markup=False,
+                        classes="approval-row-raw-metadata",
+                    ),
+                    Static(
+                        "DANGER: "
+                        + _bounded_text(entry.get("warning"), _RAW_SHELL_COPY_LIMIT),
+                        markup=False,
+                        classes="approval-row-raw-warning",
+                    ),
+                    Static(
+                        "Session scope: "
+                        + _bounded_text(
+                            entry.get("scope_notice"), _RAW_SHELL_COPY_LIMIT
+                        ),
+                        markup=False,
+                        classes="approval-row-raw-scope",
+                    ),
+                ]
+            else:
+                detail_children = [
+                    Static(
+                        _summarize_row_arguments(entry),
+                        markup=False,
+                        classes="approval-row-args",
+                    )
+                ]
+            effect_copy = format_approval_effects(entry)
+            if effect_copy:
+                detail_children.append(
+                    Static(
+                        effect_copy,
+                        markup=False,
+                        classes="approval-row-effects",
+                    )
+                )
+            # ADR-090 (task 5): the row's advisory context line, directly
+            # below the details it annotates. markup=True because the
+            # dim/italic styling requires markup; ``escape()`` neutralizes
+            # bracket injection in the model-authored text. Rendered only
+            # when the collapsed entry carries a non-empty rationale.
+            context = format_context_line(entry.get("rationale"))
+            if context:
+                detail_children.append(
+                    Static(
+                        f"[dim italic]{CONTEXT_LABEL} {escape(context)}[/dim italic]",
+                        markup=True,
+                        id=f"approval-context-{generation}-{index}",
+                    )
+                )
             if single_row:
                 fast_approve = Button(
-                    "Approve once",
+                    (
+                        _RAW_APPROVE_ONCE_LABEL
+                        if _is_raw_shell_row(entry)
+                        else _APPROVE_ONCE_LABEL
+                    ),
                     id=f"approval-fast-approve-{generation}-{index}",
                     variant="success",
                     compact=True,
-                    classes="approval-row-fast-approve",
-                    tooltip=(
-                        "Approve once and resume immediately "
-                        "(skips Select + Submit)."
-                    ),
+                    classes=_FAST_APPROVE_CLASS,
+                    tooltip=_FAST_APPROVE_TOOLTIP,
                 )
                 fast_deny = Button(
-                    "Deny",
+                    _DENY_LABEL,
                     id=f"approval-fast-deny-{generation}-{index}",
                     variant="error",
                     compact=True,
-                    classes="approval-row-fast-deny",
-                    tooltip=(
-                        "Deny and resume immediately "
-                        "(skips Select + Submit)."
-                    ),
+                    classes=_FAST_DENY_CLASS,
+                    tooltip=_FAST_DENY_TOOLTIP,
                 )
                 fast_buttons.extend((fast_approve, fast_deny))
+                fast_approve.disabled = finishing
+                fast_deny.disabled = finishing
                 control_children.append(fast_approve)
                 control_children.append(fast_deny)
+            # task-32278 AC#2: the scope line sits UNDER the controls it
+            # annotates -- last child, which `_update_mounted_single_row`
+            # relies on when it re-mounts a replacement controls row.
+            scope_static = Static(
+                DECISION_SCOPE_COPY.get(default_value, ""),
+                markup=False,
+                classes="approval-row-scope",
+            )
+            scope_statics.append(scope_static)
+            # Final-review fix: a raw-shell row already states its own,
+            # WIDER scope under `.approval-row-raw-scope` ("All shell ·
+            # session" covers every future command, not just this
+            # displayed one) -- mounting the generic per-decision line
+            # too would duplicate and undercut that authoritative
+            # statement. Left out of the row's children but still
+            # appended to `scope_statics` above (index-aligned with
+            # `_batch_selects`/`_batch_rows`), so `_on_batch_row_select_
+            # changed` can keep updating it -- a harmless no-op on an
+            # unmounted Static -- without a raw-shell special case there.
+            scope_children = () if entry.get("scope_notice") else (scope_static,)
             rows.append(
                 Vertical(
                     header_static,
-                    args_static,
+                    *reason_children,
+                    *detail_children,
                     Horizontal(
                         *control_children,
                         classes="approval-row-controls",
                     ),
+                    *scope_children,
                     id=f"approval-row-{generation}-{index}",
                     classes="approval-row",
                 )
@@ -710,11 +1114,219 @@ class ChatApprovalCard(Container):
         self._batch_selects = selects
         self._batch_legal_values = legal_values
         self._batch_rows = rows
+        self._batch_scope_statics = scope_statics
         self._batch_fast_buttons = fast_buttons
+        self._batch_is_raw_shell = is_raw_shell
+        self._batch_base_headers = base_headers
 
         rows_container.remove_children()
         if rows:
             rows_container.mount(*rows)
+
+    def _render_deadline(self, label: Static) -> None:
+        """Render the countdown and keep it ticking while a deadline is armed.
+
+        TASK-32288: re-renders `label` from `self._deadline_at` (this card's
+        own local monotonic deadline -- never a value read back from the
+        controller's clock), then arms a one-shot-per-round 1s interval to
+        call itself again via `_tick_deadline`. Idempotent: called once from
+        `set_batch` to arm/paint immediately, and once a second thereafter
+        by the interval it starts.
+
+        Args:
+            label: The `#approval-deadline` Static.
+        """
+        if self._deadline_at is None:
+            self._stop_deadline_timer()
+            label.update("")
+            label.display = False
+            return
+        remaining = max(0.0, self._deadline_at - time.monotonic())
+        text = format_approval_deadline(remaining)
+        label.update(text)
+        label.display = bool(text)
+        if not text:
+            # Reached (or already past) zero: stop, don't arm another tick.
+            self._deadline_at = None
+            self._stop_deadline_timer()
+        elif self._deadline_timer is None:
+            self._deadline_timer = self.set_interval(1.0, self._tick_deadline)
+
+    def _tick_deadline(self) -> None:
+        """One second of the armed countdown -- re-render, or stop if gone."""
+        try:
+            label = self.query_one("#approval-deadline", Static)
+        except NoMatches:
+            self._stop_deadline_timer()
+            return
+        self._render_deadline(label)
+
+    def _stop_deadline_timer(self) -> None:
+        """Stop this round's countdown interval, if one is running."""
+        if self._deadline_timer is not None:
+            self._deadline_timer.stop()
+            self._deadline_timer = None
+
+    def _update_mounted_single_row(
+        self,
+        entry: Mapping[str, Any],
+        *,
+        rows_container: Vertical,
+        generation: int,
+        finishing: bool,
+    ) -> bool:
+        """Update the existing same-shape ordinary row, if one is mounted."""
+        rows = [
+            child
+            for child in rows_container.children
+            if isinstance(child, Vertical) and child.has_class("approval-row")
+        ]
+        if len(rows) != 1:
+            return False
+        row = rows[0]
+        if not row.is_mounted or row.query(".approval-row-full-command"):
+            return False
+
+        try:
+            header = row.query_one(".approval-row-header", Static)
+            args = row.query_one(".approval-row-args", Static)
+            row.query_one(".approval-row-decision", Select)
+            # task-32278: always present on a row this method built, so a
+            # row without one is a shape it does not own -- rebuild instead.
+            scope_static = row.query_one(".approval-row-scope", Static)
+        except NoMatches:
+            return False
+        controls = [
+            child
+            for child in row.children
+            if isinstance(child, Horizontal)
+            and child.has_class("approval-row-controls")
+        ]
+        if not controls:
+            return False
+        effect_widgets = list(row.query(".approval-row-effects"))
+        reason_widgets = list(row.query(".approval-row-reason"))
+        context_widgets = [
+            widget
+            for widget in row.query(Static)
+            if (widget.id or "").startswith("approval-context-")
+        ]
+
+        effect_copy = format_approval_effects(entry)
+        reason_copy = format_approval_reason(entry)
+        context = format_context_line(entry.get("rationale"))
+        if (
+            bool(effect_copy) != (len(effect_widgets) == 1)
+            or bool(reason_copy) != (len(reason_widgets) == 1)
+            or bool(context) != (len(context_widgets) == 1)
+        ):
+            return False
+
+        row_options = _options_for_row(entry)
+        row_values = [value for _label, value in row_options]
+        select = Select(
+            row_options,
+            value=_default_decision_for_row(entry, row_values),
+            allow_blank=False,
+            id=f"approval-row-decision-{generation}-0",
+            classes="approval-row-decision",
+        )
+        select.disabled = finishing
+        base_header = _format_row_header(entry)
+        header.update(base_header)
+        args.update(_summarize_row_arguments(entry))
+        if effect_widgets:
+            effect_widgets[0].update(effect_copy)
+        if reason_widgets:
+            reason_widgets[0].update(reason_copy)
+        scope_static.update(DECISION_SCOPE_COPY.get(str(select.value), ""))
+        if context_widgets:
+            context_widgets[0].update(
+                f"[dim italic]{CONTEXT_LABEL} {escape(context)}[/dim italic]"
+            )
+        row.remove_class("needs-decision")
+
+        fast_approve = Button(
+            _APPROVE_ONCE_LABEL,
+            id=f"approval-fast-approve-{generation}-0",
+            variant="success",
+            compact=True,
+            classes=_FAST_APPROVE_CLASS,
+            tooltip=_FAST_APPROVE_TOOLTIP,
+        )
+        fast_deny = Button(
+            _DENY_LABEL,
+            id=f"approval-fast-deny-{generation}-0",
+            variant="error",
+            compact=True,
+            classes=_FAST_DENY_CLASS,
+            tooltip=_FAST_DENY_TOOLTIP,
+        )
+        fast_approve.disabled = finishing
+        fast_deny.disabled = finishing
+        replacement_controls = Horizontal(
+            select,
+            fast_approve,
+            fast_deny,
+            classes="approval-row-controls",
+        )
+        for old_controls in controls:
+            old_controls.remove()
+        self._batch_fast_buttons = [fast_approve, fast_deny]
+        # task-32278: `mount` appends by default, which would leave the scope
+        # line ABOVE the controls it annotates on every reused row.
+        row.mount(replacement_controls, before=scope_static)
+
+        self._batch_names = [str(entry.get("call_id", "") or entry.get("llm_name", ""))]
+        self._batch_selects = [select]
+        self._batch_legal_values = [row_values]
+        self._batch_rows = [row]
+        self._batch_scope_statics = [scope_static]
+        # This reuse path is never taken for a raw-shell row -- `set_batch`
+        # only calls it when `not _is_raw_shell_row(grouped[0])` -- so the
+        # flag is always False here.
+        self._batch_is_raw_shell = [False]
+        self._batch_base_headers = [base_header]
+        return True
+
+    def _render_summary_line(self) -> None:
+        """Render the batch-level advisory summary line (ADR-090).
+
+        Plain, dim/italic, visually subordinate to every machine-owned
+        field; hidden entirely when there is nothing to show.
+        """
+        try:
+            summary = self.query_one("#approval-summary", Static)
+        except NoMatches:
+            return
+        text = self._batch_summary or ""
+        if text:
+            summary.update(
+                f"[dim italic]{SUMMARY_LABEL} {escape(text)}[/dim italic]"
+            )
+            summary.display = True
+        else:
+            summary.update("")
+            summary.display = False
+
+    def set_summary(self, round_id: str | None, text: str) -> None:
+        """Patch ONLY the batch summary line for a matching round (ADR-090).
+
+        Guarded by the card's current round id -- a late result from a
+        prior round must never land on the current card -- and never
+        re-runs ``set_batch``, so per-row Selects and in-progress decisions
+        are untouched.
+
+        Args:
+            round_id: The approval round the summary belongs to; dropped
+                unless it equals this card's current round id.
+            text: The advisory summary text; clipped and control-stripped
+                by ``format_context_line`` before rendering.
+        """
+        if round_id is None or self._batch_round_id != round_id:
+            return
+        self._batch_summary = format_context_line(text)
+        self._render_summary_line()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -741,6 +1353,29 @@ class ChatApprovalCard(Container):
             if event.button in self._batch_fast_buttons:
                 self._submit_fast_decision("deny")
 
+    def _mark_row_needs_decision(self, row: Vertical, base_header: str) -> None:
+        """Flag ``row`` as needing an explicit decision -- class AND text.
+
+        TASK-1845: colour is never the only carrier of state, so the
+        ``needs-decision`` CSS class (border/tint) is paired with a
+        ``NEEDS_DECISION_PREFIX`` on the header Static itself.
+        """
+        row.add_class("needs-decision")
+        try:
+            header = row.query_one(".approval-row-header", Static)
+        except NoMatches:
+            return
+        header.update(f"{NEEDS_DECISION_PREFIX}{base_header}")
+
+    def _clear_row_needs_decision(self, row: Vertical, base_header: str) -> None:
+        """Clear a needs-decision flag -- class AND text -- back to normal."""
+        row.remove_class("needs-decision")
+        try:
+            header = row.query_one(".approval-row-header", Static)
+        except NoMatches:
+            return
+        header.update(base_header)
+
     def _set_all_batch_decisions(self, candidates: tuple[str, ...]) -> None:
         """Bulk-set every row to the first of ``candidates`` that row legally offers.
 
@@ -753,31 +1388,44 @@ class ChatApprovalCard(Container):
         none of ``candidates`` is left on its current value rather than
         crashing or silently doing nothing useful.
 
+        task-32282: the raw-shell row is a second, deliberate reason to
+        skip -- its options legally INCLUDE ``approve_once`` (it is a real
+        per-call choice), so the legality check alone would happily bulk-
+        approve it right along with every ordinary row, defeating its
+        Deny-by-default posture (`_default_decision_for_row`). "Approve
+        all" must never move it off Deny; only an explicit per-row choice
+        (or "Deny all", which the row already legally offers) may.
+
         A row left untouched this way is otherwise visually identical to a
-        row nobody has looked at yet, so it also gets a ``needs-decision``
-        class on its row container -- a visible "this one still needs an
-        explicit choice" signal. A row that DOES receive a bulk value has
-        the class cleared, so a stale flag from an earlier bulk press
-        (e.g. "Approve all" skipped it, then "Deny all" successfully set
-        it) never lingers.
+        row nobody has looked at yet, so it gets `_mark_row_needs_decision`
+        -- a ``needs-decision`` class on its row container AND a text
+        prefix on its header (TASK-1845: colour is never the only carrier
+        of state). A row that DOES receive a bulk value has both cleared,
+        so a stale flag from an earlier bulk press (e.g. "Approve all"
+        skipped it, then "Deny all" successfully set it) never lingers.
         """
-        for select, legal_values, row in zip(
-            self._batch_selects, self._batch_legal_values, self._batch_rows
+        for select, legal_values, row, is_raw_shell, base_header in zip(
+            self._batch_selects,
+            self._batch_legal_values,
+            self._batch_rows,
+            self._batch_is_raw_shell,
+            self._batch_base_headers,
         ):
             applied = False
-            for candidate in candidates:
-                if candidate in legal_values:
-                    select.value = candidate
-                    applied = True
-                    break
+            if not (is_raw_shell and "approve_once" in candidates):
+                for candidate in candidates:
+                    if candidate in legal_values:
+                        select.value = candidate
+                        applied = True
+                        break
             if applied:
-                row.remove_class("needs-decision")
+                self._clear_row_needs_decision(row, base_header)
             else:
-                row.add_class("needs-decision")
+                self._mark_row_needs_decision(row, base_header)
 
     @on(Select.Changed)
     def _on_batch_row_select_changed(self, event: Select.Changed) -> None:
-        """Clear a row's ``needs-decision`` flag once it has an explicit choice.
+        """Track a row's chosen decision: scope line, ``needs-decision`` flag.
 
         The only ``Select`` widgets under this card are the per-row batch
         decision selects, so no id/class scoping is needed on the
@@ -793,7 +1441,20 @@ class ChatApprovalCard(Container):
         if select not in self._batch_selects:
             return
         index = self._batch_selects.index(select)
-        self._batch_rows[index].remove_class("needs-decision")
+        # task-32282: the user just made an explicit choice for this row --
+        # clear both the CSS flag and any needs-decision text prefix a
+        # bulk button left on its header.
+        if index < len(self._batch_base_headers):
+            self._clear_row_needs_decision(
+                self._batch_rows[index], self._batch_base_headers[index]
+            )
+        else:
+            self._batch_rows[index].remove_class("needs-decision")
+        # task-32278 AC#2: the scope line describes the CURRENT choice.
+        if index < len(self._batch_scope_statics):
+            self._batch_scope_statics[index].update(
+                DECISION_SCOPE_COPY.get(str(event.value), "")
+            )
 
     def _disable_batch_submit_controls(self) -> None:
         """Disable this round's submitting controls right after a press.

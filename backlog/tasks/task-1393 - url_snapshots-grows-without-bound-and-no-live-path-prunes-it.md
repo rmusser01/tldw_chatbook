@@ -96,5 +96,5 @@ migration next door, which needed an explicit `BEGIN IMMEDIATE` for the same pro
 `Tests/Subscriptions/test_watchlist_snapshot_pruning.py` (new, 11 tests).
 Suites: `Tests/Subscriptions/ Tests/Scheduling/ Tests/Watchlists/` -> **601 passed** in 193.82s;
 after the fix round `Tests/Subscriptions/` -> **190 passed** in 42.79s.
-Report: `task-1393-report.md`.
+Report: `backlog/docs/task-reports/task-1393-report.md`.
 <!-- SECTION:NOTES:END -->

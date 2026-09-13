@@ -10,13 +10,27 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import dataclass, field
-from typing import Callable, Literal, TypeAlias
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from enum import Enum
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal, TypeAlias
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
     ProviderContinuationCheckpoint,
 )
+
+
+class WorkOrigin(Enum):
+    """Trusted admission origin shared by runtime owners."""
+
+    MANUAL = "manual"
+    AUTOMATIC = "automatic"
+
 
 RUN_RUNNING = "running"
 RUN_DONE = "done"
@@ -36,16 +50,73 @@ STEP_TOOL_CALL = "tool_call"
 STEP_TOOL_RESULT = "tool_result"
 STEP_SPAWN = "spawn"
 STEP_ERROR = "error"
+STEP_MODEL_REQUEST_STARTED = "model_request_started"
+STEP_MODEL_RESPONSE_COMPLETED = "model_response_completed"
+STEP_MODEL_RETRY = "model_retry"
+STEP_MODEL_ERROR = "model_error"
+STEP_MODEL_CANCELLED = "model_cancelled"
+STEP_TOOL_PROPOSED = "tool_proposed"
+STEP_APPROVAL_REQUESTED = "approval_requested"
+STEP_APPROVAL_APPROVED = "approval_approved"
+STEP_APPROVAL_DENIED = "approval_denied"
+STEP_APPROVAL_REVOKED = "approval_revoked"
+STEP_TOOL_EXECUTION_STARTED = "tool_execution_started"
+STEP_TOOL_SUCCEEDED = "tool_succeeded"
+STEP_TOOL_FAILED = "tool_failed"
+STEP_TOOL_TIMED_OUT = "tool_timed_out"
+STEP_TOOL_CANCELLED = "tool_cancelled"
 # Fleet PR3b Task 1 (spec SS6): a steering entry delivered to a child at the
 # protocol-coherent drain boundary records a step of this kind, so the step
 # log shows WHEN each entry actually reached the model.
 STEP_STEERING = "steering"
+
+# Append-only agent-run lifecycle observations use dedicated storage-index
+# bands. Control rows must remain below TRACE_STEP_INDEX_BASE; runtime trace
+# rows and capture diagnostics use the following named bands.
+TRACE_STEP_INDEX_BASE = 1_000_000
+TRACE_CAPTURE_INDEX_BASE = 2_000_000
+CONTROL_CAPTURE_INDEX_BASE = 3_000_000
+# One control step can emit at most five trace observations (proposed,
+# approval requested, approved/denied, execution started, terminal outcome),
+# plus two one-time context observations per run. Keep the derived final trace
+# index strictly below the capture band; owner_seq, not these indices, carries
+# observation order.
+MAX_RUN_CONTROL_STEPS = (
+    TRACE_CAPTURE_INDEX_BASE - TRACE_STEP_INDEX_BASE - 3
+) // 5
+# Lifecycle stays above every runtime/capture band.
+# keeping lifecycle at 10_000_000+ prevents collisions while owner_seq carries
+# the real observation order independently of this storage identity.
+AGENT_LIFECYCLE_INDEX_BASE = 10_000_000
+STEP_AGENT_RUN_RESERVED = "agent_run_reserved"
+STEP_AGENT_RUN_CREATED = "agent_run_created"
+STEP_AGENT_RUN_RESUMED = "agent_run_resumed"
+STEP_AGENT_RUN_STARTED = "agent_run_started"
+STEP_AGENT_RUN_COMPLETED = "agent_run_completed"
+STEP_AGENT_RUN_FAILED = "agent_run_failed"
+STEP_AGENT_RUN_CANCELLED = "agent_run_cancelled"
+STEP_AGENT_RUN_SUPERSEDED = "agent_run_superseded"
+
+TOOL_OUTCOME_SUCCESS = "success"
+TOOL_OUTCOME_FAILED = "failed"
+TOOL_OUTCOME_BLOCKED = "blocked"
+TOOL_OUTCOME_TIMEOUT = "timeout"
+TOOL_OUTCOME_CANCELLED = "cancelled"
+ToolOutcome: TypeAlias = Literal["success", "failed", "blocked", "timeout", "cancelled"]
+
+ToolProjectionAudience: TypeAlias = Literal[
+    "display", "log", "cycle", "continuation"
+]
 
 # The two steering sources (spec SS6: "two paths, one mechanism"). The label
 # the child sees is derived from the source by `format_steering_message`
 # below -- prepended by the mechanism, never trusted from input.
 STEERING_SOURCE_SUPERVISOR = "supervisor"
 STEERING_SOURCE_USER = "user"
+# TASK-28227: an active-turn redirect. Unlike the two steering sources it is
+# rendered PLAIN (a real user reply, no "[Steering from ...]" wrapper) -- the
+# loop branches on it before format_steering_message is ever called.
+STEERING_SOURCE_REDIRECT = "redirect"
 #: Cap on one steering entry's text, enforced by the producers at their own
 #: boundaries (send_to_agent -- Task 2; the panel input -- Task 3). The
 #: ``max_subagent_result_chars`` shape: a plain int ceiling, 4000.
@@ -71,11 +142,13 @@ def format_steering_message(source: str, text: str) -> str:
     """
     return f"[Steering from {source}] {text}"
 
+
 SPAWN_TOOL_NAME = "spawn_subagent"
 FIND_TOOLS_NAME = "find_tools"
 LOAD_TOOLS_NAME = "load_tools"
 SKILL_FILE_TOOL_NAME = "skill_file"
 INSTALL_SKILL_TOOL_NAME = "install_skill"
+PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME = "prepare_managed_skill_promotion"
 RUN_SKILL_SCRIPT_TOOL_NAME = "run_skill_script"
 SEARCH_RUN_LOG_TOOL_NAME = "search_run_log"
 # Phase 2 (run-log spec §10): the two aggregation/slicing runtime tools,
@@ -100,6 +173,34 @@ CHECK_AGENTS_TOOL_NAME = "check_agents"
 # mailbox is instant, but the id-resolution copy lives in the service
 # closure, not behind invoke_tool's daemon-thread timeout wrapper).
 SEND_TO_AGENT_TOOL_NAME = "send_to_agent"
+# TASK-28238 phase 2 Task 5: the headless merge/discard tools for a worktree-
+# isolated child (Task 4's `isolation="worktree"` spawn). Primary-only and
+# fleet-gated exactly like wait_agents/check_agents above (a worktree only
+# ever exists for a fleet-launched child), and dispatched IN-LOOP beside
+# them for the same reason -- both mutate the shared tree and gate on a
+# user confirm callable, which does not belong behind invoke_tool's
+# per-call daemon-thread timeout wrapper.
+MERGE_AGENT_WORKTREE_TOOL_NAME = "merge_agent_worktree"
+DISCARD_AGENT_WORKTREE_TOOL_NAME = "discard_agent_worktree"
+REPORT_TO_SUPERVISOR_TOOL_NAME = "report_to_supervisor"
+READ_AGENT_MESSAGES_TOOL_NAME = "read_agent_messages"
+MESSAGE_TOOL_NAMES = frozenset(
+    {REPORT_TO_SUPERVISOR_TOOL_NAME, READ_AGENT_MESSAGES_TOOL_NAME}
+)
+# Chat fork/spawn (2026-09-11 spec, ADR-150): the two primary-agent tools
+# for handing a parallel workstream to the user -- fork_chat copies this
+# chat's active history into a new chat, new_chat starts an empty one. Each
+# call lands on a user-confirmation card and the new chat opens in the
+# background; schemas live in tool_catalog.py beside the other runtime tools.
+FORK_CHAT_TOOL_NAME = "fork_chat"
+NEW_CHAT_TOOL_NAME = "new_chat"
+
+#: Agent-supplied title cap (chars) for a fork_chat/new_chat conversation
+#: (ADR-150). Shared by the bridge closures and the controller executor so
+#: confirmation and execution can never drift apart.
+CHAT_CREATE_TITLE_MAX = 120
+#: Per-field cap (chars) for opening_prompt / instructions payloads.
+CHAT_CREATE_PAYLOAD_MAX = 20_000
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -107,6 +208,7 @@ RUNTIME_TOOL_NAMES = frozenset(
         LOAD_TOOLS_NAME,
         SKILL_FILE_TOOL_NAME,
         INSTALL_SKILL_TOOL_NAME,
+        PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
         RUN_SKILL_SCRIPT_TOOL_NAME,
         SEARCH_RUN_LOG_TOOL_NAME,
         RUN_LOG_STATS_TOOL_NAME,
@@ -114,22 +216,22 @@ RUNTIME_TOOL_NAMES = frozenset(
         WAIT_AGENTS_TOOL_NAME,
         CHECK_AGENTS_TOOL_NAME,
         SEND_TO_AGENT_TOOL_NAME,
+        MERGE_AGENT_WORKTREE_TOOL_NAME,
+        DISCARD_AGENT_WORKTREE_TOOL_NAME,
+        REPORT_TO_SUPERVISOR_TOOL_NAME,
+        READ_AGENT_MESSAGES_TOOL_NAME,
+        FORK_CHAT_TOOL_NAME,
+        NEW_CHAT_TOOL_NAME,
     }
 )
 
-#: Above this, `initial_disclosure` defers everything to find_tools/
-#: load_tools instead of direct-disclosing the whole catalog. Raised
-#: alongside `RunBudget.max_active_tools` (8 -> 24) because the two are
-#: coupled: `max_active_tools` is a one-way ratchet on the active set --
-#: `load_tools` refuses a call that would exceed it with "no room", and
-#: nothing ever unloads a tool once active -- so a catalog that clears the
-#: raised ceiling but not this threshold would still pay for progressive
-#: disclosure it can never actually use. The threshold has to rise with
-#: the ceiling for the opposite reason too: `initial_disclosure` runs once
-#: per RUN (every user message, not once per session), so a catalog sized
-#: just above the OLD threshold paid a find_tools + load_tools round trip
-#: before any real work, on every single message.
-DIRECT_DISCLOSE_THRESHOLD = 16
+#: Complete-catalog schemas may use this fraction of the selected model's
+#: context before the run switches to progressive discovery. This is an
+#: automatic-disclosure threshold, not a ceiling on a deferred working set.
+DIRECT_DISCLOSURE_CONTEXT_FRACTION = 0.10
+#: One search response stays small and relevant; callers can refine and search
+#: again without limiting how many catalog entries remain reachable.
+FIND_TOOLS_RESULT_LIMIT = 8
 LOOP_DETECTION_N = 3
 #: Fence-protocol tool-result convention (`agent_runtime._append_tool_result`'s
 #: fence branch: `{"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}
@@ -151,13 +253,51 @@ MAX_LOOP_PERIOD = 4
 class SkillFileBindings:
     """Per-run authorization + reader for the skill_file runtime tool.
 
-    Mutable by design: seeded with the turn's $skill names; SkillRunner adds
-    each spawned skill's name before spawn so a skill can always read its own
-    bundle. Authorization lives here, never in config.allowed_tools.
+    Mutable by design: seeded with the turn's admitted skill definitions;
+    SkillRunner adds each spawned definition before spawn so a skill can read
+    only that exact bundle. Authorization lives here, never in
+    config.allowed_tools.
     """
 
     authorized: set[str]
-    reader: Callable[[str, str], dict] | None = None
+    reader: Callable[[str, str], dict] | None = field(default=None, repr=False)
+    definition_digests: dict[str, str] = field(default_factory=dict, repr=False)
+    current_definition_digest: Callable[[str], str | None] | None = field(
+        default=None, repr=False
+    )
+
+    def authorize(self, skill_name: str, definition_digest: str | None) -> None:
+        """Grant one exact admitted skill definition, or fail closed."""
+        digest = str(definition_digest or "")
+        if not digest:
+            self.revoke(skill_name)
+            return
+        self.definition_digests[skill_name] = digest
+        self.authorized.add(skill_name)
+
+    def revoke(self, skill_name: str) -> None:
+        """Remove both the name and its exact admitted definition."""
+        self.authorized.discard(skill_name)
+        self.definition_digests.pop(skill_name, None)
+
+    def read(self, skill_name: str, path: str) -> dict:
+        """Revalidate the exact admitted definition before reading bytes."""
+        expected = self.definition_digests.get(skill_name)
+        resolver = self.current_definition_digest
+        if skill_name not in self.authorized or not expected or resolver is None:
+            self.revoke(skill_name)
+            raise PermissionError("skill_definition_changed")
+        try:
+            current = resolver(skill_name)
+        except Exception:  # noqa: BLE001 -- uncertainty revokes old authority
+            self.revoke(skill_name)
+            raise PermissionError("skill_definition_changed") from None
+        if current != expected:
+            self.revoke(skill_name)
+            raise PermissionError("skill_definition_changed")
+        if self.reader is None:
+            raise RuntimeError("no reader configured")
+        return self.reader(skill_name, path)
 
 
 @dataclass(frozen=True)
@@ -180,12 +320,88 @@ class ToolSchema:
     parameters: dict
 
 
+#: ADR-090: cap for rationale text captured at parse time (tail-biased).
+RATIONALE_CAPTURE_CAP = 500
+
+_RATIONALE_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_RATIONALE_WHITESPACE = re.compile(r"\s+")
+
+
+def normalize_rationale(text: object, cap: int = RATIONALE_CAPTURE_CAP) -> str:
+    """Normalize model-authored advisory text for display-surface transit.
+
+    Untrusted-content hygiene (ADR-090 §Security): strip control characters,
+    collapse all whitespace to single spaces, and cap length keeping the
+    TAIL (the end of a preamble is the part adjacent to the tool call; the
+    head is often an unrelated answer to the user), prefixing an ellipsis
+    when truncated.
+
+    Args:
+        text: Raw model-authored text of any type; non-strings degrade to "".
+        cap: Maximum length of the returned string, including the ellipsis.
+
+    Returns:
+        The normalized string, at most ``cap`` characters, or "".
+    """
+    if not isinstance(text, str):
+        return ""
+    cleaned = _RATIONALE_WHITESPACE.sub(
+        " ", _RATIONALE_CONTROL_CHARS.sub(" ", text)
+    ).strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > cap:
+        return "\N{HORIZONTAL ELLIPSIS}" + cleaned[-(cap - 1) :]
+    return cleaned
+
+
+def with_preamble_rationale(
+    calls: Sequence[ToolCall], preamble: str
+) -> tuple[ToolCall, ...]:
+    """Attach a turn's preamble text as the rationale of calls lacking one.
+
+    The hybrid rule (ADR-090): an explicit fence ``rationale`` key wins, so
+    calls that already carry a rationale pass through untouched; everything
+    else (native turn text, fence preamble) fills in from ``preamble``.
+
+    Args:
+        calls: The turn's parsed tool calls.
+        preamble: The model's visible text for the turn (native text or the
+            fence's preceding text).
+
+    Returns:
+        Tuple of calls with preamble-derived rationale applied.
+    """
+    normalized = normalize_rationale(preamble)
+    if not normalized:
+        return tuple(calls)
+    return tuple(
+        call if call.rationale else replace(call, rationale=normalized)
+        for call in calls
+    )
+
+
+@dataclass(frozen=True)
+class ToolLoadSelection:
+    """Side-effect-free outcome of resolving one catalog working-set request."""
+
+    accepted: tuple[ToolSchema, ...] = ()
+    omitted_for_budget: tuple[str, ...] = ()
+    invalid_inputs: tuple[str, ...] = ()
+    details_omitted_for_budget: bool = False
+
+
 @dataclass(frozen=True)
 class ToolCall:
     name: str
     args: dict
     call_id: str = ""
     raw_arguments: str = ""
+    #: ADR-090: the model's own stated reason for this call (explicit fence
+    #: ``rationale`` key, else the turn's preamble text). Advisory display
+    #: data for the approval card ONLY -- never persisted, never serialized
+    #: into durable captures, never an input to any security verdict.
+    rationale: str = ""
 
 
 @dataclass(frozen=True)
@@ -193,6 +409,76 @@ class ToolResult:
     ok: bool
     content: str = ""
     error: str = ""
+    # Optional refusal provenance lets the runtime distinguish a permission
+    # block from an ordinary failed dispatch without interpreting payload text.
+    outcome: ToolOutcome | None = None
+
+    @classmethod
+    def blocked(cls, error: str) -> ToolResult:
+        """Return a permission/policy refusal with structured provenance.
+
+        Args:
+            error: User-visible refusal reason.
+
+        Returns:
+            A failed tool result explicitly classified as blocked.
+        """
+        return cls(ok=False, error=error, outcome=TOOL_OUTCOME_BLOCKED)
+
+
+@dataclass(frozen=True)
+class ToolRecordProjection:
+    """One content boundary's immutable view of a tool call and result.
+
+    ``arguments`` is a detached, read-only mapping.  Providers may replace it
+    with content-free metadata for sensitive tools; ordinary providers receive
+    the compatibility projection from :func:`default_tool_record_projection`.
+    """
+
+    arguments: Mapping[str, object] = field(default_factory=dict)
+    content: str = ""
+    error: str = ""
+    ok: bool | None = None
+    error_category: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+
+
+def default_tool_record_projection(
+    call: ToolCall, result: ToolResult | None
+) -> ToolRecordProjection:
+    """Return the byte-compatible projection for providers without a hook."""
+    return ToolRecordProjection(
+        arguments=call.args,
+        content=result.content if result is not None else "",
+        error=result.error if result is not None else "",
+        ok=result.ok if result is not None else None,
+    )
+
+
+def failed_tool_record_projection(
+    call: ToolCall, result: ToolResult | None, error_category: str
+) -> ToolRecordProjection:
+    """Return bounded metadata when an audience projection cannot run."""
+    category = error_category[:64] or "ProjectionError"
+    message = f"Tool record projection failed ({category})."
+    return ToolRecordProjection(
+        arguments={
+            "tool_name": call.name[:128],
+            "call_id": call.call_id[:128],
+            "success": bool(result.ok) if result is not None else False,
+            "error_category": category,
+        },
+        content=message,
+        error=message,
+        ok=result.ok if result is not None else False,
+        error_category=category,
+    )
+
+
+class SpawnAdmissionRefusal(ToolResult):
+    """A spawn refused before child execution; it consumes no spawn allowance."""
 
 
 @dataclass(frozen=True)
@@ -256,8 +542,9 @@ class ModelTurn:
     ``assistant_message`` carries the provider-shaped assistant message for
     native tool-call turns (content plus the raw ``tool_calls`` array,
     echoed verbatim into history so the follow-up ``role="tool"`` results
-    pair with their calls by id). ``None`` for fence-protocol turns, whose
-    history keeps the plain-text convention.
+    pair with their calls by id). Either protocol may attach an ephemeral
+    canonical thinking envelope; final assistant echoes retain that ownership
+    for in-memory child continuation.
     """
 
     text: str = ""
@@ -287,13 +574,6 @@ class RunBudget:
     max_steps: int = 8
     max_wall_seconds: float = 240.0
     max_subagents: int = 2
-    # Raised 8 -> 24 alongside DIRECT_DISCLOSE_THRESHOLD (8 -> 16); see that
-    # constant's comment for why the two move together. This ceiling is
-    # itself a one-way ratchet within a run: load_tools() refuses a call
-    # that would exceed it ("no room") and nothing ever unloads an active
-    # tool, so raising it only ever widens what a run can reach, never
-    # narrows it back down mid-run.
-    max_active_tools: int = 24
     max_subagent_result_chars: int = 4000
     # Ceiling on how much of ONE tool result enters conversation history.
     # Enforced at the history-append seam (agent_runtime), NOT per tool, so
@@ -334,6 +614,22 @@ class RunBudget:
     # wrapper reporting "timed out" for a call that later really executes
     # on its abandoned thread -- see `_call_with_timeout`'s docstring).
     max_tool_call_seconds: float = 300.0
+    #: TASK-25901: how many times a TRANSIENT model failure may be retried
+    #: inside the loop before the run gives up. 0 reproduces the pre-retry
+    #: behaviour exactly (raise on the first failure). Terminal errors ignore
+    #: this entirely -- they are never retried at any setting.
+    max_model_retries: int = 2
+    #: TASK-26001: fraction of any budget dimension at which the model is told
+    #: once to start wrapping up. The notice rides the newest tool result --
+    #: never a synthetic user turn -- so the prompt-cache prefix stays intact.
+    budget_warning_fraction: float = 0.8
+
+    def __post_init__(self) -> None:
+        if self.max_steps > MAX_RUN_CONTROL_STEPS:
+            raise ValueError(
+                f"max_steps must be <= {MAX_RUN_CONTROL_STEPS} to preserve "
+                "agent trace storage bands"
+            )
 
 
 #: Fleet spec §4: validation caps for user-authored agent definitions.
@@ -434,6 +730,21 @@ class AgentStep:
     args: dict | None = None
     result: str = ""
     created_at: str = ""
+    # Optional for backward compatibility with persisted steps written before
+    # tool outcomes were structured. Only meaningful on STEP_TOOL_RESULT.
+    tool_outcome: ToolOutcome | None = None
+    status: str = ""
+    parent_event_id: str | None = None
+    source_event_id: str | None = None
+    replacement_event_id: str | None = None
+    field_states: dict[str, str] = field(default_factory=dict)
+    sensitivity: str = ""
+    # Trace-v2 envelope fields. ``index`` remains the legacy control-step
+    # identity; owner_seq is the observation order across control + lifecycle.
+    owner_seq: int | None = None
+    call_id: str = ""
+    parent_step_index: int | None = None
+    source_step_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -509,6 +820,9 @@ class AgentConfig:
             with launch-relative, never absolute, paths). Empty for the default
             workspace, so the common case adds nothing. Carried on the config
             so it propagates verbatim onto spawned sub-agents' configs.
+        personal_context_block: Immutable, already-authorized user-owned data
+            block appended to every model request in this run tree. Empty by
+            default so existing request bytes are unchanged.
         response_reserve_tokens: Non-negative output-token capacity excluded
             from project-instruction input admission.
     """
@@ -518,12 +832,24 @@ class AgentConfig:
     allowed_tools: tuple[str, ...] = ()
     budget: RunBudget = field(default_factory=RunBudget)
     native_tools: bool = True
+    reasoning_replay: ReasoningReplayPolicy | None = None
     workspace_context_note: str = ""
+    personal_context_block: str = ""
     response_reserve_tokens: int = 2048
 
     def __post_init__(self) -> None:
         if self.response_reserve_tokens < 0:
             raise ValueError("response_reserve_tokens must be non-negative")
+
+    #: TASK-26002: the provider this run is talking to, so the loop can name
+    #: it when reporting a provider-level fault. Defaults empty: the loop is
+    #: pure and must not require it, and an unset value simply reads as
+    #: "unknown provider" in the message.
+    provider: str = ""
+    #: ADR-110: ordered provider fallback chain, consulted only after retry
+    #: is exhausted or on a credit/quota-terminal class. Empty means no
+    #: fallback and no projection code runs at all.
+    fallback_providers: tuple[str, ...] = ()
 
 
 @dataclass
@@ -604,7 +930,6 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
             child.max_wall_seconds, max(parent_remaining_seconds, 1.0)
         ),
         max_subagents=0,
-        max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,
         max_tool_result_chars=child.max_tool_result_chars,
         max_model_turns=child.max_model_turns,
@@ -731,7 +1056,6 @@ def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget
         max_steps=child.max_steps,
         max_wall_seconds=max(max_wall_seconds, 1.0),
         max_subagents=0,
-        max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,
         max_tool_result_chars=child.max_tool_result_chars,
         max_model_turns=child.max_model_turns,

@@ -46,12 +46,18 @@ def test_main_module_routes_serve_args(monkeypatch):
     )
     monkeypatch.setattr(sys, "argv", ["tldw-cli", "--serve", "--port", "8765"])
 
-    try:
-        runpy.run_module(
-            "tldw_chatbook.app", run_name="__main__", alter_sys=True
-        )
-    except SystemExit as exc:
-        # The serve branch exits 0 after the (patched) server returns.
-        assert exc.code in (0, None)
+    # The module entry point may decide generated CSS is stale. Do not let
+    # this routing test rewrite shared tracked stylesheets while xdist peers
+    # are reading them; CSS rebuilding has its own dedicated tests.
+    with patch("subprocess.run") as subprocess_run:
+        subprocess_run.return_value.returncode = 0
+        subprocess_run.return_value.stderr = ""
+        try:
+            runpy.run_module(
+                "tldw_chatbook.app", run_name="__main__", alter_sys=True
+            )
+        except SystemExit as exc:
+            # The serve branch exits 0 after the (patched) server returns.
+            assert exc.code in (0, None)
 
     assert captured.get("port") == 8765, captured

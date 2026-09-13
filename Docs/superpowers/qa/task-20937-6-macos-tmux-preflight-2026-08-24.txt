@@ -1,0 +1,89 @@
+TASK-20937.6 macOS terminal-native preflight (NOT iTerm2 acceptance evidence)
+Captured: 2026-08-24 America/Los_Angeles
+
+Purpose:
+- Validate the same-commit production app through a real PTY before manual iTerm2 capture.
+- This does not satisfy AC #4 until an operator attaches from iTerm2 and records a screenshot.
+
+Metadata:
+8d6784541c8dcf6ff7297d8a45747ecff5c51ad1
+worktree before live launch: clean
+live startup self-heal: CSS bundle timestamp-only regeneration; restored after capture
+ProductName:		macOS
+ProductVersion:		15.6
+BuildVersion:		24G84
+Python 3.12.11
+Textual 8.2.8
+tmux 3.6a
+3.5.14
+tmux window: 235x52; window-size manual
+launch TERM: xterm-256color
+scratch profile: /tmp/tldw-task20937.6-iterm.G3ETE5
+production data path: /tmp/tldw-task20937.6-iterm.G3ETE5/data-live/default_user
+provider readiness: deliberately nonfunctional fake OpenAI key; no request sent
+
+Observed before this final frame:
+- Edge-owned Context/Inspect rails and one divider per boundary rendered at 235x52.
+- Research Lab showed six owned conversations; Roleplay Tavern showed its temporary chat plus portrait/landscape persisted chats; Writing Room showed Writing draft.
+- Ctrl+K opened Default scratch conversation; it appeared only in flat Conversations while named-workspace rows remained only in the Tree.
+- Portrait fixture rendered centered at 21 columns without stretching; its complete image, Tall Portrait label, Reaction: Automatic copy, and Reaction action were reachable through Context outer scrolling.
+- Landscape fixture rendered at 36 columns by 6 image rows without expanding to the 35-row Character ceiling.
+- 235x52 -> 180x45 -> 235x52 preserved selected Landscape roleplay scene and the Context outer-scroll position.
+
+Final visible frame (235x52):
+         ╭────────────╮
+ ⌃1 Home │ ⌃2 Console │ ⌃3 Library  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Logs  F9 Settings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                                            Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Attach context     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                         │ Conversation | Landscape roleplay scene                                                                                                                                              │
+                     <---------|Context  │  Roleplay Tavern Ch…  ✕  Default scratch co…  ✕  Portrait roleplay…   ✕  Landscape roleplay…  ✕    New tab     Temporary                                                             │
+ ──────────────────────────────────────  │                                                                                                                                                                                      │
+ Conversations                      ▾    │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                                                        ✕  │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                                                      │
+  ▊  Search conversations    ▎           │                                                                                                                                                                                      │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                                                      │
+                                         │                                                                                                                                                                                      │
+   New conversation                      │                                                                                                                                                                                      │
+  Chats                             ▾    │                                                                                                                                                                                      │
+    Default scratch conversation   ☆     │                                                                                                                                                                                      │
+    open session - 5m                    │                                                                                                                                                                                      │
+                                         │                                                                                                                                                                                      │
+                                         │                                                                                                                                                                                      │
+                                         │                                                                                                                                                                                      │
+ ──────────────────────────────────────  │                                                                                                                                                                                      │
+ Model                              ▾    │                                                                                                                                                                                      │
+  Provider    openai                   ▆ │                                                                                                                                                                                      │
+  Model       gpt-5.6-terra              │                                                                                                                                                                                      │
+  Temperature 0.60                       │                                                                                                                                                                                      │<-Inspect
+  Max tokens  4096                       │                                                                                                                                                                                      │
+  System: none ▸                         │                                                                                                                                                                                      │
+   Configure                             │                                                                                                                                                                                      │
+                                         │                                                                                                                                                                                      │
+ ──────────────────────────────────────  │                                                                                                                                                                                      │
+ Agent                              ▸    │                                                                                                                                                                                      │
+ ──────────────────────────────────────  │                                                                                                                                                                                      │
+ Details                            ▸    │                                                                                                                                                                                      │
+ ──────────────────────────────────────  │                                                                                                                                                                                      │
+ Character                          ▾    │                                                                                                                                                                                      │
+  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓   │                                                                                                                                                                                      │
+  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓   │                                                                                                                                                                                      │
+  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓   │                                                                                                                                                                                      │
+  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓   │                                                                                                                                                                                      │
+  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓   │                                                                                                                                                                                      │
+  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓   │                                                                                                                                                                                      │
+  Wide Landscape                         │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+  Reaction: Automatic                    │   User                                                                                                                                                                               │
+                                         │   Verification fixture for Landscape roleplay scene                                                                                                                                  │
+                                         │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Provider: OpenAI     Model: gpt-5.6-terra     System Prompt: off     Character: Wide Landscape     Library search: off     Sources: 0     Approvals: 0 pending     ~$0.00 ●
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                                                                                                              Send disabled: type a message   Send     Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P palette | Ctrl+Q quit
+
+Remaining operator evidence:
+- Attach this pinned session from iTerm2 and record the actual iTerm2 screenshot/version/cells.
+- Reproduce the same commit and 235x52 cells in Windows Terminal and record the equivalent checklist/captures.

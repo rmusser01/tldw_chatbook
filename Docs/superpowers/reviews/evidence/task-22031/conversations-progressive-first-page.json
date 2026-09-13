@@ -1,0 +1,21 @@
+{
+  "calls": [
+    {
+      "conversation_id": "chat-a",
+      "max_chars": 8000,
+      "message_limit": 20,
+      "message_offset": 0
+    },
+    {
+      "conversation_id": "chat-a",
+      "max_chars": 8000,
+      "message_limit": 20,
+      "message_offset": 20
+    }
+  ],
+  "complete": false,
+  "message_count": 20,
+  "message_epoch": "epoch-chat-a",
+  "status": "Loading local Library sources\u2026",
+  "svg": "conversations-progressive-first-page.svg"
+}

@@ -17,7 +17,7 @@ can sync with a tldw server you configure).
    [first-run setup wizard](First_Run_Setup.md), which offers to do step 2
    for you; skipping it leaves you on [Home](home.md), and Console's
    composer stays locked with a "Get started" card until a provider exists.
-2. Open **[Settings](settings.md)** — press **F9**, click **F9 Settings** in
+2. Open **[Settings](settings.md)** — press **F4**, click **F4 Settings** in
    the nav bar, or **Ctrl+P** → "Tab Navigation: Switch to Settings" — and
    set a provider + model (or point at a local server) under **Providers &
    Models**.
@@ -33,21 +33,26 @@ can sync with a tldw server you configure).
 |-----|--------|----------------|
 | Ctrl+1 | [Home](home.md) | Triage snapshot: what needs attention, what's running, what's recent, and a suggested next action. |
 | Ctrl+2 | [Console](console.md) | Live agent conversations, approvals, tools, RAG, and runs. |
+| Console → Menu → Buddy | [Buddies](buddies.md) | Manage artwork and Personas; follow and reply to conversations across screens. |
 | Ctrl+3 | [Library](library.md) | Source material, imports, notes, media, conversations, prompts, skills, Search/RAG — plus hand-offs to Study for flashcards and quizzes. |
-| Ctrl+4 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
-| Ctrl+5 | [Roleplay](roleplay-chat-dictionaries.md) | Characters, personas, chat dictionaries, and lore/world books. |
-| Ctrl+6 | [Watchlists](watchlists.md) 🚧 | Monitored sources, runs, alerts, and recovery. |
+| Ctrl+4 | [Roleplay](roleplay-chat-dictionaries.md) | Characters, personas, chat dictionaries, and lore/world books. |
+| Ctrl+5 | [Watchlists](watchlists.md) 🚧 | Monitored sources, runs, alerts, and recovery. |
+| Ctrl+6 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
 | Ctrl+7 | [Schedules](schedules.md) 🚧 | When jobs, watchlists, and workflows run. |
 | Ctrl+8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
 | Ctrl+9 | [MCP](mcp.md) 🚧 | MCP servers, tools, permissions, auth, and audit. |
 | Ctrl+0 | [ACP](acp.md) 🚧 | Agent Client Protocol agents, sessions, runtimes, diffs, and terminals. |
-| F7 | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
-| F8 | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
-| F9 | [Settings](settings.md) | Global app preferences, appearance, accounts, and storage. |
+| F2 | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
+| F3 | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
+| F4 | [Settings](settings.md) | Global app preferences, appearance, accounts, and storage. |
+| F5 | [Research](research_workspace.md) | Authority-explicit research workspaces, plus navigation to durable Research Runs. |
+| F7 | [Meetings](meetings.md) | Record a call or a room with a live labelled transcript, then file it in the Library. |
 
-Lab, Logs, and Settings sit past the ten digits, so they get function keys
-instead: **F7**, **F8**, **F9** — the nav labels say so ("F7 Lab", "F8 Logs",
-"F9 Settings"). The nav bar and the command palette (**Ctrl+P**) reach them
+Lab, Logs, Settings, Research, and Meetings sit past the ten digits, so they
+continue the walk onto the function-key row from its left end: **F2**, **F3**,
+**F4**, **F5**, **F7** (F1 is Help and F6 is Next Pane; F6 is skipped) — the
+nav labels say so ("F2 Lab", "F3 Logs", "F4 Settings", "F5 Research",
+"F7 Meetings"). The nav bar and the command palette (**Ctrl+P**) reach them
 too.
 
 Two more screens exist with **no nav label and no "Tab Navigation" palette
@@ -64,20 +69,25 @@ separate screens.
 
 | Guide | What it covers |
 |-------|----------------|
+| [Set up and use Persona Buddy](buddy.md) | Select Migu, move and resize the companion, use Console voice, handle approvals, and troubleshoot. |
+| [Set up and manage your Personal Context Profile](settings/personal-context-profile.md) | Optional interviews, global/workspace context, agent proposals, synchronization boundaries, export, and removal. |
+| [Turn feeds into a scheduled Watchlist briefing](watchlists-quickstart.md) | A start-to-finish Console walkthrough: create feeds and a Watchlist, follow receipts, generate a briefing, schedule it every 24 hours, and verify the saved result. |
 | [Using OpenAI-compatible TTS servers](openai-compatible-tts.md) | Pointing text-to-speech at your own server (e.g. a local, keyless engine like pocket-tts) via Settings ▸ Speech & TTS; also covers the app-wide default voice profile and per-character voices. |
 
 **Note:** The "⌃\<digit\>" (or "F\<n\>") shown before each nav label is
 that screen's hotkey: press **Ctrl+digit** (Ctrl+1 … Ctrl+9, Ctrl+0) — or
-**F7** / **F8** / **F9** for the last three — to switch to it from anywhere;
-the keys work even while a text field has focus. Bare digit keys are not
+**F2**–**F5** / **F7** for the last five — to switch to it from anywhere;
+the keys work even while a text field has focus. While a modal dialog
+is open it owns the keyboard — destination keys stay inert until it closes
+(the Ctrl+K session switcher additionally uses **Shift+F3** for its mode
+toggle and **F2** for rename). Bare digit keys are not
 navigation shortcuts (typing `2` in the composer just types "2"). Clicking
 the nav label and **Ctrl+P** work everywhere too.
 
-One screen claims some of these digits for itself: on
-[Roleplay](roleplay-chat-dictionaries.md), **Ctrl+1 –
-Ctrl+4 switch that screen's four modes** instead of changing screens.
-Ctrl+5 … Ctrl+0 still navigate from there, as do the nav bar and
-**Ctrl+P**.
+No screen borrows these keys for itself: the Ctrl+digit chords and the
+F2–F5 / F7 tail navigate from everywhere, including
+[Roleplay](roleplay-chat-dictionaries.md) (whose four modes use the single
+letters **c / p / d / l**).
 
 ## Global keyboard shortcuts
 
@@ -86,8 +96,8 @@ Ctrl+5 … Ctrl+0 still navigate from there, as do the nav bar and
 | F1 | Open the current screen's keyboard-shortcuts list (content is screen-specific) |
 | Ctrl+P | Open the command palette — search and jump to any screen or command from anywhere |
 | Ctrl+Q | Quit the app |
-| Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above). Exception: on [Roleplay](roleplay-chat-dictionaries.md), Ctrl+1 – Ctrl+4 switch that screen's modes instead |
-| F7 / F8 / F9 | Switch to Lab / Logs / Settings — the three destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords |
+| Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above) — works from every screen, [Roleplay](roleplay-chat-dictionaries.md) included |
+| F2 / F3 / F4 / F5 / F7 | Switch to Lab / Logs / Settings / Research / Meetings — the five destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords (F6 is skipped: Next Pane) |
 | F6 | Cycle through the current screen's panes; on screens without a pane cycle it only shows a notice |
 | Shift+F6 | Cycle panes backward — bound only on [Console](console.md) and [Roleplay](roleplay-chat-dictionaries.md); elsewhere it does nothing |
 
@@ -95,37 +105,25 @@ Everything else (Enter/Ctrl+K/Ctrl+T in Console, and the single-letter
 mnemonics like `s`/`r`/`t` on Settings) is screen-specific — see that
 screen's own page for its "Keyboard & commands" table.
 
-## Console agent runs are screen-scoped
+<a id="console-agent-runs-are-screen-scoped"></a>
+## Console runs continue during navigation
 
-Agent **turns** you start in Console — and any approval/confirmation
-they're waiting on — live only as long as the Console screen itself stays
-mounted. Leaving Console for another screen (e.g. Settings, Ctrl+1…Ctrl+0,
-or the command palette) cancels every in-flight turn and denies every
-pending or parked approval for that visit; coming back starts a fresh
-Console. One thing is deliberately **not** screen-scoped: a background
-sub-agent that already outlived its spawning turn keeps running through
-the leave — its result lands durably in the run log, its completion
-raises a toast on whatever screen you're on plus a durable `◈` marker,
-and the supervisor's auto-wake is staged and claimed when Console next
-mounts (see [Console ▸ Agent runs &
-tools](console/agent-runs-and-tools.md)). Guards make all of this visible
-instead of silent:
+Switching to Settings, Home, Library, or another destination keeps accepted
+Console turns, queued prompts, sub-agents, and pending decisions running. Returning
+resumes the same Console with its latest results. Opening or closing a modal also
+preserves work. Console microphone capture and Console automatic speech stop while
+Console is hidden. Optional [Buddy speech](buddies.md) can continue across screens.
 
-- **Before you leave:** if any run is still in flight or waiting on an
-  approval, a confirmation dialog asks "N agent runs will be cancelled if
-  you leave Console. Leave anyway?" — **Leave** proceeds, **Stay** keeps
-  Console (and the fleet) exactly as it was. An idle Console never shows
-  this prompt.
-- **After you return:** the next Console mount reports each fate
-  truthfully, one-time: "N agent runs were cancelled when you left
-  Console." for the turns the teardown killed, and "… sub-agents kept
-  running in the background when you left Console — you'll be notified
-  as they finish." for the survivors it spared — so neither a lost run
-  nor continuing background work is ever silently unexplained.
+A decision that needs your input while Console is hidden raises one notice and a
+navigation badge. Answer it in Console or a supported Buddy interaction card.
+Configured decision timeouts count only while that session's card is available to
+answer; time away from an answerable card does not consume the budget. Nothing is
+approved automatically.
 
-Nothing is ever auto-approved: an approval that gets caught by this
-teardown is always denied, never resolved on your behalf — and an
-auto-wake can never resolve one either.
+**Stop** still interrupts the selected turn and pauses its queue. Closing a session
+cancels its work, and confirmed application quit shuts down the runtime. Continuation
+after an application exit or crash is not guaranteed. An unsaved queue-manager edit
+must still be saved or cancelled before navigation.
 
 Full detail on runs, approvals, and tools:
 [Console ▸ Agent runs & tools](console/agent-runs-and-tools.md).
@@ -142,7 +140,7 @@ Full detail on runs, approvals, and tools:
 | Conversations | [Library ▸ Media & conversations](library/media-and-conversations.md) |
 | CCP (Conversations, Characters & Prompts) | [Roleplay](roleplay-chat-dictionaries.md) for characters and personas; prompts moved to [Library ▸ Prompts](library/prompts.md) |
 | LLM management | [Lab](lab.md) 🚧 |
-| Research | [Library](library.md) |
+| Research | [Research Workspace](research_workspace.md) for the workbench; its **Runs** mode preserves the durable run operator. |
 | Ingest | [Library ▸ Import & export](library/import-and-export.md) |
 | Writing | [Library](library.md) |
 | Chatbooks | [Artifacts](artifacts.md) 🚧 |

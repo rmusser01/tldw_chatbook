@@ -1,0 +1,5 @@
+{
+  "kind": "automated",
+  "result_name": "Tests/UI/test_library_multiselect_notes.py::test_permanent_navigator_tasks_respect_dirty_draft_veto[handle_library_notes_import_receipt-_library_note_import_controller-revisit_receipt]",
+  "status": "PASS"
+}

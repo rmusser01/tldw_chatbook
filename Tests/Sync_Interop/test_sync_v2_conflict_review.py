@@ -121,6 +121,14 @@ def test_conflict_review_service_maps_retained_outbox_failures_without_plaintext
     assert "Private" not in str(reviews[0])
 
 
+def test_notes_organization_review_seam_is_empty_without_notes_repository(tmp_path):
+    service = SyncV2ConflictReviewService(
+        state_repository=SyncStateRepository(tmp_path / "sync_state.db")
+    )
+
+    assert service.build_notes_organization_adoption_items(dataset_id="dataset-1") == ()
+
+
 def test_conflict_review_service_prefers_newest_durable_rows_and_dedupes_retained_failures(
     tmp_path,
 ):

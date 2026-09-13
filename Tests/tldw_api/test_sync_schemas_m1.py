@@ -6,6 +6,10 @@ from tldw_chatbook.tldw_api import (
     SyncV2ProfileBootstrapResponse,
     SyncV2ProfileResponse,
 )
+from tldw_chatbook.tldw_api.sync_schemas import (
+    SyncV2ProfileDatasetStatus,
+    SyncV2PushAcceptedEnvelope,
+)
 
 # Captured verbatim from the live codex/sync-v2-m1-next server @ 992e89a03.
 LIVE_CAPABILITIES = {
@@ -56,6 +60,49 @@ def test_capabilities_parses_live_m1_payload():
     assert caps.encryption["policy"] == "server_trusted_v1"
 
 
+def test_capabilities_preserves_notes_adapter_version_advertisement():
+    payload = {
+        **LIVE_CAPABILITIES,
+        "supported_adapter_versions": {
+            "notes.note": [1],
+            "notes.keyword": [1],
+        },
+    }
+
+    caps = SyncV2CapabilitiesResponse.model_validate(payload)
+
+    assert caps.supported_adapter_versions == {
+        "notes.note": [1],
+        "notes.keyword": [1],
+    }
+
+
+def test_push_accepted_envelope_preserves_materialization_error_details():
+    accepted = SyncV2PushAcceptedEnvelope.model_validate(
+        {
+            "client_envelope_id": "intent-1",
+            "server_cursor": 17,
+            "apply_status": "failed",
+            "apply_error_code": "projection_failed",
+            "apply_error_message": "folder parent is missing",
+        }
+    )
+
+    assert accepted.model_dump(mode="json") == {
+        "client_envelope_id": "intent-1",
+        "envelope_id": None,
+        "server_sequence": 17,
+        "domain": None,
+        "entity_id": None,
+        "object_id": None,
+        "object_revision": None,
+        "apply_status": "failed",
+        "apply_error_code": "projection_failed",
+        "apply_error_message": "folder parent is missing",
+        "server_cursor": 17,
+    }
+
+
 def test_capabilities_back_compat_properties():
     caps = SyncV2CapabilitiesResponse.model_validate(LIVE_CAPABILITIES)
     # Legacy readers used .supported_domains / .supported_operations.
@@ -75,6 +122,19 @@ def test_capabilities_parses_legacy_flat_supported_operations():
     assert caps.domains == ["notes", "chat"]
     assert caps.operations == {"*": ["upsert", "delete", "resolve_conflict"]}
     assert caps.supported_operations == ["delete", "resolve_conflict", "upsert"]
+
+
+def test_capabilities_parses_legacy_domain_supported_operations():
+    caps = SyncV2CapabilitiesResponse.model_validate(
+        {
+            "supported_domains": ["notes.note"],
+            "supported_operations": {
+                "notes.note": ["upsert", "tombstone"],
+            },
+        }
+    )
+
+    assert caps.operations == {"notes.note": ["upsert", "tombstone"]}
 
 
 def test_capabilities_coerces_legacy_int_protocol_version():
@@ -146,3 +206,63 @@ def test_bootstrap_request_defaults_to_m1_domains_and_offline_mode():
         "chat.message",
         "attachment.ref",
     ]
+
+
+def test_profile_dataset_parses_notes_organization_bootstrap_status():
+    dataset = SyncV2ProfileDatasetStatus.model_validate(
+        {
+            "dataset_id": "dataset-1",
+            "domains": ["notes.keyword", "notes.folder"],
+            "notes_organization": {
+                "state": "initializing",
+                "captured_count": 2,
+                "expected_count": 7,
+                "error_code": None,
+            },
+        }
+    )
+
+    assert dataset.notes_organization is not None
+    assert dataset.notes_organization.state == "initializing"
+    assert dataset.notes_organization.captured_count == 2
+    assert dataset.notes_organization.expected_count == 7
+    assert dataset.notes_organization.error_code is None
+
+
+def test_bootstrap_request_carries_complete_versioned_notes_organization_group():
+    organization_domains = [
+        "notes.keyword",
+        "notes.keyword_link",
+        "notes.keyword_collection",
+        "notes.keyword_collection_link",
+        "notes.folder",
+        "notes.folder_link",
+    ]
+    request = SyncV2ProfileBootstrapRequest(
+        device_name="Enrollment device",
+        requested_domains=[
+            "notes.note",
+            "chat.conversation",
+            *organization_domains,
+        ],
+        supported_adapter_versions={
+            domain: [1]
+            for domain in [
+                "notes.note",
+                "chat.conversation",
+                *organization_domains,
+            ]
+        },
+    )
+
+    dumped = request.model_dump(mode="json")
+    assert dumped["requested_domains"] == [
+        "notes.note",
+        "chat.conversation",
+        *organization_domains,
+    ]
+    assert dumped["supported_adapter_versions"] == {
+        domain: [1]
+        for domain in ["notes.note", "chat.conversation", *organization_domains]
+    }
+    assert "encryption_policy" not in dumped

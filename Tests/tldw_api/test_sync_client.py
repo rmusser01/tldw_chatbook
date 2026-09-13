@@ -266,6 +266,24 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
     }
 
 
+@pytest.mark.asyncio
+async def test_sync_v2_capabilities_can_be_scoped_to_dataset(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "domains": [],
+            "supported_adapter_versions": {},
+            "writable_adapter_versions": {},
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.get_sync_v2_capabilities(dataset_id="dataset-1")
+
+    assert mocked.await_args.args[:2] == ("GET", "/api/v1/sync/capabilities")
+    assert mocked.await_args.kwargs["params"] == {"dataset_id": "dataset-1"}
+
+
 class _AttachmentUploadRequestDumpSpy:
     def __init__(self) -> None:
         self.dump_kwargs: dict[str, object] | None = None
@@ -529,6 +547,76 @@ async def test_sync_v2_client_bootstraps_profile(monkeypatch):
         "/api/v1/sync/profile/bootstrap",
     )
     assert mocked.await_args_list[0].kwargs["json_data"]["mode"] == "offline_sync"
+
+
+@pytest.mark.asyncio
+async def test_sync_v2_client_sends_notes_organization_adapter_versions(monkeypatch):
+    from tldw_chatbook.tldw_api import SyncV2ProfileBootstrapRequest
+
+    organization_domains = [
+        "notes.keyword",
+        "notes.keyword_link",
+        "notes.keyword_collection",
+        "notes.keyword_collection_link",
+        "notes.folder",
+        "notes.folder_link",
+    ]
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "created": True,
+            "profile_bootstrapped": True,
+            "user_id": "user_123",
+            "active_dataset_id": "ds_1",
+            "device": {"device_id": "dev_1", "registered": True},
+            "dataset": {
+                "dataset_id": "ds_1",
+                "scope": "personal",
+                "default_personal": True,
+                "domains": [
+                    "notes.note",
+                    "chat.conversation",
+                    *organization_domains,
+                ],
+                "encryption_policy": "server_trusted_v1",
+                "notes_organization": {
+                    "state": "initializing",
+                    "captured_count": 0,
+                    "expected_count": 0,
+                    "error_code": None,
+                },
+            },
+            "server_cursor": 0,
+            "capabilities": {"protocol_version": "sync-v2-m1"},
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.bootstrap_sync_v2_profile(
+        SyncV2ProfileBootstrapRequest(
+            device_name="Test Device",
+            requested_domains=[
+                "notes.note",
+                "chat.conversation",
+                *organization_domains,
+            ],
+            supported_adapter_versions={
+                domain: [1]
+                for domain in [
+                    "notes.note",
+                    "chat.conversation",
+                    *organization_domains,
+                ]
+            },
+        )
+    )
+
+    payload = mocked.await_args.kwargs["json_data"]
+    assert payload["supported_adapter_versions"] == {
+        domain: [1]
+        for domain in ["notes.note", "chat.conversation", *organization_domains]
+    }
+    assert "encryption_policy" not in payload
 
 
 @pytest.mark.asyncio

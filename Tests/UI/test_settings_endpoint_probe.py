@@ -690,6 +690,69 @@ async def test_openai_probe_defaults_to_chat_catalog_contract() -> None:
     ]
 
 
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_console_connection_seam_reaches_real_models_endpoint() -> None:
+    """The lazy Console seam reaches /v1/models and preserves returned IDs."""
+    import http.server
+    import json
+    import threading
+
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderDraftIdentity,
+        ProviderProbeResult,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    requested_paths: list[str] = []
+    payload = json.dumps(
+        {"data": [{"id": "served-alpha"}, {"id": "served-beta"}]}
+    ).encode("utf-8")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requested_paths.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1"
+        identity = ProviderDraftIdentity(
+            provider_key="llama_cpp",
+            connection_identity=canonical_connection_identity(
+                "llama_cpp",
+                endpoint,
+            ),
+            credential_source="none",
+            credential_revision=3,
+            draft_generation=7,
+        )
+
+        result = await ChatScreen._test_console_connection(identity)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert result == ProviderProbeResult(
+        "reachable",
+        ("served-alpha", "served-beta"),
+    )
+    assert requested_paths == ["/v1/models"]
+
+
 @pytest.mark.asyncio
 async def test_openai_probe_uses_tts_contract_only_when_explicit() -> None:
     requests: list[httpx.Request] = []
@@ -924,3 +987,67 @@ async def test_owned_tts_probe_client_closes_when_cancelled(monkeypatch) -> None
         )
 
     assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_probe_requests_identity_encoding_so_real_gzip_peers_stay_reachable() -> (
+    None
+):
+    """A content-negotiating peer must not read as a connection failure.
+
+    Live incident: `read_bounded_model_response` streams raw bytes and
+    rejects any non-identity `Content-Encoding`, but this probe never asked
+    for identity -- so httpx advertised `gzip, deflate`, api.openai.com
+    honored it, and a *valid* key came back "unreachable: connection error"
+    with zero models. Mocked peers never compress, so no existing test saw
+    it. The two other `read_bounded_model_response` call sites already send
+    this header; this one did not.
+    """
+
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        accept_encoding = request.headers.get("accept-encoding")
+        seen.append(accept_encoding)
+        # Behave like a real server: compress only when the client offers it.
+        if accept_encoding and "gzip" in accept_encoding.casefold():
+            import gzip as _gzip
+
+            return httpx.Response(
+                200,
+                headers={"Content-Encoding": "gzip"},
+                content=_gzip.compress(b'{"data": [{"id": "gpt-4.1-nano"}]}'),
+            )
+        return httpx.Response(200, json={"data": [{"id": "gpt-4.1-nano"}]})
+
+    outcome = await probe_settings_endpoint(
+        "https://api.openai.com/v1",
+        provider="openai",
+        http_client=_client(handler),
+    )
+
+    assert seen == ["identity"]
+    assert outcome.state == "reachable"
+    assert outcome.category is None
+    assert outcome.model_ids == ("gpt-4.1-nano",)
+
+
+@pytest.mark.asyncio
+async def test_tts_catalog_probe_also_requests_identity_encoding() -> None:
+    """The TTS catalog probe shares the same bounded reader and hazard."""
+
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("accept-encoding"))
+        return httpx.Response(200, json={"data": [{"id": "tts-1"}]})
+
+    outcome = await probe_settings_endpoint(
+        "https://api.openai.com/v1",
+        provider="openai",
+        purpose="tts_catalog",
+        http_client=_client(handler),
+    )
+
+    assert seen == ["identity"]
+    assert outcome.state is not SpeechTTSConnectionState.UNREACHABLE

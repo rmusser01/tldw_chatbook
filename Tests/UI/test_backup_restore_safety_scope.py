@@ -24,7 +24,7 @@ async def test_preserved_builtin_safety_scope_is_explicit_and_target_bound(
 ):
     from textual.app import App
     from textual.widgets import Button, Input, Select
-    
+
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 

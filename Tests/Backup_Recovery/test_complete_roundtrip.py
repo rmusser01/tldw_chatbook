@@ -147,7 +147,6 @@ async def main():
   theme=selector.parent/'themes'/(name+'.toml')
   theme.parent.mkdir(mode=0o700,exist_ok=True)
   theme.write_text('[theme]\nname='+json.dumps(name)+'\ndark=true\n[colors]\nbackground="#112233"\n')
-  from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplate,ChunkingTemplateManager
   persona_service=app.local_character_persona_service
   persona=persona_service.create_persona_profile({'name':name+' persona','system_prompt':name+' retained persona prompt','is_active':False})
   dictionary_service=app.local_chat_dictionary_service
@@ -160,9 +159,8 @@ async def main():
   audio_service.tts_audio_generator=lambda **kwargs:(name+' retained audio bytes').encode()
   audio=await audio_service.create_audio_speech({'input':name+' spoken input','response_format':'wav'})
   await audio_service.update_tts_history_favorite(audio['history_id'],{'favorite':True})
-  templates=ChunkingTemplateManager()
-  template=ChunkingTemplate(name=name+'-retained',description=name+' chunking template',pipeline=[])
-  templates.save_template(template)
+  templates=app.local_rag_admin_service
+  template=templates.create_template(name=name+'-retained',description=name+' chunking template',template={'chunking':{'method':'words','config':{'max_size':100}}})
   from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as dictionaries
   from tldw_chatbook.config import get_user_data_dir
   dictionary_service.add_entry(dictionary['id'],{'pattern':name+'-term','replacement':name+' retained definition'})
@@ -185,12 +183,16 @@ async def main():
   assert read_templates()=={template_key:note_template}
   templates_path=get_cli_config_path().parent/'note_templates.json'
   assert templates_path==selector.parent/'note_templates.json'
-  durable_api=dict(persona=persona['id'],dictionary=dictionary['id'],dictionary_revision=dictionary_version['revision'],grammar=grammar['id'],feedback=feedback['feedback_id'],audio=audio['history_id'],template=template.name)
-  durable_files={owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.prompt_history',history.path),('ui.emoji_recents',selector.parent/'recent_emojis.json'),('ui.state',state),('ui.themes',theme),('personas',persona_service.persona_store_path),('chat.dictionary_history',dictionary_service.history_store_path),('chat.grammars',app.local_chat_grammars_service.store_path),('feedback',app.local_feedback_service.store_path),('audio.history',audio_service.history_store_path),('chunking.templates',templates.user_templates_dir/(template.name+'.json')))}
+  durable_api=dict(persona=persona['id'],dictionary=dictionary['id'],dictionary_revision=dictionary_version['revision'],grammar=grammar['id'],feedback=feedback['feedback_id'],audio=audio['history_id'],template=template['name'])
+  durable_files={owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.prompt_history',history.path),('ui.emoji_recents',selector.parent/'recent_emojis.json'),('ui.state',state),('ui.themes',theme),('personas',persona_service.persona_store_path),('chat.dictionary_history',dictionary_service.history_store_path),('chat.grammars',app.local_chat_grammars_service.store_path),('feedback',app.local_feedback_service.store_path),('audio.history',audio_service.history_store_path))}
   durable_files.update({owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.dictionaries',exported),('generation.styles',style),('notes.templates',templates_path))})
   collections=app.local_library_collections_service
-  collection=collections.create_collection(name+' collection',description=name+' retained collection')
-  collection_member=collections.add_item_to_collection(collection.collection_id,source_type='note',source_id=str(note),title=name+' linked note')
+  # Retained legacy collections are read-only in the current application.
+  # Seed historical rows directly; restore verification uses its shipped reader.
+  collection_id=name+'-legacy-collection';collection_member=name+'-legacy-member'
+  with collections.db.transaction() as connection:
+   connection.execute('INSERT INTO library_collections (collection_id,name,description,created_at,updated_at) VALUES (?,?,?,?,?)',(collection_id,name+' collection',name+' retained collection','2026-09-12','2026-09-12'))
+   connection.execute('INSERT INTO library_collection_items (membership_id,collection_id,source_type,source_id,title,created_at) VALUES (?,?,?,?,?,?)',(collection_member,collection_id,'note',str(note),name+' linked note','2026-09-12'))
   workspaces=app.workspace_registry_service
   workspace=workspaces.create_workspace(workspace_id=name+'-retained-workspace',name=name+' workspace',description=name+' retained workspace')
   workspace_member=workspaces.link_membership(workspace.workspace_id,item_type='note',item_id=str(note),title=name+' linked note')
@@ -213,7 +215,7 @@ async def main():
   sync_key=dict(source_authority='local',server_profile_id=None,authenticated_principal_id=None,workspace_scope=workspace.workspace_id)
   sync=app.sync_state_repository.set_sync_profile_state(**sync_key,last_error=name+' retained offline status')
   registries={
-   'db.library_collections':dict(path=str(collections.db.db_path),id=collection.collection_id,member=collection_member),
+   'db.library_collections':dict(path=str(collections.db.db_path),id=collection_id,member=collection_member),
    'db.workspaces':dict(path=str(workspaces.db.db_path),id=workspace.workspace_id,member=workspace_member.membership_id),
    'db.subscriptions':dict(path=str(app.subscriptions_db.db_path),id=subscription),
    'db.scheduled_tasks':dict(path=str(schedules.db.db_path),id=reminder.id,run_at=reminder.run_at.isoformat()),
@@ -276,8 +278,11 @@ async def main():
    active_rows=[list(row) for row in replica.list_active_files(str(notes_root))]
   finally:replica.close()
   version=core.get_note_by_id(note)['version']
-  assert app.notes_service.link_note_to_file(app.notes_user_id,note,active,notes_root,sync_strategy='disk_to_db')
-  linked=next(row for row in app.notes_service.get_notes_for_sync(app.notes_user_id,notes_root) if row['id']==note)
+  # Seed retained pre-cutover metadata; the current service cannot create legacy bindings.
+  with core.transaction() as connection:
+   changed=connection.execute('UPDATE notes SET file_path_on_disk=?,relative_file_path_on_disk=?,sync_root_folder=?,is_externally_synced=1,sync_strategy=?,file_extension=?,version=version+1 WHERE id=? AND version=?',(str(active),active.name,str(notes_root),'disk_to_db',active.suffix,note,version))
+   assert changed.rowcount==1
+  linked=core.get_note_by_id(note)
   assert linked['version']==version+1 and linked['sync_strategy']=='disk_to_db'
   fields=('id','version','file_path_on_disk','relative_file_path_on_disk','sync_root_folder','is_externally_synced','sync_strategy','file_extension')
   with closing(sqlite3.connect(replica_path.as_uri()+'?mode=ro',uri=True)) as database:
@@ -919,7 +924,7 @@ async def main():
    assert database.execute('SELECT root,relative_path,hex(raw_bytes),content_hash,decoded_text,size,mtime_ns,deleted_at FROM files ORDER BY relative_path').fetchall()==[tuple(row) for row in notes['rows']['files']]
    assert database.execute('SELECT root,relative_path,hex(raw_bytes),content_hash,kind,session_key,created_at FROM revisions ORDER BY relative_path').fetchall()==[tuple(row) for row in notes['rows']['revisions']]
    assert database.execute('SELECT root,relative_path,is_prefix FROM protected_paths ORDER BY relative_path').fetchall()==[tuple(row) for row in notes['rows']['protected']]
-  linked=next(row for row in app.notes_service.get_notes_for_sync(app.notes_user_id,Path(root_key)) if row['id']==seed['note'])
+  linked=app.chachanotes_db.get_note_by_id(seed['note'])
   fields=('id','version','file_path_on_disk','relative_file_path_on_disk','sync_root_folder','is_externally_synced','sync_strategy','file_extension')
   assert [linked[field] for field in fields]==notes['membership']
   assert (Path(root_key)/'linked.md').read_bytes()==bytes.fromhex(notes['current'])
@@ -996,9 +1001,10 @@ async def main():
   assert feedback['helpful'] is True and feedback['user_notes']==label+' retained feedback'
   audio=await app.local_audio_services_service.get_tts_history_entry(durable['audio'])
   assert audio['text']==label+' spoken input' and audio['content']==(label+' retained audio bytes').encode() and audio['favorite']
-  from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
-  template=ChunkingTemplateManager().load_template(durable['template'])
-  assert template is not None and template.description==label+' chunking template' and template.pipeline==[]
+  template=app.local_rag_admin_service.get_template(durable['template'])
+  assert template['description']==label+' chunking template'
+  template_body=json.loads(template['template_json'])
+  assert template_body['chunking']=={'method':'words','config':{'max_size':100}}
   registries=seed['registries']
   from tldw_chatbook.Library.library_tool_contract import make_public_id
   collections=app.local_library_collections_service

@@ -87,7 +87,12 @@ Based on the metrics collected, you can:
 ## Integration with Monitoring
 
 For production use, the metrics can be:
-- Exported to Prometheus using the built-in server (`init_metrics_server()`)
+- Exported to Prometheus using the built-in server (`init_metrics_server()`).
+  **Opt-in:** the listener is off unless `[metrics] enabled = true` is set in
+  `config.toml`. It binds `127.0.0.1:9090` by default and serves an
+  unauthenticated endpoint, so set `bind_address` deliberately if you need to
+  scrape it from another host. Metric *collection* is unaffected by this
+  setting -- only whether an HTTP endpoint is exposed.
 - Visualized in Grafana dashboards
 - Used for alerting on slow startups
 - Collected for performance trending over time

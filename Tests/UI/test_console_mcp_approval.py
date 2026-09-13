@@ -20,23 +20,31 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from loguru import logger
 from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.app import App, ComposeResult
-from textual.widgets import Button, Select, Static
+from textual.app import ComposeResult
+from textual.widgets import Button, Select, Static, TextArea
 
 import tldw_chatbook
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
-from tldw_chatbook.Agents.run_context import use_run_id
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.run_context import current_run_id, use_run_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Chat.console_display_state import CONSOLE_INSPECTOR_NO_APPROVAL_REASON
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_WORKBENCH_SHORTCUTS, ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+    NEEDS_DECISION_PREFIX,
+    ChatApprovalCard,
+)
+from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
 from Tests.UI.app_factory import _build_test_app
 
@@ -96,6 +104,32 @@ class _CardHarnessApp(ConsolidatedCSSApp):
     def _capture_decision(self, event: ChatApprovalCard.ApprovalDecided) -> None:
         self.decided.append(event.decisions)
         self.decided_round_ids.append(event.round_id)
+
+
+def _raw_shell_call(command: str) -> dict:
+    return {
+        "llm_name": "shell_exec",
+        "server_key": "local:__local__",
+        "tool_name": "shell_exec",
+        "server_label": "Raw CLI (unsafe host shell)",
+        "arguments": {
+            "command": command,
+            "shell": "bash",
+            "initial_directory": "/tmp/raw-shell-test",
+            "timeout_seconds": 17.0,
+        },
+        "reason": "ask",
+        "options": ["approve_once", "approve_session", "deny"],
+        "call_id": "raw-call-1",
+        "full_command": command,
+        "warning": (
+            "Runs with the full authority of the OS user. Command and output "
+            "may persist in a local log."
+        ),
+        "scope_notice": (
+            "Allow for session covers future raw shell commands in this Console session."
+        ),
+    }
 
 
 def _sample_calls() -> list[dict]:
@@ -198,17 +232,29 @@ async def test_card_never_renders_the_retired_single_approval_buttons():
     async with app.run_test() as pilot:
         card = app.query_one(ChatApprovalCard)
 
-        for retired_id in ("#approval-single-body", "#approval-allow-once", "#approval-deny"):
+        for retired_id in (
+            "#approval-single-body",
+            "#approval-allow-once",
+            "#approval-deny",
+        ):
             assert not list(app.query(retired_id)), retired_id
 
         card.set_batch(_sample_calls(), timeout_seconds=45.0)
         await pilot.pause()
-        for retired_id in ("#approval-single-body", "#approval-allow-once", "#approval-deny"):
+        for retired_id in (
+            "#approval-single-body",
+            "#approval-allow-once",
+            "#approval-deny",
+        ):
             assert not list(app.query(retired_id)), retired_id
 
         card.set_batch([], timeout_seconds=45.0)
         await pilot.pause()
-        for retired_id in ("#approval-single-body", "#approval-allow-once", "#approval-deny"):
+        for retired_id in (
+            "#approval-single-body",
+            "#approval-allow-once",
+            "#approval-deny",
+        ):
             assert not list(app.query(retired_id)), retired_id
 
 
@@ -248,11 +294,96 @@ async def test_set_batch_renders_one_row_per_unique_name_with_tooltips():
 
 
 @pytest.mark.asyncio
-async def test_risk_floored_row_header_carries_a_why_affordance_tooltip():
+async def test_raw_shell_row_shows_complete_command_and_danger_context():
+    command = "printf 'first line\\n'\nprintf 'second line with [markup]\\n'"
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch([_raw_shell_call(command)], timeout_seconds=45.0)
+        await pilot.pause()
+
+        row = app.query_one(".approval-row")
+        full_command = row.query_one(".approval-row-full-command", TextArea)
+        assert full_command.text == command
+        assert full_command.read_only is True
+        assert not list(row.query(".approval-row-args"))
+
+        metadata = _text(row.query_one(".approval-row-raw-metadata", Static))
+        warning = _text(row.query_one(".approval-row-raw-warning", Static))
+        scope = _text(row.query_one(".approval-row-raw-scope", Static))
+        assert "Shell: bash" in metadata
+        assert "Directory: /tmp/raw-shell-test" in metadata
+        assert "Timeout: 17" in metadata
+        assert "full authority of the OS user" in warning
+        assert "local log" in warning
+        assert "future raw shell commands" in scope
+
+
+@pytest.mark.asyncio
+async def test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does():
+    """Final-review fix: `.approval-row-raw-scope` ("Session scope: ...") is the
+    raw-shell row's own, WIDER statement of what "All shell · session"
+    covers -- the generic per-decision `.approval-row-scope` line
+    (`DECISION_SCOPE_COPY`) would duplicate and undercut it, so a
+    raw-shell row must not also mount that Static. An ordinary MCP row
+    carries no `.approval-row-raw-scope` and must keep its
+    `.approval-row-scope` line exactly as before.
+    """
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(
+            [_sample_calls()[0], _raw_shell_call("printf ok")],
+            timeout_seconds=45.0,
+        )
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        assert list(mcp_row.query(".approval-row-scope"))
+        assert not list(raw_row.query(".approval-row-scope"))
+        assert list(raw_row.query(".approval-row-raw-scope"))
+
+
+@pytest.mark.asyncio
+async def test_raw_shell_row_defaults_to_deny_and_enter_does_not_submit():
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch([_raw_shell_call("printf safe")], timeout_seconds=45.0)
+        await pilot.pause()
+
+        select = app.query_one(".approval-row-decision", Select)
+        assert [value for _label, value in select._options] == [
+            "approve_once",
+            "approve_session",
+            "deny",
+        ]
+        assert select.value == "deny"
+        assert card.first_focus_widget_id() == select.id
+
+        card.focus_first_decision()
+        await pilot.pause()
+        assert app.focused is select
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.decided == []
+
+
+def test_raw_shell_command_view_has_bounded_scrollable_geometry():
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+        ".approval-row-full-command",
+        ("width: 1fr", "height: 6", "min-height: 3"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_reason_badges_carry_a_visible_why_line_not_a_tooltip():
     """Fleet-UX expert review F5/F7 (task-1234, item g): "(high risk)" on a
-    plain read reads as alarmist with no explanation -- the row header
-    Static now carries a tooltip naming why. `config_changed` rows (no
-    risk badge) get no tooltip at all; this is scoped to `risk_floored`."""
+    plain read reads as alarmist with no explanation. That explanation was a
+    header TOOLTIP, which on a terminal nobody sees; task-32278 made it a
+    visible `.approval-row-reason` line and gave `config_changed` one too.
+    The header must carry no tooltip at all now -- a hover-only duplicate of
+    a line already on the card is how the unreadable version came back."""
     app = _CardHarnessApp()
     calls = [
         {
@@ -282,12 +413,15 @@ async def test_risk_floored_row_header_carries_a_why_affordance_tooltip():
         changed_header = rows[1].query_one(".approval-row-header", Static)
 
         assert "(high risk)" in _text(risk_header)
-        assert risk_header.tooltip == (
-            "Reads can exfiltrate file contents; built-in file tools "
-            "always ask before running."
+        assert not risk_header.tooltip
+        assert _text(rows[0].query_one(".approval-row-reason", Static)) == (
+            "High risk: this tool reads local data and always asks first."
         )
         assert "(definition changed)" in _text(changed_header)
         assert not changed_header.tooltip
+        assert _text(rows[1].query_one(".approval-row-reason", Static)) == (
+            "Definition changed since you last allowed it; review the arguments."
+        )
 
 
 @pytest.mark.asyncio
@@ -321,11 +455,12 @@ async def test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid
         ]
         assert narrowed_select.value == "approve_session"
 
-        # The row with no `options` key is untouched: full four choices,
+        # The row with no `options` key is untouched: full dev choices,
         # default `approve_once` (MCP behavior unchanged, byte-identical).
         assert [value for _label, value in unfiltered_select._options] == [
             "approve_once",
             "approve_session",
+            "allow_matching",
             "always_allow",
             "deny",
         ]
@@ -530,6 +665,106 @@ async def test_approve_all_and_deny_all_bulk_set_every_row():
 
 
 @pytest.mark.asyncio
+async def test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision():
+    """task-32282: "Approve all" must never move a raw-shell row off its
+    deliberate Deny default. The row's narrowed options legally include
+    ``approve_once`` (a real, explicit per-call choice), so the pre-fix
+    ``_set_all_batch_decisions`` -- which only checked legality, not row
+    identity -- bulk-set it right along with every ordinary MCP row. It
+    must be skipped, and the skip must be visible in TEXT (TASK-1845:
+    colour is never the only carrier of state), not just the CSS class.
+    """
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        assert raw_select.value == "deny"
+        assert not raw_row.has_class("needs-decision")
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+
+        mcp_select = mcp_row.query_one(".approval-row-decision", Select)
+        assert mcp_select.value == "approve_once"
+        assert raw_select.value == "deny"  # never moved off the deny default
+        assert raw_row.has_class("needs-decision")
+        header_text = _text(raw_row.query_one(".approval-row-header", Static))
+        assert header_text.startswith(NEEDS_DECISION_PREFIX), header_text
+        # An untouched row (here, the MCP row Approve all DID apply to)
+        # must never pick up the prefix.
+        mcp_header_text = _text(mcp_row.query_one(".approval-row-header", Static))
+        assert not mcp_header_text.startswith(NEEDS_DECISION_PREFIX)
+
+
+@pytest.mark.asyncio
+async def test_changing_raw_shell_select_after_approve_all_clears_needs_decision_prefix():
+    """task-32282: once the user gives the flagged raw-shell row its own
+    explicit decision, both the CSS flag and the header text prefix must
+    clear -- exactly as an ordinary narrowed row already does (see
+    ``test_changing_a_flagged_rows_select_clears_needs_decision``)."""
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        raw_row = list(app.query(".approval-row"))[1]
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        header = raw_row.query_one(".approval-row-header", Static)
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert raw_row.has_class("needs-decision")
+        assert _text(header).startswith(NEEDS_DECISION_PREFIX)
+
+        raw_select.post_message(Select.Changed(raw_select, "approve_once"))
+        await pilot.pause()
+
+        assert not raw_row.has_class("needs-decision")
+        assert not _text(header).startswith(NEEDS_DECISION_PREFIX)
+
+
+@pytest.mark.asyncio
+async def test_deny_all_sets_raw_shell_row_to_deny_and_clears_needs_decision_prefix():
+    """task-32282 (c): "Deny all" is legal for a raw-shell row (``deny`` is
+    always one of its options), so it must apply normally -- setting the
+    Select and clearing any stale needs-decision state left by an earlier
+    "Approve all" press."""
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        header = raw_row.query_one(".approval-row-header", Static)
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert raw_row.has_class("needs-decision")
+
+        app.query_one("#approval-deny-all", Button).press()
+        await pilot.pause()
+
+        assert raw_select.value == "deny"
+        assert not raw_row.has_class("needs-decision")
+        assert not _text(header).startswith(NEEDS_DECISION_PREFIX)
+        mcp_select = mcp_row.query_one(".approval-row-decision", Select)
+        assert mcp_select.value == "deny"
+
+
+@pytest.mark.asyncio
 async def test_submit_posts_approval_decided_with_per_row_decisions():
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
@@ -597,6 +832,229 @@ async def test_set_batch_remount_does_not_duplicate_rows():
         rows = list(app.query(".approval-row"))
         assert len(rows) == 1
         assert card._batch_names == ["mcp__srv_a__search"]
+
+
+@pytest.mark.asyncio
+async def test_identical_approval_round_sync_preserves_mounted_controls():
+    """Resume-state sync is idempotent without suppressing real updates."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        calls = _single_call()
+        card.set_batch(
+            calls,
+            timeout_seconds=45.0,
+            round_id="round-stable",
+            phase="approval",
+        )
+        await pilot.pause()
+
+        generation = card._batch_generation
+        select = app.query_one(".approval-row-decision", Select)
+        fast_approve = app.query_one(".approval-row-fast-approve", Button)
+        for _ in range(5):
+            card.set_batch(
+                [dict(calls[0], arguments={"query": "hello"})],
+                timeout_seconds=45.0,
+                round_id="round-stable",
+                phase="approval",
+            )
+        await pilot.pause()
+
+        assert card._batch_generation == generation
+        assert app.query_one(".approval-row-decision", Select) is select
+        assert app.query_one(".approval-row-fast-approve", Button) is fast_approve
+
+        changed_calls = [dict(calls[0], arguments={"query": "changed"})]
+        card.set_batch(
+            changed_calls,
+            timeout_seconds=45.0,
+            round_id="round-stable",
+            phase="approval",
+        )
+        await pilot.pause()
+        assert card._batch_generation == generation + 1
+
+        card.set_batch(
+            changed_calls,
+            timeout_seconds=45.0,
+            round_id="round-stable",
+            phase="finishing",
+        )
+        await pilot.pause()
+        assert card._batch_generation == generation + 2
+
+        card.set_batch(
+            changed_calls,
+            timeout_seconds=45.0,
+            round_id="round-next",
+            phase="approval",
+        )
+        await pilot.pause()
+        assert card._batch_generation == generation + 3
+
+
+@pytest.mark.asyncio
+async def test_changed_ordinary_one_row_reuses_only_noncommitting_widgets():
+    """A new ordinary one-row round updates in place without reusing commit buttons.
+
+    Replacing the row and Select forces Textual to register, style, lay out, and
+    paint the whole subtree again.  The decision controls deliberately remain
+    round-scoped: reusing them would let queued old-round interaction reach the
+    new round.
+    """
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        first = [
+            dict(
+                _single_call()[0],
+                effects=["network"],
+                rationale="Checking the old target",
+            )
+        ]
+        card.set_batch(first, timeout_seconds=45.0, round_id="round-reuse-old")
+        await pilot.pause()
+
+        row = app.query_one(".approval-row")
+        header = row.query_one(".approval-row-header", Static)
+        args = row.query_one(".approval-row-args", Static)
+        select = app.query_one(".approval-row-decision", Select)
+        old_fast_approve = app.query_one(".approval-row-fast-approve", Button)
+        card.set_batch([], timeout_seconds=0, round_id=None)
+        assert card.display is False
+
+        changed = [
+            {
+                "llm_name": "mcp__srv_b__write",
+                "server_key": "local:srv_b",
+                "tool_name": "write",
+                "server_label": "Srv B",
+                "arguments": {"path": "/tmp/new.txt"},
+                "reason": "ask",
+                "options": ["approve_session", "deny"],
+                "effects": ["private_read"],
+                "rationale": "Writing the new target",
+            }
+        ]
+        card.set_batch(changed, timeout_seconds=45.0, round_id="round-reuse-new")
+        await pilot.pause()
+
+        assert app.query_one(".approval-row") is row
+        assert row.query_one(".approval-row-header", Static) is header
+        assert row.query_one(".approval-row-args", Static) is args
+        new_select = app.query_one(".approval-row-decision", Select)
+        assert new_select is not select
+        assert app.query_one(".approval-row-fast-approve", Button) is not (
+            old_fast_approve
+        )
+        assert [value for _label, value in new_select._options] == [
+            "approve_session",
+            "deny",
+        ]
+        assert new_select.value == "approve_session"
+        assert "Srv B · write" in _text(row.query_one(".approval-row-header", Static))
+        assert "/tmp/new.txt" in _text(row.query_one(".approval-row-args", Static))
+        assert "may read private local data" in _text(
+            row.query_one(".approval-row-effects", Static)
+        )
+        context = next(
+            widget
+            for widget in row.query(Static)
+            if (widget.id or "").startswith("approval-context-")
+        )
+        assert "Writing the new target" in _text(context)
+
+        app.query_one(".approval-row-fast-approve", Button).press()
+        await pilot.pause()
+        assert app.decided == [{"mcp__srv_b__write": "approve_once"}]
+        assert app.decided_round_ids == ["round-reuse-new"]
+
+
+@pytest.mark.asyncio
+async def test_queued_old_select_event_cannot_change_the_new_round():
+    """A queued public Select change must remain bound to its old control."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-old")
+        await pilot.pause()
+
+        old_select = app.query_one(".approval-row-decision", Select)
+        old_select.expanded = True
+        # Public value assignment posts Select.Changed asynchronously. Replace
+        # the round before the queued message drains to reproduce the stale-
+        # generation delivery without importing Textual's private overlay.
+        old_select.value = "always_allow"
+        card.set_batch([], timeout_seconds=0, round_id=None)
+        card.set_batch(
+            [
+                {
+                    "llm_name": "mcp__srv_b__write",
+                    "server_key": "local:srv_b",
+                    "tool_name": "write",
+                    "server_label": "Srv B",
+                    "arguments": {"path": "/tmp/new.txt"},
+                    "reason": "ask",
+                    "options": ["approve_once", "always_allow", "deny"],
+                }
+            ],
+            timeout_seconds=45.0,
+            round_id="round-new",
+        )
+
+        await pilot.pause()
+        new_select = app.query_one(".approval-row-decision", Select)
+        assert new_select is not old_select
+        assert new_select.value == "approve_once"
+        assert new_select.expanded is False
+
+
+@pytest.mark.asyncio
+async def test_back_to_back_changed_rounds_leave_only_latest_controls():
+    """Deferred pruning cannot leave an intermediate decision row visible."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-first")
+        await pilot.pause()
+
+        def changed_call(suffix: str) -> list[dict]:
+            return [
+                {
+                    "llm_name": f"mcp__srv__{suffix}",
+                    "server_key": "local:srv",
+                    "tool_name": suffix,
+                    "server_label": "Srv",
+                    "arguments": {"path": f"/tmp/{suffix}.txt"},
+                    "reason": "ask",
+                }
+            ]
+
+        card.set_batch(
+            changed_call("second"),
+            timeout_seconds=45.0,
+            round_id="round-second",
+        )
+        card.set_batch(
+            changed_call("third"),
+            timeout_seconds=45.0,
+            round_id="round-third",
+        )
+        await pilot.pause()
+
+        row = app.query_one(".approval-row")
+        assert len(row.query(".approval-row-controls")) == 1
+        assert len(row.query(".approval-row-decision")) == 1
+        assert len(row.query(".approval-row-fast-approve")) == 1
+        assert len(row.query(".approval-row-fast-deny")) == 1
+        assert "third" in _text(row.query_one(".approval-row-header", Static))
+
+        row.query_one(".approval-row-decision", Select).value = "deny"
+        app.query_one("#approval-submit", Button).press()
+        await pilot.pause()
+        assert app.decided == [{"mcp__srv__third": "deny"}]
+        assert app.decided_round_ids == ["round-third"]
 
 
 # ---------------------------------------------------------------------------
@@ -857,6 +1315,633 @@ async def _show_production_approval_batch(
     raise AssertionError("Production approval batch did not finish rendering")
 
 
+class _ControllerCardsHarness(ConsolidatedCSSApp):
+    """Production task-card hierarchy with the real consolidated stylesheet."""
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.controller: ConsoleChatController | None = None
+
+    def compose(self) -> ComposeResult:
+        yield ChatTaskCards(id="console-task-surface")
+
+    @on(ChatApprovalCard.ApprovalDecided)
+    def _resolve_controller_approval(
+        self, event: ChatApprovalCard.ApprovalDecided
+    ) -> None:
+        if self.controller is not None:
+            self.controller.resolve_pending_approval(
+                event.decisions,
+                round_id=event.round_id,
+            )
+
+
+@pytest.mark.asyncio
+async def test_descriptor_effects_reach_the_mounted_production_approval_card(tmp_path):
+    """A controller-marshaled local descriptor reaches the real card unchanged."""
+    app = _ControllerCardsHarness()
+    assert _BUNDLED_STYLESHEET.resolve() in {
+        path.resolve() for path in app.css_path
+    }
+    async with app.run_test(size=(200, 40)) as pilot:
+        cards = app.query_one(ChatTaskCards)
+        gate = LocalToolProvider(
+            workspace_root=tmp_path,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+        ).pending_gate_for("fs_list", {"effects": ["network"], "path": "."})
+        assert gate is not None
+        call = MCPPendingCall(
+            llm_name=gate.llm_name,
+            server_key=gate.server_key,
+            tool_name=gate.tool_name,
+            server_label=gate.server_label,
+            arguments=gate.arguments,
+            reason=gate.reason,
+            effects=gate.effects,
+        )
+        controller, store = _build_controller()
+        session = store.ensure_session()
+        controller.app = app
+        controller.set_pending_approval = lambda payload: (
+            cards.sync_state(TaskResumeState(pending_approval=payload))
+            if payload is not None
+            else None
+        )
+        controller.park_pending_approval = lambda _session_id: None
+
+        pending = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_mcp_approvals, [call], session_id=session.id
+            )
+        )
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            card = cards.query_one(ChatApprovalCard)
+            effects = card.query(".approval-row-effects")
+            if card.display and len(effects) == 1:
+                break
+            await pilot.pause(0.05)
+        else:
+            controller.begin_shutdown()
+            await pending
+            raise AssertionError("Production approval card did not render effects")
+
+        assert _text(effects.first()) == "Effects: may read private local data"
+        assert "network" not in _text(effects.first())
+        controller.resolve_pending_approval(
+            {call.llm_name: "deny"}, round_id=card._batch_round_id
+        )
+        assert await pending == {call.llm_name: "deny"}
+
+
+@pytest.mark.parametrize("crash_after_release", [False, True], ids=("success", "crash"))
+@pytest.mark.asyncio
+async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
+    tmp_path, crash_after_release
+):
+    """Approval becomes a disabled finishing card until the keyed terminal.
+
+    This uses the production task-card hierarchy, a real local descriptor,
+    the real review bridge, and ``AgentService._make_invoke_tool``.  The
+    handler is event-blocked so the assertion cannot race a fast mutation;
+    the crash case proves the same terminal cleanup runs for ``BaseException``.
+    """
+    from tldw_chatbook.Agents.agent_models import (
+        AgentConfig,
+        RunBudget,
+        ToolCall,
+        ToolResult,
+    )
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
+    from tldw_chatbook.Tools.watchlists_command_service import (
+        WatchlistsCommandService,
+    )
+
+    app = _ControllerCardsHarness()
+    entered = threading.Event()
+    release = threading.Event()
+    result_box: dict[str, ToolResult] = {}
+    subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    bundles = WatchlistBundleService(subscriptions)
+
+    def blocked_create(**kwargs):
+        entered.set()
+        if not release.wait(5):
+            raise AssertionError("test never released definitive handler")
+        if crash_after_release:
+            raise SystemExit("secret definitive crash detail")
+        return bundles.create_with_sources(**kwargs)
+
+    def unavailable(*_args, **_kwargs):
+        return None
+
+    commands = WatchlistsCommandService(
+        runtime_source_loader=lambda: "local",
+        create_sources_batch=unavailable,
+        create_collection=blocked_create,
+        update_collection_sources=unavailable,
+    )
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        watchlists_command_service=commands,
+        resolve_state=lambda _hub: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    run_id = "run-definitive-card"
+    call = ToolCall(
+        name="watchlists_create_collection",
+        args={"name": "Threat intel", "if_exists": "auto_suffix"},
+        call_id="call-definitive-card",
+    )
+
+    async with app.run_test(size=(200, 40)) as pilot:
+        cards = app.query_one(ChatTaskCards)
+        app.controller = controller
+        controller.app = app
+        controller.set_pending_approval = lambda payload: cards.sync_state(
+            TaskResumeState(pending_approval=payload)
+        )
+        controller.park_pending_approval = lambda _session_id: None
+        controller.mcp_approval_timeout_seconds = lambda: 30.0
+        review = build_local_review_hook(
+            provider,
+            lambda pending: controller.request_mcp_approvals(
+                pending, session_id=session.id
+            ),
+        )
+        service = AgentService(
+            db=AgentRunsDB(tmp_path / "runs.db", "test"),
+            registry=registry,
+            chat_call=lambda **_kwargs: {"choices": [{"message": {"content": "x"}}]},
+            on_tool_terminal=controller.complete_definitive_tool,
+            on_run_terminal=controller.complete_definitive_run,
+        )
+        invoke = service._make_invoke_tool(
+            AgentConfig(
+                model="test",
+                system_prompt="s",
+                allowed_tools=(call.name,),
+                budget=RunBudget(max_tool_call_seconds=0.001),
+            ),
+            disclosed_names={call.name},
+            run_id=run_id,
+        )
+
+        def run_tool() -> None:
+            with use_run_id(run_id):
+                verdicts = review([call], run_id)
+                assert verdicts.get(call.name) == "proceed"
+                result_box["result"] = invoke(call)
+
+        worker = threading.Thread(target=run_tool)
+        worker.start()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            card = cards.query_one(ChatApprovalCard)
+            fast = list(card.query(".approval-row-fast-approve"))
+            if card.display and fast:
+                break
+            await pilot.pause(0.05)
+        else:
+            controller.begin_shutdown()
+            worker.join(2)
+            raise AssertionError("approval card did not mount")
+
+        await pilot.click(f"#{fast[0].id}")
+        assert entered.wait(2), "approved handler never started"
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if _text(card.query_one("#approval-title", Static)).startswith(
+                "Finishing"
+            ):
+                break
+            await pilot.pause(0.05)
+        else:
+            release.set()
+            await asyncio.to_thread(worker.join, 2)
+            raise AssertionError("approval card never entered finishing state")
+
+        assert _text(card.query_one("#approval-title", Static)) == (
+            "Finishing — Stop will not cancel"
+        )
+        assert card.display is True
+        assert all(select.disabled for select in card.query(Select))
+        assert all(button.disabled for button in card.query(Button))
+        assert worker.is_alive(), "runtime returned before the real tool terminal"
+
+        release.set()
+        await asyncio.to_thread(worker.join, 3)
+        assert not worker.is_alive()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and card.display:
+            await pilot.pause(0.05)
+        assert card.display is False
+
+    result = result_box["result"]
+    if crash_after_release:
+        assert result.ok is False
+        assert result.error == "tool call failed: watchlists_create_collection"
+        assert "secret" not in result.error
+        assert bundles.list_watchlists() == []
+    else:
+        assert result.ok is True
+        assert [row["name"] for row in bundles.list_watchlists()] == ["Threat intel"]
+
+
+@pytest.mark.parametrize(
+    "failure_type",
+    [SystemExit, asyncio.CancelledError],
+    ids=("system-exit", "cancelled-error"),
+)
+def test_run_terminal_sweeps_approved_undispatched_row_after_base_exception(
+    tmp_path, monkeypatch, failure_type
+):
+    """The loop terminal observer runs once even when control flow escapes."""
+    import tldw_chatbook.Agents.agent_service as agent_service_module
+    from tldw_chatbook.Agents.agent_models import AgentConfig
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import (
+        ToolCatalogRegistry,
+        ToolExecutionPolicy,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    received: list[dict | None] = []
+    terminal_calls: list[str] = []
+    run_id = f"run-base-exception-{failure_type.__name__}"
+    call = MCPPendingCall(
+        llm_name="watchlists_create_collection",
+        server_key="local:__local__",
+        tool_name="watchlists_create_collection",
+        server_label="Local",
+        arguments={"name": "Threat intel", "if_exists": "auto_suffix"},
+        reason="ask",
+        call_id="call-never-dispatched",
+        execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+    controller.app = _FakeApp()
+    controller.mcp_approval_timeout_seconds = lambda: 2.0
+    controller.set_pending_approval = received.append
+
+    decision_box: dict[str, dict[str, str]] = {}
+
+    def request_approval() -> None:
+        with use_run_id(run_id):
+            decision_box["decisions"] = controller.request_mcp_approvals(
+                [call], session_id=session.id
+            )
+
+    approval_worker = threading.Thread(target=request_approval, daemon=True)
+    approval_worker.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not received:
+        time.sleep(0.01)
+    assert received, "approved-but-undispatched row never mounted"
+    payload = received[-1]
+    assert payload is not None
+    controller.resolve_pending_approval(
+        {call.call_id: "approve_once"}, round_id=str(payload["round_id"])
+    )
+    approval_worker.join(2)
+    assert not approval_worker.is_alive()
+    assert decision_box["decisions"] == {call.call_id: "approve_once"}
+    retained = received[-1]
+    assert retained is not None
+    assert retained["phase"] == "finishing"
+    assert retained["run_id"] == run_id
+
+    def fail_after_approval(*_args, **_kwargs):
+        assert current_run_id() == run_id
+        raise failure_type("loop terminal")
+
+    monkeypatch.setattr(agent_service_module, "run_agent_loop", fail_after_approval)
+
+    def observe_terminal(run_id: str) -> None:
+        terminal_calls.append(run_id)
+        controller.complete_definitive_run(run_id)
+
+    runs = AgentRunsDB(tmp_path / "base-exception-runs.db", "test")
+    runs.create_run(
+        conversation_id="conversation",
+        agent_kind="primary",
+        run_id=run_id,
+    )
+    monkeypatch.setattr(runs, "create_run", lambda **_kwargs: run_id)
+    service = AgentService(
+        db=runs,
+        registry=ToolCatalogRegistry(),
+        chat_call=lambda **_kwargs: {"choices": [{"message": {"content": "x"}}]},
+        on_run_terminal=observe_terminal,
+    )
+    with pytest.raises(failure_type):
+        service.run_turn(
+            conversation_id="conversation",
+            messages=[{"role": "user", "content": "go"}],
+            config=AgentConfig(
+                model="test", system_prompt="s", allowed_tools=()
+            ),
+            api_endpoint="openai",
+        )
+
+    assert terminal_calls == [run_id]
+    assert received[-1] is None
+    assert controller._parked_approval_payloads == {}
+
+
+def test_local_same_name_finishing_rows_complete_by_call_id_out_of_order(tmp_path):
+    """Two approved local mutations remain independently addressable."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda _hub: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+    )
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    received: list[dict | None] = []
+    result_box: dict[str, dict[str, str]] = {}
+    run_id = "run-local-same-name"
+    calls = [
+        ToolCall(
+            name="watchlists_create_collection",
+            args={"name": "First", "if_exists": "conflict"},
+            call_id="call-first",
+        ),
+        ToolCall(
+            name="watchlists_create_collection",
+            args={"name": "Second", "if_exists": "conflict"},
+            call_id="call-second",
+        ),
+    ]
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 2.0
+    hook = build_local_review_hook(
+        provider,
+        lambda pending: controller.request_mcp_approvals(
+            pending, session_id=session.id
+        ),
+    )
+
+    def review() -> None:
+        with use_run_id(run_id):
+            result_box["verdicts"] = hook(calls, run_id)
+
+    worker = threading.Thread(target=review, daemon=True)
+    worker.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not received:
+        time.sleep(0.01)
+    assert received, "same-name local approval batch never mounted"
+    payload = received[-1]
+    assert payload is not None
+    payload_calls = list(payload["calls"])
+    decisions = {
+        str(row.get("call_id") or row["llm_name"]): "approve_once"
+        for row in payload_calls
+    }
+    controller.resolve_pending_approval(
+        decisions, round_id=str(payload["round_id"])
+    )
+    worker.join(2)
+    assert not worker.is_alive()
+
+    finishing = received[-1]
+    assert finishing is not None
+    assert finishing["phase"] == "finishing"
+    assert [row["call_id"] for row in finishing["calls"]] == [
+        "call-first",
+        "call-second",
+    ]
+
+    controller.complete_definitive_tool(
+        run_id, "call-second", "watchlists_create_collection"
+    )
+    remaining = received[-1]
+    assert remaining is not None
+    assert [row["call_id"] for row in remaining["calls"]] == ["call-first"]
+
+    controller.complete_definitive_tool(
+        run_id, "call-first", "watchlists_create_collection"
+    )
+    assert received[-1] is None
+
+
+def test_definitive_tool_terminal_falls_back_to_name_for_empty_call_id():
+    """A fence/legacy terminal removes one no-id row and keeps its sibling."""
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    run_id = "run-no-call-id"
+    tool_name = "watchlists_create_collection"
+    target = {"llm_name": tool_name, "call_id": ""}
+    sibling = {"llm_name": tool_name, "call_id": "call-sibling"}
+    controller._parked_approval_payloads["round-no-call-id"] = {
+        "round_id": "round-no-call-id",
+        "session_id": session.id,
+        "run_id": run_id,
+        "phase": "finishing",
+        "calls": [target, sibling],
+    }
+
+    controller.complete_definitive_tool(run_id, tool_name, tool_name)
+
+    retained = controller._parked_approval_payloads["round-no-call-id"]
+    assert retained["calls"] == [sibling]
+
+
+@pytest.mark.asyncio
+async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
+    """Finishing is status, not a pending decision or disabled focus target."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _single_call(),
+                        "timeout_seconds": 0.0,
+                        "round_id": "round-finishing-focus",
+                        "phase": "finishing",
+                    }
+                )
+            )
+            await pilot.pause()
+            card = screen.query_one(ChatApprovalCard)
+
+            assert card.display is True
+            assert screen._console_pending_approval_count() == 0
+            assert all(select.disabled for select in card.query(Select))
+
+            card.focus_first_decision()
+            await pilot.pause()
+
+            assert card.can_focus is True
+            assert app.focused is card
+
+
+# ---------------------------------------------------------------------------
+# task-32277: Alt+A keyboard route to the approval card.
+# ---------------------------------------------------------------------------
+
+
+def test_console_binds_alt_a_to_review_pending_approval():
+    """The binding exists, is advertised, and its action is implemented.
+
+    Mirrors the equivalent binding-registration check for the trajectory
+    launch key, `test_console_binds_single_letter_trajectory_launch`
+    (`Tests/UI/test_trajectory_live.py`).
+    """
+    bindings = {binding.key: binding for binding in ChatScreen.BINDINGS}
+    binding = bindings.get("alt+a")
+    assert binding is not None
+    assert binding.action == "review_pending_approval"
+    assert binding.show is True
+    assert hasattr(ChatScreen, "action_review_pending_approval")
+    # TASK-24604's precedent: the footer legend is the only place an
+    # accelerator with no menu/button equivalent is discoverable at all.
+    assert ("Alt+A", "approval") in CONSOLE_WORKBENCH_SHORTCUTS
+
+
+@pytest.mark.asyncio
+async def test_alt_a_focuses_the_pending_approval_decision_select():
+    """With a batch pending, Alt+A lands focus on the row's decision
+    Select -- never Submit (`ChatApprovalCard.focus_first_decision`'s own
+    contract)."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _single_call(),
+                        "timeout_seconds": 45.0,
+                        "round_id": "round-alt-a-focus",
+                    }
+                )
+            )
+            await pilot.pause()
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert isinstance(app.focused, Select)
+            assert "approval-row-decision" in app.focused.classes
+
+
+@pytest.mark.asyncio
+async def test_alt_a_notifies_when_nothing_is_pending():
+    """With nothing pending, Alt+A notifies rather than focusing anything --
+    same fallback message as the inspector's Review approval button
+    (`CONSOLE_INSPECTOR_NO_APPROVAL_REASON`)."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications
+
+
+@pytest.mark.asyncio
+async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
+    """AC#3: the route works at 80 columns with the inspector closed."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(80, 24)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            # TASK-24604's own docstring: the Inspect rail ships CLOSED.
+            # Same accessor `action_toggle_console_inspector_rail` itself
+            # checks -- a hidden ancestor doesn't necessarily flip a
+            # descendant's own `.display` attribute.
+            assert not screen._is_console_widget_displayed("console-right-rail")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _single_call(),
+                        "timeout_seconds": 45.0,
+                        "round_id": "round-alt-a-80col",
+                    }
+                )
+            )
+            await pilot.pause()
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert isinstance(app.focused, Select)
+            assert "approval-row-decision" in app.focused.classes
+
+
 @pytest.mark.asyncio
 async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
     """Without an explicit width, `_conversations.tcss`'s bare `Select {
@@ -876,7 +1961,9 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
     a few rows of the last row's bottom), matching the audit-mode geometry
     tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
     app = _build_test_app()
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash):
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
         async with app.run_test(size=(200, 40)) as pilot:
             card = await _show_production_approval_batch(app, pilot, _sample_calls())
 
@@ -903,8 +1990,12 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
                     f"decision Select width {select.size.width} claimed the "
                     f"entire row width {row.size.width} under bundled CSS"
                 )
-                assert select.size.width == 26, (
-                    f"decision Select width {select.size.width} != pinned 26"
+                # task-32278: 27 = the 19-cell longest label ("Always · these
+                # args") + 8 cells of Textual Select chrome. The closed Select
+                # does not ellipsize -- it WRAPS and grows -- so this number
+                # and `_DECISION_OPTIONS` move together.
+                assert select.size.width == 27, (
+                    f"decision Select width {select.size.width} != pinned 27"
                 )
                 # TASK-1846: the row is three stacked lines now -- header,
                 # arguments, then `.approval-row-controls` -- so neither text
@@ -942,7 +2033,11 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
                 # arguments moved to their own, and a collapsed `xN` row may
                 # legitimately render several argument sets. A row that has
                 # lost `height: auto` balloons to 15, so this still catches it.
-                assert row.size.height <= 6, (
+                # task-32278: 6 -> 8. Every row gained the scope line under
+                # its controls, and the `config_changed` row in
+                # `_sample_calls` gained the reason line that used to be a
+                # header tooltip.
+                assert row.size.height <= 8, (
                     f"approval row ballooned to height {row.size.height} under "
                     "bundled CSS -- height: auto; min-height: 1; is not winning"
                 )
@@ -953,13 +2048,15 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
             # #approval-batch-actions bar far down. Empirically measured before
             # this fix: container ballooning to height 19, actions pushed to y=20.
             batch_rows = card.query_one("#approval-batch-rows")
-            # TASK-1846: per-row budget 3 -> 6 (a row is two lines now and a
-            # collapsed row may carry several argument sets). Still catches a
-            # balloon: the container is capped at 15, so two ballooned rows
-            # clamp to 15 and blow this bound.
-            assert batch_rows.size.height <= len(rows) * 6 + 2, (
+            # task-32278: this was a per-row CONSTANT (3, then 6), which had
+            # to be re-bumped every time a row gained a line -- and each bump
+            # loosened it. Bounded by the rows' ACTUAL heights instead: the
+            # bug it guards is the container claiming space its rows do not
+            # need, which this states directly and needs no future bumping.
+            assert batch_rows.size.height <= sum(r.size.height for r in rows) + 2, (
                 f"approval-batch-rows container ballooned to height "
-                f"{batch_rows.size.height} (with {len(rows)} rows) under bundled CSS "
+                f"{batch_rows.size.height} over {len(rows)} rows totalling "
+                f"{sum(r.size.height for r in rows)} under bundled CSS "
                 "-- height: auto; min-height: 0; is not winning"
             )
 
@@ -991,7 +2088,9 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
     The production Console is allowed to mount and settle before the pending
     approval state is delivered, matching the real worker-to-UI round trip."""
     app = _build_test_app()
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash):
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
         async with app.run_test(size=(200, 40)) as pilot:
             card = await _show_production_approval_batch(app, pilot, _single_call())
 
@@ -1024,8 +2123,9 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
 
             # Compact row (same discipline as the sibling test). TASK-1846
             # made it two lines -- headline + full-width arguments -- so the
-            # bound moves 4 -> 6; a row that lost `height: auto` is 15.
-            assert row.size.height <= 6, (
+            # bound moves 4 -> 6; task-32278's scope line makes it 7. A row
+            # that lost `height: auto` is 15.
+            assert row.size.height <= 7, (
                 f"single-row approval row ballooned to height {row.size.height} "
                 "under bundled CSS"
             )
@@ -1041,7 +2141,7 @@ def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bun
     Defect-1 Select-width lesson as `#mcp-tools-filter-server-slot Select`
     / `#mcp-audit-filter-decision` above, applied to the approval card."""
     _assert_rule_pinned_in_bundle_source_and_bundle(
-        ".approval-row-decision {", ("width: 26;",)
+        ".approval-row-decision {", ("width: 27;",)
     )
 
 
@@ -1082,6 +2182,7 @@ def _pending(
     server_label: str = "Srv",
     reason: str = "ask",
     arguments: dict | None = None,
+    call_id: str = "",
 ) -> MCPPendingCall:
     return MCPPendingCall(
         llm_name=llm_name,
@@ -1090,14 +2191,21 @@ def _pending(
         server_label=server_label,
         arguments=arguments or {"a": 1},
         reason=reason,
+        call_id=call_id,
     )
 
 
 class _FakeApp:
     """`call_from_thread` stand-in: invokes the callback immediately."""
 
+    def __init__(self) -> None:
+        self.notifications: list[str] = []
+
     def call_from_thread(self, fn, *args, **kwargs):
         return fn(*args, **kwargs)
+
+    def notify(self, message, **_kwargs) -> None:
+        self.notifications.append(str(message))
 
 
 def _build_controller() -> tuple[ConsoleChatController, ConsoleChatStore]:
@@ -1169,6 +2277,134 @@ def test_request_mcp_approvals_routes_one_decision_to_duplicate_names():
     assert decisions == {"mcp__srv__tool": "always_allow"}
 
 
+def test_request_mcp_approvals_preserves_native_call_ids_as_verdict_keys():
+    """Two same-tool native calls remain independently addressable."""
+    controller, _ = _build_controller()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    pending = [
+        _pending(call_id="call-a", arguments={"path": "a.txt"}),
+        _pending(call_id="call-b", arguments={"path": "b.txt"}),
+    ]
+
+    def _resolve_soon() -> None:
+        time.sleep(0.05)
+        payload = received[-1]
+        assert payload is not None
+        assert [call["call_id"] for call in payload["calls"]] == [
+            "call-a",
+            "call-b",
+        ]
+        controller.resolve_pending_approval(
+            {"call-a": "approve_once", "call-b": "deny"},
+            round_id=payload["round_id"],
+        )
+
+    threading.Thread(target=_resolve_soon).start()
+    decisions = controller.request_mcp_approvals(pending)
+
+    assert decisions == {"call-a": "approve_once", "call-b": "deny"}
+
+
+def test_run_terminal_clears_approved_definitive_row_never_dispatched():
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    call = MCPPendingCall(
+        llm_name="watchlists_create_collection",
+        server_key="local:__local__",
+        tool_name="watchlists_create_collection",
+        server_label="Local",
+        arguments={"name": "Threat intel"},
+        reason="ask",
+        execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+    result_box: dict[str, dict[str, str]] = {}
+
+    def request() -> None:
+        with use_run_id("run-never-dispatched"):
+            result_box["decisions"] = controller.request_mcp_approvals(
+                [call], session_id=session.id
+            )
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not received:
+        time.sleep(0.01)
+    payload = received[-1]
+    assert payload is not None
+    controller.resolve_pending_approval(
+        {call.llm_name: "approve_once"}, round_id=payload["round_id"]
+    )
+    worker.join(2)
+
+    assert result_box["decisions"] == {call.llm_name: "approve_once"}
+    assert received[-1] is not None
+    assert received[-1]["phase"] == "finishing"
+
+    controller.complete_definitive_run("run-never-dispatched")
+
+    assert received[-1] is None
+    assert controller._parked_approval_payloads == {}
+
+
+@pytest.mark.parametrize("retained_phase", ["approval", "finishing"])
+def test_close_session_discards_its_approved_definitive_row(retained_phase):
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    call = MCPPendingCall(
+        llm_name="watchlists_create_collection",
+        server_key="local:__local__",
+        tool_name="watchlists_create_collection",
+        server_label="Local",
+        arguments={"name": "Threat intel"},
+        reason="ask",
+        execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+
+    def request() -> None:
+        with use_run_id("run-session-close"):
+            controller.request_mcp_approvals([call], session_id=session.id)
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not received:
+        time.sleep(0.01)
+    payload = received[-1]
+    assert payload is not None
+    controller.resolve_pending_approval(
+        {call.llm_name: "approve_once"}, round_id=payload["round_id"]
+    )
+    worker.join(2)
+    assert received[-1] is not None
+    assert received[-1]["phase"] == "finishing"
+    # ``approval`` represents close winning the lock immediately before the
+    # request thread can publish its finishing transition.
+    received[-1]["phase"] = retained_phase
+
+    from Tests.Chat.console_close_helpers import close_controller_session
+
+    close_controller_session(controller, session.id)
+
+    assert received[-1] is None
+    assert controller._parked_approval_payloads == {}
+
+
 def test_request_mcp_approvals_timeout_denies_with_timeout_for_all_undecided():
     controller, _ = _build_controller()
     received: list[dict | None] = []
@@ -1204,14 +2440,18 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
-    def _cancel_soon() -> None:
-        time.sleep(0.05)
-        controller.begin_shutdown()
-
-    canceller = threading.Thread(target=_cancel_soon)
-    canceller.start()
-    decisions = controller.request_mcp_approvals([_pending()])
-    canceller.join()
+    result = {}
+    worker = threading.Thread(
+        target=lambda: result.update(
+            decisions=controller.request_mcp_approvals([_pending()])
+        )
+    )
+    worker.start()
+    assert _wait_until(lambda: bool(controller._pending_approval_rounds))
+    controller.begin_shutdown()  # Queue mutation stays on its owning UI thread.
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    decisions = result["decisions"]
 
     assert decisions == {"mcp__srv__tool": "deny"}
     assert received[-1] is None
@@ -1332,22 +2572,26 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     )
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
-    def _cancel_soon() -> None:
-        time.sleep(0.05)
-        controller.begin_shutdown()
+    result = {}
 
-    canceller = threading.Thread(target=_cancel_soon)
-    canceller.start()
-    decisions = controller.request_mcp_approvals(
-        [
-            _pending(
-                server_key="local:docs",
-                tool_name="search",
-                llm_name="mcp__docs__search",
-            )
-        ]
-    )
-    canceller.join()
+    def request() -> None:
+        result["decisions"] = controller.request_mcp_approvals(
+            [
+                _pending(
+                    server_key="local:docs",
+                    tool_name="search",
+                    llm_name="mcp__docs__search",
+                )
+            ]
+        )
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    assert _wait_until(lambda: bool(controller._pending_approval_rounds))
+    controller.begin_shutdown()  # Queue mutation stays on its owning UI thread.
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    decisions = result["decisions"]
 
     assert decisions == {"mcp__docs__search": "deny"}
 
@@ -1356,7 +2600,12 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     assert records, "the stop-mid-approval path left no audit record at all"
     assert records[0]["server_key"] == "local:docs"
     assert records[0]["tool_name"] == "search"
-    assert records[0]["decision"] == "denied"
+    # task-32280 fix round: the turn was stopped WHILE the card was up, so
+    # nobody answered it. The bare "denied" Audit now renders as "Denied by
+    # you" claimed a decision the user never got to make; the category the
+    # row already carried (`approval_cancelled`) is unchanged, so the
+    # precise mechanism survives the retarget.
+    assert records[0]["decision"] == "denied-unresolved"
     assert records[0]["ok"] is False
     assert records[0]["error_category"] == "approval_cancelled"
     assert "error" not in records[0]
@@ -1434,18 +2683,20 @@ def test_request_mcp_approvals_parks_for_a_non_active_session():
     """PA-T9: a round whose `session_id` differs from the store's ACTIVE
     session parks -- no card mount (`set_pending_approval` never called
     with a real payload), the run-marker pending flag flips, and
-    `park_pending_approval` fires exactly once. Visiting (switching to)
-    the owning session later mounts the SAME retained payload and lets it
-    resolve normally."""
+    one app-owned sanitized notice is emitted. The retired screen parking
+    hook is never used. Visiting the owning session later mounts the SAME
+    retained payload and lets it resolve normally."""
     controller, store = _build_controller()
     viewed = store.create_session(title="Viewed").id
     background = store.create_session(title="Background").id
     store.switch_session(viewed)  # keep viewing the first session
-    controller.app = _FakeApp()
+    app = _FakeApp()
+    controller.app = app
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
-    parked: list[str] = []
-    controller.park_pending_approval = parked.append
+    controller.park_pending_approval = lambda _session_id: pytest.fail(
+        "background decisions must not use the legacy screen notice hook"
+    )
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
     result_holder: dict[str, dict[str, str]] = {}
@@ -1457,9 +2708,12 @@ def test_request_mcp_approvals_parks_for_a_non_active_session():
 
     worker = threading.Thread(target=_run_round)
     worker.start()
-    time.sleep(0.1)
+    assert _wait_until(lambda: bool(app.notifications))
 
-    assert parked == [background]
+    assert app.notifications == [
+        "A Console session needs approval to use a tool. "
+        "Return to Console to respond."
+    ]
     assert mounted == []  # never mounted -- the active session's card is untouched
     assert background in controller._pending_approvals
     assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
@@ -1562,9 +2816,7 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     # The MCP bridge's OWN payload map is cleared (it was the last MCP
     # round for this session).
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, background
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, background)
         is None
     )
 
@@ -1600,19 +2852,44 @@ def test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_ro
     # the no-app path.
     controller.app = _FakeApp()
     controller.set_pending_approval = lambda payload: None
-    # A short deadline: if A's cancel event wrongly denied this round, the
-    # cancellation branch would fire first (`_record_cancelled_approval_
-    # decisions` aside) -- observing "timeout" instead of "deny" proves the
-    # cancellation branch never triggered.
-    controller.mcp_approval_timeout_seconds = lambda: 0.05
+    controller.mcp_approval_timeout_seconds = lambda: 60.0
 
     a_cancel_event = threading.Event()
     a_cancel_event.set()
     controller._active_cancel_events[session_a] = a_cancel_event
 
-    decisions = controller.request_mcp_approvals([_pending()], session_id=session_b)
+    cancel_checked = threading.Event()
+    original_is_cancelled = controller._is_session_cancelled
 
-    assert decisions == {"mcp__srv__tool": "timeout"}
+    def _checked_is_cancelled(*args, **kwargs):
+        result = original_is_cancelled(*args, **kwargs)
+        cancel_checked.set()
+        return result
+
+    controller._is_session_cancelled = _checked_is_cancelled
+    result: dict[str, dict[str, str]] = {}
+
+    def _request() -> None:
+        result["decisions"] = controller.request_mcp_approvals(
+            [_pending()], session_id=session_b
+        )
+
+    worker = threading.Thread(target=_request, daemon=True)
+    worker.start()
+    assert cancel_checked.wait(timeout=2), "the owning-session cancel check never ran"
+    assert worker.is_alive(), "session A's cancel event settled session B's round"
+    round_id = next(
+        round_id
+        for round_id, state in controller._pending_approval_rounds.items()
+        if state.get("session_id") == session_b
+    )
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "deny"}, round_id=round_id
+    )
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert result["decisions"] == {"mcp__srv__tool": "deny"}
 
 
 def test_request_mcp_approvals_own_session_cancel_event_denies_the_round():
@@ -1701,9 +2978,7 @@ def test_resolve_pending_approval_by_round_id_survives_a_mid_flight_session_swit
 
     # Clean up B's still-waiting round rather than leaving a live thread
     # blocked for the rest of its 30s timeout.
-    controller.resolve_pending_approval(
-        {"mcp__b__tool": "deny"}, round_id=round_id_b
-    )
+    controller.resolve_pending_approval({"mcp__b__tool": "deny"}, round_id=round_id_b)
     worker_b.join(timeout=2.0)
     assert result_b["decisions"] == {"mcp__b__tool": "deny"}
 
@@ -1772,26 +3047,24 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     round_id_2 = _other_round_id(controller, session_a, round_id_1)
     assert round_id_2 != round_id_1
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )["round_id"]
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)[
+            "round_id"
+        ]
         == round_id_1
     ), "arming round 2 must not evict round 1's card"
 
     # Round 1 (the EARLIER, now-superseded round) resolves first -- its
     # teardown must not discard round 2's still-armed, newer payload, nor
     # clear the badge.
-    controller.resolve_pending_approval(
-        {"mcp__one__tool": "deny"}, round_id=round_id_1
-    )
+    controller.resolve_pending_approval({"mcp__one__tool": "deny"}, round_id=round_id_1)
     worker_1.join(timeout=2.0)
     assert result_1["decisions"] == {"mcp__one__tool": "deny"}
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
     assert session_a in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )["round_id"]
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)[
+            "round_id"
+        ]
         == round_id_2
     ), "round 1 resolving must promote round 2, not discard it"
 
@@ -1804,9 +3077,7 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)
         is None
     )
 
@@ -1897,17 +3168,13 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     # Round 1 (the OLDER round) remains fully decidable through the UI
     # the whole time round 2 was resolving -- resolving it now by its OWN
     # `round_id` must still work correctly.
-    controller.resolve_pending_approval(
-        {"mcp__one__tool": "deny"}, round_id=round_id_1
-    )
+    controller.resolve_pending_approval({"mcp__one__tool": "deny"}, round_id=round_id_1)
     worker_1.join(timeout=2.0)
     assert result_1["decisions"] == {"mcp__one__tool": "deny"}
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)
         is None
     )
     # Round 1 (now the LAST remaining round) resolving DOES clear the card.
@@ -1928,12 +3195,9 @@ class _DeferredClearApp:
     clear closures until a test explicitly releases them, while every
     OTHER `call_from_thread` use (mount, park) still runs immediately.
 
-    The clear closures built by `_clear_pending_approval_if_round_is_
-    current` (and its skill-install/skill-script mirrors) are always
-    invoked with zero positional/keyword args -- every other
-    `call_from_thread` call in these bridges carries a positional
-    payload/session_id -- so that shape is what identifies "this is a
-    teardown clear" without needing any bridge-specific hook.
+    Defer the exact `_remount_head` closure. Retained-decision projection
+    also marshals a zero-argument callable before teardown accounting,
+    so argument count no longer identifies this race seam.
     """
 
     def __init__(self) -> None:
@@ -1941,7 +3205,7 @@ class _DeferredClearApp:
         self.release_clear = threading.Event()
 
     def call_from_thread(self, fn, *args, **kwargs):
-        if not args and not kwargs:
+        if fn.__qualname__.endswith("remount_head.<locals>._apply"):
             self.clear_enqueued.set()
             self.release_clear.wait(timeout=5)
             return fn()
@@ -1995,9 +3259,7 @@ def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_t
     # Resolve round 1 -- its teardown runs its accounting cleanup (badge
     # discard, own payload-map pop) synchronously, then reaches its clear
     # call and BLOCKS there, before the clear itself ever runs.
-    controller.resolve_pending_approval(
-        {"mcp__one__tool": "deny"}, round_id=round_id_1
-    )
+    controller.resolve_pending_approval({"mcp__one__tool": "deny"}, round_id=round_id_1)
     assert app.clear_enqueued.wait(timeout=5), (
         "round 1's teardown never reached its clear call"
     )
@@ -2006,9 +3268,7 @@ def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_t
     # has run yet.
     assert session_a not in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)
         is None
     )
 
@@ -2056,9 +3316,7 @@ def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_t
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)
         is None
     )
     assert mounted[-1] is None
@@ -2077,33 +3335,52 @@ def test_resolve_pending_approval_ignores_a_stale_or_unknown_round_id():
 
 def test_resolve_pending_approval_stale_round_id_never_resolves_a_newer_round_for_the_same_session():
     """Mirrors `resolve_pending_skill_script`'s identical defended scenario:
-    round 1 for session A times out (its round_id is popped), round 2 arms
+    round 1 for session A settles (its round_id is popped), round 2 arms
     for the SAME session immediately after -- a late decision carrying
     round 1's now-stale id must never resolve round 2."""
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     controller.app = _FakeApp()
     mounted: list[dict | None] = []
-    controller.set_pending_approval = mounted.append
-    controller.mcp_approval_timeout_seconds = lambda: 0.05
+    projected = threading.Event()
 
-    round_1_decisions = controller.request_mcp_approvals(
-        [_pending(llm_name="mcp__srv__tool")], session_id=session_a
-    )
-    assert round_1_decisions == {"mcp__srv__tool": "timeout"}
-    stale_round_id = mounted[0]["round_id"]
+    def _mount(payload: dict | None) -> None:
+        mounted.append(payload)
+        if payload is not None:
+            projected.set()
 
+    controller.set_pending_approval = _mount
     controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    result_1: dict[str, dict[str, str]] = {}
+
+    def _run_round_1() -> None:
+        result_1["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__srv__tool")], session_id=session_a
+        )
+
+    first = threading.Thread(target=_run_round_1, daemon=True)
+    first.start()
+    assert projected.wait(timeout=2), "round 1 never mounted"
+    stale_round_id = mounted[-1]["round_id"]
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "deny"}, round_id=stale_round_id
+    )
+    first.join(timeout=2)
+    assert not first.is_alive()
+    assert result_1["decisions"] == {"mcp__srv__tool": "deny"}
+
     result_2: dict[str, dict[str, str]] = {}
+    projected.clear()
 
     def _run_round_2() -> None:
         result_2["decisions"] = controller.request_mcp_approvals(
             [_pending(llm_name="mcp__srv__tool")], session_id=session_a
         )
 
-    worker = threading.Thread(target=_run_round_2)
+    worker = threading.Thread(target=_run_round_2, daemon=True)
     worker.start()
-    time.sleep(0.1)
+    assert projected.wait(timeout=2), "round 2 never mounted"
     round_2_id = mounted[-1]["round_id"]
     assert round_2_id != stale_round_id
 
@@ -2111,13 +3388,15 @@ def test_resolve_pending_approval_stale_round_id_never_resolves_a_newer_round_fo
     controller.resolve_pending_approval(
         {"mcp__srv__tool": "deny"}, round_id=stale_round_id
     )
-    time.sleep(0.1)
     assert "decisions" not in result_2
+    assert worker.is_alive()
 
     # Round 2 still resolves normally via its OWN id.
     controller.resolve_pending_approval(
         {"mcp__srv__tool": "approve_once"}, round_id=round_2_id
     )
+    worker.join(timeout=2)
+    assert not worker.is_alive()
     worker.join(timeout=2.0)
     assert result_2["decisions"] == {"mcp__srv__tool": "approve_once"}
 
@@ -2223,6 +3502,7 @@ def test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names():
 @pytest.fixture
 def mock_chat_host():
     host = Mock()
+    host.chachanotes_db = None
     host.app_config = {
         "chat_defaults": {
             "provider": "openai",
@@ -2405,8 +3685,7 @@ async def test_collapsed_row_discloses_every_target_in_the_rendered_row():
         rendered = _text(rows[0])
         for path in ("spec.md", "secrets.md", "todo.md"):
             assert path in rendered, (
-                f"{path} is hidden behind the x3 -- the mounted row shows: "
-                f"{rendered!r}"
+                f"{path} is hidden behind the x3 -- the mounted row shows: {rendered!r}"
             )
 
 
@@ -2434,6 +3713,68 @@ async def test_armed_deadline_is_visible_on_the_mounted_card():
         card.set_batch(_sample_calls(), timeout_seconds=0)
         await pilot.pause()
         assert not app.query_one("#approval-deadline", Static).display
+
+
+@pytest.mark.asyncio
+async def test_the_deadline_countdown_ticks_and_stops_on_clear_or_timeout():
+    """TASK-32288: with a finite timeout the countdown actually TICKS.
+
+    Before this fix `set_batch` rendered `format_approval_deadline` once and
+    never again -- with `[mcp] approval_timeout_seconds` configured the card
+    showed a frozen "Auto-denies in 2:00" for the whole window, silently
+    lying to the user about how much time was left. The controller arms the
+    real auto-deny clock; this card only displays it, computed from a LOCAL
+    `time.monotonic()` deadline captured in `set_batch` (never read back
+    from the controller).
+    """
+    import re
+
+    def _remaining_seconds(text: str) -> int:
+        match = re.fullmatch(r"Auto-denies in (\d+):(\d{2})", text)
+        assert match, text
+        return int(match.group(1)) * 60 + int(match.group(2))
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=90.0, round_id="round-a")
+        await pilot.pause()
+
+        deadline = app.query_one("#approval-deadline", Static)
+        assert _text(deadline) == "Auto-denies in 1:30"
+        assert card._deadline_timer is not None
+
+        await pilot.pause(1.1)
+        ticked_text = _text(deadline)
+        assert ticked_text != "Auto-denies in 1:30"
+        # Ticked down, never back up, never frozen -- allow a little
+        # scheduler slack rather than pinning an exact second.
+        assert 85 <= _remaining_seconds(ticked_text) <= 89, ticked_text
+
+        # A re-sync of the SAME round/phase/calls (the unchanged-round guard
+        # near the top of `set_batch`) must not reset the deadline clock.
+        card.set_batch(_sample_calls(), timeout_seconds=90.0, round_id="round-a")
+        await pilot.pause()
+        assert _text(deadline) != "Auto-denies in 1:30"
+        assert _remaining_seconds(_text(deadline)) <= _remaining_seconds(ticked_text)
+
+        # Clearing the batch stops the timer -- no leaked interval.
+        card.set_batch([], timeout_seconds=90.0)
+        await pilot.pause()
+        assert card._deadline_timer is None
+
+        # timeout_seconds=0/None: nothing shown, no timer armed.
+        card.set_batch(_sample_calls(), timeout_seconds=0, round_id="round-b")
+        await pilot.pause()
+        assert _text(deadline) == ""
+        assert not deadline.display
+        assert card._deadline_timer is None
+
+        # A NEW batch (different round) re-arms the countdown from scratch.
+        card.set_batch(_sample_calls(), timeout_seconds=60.0, round_id="round-new")
+        await pilot.pause()
+        assert _text(deadline) == "Auto-denies in 1:00"
+        assert card._deadline_timer is not None
 
 
 @pytest.mark.unit
@@ -2468,21 +3809,27 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self, run_id): pass
+        def begin_turn(self, run_id):
+            pass
+
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, run_id, name, decision): stamped.append((name, decision))
-        def is_session_approved(self, name): return False
+
+        def stamp(self, run_id, name, decision):
+            stamped.append((name, decision))
+
+        def is_session_approved(self, name):
+            return False
+
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
 
     class _Provider:
-        def tool_for(self, name): return SimpleNamespace(name=name)
+        def tool_for(self, name):
+            return SimpleNamespace(name=name)
 
     def request_approvals(pending):
-        by_path = {
-            row.call_id: (row.arguments or {}).get("path") for row in pending
-        }
+        by_path = {row.call_id: (row.arguments or {}).get("path") for row in pending}
         # Refuse secrets.md; allow spec.md. Refusal FIRST is the fail-open
         # ordering -- the later approval used to overwrite it.
         return {
@@ -2493,10 +3840,13 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     hook = build_tool_review_hook(
         _Gate(), _Provider(), None, request_approvals, workspace_id=None
     )
-    verdicts = hook([
-        ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="call-1"),
-        ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-2"),
-    ], RUN)
+    verdicts = hook(
+        [
+            ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="call-1"),
+            ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-2"),
+        ],
+        RUN,
+    )
 
     refusal = verdicts.get("call-1")
     assert refusal and refusal != "proceed", (
@@ -2527,7 +3877,7 @@ def test_mcp_rows_carry_their_call_id_so_two_targets_are_two_decisions():
     from tldw_chatbook.Chat.console_chat_controller import _collect_mcp_pending
 
     class _Provider:
-        def pending_gate_for(self, llm_name, args, call_id=""):
+        def pending_gate_for(self, llm_name, args, call_id="", rationale=""):
             return MCPPendingCall(
                 llm_name=llm_name,
                 server_key="local:fs",
@@ -2535,6 +3885,7 @@ def test_mcp_rows_carry_their_call_id_so_two_targets_are_two_decisions():
                 server_label="FS",
                 arguments=dict(args or {}),
                 call_id=call_id,
+                rationale=rationale,
                 reason="ask",
             )
 
@@ -2571,21 +3922,30 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self, run_id): pass
+        def begin_turn(self, run_id):
+            pass
+
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, run_id, name, decision): stamped.append((name, decision))
-        def is_session_approved(self, name): return False
+
+        def stamp(self, run_id, name, decision):
+            stamped.append((name, decision))
+
+        def is_session_approved(self, name):
+            return False
+
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
 
     class _Provider:
-        def tool_for(self, name): return SimpleNamespace(name=name)
+        def tool_for(self, name):
+            return SimpleNamespace(name=name)
 
     def request_approvals(pending):
         return {
             row.call_id: (
-                "deny" if (row.arguments or {}).get("path") == "secrets.md"
+                "deny"
+                if (row.arguments or {}).get("path") == "secrets.md"
                 else "approve_session"
             )
             for row in pending
@@ -2594,10 +3954,13 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     hook = build_tool_review_hook(
         _Gate(), _Provider(), None, request_approvals, workspace_id=None
     )
-    verdicts = hook([
-        ToolCall(name="read_file", args={"path": "spec.md"}, call_id="c-ok"),
-        ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="c-no"),
-    ], RUN)
+    verdicts = hook(
+        [
+            ToolCall(name="read_file", args={"path": "spec.md"}, call_id="c-ok"),
+            ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="c-no"),
+        ],
+        RUN,
+    )
 
     assert stamped == [("read_file", "approve_session")], (
         "the refusal was stamped against the tool NAME, which also blocks "
@@ -2630,33 +3993,42 @@ def test_the_broadest_approval_scope_for_a_tool_survives_collapsing():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self, run_id): pass
+        def begin_turn(self, run_id):
+            pass
+
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, run_id, name, decision): stamped.append((name, decision))
-        def is_session_approved(self, name): return False
+
+        def stamp(self, run_id, name, decision):
+            stamped.append((name, decision))
+
+        def is_session_approved(self, name):
+            return False
+
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
 
     class _Provider:
-        def tool_for(self, name): return SimpleNamespace(name=name)
+        def tool_for(self, name):
+            return SimpleNamespace(name=name)
 
     def request_approvals(pending):
         # Broad scope FIRST, narrow second -- the ordering that used to lose it.
         return {
-            row.call_id: (
-                "approve_session" if row.call_id == "c1" else "approve_once"
-            )
+            row.call_id: ("approve_session" if row.call_id == "c1" else "approve_once")
             for row in pending
         }
 
     hook = build_tool_review_hook(
         _Gate(), _Provider(), None, request_approvals, workspace_id=None
     )
-    hook([
-        ToolCall(name="read_file", args={"path": "a.md"}, call_id="c1"),
-        ToolCall(name="read_file", args={"path": "b.md"}, call_id="c2"),
-    ], RUN)
+    hook(
+        [
+            ToolCall(name="read_file", args={"path": "a.md"}, call_id="c1"),
+            ToolCall(name="read_file", args={"path": "b.md"}, call_id="c2"),
+        ],
+        RUN,
+    )
 
     assert stamped == [("read_file", "approve_session")], (
         "the session grant the user chose was downgraded to approve_once, so "
@@ -2799,9 +4171,7 @@ def test_revoking_a_run_unblocks_its_waiting_thread_and_clears_the_card():
     assert mounted[-1] is None, "the revoked card was left on screen"
     assert session_id not in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_id
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_id)
         is None
     )
 
@@ -2822,13 +4192,13 @@ def test_revoking_an_unknown_run_is_a_zero_return_noop():
     results: dict[str, dict[str, str]] = {}
     worker = _arm_round(
         controller,
-        run_id=RUN_A,
+        run_id=RUN_B,
         session_id=session_id,
         llm_name="mcp__srv__tool",
         results=results,
     )
     time.sleep(0.15)
-    round_a = _round_id_for(controller, RUN_A)
+    round_a = _round_id_for(controller, RUN_B)
 
     assert controller.revoke_approval_rounds_for_run("run-nobody") == 0
     # An empty/absent run id must never match the rounds armed outside any
@@ -2843,7 +4213,7 @@ def test_revoking_an_unknown_run_is_a_zero_return_noop():
         {"mcp__srv__tool": "approve_once"}, round_id=round_a
     )
     worker.join(timeout=3.0)
-    assert results[RUN_A] == {"mcp__srv__tool": "approve_once"}
+    assert results[RUN_B] == {"mcp__srv__tool": "approve_once"}
 
 
 def test_a_decision_landing_after_a_revoke_cannot_reopen_the_round():
@@ -3059,8 +4429,7 @@ def test_the_next_turns_stop_does_not_deny_an_earlier_turns_survivors_card():
     worker.join(timeout=2.5)
 
     assert worker.is_alive(), (
-        "turn 2's Stop denied turn 1's survivor's still-open card: "
-        f"{results}"
+        f"turn 2's Stop denied turn 1's survivor's still-open card: {results}"
     )
     assert survivor_round in controller._pending_approval_rounds
     assert results == {}
@@ -3305,3 +4674,550 @@ def test_human_prompt_defaults_pin_no_deadline():
     assert cc_module._DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS == 0.0
     assert cc_module._DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS == 0.0
     assert cc_module._DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS == 0.0
+
+
+# --- task-32280 (Qodo #2597 #8): a no-UI round is not a user's decision ----
+
+
+def test_a_no_app_round_reports_every_key_as_unanswered():
+    """`request_mcp_approvals` fails CLOSED with no app wired -- no card can
+    be shown, so nothing runs. But it returned a BARE dict, which
+    `approval_was_unanswered()` reads as "the user answered": both review
+    hooks then wrote `record_user_denial()`, so MCP and local audit rows
+    claimed a person pressed Deny on a card that was never displayed.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ApprovalDecisions,
+        approval_was_unanswered,
+    )
+
+    controller, _ = _build_controller()
+    assert controller.app is None  # the branch under test
+
+    rows = [_pending(call_id="call-1"), _pending(llm_name="mcp__srv__other")]
+    decisions = controller.request_mcp_approvals(rows)
+
+    # Still fails closed -- the verdicts themselves are unchanged.
+    assert decisions == {"call-1": "deny", "mcp__srv__other": "deny"}
+    assert isinstance(decisions, ApprovalDecisions)
+    assert decisions.unresolved_keys == frozenset({"call-1", "mcp__srv__other"})
+    assert all(approval_was_unanswered(row, decisions) for row in rows)
+
+
+def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
+    """The MCP review hook's end of the same bug: an unanswered round must
+    not reach `MCPToolProvider.record_user_denial`."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import (
+        USER_DENIED_REFUSAL,
+        build_tool_review_hook,
+    )
+
+    controller, _ = _build_controller()
+    assert controller.app is None  # the branch under test
+
+    denials: list[str] = []
+
+    class _McpProvider:
+        def apply_batch_decisions(self, run_id, stamps):
+            pass
+
+        def pending_gate_for(self, name, args, call_id="", *, rationale=""):
+            return _pending(llm_name=name, call_id=call_id)
+
+        def record_user_denial(self, llm_name):
+            denials.append(llm_name)
+
+    class _BuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+        def stamp(self, run_id, name, decision):
+            pass
+
+    class _BuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    hook = build_tool_review_hook(
+        _BuiltinGate(),
+        _BuiltinProvider(),
+        _McpProvider(),
+        controller.request_mcp_approvals,
+        workspace_id=None,
+    )
+    verdicts = hook(
+        [ToolCall(name="mcp__srv__tool", args={"a": 1}, call_id="call-1")], RUN
+    )
+
+    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
+    assert denials == [], "a headless fail-closed deny was audited as the user's"
+@pytest.mark.asyncio
+async def test_the_approval_route_reaches_a_pending_skill_install_card():
+    """Qodo #5: the ◆ marker and the Alt+A / Review-approval route cover ALL
+    FIVE interrupt kinds, not just approvals and questions.
+
+    A pending skill-install (or skill-script) confirm registers in the same
+    round registry and marks the tab, but the route knew only approval and
+    question cards -- so clicking that tab, or pressing Alt+A, reached the
+    "No approval is pending." warning while its decision card sat mounted on
+    screen. What this pins is the routing decision: the route finds that card
+    and declines to warn. Where focus lands inside a card is the card's own
+    contract (`test_alt_a_focuses_the_pending_approval_decision_select`).
+
+    Synced WITHOUT an intervening pause on purpose: with no real round armed,
+    the controller's next projection tick clears the pending payload again.
+    """
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_skill_install={
+                        "url": "https://example.invalid/skill.zip",
+                        "request_id": "req-skill-focus",
+                    }
+                )
+            )
+            assert (
+                screen._first_displayed_console_decision_card(
+                    "#chat-skill-install-card"
+                )
+                is not None
+            )
+            # No approval batch exists, so this is exactly the state that used
+            # to fall through to the warning.
+            assert screen._console_pending_approval_count() == 0
+
+            assert screen._route_console_pending_approval_focus() is True
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") not in notifications
+
+
+@pytest.mark.asyncio
+async def test_a_route_with_nothing_pending_can_decline_to_warn():
+    """Qodo #5: a ◆ tab whose card is already gone must fall back to the
+    ordinary tab press, not warn -- so the shared route takes
+    `notify_missing=False` and reports whether it focused anything."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            assert screen._route_console_pending_approval_focus(
+                notify_missing=False
+            ) is False
+            assert notifications == []
+
+            # The default still warns -- the inspector button and Alt+A rely
+            # on it.
+            assert screen._route_console_pending_approval_focus() is False
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications
+
+
+# TASK-13215: delayed fallback admission and atomic verdict commitment.
+class _RevocationApp:
+    def call_from_thread(self, callback, *args, **kwargs):
+        return callback(*args, **kwargs)
+
+    def notify(self, *_args, **_kwargs):
+        pass
+
+
+def _revocation_controller():
+    store = ConsoleChatStore()
+    ctrl = ConsoleChatController(store=store, provider_gateway=object())
+    ctrl.app = _RevocationApp()
+    ctrl._maybe_fire_permission_summary = lambda _payload: None
+    ctrl.mcp_approval_timeout_seconds = lambda: 0
+    ctrl.skill_script_confirm_timeout_seconds = lambda: 0
+    sid = store.create_session(title="Probe").id
+    store.switch_session(sid)
+    return ctrl, sid
+
+
+def _revocation_pending():
+    return MCPPendingCall(
+        llm_name="mcp__probe__tool",
+        server_key="probe:probe",
+        tool_name="tool",
+        server_label="Probe",
+        arguments={},
+        reason="ask",
+    )
+
+
+def _revocation_auto_answer(ctrl, kind, answer=True):
+    mounted = []
+
+    def setter(payload):
+        if payload is None:
+            return
+        mounted.append(payload)
+        if kind == "approval":
+            ctrl.resolve_pending_approval(
+                {
+                    row.get("call_id") or row["llm_name"]: "approve_once"
+                    if answer
+                    else "deny"
+                    for row in payload["calls"]
+                },
+                round_id=payload["round_id"],
+            )
+        else:
+            ctrl.resolve_pending_skill_script(
+                answer, answer, request_id=payload["request_id"]
+            )
+
+    setattr(
+        ctrl,
+        "set_pending_approval" if kind == "approval" else "set_pending_skill_script",
+        setter,
+    )
+    return mounted
+
+
+def _revocation_request(ctrl, sid, kind):
+    if kind == "approval":
+        return ctrl.request_mcp_approvals([_revocation_pending()], session_id=sid)
+    return ctrl.request_skill_script_confirm(
+        {"skill_name": "demo", "script_path": "demo.py"}, session_id=sid
+    )
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+def test_post_revoke_arm_denies_without_mounting(kind):
+    ctrl, sid = _revocation_controller()
+    mounted = _revocation_auto_answer(ctrl, kind)
+    assert ctrl.revoke_approval_rounds_for_run("already-revoked") == 0
+    with use_run_id("already-revoked"):
+        result = _revocation_request(ctrl, sid, kind)
+    assert mounted == []
+    assert not ctrl._interrupt_host.registries[kind]
+    assert not ctrl._interrupt_host.payloads[kind]
+    assert not ctrl._pending_approvals
+    assert result == (
+        {"mcp__probe__tool": "deny"}
+        if kind == "approval"
+        else {"allow": False, "remember": False}
+    )
+    if kind == "approval":
+        assert result.unresolved_keys == frozenset({"mcp__probe__tool"})
+    with use_run_id("unrelated-sibling"):
+        sibling = _revocation_request(ctrl, sid, kind)
+    assert mounted
+    assert sibling == (
+        {"mcp__probe__tool": "approve_once"}
+        if kind == "approval"
+        else {"allow": True, "remember": True}
+    )
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+def test_empty_run_owner_warns_once_without_payload_content(kind):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, kind)
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        with use_run_id(""):
+            result = _revocation_request(ctrl, sid, kind)
+    finally:
+        logger.remove(sink)
+    assert len(messages) == 1, messages
+    assert "without a run owner" in messages[0]
+    assert "demo" not in messages[0] and "probe" not in messages[0]
+
+    assert result == (
+        {"mcp__probe__tool": "approve_once"}
+        if kind == "approval"
+        else {"allow": True, "remember": True}
+    )
+
+
+def test_revoke_after_result_snapshot_but_before_unregister_returns_cached_allow(
+    monkeypatch,
+):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, "approval")
+    original = ctrl._interrupt_host.run_round
+    observed = {}
+
+    def wrapped(*args, **kwargs):
+        on_outcome = kwargs["on_outcome"]
+
+        def after_snapshot(outcome):
+            on_outcome(outcome)
+            observed["count"] = ctrl.revoke_approval_rounds_for_run("run-return-gap")
+            observed["state_decisions"] = dict(args[3]["decisions"])
+
+        kwargs["on_outcome"] = after_snapshot
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ctrl._interrupt_host, "run_round", wrapped)
+    with use_run_id("run-return-gap"):
+        result = _revocation_request(ctrl, sid, "approval")
+    assert (
+        observed["count"] == 1
+    )  # Still registered, but the result snapshot already won.
+    assert observed["state_decisions"] == {"mcp__probe__tool": "deny"}
+    assert result == {"mcp__probe__tool": "approve_once"}
+
+
+def test_revoke_before_result_snapshot_returns_deny(monkeypatch):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, "approval")
+    original = ctrl._interrupt_host.run_round
+    observed = {}
+
+    def wrapped(*args, **kwargs):
+        on_outcome = kwargs["on_outcome"]
+
+        def before_snapshot(outcome):
+            observed["count"] = ctrl.revoke_approval_rounds_for_run("run-read-gap")
+            on_outcome(outcome)
+
+        kwargs["on_outcome"] = before_snapshot
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ctrl._interrupt_host, "run_round", wrapped)
+    with use_run_id("run-read-gap"):
+        result = _revocation_request(ctrl, sid, "approval")
+    assert observed["count"] == 1
+    assert result == {"mcp__probe__tool": "deny"}
+    assert result.unresolved_keys == frozenset({"mcp__probe__tool"})
+
+
+def test_local_provider_refuses_write_after_revoke_then_arm(tmp_path):
+    ctrl, sid = _revocation_controller()
+    mounted = _revocation_auto_answer(ctrl, "approval")
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        allow_write=True,
+        resolve_state=lambda _hub: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+        approval_callback=lambda rows: ctrl.request_mcp_approvals(rows, session_id=sid),
+    )
+    assert ctrl.revoke_approval_rounds_for_run("revoked-local-writer") == 0
+    with use_run_id("revoked-local-writer"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "probe.txt", "content": "late write"}
+        )
+    assert mounted == []
+    assert not result.ok, result
+    assert not (tmp_path / "probe.txt").exists()
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+def test_revoked_arm_is_refused_before_configuration_read(kind):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, kind)
+    assert ctrl.revoke_approval_rounds_for_run("late-config") == 0
+    observed = []
+
+    def configuration():
+        observed.append(dict(ctrl._interrupt_host.registries[kind]))
+        return 0
+
+    if kind == "approval":
+        ctrl.mcp_approval_timeout_seconds = configuration
+    else:
+        ctrl.skill_script_confirm_timeout_seconds = configuration
+    with use_run_id("late-config"):
+        _revocation_request(ctrl, sid, kind)
+    assert observed == []
+
+
+def test_revocation_cannot_split_a_batch_snapshot(monkeypatch):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, "approval")
+    host = ctrl._interrupt_host
+    disposition = threading.Event()
+    finished = threading.Event()
+    observed = {}
+    original_lock = host.lock
+
+    class ContentionLock:
+        def __enter__(self):
+            if threading.current_thread().name == "snapshot-revoker":
+                acquired = original_lock.acquire(blocking=False)
+                observed["blocked"] = not acquired
+                disposition.set()
+                if not acquired:
+                    original_lock.acquire()
+            else:
+                original_lock.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            original_lock.release()
+
+    lock = ContentionLock()
+    monkeypatch.setattr(host, "lock", lock)
+    monkeypatch.setattr(ctrl, "_approval_state_lock", lock)
+
+    def revoke():
+        observed["count"] = ctrl.revoke_approval_rounds_for_run("batch-read-gap")
+        finished.set()
+
+    revoker = threading.Thread(target=revoke, name="snapshot-revoker", daemon=True)
+
+    class ReadGap(dict):
+        fired = False
+
+        def get(self, key, default=None):
+            value = super().get(key, default)
+            if key == "first" and not self.fired:
+                self.fired = True
+                revoker.start()
+                assert disposition.wait(3), "revoker never attempted the shared lock"
+                if not observed["blocked"]:
+                    assert finished.wait(3), "unlocked revocation failed to finish"
+            return value
+
+    original = host.run_round
+
+    def wrapped(*args, **kwargs):
+        callback = kwargs["on_outcome"]
+        cells = dict(zip(callback.__code__.co_freevars, callback.__closure__))
+        shared = ReadGap(cells["decisions"].cell_contents)
+        cells["decisions"].cell_contents = shared
+        args[3]["decisions"] = shared
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(host, "run_round", wrapped)
+    calls = [
+        MCPPendingCall(
+            llm_name=name,
+            server_key="probe:probe",
+            tool_name=name,
+            server_label="Probe",
+            arguments={},
+            reason="ask",
+        )
+        for name in ("first", "second")
+    ]
+    try:
+        with use_run_id("batch-read-gap"):
+            result = ctrl.request_mcp_approvals(calls, session_id=sid)
+    finally:
+        if revoker.ident is not None:
+            revoker.join(3)
+    assert not revoker.is_alive()
+    assert finished.is_set()
+    assert result == {"first": "approve_once", "second": "approve_once"}
+    assert not result.unresolved_keys
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+@pytest.mark.parametrize("ending", ["revoke", "teardown"])
+def test_sibling_payload_remounts_after_round_ends(kind, ending, monkeypatch):
+    ctrl, sid = _revocation_controller()
+    host = ctrl._interrupt_host
+    mounted = []
+    setattr(
+        ctrl,
+        "set_pending_approval" if kind == "approval" else "set_pending_skill_script",
+        mounted.append,
+    )
+    ready = {run: threading.Event() for run in ("first-run", "sibling-run")}
+    results = {}
+    original = host.run_round
+
+    def wrapped(*args, **kwargs):
+        before_wait = kwargs.get("before_wait")
+
+        def entered():
+            if before_wait is not None:
+                before_wait()
+            ready[args[3]["run_id"]].set()
+
+        kwargs["before_wait"] = entered
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(host, "run_round", wrapped)
+
+    def request(run):
+        with use_run_id(run):
+            results[run] = _revocation_request(ctrl, sid, kind)
+
+    workers = []
+    try:
+        for run, entered in ready.items():
+            worker = threading.Thread(target=request, args=(run,), daemon=True)
+            workers.append(worker)
+            worker.start()
+            assert entered.wait(3)
+        ids = {state["run_id"]: rid for rid, state in host.registries[kind].items()}
+        sibling_id = ids["sibling-run"]
+        sibling_payload = host.payloads[kind][sibling_id]
+        if ending == "revoke":
+            assert ctrl.revoke_approval_rounds_for_run("first-run") == 1
+        elif kind == "approval":
+            ctrl.resolve_pending_approval(
+                {"mcp__probe__tool": "deny"}, round_id=ids["first-run"]
+            )
+        else:
+            ctrl.resolve_pending_skill_script(False, False, request_id=ids["first-run"])
+        workers[0].join(3)
+        assert not workers[0].is_alive()
+        assert host.payloads[kind][sibling_id] is sibling_payload
+        assert ctrl._pending_approvals[sid] == {sibling_id}
+        other = ctrl.store.create_session(title="Away").id
+        ctrl.switch_session(other)
+        assert mounted[-1] is None
+        ctrl.switch_session(sid)
+        id_key = "round_id" if kind == "approval" else "request_id"
+        assert mounted[-1][id_key] == sibling_id
+        if kind == "approval":
+            ctrl.resolve_pending_approval(
+                {"mcp__probe__tool": "approve_once"}, round_id=mounted[-1][id_key]
+            )
+        else:
+            ctrl.resolve_pending_skill_script(
+                True, False, request_id=mounted[-1][id_key]
+            )
+        workers[1].join(3)
+        assert not workers[1].is_alive()
+        assert results["sibling-run"] == (
+            {"mcp__probe__tool": "approve_once"}
+            if kind == "approval"
+            else {"allow": True, "remember": False}
+        )
+        assert not host.registries[kind] and not host.payloads[kind]
+        assert not ctrl._pending_approvals
+    finally:
+        for run in ready:
+            ctrl.revoke_approval_rounds_for_run(run)
+        for worker in workers:
+            worker.join(3)

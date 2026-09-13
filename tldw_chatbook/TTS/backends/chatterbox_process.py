@@ -37,6 +37,7 @@ sys.stderr = open(os.devnull, "w")
 import json  # noqa: E402
 import base64  # noqa: E402
 import io  # noqa: E402
+import wave
 import traceback  # noqa: E402
 
 # Create a writer using the saved stdout file descriptor
@@ -115,7 +116,6 @@ def main():
 
         from chatterbox.tts import ChatterboxTTS
         import torch
-        import torchaudio
 
         send_response({"type": "status", "message": "Imports successful"})
     except Exception as e:
@@ -235,13 +235,26 @@ def main():
                     elif hasattr(model, "sr"):
                         sample_rate = model.sr
 
-                    # Save audio to buffer
-                    torchaudio.save(
-                        buffer,
-                        wav.unsqueeze(0) if wav.dim() == 1 else wav,
-                        sample_rate,
-                        format="wav",
+                    # PCM16 WAV needs no optional torchaudio/TorchCodec encoder.
+                    if (
+                        wav.dim() not in (1, 2)
+                        or wav.numel() == 0
+                        or not torch.isfinite(wav).all()
+                    ):
+                        raise ValueError("Model returned invalid audio samples")
+                    audio = wav.detach().cpu()
+                    if audio.dim() == 2:
+                        audio = audio.mean(dim=0)
+                    pcm = (
+                        (audio.clamp(-1.0, 1.0).numpy() * 32767.0)
+                        .astype("<i2")
+                        .tobytes()
                     )
+                    with wave.open(buffer, "wb") as output:
+                        output.setparams(
+                            (1, 2, int(sample_rate), 0, "NONE", "not compressed")
+                        )
+                        output.writeframes(pcm)
 
                     # Get bytes from buffer
                     buffer.seek(0)

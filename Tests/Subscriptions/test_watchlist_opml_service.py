@@ -224,6 +224,148 @@ async def test_import_assigns_membership_and_reimport_is_a_structural_noop(tmp_p
     assert total_sources == 3, "no duplicate sources"
 
 
+@pytest.mark.asyncio
+async def test_import_counts_a_create_race_resolution_as_existing(tmp_path):
+    """A stale preflight lookup must not turn an existing source into a
+    false ``created`` receipt when exact-batch insertion resolves the race."""
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        LocalWatchlistsService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_scope_service import (
+        WatchlistBackend,
+        WatchlistScopeService,
+    )
+
+    url = "https://example.com/existing.xml"
+    db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    db.add_subscription(name="Existing", type="rss", source=url)
+    local = LocalWatchlistsService(db_factory=lambda: db)
+    local.find_source_id_by_url = lambda _url: None
+    scope = WatchlistScopeService(local_service=local, server_service=None)
+    document = WatchlistOpmlService().export(
+        [], [{"name": "Existing", "url": url, "source_type": "rss"}]
+    )
+
+    result = await scope.import_opml(
+        runtime_backend=WatchlistBackend.LOCAL, xml_text=document
+    )
+
+    assert result["created"] == 0
+    assert result["existing"] == 1
+    assert result["sources"] == []
+    assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_import_memoizes_unicode_casefold_equivalent_folders(tmp_path):
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        LocalWatchlistsService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_scope_service import (
+        WatchlistBackend,
+        WatchlistScopeService,
+    )
+
+    xml = (
+        '<?xml version="1.0"?><opml version="2.0"><body>'
+        '<outline text="Straße"><outline text="One" type="rss" '
+        'xmlUrl="https://example.com/one"/></outline>'
+        '<outline text="STRASSE"><outline text="Two" type="rss" '
+        'xmlUrl="https://example.com/two"/></outline>'
+        "</body></opml>"
+    )
+    db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    local = LocalWatchlistsService(db_factory=lambda: db)
+    resolve_calls: list[str] = []
+    original_resolve = local.resolve_or_create_watchlist
+
+    def record_resolve(name: str):
+        resolve_calls.append(name)
+        return original_resolve(name)
+
+    local.resolve_or_create_watchlist = record_resolve
+    scope = WatchlistScopeService(local_service=local, server_service=None)
+
+    result = await scope.import_opml(
+        runtime_backend=WatchlistBackend.LOCAL, xml_text=xml
+    )
+
+    assert resolve_calls == ["Straße"]
+    assert result["watchlists_created"] == ["Straße"]
+    assert result["watchlists_reused"] == []
+    assert result["assignments"] == 2
+
+
+@pytest.mark.asyncio
+async def test_import_reuses_existing_unicode_casefold_equivalent_folder(tmp_path):
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        LocalWatchlistsService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_scope_service import (
+        WatchlistBackend,
+        WatchlistScopeService,
+    )
+
+    xml = (
+        '<?xml version="1.0"?><opml version="2.0"><body>'
+        '<outline text="Straße"><outline text="One" type="rss" '
+        'xmlUrl="https://example.com/one"/></outline>'
+        "</body></opml>"
+    )
+    db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    bundle = WatchlistBundleService(db)
+    prior_source_id = db.add_subscription(
+        name="Prior",
+        type="rss",
+        source="https://example.com/prior",
+    )
+    existing_result = bundle.create_with_sources(
+        "STRASSE",
+        description="Keep this operator-authored description",
+        tags=["priority", "threat-intel"],
+        source_ids=[prior_source_id],
+        if_exists="conflict",
+    )
+    existing = existing_result["watchlist"]
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE watchlists SET is_active = 0, sort_order = 73 WHERE id = ?",
+            (existing["id"],),
+        )
+    existing = bundle.list_watchlists()[0]
+    scope = WatchlistScopeService(
+        local_service=LocalWatchlistsService(db_factory=lambda: db),
+        server_service=None,
+    )
+
+    result = await scope.import_opml(
+        runtime_backend=WatchlistBackend.LOCAL, xml_text=xml
+    )
+
+    assert bundle.list_watchlists() == [existing]
+    assert existing == {
+        "id": existing["id"],
+        "name": "STRASSE",
+        "description": "Keep this operator-authored description",
+        "tags": ["priority", "threat-intel"],
+        "is_active": False,
+        "sort_order": 73,
+    }
+    assert result["watchlists_created"] == []
+    assert result["watchlists_reused"] == ["STRASSE"]
+    members = bundle.list_source_rows(existing["id"])
+    assert {row["url"] for row in members} == {
+        "https://example.com/prior",
+        "https://example.com/one",
+    }
+
+
 # --- TASK-3604 plan task 4: export nests watchlists as folders (ADR-043 rule 5) -
 
 

@@ -17,10 +17,12 @@ import hmac
 import json
 import re
 import secrets
+from bisect import bisect_right
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
-from rich.cells import cell_len
+from rich.cells import cell_len, split_graphemes
 from rich.markup import escape
 from rich.text import Text
 from textual import on
@@ -28,7 +30,15 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.content import Content
 from textual.css.query import NoMatches
-from textual.events import Click, DescendantBlur, DescendantFocus, Key, MouseUp
+from textual.events import (
+    Click,
+    DescendantBlur,
+    DescendantFocus,
+    Enter,
+    Key,
+    Leave,
+    MouseUp,
+)
 from textual.geometry import Region
 from textual.message import Message
 from textual.widget import Widget
@@ -77,6 +87,7 @@ _PLACEHOLDER_CANDIDATE_PATTERN = re.compile(r"\[\[TLDW_PROTECTED:[^\]]*\]\]")
 #: chunk (terminal cells instead of characters), not in where it is willing
 #: to break.
 _DRAFT_WORD_SPLIT_RE = re.compile(r"([\t\n\x0b\x0c\r ]+)")
+_DRAFT_TAB_WIDTH = 8
 
 #: Modifier prefixes that make a key a CHORD rather than text input, even
 #: when it carries a printable ``character``. Textual's terminal parser
@@ -87,16 +98,16 @@ _DRAFT_WORD_SPLIT_RE = re.compile(r"([\t\n\x0b\x0c\r ]+)")
 #: into the draft and `ChatScreen`'s own ``Binding("alt+m", ...)`` never
 #: ran (TASK-1800).
 #:
-#: ``ctrl+``/``super+``/``meta+`` are listed for completeness, not because
+#: ``ctrl+``/``super+``/``meta+``/``cmd+`` are listed for completeness, not because
 #: they leak today: their characters are C0 control bytes, which are not
 #: printable, so they never reached that branch. ``alt`` is the one that
-#: does. Listing all four keeps the rule "a modified key is not text" true
+#: does. Listing all five keeps the rule "a modified key is not text" true
 #: by construction rather than by accident of the control-byte encoding.
 #:
 #: TASK-3749 moved this here from `chat_screen` along with the
 #: printable-key branch it guards: "is this keystroke text?" is a question
 #: about the composer's input, and it now has no other caller.
-_CHORD_MODIFIER_PREFIXES = ("alt+", "ctrl+", "super+", "meta+")
+_CHORD_MODIFIER_PREFIXES = ("alt+", "ctrl+", "super+", "meta+", "cmd+")
 
 
 def _is_modified_chord(key: str) -> bool:
@@ -217,16 +228,57 @@ class _DraftSegment:
 
 @dataclass
 class ConsoleDraftStash:
-    """A draft captured synchronously at the send keypress (TASK-340).
+    """A revision-pinned draft captured synchronously for send admission.
 
-    Holds the composer's real segment objects so paste provenance and
-    collapse state survive a restore, plus the canonical text the send
-    path uses as its payload.
+    The snapshot is intentionally non-destructive.  ``edit_serial`` and
+    ``generation`` identify the accepted revision while ``segments`` preserve
+    paste provenance if a caller still needs the legacy restore path.
     """
 
     segments: list[_DraftSegment]
     text: str
     has_paste: bool
+    raw_cli_prefix_typed: bool = False
+    edit_serial: int = 0
+    generation: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleRawDraft:
+    """Pure classification of one captured Console draft."""
+
+    kind: Literal["chat", "escaped_chat", "raw"]
+    text: str
+
+
+def classify_console_raw_draft(stash: ConsoleDraftStash) -> ConsoleRawDraft:
+    """Classify a captured draft without deriving trust from its text."""
+    if stash.text.startswith(r"\! "):
+        return ConsoleRawDraft("escaped_chat", stash.text[1:])
+    if stash.raw_cli_prefix_typed and stash.text.startswith("! "):
+        return ConsoleRawDraft("raw", stash.text[2:])
+    return ConsoleRawDraft("chat", stash.text)
+
+
+def unescape_console_raw_chat_stash(stash: ConsoleDraftStash) -> ConsoleDraftStash:
+    """Remove one raw-chat escape while preserving segment provenance."""
+    if not stash.text.startswith(r"\! "):
+        return stash
+    escaped_text = stash.text[1:]
+    segments = [replace(segment) for segment in stash.segments]
+    if not segments and escaped_text:
+        segments = [_DraftSegment(escaped_text)]
+    for index, segment in enumerate(segments):
+        if segment.text:
+            if segment.text.startswith("\\"):
+                segments[index] = replace(segment, text=segment.text[1:])
+            break
+    return replace(
+        stash,
+        segments=segments,
+        text=escaped_text,
+        raw_cli_prefix_typed=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -320,6 +372,33 @@ BASE_ACTIONS_WIDTH = 6 + MIC_SEND_GAP + 11 + 6
 ATTACHMENT_ACTIONS_WIDTH = BASE_ACTIONS_WIDTH + 4
 
 
+#: TASK-25826: every label this control can display for a given state, so its
+#: width can be fixed once instead of tracking the current string. The price
+#: suffix appears mid-typing (`sync_action_state` runs on the keystroke path),
+#: and sizing from the live label widened the button under the cursor and
+#: shifted the composer's right edge while the user was typing.
+_SEND_BUTTON_LABEL_VARIANTS = (
+    "Send",
+    "Send | $",
+    "Queue",
+    "Queue | $",
+    "Run",
+    "Queue full",
+    "Preparing...",
+)
+
+
+def send_button_width_for(label: str) -> int:
+    """Return the send control's width -- stable across label variants.
+
+    Sized for the widest label the control can take, so swapping Send/Queue
+    or gaining the price suffix never moves the button's edge.
+    """
+
+    widest = max(cell_len(variant) for variant in _SEND_BUTTON_LABEL_VARIANTS)
+    return max(6, max(widest, cell_len(label)) + 2)
+
+
 class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
@@ -349,7 +428,8 @@ class ConsoleComposerBar(Horizontal):
             composer: The composer whose draft changed.
             is_insertion: True when the edit ADDED text (a printable
                 character, or Shift+Enter/Ctrl+J's newline), False when it
-                removed text (Backspace/Ctrl+H, Delete, Ctrl+W, Ctrl+U).
+                removed text (Backspace/Ctrl+H, Delete, Ctrl+W, Ctrl+U,
+                focused Ctrl+C).
                 The screen dismisses first-run guidance on insertions only
                 -- "the user has started composing" is not something a
                 Backspace says -- which is exactly the baseline split, and
@@ -396,10 +476,24 @@ class ConsoleComposerBar(Horizontal):
     VOICE_CHIP_MAX_WIDTH = 53
     #: Cell cap for the inline `#console-send-disabled-reason` strip. The
     #: longest copy `build_console_disabled_reason` emits is 49 cells, so 52
-    #: renders every reason whole at common widths while the `1fr` draft
-    #: yields the space; narrower composers ellipsize (`text-overflow` in
-    #: the stylesheet) rather than wrapping into a second row.
+    #: renders every reason whole at common widths. TASK-24415: this is only
+    #: the UPPER bound -- the effective cap is `_send_reason_width_cap`,
+    #: derived from the live row width so the strip ellipsizes (or hides,
+    #: below `SEND_REASON_MIN_LEGIBLE_WIDTH`) instead of starving the draft;
+    #: the `1fr` draft has `min_width: 0` and otherwise yields to zero.
     SEND_REASON_MAX_WIDTH = 52
+    #: TASK-24415: the visible draft's guaranteed floor. The actions-row
+    #: budget (TASK-2154.14) was sized to "keep the draft's 32-cell floor"
+    #: in arithmetic only; this is the layout-side promise the reason strip
+    #: must respect.
+    DRAFT_MIN_RENDER_WIDTH = 32
+    #: TASK-24415: left-cluster furniture sharing the draft's row -- the
+    #: ``Composer ▾`` toggle (12) plus the ``Menu`` button (6).
+    LEFT_CLUSTER_WIDTH = 12 + 6
+    #: TASK-24415: below this many cells an ellipsized reason says nothing
+    #: the Send tooltip does not -- hide the strip rather than starve the
+    #: draft.
+    SEND_REASON_MIN_LEGIBLE_WIDTH = 12
     #: Shown in the chip both for the terminal "stop and transcribe" phase
     #: (`sync_dictation_state`'s "transcribing" branch) and for a per-segment
     #: transcription in flight while still `recording`
@@ -470,6 +564,14 @@ class ConsoleComposerBar(Horizontal):
     DICTATION_IDLE_TOOLTIP = (
         "Dictate into the draft with the configured speech-to-text provider."
     )
+    #: Shown on an enabled Send whenever the next-send price is not the copy
+    #: on the button -- i.e. whenever the pointer is not on Send, which is the
+    #: only state in which a tooltip can be displayed at all.
+    SEND_READY_TOOLTIP = "Send the active Console session draft."
+    #: The degraded price copy, kept byte-identical to the controller's own
+    #: failure copy so a provider that raises and a provider that fails
+    #: internally read the same to the user.
+    SEND_PRICE_UNAVAILABLE_TOOLTIP = "Next request: cost unavailable"
 
     def __init__(
         self,
@@ -477,9 +579,22 @@ class ConsoleComposerBar(Horizontal):
         collapsed: bool = False,
         collapse_large_pastes: bool = True,
         paste_collapse_threshold: int = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        send_price_tooltip_provider: Callable[[str], str | None] | None = None,
+        send_price_available_provider: Callable[[str], bool] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        # TASK-23018: two seams, deliberately. The AVAILABLE provider must be
+        # cheap -- it runs on the keystroke path because the Send label's
+        # "| $" suffix depends on it. The TOOLTIP provider re-derives the
+        # whole next request and is only ever called when the pointer is
+        # actually on Send, where a 0.5s hover delay pays for it.
+        self._send_price_tooltip_provider = send_price_tooltip_provider
+        self._send_price_available_provider = send_price_available_provider
+        #: Whether the last `sync_action_state` decided a price tooltip
+        #: exists. Gates the hover handlers so they never overwrite a
+        #: blocked/idle Send tooltip.
+        self._send_price_available = False
         self._collapsed = bool(collapsed)
         self.can_focus = not self._collapsed
         self.styles.height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
@@ -531,6 +646,23 @@ class ConsoleComposerBar(Horizontal):
         self._run_active = False
         self._queued_prompt_count = 0
         self._queue_paused = False
+        # task-24453: cheap fingerprint of every input `_sync_collapsed_
+        # presentation` reads. That method ran three times per keystroke,
+        # each run doing 4 `query_one` lookups, a `Static.update()` and 4
+        # `set_class` calls -- on the collapsed row, which is `display:none`
+        # for the whole time the user is typing. `None` never equals a real
+        # signature tuple, so the first pass after mount always runs in full.
+        self._collapsed_presentation_signature: tuple[object, ...] | None = None
+        # task-24453: geometry last written by `_apply_draft_height`. See that
+        # method for why an unguarded write cost a whole-screen relayout per
+        # keystroke.
+        self._draft_geometry_signature: tuple[int, int, int] | None = None
+        # task-24453: last-applied values for the three other per-keystroke
+        # syncs. `None` never equals a real value, so the first pass after
+        # mount always runs in full.
+        self._improvement_recovery_visible: bool | None = None
+        self._raw_cli_status_visible: bool | None = None
+        self._hidden_input_mirror: str | None = None
         self._send_button_width = 6
         self._send_label = "Send"
         self._send_blocked = False
@@ -587,6 +719,15 @@ class ConsoleComposerBar(Horizontal):
         self._draft_selection_range: tuple[int, int] | None = None
         self._cursor_visible = True
         self._cursor_blink_timer: Any | None = None
+        #: TASK-22218: render memo for the visible-draft Static -- one entry,
+        #: ``(key, {blink_phase: Text})``, keyed on every input that shapes
+        #: the renderable (see `_visible_render_memo_key`). Lets a blink tick
+        #: with an unchanged draft/width/history reuse the built renderable
+        #: instead of re-running the full-draft cell wrap and the history
+        #: prefix scan ~1.89x/s forever.
+        self._visible_render_cache: tuple[tuple[Any, ...], dict[bool, Text]] | None = (
+            None
+        )
         #: TASK-1364: shared JSONL prompt-history store, injected by the
         #: owning screen (`set_prompt_history`). Drives fish-shell-style
         #: ghost text (most-recent prefix match) and Up/Down recall. None
@@ -596,6 +737,11 @@ class ConsoleComposerBar(Horizontal):
         #: in-progress text is stashed in the history store while
         #: navigating), negatives walk backwards through stored entries.
         self._history_index: int = 0
+        # Process-memory-only input provenance. Text alone can never set either
+        # bit; only the physical printable-key branch advances stage one into
+        # the trusted exact ``! `` prefix.
+        self._raw_cli_prefix_stage_one = False
+        self._raw_cli_prefix_typed = False
 
     @property
     def collapse_large_pastes_enabled(self) -> bool:
@@ -659,6 +805,61 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return ""
 
+    def _begin_raw_cli_mutation(self) -> bool:
+        """Clear partial progress and capture whether an existing prefix may survive."""
+        self._raw_cli_prefix_stage_one = False
+        return self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
+
+    def _finish_raw_cli_mutation(
+        self,
+        preserve_trusted_prefix: bool,
+        *,
+        mutation_start: int | None = None,
+        replaces_selection: bool = False,
+    ) -> None:
+        """Preserve trust only when a mutation began after the typed prefix."""
+        if mutation_start is not None:
+            preserve_trusted_prefix = (
+                preserve_trusted_prefix
+                and not replaces_selection
+                and mutation_start >= 2
+            )
+        self._raw_cli_prefix_typed = bool(
+            preserve_trusted_prefix and self.draft_text().startswith("! ")
+        )
+
+    def _clear_raw_cli_provenance(self) -> None:
+        """Fail closed across wholesale or non-physical draft replacement."""
+        self._raw_cli_prefix_stage_one = False
+        self._raw_cli_prefix_typed = False
+
+    def _sync_raw_cli_state(self) -> None:
+        """Project trusted raw mode into one persistent, text-labeled danger state."""
+        active = self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
+        if self._raw_cli_prefix_typed and not active:
+            self._raw_cli_prefix_typed = False
+        self.set_class(active, "console-raw-cli-danger")
+        self._sync_collapsed_presentation()
+        # task-24453: `active` is False for every keystroke that is not part of
+        # a raw-CLI draft, which is nearly all of them. The status row's
+        # content and geometry below are a pure function of it, so re-asserting
+        # them per keypress only bought a `Static.update` and four style writes
+        # on an already-hidden row.
+        if active == self._raw_cli_status_visible:
+            return
+        try:
+            status = self.query_one("#console-raw-cli-status", Static)
+        except NoMatches:
+            return
+        self._raw_cli_status_visible = active
+        status.set_class(active, "console-raw-cli-danger")
+        status.update(Content("RAW CLI · HOST ACCESS" if active else ""))
+        status.styles.display = "block" if active else "none"
+        status.styles.width = "auto" if active else 0
+        status.styles.min_width = 0
+        status.styles.height = 1 if active else 0
+        status.styles.min_height = 1 if active else 0
+
     def _canonical_draft_text(self) -> str:
         """Return the full payload represented by composer segments."""
         return "".join(segment.text for segment in self._segments)
@@ -692,12 +893,78 @@ class ConsoleComposerBar(Horizontal):
     def invalidate_improvement_undo(self) -> None:
         """Expire the one-shot improvement Undo without touching native history."""
         self._improvement_undo = None
+        self._sync_improvement_recovery()
 
     def take_improvement_undo_snapshot(self) -> ComposerDraftSnapshot | None:
         """Consume and return the current exact improvement Undo snapshot."""
         snapshot = self._improvement_undo
         self._improvement_undo = None
+        self._sync_improvement_recovery()
         return snapshot
+
+    @staticmethod
+    def _snapshot_improvement_review_text(snapshot: ComposerDraftSnapshot) -> str:
+        """Build comparison copy without revealing protected inline-file bytes."""
+        parts: list[str] = []
+        for segment in snapshot.segments:
+            if segment.origin == "inline_file":
+                label = (segment.label or "attached file").strip()
+                parts.append(f"[Protected content: {label}]")
+            else:
+                parts.append(segment.text)
+        return "".join(parts)
+
+    def improvement_comparison(self) -> tuple[str, str] | None:
+        """Return safe before/after copy for the current one-shot improvement."""
+        before = self._improvement_undo
+        if before is None:
+            return None
+        after = self.capture_draft_snapshot()
+        return (
+            self._snapshot_improvement_review_text(before),
+            self._snapshot_improvement_review_text(after),
+        )
+
+    def _sync_improvement_recovery(self) -> None:
+        """Show recovery actions only while an exact improvement Undo exists.
+
+        task-24453: every keystroke reaches this, and `visible` is False for
+        the whole of an ordinary typing session (there is no improvement Undo
+        to recover). Left unguarded it cost 3 `query_one` lookups plus a full
+        `_refresh_visible_draft` -- itself 2 more lookups, 2 `Static.update`
+        calls and a `refresh(layout=True)` -- to re-assert a row that was
+        already hidden. The trailing refresh exists to re-render the draft at
+        the width the recovery row leaves behind, so when visibility has not
+        moved there is no new width and nothing to redraw.
+        """
+        visible = self._improvement_undo is not None and not self._collapsed
+        if visible == self._improvement_recovery_visible:
+            return
+        try:
+            recovery = self.query_one(
+                "#console-prompt-improvement-recovery", Horizontal
+            )
+            undo = self.query_one("#console-prompt-improvement-undo", Button)
+            review = self.query_one("#console-prompt-improvement-review", Button)
+        except NoMatches:
+            return
+        recovery.styles.display = "block" if visible else "none"
+        undo.disabled = not visible
+        review.disabled = not visible
+        # TASK-31663 AC#3: focusability follows the row's display, explicitly.
+        # The 2026-09-05 critique blamed "Tab never reaches the rail" on a
+        # hidden-but-focusable blank widget labelled "Review changes"; measured,
+        # that widget is `#console-prompt-improvement-review` HERE (not the left
+        # rail), and the only things keeping it out of the composer's Tab ring
+        # were `disabled` and the parent row's `display: none`. Both are
+        # incidental: enable one of these buttons without showing the row and a
+        # blank stop appears in the ring. The second half of this pair is
+        # `compose`, which builds them non-focusable because the row starts
+        # hidden.
+        undo.can_focus = visible
+        review.can_focus = visible
+        self._improvement_recovery_visible = visible
+        self._refresh_visible_draft()
 
     def undo_improvement(self) -> bool:
         """Restore and consume the latest exact improvement transaction."""
@@ -1007,6 +1274,7 @@ class ConsoleComposerBar(Horizontal):
         self._redo_stack = list(checkpoint.redo_stack)
         self._improvement_undo = checkpoint.improvement_undo
         self._coalescing_active = checkpoint.coalescing_active
+        self._sync_improvement_recovery()
         self._sync_current_action_state()
 
     @staticmethod
@@ -1226,6 +1494,7 @@ class ConsoleComposerBar(Horizontal):
 
         # All parsing and validation above used detached immutable/local values.
         # This is the single live segment swap for the complete transaction.
+        self._clear_raw_cli_provenance()
         self._segments = rebuilt
         self._segments_initialized = True
         self._cursor_index = len(self._canonical_draft_text())
@@ -1236,6 +1505,7 @@ class ConsoleComposerBar(Horizontal):
         self._redo_stack = []
         self._coalescing_active = False
         self._improvement_undo = snapshot
+        self._sync_improvement_recovery()
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -1292,6 +1562,7 @@ class ConsoleComposerBar(Horizontal):
             if text
             else []
         )
+        self._clear_raw_cli_provenance()
         self._segments = rebuilt
         self._segments_initialized = True
         self._cursor_index = len(text)
@@ -1302,6 +1573,7 @@ class ConsoleComposerBar(Horizontal):
         self._redo_stack = []
         self._coalescing_active = False
         self._improvement_undo = snapshot
+        self._sync_improvement_recovery()
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -1330,6 +1602,7 @@ class ConsoleComposerBar(Horizontal):
         """Atomically restore exact draft state without calling ``load_draft``."""
         self._validate_snapshot_shape(snapshot)
         rebuilt = self._private_segments_from_snapshot(snapshot)
+        self._clear_raw_cli_provenance()
 
         # A restore is a new live scope generation even though user-visible
         # bytes/state and edit serial are restored exactly. This prevents an
@@ -1530,13 +1803,20 @@ class ConsoleComposerBar(Horizontal):
         return style_ranges
 
     def _sync_hidden_input(self) -> None:
-        """Keep the hidden compatibility input aligned with canonical payload."""
+        """Keep the hidden compatibility input aligned with canonical payload.
+
+        task-24453: the mirror only needs writing when the canonical payload
+        actually changed. This widget is the sole writer of that value, so a
+        matching cache means the hidden input already holds it.
+        """
+        canonical = self._canonical_draft_text()
+        if canonical == self._hidden_input_mirror:
+            return
         try:
-            self.query_one(
-                "#console-command-input", Input
-            ).value = self._canonical_draft_text()
+            self.query_one("#console-command-input", Input).value = canonical
         except NoMatches:
             return
+        self._hidden_input_mirror = canonical
 
     def _sync_interaction_classes(self) -> None:
         """Mirror focus-within and draft presence onto stable CSS state classes."""
@@ -1545,6 +1825,7 @@ class ConsoleComposerBar(Horizontal):
             self._has_any_draft_content(),
             "console-composer-has-draft",
         )
+        self._sync_raw_cli_state()
 
     def _sync_current_action_state(self) -> None:
         """Refresh action buttons from the current draft and cached run/save state."""
@@ -1562,6 +1843,50 @@ class ConsoleComposerBar(Horizontal):
             ephemeral=self._ephemeral,
             send_label=self._send_label,
         )
+
+    def _send_reason_width_cap(self) -> int:
+        """Return the max cells the reason strip may take (0 = hide it).
+
+        TASK-24415: the strip is advisory copy (the Send tooltip carries the
+        same reason), so its width budget is whatever the live row can spare
+        AFTER the fixed furniture (left cluster + actions row) and the draft
+        floor. Before this, the strip's static 52-cell auto width consumed
+        narrow rows entirely -- the ``1fr`` draft (``min_width: 0``) laid out
+        at zero columns and the user typed blind while the slash-command
+        popup filtered invisible input.
+
+        Returns:
+            0 when the row cannot spare a legible strip (hide it), else a
+            cap of at most ``SEND_REASON_MAX_WIDTH`` cells.
+        """
+        try:
+            row = self.query_one("#console-composer-expanded", Horizontal)
+        except NoMatches:
+            return self.SEND_REASON_MAX_WIDTH
+        row_width = int(row.content_region.width)
+        if row_width <= 0:
+            # Not laid out yet (first sync before mount completes); the
+            # next resize re-derives the cap against a real width.
+            return self.SEND_REASON_MAX_WIDTH
+        reserved = self.LEFT_CLUSTER_WIDTH + self._actions_row_width()
+        # TASK-24620: a displayed voice chip draws from the same spare
+        # space; the chip (live dictation state) has priority, so the
+        # reason strip budgets around whatever the chip currently holds.
+        # The CACHED chip width, deliberately -- `chip.region` is stale
+        # until the next layout pass, and this cap runs in the same turn
+        # that just resized the chip. Without this, the two advisory strips
+        # each budgeted the full remainder independently and jointly
+        # starved the draft.
+        budget = (
+            row_width
+            - reserved
+            - self.ADVISORY_MARGIN_ALLOWANCE
+            - self.DRAFT_MIN_RENDER_WIDTH
+            - self._voice_chip_last_width
+        )
+        if budget < self.SEND_REASON_MIN_LEGIBLE_WIDTH:
+            return 0
+        return min(self.SEND_REASON_MAX_WIDTH, budget)
 
     def _sync_send_disabled_reason(self, reason: str, *, muted: bool) -> None:
         """Render or hide the persistent Send disabled-reason strip.
@@ -1585,15 +1910,52 @@ class ConsoleComposerBar(Horizontal):
             return
         strip.set_class(muted, "console-send-disabled-reason-idle")
         if reason:
-            strip.update(Content(reason))
-            strip.styles.display = "block"
-            strip.styles.width = "auto"
-            strip.styles.min_width = 0
-            strip.styles.max_width = self.SEND_REASON_MAX_WIDTH
-            strip.styles.height = 1
-            strip.styles.min_height = 1
+            # TASK-21145 (UAT H-3): a setup blocker must carry its own way
+            # out — the UAT run showed "Send blocked — finish provider
+            # setup to continue" with no route to that setup. The WHOLE
+            # reason becomes an action link opening the wizard re-run
+            # (app.action_run_setup_wizard); appending a separate "Open
+            # setup" label instead blew the strip's width budget and
+            # squeezed the command card (SEND_REASON_MAX_WIDTH is sized
+            # for the longest reason + the 2-cell chevron).
+            #
+            # TASK-21150 item (d): `reason` goes in as a TEMPLATE VARIABLE,
+            # never f-string interpolation. Today every reason is a fixed
+            # literal from build_console_disabled_reason, so interpolating
+            # was safe by invariant — i.e. by comment. Substitution makes it
+            # safe by construction: the value is inserted as text and is
+            # never re-parsed as markup, so a future reason carrying "[...]"
+            # cannot smuggle in styling or a second action.
+            if self.has_class("console-composer-setup-blocked"):
+                reason_content = Content.from_markup(
+                    "[@click=app.run_setup_wizard]$reason ›[/]",
+                    reason=reason,
+                )
+            else:
+                reason_content = Content(reason)
+            if strip.content != reason_content:
+                strip.update(reason_content)
+            # TASK-24415: the cap is a function of the live row width so the
+            # draft keeps its floor; below a legible budget the strip hides
+            # entirely (the Send tooltip still carries the reason).
+            cap = self._send_reason_width_cap()
+            if cap > 0:
+                strip.styles.display = "block"
+                strip.styles.width = "auto"
+                strip.styles.min_width = 0
+                strip.styles.max_width = cap
+                strip.styles.height = 1
+                strip.styles.min_height = 1
+            else:
+                strip.styles.display = "none"
+                strip.styles.width = 0
+                strip.styles.min_width = 0
+                strip.styles.max_width = 0
+                strip.styles.height = 0
+                strip.styles.min_height = 0
         else:
-            strip.update(Content(""))
+            if strip.content != Content(""):
+                strip.update(Content(""))
             strip.styles.display = "none"
             strip.styles.width = 0
             strip.styles.min_width = 0
@@ -1605,6 +1967,127 @@ class ConsoleComposerBar(Horizontal):
             # the row. Keep this redundant guidance cached but out of layout
             # until the next ordinary voice-status repaint restores it.
             strip.styles.display = "none"
+
+    def _send_price_is_available(self) -> bool:
+        """Answer the cheap "is there a price to show?" question.
+
+        Runs on the keystroke path, so it must never reach the transcript.
+        A missing seam or a raising one both resolve to True: the derivation
+        itself degrades to an honest "cost unavailable" tooltip, so the
+        ``| $`` suffix still has something behind it.
+
+        Returns:
+            True when Send should advertise a next-send price.
+        """
+        provider = self._send_price_available_provider
+        if provider is None:
+            return True
+        try:
+            return bool(provider(self.draft_text()))
+        except Exception:  # noqa: BLE001 -- pricing cannot block Send
+            return True
+
+    def _derive_send_price_tooltip(self) -> str:
+        """Render the next-send price for the CURRENT draft, right now.
+
+        Deliberately uncached: it is called only when the pointer is on Send,
+        so it always reads the live draft and the live session and can never
+        show a number the composer has since moved past.
+
+        Returns:
+            The rendered price tooltip, or the honest degraded copy.
+        """
+        provider = self._send_price_tooltip_provider
+        if provider is None:
+            return self.SEND_READY_TOOLTIP
+        try:
+            tooltip = provider(self.draft_text())
+        except Exception:  # noqa: BLE001 -- pricing presentation cannot block Send
+            return self.SEND_PRICE_UNAVAILABLE_TOOLTIP
+        return tooltip or self.SEND_READY_TOOLTIP
+
+    @staticmethod
+    def _node_is_send(node: Any | None, send_button: Button) -> bool:
+        """Whether ``node`` is the Send button or lives inside it."""
+        if node is None:
+            return False
+        return any(
+            candidate is send_button
+            for candidate in getattr(node, "ancestors_with_self", ())
+        )
+
+    def _pointer_is_on_send(self, send_button: Button) -> bool:
+        """Whether the pointer currently rests on the Send button.
+
+        Reads ``App.mouse_over`` rather than ``Button.mouse_hover``: Textual
+        clears ``mouse_hover`` when a widget is disabled under the pointer
+        (``Widget.watch_disabled``), so a Send that goes empty and then
+        sendable again -- staging an attachment, say -- without the mouse
+        moving would otherwise never re-derive its price.
+
+        Args:
+            send_button: The composer's Send button.
+
+        Returns:
+            True when the pointer is on Send.
+        """
+        try:
+            under_pointer = self.app.mouse_over
+        except Exception:  # noqa: BLE001 -- no active app (teardown/unmounted)
+            return False
+        return self._node_is_send(under_pointer, send_button)
+
+    def _refresh_send_price_for_pointer(self) -> None:
+        """Put the price on Send while the pointer is on it, take it off when not.
+
+        Reads the pointer's CURRENT position rather than the position the
+        triggering event carried: Textual queues a synthetic ``Leave`` when a
+        widget is disabled under the pointer (``Widget.watch_disabled``), and
+        that message can be delivered after Send has already become sendable
+        again -- a stale "the pointer left" that never happened.
+        """
+        if not self._send_price_available:
+            # Send is blocked or empty; its tooltip belongs to the blocked
+            # copy and pricing must not overwrite it.
+            return
+        try:
+            send_button = self.query_one("#console-send-message", Button)
+        except NoMatches:
+            return
+        send_button.tooltip = (
+            self._derive_send_price_tooltip()
+            if self._pointer_is_on_send(send_button)
+            else self.SEND_READY_TOOLTIP
+        )
+
+    def on_enter(self, event: Enter) -> None:
+        """Derive the Send price when the pointer arrives (TASK-23018).
+
+        Textual shows a tooltip ``App.TOOLTIP_DELAY`` (0.5s) after the
+        pointer settles and posts ``Enter`` immediately, so deriving here is
+        both far off the keystroke path and always in time.
+
+        Args:
+            event: The arriving pointer event. Deliberately unread --
+                ``_refresh_send_price_for_pointer`` resolves the *current*
+                pointer from ``App.mouse_over`` instead, because
+                ``Button.watch_disabled`` can queue a synthetic ``Leave``
+                that arrives after Send is sendable again, so the event's
+                own node is not a reliable answer to "where is the pointer
+                now". Accepted to match Textual's handler signature.
+        """
+        self._refresh_send_price_for_pointer()
+
+    def on_leave(self, event: Leave) -> None:
+        """Take the derived price back off Send when the pointer leaves.
+
+        Args:
+            event: The departing pointer event. Deliberately unread, for the
+                same reason as :meth:`on_enter` -- the current pointer is
+                read from ``App.mouse_over`` rather than trusted from the
+                event's node. Accepted to match Textual's handler signature.
+        """
+        self._refresh_send_price_for_pointer()
 
     def sync_action_state(
         self,
@@ -1658,15 +2141,38 @@ class ConsoleComposerBar(Horizontal):
 
         normalized_send_label = send_label.strip() or "Send"
         self._send_label = normalized_send_label
-        self._send_button_width = max(6, cell_len(normalized_send_label) + 2)
-        send_button.label = normalized_send_label
+        raw_cli_ready = self._raw_cli_prefix_typed and self.draft_text().startswith(
+            "! "
+        )
+        effective_send_blocked = send_blocked and not raw_cli_ready
+        send_ready = has_draft and not effective_send_blocked
+        # TASK-23018: this used to call the TOOLTIP provider, which re-derives
+        # the entire next request (whole-session provider projection + token
+        # count) -- measured at 5.85 ms per keypress on a 400-message session
+        # against a 0.37 ms baseline, scaling with conversation length, on a
+        # method reached from `insert_text` for every printable key. Only the
+        # cheap availability question is asked here now; the rendered tooltip
+        # is derived in `_refresh_send_price_for_pointer` when it reaches
+        # Send, which is the only moment a tooltip can be seen.
+        price_available = (
+            send_ready
+            and not raw_cli_ready
+            and self._send_price_tooltip_provider is not None
+        )
+        if price_available:
+            price_available = self._send_price_is_available()
+        self._send_price_available = price_available
+        displayed_send_label = "Run" if raw_cli_ready else normalized_send_label
+        if price_available:
+            displayed_send_label = f"{normalized_send_label} | $"
+
+        self._send_button_width = send_button_width_for(displayed_send_label)
+        send_button.label = displayed_send_label
         send_button.styles.width = self._send_button_width
         send_button.styles.min_width = self._send_button_width
         send_button.styles.max_width = self._send_button_width
         if not self._voice_full_width_preparing:
             self._set_actions_row_width(actions, self._actions_row_width())
-
-        send_ready = has_draft and not send_blocked
 
         # TASK-2154.6 (FR-04): Send now carries a REAL disabled state instead
         # of the old CSS-classes-only subdual -- a hover tooltip was the sole
@@ -1677,7 +2183,9 @@ class ConsoleComposerBar(Horizontal):
         # feedback (toast + transcript system row) survives the flag.
         send_button.disabled = not send_ready
         send_button.variant = "primary" if send_ready else "default"
-        if send_blocked and wake_turn_active:
+        if raw_cli_ready:
+            send_button.tooltip = "Run this raw command with host-user authority."
+        elif effective_send_blocked and wake_turn_active:
             # task-15862 AC#3: a wake turn's blocked state names itself --
             # the queue tooltip riding `setup_blocked_reason` mid-wake read
             # as a provider-setup problem.
@@ -1685,14 +2193,20 @@ class ConsoleComposerBar(Horizontal):
                 "A background sub-agent result is being delivered. "
                 "Wait for it to finish."
             )
-        elif send_blocked and setup_blocked_reason:
+        elif effective_send_blocked and setup_blocked_reason:
             send_button.tooltip = setup_blocked_reason
-        elif send_blocked:
+        elif effective_send_blocked:
             send_button.tooltip = (
                 "Wait for the active Console run to finish before sending."
             )
+        elif price_available and self._pointer_is_on_send(send_button):
+            # The pointer is already parked on Send (typing with the mouse at
+            # rest, or a re-sync mid-hover). Textual re-reads `.tooltip` from
+            # the setter while a tooltip is displayed, so re-deriving here is
+            # what keeps a VISIBLE price honest as the draft changes.
+            send_button.tooltip = self._derive_send_price_tooltip()
         elif has_draft:
-            send_button.tooltip = "Send the active Console session draft."
+            send_button.tooltip = self.SEND_READY_TOOLTIP
         else:
             send_button.tooltip = "Type a message to send."
         send_button.set_class(send_ready, "console-action-primary")
@@ -1700,21 +2214,23 @@ class ConsoleComposerBar(Horizontal):
         send_button.set_class(not send_ready, "console-action-disabled")
         send_button.set_class(send_ready, "console-send-ready")
         send_button.set_class(not has_draft, "console-send-inactive")
-        send_button.set_class(send_blocked, "console-send-blocked")
+        send_button.set_class(effective_send_blocked, "console-send-blocked")
         self.set_class(
-            send_blocked and bool(setup_blocked_reason) and not wake_turn_active,
+            effective_send_blocked
+            and bool(setup_blocked_reason)
+            and not wake_turn_active,
             "console-composer-setup-blocked",
         )
         reason = build_console_disabled_reason(
             action_id="send",
             has_draft=has_draft,
-            send_blocked=send_blocked,
+            send_blocked=effective_send_blocked,
             setup_blocked_reason=setup_blocked_reason,
             wake_turn_active=wake_turn_active,
         )
         reason_changed = reason != self._send_disabled_reason
         self._send_disabled_reason = reason
-        self._sync_send_disabled_reason(reason, muted=not send_blocked)
+        self._sync_send_disabled_reason(reason, muted=not effective_send_blocked)
 
         stop_button.disabled = False
         stop_button.variant = "warning" if run_active else "default"
@@ -1736,6 +2252,14 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
         stop_button.styles.display = "block" if run_active else "none"
+        # TASK-28227: Redirect shares Stop's visibility exactly -- present
+        # while (and only while) this tab's run is active.
+        try:
+            redirect_button = self.query_one("#console-redirect-generation", Button)
+        except NoMatches:
+            redirect_button = None
+        if redirect_button is not None:
+            redirect_button.styles.display = "block" if run_active else "none"
 
         # Attach and Save Chatbook no longer live in this row -- their
         # enabled/disabled presentation (including the temporary-chat block
@@ -2081,7 +2605,9 @@ class ConsoleComposerBar(Horizontal):
         # caller in this module) regardless of `replace_whitespace`, which
         # only controls whether *other* whitespace becomes plain spaces.
         chunks = [
-            chunk for chunk in _DRAFT_WORD_SPLIT_RE.split(line.expandtabs(8)) if chunk
+            chunk
+            for chunk in _DRAFT_WORD_SPLIT_RE.split(line.expandtabs(_DRAFT_TAB_WIDTH))
+            if chunk
         ]
         chunks.reverse()
         lines: list[str] = []
@@ -2199,11 +2725,11 @@ class ConsoleComposerBar(Horizontal):
         """Return the wrapped row containing a source-text offset.
 
         For SPLICED offsets only -- callers that pass `line_slices` wrapped
-        from a caret-glyph- or placeholder-spliced `render_text`, together
+        from a caret-glyph-spliced `render_text`, together
         with the matching spliced offset into it (the two current
         production callers, both via `_visible_draft_line_slices(...,
         cursor_index=...)`: `_draft_renderable`'s glyph splice and
-        `_display_index_at`'s space splice). A real character always
+        `_display_index_at`'s glyph splice). A real character always
         occupies the exact offset being looked up under that contract, so
         the "no row contains this offset" fallback below (unconditionally
         the LAST row) is never actually reachable there.
@@ -2343,22 +2869,12 @@ class ConsoleComposerBar(Horizontal):
         ghost_suffix: str = "",
     ) -> Text:
         if text:
-            # While focused, exactly one display cell is always reserved at
-            # the caret position inside the wrapped draft -- the caret glyph
-            # during the visible blink phase, an ordinary space during the
-            # hidden phase -- and it is wrapped in the *same* pass as the
-            # draft itself (rather than appended afterward). That keeps the
-            # two blink phases layout-identical: whichever character reserves
-            # the cell is decided by wrap width alone, never by which literal
-            # character it is, so a blink tick can never change how many
-            # visual rows the draft occupies (which previously could clip or
-            # jitter the composer when the last wrapped line landed exactly
-            # at the wrap width). The glyph is left unstyled: the block
-            # character is prominent enough on its own, and leaving it
-            # unstyled keeps it from being mistaken for a stateful paste
-            # token.
+            # Reserve the same glyph in BOTH blink phases. A space has the
+            # same cell width but different word boundaries: wrapping it
+            # instead makes whole words jump on every blink (TASK-32012.1).
+            # Hide only the mapped caret character AFTER wrapping/windowing.
             if focused:
-                caret_cell = resolve_glyph(cls.CURSOR_GLYPH) if cursor_visible else " "
+                caret_cell = resolve_glyph(cls.CURSOR_GLYPH)
                 caret_position = (
                     len(text)
                     if cursor_index is None
@@ -2392,11 +2908,43 @@ class ConsoleComposerBar(Horizontal):
             else:
                 caret_position = None
                 render_text = text
+            if "\t" in render_text:
+                # Wrapping expands tabs. Put caret/style offsets in that same
+                # coordinate space before selecting or masking a visible row.
+                if caret_position is not None:
+                    caret_position = len(
+                        render_text[:caret_position].expandtabs(_DRAFT_TAB_WIDTH)
+                    )
+                if style_ranges:
+                    style_ranges = [
+                        (
+                            len(render_text[:start].expandtabs(_DRAFT_TAB_WIDTH)),
+                            len(render_text[:end].expandtabs(_DRAFT_TAB_WIDTH)),
+                            style,
+                        )
+                        for start, end, style in style_ranges
+                    ]
+                render_text = render_text.expandtabs(_DRAFT_TAB_WIDTH)
             line_slices = cls._visible_draft_line_slices(
                 render_text,
                 width,
                 cursor_index=caret_position,
             )
+            if caret_position is not None and not cursor_visible:
+                for index, line_slice in enumerate(line_slices):
+                    if line_slice.start <= caret_position < line_slice.end:
+                        offset = (
+                            caret_position
+                            - line_slice.start
+                            + line_slice.synthetic_prefix_columns
+                        )
+                        line_slices[index] = replace(
+                            line_slice,
+                            text=line_slice.text[:offset]
+                            + " "
+                            + line_slice.text[offset + 1 :],
+                        )
+                        break
             # `no_wrap`/`overflow="crop"`: defense-in-depth, not the fix for
             # any known bug reachable through this file's own call sites.
             # Each joined row is already budgeted to fit `width` by
@@ -2480,7 +3028,11 @@ class ConsoleComposerBar(Horizontal):
         # while focused, computed once here (at focus/blur/mutation time,
         # never on a blink tick) so the exactly-at-width case gets its extra
         # row up front instead of only discovering it needs one mid-blink.
-        measured_text = f"{text} " if reserve_trailing_cell else text
+        measured_text = (
+            f"{text}{resolve_glyph(cls.CURSOR_GLYPH)}"
+            if reserve_trailing_cell
+            else text
+        )
         return max(
             cls.MIN_DRAFT_ROWS,
             min(
@@ -2500,7 +3052,19 @@ class ConsoleComposerBar(Horizontal):
 
     def _apply_draft_height(self, row_count: int) -> None:
         row_count = max(self.MIN_DRAFT_ROWS, min(self.MAX_DRAFT_ROWS, row_count))
-        composer_height = row_count + self.COMPOSER_CHROME_ROWS
+        recovery_rows = int(self._improvement_undo is not None and not self._collapsed)
+        composer_height = row_count + self.COMPOSER_CHROME_ROWS + recovery_rows
+        # task-24453: this runs on every keystroke, and its unconditional
+        # `self.refresh(layout=True)` below forced a WHOLE-SCREEN relayout per
+        # keypress (measured: 45 layouts for 43 keys, ~11.5 ms each). The
+        # geometry it writes is a pure function of these three values, so when
+        # none of them moved -- the overwhelmingly common case, since a draft
+        # only changes row count when it wraps -- there is nothing to write and
+        # nothing to relayout. `on_mount` clears the signature so a remounted
+        # composer always re-applies its geometry to fresh widgets.
+        geometry = (row_count, recovery_rows, composer_height)
+        if geometry == self._draft_geometry_signature:
+            return
         try:
             visible_draft = self.query_one("#console-command-visible-text", Static)
             visible_draft.styles.height = row_count
@@ -2517,12 +3081,21 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             pass
         self.styles.height = composer_height
-        self.styles.min_height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
-        self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
+        self.styles.min_height = (
+            self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS + recovery_rows
+        )
+        self.styles.max_height = (
+            self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS + recovery_rows
+        )
+        self._draft_geometry_signature = geometry
         self.refresh(layout=True)
 
     def _apply_collapsed_geometry(self) -> None:
         """Pin the compact presentation to exactly one terminal row."""
+        # The expanded geometry is no longer on the widget, so the next
+        # `_apply_draft_height` must write it again rather than trust a
+        # signature captured before the collapse (task-24453).
+        self._draft_geometry_signature = None
         self.styles.height = 1
         self.styles.min_height = 1
         self.styles.max_height = 1
@@ -2530,6 +3103,8 @@ class ConsoleComposerBar(Horizontal):
 
     def _collapsed_status_text(self) -> str:
         """Build presence-only status copy without exposing retained content."""
+        if self._raw_cli_prefix_typed and self.draft_text().startswith("! "):
+            return "RAW CLI · HOST ACCESS"
         parts = ["Composer hidden"]
         if self._run_active:
             parts.append("Generating")
@@ -2552,19 +3127,59 @@ class ConsoleComposerBar(Horizontal):
         self._sync_collapsed_presentation()
 
     def _sync_collapsed_presentation(self) -> None:
-        """Synchronize stable presentation containers from cached widget state."""
+        """Synchronize stable presentation containers from cached widget state.
+
+        task-24453: every caller of this method reaches it from the keystroke
+        path, so it ran three times per keypress and did the same DOM work each
+        time whether or not anything had moved. Two guards, in order:
+
+        1. A signature over exactly the state the body reads. When it matches
+           the previous pass nothing has changed and the whole method is
+           skipped -- the same fingerprint pattern
+           `main_navigation._update_overflow_hints` uses.
+        2. While the composer is EXPANDED, the collapsed row is `display:none`,
+           so its content and classes are invisible; only the two display flips
+           and this widget's own class are applied. The skipped work is not
+           lost: `_collapsed` is part of the signature, so collapsing always
+           misses the cache and repaints the row from current state before it
+           becomes visible.
+        """
+        raw_cli_active = self._raw_cli_prefix_typed and self.draft_text().startswith(
+            "! "
+        )
+        status_text = self._collapsed_status_text()
+        signature = (
+            self._collapsed,
+            status_text,
+            raw_cli_active,
+            self._run_active,
+        )
+        if signature == self._collapsed_presentation_signature:
+            return
         try:
             expanded = self.query_one("#console-composer-expanded", Horizontal)
             collapsed = self.query_one("#console-composer-collapsed", Horizontal)
-            status = self.query_one("#console-composer-collapsed-status", Static)
-            stop = self.query_one("#console-collapsed-stop-generation", Button)
         except NoMatches:
+            # Leave the signature unset so the next pass retries -- caching a
+            # signature for a sync that never landed would strand the row.
             return
         expanded.styles.display = "none" if self._collapsed else "block"
         collapsed.styles.display = "block" if self._collapsed else "none"
-        status.update(self._collapsed_status_text())
-        stop.styles.display = "block" if self._run_active else "none"
         self.set_class(self._collapsed, "console-composer-collapsed")
+
+        if self._collapsed:
+            try:
+                status = self.query_one("#console-composer-collapsed-status", Static)
+                stop = self.query_one("#console-collapsed-stop-generation", Button)
+            except NoMatches:
+                return
+            status.update(status_text)
+            collapsed.set_class(raw_cli_active, "console-raw-cli-danger")
+            status.set_class(raw_cli_active, "console-raw-cli-danger")
+            status.set_class(raw_cli_active, "console-voice-status-error")
+            stop.styles.display = "block" if self._run_active else "none"
+
+        self._collapsed_presentation_signature = signature
 
     def set_collapsed(self, collapsed: bool) -> None:
         """Switch presentation without remounting or clearing editor state.
@@ -2580,6 +3195,7 @@ class ConsoleComposerBar(Horizontal):
             self._apply_collapsed_geometry()
         else:
             self._refresh_visible_draft()
+        self._sync_improvement_recovery()
 
     def _insert_literal_at_cursor(self, text: str) -> None:
         """Splice literal text into the draft at the caret, coalescing segments.
@@ -2849,7 +3465,75 @@ class ConsoleComposerBar(Horizontal):
         self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
 
+    def _visible_render_memo_key(self, draft: str, width: int) -> tuple[Any, ...]:
+        """Return the invalidation key for the visible-draft render memo.
+
+        Every input that shapes `_build_visible_draft_renderable`'s output
+        (except the blink phase, which selects the per-key slot) appears
+        here, so a stale hit is impossible by construction rather than by
+        remembering to clear the cache at each mutation site:
+
+        * draft display text + wrap width -- the wrapped content itself;
+        * focus, segment-model initialization, canonical + display caret
+          offsets -- caret splice position and ghost gating;
+        * canonical text -- `_ghost_suffix` matches history against the
+          CANONICAL draft, and two different canonical drafts can render the
+          same display text (equal-length collapsed paste tokens);
+        * style ranges + selection state -- paste-token/selection styling
+          (selection also gates the ghost);
+        * history identity/revision + recall index -- the ghost suffix is
+          part of the memoized OUTPUT, so a history record while the
+          composer idles must invalidate via `PromptHistory.revision`
+          (`id(history)` guards a whole-store swap, whose fresh revision
+          counter could collide with the old store's).
+
+        The two O(len(draft)) joins here (display text is joined by the
+        caller, canonical here) are the price of self-validating keys:
+        ~microseconds against the multi-millisecond wrap they gate.
+        """
+        history = self._prompt_history
+        return (
+            draft,
+            width,
+            self.has_focus_within,
+            self._segments_initialized,
+            self._cursor_index,
+            self._cursor_display_index() if self._segments_initialized else None,
+            self._canonical_draft_text() if self._segments_initialized else draft,
+            tuple(self._display_draft_style_ranges()),
+            self._draft_selection_all,
+            self._draft_selection_range,
+            self._history_index,
+            None if history is None else (id(history), history.revision),
+        )
+
     def _current_visible_draft_renderable(self, draft: str, width: int) -> Text:
+        """Return the Text renderable for the current draft/placeholder state.
+
+        TASK-22218: memoized per blink phase. The 0.53 s caret blink calls
+        this ~1.89x/s for as long as the composer holds focus; before the
+        memo, every tick re-ran the grapheme-aware cell wrap of the ENTIRE
+        draft plus `_ghost_suffix`'s linear scan over up to 1000 history
+        entries -- measured 1.58 ms/tick with a 20 KB draft -- just to flip
+        one caret cell. A tick with an unchanged key is now a dict hit; the
+        two phases cache their final caret character separately, while
+        sharing the same wrapping policy.
+        """
+        phase = bool(getattr(self, "_cursor_visible", True))
+        memo_key = self._visible_render_memo_key(draft, width)
+        cache = self._visible_render_cache
+        if cache is not None and cache[0] == memo_key:
+            cached = cache[1].get(phase)
+            if cached is not None:
+                return cached
+        else:
+            cache = (memo_key, {})
+            self._visible_render_cache = cache
+        renderable = self._build_visible_draft_renderable(draft, width)
+        cache[1][phase] = renderable
+        return renderable
+
+    def _build_visible_draft_renderable(self, draft: str, width: int) -> Text:
         """Build the Text renderable for the current draft/placeholder state."""
         if draft:
             focused = self.has_focus_within
@@ -2866,8 +3550,9 @@ class ConsoleComposerBar(Horizontal):
                 ),
                 # Ghost text only shows while focused (the caret it trails is
                 # focus-only too) and `_ghost_suffix` self-gates on caret-at-
-                # end/selection/live-draft, so this recomputes cleanly on
-                # every blink tick and edit.
+                # end/selection/live-draft. Recomputed on every memo MISS;
+                # history changes while the draft idles reach the next tick
+                # through the history revision in the memo key.
                 ghost_suffix=self._ghost_suffix() if focused else "",
             )
         return self._placeholder_renderable(width=width)
@@ -2875,14 +3560,41 @@ class ConsoleComposerBar(Horizontal):
     def _render_visible_draft_only(self) -> None:
         """Re-render the visible-draft Static without recomputing composer height.
 
-        Used by the cursor blink tick, which must stay cheap and must not
-        trigger a layout recompute on every blink phase.
+        Used by the cursor blink tick (its only caller), which must stay cheap
+        and must not trigger a layout recompute on every blink phase.
+
+        TASK-21692: ``Static.update`` defaults to ``layout=True``, so this
+        method used to arm a full screen layout pass ~2x/second for as long
+        as the composer merely held focus -- measured at 1 ``Screen.
+        _refresh_layout`` + 1 ``Compositor.reflow`` + 1 arrangement-cache
+        miss per tick. ``layout=False`` is sound here because the rendered
+        SIZE cannot differ between the two blink phases:
+
+        * ``_draft_renderable`` wraps the same caret glyph in BOTH phases,
+          then masks only that character with a space while hidden, so the
+          two phases retain identical word positions and cell widths. Both
+          ``CURSOR_GLYPH`` and its ASCII fallback ``|`` are single-width.
+        * The Static's geometry is pinned by inline styles rather than
+          derived from its content: ``width: 1fr``, ``text_wrap = "nowrap"``,
+          ``text_overflow = "clip"`` (set in ``compose``) and an explicit
+          ``height``/``min_height``/``max_height`` written by
+          ``_apply_draft_height``, which every size-changing path
+          (``_refresh_visible_draft``, resize, collapse) still goes through
+          with ``layout=True``. The blink tick changes no state those paths
+          read.
+
+        TASK-22218 fixed the COMPUTE half: `_current_visible_draft_
+        renderable` is memoized per blink phase, so a tick with an unchanged
+        draft/width/history reuses the built renderable instead of re-running
+        the full-draft cell wrap and the history ghost scan.
         """
         try:
             draft = self._display_draft_text()
             width = self._draft_render_width()
             renderable = self._current_visible_draft_renderable(draft, width)
-            self.query_one("#console-command-visible-text", Static).update(renderable)
+            self.query_one("#console-command-visible-text", Static).update(
+                renderable, layout=False
+            )
         except NoMatches:
             return
 
@@ -2907,7 +3619,31 @@ class ConsoleComposerBar(Horizontal):
             return
 
     def _toggle_cursor_blink(self) -> None:
-        """Flip the cursor blink phase and refresh only the visible draft."""
+        """Flip the cursor blink phase and refresh only the visible draft.
+
+        TASK-22218: `_sync_cursor_blink_state`'s resume gate is
+        `has_focus_within`, which reads this widget's OWN screen's focus
+        memory -- it survives `push_screen`, so the timer keeps firing under
+        every modal. Rather than pause/resume bookkeeping across cover and
+        uncover (Textual's ScreenSuspend/ScreenResume are posted to the
+        Screen, not to its descendants), this keeps the TASK-22219 shape:
+        the timer keeps ticking and the tick early-outs while the screen is
+        not active, which reduces a covered fire to one property check. The
+        caret parks SOLID on the first covered tick (matching
+        `_sync_cursor_blink_state`'s pause convention, and the composer can
+        be partly visible under a dialog); the first tick after the screen
+        is active again resumes the blink -- the timer itself is the resume
+        path, so there is no resume callback to miss.
+        """
+        if not self.is_attached:
+            # Teardown race: a queued tick can land while the composer is
+            # being unmounted; `self.screen` would raise NoScreen.
+            return
+        if not self.screen.is_active:
+            if not self._cursor_visible:
+                self._cursor_visible = True
+                self._render_visible_draft_only()
+            return
         self._cursor_visible = not self._cursor_visible
         self._render_visible_draft_only()
 
@@ -2923,6 +3659,13 @@ class ConsoleComposerBar(Horizontal):
             timer.pause()
 
     def on_mount(self) -> None:
+        # Fresh widget tree: any geometry signature from a previous mount
+        # describes widgets that no longer exist (task-24453).
+        self._draft_geometry_signature = None
+        self._collapsed_presentation_signature = None
+        self._improvement_recovery_visible = None
+        self._raw_cli_status_visible = None
+        self._hidden_input_mirror = None
         self._cursor_blink_timer = self.set_interval(
             self.CURSOR_BLINK_INTERVAL,
             self._toggle_cursor_blink,
@@ -2931,6 +3674,7 @@ class ConsoleComposerBar(Horizontal):
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
+        self._sync_improvement_recovery()
         self._sync_current_action_state()
         if self._prompt_history is not None:
             # TASK-1364: warm the history entries so ghost text and recall
@@ -2948,6 +3692,36 @@ class ConsoleComposerBar(Horizontal):
             )
 
     def on_resize(self, event: Any) -> None:
+        """Re-derive the advisory-strip budgets against the new row width.
+
+        TASK-24415/24620: the reason strip's and voice chip's width caps are
+        functions of the LIVE row width -- a resize must re-derive them, or
+        strips sized for the old width keep starving the draft at the new
+        one. The chip replays its cached status so the same budget rule
+        applies on the shrink.
+
+        Args:
+            event: Textual resize event (unused beyond the handler
+                signature; the layout has already settled when it fires).
+        """
+        self._sync_send_disabled_reason(
+            self._send_disabled_reason, muted=not self._send_blocked
+        )
+        if self._voice_status_last is not None:
+            (
+                voice_state,
+                voice_partial,
+                voice_elapsed,
+                voice_message,
+                voice_segment_transcribing,
+            ) = self._voice_status_last
+            self.set_voice_status(
+                voice_state,
+                partial=voice_partial,
+                elapsed_seconds=voice_elapsed,
+                message=voice_message,
+                segment_transcribing=voice_segment_transcribing,
+            )
         self._refresh_visible_draft()
 
     def on_focus(self) -> None:
@@ -2956,6 +3730,7 @@ class ConsoleComposerBar(Horizontal):
         self._refresh_visible_draft()
 
     def on_blur(self) -> None:
+        self._raw_cli_prefix_stage_one = False
         self._sync_interaction_classes()
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
@@ -2969,6 +3744,37 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
+
+    @on(Button.Pressed, "#console-send-message")
+    def _stash_visible_send_draft(self, event: Button.Pressed) -> None:
+        """Capture a mouse Send at its press event, matching the Enter path."""
+        owner = self.screen
+        if not hasattr(owner, "_console_pending_send_stash"):
+            return
+        if getattr(owner, "_console_pending_send_stash") is None:
+            owner._console_pending_send_stash = self.stash_raw_cli_draft_for_send()
+
+    def replace_draft_via_completion(self, text: str) -> None:
+        """Replace the draft with an accepted completion, undo-ably.
+
+        TASK-24416: accepting a slash-popup suggestion is one more edit in
+        the SAME draft scope -- unlike ``load_draft`` (a session-scope
+        change that wipes history by design, TASK-1281), the pre-accept
+        draft is recorded onto the undo stack so an accidental accept is
+        Ctrl+Z-able, and the redo branch is invalidated exactly like a
+        typed edit.
+
+        Args:
+            text: The completion's full-draft replacement text.
+        """
+        self._record_undo_snapshot(coalesce=False)
+        banked = self.export_undo_history()
+        self.load_draft(text)
+        # `load_draft` wiped the stacks; reinstate the banked ones (their
+        # bundled "current" is the PRE-accept draft, which no longer matches
+        # `draft_text()`, so `restore_undo_history` re-adopts only the
+        # stacks and leaves the accepted text in place).
+        self.restore_undo_history(banked)
 
     def load_draft(self, text: str) -> None:
         """Replace the native Console draft with literal text.
@@ -2990,6 +3796,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Draft payload to show and send literally.
         """
+        self._clear_raw_cli_provenance()
         self._advance_draft_generation()
         self._clear_draft_selection()
         self._segments = [_DraftSegment(text)] if text else []
@@ -3003,22 +3810,22 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
-    def stash_draft_for_send(self) -> ConsoleDraftStash | None:
-        """Capture and clear the draft synchronously at the send keypress.
+    def capture_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Capture the current draft for admission without mutating it.
 
-        Keystrokes processed after this call land in a fresh, empty draft —
-        they can never fold into the captured send payload (TASK-340). A
-        rejected send hands the stash back via ``restore_stashed_draft``.
+        The caller commits this exact revision only after app-owned runtime
+        custody succeeds.  Text typed after capture therefore remains live
+        and is preserved by :meth:`commit_captured_draft`.
 
         Returns:
-            The captured stash, or ``None`` when the draft is empty (an
-            image-only send has nothing to capture or restore).
+            The captured revision, or ``None`` when the draft is empty.
         """
-        # A send keypress is a draft-scope barrier even when there is no text
-        # to stash (for example, an attachment-only send).
-        self.invalidate_improvement_undo()
         text = self.draft_text()
+        raw_cli_prefix_typed = self._raw_cli_prefix_typed and text.startswith("! ")
+        self._raw_cli_prefix_stage_one = False
         if not text:
+            self._raw_cli_prefix_typed = False
+            self._sync_raw_cli_state()
             return None
         if not self._segments_initialized:
             self._segments = [_DraftSegment(text)]
@@ -3030,9 +3837,78 @@ class ConsoleComposerBar(Horizontal):
             segments=[replace(segment) for segment in self._segments],
             text=text,
             has_paste=self.has_paste_segments(),
+            raw_cli_prefix_typed=raw_cli_prefix_typed,
+            edit_serial=self._user_edit_serial,
+            generation=self._draft_generation,
         )
-        self.clear_draft()
         return stash
+
+    def commit_captured_draft(self, stash: ConsoleDraftStash | None) -> bool:
+        """Remove only a captured revision after runtime accepts custody.
+
+        A later edit is preserved when it follows the captured payload.  If
+        the captured prefix itself changed, the commit fails closed and leaves
+        the whole live draft untouched.
+
+        Args:
+            stash: Snapshot returned by :meth:`capture_draft_for_send`.
+
+        Returns:
+            True when the captured revision was committed, otherwise False.
+        """
+        self.invalidate_improvement_undo()
+        if stash is None:
+            self.clear_history()
+            return True
+        current = self.draft_text()
+        if (
+            self._draft_generation != stash.generation
+            or not current.startswith(stash.text)
+            or (
+                current == stash.text
+                and self._user_edit_serial != stash.edit_serial
+            )
+        ):
+            return False
+        if not self._segments_initialized:
+            self._segments = [_DraftSegment(current)] if current else []
+            self._segments_initialized = True
+        remaining = len(stash.text)
+        kept: list[_DraftSegment] = []
+        for segment in self._segments:
+            if remaining >= len(segment.text):
+                remaining -= len(segment.text)
+                continue
+            if remaining:
+                kept.append(replace(segment, text=segment.text[remaining:]))
+                remaining = 0
+            else:
+                kept.append(replace(segment))
+        if remaining:
+            return False
+        self._advance_draft_generation()
+        self._clear_draft_selection()
+        self._segments = kept
+        self._cursor_index = len(self._canonical_draft_text())
+        self._coalescing_active = False
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+        self.clear_history()
+        return True
+
+    def stash_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Legacy destructive wrapper around capture followed by commit."""
+        stash = self.capture_draft_for_send()
+        self.commit_captured_draft(stash)
+        return stash
+
+    def stash_raw_cli_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Consume an existing trusted raw-prefix latch without deriving trust."""
+        if not (self._raw_cli_prefix_typed and self.draft_text().startswith("! ")):
+            return None
+        return self.stash_draft_for_send()
 
     def restore_stashed_draft(self, stash: ConsoleDraftStash | None) -> None:
         """Put a stashed draft back, ahead of anything typed since the stash.
@@ -3047,6 +3923,7 @@ class ConsoleComposerBar(Horizontal):
         """
         if stash is None or not stash.segments:
             return
+        self._clear_raw_cli_provenance()
         self._advance_draft_generation()
         self._clear_draft_selection()
         if not self._segments_initialized:
@@ -3057,6 +3934,9 @@ class ConsoleComposerBar(Horizontal):
             replace(segment) for segment in stash.segments
         ] + self._segments
         self._cursor_index = len(self._canonical_draft_text())
+        self._raw_cli_prefix_typed = (
+            stash.raw_cli_prefix_typed and self._canonical_draft_text().startswith("! ")
+        )
         # TASK-1281 review F3: this replaces the draft wholesale without
         # recording (a rejected send putting the user's own text back is
         # not itself an edit), but it must still close any run left open
@@ -3082,13 +3962,13 @@ class ConsoleComposerBar(Horizontal):
                 undoable (TASK-1281). Defaults to False -- most callers use
                 this to swap draft scope programmatically (session switches,
                 the post-send clear, restore-then-replace flows), and none
-                of those should be revertable with Ctrl+Z. The one caller
-                that must pass ``True`` is the Ctrl+U "clear draft" key
-                handler in `ChatScreen.on_key` -- an accidental full clear is
-                exactly what undo exists for.
+                of those should be revertable with Ctrl+Z. The Ctrl+U and
+                focused, unselected Ctrl+C key handlers pass ``True`` because
+                an accidental full clear is exactly what undo exists for.
         """
         if record_history and self._has_any_draft_content():
             self._record_undo_snapshot(coalesce=False)
+        self._clear_raw_cli_provenance()
         self._advance_draft_generation()
         self._clear_draft_selection()
         self._segments = []
@@ -3232,6 +4112,7 @@ class ConsoleComposerBar(Horizontal):
         token edge (0 or the full text length) it was nearer to, rather
         than restored verbatim into what is now the middle of a token.
         """
+        self._clear_raw_cli_provenance()
         self._clear_draft_selection()
         text_length = len(snapshot.text)
         raw_cursor = max(0, min(snapshot.cursor_index, text_length))
@@ -3340,6 +4221,7 @@ class ConsoleComposerBar(Horizontal):
                 empty history (a session that has never had a recorded
                 edit -- freshly created, or never visited before).
         """
+        self._clear_raw_cli_provenance()
         undo_entries, redo_entries = history if history is not None else ([], [])
         current_text = getattr(undo_entries, "current_text", None)
         current_segments = getattr(undo_entries, "current_segments", None)
@@ -3400,7 +4282,7 @@ class ConsoleComposerBar(Horizontal):
         reaches past the composer -- the clipboard, undo/redo's store
         persistence, send, transcript paging.
 
-        TASK-3749 added the six draft-EDITING keys (Backspace/Ctrl+H,
+        TASK-3749 added the draft-EDITING keys (Backspace/Ctrl+H,
         Delete, Ctrl+W, Shift+Enter/Ctrl+J, Ctrl+U and the printable
         fallthrough). Wave 5 had to leave those on the screen because each
         one called a screen method AFTER the edit; they now post
@@ -3422,6 +4304,18 @@ class ConsoleComposerBar(Horizontal):
             keep looking -- which includes Up/Down on a boundary row where
             neither history recall nor caret movement had anything to do.
         """
+        completes_raw_cli_prefix = (
+            self._raw_cli_prefix_stage_one
+            and event.is_printable
+            and event.character == " "
+            and not _is_modified_chord(event.key)
+            and self.draft_text() == "!"
+            and self._cursor_index == 1
+            and not self._draft_selection_all
+            and self._draft_selection_range is None
+        )
+        if self._raw_cli_prefix_stage_one and not completes_raw_cli_prefix:
+            self._raw_cli_prefix_stage_one = False
         if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
             self.select_all_draft()
             event.stop()
@@ -3478,9 +4372,10 @@ class ConsoleComposerBar(Horizontal):
         # edit with `DraftChanged` and the screen does the Workbench resync
         # (and, for insertions, the guidance dismissal) in its subscriber.
         # Ordering note: as a group these ran LATER in `on_key` than they do
-        # here -- but every key they match is disjoint from the branches that
-        # used to precede them (Ctrl+C's copy, Enter's send, PageUp/PageDown's
-        # paging, the undo/redo chords), so precedence is unchanged. The
+        # here. Focused, unselected Ctrl+C is intentionally handled before the
+        # screen's selected-draft copy branch; every other edit key remains
+        # disjoint from Enter's send, PageUp/PageDown's paging, and the
+        # undo/redo chords, so their precedence is unchanged. The
         # printable fallthrough in particular can never shadow those: their
         # characters are C0 control bytes or CR, none of which are
         # `is_printable`, and all of them are modifier chords besides.
@@ -3512,8 +4407,18 @@ class ConsoleComposerBar(Horizontal):
             event.prevent_default()
             return True
         if event.key == "ctrl+u":
-            # TASK-1281: this is the one call site that opts into undo --
+            # TASK-1281: user-requested full clears opt into undo --
             # an accidental full clear is exactly what undo exists for.
+            self.clear_draft(record_history=True)
+            self._post_draft_changed(is_insertion=False)
+            event.stop()
+            event.prevent_default()
+            return True
+        if (
+            event.key == "ctrl+c"
+            and self.has_focus
+            and not self.has_full_draft_selection()
+        ):
             self.clear_draft(record_history=True)
             self._post_draft_changed(is_insertion=False)
             event.stop()
@@ -3524,7 +4429,19 @@ class ConsoleComposerBar(Horizontal):
             and event.character is not None
             and not _is_modified_chord(event.key)
         ):
+            starts_raw_cli_prefix = (
+                event.character == "!"
+                and self.draft_text() == ""
+                and self._cursor_index == 0
+                and not self._draft_selection_all
+                and self._draft_selection_range is None
+            )
             self.insert_text(event.character)
+            if starts_raw_cli_prefix and self.draft_text() == "!":
+                self._raw_cli_prefix_stage_one = True
+            elif completes_raw_cli_prefix and self.draft_text().startswith("! "):
+                self._raw_cli_prefix_typed = True
+            self._sync_raw_cli_state()
             self._post_draft_changed(is_insertion=True)
             event.stop()
             event.prevent_default()
@@ -3547,6 +4464,7 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when there is draft text to select, otherwise False.
         """
+        self._raw_cli_prefix_stage_one = False
         if not self.draft_text():
             self._clear_draft_selection()
             self._refresh_visible_draft()
@@ -3578,8 +4496,13 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Typed text to insert without paste-collapse transformation.
         """
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
+        replaces_selection = (
+            self._draft_selection_all or self._draft_selection_range is not None
+        )
         self._mark_manual_draft_edit()
         if not text:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -3599,8 +4522,14 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
+        insertion_offset = self._cursor_index
         self._insert_literal_at_cursor(text)
         self._prune_orphaned_generated_boundaries()
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=insertion_offset,
+            replaces_selection=replaces_selection,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -3638,8 +4567,13 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Raw text inserted through a paste event.
         """
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
+        replaces_selection = (
+            self._draft_selection_all or self._draft_selection_range is not None
+        )
         self._mark_manual_draft_edit()
         if not text:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -3662,6 +4596,7 @@ class ConsoleComposerBar(Horizontal):
             self.collapse_large_pastes_enabled
             and len(text) > self.paste_collapse_threshold
         )
+        insertion_offset = self._cursor_index
         if should_collapse:
             paste_index = self._insert_segment_at_cursor(
                 _DraftSegment(
@@ -3683,6 +4618,11 @@ class ConsoleComposerBar(Horizontal):
                 )
             )
             self._prune_orphaned_generated_boundaries()
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=insertion_offset,
+            replaces_selection=replaces_selection,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -3711,8 +4651,13 @@ class ConsoleComposerBar(Horizontal):
             label: Display-only token shown in place of the text (e.g.
                 ``"📄 notes.md · 4 KB"``).
         """
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
+        replaces_selection = (
+            self._draft_selection_all or self._draft_selection_range is not None
+        )
         self._mark_manual_draft_edit()
         if not text:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -3729,6 +4674,7 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
+        insertion_offset = self._cursor_index
         self._insert_segment_at_cursor(
             _DraftSegment(
                 text,
@@ -3738,6 +4684,11 @@ class ConsoleComposerBar(Horizontal):
             )
         )
         self._prune_orphaned_generated_boundaries()
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=insertion_offset,
+            replaces_selection=replaces_selection,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -3753,6 +4704,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_left(self) -> None:
         """Delete the character (or paste token) immediately left of the caret."""
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
         self._mark_manual_draft_edit()
         if self._draft_selection_all:
             # TASK-1281: record before dispatching to `clear_draft` -- its
@@ -3775,6 +4727,7 @@ class ConsoleComposerBar(Horizontal):
         self._ensure_editable_segments()
         self._clamp_cursor()
         if not self._segments or self._cursor_index == 0:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -3782,6 +4735,11 @@ class ConsoleComposerBar(Horizontal):
         self._record_undo_snapshot(coalesce=False)
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
+        deletion_start = (
+            self._cursor_index - offset
+            if segment.collapse_state in {"collapsed", "confirm"}
+            else self._cursor_index - 1
+        )
         if segment.collapse_state in {"collapsed", "confirm"}:
             # A paste token deletes as a unit; the caret lands where it started.
             self._cursor_index -= offset
@@ -3796,6 +4754,11 @@ class ConsoleComposerBar(Horizontal):
                 del self._segments[segment_index]
         self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=deletion_start,
+            replaces_selection=self._draft_selection_range is not None,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -3803,6 +4766,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_right(self) -> None:
         """Delete the character (or paste token) immediately right of the caret."""
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
         self._mark_manual_draft_edit()
         if self._draft_selection_all:
             self._record_undo_snapshot(coalesce=False)
@@ -3813,6 +4777,7 @@ class ConsoleComposerBar(Horizontal):
         if not self._segments or self._cursor_index >= len(
             self._canonical_draft_text()
         ):
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -3820,6 +4785,12 @@ class ConsoleComposerBar(Horizontal):
         self._record_undo_snapshot(coalesce=False)
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
+        deletion_start = (
+            self._cursor_index - offset
+            if offset != len(segment.text)
+            and segment.collapse_state in {"collapsed", "confirm"}
+            else self._cursor_index
+        )
         if offset == len(segment.text):
             # Caret on a boundary: the next segment holds the deletion target.
             next_segment = self._segments[segment_index + 1]
@@ -3843,6 +4814,11 @@ class ConsoleComposerBar(Horizontal):
                 del self._segments[segment_index]
         self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=deletion_start,
+            replaces_selection=self._draft_selection_range is not None,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -3857,6 +4833,7 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when text (or a full-draft selection) was deleted.
         """
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
         self._mark_manual_draft_edit()
         if self._draft_selection_all:
             self._record_undo_snapshot(coalesce=False)
@@ -3867,6 +4844,7 @@ class ConsoleComposerBar(Horizontal):
         canonical = self._canonical_draft_text()
         cursor = self._cursor_index
         if cursor == 0:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             return False
         token_ranges: list[tuple[int, int]] = []
         offset = 0
@@ -3901,9 +4879,15 @@ class ConsoleComposerBar(Horizontal):
             ):
                 start -= 1
         if start == cursor:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             return False
         self._record_undo_snapshot(coalesce=False)
         self._delete_canonical_range(start, cursor)
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=start,
+            replaces_selection=self._draft_selection_range is not None,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -3914,6 +4898,7 @@ class ConsoleComposerBar(Horizontal):
         """Move the caret to a canonical offset, collapsing any selection."""
         # TASK-1281: every caller of this helper (arrow keys, Home/End) is a
         # cursor reposition, which always closes an open typed run.
+        self._raw_cli_prefix_stage_one = False
         self._coalescing_active = False
         self._clear_draft_selection()
         if not self._segments_initialized:
@@ -4211,6 +5196,10 @@ class ConsoleComposerBar(Horizontal):
         """
         self._prompt_history = history
         self._history_index = 0
+        # TASK-22218: the render memo keys the ghost on (id(history),
+        # revision); dropping it outright on a store swap sidesteps any
+        # reliance on id() uniqueness across a freed old store.
+        self._visible_render_cache = None
 
     def _ghost_suffix(self) -> str:
         """Return the ghost-text suffix for the current draft, or ``""``.
@@ -4368,6 +5357,7 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when the caret was positioned.
         """
+        self._raw_cli_prefix_stage_one = False
         self._ensure_editable_segments()
         # TASK-1281: click-to-position is a cursor reposition too.
         self._coalescing_active = False
@@ -4505,28 +5495,56 @@ class ConsoleComposerBar(Horizontal):
                 0, min(self._cursor_display_index(), len(display_text))
             )
             render_text = (
-                f"{display_text[:caret_position]} {display_text[caret_position:]}"
+                f"{display_text[:caret_position]}"
+                f"{resolve_glyph(self.CURSOR_GLYPH)}{display_text[caret_position:]}"
             )
         else:
             render_text = display_text
         visible_slices = self._visible_draft_line_slices(
-            render_text,
+            render_text.expandtabs(_DRAFT_TAB_WIDTH),
             self._draft_render_width(),
-            cursor_index=caret_position,
+            cursor_index=(
+                len(render_text[:caret_position].expandtabs(_DRAFT_TAB_WIDTH))
+                if caret_position is not None
+                else None
+            ),
         )
         if click_y >= len(visible_slices):
             return None
         clicked_slice = visible_slices[click_y]
-        if click_x >= len(clicked_slice.text):
+        if click_x >= cell_len(clicked_slice.text):
+            return None
+        # The terminal reports cells; slice and tab-source offsets count
+        # characters. Keep clicks on either cell of an emoji at its start,
+        # using whole grapheme boundaries with the wrapper's cell measurement.
+        for click_index, end, _ in split_graphemes(clicked_slice.text)[0]:
+            if cell_len(clicked_slice.text[:end]) > click_x:
+                break
+        else:
             return None
         if clicked_slice.synthetic_prefix_columns:
-            if click_x < clicked_slice.synthetic_prefix_columns:
+            if click_index < clicked_slice.synthetic_prefix_columns:
                 return None
             source_index = (
-                clicked_slice.start + click_x - clicked_slice.synthetic_prefix_columns
+                clicked_slice.start
+                + click_index
+                - clicked_slice.synthetic_prefix_columns
             )
         else:
-            source_index = clicked_slice.start + click_x
+            source_index = clicked_slice.start + click_index
+        if "\t" in render_text:
+            # Map expanded display positions back to the original source.
+            # A click inside a tab's spaces belongs to that tab character.
+            source_index = (
+                bisect_right(
+                    range(len(render_text) + 1),
+                    source_index,
+                    key=lambda index: len(
+                        render_text[:index].expandtabs(_DRAFT_TAB_WIDTH)
+                    ),
+                )
+                - 1
+            )
         if caret_position is not None:
             if source_index == caret_position:
                 return caret_position
@@ -4787,14 +5805,20 @@ class ConsoleComposerBar(Horizontal):
         if session_data is None:
             status = self.DEFAULT_STATUS
         else:
-            title = sanitize_character_display_label(
-                getattr(session_data, "title", None),
-                max_characters=500,
-            ) or "Untitled session"
-            backend = sanitize_character_display_label(
-                getattr(session_data, "runtime_backend", None),
-                max_characters=100,
-            ) or "local"
+            title = (
+                sanitize_character_display_label(
+                    getattr(session_data, "title", None),
+                    max_characters=500,
+                )
+                or "Untitled session"
+            )
+            backend = (
+                sanitize_character_display_label(
+                    getattr(session_data, "runtime_backend", None),
+                    max_characters=100,
+                )
+                or "local"
+            )
             raw_assistant = (
                 getattr(session_data, "assistant_id", None)
                 or getattr(
@@ -4804,14 +5828,20 @@ class ConsoleComposerBar(Horizontal):
                 )
                 or "General"
             )
-            assistant = sanitize_character_display_label(
-                raw_assistant,
-                max_characters=180,
-            ) or "General"
-            workspace = sanitize_character_display_label(
-                getattr(session_data, "workspace_id", None),
-                max_characters=180,
-            ) or "global"
+            assistant = (
+                sanitize_character_display_label(
+                    raw_assistant,
+                    max_characters=180,
+                )
+                or "General"
+            )
+            workspace = (
+                sanitize_character_display_label(
+                    getattr(session_data, "workspace_id", None),
+                    max_characters=180,
+                )
+                or "global"
+            )
             status = (
                 f"Active session: {title} | Backend: {backend} | "
                 f"Assistant: {assistant} | Scope: {workspace}"
@@ -4881,6 +5911,63 @@ class ConsoleComposerBar(Horizontal):
         if self._voice_full_width_preparing:
             self._sync_full_width_voice_presentation(True)
 
+    #: TASK-24620: the voice chip's own legibility floor, mirroring
+    #: `SEND_REASON_MIN_LEGIBLE_WIDTH` -- below it the chip hides (the
+    #: Dictate button's label still carries the mic-live state).
+    VOICE_CHIP_MIN_LEGIBLE_WIDTH = 12
+    #: TASK-24620: cells the row spends on separator margins OUTSIDE the
+    #: widgets' own widths -- the chip's normal one-cell right margin plus
+    #: the one before the actions row (measured on the laid-out row: gaps
+    #: at draft|chip and reason|actions). Budgets that ignore these deliver
+    #: a draft two cells under its floor when both advisory strips show.
+    ADVISORY_MARGIN_ALLOWANCE = 2
+
+    #: TASK-24620: last `set_voice_status` inputs, replayed from
+    #: `on_resize` so the chip's row-width budget is re-derived on resize. A
+    #: CLASS attribute, deliberately, so hand-built `__new__` fixtures never
+    #: see an AttributeError (the `_console_popup_synced_draft` lesson).
+    _voice_status_last: tuple | None = None
+
+    #: TASK-24620: the chip width last APPLIED by `set_voice_status` (0 when
+    #: hidden). The reason strip's cap subtracts this; `region` cannot be
+    #: used for that because it is stale until the next layout pass.
+    _voice_chip_last_width: int = 0
+
+    def _voice_chip_width_cap(self) -> int:
+        """Return the max cells the voice chip may take (0 = hide it).
+
+        TASK-24620: mirrors `_send_reason_width_cap` (TASK-24415). The chip
+        sized itself against the composer's FULL width with only
+        `VOICE_CHIP_MIN_WIDTH` reserved, so a long state message took up to
+        53 cells and the ``1fr`` draft (``min_width: 0``) starved beside it
+        -- the same starvation class the reason strip had. The budget is
+        whatever the live row can spare after the fixed furniture and the
+        draft floor; below a legible remainder the chip hides rather than
+        blind the composer (the Dictate button's own label still says
+        "Dictating", so the mic-live state survives).
+
+        Returns:
+            0 when the row cannot spare a legible chip (hide it), else a
+            cap of at most ``VOICE_CHIP_MAX_WIDTH`` cells.
+        """
+        try:
+            row = self.query_one("#console-composer-expanded", Horizontal)
+        except NoMatches:
+            return self.VOICE_CHIP_MAX_WIDTH
+        row_width = int(row.content_region.width)
+        if row_width <= 0:
+            # Not laid out yet; the next resize re-derives the cap.
+            return self.VOICE_CHIP_MAX_WIDTH
+        reserved = (
+            self.LEFT_CLUSTER_WIDTH
+            + self._actions_row_width()
+            + self.ADVISORY_MARGIN_ALLOWANCE
+        )
+        budget = row_width - reserved - self.DRAFT_MIN_RENDER_WIDTH
+        if budget < self.VOICE_CHIP_MIN_LEGIBLE_WIDTH:
+            return 0
+        return min(self.VOICE_CHIP_MAX_WIDTH, budget)
+
     def set_voice_status(
         self,
         state: str,
@@ -4927,8 +6014,24 @@ class ConsoleComposerBar(Horizontal):
             chip = self.query_one("#console-voice-status", Static)
         except NoMatches:
             return
+        # TASK-24620: cache the inputs so `on_resize` can re-derive the
+        # chip against the new row width (a shrink must retract the chip,
+        # not the draft).
+        self._voice_status_last = (
+            state,
+            partial,
+            elapsed_seconds,
+            message,
+            segment_transcribing,
+        )
 
         if state in ("idle", "unavailable"):
+            # PR-2230 review f2: clear the chip-width cache BEFORE the
+            # presentation sync -- `_sync_full_width_voice_presentation`
+            # re-derives the disabled-reason strip, which subtracts the
+            # cache; clearing it after left the strip capped as though the
+            # chip were still displayed.
+            self._voice_chip_last_width = 0
             self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
             chip.styles.width = 0
@@ -4936,11 +6039,35 @@ class ConsoleComposerBar(Horizontal):
             chip.update(Content(""))
             return
 
-        # `size` is (0, 0) before the first layout; fall back to the ceiling
-        # rather than computing a zero width and rendering an invisible chip.
-        total_width = self.size.width or self.VOICE_CHIP_MAX_WIDTH * 2
-        available = max(0, total_width - self.VOICE_CHIP_MIN_WIDTH)
-        width = min(self.VOICE_CHIP_MAX_WIDTH, available)
+        # TASK-24620 / PR-2230 review f3: PREPARING selects its sizing
+        # BEFORE the ordinary cap -- it is action feedback for a Dictate
+        # press, and its full-width presentation exempts it at every width,
+        # not only where the budget hits zero (the 80-column busy-parakeet
+        # tests require the WHOLE copy, and intermediate budgets used to
+        # truncate it while the presentation collapsed space the chip could
+        # have used). The non-listening branch below still shrinks the
+        # final width to the message's own length, so short preparing copy
+        # does not balloon.
+        if state == STATE_PREPARING:
+            total_width = self.size.width or self.VOICE_CHIP_MAX_WIDTH * 2
+            width = min(
+                self.VOICE_CHIP_MAX_WIDTH,
+                max(0, total_width - self.VOICE_CHIP_MIN_WIDTH),
+            )
+        else:
+            # The chip's width is a live-row budget like the send-disabled
+            # reason strip's (see `_voice_chip_width_cap`) -- the draft
+            # floor wins, and below a legible remainder the chip hides
+            # rather than starve it.
+            width = self._voice_chip_width_cap()
+        if width == 0:
+            self._voice_chip_last_width = 0
+            self._sync_full_width_voice_presentation(False)
+            chip.styles.display = "none"
+            chip.styles.width = 0
+            chip.styles.min_width = 0
+            chip.update(Content(""))
+            return
 
         if state == "listening":
             head = f"{resolve_glyph(GLYPH_VOICE_RECORDING)} {elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
@@ -4974,19 +6101,34 @@ class ConsoleComposerBar(Horizontal):
             body = message or state
             width = min(width, len(body) + 2)
 
-        chip.styles.display = "block"
-        chip.styles.width = max(width, 1)
-        chip.styles.min_width = 0
-        chip.styles.height = 1
-        chip.styles.min_height = 1
-        # Production CSS resolves the 53-cell ceiling to 52 cells here. The
-        # 51-cell executor-wait copy therefore gives back its trailing padding,
-        # keeps the normal one-cell right margin, and temporarily hides only
-        # presentation chrome; every ordinary repaint restores both padding
-        # and chrome without touching draft/editor state.
+        # The busy preparation row hides optional chrome. Reserve the actual
+        # stable action width plus the chip's three surrounding layout cells.
         full_width_preparing = (
             state == STATE_PREPARING and cell_len(body) + 2 >= self.VOICE_CHIP_MAX_WIDTH
         )
+        if full_width_preparing:
+            width = min(
+                width,
+                max(
+                    1,
+                    total_width - self._actions_row_width(attachment_visible=False) - 3,
+                ),
+            )
+            chip.tooltip = body
+            if (
+                cell_len(body) + 1 > width
+                and body == "Local transcription busy — dictation will run next."
+            ):
+                compact = "Local transcription busy — queued."
+                body = compact if cell_len(compact) + 1 <= width else "Queued"
+        else:
+            chip.tooltip = None
+        chip.styles.display = "block"
+        self._voice_chip_last_width = max(width, 1)
+        chip.styles.width = self._voice_chip_last_width
+        chip.styles.min_width = 0
+        chip.styles.height = 1
+        chip.styles.min_height = 1
         self._sync_full_width_voice_presentation(full_width_preparing)
         if full_width_preparing:
             chip.styles.padding = (0, 0, 0, 1)
@@ -4995,6 +6137,11 @@ class ConsoleComposerBar(Horizontal):
         chip.styles.margin = None
         chip.set_class(state == "error", "console-voice-status-error")
         chip.update(Content(body))
+        # TASK-24620: the chip just moved; re-derive the reason strip so it
+        # yields whatever the chip now holds (chip has priority).
+        self._sync_send_disabled_reason(
+            self._send_disabled_reason, muted=not self._send_blocked
+        )
 
     def _sync_full_width_voice_presentation(self, active: bool) -> None:
         """Make room for the persistent executor-wait copy without data loss."""
@@ -5130,6 +6277,17 @@ class ConsoleComposerBar(Horizontal):
             voice_status.styles.height = 0
             voice_status.styles.min_height = 0
             yield voice_status
+            raw_cli_status = Static(
+                Content(""),
+                id="console-raw-cli-status",
+                classes="console-voice-status console-voice-status-error",
+            )
+            raw_cli_status.styles.display = "none"
+            raw_cli_status.styles.width = 0
+            raw_cli_status.styles.min_width = 0
+            raw_cli_status.styles.height = 0
+            raw_cli_status.styles.min_height = 0
+            yield raw_cli_status
             attachment_indicator = Static(
                 "",
                 id="console-attachment-indicator",
@@ -5222,6 +6380,23 @@ class ConsoleComposerBar(Horizontal):
                 )
                 mic_button.styles.margin = (0, 0, 0, MIC_SEND_GAP)
                 yield mic_button
+                redirect_button = self._bounded_button(
+                    "Redirect",
+                    width=10,
+                    id="console-redirect-generation",
+                    classes="destination-action-button console-redirect-button",
+                    # TASK-28227: conditional like Stop -- costs nothing at
+                    # rest, time-critical when a run is going wrong. Takes
+                    # the composer draft as the correction.
+                    tooltip=(
+                        "Cut off the current response and re-run this turn "
+                        "with your typed correction. Completed tool results "
+                        "are kept."
+                    ),
+                )
+                redirect_button.styles.line_pad = 0
+                redirect_button.styles.display = "none"
+                yield redirect_button
                 stop_button = self._bounded_button(
                     "Stop",
                     width=6,
@@ -5285,3 +6460,40 @@ class ConsoleComposerBar(Horizontal):
             )
             collapsed_stop.styles.display = "block" if self._run_active else "none"
             yield collapsed_stop
+
+        recovery_row = Horizontal(id="console-prompt-improvement-recovery")
+        recovery_row.styles.display = "none"
+        with recovery_row:
+            yield Static(
+                "Draft improved",
+                id="console-prompt-improvement-status",
+                markup=False,
+            )
+            undo_button = self._bounded_button(
+                "Undo",
+                width=8,
+                id="console-prompt-improvement-undo",
+                classes="destination-action-button",
+                tooltip="Restore the draft from before this improvement.",
+                disabled=True,
+            )
+            undo_button.styles.line_pad = 0
+            # TASK-31663 AC#3: the row above is `display: none` until an
+            # improvement lands, so neither button may hold a Tab stop yet.
+            # `_sync_improvement_recovery` is the other half of this pair and
+            # flips `can_focus` back with the row's display; its early-return
+            # equality guard means it never runs while the state is unchanged,
+            # so the hidden starting state has to be built correct here.
+            undo_button.can_focus = False
+            yield undo_button
+            review_button = self._bounded_button(
+                "Review changes",
+                width=16,
+                id="console-prompt-improvement-review",
+                classes="destination-action-button",
+                tooltip="Compare the original and improved drafts.",
+                disabled=True,
+            )
+            review_button.styles.line_pad = 0
+            review_button.can_focus = False
+            yield review_button

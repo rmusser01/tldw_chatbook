@@ -50,7 +50,11 @@ from textual.widgets import Button
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
+from tldw_chatbook.Chat.console_library_destination import (
+    resolve_console_destination,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -83,21 +87,38 @@ class _StallingWakeGateway:
         self.entered_stall = asyncio.Event()
         #: Released by the test to let the parked turn finish.
         self.release = asyncio.Event()
+        self.stall_stream = False
+        self.entered_stream = asyncio.Event()
+        self.release_stream = asyncio.Event()
 
     async def resolve_for_send(self, selection):
         if self.stall:
             self.entered_stall.set()
             await self.release.wait()
-        return SimpleNamespace(
+        resolution = SimpleNamespace(
             ready=self.ready,
             provider="llama_cpp",
             model="test-model",
-            base_url=None,
+            base_url="",
             visible_copy="" if self.ready else "WIP: provider warming up",
         )
+        if resolution.ready:
+            # TASK-21590 made the typed destination mandatory on a READY
+            # resolution: `_resolved_destination_for_context` raises
+            # ValueError without it, and the submit is refused with the
+            # generic "Provider destination is incomplete." copy. Derive it
+            # through the production classifier the real gateway uses rather
+            # than hand-building one, so this double cannot drift from it.
+            resolution.resolved_destination = resolve_console_destination(
+                resolution
+            )
+        return resolution
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.payloads.append([dict(m) for m in messages])
+        if self.stall_stream:
+            self.entered_stream.set()
+            await self.release_stream.wait()
         yield self.reply
 
     async def aclose(self) -> None:
@@ -113,8 +134,12 @@ def _drain_from_child_thread(wake, drain) -> None:
 
 def _terminal_survivor_run(runs_db, conversation_id, *, result=CHILD_RESULT):
     """A sub-agent run that finished AFTER its (terminal) parent turn."""
+    from uuid import uuid4
+    chain_id = runs_db.automatic_work.create_chain(
+        conversation_id, root_submission_id=uuid4().hex
+    )
     parent_id = runs_db.create_run(
-        conversation_id=conversation_id, agent_kind="primary"
+        conversation_id=conversation_id, agent_kind="primary", work_chain_id=chain_id
     )
     runs_db.set_status(parent_id, "done", "turn final")
     run_id = runs_db.create_run(
@@ -128,17 +153,16 @@ def _terminal_survivor_run(runs_db, conversation_id, *, result=CHILD_RESULT):
 
 
 
-async def _navigate(app, pilot, target: str, *, expect: str, timeout: float = 15.0):
-    """Navigate through the real routing, answering Console's busy-fleet gate.
-
-    `ChatScreen.confirm_navigation` opens a real "Leave Console?"
-    `ConfirmationDialog` whenever the fleet is busy -- which a wake turn in
-    flight makes it. Awaiting `handle_screen_navigation` directly therefore
-    deadlocks the test against a dialog nobody answers (measured: the run
-    hangs forever with the app's pump alive). Production's answer is a user
-    pressing "Leave", so that is what this does -- posting the navigation the
-    way the nav bar does and pressing the real button.
-    """
+async def _navigate(
+    app,
+    pilot,
+    target: str,
+    *,
+    expect: str,
+    timeout: float = 15.0,
+    allow_confirmation: bool = True,
+):
+    """Navigate through real routing and optionally forbid any confirmation."""
     app.post_message(NavigateToScreen(target))
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -146,6 +170,10 @@ async def _navigate(app, pilot, target: str, *, expect: str, timeout: float = 15
         screen = app.screen
         name = type(screen).__name__
         if name == "ConfirmationDialog":
+            if not allow_confirmation:
+                screen.query_one("#cancel-button", Button).press()
+                await pilot.pause()
+                raise AssertionError("ordinary Console navigation asked for confirmation")
             try:
                 screen.query_one("#confirm-button", Button).press()
             except Exception:  # noqa: BLE001 -- the dialog may still be settling
@@ -158,6 +186,169 @@ async def _navigate(app, pilot, target: str, *, expect: str, timeout: float = 15
         f"navigating to {target!r} never reached {expect}; "
         f"stuck on {type(app.screen).__name__}"
     )
+
+
+@pytest.mark.asyncio
+async def test_manual_stream_completes_once_across_real_navigation(tmp_path):
+    """A production-admitted manual turn survives a real route change."""
+    app = _build_test_app()
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    gateway = _StallingWakeGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
+    # Keep this harness on its explicit in-memory configuration instead of
+    # letting the live-config freshness heuristic reload the default file.
+    app.app_config.pop("logging", None)
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        chat, controller, store, session_id, _conversation_id = await _seed_console(
+            app, pilot, gateway
+        )
+        runtime = chat._console_runtime()
+        gateway.reply = "MANUAL-NAVIGATION-REPLY"
+        gateway.stall_stream = True
+
+        turn_id = _admit_console_turn_to_runtime(
+            chat, "turn that survives navigation", session_id
+        )
+        record = runtime._turn_custody[turn_id]
+        task = record.task
+        assert task is not None
+        await asyncio.wait_for(gateway.entered_stream.wait(), timeout=2)
+
+        try:
+            await _navigate(
+                app,
+                pilot,
+                "library",
+                expect="LibraryScreen",
+                allow_confirmation=False,
+            )
+        except BaseException:
+            gateway.release_stream.set()
+            raise
+        assert chat not in app.screen_stack
+        assert runtime.chat_controller is controller
+        assert runtime.chat_store is store
+        assert not task.done()
+
+        gateway.release_stream.set()
+        outcome = await asyncio.wait_for(task, timeout=3)
+        assert outcome.accepted
+
+        chat2 = await _navigate(app, pilot, "chat", expect="ChatScreen")
+        await _wait_for_selector(chat2, pilot, "#console-native-composer")
+        await pilot.pause()
+
+        terminal_rows = [
+            message
+            for message in store.messages_for_session(session_id)
+            if message.content == "MANUAL-NAVIGATION-REPLY"
+        ]
+        assert len(terminal_rows) == 1
+        assert "MANUAL-NAVIGATION-REPLY" in _rendered_text(chat2)
+
+
+@pytest.mark.asyncio
+async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
+    tmp_path, monkeypatch
+):
+    """A failed first repaint is isolated and the next full sync converges."""
+    app = _build_test_app()
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    gateway = _StallingWakeGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
+    app.app_config.pop("logging", None)
+
+    original_sync = ChatScreen._sync_native_console_chat_ui
+    original_set_timer = ChatScreen.set_timer
+    inject = {"armed": False, "failed": False, "sync_succeeded": False}
+    first_failure = asyncio.Event()
+    allow_retry = asyncio.Event()
+    retry_succeeded = asyncio.Event()
+    ordinary_timer_after_sync: list[bool] = []
+
+    async def fail_first_reattach_sync(screen):
+        if inject["armed"]:
+            if not inject["failed"]:
+                inject["failed"] = True
+                first_failure.set()
+                raise RuntimeError("injected first reattach render failure")
+            await allow_retry.wait()
+        await original_sync(screen)
+        if inject["armed"]:
+            inject["sync_succeeded"] = True
+            retry_succeeded.set()
+
+    def record_ordinary_timer(screen, delay, callback, *args, **kwargs):
+        if (
+            inject["armed"]
+            and getattr(callback, "__name__", "") == "_restore_collapsible_states"
+        ):
+            ordinary_timer_after_sync.append(inject["sync_succeeded"])
+        return original_set_timer(screen, delay, callback, *args, **kwargs)
+
+    monkeypatch.setattr(
+        ChatScreen, "_sync_native_console_chat_ui", fail_first_reattach_sync
+    )
+    monkeypatch.setattr(ChatScreen, "set_timer", record_ordinary_timer)
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        chat, _controller, store, session_id, _conversation_id = await _seed_console(
+            app, pilot, gateway
+        )
+        runtime = chat._console_runtime()
+        gateway.reply = "REATTACH-RETRY-TERMINAL"
+        gateway.stall_stream = True
+        turn_id = _admit_console_turn_to_runtime(
+            chat, "turn completes while first repaint is broken", session_id
+        )
+        task = runtime._turn_custody[turn_id].task
+        assert task is not None
+        await asyncio.wait_for(gateway.entered_stream.wait(), timeout=2)
+
+        await _navigate(
+            app,
+            pilot,
+            "library",
+            expect="LibraryScreen",
+            allow_confirmation=False,
+        )
+        remount_after_sync: list[bool] = []
+        original_remount = runtime.remount_pending_approval
+
+        def record_remount() -> None:
+            remount_after_sync.append(inject["sync_succeeded"])
+            original_remount()
+
+        runtime.remount_pending_approval = record_remount
+        inject["armed"] = True
+        reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
+        await asyncio.wait_for(first_failure.wait(), timeout=2)
+
+        assert remount_after_sync == []
+        assert ordinary_timer_after_sync == []
+        assert not task.done()
+
+        gateway.release_stream.set()
+        outcome = await asyncio.wait_for(task, timeout=3)
+        assert outcome.accepted
+        allow_retry.set()
+        await asyncio.wait_for(retry_succeeded.wait(), timeout=3)
+        await pilot.pause()
+
+        terminal_rows = [
+            message
+            for message in store.messages_for_session(session_id)
+            if message.content == "REATTACH-RETRY-TERMINAL"
+        ]
+        assert len(terminal_rows) == 1
+        assert "REATTACH-RETRY-TERMINAL" in _rendered_text(reopened)
+        assert remount_after_sync == [True]
+        assert ordinary_timer_after_sync == [True]
 
 
 def _step(label: str) -> None:
@@ -266,8 +457,12 @@ async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
 
     # ...and only NOW let the turn finish: both wake rows land headless.
     _step("wake: releasing provider")
+    seeded_payloads = len(gateway.payloads)
     gateway.release.set()
-    assert await _settle(lambda: gateway.payloads), (
+    # Measure GROWTH, not truthiness: `_seed_console` already sent once, so
+    # `gateway.payloads` is non-empty before the wake ever starts and a bare
+    # truthiness check here can never go red.
+    assert await _settle(lambda: len(gateway.payloads) > seeded_payloads), (
         "the parked wake turn never reached the provider after the nav-away"
     )
     assert await _settle(

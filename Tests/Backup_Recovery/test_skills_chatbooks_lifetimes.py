@@ -23,7 +23,13 @@ def test_actual_app_refuses_new_content_during_pause(tmp_path, owner):
             await call()
         assert (path.read_bytes() if path.exists() else None) == before
 """
+    # Instantiate the current lazy owner while ordinary storage is admitted.
     script = _RUNTIME.replace(
+        "    app = TldwCli()\n",
+        "    app = TldwCli()\n"
+        "    if sys.argv[1] == 'skills':\n"
+        "        app.local_skills_service\n",
+    ).replace(
         "        startup = next(iter(storage._startups.values()))",
         check + "\n        startup = next(iter(storage._startups.values()))",
     ).replace(
@@ -298,7 +304,7 @@ def test_library_worker_closes_only_its_new_source_handles(tmp_path):
    _build_library_export_payload=LibraryScreen._build_library_export_payload,
    _run_library_export_via_service=LibraryScreen._run_library_export_via_service,
    _marshal_library_export_failure=lambda *args:errors.append(args),
-   _marshal_library_export_success=lambda *args:outcomes.append(args),
+   _marshal_library_export_success=lambda *args,**kwargs:outcomes.append((args,kwargs)),
    _marshal_library_export_cancelled=lambda *args:errors.append(args),
    app=SimpleNamespace(call_from_thread=lambda *args:None))
   def actual_worker():

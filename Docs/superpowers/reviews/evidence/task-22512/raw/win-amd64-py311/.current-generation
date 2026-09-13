@@ -1,0 +1,31 @@
+{
+  "files": [
+    {
+      "name": "win-amd64-py311-artifacts.json",
+      "sha256": "c78fe5964d120e3a05122b0e1310a57fae345d537270f242bbe16e86ae929fd1"
+    },
+    {
+      "name": "win-amd64-py311-environment-cmd.json",
+      "sha256": "2688e03e4acecb8401adb1960cfd521656334989dde7b1edb699455bac00aaef"
+    },
+    {
+      "name": "win-amd64-py311-environment-default.json",
+      "sha256": "389bd05738ab3875da8ab0d6d6e35e0c41557e4a86b0724d83dacb306870db41"
+    },
+    {
+      "name": "win-amd64-py311-environment-powershell.json",
+      "sha256": "f74b996d8e24d6011e07b3caa2447c2a365b523b02d66eb4c2b3beba0b8a1436"
+    },
+    {
+      "name": "win-amd64-py311-pyte.json",
+      "sha256": "4d4e146c9030726ca756e9eec4b78ea7650730250b2f4352c407f084d70bda04"
+    },
+    {
+      "name": "win-amd64-py311-pywinpty.json",
+      "sha256": "4925048d4be6f75ee3a3a2325a806871f091c1d0f1e948a1a9914a2c0caab855"
+    }
+  ],
+  "generation_id": "2b1adae613fb4d17bbb0be992bd10d50",
+  "row_id": "win-amd64-py311",
+  "schema_version": 1
+}

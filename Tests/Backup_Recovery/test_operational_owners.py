@@ -127,13 +127,6 @@ STORES = {
         "notes.file_notes",
         None,
     ),
-    "receipts": (
-        "Notes.note_import_receipts",
-        "NoteImportReceiptRepository",
-        "Notes.recovery",
-        "notes.sync_state",
-        None,
-    ),
 }
 
 
@@ -153,9 +146,9 @@ def operational_store(request, tmp_path):
     source = tmp_path / (name + ".db")
     constructor = getattr(importlib.import_module("tldw_chatbook." + module), symbol)
     store = constructor(db_path=source) if name == "kanban" else constructor(source)
-    if name == "receipts":
-        with store.transaction():
-            pass
+    if name in {"kanban", "notifications", "events", "sync"}:
+        # These installed owners now defer their actual schema until first use.
+        store._ensure_schema()
     try:
         yield name, source, store
     finally:
@@ -287,10 +280,6 @@ def seed_operational(name, source, store):
         )
         store.protect("/historical/external", "note.md")
         store.mark_deleted("/historical/external", "note.md")
-    elif name == "receipts":
-        from Tests.Notes.test_note_import_receipts import _approved
-
-        store.begin(_approved(), batch_size=1)
 
 
 def dump(path):
@@ -318,9 +307,6 @@ module, symbol, *_ = STORES[name]
 constructor = getattr(importlib.import_module('tldw_chatbook.' + module), symbol)
 store = constructor(db_path=source) if name == 'kanban' else constructor(source)
 try:
-    if name == 'receipts':
-        with store.transaction():
-            pass
     seed_operational(name, source, store)
 finally:
     if hasattr(store, 'close'):
@@ -568,6 +554,30 @@ def test_aggregate_declared_tree_accepts_only_explicit_same_profile_topology(tmp
 
 
 def test_subscription_site_config_manager_schema_is_qualified(tmp_path, monkeypatch):
+    _run_stable_config_case(tmp_path, "_subscription_site_config_manager_roundtrip")
+
+
+def _run_stable_config_case(tmp_path, name):
+    """Exercise config-owning services before any per-test source retargeting."""
+    script = """import sys
+from pathlib import Path
+import pytest
+from Tests.Backup_Recovery import test_operational_owners as cases
+with pytest.MonkeyPatch.context() as patches:
+    getattr(cases, sys.argv[1])(Path(sys.argv[2]), patches)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, name, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _subscription_site_config_manager_roundtrip(tmp_path, monkeypatch):
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
     from tldw_chatbook.Subscriptions.site_config_manager import SiteConfigManager
 
@@ -1015,31 +1025,49 @@ def test_real_pet_and_execution_history_writers_are_excluded(tmp_path, monkeypat
 
 
 def test_run_log_real_bound_writer_is_excluded(tmp_path, monkeypatch):
-    from tldw_chatbook.Agents import run_log
-    from tldw_chatbook.Agents.run_log import RunLogWriter
+    _run_log_real_bound_writer_is_excluded(tmp_path, monkeypatch)
 
-    monkeypatch.setattr(run_log, "resolve_log_root", lambda: tmp_path)
-    writer = RunLogWriter()
+
+def _run_log_real_bound_writer_is_excluded(tmp_path, monkeypatch):
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+    from Tests.Backup_Recovery.test_runtime_startup_handoff import _SCRIPT
+
+    # Config imports retain process-startup admission. Only the actual app's
+    # settled coordinator can yield it for native maintenance; this fixture
+    # therefore uses the existing full handoff instead of retargeting a live
+    # config source or manually closing its startup lease.
+    setup = '''
+    from pathlib import Path
+    from tldw_chatbook.Agents.run_log import RunLogWriter
+    log_root = Path.home() / "run-log-fixture"
+    log_root.mkdir()
+    writer = RunLogWriter(root=log_root, dir_name="agent-runs")
     writer.bind("historical-run")
-    writer.append(
-        run_id="historical-run", kind="primary", type="model", content="Retained body"
-    )
-    before = {
-        p: p.read_bytes() for p in (tmp_path / ".agent-runs").rglob("*") if p.is_file()
-    }
-    authority = application_authority(tmp_path, tmp_path / ".agent-runs", monkeypatch)
-    with authority.maintenance(("core", "bootstrap.unbound"), 1):
-        with pytest.raises(RuntimeError):
-            writer.append(
-                run_id="historical-run",
-                kind="primary",
-                type="model",
-                content="Not admitted",
-            )
-        # close is explicitly best-effort and logs admission failure.
+    assert writer.is_active
+    assert writer.append(run_id="historical-run", kind="primary", type="model",
+                         content="Retained body") == 1
+    before = {p: p.read_bytes() for p in log_root.rglob("*") if p.is_file()}
+    assert before
+'''
+    refused = '''
+        # The harness has entered real exclusive native maintenance and
+        # positively retired startup through the installed runtime owner.
+        assert writer.append(run_id="historical-run", kind="primary", type="model",
+                             content="Not admitted") is None
+        assert not writer.is_active
         writer.close()
-    assert {p: p.read_bytes() for p in before} == before
-    writer.close()
+        assert {p: p.read_bytes() for p in before} == before
+'''
+    assert _SCRIPT.count("    runtime = RuntimeMaintenance(app)") == 1
+    assert _SCRIPT.count("        assert not storage._startups") == 1
+    script = _SCRIPT.replace(
+        "    runtime = RuntimeMaintenance(app)",
+        setup + "\n    runtime = RuntimeMaintenance(app)",
+    ).replace(
+        "        assert not storage._startups",
+        "        assert not storage._startups\n" + refused,
+    )
+    _run(tmp_path, "startup", "resume", script=script)
 
 
 def test_pet_constructor_does_not_create_parent_before_admission(tmp_path, monkeypatch):
@@ -1053,3 +1081,71 @@ def test_pet_constructor_does_not_create_parent_before_admission(tmp_path, monke
         with pytest.raises(RuntimeError):
             JSONStorage(str(target))
     assert not target.parent.exists()
+
+
+def test_current_notes_device_authority_is_excluded_from_inventory(tmp_path):
+    from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
+    from tldw_chatbook.Notes.notes_device_state_store import (
+        NotesDeviceStateStore,
+        NotesSyncStoreSetting,
+    )
+    from tldw_chatbook.Notes.recovery import recovery_adapters
+
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    config = {"paths": {"data_dir": str(data)}, "general": {"users_name": "fixture"}}
+    profile = user_data_dir(config)
+    profile.mkdir(mode=0o700)
+    config[DISCOVERY_CONTEXT_KEY] = DiscoveryContext(
+        tmp_path / "config.toml", "fixture"
+    )
+    database = profile / "tldw_chatbook_notes_sync_state.db"
+    store = NotesDeviceStateStore(database)
+    try:
+        store.initialize()
+        store.set_setting(
+            NotesSyncStoreSetting("cutover_marker", "captured-device-authority")
+        )
+        adapter = next(
+            a for a in recovery_adapters() if a.owner_id == "notes.sync_state"
+        )
+        items = adapter.discover(config)
+        assert {item.path for item in items} == {
+            Path(str(database) + suffix) for suffix in ("", "-wal", "-shm", "-journal")
+        }
+        assert all(item.status == "intentionally_excluded" for item in items)
+        assert adapter.schema_policy() is None
+        destination = tmp_path / "copied-authority.db"
+        with pytest.raises(ValueError, match="notes_device_state_excluded"):
+            adapter.capture(items[0], destination, Event())
+        assert not destination.exists()
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("kind", ["symlink", "directory", "hardlink"])
+def test_excluded_notes_device_authority_still_refuses_unsafe_entries(tmp_path, kind):
+    from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
+    from tldw_chatbook.Notes.recovery import recovery_adapters
+
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    config = {"paths": {"data_dir": str(data)}, "general": {"users_name": "fixture"}}
+    profile = user_data_dir(config)
+    profile.mkdir(mode=0o700)
+    config[DISCOVERY_CONTEXT_KEY] = DiscoveryContext(
+        tmp_path / "config.toml", "fixture"
+    )
+    database = profile / "tldw_chatbook_notes_sync_state.db"
+    outside = tmp_path / "outside.db"
+    outside.write_bytes(b"keep")
+    if kind == "symlink":
+        database.symlink_to(outside)
+    elif kind == "hardlink":
+        os.link(outside, database)
+    else:
+        database.mkdir()
+    adapter = next(a for a in recovery_adapters() if a.owner_id == "notes.sync_state")
+    main = next(item for item in adapter.discover(config) if item.path == database)
+    assert main.status not in {"included", "intentionally_excluded", "unused"}
+    assert outside.read_bytes() == b"keep"

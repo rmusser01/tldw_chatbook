@@ -1,0 +1,37 @@
+from pathlib import Path
+import subprocess,json,hashlib,tarfile,zipfile,time,os,shutil
+r=Path('/home/ml-user/tts-linux-cuda-20260912')
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def run(args,log):
+ with (r/'logs'/log).open('w') as f:p=subprocess.run(args,stdout=f,stderr=subprocess.STDOUT)
+ (r/'logs'/(log+'.exit')).write_text(str(p.returncode)+'\n')
+ if p.returncode:raise RuntimeError(f'{log}: exit {p.returncode}')
+src=r/'source-rebased';src.mkdir()
+with tarfile.open(r/'source-dev-a766133fc4.tar.gz') as t:t.extractall(src,filter='data')
+shutil.copy2(r/'source/tldw_chatbook/TTS/backends/chatterbox.py',src/'tldw_chatbook/TTS/backends/chatterbox.py')
+os.environ.update(UV_CACHE_DIR=str(r/'cache/uv'),UV_PYTHON_INSTALL_DIR=str(r/'python'))
+uv='/home/ml-user/.local/bin/uv';venvs=[r/'venv-kokoro-py312',r/'venv-chatterbox-py312']
+run([uv,'build','--wheel','--python',str(venvs[0]/'bin/python'),'--out-dir',str(r/'wheels-rebased'),str(src)],'rebased-wheel-build.log')
+w=next((r/'wheels-rebased').glob('*.whl'));mapping={}
+with zipfile.ZipFile(w) as z:
+ for pkg in ['tldw_chatbook','tldw_profile_core']:
+  for p in (src/pkg).rglob('*.py'):
+   name=str(p.relative_to(src));digest=sha(p);assert hashlib.sha256(z.read(name)).hexdigest()==digest;mapping[name]=digest
+for v in venvs:
+ run([uv,'pip','install','--python',str(v/'bin/python'),'--reinstall','--no-deps',str(w)],f'rebased-install-{v.name}.log')
+ site=v/'lib/python3.12/site-packages'
+ for name,digest in mapping.items():assert sha(site/name)==digest,name
+identity={'base_revision':'a766133fc4','source_archive_sha256':sha(r/'source-dev-a766133fc4.tar.gz'),'production_patch':{'tldw_chatbook/TTS/backends/chatterbox.py':sha(src/'tldw_chatbook/TTS/backends/chatterbox.py')},'wheel_sha256':sha(w),'source_wheel_installed_match':True,'python_files':mapping}
+(r/'logs/rebased-wheel-identity.json').write_text(json.dumps(identity,indent=2)+'\n')
+medium=r/'cache/huggingface/hub/models--Systran--faster-whisper-medium/snapshots/08e178d48790749d25932bbc082711ddcfdfbc4f'
+for old,new in [('kokoro-cuda-01','kokoro-cuda-02'),('kokoro-onnx-01','kokoro-onnx-02'),('chatterbox-cuda-03','chatterbox-cuda-04')]:
+ script=r/f'run-{new}.sh';script.write_text((r/f'run-{old}.sh').read_text().replace(old,new))
+ with (r/'logs'/f'{new}.log').open('w') as log,(r/'logs'/f'{new}-routing.jsonl').open('w') as routes:
+  p=subprocess.Popen(['bash',str(script)],stdout=log,stderr=subprocess.STDOUT)
+  while p.poll() is None:
+   rows=json.loads(subprocess.check_output(['pactl','--format=json','list','sink-inputs'],text=True));routes.write(json.dumps({'at':time.monotonic(),'inputs':rows})+'\n');routes.flush();time.sleep(.25)
+ (r/'logs'/f'{new}.exit').write_text(str(p.returncode)+'\n')
+ if p.returncode:raise RuntimeError(f'{new} runtime exit {p.returncode}')
+ run([str(venvs[0]/'bin/python'),'-I','-B',str(r/'guard-asr.py'),str(src/'scripts/verify_live_tts_content.py'),'--evidence',str(r/'runs'/new/'evidence.json'),'--model',str(medium),'--language','en','--output',str(r/'runs'/new/'content-medium.json')],f'{new}-medium-asr.log')
+ print(new,'runtime and full ASR passed',flush=True)
+print('REBASED_QUALIFICATION_PASSED',flush=True)

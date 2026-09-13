@@ -306,6 +306,8 @@ _CREDENTIAL_LOCAL_LOCATIONS = MappingProxyType(
 )
 
 _MAX_GLOBAL_IDENTIFIER_CHARACTERS = 512
+#: Public alias so pre-save surfaces can pass Save's exact identifier limit.
+MAX_GLOBAL_IDENTIFIER_CHARACTERS = _MAX_GLOBAL_IDENTIFIER_CHARACTERS
 _UNSAFE_IDENTIFIER_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 
 
@@ -432,6 +434,12 @@ class GlobalSpeechTTSDefaults:
             self.voice_mode,
             frozenset({"exact", "server_default"}),
         )
+        if provider_id != "audio_cpp" and voice_mode == "server_default":
+            _validation_error(
+                "defaults",
+                "voice_mode",
+                "This provider requires a voice. Choose Exact and enter a voice value.",
+            )
         model_id = (
             _identifier(
                 "defaults",
@@ -1489,14 +1497,13 @@ def _string(
     return value
 
 
-def _identifier(
-    provider_id: str,
-    field_id: str,
-    value: object,
-    *,
-    max_characters: int,
-) -> str:
-    """Validate an opaque model or voice identifier without echoing it."""
+def global_identifier_is_valid(value: object, *, max_characters: int) -> bool:
+    """Return whether ``value`` is a storable opaque model/voice identifier.
+
+    The exact predicate ``_identifier`` enforces at Save, exposed as a bool
+    so pre-save surfaces (the Settings custom-ID editor) reject the same
+    inputs Save would reject, without duplicating the rule.
+    """
     if (
         type(value) is not str
         or not value
@@ -1507,19 +1514,29 @@ def _identifier(
             for character in value
         )
     ):
-        _validation_error(
-            provider_id,
-            field_id,
-            "Choose a valid saved identifier.",
-        )
+        return False
     try:
         value.encode("utf-8", errors="strict")
     except UnicodeError:
+        return False
+    return True
+
+
+def _identifier(
+    provider_id: str,
+    field_id: str,
+    value: object,
+    *,
+    max_characters: int,
+) -> str:
+    """Validate an opaque model or voice identifier without echoing it."""
+    if not global_identifier_is_valid(value, max_characters=max_characters):
         _validation_error(
             provider_id,
             field_id,
             "Choose a valid saved identifier.",
         )
+    assert isinstance(value, str)
     return value
 
 

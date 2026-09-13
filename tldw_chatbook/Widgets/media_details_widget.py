@@ -215,11 +215,6 @@ class MediaDetailsWidget(Container):
                     variant="primary",
                 )
                 yield Button(
-                    "Preview Chunks",
-                    id=f"preview-chunks-{self.type_slug}",
-                    variant="default",
-                )
-                yield Button(
                     "Reset to Default",
                     id=f"reset-chunking-{self.type_slug}",
                     variant="warning",
@@ -567,8 +562,6 @@ class MediaDetailsWidget(Container):
 
         if button_id == f"save-chunking-{self.type_slug}":
             self._save_chunking_config()
-        elif button_id == f"preview-chunks-{self.type_slug}":
-            self._preview_chunks()
         elif button_id == f"reset-chunking-{self.type_slug}":
             self._reset_chunking_config()
 
@@ -740,37 +733,6 @@ class MediaDetailsWidget(Container):
         except Exception as e:
             logger.error(f"Unexpected error saving chunking config: {e}")
             self.app_instance.notify(f"Unexpected error: {str(e)}", severity="error")
-
-    def _preview_chunks(self) -> None:
-        """Preview chunks with current configuration."""
-        if not self.media_data or not self.media_data.get("content"):
-            self.app_instance.notify(
-                "No content available to preview", severity="warning"
-            )
-            return
-
-        # Import and show preview modal
-        from ..Widgets.chunk_preview_modal import ChunkPreviewModal
-
-        # Get current config from form
-        config = {
-            "chunk_size": int(
-                self.query_one(f"#chunk-size-{self.type_slug}", Input).value or 400
-            ),
-            "chunk_overlap": int(
-                self.query_one(f"#chunk-overlap-{self.type_slug}", Input).value or 100
-            ),
-            "method": self.query_one(f"#chunk-method-{self.type_slug}", Select).value,
-        }
-
-        # Show preview modal
-        self.app_instance.push_screen(
-            ChunkPreviewModal(
-                content=self.media_data["content"],
-                config=config,
-                media_title=self.media_data.get("title", "Untitled"),
-            )
-        )
 
     def _reset_chunking_config(self) -> None:
         """Reset chunking configuration to defaults."""

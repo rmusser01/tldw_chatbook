@@ -1,12 +1,16 @@
 """Tests for the SchedulerLoop and PriorityQueue."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import (
+    DORMANT_TRANSFER_STATES,
+    ScheduledTasksDB,
+)
 from tldw_chatbook.Scheduling.models import ScheduledTask, TaskStatus
 from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
@@ -175,6 +179,108 @@ async def test_scheduler_periodically_reloads_queue(db):
     assert mock_load.call_count >= 2
 
 
+def test_reload_requests_are_thread_safe_monotonic_tokens(db):
+    """Concurrent callers receive unique request identities in request order."""
+    loop = SchedulerLoop(db, handlers={})
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        tokens = list(pool.map(lambda _index: loop.request_reload(), range(16)))
+
+    assert all(token is not None for token in tokens)
+    assert sorted(token.value for token in tokens) == list(range(1, 17))
+
+
+@pytest.mark.asyncio
+async def test_stopped_scheduler_never_acknowledges_reload_request(db):
+    """A request token alone is not evidence that any queue load occurred."""
+    loop = SchedulerLoop(db, handlers={})
+    wait_for_reload = getattr(loop, "wait_for_reload", None)
+
+    assert wait_for_reload is not None, "SchedulerLoop must expose bounded reload waits"
+    token = loop.request_reload()
+    assert await wait_for_reload(token, timeout=0.01) is False
+
+
+@pytest.mark.asyncio
+async def test_reload_request_wakes_sleeping_loop_and_waits_for_real_load(db):
+    """A worker-thread request wakes a long-poll loop and acks after load."""
+    loop = SchedulerLoop(db, handlers={}, poll_interval=60)
+
+    with patch.object(loop.queue, "load") as load:
+        task = asyncio.create_task(loop.run())
+        while load.call_count < 1:
+            await asyncio.sleep(0)
+        token = await asyncio.to_thread(loop.request_reload)
+
+        assert await loop.wait_for_reload(token, timeout=0.5) is True
+        assert load.call_count >= 2
+        loop.stop()
+        await asyncio.wait_for(task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_reload_request_during_tick_is_not_erased_before_sleep(db):
+    """A request racing an active handler still wakes the next queue load."""
+    _create_reminder(db, "Busy", "2026-01-01T00:00:00+00:00")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(_task):
+        entered.set()
+        await release.wait()
+
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        poll_interval=60,
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    task = asyncio.create_task(loop.run())
+    await asyncio.wait_for(entered.wait(), timeout=0.5)
+
+    token = await asyncio.to_thread(loop.request_reload)
+    release.set()
+
+    assert await loop.wait_for_reload(token, timeout=0.5) is True
+    loop.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_initial_load_coalesces_and_acknowledges_every_covered_token(db):
+    """One successful load may acknowledge all requests captured before it."""
+    loop = SchedulerLoop(db, handlers={}, poll_interval=60)
+    first = loop.request_reload()
+    second = loop.request_reload()
+
+    with patch.object(loop.queue, "load") as load:
+        task = asyncio.create_task(loop.run())
+        while load.call_count < 1:
+            await asyncio.sleep(0)
+
+        assert await loop.wait_for_reload(first, timeout=0.5) is True
+        assert await loop.wait_for_reload(second, timeout=0.5) is True
+        assert load.call_count == 1
+        loop.stop()
+        await asyncio.wait_for(task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_failed_queue_load_never_acknowledges_covered_reload_token(db):
+    """A raised queue load closes the loop without acknowledging its token."""
+    loop = SchedulerLoop(db, handlers={}, poll_interval=60)
+
+    with patch.object(loop.queue, "load", side_effect=[None, RuntimeError("boom")]):
+        task = asyncio.create_task(loop.run())
+        while not loop.running:
+            await asyncio.sleep(0)
+        token = loop.request_reload()
+
+        assert await loop.wait_for_reload(token, timeout=0.5) is False
+        with pytest.raises(RuntimeError, match="boom"):
+            await task
+
+
 # ---------------------------------------------------------------------------
 # PriorityQueue tests
 # ---------------------------------------------------------------------------
@@ -242,6 +348,188 @@ def test_queue_pop_due_skips_items_without_next_run_at(db):
     assert len(due) == 1
     assert due[0]["title"] == "Due"
     assert len(queue) == 0
+
+
+# ---------------------------------------------------------------------------
+# Automation-definition feed (schedules-handoff PR-2, Task 5)
+# ---------------------------------------------------------------------------
+
+
+def test_queue_arms_a_qualifying_automation_definition(db):
+    """A local, configured, due `recurring_question` definition is a real
+    queue row tagged `type="automation_definition"`, sorted alongside
+    everything else -- not a projection (spec §7.2)."""
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Daily standup question",
+        next_run_at="2026-01-01T00:00:01+00:00",
+    )
+    _create_reminder(db, "Reminder", "2026-01-01T00:00:02+00:00")
+
+    queue = PriorityQueue(db)
+    queue.load()
+
+    assert len(queue) == 2
+    first = queue.peek()
+    assert first["id"] == def_id
+    assert first["type"] == "automation_definition"
+
+
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+def test_queue_never_arms_a_dormant_transfer_automation_definition(db, dormant_state):
+    """spec §6.1 ruling 2: only DORMANT_TRANSFER_STATES sit out (was "any
+    non-NULL transfer_state" pre-PR-5; this test used the "to_server_sent"
+    dormant state both before and after the correction, so its assertion
+    is unchanged -- see the sibling arms_ test below for the corrected
+    two-state exclusion's new coverage)."""
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Mid-handoff",
+        next_run_at="2026-01-01T00:00:01+00:00",
+    )
+    db.update_automation_definition(def_id, transfer_state=dormant_state)
+
+    queue = PriorityQueue(db)
+    queue.load()
+
+    assert len(queue) == 0
+
+
+@pytest.mark.parametrize("armed_state", ["to_server_pending", "to_server_failed"])
+def test_queue_arms_a_non_dormant_transfer_automation_definition(db, armed_state):
+    """Corrects the pre-PR-5 any-non-NULL exclusion (spec §6.1 ruling 2): a
+    merely-queued or failed transfer keeps arming at the queue layer too."""
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Queued or failed handoff",
+        next_run_at="2026-01-01T00:00:01+00:00",
+    )
+    db.update_automation_definition(def_id, transfer_state=armed_state)
+
+    queue = PriorityQueue(db)
+    queue.load()
+
+    assert [item["id"] for item in queue._items] == [def_id]
+
+
+def test_queue_never_arms_a_server_scoped_automation_definition(db):
+    """Defense in depth (Task 5 brief): the queue-level `is_server_scoped_owner`
+    guard drops a server-owned definition even though the accessor's own
+    `owner_id="local"` filter already would have."""
+    db.create_automation_definition(
+        owner_id="server:42",
+        family="recurring_question",
+        name="Server-owned",
+        next_run_at="2026-01-01T00:00:01+00:00",
+    )
+
+    queue = PriorityQueue(db)
+    queue.load()
+
+    assert len(queue) == 0
+
+
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+def test_queue_never_arms_a_dormant_transfer_reminder_default_path(db, dormant_state):
+    """Reminder-side parity with the definitions guard above, default
+    (no `now=`) load path -- spec §6.1 ruling 2."""
+    armed_id = _create_reminder(db, "Armed", "2026-01-01T00:00:01+00:00")
+    dormant_id = _create_reminder(db, "Dormant", "2026-01-01T00:00:02+00:00")
+    db.update_reminder_task(dormant_id, transfer_state=dormant_state)
+
+    queue = PriorityQueue(db)
+    queue.load()
+
+    ids = {item["id"] for item in queue._items}
+    assert armed_id in ids
+    assert dormant_id not in ids
+
+
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+def test_queue_never_arms_a_dormant_transfer_reminder_due_before_path(db, dormant_state):
+    """Same guard, the back-compat `now=`-provided load path
+    (`reminders_due_before`)."""
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    armed_id = _create_reminder(db, "Armed", now.isoformat())
+    dormant_id = _create_reminder(db, "Dormant", now.isoformat())
+    db.update_reminder_task(dormant_id, transfer_state=dormant_state)
+
+    queue = PriorityQueue(db)
+    queue.load(now=now)
+
+    ids = {item["id"] for item in queue._items}
+    assert armed_id in ids
+    assert dormant_id not in ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+async def test_dispatch_rechecks_transfer_state_after_the_queue_snapshot(
+    db, dormant_state
+):
+    """Final review I6: `pop_due` filters the snapshot by time ALONE, so a
+    transfer push landing between `queue.load()` and the actual dispatch
+    (it CASes the row and creates the server task while an earlier task in
+    the same due list is awaited) left the loop firing a row that was by
+    then live on the server -- one local fire plus one server fire."""
+    task_id = _create_reminder(db, "Moving", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    loop.queue.load()
+    assert len(loop.queue) == 1, "armed at snapshot time"
+
+    # The interleaving: the sync's push disarms the row after the
+    # snapshot, before this tick reaches it.
+    db.update_reminder_task(task_id, transfer_state=dormant_state)
+
+    await loop.tick()
+
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rechecks_owner_after_the_queue_snapshot(db):
+    """Same window, the other half of "armed": a completed transfer flips
+    `owner_id` to the server scope (ADR-077 single-owner execution)."""
+    task_id = _create_reminder(db, "Moved", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    loop.queue.load()
+
+    db.update_reminder_task(task_id, owner_id="server:1", server_id="srv-1")
+
+    await loop.tick()
+
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_recheck_still_fires_an_unchanged_row(db):
+    """The guard refuses only on a positively-read disqualifying row --
+    the ordinary path must be untouched."""
+    _create_reminder(db, "Normal", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    loop.queue.load()
+
+    await loop.tick()
+
+    handler.assert_awaited_once()
 
 
 class _FakeWatchlistProjection(WatchlistProjection):
@@ -529,3 +817,89 @@ async def test_scheduler_loop_dispatches_a_due_briefing_job(db):
     handler.assert_awaited_once()
     dispatched_task = handler.await_args.args[0]
     assert dispatched_task["id"] == "briefing:1"
+
+
+# ---------------------------------------------------------------------------
+# UAT finding 3a: dispatch -> UI fanout (`on_reminder_dispatched`)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_reminder_dispatched_fires_after_a_successful_fire(db):
+    """The callback must fire AFTER `mark_reminder_dispatched` commits, not
+    before -- a UI refresh triggered from it must see the row's NEW fired
+    state (enabled=False, next_run_at=None for a one-time reminder), never
+    the stale pre-fire snapshot."""
+    task_id = _create_reminder(db, "Test", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+    calls: list[str] = []
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        on_reminder_dispatched=lambda tid: calls.append(tid),
+    )
+    loop.queue.load()
+    await loop.tick()
+
+    handler.assert_awaited_once()
+    assert calls == [task_id]
+    row = db.get_reminder_task(task_id)
+    assert row["enabled"] == 0, "the callback must fire AFTER the row's fired state lands"
+    assert row["next_run_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_on_reminder_dispatched_fires_after_a_failed_handler_too(db):
+    """A handler that raises still calls `mark_reminder_dispatched`
+    (recording the failed attempt) -- the row's bucket/status can still
+    change (e.g. its retry/missed state), so the UI must still hear
+    about it."""
+    task_id = _create_reminder(db, "Test", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock(side_effect=RuntimeError("boom"))
+    calls: list[str] = []
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        on_reminder_dispatched=lambda tid: calls.append(tid),
+    )
+    loop.queue.load()
+
+    with patch("tldw_chatbook.Scheduling.scheduler.loop.logger"):
+        await loop.tick()
+
+    assert calls == [task_id]
+
+
+@pytest.mark.asyncio
+async def test_on_reminder_dispatched_callback_failure_does_not_break_dispatch(db):
+    """Same tolerance as `on_queue_changed`: a broken callback must never
+    fail the dispatch itself."""
+    task_id = _create_reminder(db, "Test", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+
+    def boom(_task_id):
+        raise RuntimeError("bad callback")
+
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        on_reminder_dispatched=boom,
+    )
+    loop.queue.load()
+    await loop.tick()
+
+    handler.assert_awaited_once()
+    row = db.get_reminder_task(task_id)
+    assert row["enabled"] == 0, "the dispatch itself must still have succeeded"
+
+
+def test_on_reminder_dispatched_defaults_to_none_and_is_optional():
+    """Several existing tests build a `SchedulerLoop` via `__new__`,
+    bypassing `__init__` -- `_notify_reminder_dispatched` must tolerate a
+    missing attribute, not just a `None` one."""
+    loop = SchedulerLoop.__new__(SchedulerLoop)
+    # No `on_reminder_dispatched` attribute at all -- must not raise.
+    loop._notify_reminder_dispatched("some-id")

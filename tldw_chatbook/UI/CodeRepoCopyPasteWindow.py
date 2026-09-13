@@ -26,7 +26,6 @@ from textual.widgets import (
     Select,
     Static,
     TextArea,
-    LoadingIndicator,
 )
 from textual.reactive import reactive
 from textual.message import Message
@@ -36,6 +35,7 @@ from textual.css.query import NoMatches
 from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeView
 from ..Utils.github_api_client import GitHubAPIClient, GitHubAPIError
 from ..config import get_cli_config_path
+from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -266,7 +266,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             # Loading overlay
             with Container(classes="loading-overlay hidden", id="loading-overlay"):
                 with Container(classes="loading-content"):
-                    yield LoadingIndicator()
+                    yield PausableLoadingIndicator()
                     yield Label(
                         "Loading repository...",
                         classes="loading-label",
@@ -877,7 +877,11 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             return
 
         # Run export in a worker to avoid blocking UI
-        self.run_worker(self._export_to_zip_worker(selected_files), exclusive=True)
+        self.run_worker(
+            self._export_to_zip_worker(selected_files),
+            exclusive=True,
+            group="coderepo-export-to-zip",
+        )
 
     @on(Button.Pressed, "#generate-compilation-btn")
     async def generate_compilation(self, event: Button.Pressed) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Mapping
 
 
@@ -14,6 +15,8 @@ class ShellDestination:
     purpose: str
     tooltip: str
     legacy_routes: tuple[str, ...] = ()
+    related_routes: tuple[str, ...] = ()
+    palette_aliases: tuple[str, ...] = ()
     full_label: str | None = None
     navigation_priority: int = 50
 
@@ -61,20 +64,12 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
             "search",
             "conversation",
             "study",
+            "chunking_lab",
             "prompts",
             "skills",
             "writing",
-            "research",
         ),
         navigation_priority=30,
-    ),
-    ShellDestination(
-        "artifacts",
-        "Artifacts",
-        "artifacts",
-        "Generated outputs, bundles, reports, datasets, and Chatbooks.",
-        "Browse generated and portable outputs.",
-        ("chatbooks",),
     ),
     ShellDestination(
         "personas",
@@ -101,10 +96,18 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         navigation_priority=40,
     ),
     ShellDestination(
+        "artifacts",
+        "Artifacts",
+        "artifacts",
+        "Generated outputs, bundles, reports, datasets, and Chatbooks.",
+        "Browse generated and portable outputs.",
+        ("chatbooks",),
+    ),
+    ShellDestination(
         "schedules",
         "Schedules",
         "schedules",
-        "When jobs, watchlists, and workflows run.",
+        "When scheduled tasks fire and recurring questions run.",
         "Manage run timing, triggers, and recovery.",
     ),
     ShellDestination(
@@ -153,13 +156,71 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Configure application preferences.",
         ("stats",),
     ),
+    ShellDestination(
+        "research",
+        "Research",
+        "research_workspace",
+        "Grounded workspaces and durable research-run observation.",
+        "Open Research Workspace for grounded research and research runs.",
+        related_routes=("research",),
+        palette_aliases=(
+            "research workspace",
+            "research runs",
+            "research sessions",
+            "deep research",
+            "notebook",
+        ),
+        navigation_priority=35,
+    ),
+    ShellDestination(
+        "meetings",
+        "Meetings",
+        "meetings",
+        "Record a call or a room with a live labelled transcript, then file it in the Library.",
+        "Record and transcribe a meeting.",
+        palette_aliases=("meeting", "record", "transcribe"),
+        navigation_priority=75,
+    ),
 )
 
 _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
     destination.destination_id: destination for destination in SHELL_DESTINATION_ORDER
 }
 
+# Shortcut ownership is a destination contract, not a position in the
+# navigation strip. New destinations therefore cannot silently reassign an
+# established shortcut by changing ``SHELL_DESTINATION_ORDER``.
+# task-32458 (explicit reassignment, not a silent one): the shortcut set
+# follows one left-to-right keyboard walk so the strip reads in order --
+# ctrl+1..ctrl+9, ctrl+0 across the number row for the first ten
+# destinations, then the F-row from its left end (f2, f3, f4, f5, then f7)
+# for the rest, because f1 (Help) and f6 (Next Pane) are reserved
+# app-globals (ADR-031). Higher F-keys read as an arbitrary jump: the old
+# f7..f11 tail scanned as "9, 0, 7, 8, 9, 10, 11" with F10/F11 stranded
+# mid-strip. Any change here must update the strip ORDER in lockstep so
+# position and shortcut stay aligned.
+SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
+    {
+        "home": "ctrl+1",
+        "console": "ctrl+2",
+        "library": "ctrl+3",
+        "personas": "ctrl+4",
+        "watchlists_collections": "ctrl+5",
+        "artifacts": "ctrl+6",
+        "schedules": "ctrl+7",
+        "workflows": "ctrl+8",
+        "mcp": "ctrl+9",
+        "acp": "ctrl+0",
+        "lab": "f2",
+        "logs": "f3",
+        "settings": "f4",
+        "research": "f5",
+        "meetings": "f7",
+    }
+)
+
 _ROUTABLE_LEGACY_ROUTES = {
+    "chunking_lab",
     "chat",
     "notes",
     "media",
@@ -168,7 +229,6 @@ _ROUTABLE_LEGACY_ROUTES = {
     "conversation",
     "study",
     "writing",
-    "research",
     "chatbooks",
     "subscriptions",
     "tools_settings",
@@ -197,11 +257,18 @@ for destination in SHELL_DESTINATION_ORDER:
         destination.primary_route,
         destination.primary_route,
     )
-    _ROUTE_MAP[destination.destination_id] = ResolvedShellRoute(
-        destination.destination_id,
-        destination.primary_route,
-        destination.destination_id,
-    )
+    if destination.destination_id not in destination.related_routes:
+        _ROUTE_MAP[destination.destination_id] = ResolvedShellRoute(
+            destination.destination_id,
+            destination.primary_route,
+            destination.destination_id,
+        )
+    for related_route in destination.related_routes:
+        _ROUTE_MAP[related_route] = ResolvedShellRoute(
+            destination.destination_id,
+            related_route,
+            related_route,
+        )
     for legacy_route in destination.legacy_routes:
         canonical_route = _CANONICAL_ROUTE_OVERRIDES.get(
             legacy_route,

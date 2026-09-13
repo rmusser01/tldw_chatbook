@@ -6,12 +6,13 @@ Widget for displaying dictation performance metrics and analytics.
 from typing import Dict
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Container, Grid
-from textual.widgets import Label, Static, ProgressBar, Button
+from textual.widgets import Label, Static, Button
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual import work
 
 from ..Audio.dictation_metrics import get_performance_monitor
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 
 class DictationPerformanceWidget(Widget):
@@ -162,7 +163,7 @@ class DictationPerformanceWidget(Widget):
         """Load metrics on mount."""
         self.refresh_metrics()
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="dictation-performance-refresh-metrics")
     async def refresh_metrics(self):
         """Refresh performance metrics."""
         monitor = get_performance_monitor()
@@ -274,7 +275,7 @@ class DictationPerformanceWidget(Widget):
                     wpm_percent = (
                         (stats["average_wpm"] / max_wpm * 100) if max_wpm > 0 else 0
                     )
-                    bar = ProgressBar(total=100, show_eta=False)
+                    bar = PausableProgressBar(total=100, show_eta=False)
                     bar.advance(wpm_percent)
                     container.mount(bar)
 

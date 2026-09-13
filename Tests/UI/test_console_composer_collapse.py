@@ -49,10 +49,60 @@ class _BundledConsoleGeometryHarness(ConsoleHarness):
     CSS_PATH = str(_BUNDLED_STYLESHEET)
 
 
-def _ready_console_host() -> ConsoleHarness:
+@pytest.mark.asyncio
+async def test_improvement_recovery_row_tracks_exact_composer_lifecycle() -> None:
+    app = _ComposerGeometryApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+
+        def apply_replacement() -> None:
+            composer.load_draft("Draft answer")
+            snapshot = composer.capture_draft_snapshot()
+            assert composer.replace_snapshot_as_paste(snapshot, "Improved answer")
+
+        def assert_recovery(visible: bool) -> None:
+            row = composer.query_one("#console-prompt-improvement-recovery")
+            assert row.display is visible
+            assert composer.query_one(
+                "#console-prompt-improvement-undo", Button
+            ).disabled is not visible
+            assert composer.query_one(
+                "#console-prompt-improvement-review", Button
+            ).disabled is not visible
+
+        apply_replacement()
+        await pilot.pause()
+        assert_recovery(True)
+
+        composer.set_collapsed(True)
+        await pilot.pause()
+        assert_recovery(False)
+        assert composer.improvement_undo_available
+        composer.set_collapsed(False)
+        await pilot.pause()
+        assert_recovery(True)
+
+        composer.insert_text("!")
+        await pilot.pause()
+        assert_recovery(False)
+        assert composer.improvement_comparison() is None
+
+        apply_replacement()
+        assert composer.stash_draft_for_send() is not None
+        await pilot.pause()
+        assert_recovery(False)
+
+        apply_replacement()
+        composer.load_draft(composer.draft_text())
+        await pilot.pause()
+        assert_recovery(False)
+
+
+def _ready_console_host() -> _BundledConsoleGeometryHarness:
     app = _build_test_app()
     _configure_native_ready_console(app)
-    return ConsoleHarness(app)
+    return _BundledConsoleGeometryHarness(app)
 
 
 async def _mounted_console(host: ConsoleHarness, pilot):
@@ -955,46 +1005,85 @@ async def test_console_composer_focus_edge_is_live_and_stable():
 
 
 @pytest.mark.asyncio
-async def test_console_transcript_focus_recolors_region_columns():
-    """task-17651: the region's column lines carry transcript focus.
-
-    The transcript widget draws no border of its own any more, so the
-    TASK-359 pane-stop painter recolors the region's inline column lines
-    to the focus accent while the transcript holds focus — and the
-    suppressed top/bottom edges survive the repaint (no resurrected
-    separator rows), with no layout change.
-    """
-    from textual.color import Color as _Color
-
+async def test_console_transcript_focus_marks_title_without_changing_collapsed_layout():
+    """F6 marks the stable title without restoring the old transcript frame."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = _BundledConsoleGeometryHarness(app)
 
     async with host.run_test(size=(150, 44)) as pilot:
         console = await _mounted_console(host, pilot)
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript, selected = await _seed_overflowing_transcript(console, pilot)
         region = console.query_one("#console-transcript-region")
-        region_rect = region.region
+        title = console.query_one("#console-transcript-title")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        context_collapse = console.query_one("#console-context-rail-collapse", Button)
 
-        transcript.focus()
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+        context_collapse.focus()
         await pilot.pause()
 
-        kind, color = region.styles.border_left
-        assert kind == "solid"
-        assert color == _Color.parse("#0178D4")
+        geometry = {
+            widget.id: (widget.region, widget.content_region)
+            for widget in (region, title, transcript, composer)
+        }
+        sample_points = (
+            (title.region.x, title.region.y),
+            (transcript.region.x, transcript.region.y),
+            (transcript.region.right - 1, transcript.region.y),
+            (composer.region.x, composer.region.y),
+        )
+        hits = tuple(host.screen.get_widget_at(*point)[0] for point in sample_points)
+
+        await pilot.press("f6")
+        await pilot.pause()
+
+        assert host.focused is transcript
+        assert composer.collapsed is True
+        assert region.styles.border_left[0] in ("", "none")
+        assert region.styles.border_right[0] in ("", "none")
         assert region.styles.border_bottom[0] in ("", "none")
         assert region.styles.border_top[0] in ("", "none")
-        assert region.region == region_rect
+        assert title.styles.text_style.bold
+        assert title.styles.text_style.underline
+        assert not transcript.styles.text_style.underline
+        assert transcript.selected_message_id == selected
+        assert {
+            widget.id: (widget.region, widget.content_region)
+            for widget in (region, title, transcript, composer)
+        } == geometry
+        assert (
+            tuple(host.screen.get_widget_at(*point)[0] for point in sample_points)
+            == hits
+        )
 
-        console.query_one("#console-native-composer", ConsoleComposerBar).focus()
+        # Monochrome oracle: typography remains visible when focus colors do not.
+        title.styles.background = transcript.styles.background
+        title.styles.color = transcript.styles.color
+        assert title.styles.text_style.bold
+        assert title.styles.text_style.underline
+
+        await pilot.press("f6")
         await pilot.pause()
 
-        blur_kind, blur_color = region.styles.border_left
-        assert blur_kind == "solid"
-        assert blur_color == _Color.parse("#6f7782")
+        assert host.focused is not transcript
+        assert composer.collapsed is True
+        assert region.styles.border_left[0] in ("", "none")
+        assert region.styles.border_right[0] in ("", "none")
         assert region.styles.border_bottom[0] in ("", "none")
+        assert region.styles.border_top[0] in ("", "none")
+        assert not title.styles.text_style.bold
+        assert not title.styles.text_style.underline
+        assert transcript.selected_message_id == selected
+        assert {
+            widget.id: (widget.region, widget.content_region)
+            for widget in (region, title, transcript, composer)
+        } == geometry
+        assert (
+            tuple(host.screen.get_widget_at(*point)[0] for point in sample_points)
+            == hits
+        )
 
 
 @pytest.mark.asyncio

@@ -70,9 +70,9 @@ _LOAD_REGION_LAYOUT_TARGET = (
 class _BatchObserver:
     """Records `app._batch_count > 0` at entry to each swap DOM-work method.
 
-    Call-through wrappers on the three methods `apply_section_view` drives:
-    the region sync (which mounts CONTENT back on a cold Read switch), the
-    section pane rebuild and the header rebuild. Only entries made while
+    Call-through wrappers on the two DOM methods `apply_section_view` drives:
+    the body reconciliation (which mounts the permanent Reader and swaps the
+    section pane) and the header replacement. Only entries made while
     `apply_section_view` itself is on the stack are recorded -- the drainer
     can legitimately run e.g. a rail `refresh_region_content` outside the
     swap (and outside the batch) in the same settle window, and that is not
@@ -82,7 +82,7 @@ class _BatchObserver:
     measured; see the module docstring).
     """
 
-    _METHODS = ("_sync_regions", "refresh_region_content", "refresh_header_content")
+    _METHODS = ("_reconcile_body", "_replace_header")
 
     def __init__(self) -> None:
         self.entries: list[tuple[str, bool]] = []
@@ -154,7 +154,7 @@ async def test_the_cold_read_swap_runs_inside_one_batch_update(monkeypatch, layo
 
         assert screen.query("#wl-region-content"), "CONTENT must be back on Read"
         surfaces = {name for name, _ in observed.entries}
-        assert {"_sync_regions", "refresh_region_content"} <= surfaces, (
+        assert {"_reconcile_body", "_replace_header"} <= surfaces, (
             f"the swap must actually have exercised its DOM work: {observed.entries}"
         )
         unbatched = [name for name, batched in observed.entries if not batched]
@@ -194,7 +194,10 @@ def _primed_screen(app, section: str) -> WatchlistsCollectionsScreen:
     """An unmounted screen whose state gives `section`'s pane NON-default
     seeds, so a plain-assignment seeding would queue the extra recompose."""
     screen = _unmounted_screen(app)
-    screen.active_section = section
+    # This is deliberately an unmounted factory probe. Seed the backing
+    # reactive directly so Textual does not invoke the mounted-only layout
+    # watcher while there is no active app context.
+    screen.__dict__["_reactive_active_section"] = section
     if section == "overview":
         screen.set_reactive(
             WatchlistsCollectionsScreen.overview_data,
@@ -217,7 +220,7 @@ def _primed_screen(app, section: str) -> WatchlistsCollectionsScreen:
     elif section == "rules":
         screen._loaded_rules = [_RULE_ROW]
     elif section == "rules-editing":
-        screen.active_section = "rules"
+        screen.__dict__["_reactive_active_section"] = "rules"
         screen._loaded_rules = [_RULE_ROW]
         screen._rule_form_open = True
         screen._rule_form_editing = _RULE_ROW
@@ -306,6 +309,8 @@ async def test_content_pane_item_seeding_queues_no_recompose():
     was selected. Born red against the pre-task code."""
     app = _build_test_app()
     screen = _unmounted_screen(app)
+    screen.__dict__["_reactive_active_section"] = "items"
+    screen.__dict__["_reactive_runtime_backend"] = "local"
     screen._selected_content_item = {
         "id": "i1",
         "title": "Story 1",
@@ -358,7 +363,7 @@ async def test_runs_pane_seeding_still_starts_the_poll_for_a_running_run():
     try:
         app = _build_test_app()
         screen = _unmounted_screen(app)
-        screen.active_section = "runs"
+        screen.__dict__["_reactive_active_section"] = "runs"
         running = {"id": "run-9", "status": "running", "source_name": "AI News"}
         screen._loaded_runs = [running]
         screen.selected_run = running

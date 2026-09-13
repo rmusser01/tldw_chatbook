@@ -557,9 +557,12 @@ class LocalPromptService:
         sized to ``limit`` results.
 
         Args:
-            query: Plain user query text, forwarded as ``search_query``
-                (used verbatim as the FTS MATCH expression when
-                ``fts_match_query`` is not provided).
+            query: Plain user query text, forwarded as ``search_query``.
+                ``PromptsDatabase.search_prompts`` converts it to the
+                AND-of-quoted-tokens form when ``fts_match_query`` is not
+                provided (``build_and_match_query``, TASK-19558) -- every
+                token must appear but they need not be adjacent, so it is
+                neither a phrase nor a verbatim MATCH expression.
             limit: Maximum number of prompts to return.
             include_deleted: Whether to include soft-deleted prompts.
             fts_match_query: Optional pre-built FTS5 MATCH string (e.g.

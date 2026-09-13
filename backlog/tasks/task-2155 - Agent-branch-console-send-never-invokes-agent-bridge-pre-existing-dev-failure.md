@@ -3,9 +3,11 @@ id: TASK-2155
 title: >-
   Agent-branch console send never invokes agent bridge (pre-existing dev
   failure)
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-06 17:09'
+updated_date: '2026-09-12 07:25'
 labels:
   - console
   - agent
@@ -21,5 +23,38 @@ test_native_send_applies_conversation_dictionary_agent_branch fails on clean dev
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Test passes on dev without changing app behavior contracts,Root cause documented in task notes
+- [x] #1 Test passes on dev without changing app behavior contracts,Root cause documented in task notes
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: N/A
+Reason: test-harness repair preserving existing durable acceptance and dictionary contracts.
+1. Record current failure: RuntimeError at ChatPersistenceService.commit_durable_turn because durable Console Library policy no longer matches acceptance. The manually bound conversation has no policy row; hydration alone does not fix it.
+2. Insert the real Console Library policy using the current session candidate, then hydrate the holder before Send, matching the adjacent world-info harness. Preserve real durable commit and agent dispatch.
+3. Verify substituted model payload and raw transcript through both dictionary send branches. Do not weaken production authority or persistence checks.
+4. Run targeted static checks and independent review, record evidence and close.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The failure was stale harness setup, not agent routing: both dictionary send
+branches reached durable commit and were refused with `RuntimeError: Durable
+Console Library policy no longer matches acceptance.` The manually assigned
+conversation ID had no persisted policy row; hydration alone could not create
+one. The shared test helper now inserts revision 1 through the real policy
+repository and hydrates the session before Send, matching the world-info
+integration harness. Provider and agent payloads still receive substituted
+text, while both persisted USER rows are asserted to retain the raw draft.
+No production contract changed.
+
+Verification used `.superpowers/sdd/2026-09-11-agent-orchestration-pr-integration/venv/bin/python`.
+The pre-edit module reproduced 2 failures; the final focused run passed both
+dictionary tests. ADR required: no; this is test setup for existing durable
+acceptance.
+
+Independent task review and final whole-branch review approved. The final documentation correction was also re-reviewed and approved at 13456c5393. Targeted test evidence above remains applicable; no runtime code changed after those runs. Changed-line lint/format checks and branch whitespace checks passed. Seven inherited mounted-UI/readiness failures and environment warnings remain explicitly recorded in backlog/docs/agent-orchestration-followups-2026-09-12.md; this closure does not claim a full green suite. Closed on codex/agent-orchestration-followups, pending integration.
+<!-- SECTION:NOTES:END -->

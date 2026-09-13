@@ -1,0 +1,1101 @@
+# Tests/UI/test_console_environment_controller.py
+"""Controller cadence/TTL/backoff tests — no Textual app, synchronous fakes."""
+
+from datetime import UTC, datetime, timedelta
+
+import tldw_chatbook.Workspaces.environment_status as env_mod
+from tldw_chatbook.Chat.console_environment_state import (
+    EnvironmentSnapshot,
+    EnvSourceAvailability,
+    GitEnvState,
+    PrEnvState,
+    TasksEnvState,
+)
+from tldw_chatbook.UI.Console_Modules.environment import (
+    UNKNOWN_ROOT,
+    ConsoleEnvironmentController,
+)
+
+
+class Fixture:
+    def __init__(self, monkeypatch, *, root="/w/repo", rail_open=True):
+        self.dispatched: list[dict] = []
+        self.snapshots: list[EnvironmentSnapshot] = []
+        self.root: str | None = root
+        self.rail_open = rail_open
+        self.clock = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
+        self.git_calls = 0
+        self.pr_calls = 0
+
+        def fake_git(path, previous=None):
+            self.git_calls += 1
+            return GitEnvState(
+                availability=EnvSourceAvailability.OK,
+                root=str(path),
+                branch="feat/task-1-x",
+            )
+
+        def fake_pr(path, branch, runner=None, previous=None):
+            self.pr_calls += 1
+            return PrEnvState(
+                availability=EnvSourceAvailability.OK,
+                number=7,
+                title="T",
+                state="OPEN",
+                url="https://x/pull/7",
+            )
+
+        monkeypatch.setattr(env_mod, "gather_git_env", fake_git)
+        monkeypatch.setattr(env_mod, "gather_pr_env", fake_pr)
+        monkeypatch.setattr(
+            env_mod.BacklogTaskScanner,
+            "scan",
+            lambda scanner, ws, branch: TasksEnvState(
+                availability=EnvSourceAvailability.NOT_APPLICABLE
+            ),
+        )
+
+        def run_worker(fn, **kwargs):
+            self.dispatched.append(kwargs)
+            fn()  # synchronous: the "worker" runs inline
+
+        self.controller = ConsoleEnvironmentController(
+            run_worker=run_worker,
+            marshal_to_ui=lambda fn, *a: fn(*a),
+            workspace_root_accessor=lambda: self.root,
+            rail_open_accessor=lambda: self.rail_open,
+            on_snapshot=self.snapshots.append,
+            now=lambda: self.clock,
+        )
+
+
+def test_no_dispatch_while_rail_closed(monkeypatch):
+    fx = Fixture(monkeypatch, rail_open=False)
+    fx.controller.request_refresh(include_net=True)
+    assert fx.dispatched == []
+
+
+def test_local_and_net_use_distinct_worker_groups(monkeypatch):
+    fx = Fixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True)
+    groups = {d["group"] for d in fx.dispatched}
+    assert groups == {
+        ConsoleEnvironmentController.LOCAL_WORKER_GROUP,
+        ConsoleEnvironmentController.NET_WORKER_GROUP,
+    }
+    assert all(d["thread"] is True and d["exclusive"] is True for d in fx.dispatched)
+
+
+def test_net_ttl_suppresses_refetch_within_60s_and_force_busts_it(monkeypatch):
+    fx = Fixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True)
+    fx.clock += timedelta(seconds=30)
+    fx.controller.request_refresh(include_net=True)
+    assert fx.pr_calls == 1  # TTL held
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.pr_calls == 2
+    fx.clock += timedelta(seconds=61)
+    fx.controller.request_refresh(include_net=True)
+    assert fx.pr_calls == 3
+
+
+def test_three_failures_pause_the_local_tier_until_forced(monkeypatch):
+    fx = Fixture(monkeypatch)
+    monkeypatch.setattr(
+        env_mod,
+        "gather_git_env",
+        lambda path, previous=None: GitEnvState(
+            availability=EnvSourceAvailability.ERROR
+        ),
+    )
+    for _ in range(3):
+        fx.controller.poll_tick()
+    dispatched_before = len(fx.dispatched)
+    fx.controller.poll_tick()  # paused: no new dispatch
+    assert len(fx.dispatched) == dispatched_before
+
+
+def _fail_git(fx, monkeypatch):
+    """Replace the git gatherer with an always-ERROR one that still counts.
+
+    ``Fixture``'s own fake owns ``git_calls``; a bare ``monkeypatch.setattr``
+    lambda silently stops incrementing it, so a test asserting on the count
+    reads 0 and proves nothing about the pause.
+    """
+
+    def fail_git(path, previous=None):
+        fx.git_calls += 1
+        return GitEnvState(availability=EnvSourceAvailability.ERROR)
+
+    monkeypatch.setattr(env_mod, "gather_git_env", fail_git)
+
+
+def test_forced_refresh_revives_a_paused_local_tier(monkeypatch):
+    """A backed-off LOCAL tier must come back on the Refresh slot (F3a).
+
+    The Refresh tail posts ``request_refresh(include_net=True,
+    force_net=True)``. Before this fix ``force_net`` bypassed only the net
+    tier's counter, so three consecutive local ERRORs left the panel stuck
+    on its error row for the life of the screen -- contradicting both the
+    spec and the shipped user guide ("until manual refresh or scope
+    change").
+    """
+    fx = Fixture(monkeypatch)
+    _fail_git(fx, monkeypatch)
+    for _ in range(3):
+        fx.controller.poll_tick()
+    assert fx.git_calls == 3
+    fx.controller.poll_tick()
+    assert fx.git_calls == 3  # paused
+
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.git_calls == 4  # revived by the explicit refresh
+
+    # ... and an ordinary poll works again from there (counter really reset,
+    # not merely bypassed for the one forced call).
+    def ok_git(path, previous=None):
+        fx.git_calls += 1
+        return GitEnvState(
+            availability=EnvSourceAvailability.OK, root=str(path), branch="feat/x"
+        )
+
+    monkeypatch.setattr(env_mod, "gather_git_env", ok_git)
+    fx.controller.poll_tick()
+    assert fx.git_calls == 5
+
+
+def test_forced_refresh_revives_a_paused_net_tier_too(monkeypatch):
+    fx = Fixture(monkeypatch)
+
+    def fail_pr(path, branch, runner=None, previous=None):
+        fx.pr_calls += 1
+        return PrEnvState(availability=EnvSourceAvailability.ERROR)
+
+    monkeypatch.setattr(env_mod, "gather_pr_env", fail_pr)
+    for _ in range(3):
+        fx.clock += timedelta(seconds=61)
+        fx.controller.request_refresh(include_net=True)
+    assert fx.pr_calls == 3
+    fx.clock += timedelta(seconds=61)
+    fx.controller.request_refresh(include_net=True)
+    assert fx.pr_calls == 3  # paused
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.pr_calls == 4
+
+
+def test_unforced_refresh_does_not_revive_a_paused_tier(monkeypatch):
+    """Negative control: only the FORCED path clears the counters."""
+    fx = Fixture(monkeypatch)
+    _fail_git(fx, monkeypatch)
+    for _ in range(4):
+        fx.controller.poll_tick()
+    assert fx.git_calls == 3
+    fx.controller.request_refresh(include_net=True)  # no force
+    assert fx.git_calls == 3
+
+
+def test_stale_scope_snapshot_is_dropped_when_root_changes_mid_flight(monkeypatch):
+    fx = Fixture(monkeypatch)
+
+    def run_worker_scope_shift(fn, **kwargs):
+        fx.root = "/other/repo"  # root changes while the "worker" runs
+        fn()
+
+    fx.controller._run_worker = run_worker_scope_shift
+    fx.controller.request_refresh()
+    assert fx.snapshots == []  # landed result discarded by the stale-scope guard
+
+
+def test_poll_tick_dispatches_local_only(monkeypatch):
+    fx = Fixture(monkeypatch)
+    fx.controller.poll_tick()
+    assert fx.git_calls == 1 and fx.pr_calls == 0
+
+
+def test_rail_open_dispatches_both_tiers(monkeypatch):
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    assert fx.git_calls == 1 and fx.pr_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Deferred-fake tests (controller ruling: authorized extension beyond the
+# plan's verbatim set). `Fixture` above runs each dispatched job SYNCHRONOUSLY
+# at dispatch time, which hides bugs that only surface under real async
+# ordering -- a job landing after a NEWER dispatch of the same tier, or a net
+# dispatch being evaluated before the local tier has landed. `DeferredFixture`
+# queues jobs instead of running them, so tests can land them in whatever
+# order they choose.
+# ---------------------------------------------------------------------------
+
+
+class DeferredFixture:
+    def __init__(self, monkeypatch, *, root="/w/repo", rail_open=True):
+        self.dispatched: list[dict] = []
+        self.jobs: list = []  # queued job callables, in dispatch order
+        self.snapshots: list[EnvironmentSnapshot] = []
+        self.root: str | None = root
+        self.rail_open = rail_open
+        self.clock = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
+        self.git_calls = 0
+        self.pr_calls = 0
+        self.pr_branches_seen: list[str | None] = []
+
+        def fake_git(path, previous=None):
+            self.git_calls += 1
+            return GitEnvState(
+                availability=EnvSourceAvailability.OK,
+                root=str(path),
+                branch=f"feat/call-{self.git_calls}",
+            )
+
+        def fake_pr(path, branch, runner=None, previous=None):
+            self.pr_calls += 1
+            self.pr_branches_seen.append(branch)
+            return PrEnvState(
+                availability=EnvSourceAvailability.OK,
+                number=7,
+                title="T",
+                state="OPEN",
+                url="https://x/pull/7",
+            )
+
+        monkeypatch.setattr(env_mod, "gather_git_env", fake_git)
+        monkeypatch.setattr(env_mod, "gather_pr_env", fake_pr)
+        monkeypatch.setattr(
+            env_mod.BacklogTaskScanner,
+            "scan",
+            lambda scanner, ws, branch: TasksEnvState(
+                availability=EnvSourceAvailability.NOT_APPLICABLE
+            ),
+        )
+
+        def run_worker(fn, **kwargs):
+            self.dispatched.append(kwargs)
+            self.jobs.append(fn)  # queued -- NOT run inline
+
+        self.controller = ConsoleEnvironmentController(
+            run_worker=run_worker,
+            marshal_to_ui=lambda fn, *a: fn(*a),
+            workspace_root_accessor=lambda: self.root,
+            rail_open_accessor=lambda: self.rail_open,
+            on_snapshot=self.snapshots.append,
+            now=lambda: self.clock,
+        )
+
+    def run_job(self, index: int) -> None:
+        self.jobs[index]()
+
+
+def test_net_dispatch_waits_for_landed_branch_on_first_open(monkeypatch):
+    """C1: on first rail open the local job hasn't landed when net would be
+    dispatched, so the branch is unknown. The net dispatch must defer until
+    local lands, then fire with the freshly-landed branch (never None)."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True)
+    assert len(fx.jobs) == 1  # net can't dispatch yet -- branch unknown
+    assert fx.pr_calls == 0
+
+    fx.run_job(0)  # land the local job: branch becomes known
+    assert len(fx.jobs) == 2  # the deferred net job is now queued
+    assert fx.pr_calls == 0  # not run yet
+
+    fx.run_job(1)  # land the (previously deferred) net job
+    assert fx.pr_calls == 1
+    assert fx.pr_branches_seen == ["feat/call-1"]  # landed branch, never None
+    assert fx.controller.snapshot.pr.availability is EnvSourceAvailability.OK
+    assert fx.controller.snapshot.pr.number == 7
+
+
+def test_root_spelling_difference_does_not_defeat_ttl(monkeypatch):
+    """I2: root-change detection must compare against the accessor's own raw
+    string (`_landed_root`), never git's RESOLVED toplevel (`GitEnvState.root`),
+    or a spelling difference (e.g. /tmp vs /private/tmp) makes every poll
+    misdetect a root change, wipe `_net_fetched_at`, and re-dispatch net."""
+    fx = DeferredFixture(monkeypatch, root="/tmp/wt")
+
+    def fake_git_resolved(path, previous=None):
+        fx.git_calls += 1
+        return GitEnvState(
+            availability=EnvSourceAvailability.OK,
+            root="/private/tmp/wt",  # resolved -- different
+            branch="feat/task-1-x",
+        )  # spelling than the accessor
+
+    monkeypatch.setattr(env_mod, "gather_git_env", fake_git_resolved)
+
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)  # land local -> branch known -> deferred net job queued
+    assert len(fx.jobs) == 2
+    fx.run_job(1)  # land net
+    assert fx.pr_calls == 1
+
+    def net_dispatch_count() -> int:
+        return sum(
+            1
+            for d in fx.dispatched
+            if d["group"] == ConsoleEnvironmentController.NET_WORKER_GROUP
+        )
+
+    net_dispatches_before = net_dispatch_count()
+    for _ in range(5):
+        fx.controller.poll_tick()
+    assert (
+        net_dispatch_count() == net_dispatches_before
+    )  # no false root-change reset fired
+    assert fx.pr_calls == 1  # gh called at most once inside the TTL window
+
+
+def test_local_tier_resumes_after_root_change_following_pause(monkeypatch):
+    """I3: an ERROR GitEnvState carries root="" so a paused local tier can
+    only resume via a genuine root change, detected against `_landed_root`
+    (set unconditionally on every local landing, success or failure)."""
+    fx = Fixture(monkeypatch)
+    monkeypatch.setattr(
+        env_mod,
+        "gather_git_env",
+        lambda path, previous=None: GitEnvState(
+            availability=EnvSourceAvailability.ERROR
+        ),
+    )
+    for _ in range(3):
+        fx.controller.poll_tick()
+    assert fx.controller._failures["local"] == 3
+
+    def local_dispatch_count() -> int:
+        return sum(
+            1
+            for d in fx.dispatched
+            if d["group"] == ConsoleEnvironmentController.LOCAL_WORKER_GROUP
+        )
+
+    local_dispatches_before = local_dispatch_count()
+    fx.root = "/other/repo"
+    fx.controller.poll_tick()
+    assert (
+        local_dispatch_count() > local_dispatches_before
+    )  # pause lifted by the root change
+    assert (
+        fx.controller._failures["local"] < 3
+    )  # counters were reset, not left at the cap
+
+
+def test_stale_local_landing_is_dropped_by_dispatch_token(monkeypatch):
+    """I4: a per-tier monotonic dispatch token drops a landing that arrives
+    after a NEWER dispatch of the same tier -- regardless of which job's OS
+    thread happens to finish (i.e. land) first."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh()  # dispatch #1 (local only)
+    fx.controller.request_refresh()  # dispatch #2 (local only)
+    assert len(fx.jobs) == 2
+
+    fx.run_job(1)  # land the SECOND (newer, highest-token) dispatch first
+    newer_branch = fx.controller.snapshot.git.branch
+
+    fx.run_job(0)  # land the FIRST (older, now-stale) dispatch second
+    assert fx.controller.snapshot.git.branch == newer_branch  # stale landing dropped
+    assert fx.git_calls == 2  # both gathers ran; only the newer one's landing stuck
+
+
+# ---------------------------------------------------------------------------
+# task-13 hardening (additions B and C). B closes two gaps in the deferred
+# net path that only exist because the dispatch is deferred at all; C makes a
+# branch change actually TRIGGER the net refetch its own TTL key already
+# allows for.
+# ---------------------------------------------------------------------------
+
+
+def _net_dispatch_count(fx) -> int:
+    return sum(
+        1
+        for d in fx.dispatched
+        if d["group"] == ConsoleEnvironmentController.NET_WORKER_GROUP
+    )
+
+
+def test_deferred_net_dispatch_is_dropped_when_the_rail_closed_meanwhile(monkeypatch):
+    """B1: the rail-open guard must be re-checked at RE-dispatch time.
+
+    `request_refresh` refuses to dispatch behind a closed rail, but a net
+    request deferred while the branch was unknown is re-issued later, from
+    `_land` -- and the rail can have closed in between. Without a second
+    check that deferred `gh` fetch fires for a panel nobody is looking at.
+    """
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True)
+    assert len(fx.jobs) == 1 and _net_dispatch_count(fx) == 0  # net deferred
+
+    fx.rail_open = False  # the user collapsed the Inspect rail meanwhile
+    fx.run_job(0)  # local lands: the deferred net would be re-issued here
+    assert _net_dispatch_count(fx) == 0
+    assert fx.pr_calls == 0
+    assert fx.controller._net_pending is False  # dropped, not left latched
+
+    fx.rail_open = True  # reopening still fetches normally
+    fx.controller.notify_rail_opened()
+    assert _net_dispatch_count(fx) == 1
+
+
+def test_pending_net_request_is_cleared_when_its_scope_is_dropped(monkeypatch):
+    """B2: a pending net request whose local landing is scope-dropped is orphaned.
+
+    `_land`'s stale-scope guard returns before the pending-net block, so the
+    request that was waiting on that landing can never be re-issued -- and
+    its accumulated `force_net` then leaks into whatever request re-keys the
+    slot next, silently bypassing the 60s TTL.
+    """
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller._net_pending is True
+    assert fx.controller._net_pending_force is True
+
+    fx.root = "/other/repo"  # workspace switched before the local job landed
+    fx.run_job(0)  # this landing is scope-dropped
+    assert fx.controller._net_pending is False
+    assert fx.controller._net_pending_force is False
+    assert fx.controller._net_pending_scope is None
+
+    # ...so a later PLAIN refresh cannot inherit the dropped request's force.
+    fx.controller.request_refresh(include_net=True)
+    assert fx.controller._net_pending_scope == "/other/repo"
+    assert fx.controller._net_pending_force is False
+
+
+def test_pending_net_force_accumulates_within_one_scope(monkeypatch):
+    """The `_net_pending_scope`/force block's same-scope arm: force is sticky."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True)
+    assert fx.controller._net_pending_scope == "/w/repo"
+    assert fx.controller._net_pending_force is False
+
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller._net_pending_force is True
+
+    fx.controller.request_refresh(include_net=True)  # must not DOWNGRADE it
+    assert fx.controller._net_pending_force is True
+
+    # An in-window TTL entry for the branch that is about to land (the fake
+    # gatherer numbers branches by CALL, not by dispatch, so the first job
+    # actually run yields `feat/call-1`): only a genuinely FORCED deferred
+    # dispatch busts it.
+    fx.controller._net_fetched_at = ("/w/repo", "feat/call-1", fx.clock)
+    fx.run_job(2)  # land the newest local dispatch (older tokens are stale)
+    assert fx.controller._net_pending is False
+    fx.run_job(len(fx.jobs) - 1)
+    assert fx.pr_calls == 1
+    assert fx.pr_branches_seen == ["feat/call-1"]
+
+
+def test_pending_net_force_is_rekeyed_not_inherited_on_a_new_scope(monkeypatch):
+    """The other arm: a DIFFERENT scope resets force rather than inheriting it."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller._net_pending_force is True
+
+    fx.root = "/other/repo"
+    fx.controller.request_refresh(include_net=True)  # new scope, not forced
+    assert fx.controller._net_pending_scope == "/other/repo"
+    assert fx.controller._net_pending_force is False
+
+
+def test_branch_change_on_a_local_landing_escalates_a_net_refresh(monkeypatch):
+    """C: showing another branch's PR unmarked is the defect this closes.
+
+    The net TTL is keyed `(root, branch)`, so a branch change is already
+    TTL-clean -- nothing merely *triggered* the refetch, so the panel kept
+    painting the previous branch's PR/checks until the next rail open.
+    """
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)  # local lands feat/call-1; the deferred net job is queued
+    fx.run_job(1)  # net lands for feat/call-1
+    assert fx.pr_branches_seen == ["feat/call-1"]
+
+    jobs_before = len(fx.jobs)
+    fx.controller.poll_tick()  # local tier only
+    fx.run_job(jobs_before)  # lands feat/call-2 -- a different branch
+    assert len(fx.jobs) == jobs_before + 2  # the escalated net job is queued
+    fx.run_job(jobs_before + 1)
+    assert fx.pr_branches_seen == ["feat/call-1", "feat/call-2"]
+
+
+def test_branch_change_does_not_escalate_while_the_rail_is_closed(monkeypatch):
+    """C's negative control: no `gh` fetch for a panel nobody is looking at."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)
+    fx.run_job(1)
+    assert fx.pr_calls == 1
+
+    fx.controller.request_refresh()  # queue one more local job while open
+    fx.rail_open = False  # rail closes before it lands
+    jobs_before = len(fx.jobs)
+    fx.run_job(jobs_before - 1)
+    assert len(fx.jobs) == jobs_before  # nothing escalated
+    assert fx.pr_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# TASK-31664 AC#3, round-1 review I1/I2: `pending_ack_tiers` tracks which
+# tiers an EXPLICIT (`force_net=True`) refresh is still owed, so the screen
+# can hold its "Refreshing…" acknowledgment until the slow `gh` tier lands,
+# not just the fast local one -- and never leave it wedged if something it
+# was waiting for is never coming.
+# ---------------------------------------------------------------------------
+
+
+def test_pending_ack_tiers_survives_the_local_landing_and_clears_on_net(monkeypatch):
+    """I1: the ack must not clear on the first (local) landing alone."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+    assert len(fx.jobs) == 1  # net deferred -- branch unknown on first press
+
+    fx.run_job(0)  # land local
+    assert fx.controller.pending_ack_tiers == frozenset({"net"})
+    assert len(fx.jobs) == 2  # deferred net now dispatched
+
+    fx.run_job(1)  # land net
+    assert fx.controller.pending_ack_tiers == frozenset()
+
+
+def test_pending_ack_tiers_never_set_by_a_plain_refresh(monkeypatch):
+    """Only `force_net=True` (the Refresh button) arms tracking at all --
+    the 10s poll and rail-open nudge must never leave a stale entry."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True)  # not forced
+    assert fx.controller.pending_ack_tiers == frozenset()
+    fx.controller.notify_rail_opened()  # also not forced
+    assert fx.controller.pending_ack_tiers == frozenset()
+    fx.controller.poll_tick()
+    assert fx.controller.pending_ack_tiers == frozenset()
+
+
+def test_pending_ack_tiers_empty_on_unknown_root_or_closed_rail(monkeypatch):
+    """I2: a call that dispatches NOTHING must never arm anything to wait
+    for -- these used to be reachable only by arming BEFORE the call."""
+    fx = DeferredFixture(monkeypatch)
+    fx.root = UNKNOWN_ROOT
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset()
+    assert fx.jobs == []
+
+    fx2 = DeferredFixture(monkeypatch, rail_open=False)
+    fx2.controller.request_refresh(include_net=True, force_net=True)
+    assert fx2.controller.pending_ack_tiers == frozenset()
+    assert fx2.jobs == []
+
+
+def test_pending_ack_tiers_settles_immediately_for_an_unbound_workspace(monkeypatch):
+    """I2: `_land_unbound` lands SYNCHRONOUSLY, so by the time
+    `request_refresh` returns there is nothing left to wait for -- an ack
+    armed from this call would otherwise never clear."""
+    fx = DeferredFixture(monkeypatch, root=None)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset()
+
+
+def test_pending_ack_tiers_cleared_when_the_scope_changes_mid_flight(monkeypatch):
+    """I2: a scope change before the local tier lands must not leave the
+    OLD press's ack waiting forever for a landing that will only ever hit
+    the stale-scope guard from now on."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+
+    fx.root = "/other/repo"  # workspace switched before the local job landed
+    fx.run_job(0)  # this landing is scope-dropped
+    assert fx.controller.pending_ack_tiers == frozenset()
+
+
+def test_pending_ack_tiers_cleared_when_the_deferred_net_is_abandoned(monkeypatch):
+    """I2: mirrors `test_deferred_net_dispatch_is_dropped_when_the_rail_
+    closed_meanwhile` -- when the rail closes before the deferred net can
+    be re-issued, that fetch is never coming, so the ack must not wait for
+    it forever."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+
+    fx.rail_open = False  # the user collapsed the Inspect rail meanwhile
+    snapshots_before = len(fx.snapshots)
+    fx.run_job(0)  # local lands: the deferred net would be re-issued here
+    assert fx.controller.pending_ack_tiers == frozenset()
+    # Final-review I1 sibling check: clearing the set is only half the ack --
+    # the screen clears its "Refreshing…" label from `on_snapshot`. This path
+    # is self-healing because the abandonment happens INSIDE a real landing,
+    # which falls through to `_on_snapshot` on its way out.
+    assert len(fx.snapshots) > snapshots_before
+
+
+def test_pending_ack_clear_on_a_scope_drop_still_notifies_the_screen(monkeypatch):
+    """Final review I1: clearing the pending set is only HALF the ack.
+
+    The screen's only ack-clear site is the top of
+    ``_land_console_environment``, which runs on ``on_snapshot``. The
+    stale-scope guard cleared ``_pending_ack_tiers`` but fired no snapshot,
+    so when the accessor flips to ``UNKNOWN_ROOT`` mid-refresh (the ~12s
+    measured `gh` window is long enough for a chat controller to go away and
+    come back) every landing of the in-flight refresh is scope-dropped --
+    and every LATER poll takes the UNKNOWN skip, which lands nothing while
+    ``_has_landed``. Nothing ever calls ``on_snapshot`` again, so the button
+    reads "Refreshing…" for as long as the UNKNOWN spell lasts.
+    """
+    fx = DeferredFixture(monkeypatch)
+    # Establish a landed root A first, so the UNKNOWN skip below takes the
+    # `_has_landed` arm -- the one that never lands anything of its own.
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)  # local lands for /w/repo
+    fx.run_job(1)  # net lands for /w/repo
+    assert fx.controller._has_landed is True
+
+    jobs_before = len(fx.jobs)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+    assert len(fx.jobs) == jobs_before + 2  # both tiers dispatched for real
+
+    fx.root = UNKNOWN_ROOT  # the accessor blips during the gh window
+    snapshots_before = len(fx.snapshots)
+    for index in range(jobs_before, len(fx.jobs)):
+        fx.run_job(index)  # every one of these landings is scope-dropped
+
+    assert fx.controller.pending_ack_tiers == frozenset()
+    # The screen-side clear evidence: `_land_console_environment` only ever
+    # runs from `on_snapshot`, so an empty pending set nobody was told about
+    # leaves the label up.
+    assert len(fx.snapshots) > snapshots_before
+
+    # ...and nothing else would have supplied one: the UNKNOWN skip lands
+    # nothing while `_has_landed`, however long the blip lasts.
+    snapshots_after_drop = len(fx.snapshots)
+    for _ in range(ConsoleEnvironmentController._MAX_UNKNOWN_TICKS + 2):
+        fx.controller.poll_tick()
+    assert len(fx.snapshots) == snapshots_after_drop
+
+
+def test_a_stale_landing_does_not_clear_a_LATER_scopes_pending_ack(monkeypatch):
+    """Q5: the ack set is per-refresh, so the scope that OWNS it must match.
+
+    ``_pending_ack_tiers`` is one unkeyed set, and the stale-scope guard
+    emptied it (and, since the final-review fix above, fired ``on_snapshot``)
+    for ANY dropped landing. Sequence that breaks:
+
+    Refresh in workspace A pends {local, net} -> the user switches to B ->
+    Refresh in B repopulates the same set -> A's landing, still in flight
+    from the ~12s `gh` window, arrives and is scope-dropped -> the guard
+    clears the WHOLE set and notifies, so the screen drops "Refreshing…"
+    while B's tiers are still genuinely in flight. The user watches the
+    acknowledgment vanish seconds before the data it was acknowledging
+    arrives, on the panel they are actually looking at.
+
+    A stale landing from a scope that no longer OWNS the ack must not touch
+    it; the ack still clears normally once B's own tiers land.
+    """
+    fx = DeferredFixture(monkeypatch, root="/w/A")
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)  # local lands for /w/A
+    fx.run_job(1)  # net lands for /w/A
+    assert fx.controller._has_landed is True
+
+    # Explicit refresh in A: both tiers dispatched, both owed.
+    a_first = len(fx.jobs)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+    a_jobs = range(a_first, len(fx.jobs))
+    assert len(a_jobs) == 2
+
+    # The user switches to B and refreshes there before A's jobs land. B is a
+    # new scope, so its branch is unknown and the net tier DEFERS (C1) -- but
+    # both tiers are still owed, which is exactly what the ack is for.
+    fx.root = "/w/B"
+    b_local_index = len(fx.jobs)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+    assert len(fx.jobs) == b_local_index + 1  # local only; net deferred
+    assert fx.controller._net_pending is True
+
+    # A's stale landings arrive. They are correctly dropped for the paint --
+    # but they must not speak for B's outstanding acknowledgment.
+    snapshots_before = len(fx.snapshots)
+    for index in a_jobs:
+        fx.run_job(index)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"}), (
+        "a stale landing from the abandoned scope cleared the LIVE scope's ack"
+    )
+    assert len(fx.snapshots) == snapshots_before, (
+        "a stale landing notified the screen to drop an ack it does not own"
+    )
+
+    # B's own tiers land: now, and only now, the ack clears.
+    b_net_index = len(fx.jobs)
+    fx.run_job(b_local_index)  # lands local for B, releases the deferred net
+    assert fx.controller.pending_ack_tiers == frozenset({"net"})
+    assert len(fx.jobs) == b_net_index + 1
+    fx.run_job(b_net_index)
+    assert fx.controller.pending_ack_tiers == frozenset()
+    assert len(fx.snapshots) > snapshots_before
+
+
+# ---------------------------------------------------------------------------
+# TASK-31660: root-is-None is an ANSWER (UNBOUND), not a reason to skip.
+#
+# `poll_tick`/`request_refresh` used to `return` on a None root, so nothing
+# landed and the LAST PAINT STOOD: after a switch to an unbound workspace the
+# panel kept the previous repository's branch and counts -- and still offered
+# "Commit or push - N files" against it -- permanently, with an inert Refresh.
+# ---------------------------------------------------------------------------
+
+
+def _unbound_landings(fx) -> list:
+    return [
+        s for s in fx.snapshots
+        if s.git.availability is EnvSourceAvailability.UNBOUND
+    ]
+
+
+def test_cold_start_is_pending_and_lands_nothing_until_a_gatherer_answers(monkeypatch):
+    """AC #2: PENDING first, data second -- never a negative in between."""
+    fx = DeferredFixture(monkeypatch)
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.PENDING
+    assert fx.snapshots == []
+
+    fx.controller.notify_rail_opened()
+    assert fx.snapshots == []  # dispatched, but nothing has ANSWERED yet
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.PENDING
+
+    fx.run_job(0)
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+    assert fx.snapshots[-1].git.branch == "feat/call-1"
+
+
+def test_switch_to_an_unbound_workspace_lands_unbound_within_one_poll(monkeypatch):
+    """AC #1/#3: the previous root's data is replaced, not left painted."""
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+    assert fx.controller.snapshot.pr.availability is EnvSourceAvailability.OK
+
+    fx.root = None  # workspace switched to one that binds no folder
+    fx.controller.poll_tick()
+
+    landed = fx.controller.snapshot
+    assert landed.git.availability is EnvSourceAvailability.UNBOUND
+    assert landed.pr.availability is EnvSourceAvailability.UNBOUND
+    assert landed.tasks.availability is EnvSourceAvailability.UNBOUND
+    assert landed.git.branch is None and landed.git.files == ()
+    assert landed.pr.number == 0  # the other repo's PR went with its root
+    assert _unbound_landings(fx)  # it reached `on_snapshot`, not just the field
+
+
+def test_unbound_poll_dispatches_no_git_or_gh_work(monkeypatch):
+    """Landing a state is not the same as gathering one: no root, no I/O."""
+    fx = Fixture(monkeypatch, root=None)
+    fx.controller.poll_tick()
+    assert fx.dispatched == []
+    assert fx.git_calls == 0 and fx.pr_calls == 0
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+
+
+def test_unbound_lands_nothing_while_the_rail_is_closed(monkeypatch):
+    """Negative control: the rail-open guard still comes first."""
+    fx = Fixture(monkeypatch, root=None, rail_open=False)
+    fx.controller.poll_tick()
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    fx.controller.notify_rail_opened()
+    assert fx.snapshots == []
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.PENDING
+
+
+def test_refresh_while_unbound_re_checks_the_binding_and_re_lands(monkeypatch):
+    """AC #4: the Refresh slot is never a visible no-op in UNBOUND."""
+    fx = Fixture(monkeypatch, root=None)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert len(_unbound_landings(fx)) == 1
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert len(_unbound_landings(fx)) == 2  # re-checked, re-landed
+
+    # ...and the same press recovers the moment a folder IS bound again.
+    fx.root = "/w/repo"
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.git_calls == 1 and fx.pr_calls == 1
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+
+
+def test_unbound_to_bound_recovers_on_the_next_poll(monkeypatch):
+    """AC #3's other direction: None -> root must be detected as a change."""
+    fx = Fixture(monkeypatch, root=None)
+    fx.controller.poll_tick()
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+    assert fx.controller._landed_root is None
+
+    fx.root = "/w/repo"
+    fx.controller.poll_tick()
+    assert fx.git_calls == 1
+    assert fx.pr_calls == 1  # a root change is a BOTH-tier refresh
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+    assert fx.controller._landed_root == "/w/repo"
+
+
+def test_unbound_clears_the_net_ttl_so_a_rebind_refetches(monkeypatch):
+    """The `gh` TTL is keyed on the OLD root; unbinding must retire it."""
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    assert fx.pr_calls == 1
+    fx.root = None
+    fx.controller.poll_tick()
+    assert fx.controller._net_fetched_at is None
+    assert fx.controller._net_pending is False
+
+    fx.root = "/w/repo"  # rebound to the SAME root, well inside the 60s TTL
+    fx.controller.poll_tick()
+    assert fx.pr_calls == 2
+
+
+def test_repeated_unbound_polls_do_not_arm_the_backoff_pause(monkeypatch):
+    """UNBOUND is a healthy answer, not a failure: it must not count."""
+    fx = Fixture(monkeypatch, root=None)
+    for _ in range(5):
+        fx.controller.poll_tick()
+    assert fx.controller._failures == {"local": 0, "net": 0}
+    assert len(_unbound_landings(fx)) == 5
+
+    fx.root = "/w/repo"
+    fx.controller.poll_tick()
+    assert fx.git_calls == 1  # not paused
+
+
+def test_a_deferred_local_landing_for_a_dropped_root_stays_dropped(monkeypatch):
+    """The stale-scope guard still holds when the NEW scope is None.
+
+    A local gather in flight for `/w/repo` must not repaint the panel after
+    the workspace has unbound -- that is the same last-paint-stands defect,
+    one landing later.
+    """
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh()
+    fx.root = None
+    fx.controller.poll_tick()  # lands UNBOUND
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+
+    fx.run_job(0)  # the in-flight gather for the old root finally lands
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+
+
+# ---------------------------------------------------------------------------
+# TASK-31660 round 1 (review): "cannot tell" is NOT "answered: nothing bound".
+#
+# The root accessor chain returns `()` for a genuinely unbound workspace but
+# `None` for an undetermined one (a swallowed exception; a chat controller
+# not built yet or with no active session). Landing UNBOUND on the latter
+# would assert "No folder is bound…" on the strength of a failure -- and
+# would reset the local tier's 3-strike backoff while doing it.
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_root_lands_nothing_and_leaves_the_previous_paint(monkeypatch):
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    good = fx.controller.snapshot
+    assert good.git.availability is EnvSourceAvailability.OK
+    landings_before = len(fx.snapshots)
+    dispatches_before = len(fx.dispatched)
+
+    fx.root = UNKNOWN_ROOT  # the accessor could not tell
+    fx.controller.poll_tick()
+    fx.controller.request_refresh(include_net=True)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    fx.controller.notify_rail_opened()
+
+    assert len(fx.snapshots) == landings_before  # nothing landed at all
+    assert len(fx.dispatched) == dispatches_before  # and nothing dispatched
+    assert fx.controller.snapshot is good  # the previous paint stands
+    assert fx.controller._landed_root == "/w/repo"  # scope bookkeeping untouched
+
+
+def test_unknown_root_does_not_reset_the_backoff_counters(monkeypatch):
+    """The counter that stops a 10s flap loop must survive an unknown root."""
+    fx = Fixture(monkeypatch)
+    _fail_git(fx, monkeypatch)
+    for _ in range(3):
+        fx.controller.poll_tick()
+    assert fx.controller._failures["local"] == 3  # paused
+
+    fx.root = UNKNOWN_ROOT
+    fx.controller.poll_tick()
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller._failures["local"] == 3  # still paused, not revived
+    assert fx.git_calls == 3
+
+
+def test_unknown_root_is_not_mistaken_for_a_root_change(monkeypatch):
+    """A transient unknown must not wipe the net TTL and re-fetch `gh`."""
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    assert fx.pr_calls == 1
+    fetched_at = fx.controller._net_fetched_at
+    assert fetched_at is not None
+
+    fx.root = UNKNOWN_ROOT
+    for _ in range(5):
+        fx.controller.poll_tick()
+    assert fx.controller._net_fetched_at == fetched_at
+    assert fx.pr_calls == 1
+
+    fx.root = "/w/repo"  # recovers into an ordinary poll, no root change
+    fx.controller.poll_tick()
+    assert fx.git_calls == 2
+    assert fx.pr_calls == 1  # same root, TTL still holds
+
+
+def test_unknown_and_unbound_are_different_answers(monkeypatch):
+    """The negative control that makes the two tests above mean something."""
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+
+    fx.root = UNKNOWN_ROOT
+    fx.controller.poll_tick()
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+
+    fx.root = None  # asked, and the answer is "nothing is bound"
+    fx.controller.poll_tick()
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+
+
+# ---------------------------------------------------------------------------
+# TASK-31665 AC#10: a bound -> bound switch must not pair the new root's
+# branch/counts with the OLD root's PR while the deferred `gh` fetch is out
+# ---------------------------------------------------------------------------
+
+
+def test_bound_to_bound_switch_retires_the_previous_roots_pr_immediately(monkeypatch):
+    """The local tier is fast and `gh` is not (measured ~12s). Between the
+    two landings the panel painted the NEW root's branch and counts beside
+    the OLD root's PR number and checks -- the same "another repository's
+    data, unmarked" defect TASK-31660 fixed for bound -> unbound."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)  # local lands for /w/repo
+    fx.run_job(1)  # the deferred net job lands
+    assert fx.controller.snapshot.pr.availability is EnvSourceAvailability.OK
+    assert fx.controller.snapshot.pr.number == 7
+
+    fx.root = "/w/other"
+    fx.controller.poll_tick()  # root change -> full refresh, net deferred
+    local_job_index = len(fx.jobs) - 1
+    fx.run_job(local_job_index)  # the new root's local tier lands FIRST
+
+    snapshot = fx.controller.snapshot
+    assert snapshot.git.root == "/w/other"
+    assert snapshot.pr.availability is EnvSourceAvailability.PENDING, (
+        "the previous root's PR state is still painted beside the new root's "
+        f"branch: {snapshot.pr}"
+    )
+    assert snapshot.pr.number == 0
+
+
+def test_a_same_root_local_landing_still_keeps_the_pr_state(monkeypatch):
+    """Negative control for AC#10: only a ROOT CHANGE retires the PR tier.
+    An ordinary 10s poll must not blank the PR card every ten seconds."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)
+    fx.run_job(1)
+    assert fx.controller.snapshot.pr.number == 7
+
+    fx.controller.poll_tick()  # same root
+    fx.run_job(len(fx.jobs) - 1)
+
+    assert fx.controller.snapshot.pr.availability is EnvSourceAvailability.OK
+    assert fx.controller.snapshot.pr.number == 7
+
+
+# ---------------------------------------------------------------------------
+# TASK-31665 AC#11: a PERSISTENTLY undetermined root gets its own state
+# ---------------------------------------------------------------------------
+
+
+def test_persistent_unknown_root_eventually_lands_its_own_state(monkeypatch):
+    """The panel used to sit on PENDING's "Checking workspace…" with an inert
+    Refresh for the life of the screen whenever the cause was structural (no
+    chat controller, no active session) rather than transient."""
+    fx = Fixture(monkeypatch)
+    fx.root = UNKNOWN_ROOT
+
+    for _ in range(ConsoleEnvironmentController._MAX_UNKNOWN_TICKS - 1):
+        fx.controller.poll_tick()
+    assert fx.snapshots == [], "an undetermined root must stay quiet at first"
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.PENDING
+
+    fx.controller.poll_tick()  # the threshold tick
+    assert len(fx.snapshots) == 1
+    assert fx.snapshots[-1].git.availability is EnvSourceAvailability.UNKNOWN
+    assert fx.dispatched == [], "nothing was dispatched; nothing may claim to be"
+
+
+def test_the_unknown_state_lands_once_not_on_every_subsequent_tick(monkeypatch):
+    fx = Fixture(monkeypatch)
+    fx.root = UNKNOWN_ROOT
+    for _ in range(ConsoleEnvironmentController._MAX_UNKNOWN_TICKS + 5):
+        fx.controller.poll_tick()
+    assert len(fx.snapshots) == 1
+
+
+def test_an_explicit_refresh_answers_a_never_landed_unknown_root_at_once(monkeypatch):
+    """AC#11's other half: Refresh must re-probe HONESTLY rather than be a
+    visible no-op. The user just asked; "there is no session to look at" is
+    an answer, and it is the one that is true."""
+    fx = Fixture(monkeypatch)
+    fx.root = UNKNOWN_ROOT
+
+    fx.controller.request_refresh(include_net=True, force_net=True)
+
+    assert len(fx.snapshots) == 1
+    assert fx.snapshots[-1].git.availability is EnvSourceAvailability.UNKNOWN
+    assert fx.controller._failures == {"local": 0, "net": 0}
+
+
+def test_a_transient_unknown_root_never_lands_the_unknown_state(monkeypatch):
+    """Below the threshold the old behaviour is exactly preserved."""
+    fx = Fixture(monkeypatch)
+    fx.root = UNKNOWN_ROOT
+    fx.controller.poll_tick()
+    fx.root = "/w/repo"
+    fx.controller.poll_tick()
+
+    assert all(
+        snapshot.git.availability is not EnvSourceAvailability.UNKNOWN
+        for snapshot in fx.snapshots
+    )
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+
+
+def test_a_panel_with_real_data_keeps_it_through_a_persistent_unknown(monkeypatch):
+    """An undetermined root is not evidence the last answer went stale."""
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    good = fx.controller.snapshot
+    assert good.git.availability is EnvSourceAvailability.OK
+
+    fx.root = UNKNOWN_ROOT
+    for _ in range(ConsoleEnvironmentController._MAX_UNKNOWN_TICKS + 3):
+        fx.controller.poll_tick()
+    fx.controller.request_refresh(include_net=True, force_net=True)
+
+    assert fx.controller.snapshot is good
+
+
+def test_the_unknown_landing_does_not_pretend_a_scope_was_established(monkeypatch):
+    """`_landed_root`/`_has_landed` are the root-change bookkeeping; an
+    unknown landing states that NOTHING was established, so it must not
+    register as an establishment or the next real root would not read as a
+    change."""
+    fx = Fixture(monkeypatch)
+    fx.root = UNKNOWN_ROOT
+    for _ in range(ConsoleEnvironmentController._MAX_UNKNOWN_TICKS):
+        fx.controller.poll_tick()
+    assert fx.controller._has_landed is False
+    assert fx.controller._landed_root is None
+
+    fx.root = "/w/repo"
+    fx.controller.poll_tick()
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK

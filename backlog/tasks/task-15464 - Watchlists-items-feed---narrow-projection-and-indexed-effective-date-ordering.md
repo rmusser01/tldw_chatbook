@@ -1,6 +1,6 @@
 ---
 id: TASK-15464
-title: Watchlists items feed: narrow projection and indexed effective-date ordering
+title: 'Watchlists items feed: narrow projection and indexed effective-date ordering'
 status: Done
 assignee:
   - '@claude'

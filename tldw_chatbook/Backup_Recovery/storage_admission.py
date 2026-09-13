@@ -1303,12 +1303,22 @@ class _PreviewScope:
 
         self.check()
         source = lexical_path(source)
-        before = self._source_state(source)
         if source in self.snapshots:
             previous, target = self.snapshots[source]
-            if previous != before:
-                raise ValueError("preview_sqlite_changed")
+            # Owners sharing this source inspect one verified image per preview.
+            # Ordinary live commits cannot invalidate that private image; a
+            # replaced or unsafe source path still cannot reuse its identity.
+            with bootstrap.pinned_directory(source.parent) as parent:
+                current = os.stat(source.name, dir_fd=parent, follow_symlinks=False)
+                if (
+                    not stat.S_ISREG(current.st_mode)
+                    or current.st_nlink != 1
+                    or current.st_uid != os.geteuid()
+                    or (current.st_dev, current.st_ino) != previous[0][:2]
+                ):
+                    raise ValueError("preview_sqlite_changed")
             return target
+        before = self._source_state(source)
         required = sum(state[2] for state in before[:2] if state is not None)
         if (
             any(
@@ -1788,6 +1798,8 @@ def _check_capture_file_identity(scope, selected, info, *, source_only=False):
 
 # Explicit installed owners; identifiers grant no path or maintenance authority.
 _RAW_RECOVERY_LIMITS = {
+    "research.paste_staging": 64 * 1024,
+    "collections.archives": 1,
     "rag.definitions": 16 * 1024**2,
     "rag.projections": 256 * 1024**3,
     "recovered.media": 512 * 1024**2,
@@ -1997,9 +2009,11 @@ def _consume_recovery_file(
     """Return bounded definition bytes after native reader retirement."""
     _recovery_file_limit(owner_id, max_bytes)
     selected = lexical_path(candidate)
+    # Final rediscovery may run inside capture_scope. Its bounded reads use the
+    # explicitly held discovery namespace, not the narrower payload source set.
     scope = (
-        getattr(_local, "capture_scope", None)
-        or getattr(_local, "discovery_scope", None)
+        getattr(_local, "discovery_scope", None)
+        or getattr(_local, "capture_scope", None)
         or getattr(_local, "preview_scope", None)
     )
     lease = acquire_storage(selected) if scope is None else None

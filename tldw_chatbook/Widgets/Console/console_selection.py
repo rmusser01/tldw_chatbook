@@ -51,6 +51,25 @@ class SelectionManager:
         return SelectionState(active=self._active, selection=selection)
 
     @property
+    def is_idle(self) -> bool:
+        """Whether ``cancel()`` would change nothing (TASK-21119).
+
+        Exactly the post-``cancel()`` field state, including the two
+        one-shot click tokens: the screen-level click-outside dismissal
+        skips its whole cleanup pass when every transcript is idle, so
+        "idle" has to mean *cancel is a no-op*, not merely "no visible
+        selection" -- a stale ``just_finished``/``release_click_pending``
+        still suppresses a later row click.
+        """
+        return (
+            self._origin_row is None
+            and not self._active
+            and self._finished is None
+            and not self._just_finished
+            and not self._release_click_pending
+        )
+
+    @property
     def just_finished(self) -> bool:
         return self._just_finished
 
@@ -78,10 +97,22 @@ class SelectionManager:
         self._active = True
         self._finished = None
 
-    def extend_drag(self, row_key: str, offset: int) -> None:
+    def extend_drag(self, row_key: str, offset: int) -> bool:
+        """Extend the active drag; report whether the offset actually moved.
+
+        TASK-21114: MouseMove arrives at 50-100 Hz and neighboring cells
+        routinely map to the SAME character offset; the return value lets
+        the caller skip re-rendering entirely for those events. ``False``
+        also covers the pre-existing no-op arms (inactive manager,
+        cross-row drags clamping to the origin row).
+        """
         if not self._active or row_key != self._origin_row:
-            return  # cross-row drags clamp to the origin row
-        self._current_offset = max(0, offset)
+            return False  # cross-row drags clamp to the origin row
+        offset = max(0, offset)
+        if offset == self._current_offset:
+            return False
+        self._current_offset = offset
+        return True
 
     def finish_drag(self) -> TextSelection | None:
         if not self._active:

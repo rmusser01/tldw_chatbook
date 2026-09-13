@@ -360,7 +360,7 @@ _REAL_RAIL_ROW_WIDTH = 17
 
 
 async def test_count_pending_reserve_stabilizes_gloss_across_arrival():
-    """LIB-15: reproduces the live "Collections — item sets" -> "Collections
+    """LIB-15: reproduces the live "Collections — saved captures" -> "Collections
     (0)" flip and pins the fix. Two different (title, gloss) pairs are
     covered so the rule is proven general, not special-cased to one row.
 
@@ -379,7 +379,7 @@ async def test_count_pending_reserve_stabilizes_gloss_across_arrival():
     """
     cases = (
         # (title, gloss, width chosen inside THIS pair's own bug zone)
-        ("Collections", "item sets", 27),
+        ("Collections", "saved captures", 33),
         ("Watchers", "tracked pages", 28),
     )
     for title, gloss, width in cases:
@@ -478,12 +478,12 @@ async def test_gloss_genuinely_drops_when_the_known_count_grows_too_wide():
         target_id="x",
         count=123,
         count_known=True,
-        subtitle="item sets",
+        subtitle="saved captures",
         count_pending=True,
-        short_title="Sets",
+        short_title="Captures",
     )
     label = LibraryRail._row_label(row, selected=False, width=_REAL_RAIL_ROW_WIDTH)
-    assert "item sets" not in label
+    assert "saved captures" not in label
 
 
 # -- LIB-18: no rail row label truncates mid-word at 120/100/80 columns ----
@@ -552,12 +552,12 @@ async def test_collections_row_falls_back_to_short_title_once_double_digit():
         target_id="collections",
         count=23,
         count_known=True,
-        subtitle="item sets",
+        subtitle="saved captures",
         count_pending=True,
-        short_title="Sets",
+        short_title="Captures",
     )
     label = LibraryRail._row_label(row, selected=False, width=_REAL_RAIL_ROW_WIDTH)
-    assert label == "  Sets (23)"
+    assert label == "  Captures (23)"
     assert "Collect" not in label
 
 
@@ -602,13 +602,14 @@ async def test_no_row_label_truncates_mid_word_at_120_100_and_80_columns():
                 assert fragment not in label, (row.row_id, label)
 
 
-async def test_handoff_meta_line_drops_rather_than_ellipsizing_mid_word():
-    """LIB-18: "opens staging canvas" (24 cells with its indent) does not
-    fit the real 17-cell row width -- it must drop entirely rather than
-    render Textual's own "opens stagin…" mid-word ellipsis (reproduced
-    live at 120x35). At width 0 (compose time, before layout) it still
-    renders in full, matching every other element's unfitted-until-resize
-    behavior."""
+async def test_handoff_rows_carry_no_meta_line_at_any_width():
+    """LIB-18 fitted a handoff meta line to the row width so it dropped
+    rather than ellipsizing mid-word ("opens stagin…", live at 120x35).
+
+    task-32069 removed the line outright: three destinations were spending
+    six rail rows on the same sentence. This keeps the width sweep as the
+    regression pin -- neither the fitted nor the unfitted label may grow a
+    second line back."""
     row = LibraryRailRow(
         row_id="create-flashcards",
         section_id="study",
@@ -625,7 +626,8 @@ async def test_handoff_meta_line_drops_rather_than_ellipsizing_mid_word():
     assert "\n" not in fitted
 
     unfitted = LibraryRail._row_label(row, selected=False, width=0)
-    assert "see what carries over" in unfitted
+    assert "see what carries over" not in unfitted
+    assert "\n" not in unfitted
 
 
 # -- LIB-17: prefilled search inputs are editable without cursor traps -----
@@ -719,3 +721,77 @@ async def test_search_rag_query_input_gets_the_same_click_select_all_fix():
     )
 
     assert SelectAllOnFocusingClickInput is RailBase
+
+
+async def test_a_collections_count_failure_never_evicts_the_db_sizes_row(
+    widget_pilot,
+) -> None:
+    """task-32103 AC#3 (fix round 2): the failure sentence must not be its own entry.
+
+    ``details_lines`` is positional: Source, then the counts body, then --
+    since task-32230 -- everything from index 2 onward is a DB size, one
+    entry per source. So a failure sentence appended as its own entry is
+    rendered AS a size; folding it into the counts value is what keeps each
+    size on its own row. (Before task-32230 the sizes shared a single slot,
+    and the appended sentence evicted them outright: the rail painted
+    "DB sizes · Collections count unavailable (waited 5 s) …" and the real
+    "Prompts … · Chats/Notes … · Media …" line vanished.)
+
+    Driven through the SCREEN's own ``_library_details_lines`` and the
+    rail's shipped compose, because the defect is the shape the screen
+    hands over, not anything the rail does with it.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    app.db_sizes_status = {
+        "prompts": "1.0 KB",
+        "chachanotes": "2.0 KB",
+        "media": "3.0 KB",
+    }
+    screen = LibraryScreen(app)
+    details_lines = screen._library_details_lines(
+        "local", None, collections_count_failure="timeout"
+    )
+
+    shell = LibraryShellState(
+        header_line="Library | Test",
+        sections=(),
+        details_lines=details_lines,
+        selected_row_id="",
+        canvas_kind="empty",
+        canvas_target="",
+        canvas_empty_copy="",
+    )
+    async with await widget_pilot(
+        LibraryRail,
+        shell=shell,
+        preferences=LibraryRailPreferences(details_open=True),
+    ) as pilot:
+        await pilot.pause()
+        # task-32230: the sizes take a row EACH now (joined on one line they
+        # wrapped mid-value at the rail's 22-cell column), so the block is
+        # read across every `#library-details-db-sizes*` row. The property
+        # this test pins is unchanged and un-weakened -- all three sizes
+        # present, the failure sentence nowhere among them -- it is only the
+        # number of widgets carrying them that moved.
+        size_rows = [
+            widget
+            for widget in pilot.app.query(".library-details-row")
+            if str(widget.id or "").startswith("library-details-db-sizes")
+        ]
+        assert size_rows, "the DB-sizes block was evicted entirely"
+        sizes = " ".join(str(widget.renderable) for widget in size_rows)
+        body = str(pilot.app.query_one("#library-details-body", Static).renderable)
+
+        # The sizes rows still carry the sizes, and only the sizes. (The
+        # values render with a non-breaking join, "1.0KB" -- see
+        # ``_unbreakable_size_text``.)
+        assert "Prompts" in sizes and "1.0" in sizes
+        assert "Chats/Notes" in sizes and "2.0" in sizes
+        assert "Media" in sizes and "3.0" in sizes
+        assert "Collections count unavailable" not in sizes
+        # ...and the failure sentence is on screen, in the body row.
+        assert "Collections count unavailable (waited 5 s)" in body
+        assert "open Collections to load it." in body

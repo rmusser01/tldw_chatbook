@@ -1,77 +1,26 @@
-"""Wake at launch: deliver what was already owed when the app starts.
+"""Recover and hydrate saved native fleet results at application startup.
 
-task-15860 Task 6, and the last fire point the arc was missing. The
-wake-fires-headless landing made a survivor settling with **no Console
-mounted** deliver a full supervisor turn — but only inside a process that
-had opened Console at least once, because `ensure_chat_controller` /
-`ensure_agent_bridge` are lazy and their only callers were `ChatScreen`
-and its Console modules. A child that finished while the app was closed —
-or one whose delivery the user quit out from under — waited for the next
-Console visit, however many launches later that was.
-
-**The owner's ruling, which this module implements literally:** wake at
-launch is YES, and it is **mark-gated**. At startup do ONE cheap indexed
-read; deliver only for a conversation that already carries a
-`FLEET_UNSEEN` mark AND an owed `agent_runs` ledger row — i.e. only work
-the user already started that already finished. It stays behind the
-existing `[agents] autowake_enabled`; there is **no** separate
-`autowake_on_launch` switch.
-
-## When there are no marks, this constructs NOTHING
-
-That is the overwhelmingly common case and it is pinned as such
-(`Tests/UI/test_console_launch_wake.py::
-test_a_launch_with_no_marks_constructs_nothing_and_reads_once`): the kill
-switch is read, one indexed `conversation_local_marks` listing runs, and
-the function returns. No `ConsoleChatStore`, no provider gateway, no
-`ConsoleAgentBridge` — so no `agent_runs.db` file is even opened — and no
-`ConsoleChatController`. Startup for a user who never uses the fleet is
-byte-identical to before this module existed.
-
-## Why the claim stays MARKS-indexed
-
-Seeding from the ledger alone manufactures phantom wakes. A crash-killed
-child is swept to `error` by `AgentRunsDB`'s reconcile pass, which makes
-it a terminal, undelivered row — genuinely "owed" by the ledger's own
-definition — but it carries **no mark**, because nothing ever settled it
-through the fan-out. `undelivered_wake_runs` defines *what* is owed; the
-mark defines *which conversations*. Both are needed, and this module asks
-them in that order.
-
-## Hydration, and the stale-mark case it exposes
-
-A launch wake needs a session for a conversation nobody has opened, so
-this module hydrates one through the shared
-`Chat/console_conversation_hydration.py` policy — the same tree load, the
-same whole-tree node build, the same active-leaf pointer and the same
-roleplay overlay `ChatScreen`'s saved-conversation resume uses. Only the
-BASE settings differ, and only because they must: the screen inherits the
-active session's settings and a launch has none, so it starts from the
-config defaults the screen itself falls back to.
-
-Some marked conversations **cannot** be hydrated, ever. A fleet turn in an
-UNSAVED (temporary) session is keyed by the ephemeral `session.id`
-(`ConsoleChatController._agent_conversation_id` returns
-`session.persisted_conversation_id or session_id`), and that id names no
-ChaChaNotes conversation once the process that held the session is gone.
-Executed, not assumed: the mark survives the restart and resolves to
-nothing. Leaving it costs a permanent, undismissable row and a futile
-hydration attempt on every launch for the rest of the install's life, so
-this module CLEARS such a mark — but only when the local DB itself says
-the conversation does not exist, and only for a mark that is otherwise
-owed, i.e. one this module was about to act on.
+ADR-135 makes run history the discovery index; attention badges are a view
+projection. Read only an existing sibling runs database before constructing any
+Console components. Native runtime creation owns the single recovery audit,
+which must finish before launch hydration or automatic admission proceeds.
+Claims with uncertain outcomes remain saved for review, never replayed.
 """
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from contextlib import closing
+from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
 from tldw_chatbook.Chat.console_conversation_hydration import (
     ConversationLoadFailed,
     ConversationServiceUnavailable,
-    apply_resume_settings_overrides,
+    hydrate_console_generation_settings,
     hydrate_console_session,
     load_console_conversation_tree,
 )
@@ -81,11 +30,13 @@ from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
 from tldw_chatbook.Chat.console_session_settings import (
     default_console_session_settings,
 )
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
 __all__ = [
     "LAUNCH_WAKE_TASK_NAME",
     "deliver_launch_wakes",
     "marked_conversations_at_launch",
+    "pending_conversations_at_launch",
 ]
 
 #: The name the app gives the deferred startup task, so a test (and a log
@@ -93,45 +44,78 @@ __all__ = [
 LAUNCH_WAKE_TASK_NAME = "deferred_launch_wake"
 
 
-def marked_conversations_at_launch(app: Any) -> tuple[str, ...]:
-    """The one cheap indexed read a launch is allowed to pay for.
+def pending_conversations_at_launch(app: Any) -> tuple[str, ...]:
+    """Discover pending native survivor identities without creating a database.
 
-    Reads the `[agents] autowake_enabled` kill switch FIRST, so an install
-    with auto-wake off pays nothing at all — not even the listing. An
-    empty result must lead the caller to construct nothing; see this
-    module's docstring.
-
-    Args:
-        app: The app object; read for `conversation_local_marks_service`.
-
-    Returns:
-        The conversation ids carrying a durable `FLEET_UNSEEN` mark, or an
-        empty tuple (switch off / no marks service / a failed read — a
-        launch must never die on this).
+    Includes claimed results awaiting recovery or review, regardless of badges.
+    The private read-only connection performs no migration or run reconciliation.
+    Historical schemas without delivery stamps expose survivor candidates so the
+    native database owner can upgrade them before recovery. Discovery itself
+    grants no automatic authority; chainless results require manual review.
+    Disabled automatic work, memory databases, absent files, and failed reads
+    return no launch candidates. Explicit Console startup still owns recovery.
     """
     if not autowake_enabled():
         return ()
-    service = getattr(app, "conversation_local_marks_service", None)
-    if service is None:
+    db = getattr(app, "chachanotes_db", None)
+    db_path = getattr(db, "db_path", None)
+    if not db_path or str(db_path) == ":memory:" or str(db_path).startswith("file:"):
         return ()
     try:
-        return tuple(service.list_marked_conversation_ids(service.FLEET_UNSEEN))
-    except Exception as exc:  # noqa: BLE001 -- a launch never dies on a claim
+        path = Path(db_path).parent / "agent_runs.db"
+        if not path.is_file():
+            return ()
+        with closing(
+            connect_private_sqlite(
+                "chat.launch_wake", path, read_only=True, must_exist=True
+            )
+        ) as connection:
+            # Inspect actual columns, as AgentRunsDB's guarded migrations do.
+            # Historical survivors must reach that owner before a new delivery
+            # column can exist. This read only discovers candidates: subsequent
+            # runtime recovery still refuses automatic work without lineage.
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(agent_runs)")
+            }
+            if not columns:
+                return ()
+            delivery_filter = (
+                "child.wake_delivered_at IS NULL AND "
+                if "wake_delivered_at" in columns
+                else ""
+            )
+            # Same survivor predicate as AgentRunsDB.pending_wake_conversation_ids.
+            # Do not construct AgentRunsDB here: its startup sweep mutates runs.
+            rows = connection.execute(
+                "SELECT DISTINCT child.conversation_id FROM agent_runs AS child "
+                "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
+                f"WHERE {delivery_filter}child.agent_kind!='primary' "
+                "AND child.status IN ('done','error','cancelled') "
+                f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
+                "AND child.updated_at>=parent.updated_at ORDER BY child.conversation_id",
+                tuple(sorted(TERMINAL_RUN_STATUSES)),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+    except Exception as exc:  # noqa: BLE001 -- a launch never dies on discovery
         logger.warning(
-            "launch wake mark listing failed (exception_type={})",
+            "launch wake result discovery failed (exception_type={})",
             type(exc).__name__,
         )
         return ()
+
+
+def marked_conversations_at_launch(app: Any) -> tuple[str, ...]:
+    """Compatibility name for durable result discovery; marks are not consulted."""
+    return pending_conversations_at_launch(app)
 
 
 def _clear_unresolvable_mark(app: Any, conversation_id: str) -> None:
     """Drop a `FLEET_UNSEEN` mark that can never be resolved again.
 
     Only reached for a conversation the ledger still owes AND that the
-    local ChaChaNotes DB has no row for — the ephemeral-session shape in
-    this module's docstring. The owed `agent_runs` rows are deliberately
-    left alone: they are stamped by delivery, never by give-up, and with
-    the mark gone nothing indexes them, so nothing re-announces them.
+    local ChaChaNotes DB has no row for, such as an unsaved session from a
+    previous process. Saved run rows and execution claims remain
+    available for review; clearing attention cannot authorize their replay.
     """
     logger.info(
         "launch wake: clearing an unresolvable ◈ mark (the conversation no "
@@ -217,7 +201,7 @@ def _ensure_launch_runtime(app: Any) -> Any:
         store_factory=lambda: store,
         provider_gateway_factory=lambda: gateway,
         skills_service=getattr(app, "skills_scope_service", None),
-        native_tools_enabled_factory=lambda: (lambda: _gate("native_tool_calls")),
+        native_tools_enabled_factory=lambda: lambda: _gate("native_tool_calls"),
     )
     if bridge is None:
         return None
@@ -265,27 +249,24 @@ def _restore_active_session(store: Any, session_id: str | None) -> None:
         )
 
 
-async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
-    """Hydrate and fire every wake this launch already owed.
+async def deliver_launch_wakes(app: Any, marked: Sequence[str] = ()) -> int:
+    """Recover, then hydrate saved results for bounded automatic follow-up.
 
-    Runs as a deferred startup task, after the first interactive frame.
-    Every gate the mounted case passes still applies unchanged — this
-    function seeds and hydrates, and `ConsoleFleetWakeCoordinator` does the
-    rest: the kill switch again at the fire point, the send gate
-    (`send_refusal_copy`: run state, queue ownership, `max_parallel_runs`),
-    user-wins-ties, one delivery at a time app-wide, the `wake_delivered_at`
-    ledger for exactly-once, and the viewless `wake_conversation_in_view`
-    that keeps the ◈ mark on a delivery nobody watched.
+    Runs after the first interactive frame. Discovery is rechecked before
+    creating Console components. The coordinator owns durable claims, finite
+    allowances, capacity, and user-priority gates; interrupted claims remain
+    paused for review. A missing badge never hides a pending result.
 
     Args:
         app: The app object.
-        marked: The conversation ids from `marked_conversations_at_launch`.
-            An empty sequence returns immediately, having built nothing.
+        marked: Legacy discovery snapshot, retained for call compatibility.
+            Current durable results determine which conversations are loaded.
 
     Returns:
         How many conversations were hydrated for delivery.
     """
-    if not marked:
+    pending = pending_conversations_at_launch(app)
+    if not pending:
         return 0
     controller = _ensure_launch_runtime(app)
     if controller is None:
@@ -294,26 +275,41 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
     if wake is None:
         return 0
     wake.wire(app=app)
-    # The ledger read that turns "which conversations" into "what is owed".
-    # Honours the kill switch itself, and drops anything an earlier process
-    # already delivered (`_rows_for`'s stale drop / `undelivered_wake_runs`'
-    # NULL filter), so a second launch re-announces nothing.
+    if not await wake.wait_for_recovery():
+        return 0
+    # Runtime startup has audited old owners before any launch seed or retry.
     if not wake.seed_from_marks():
         return 0
+    # Claim the pre-hydration coarse marks first: a genuine pre-v15 owed wake
+    # has no receipt to reconstruct and startup reconciliation may correctly
+    # remove that legacy-only mark.  Once the exact owed ledger rows are held
+    # in the wake registry, hydrate before delivery so every later clear/set
+    # request makes its decision against a ready (or explicitly degraded)
+    # receipt snapshot.
+    runtime = getattr(app, "console_runtime", None)
+    ensure_hydration = getattr(runtime, "ensure_activity_hydration", None)
+    if callable(ensure_hydration):
+        hydration = ensure_hydration()
+        if hydration is not None:
+            try:
+                await hydration
+            except Exception as exc:  # noqa: BLE001 - degraded receipts keep marks
+                logger.warning(
+                    "launch activity hydration failed (exception_type={})",
+                    type(exc).__name__,
+                )
     store = controller.store
-    app_config = getattr(app, "app_config", {}) or {}
     # `restore_persisted_session` ACTIVATES what it creates, which is right
     # for a launch with nothing open and wrong for one where Console is the
     # startup tab: a wake must never move the user off the tab they landed
     # on. Captured here and restored below.
     prior_active_session_id = getattr(store, "active_session_id", None)
     hydrated = 0
-    for conversation_id in marked:
+    for conversation_id in pending:
         if not wake.has_pending(conversation_id):
-            continue  # marked, but nothing owed: a delivered-but-unseen badge
+            continue  # Another caller completed the result after discovery.
         if any(
-            conversation_id
-            in (session.persisted_conversation_id, session.id)
+            conversation_id in (session.persisted_conversation_id, session.id)
             for session in store.sessions()
         ):
             continue  # already open (a re-entrant call); the coordinator has it
@@ -324,7 +320,7 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
             tree = await load_console_conversation_tree(app, conversation_id)
         except (ConversationServiceUnavailable, ConversationLoadFailed) as exc:
             logger.warning(
-                "launch wake could not load a marked conversation; it stays "
+                "launch wake could not load a pending conversation; it stays "
                 "staged for the next Console visit (exception_type={})",
                 type(exc).__name__,
             )
@@ -337,18 +333,22 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
         if not isinstance(conversation, dict):
             conversation = {}
         try:
-            hydrate_console_session(
+            hydration = hydrate_console_generation_settings(
+                getattr(app, "app_config", {}) or {},
+                conversation,
+            )
+            await hydrate_console_session(
                 app=app,
                 store=store,
                 conversation_id=conversation_id,
                 tree=tree,
-                settings=apply_resume_settings_overrides(
-                    default_console_session_settings(app_config), conversation
-                ),
+                settings=hydration.settings,
+                generation_durable_snapshot=hydration.durable_snapshot,
+                generation_metadata_status=hydration.metadata_status,
             )
         except Exception as exc:  # noqa: BLE001 -- one bad row never stops the rest
             logger.warning(
-                "launch wake hydration failed for a marked conversation "
+                "launch wake hydration failed for a pending conversation "
                 "(exception_type={})",
                 type(exc).__name__,
             )

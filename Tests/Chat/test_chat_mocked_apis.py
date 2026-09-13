@@ -83,7 +83,7 @@ class TestMockedChatAPIs:
         assert call_args[1]["headers"]["x-api-key"] == "test-key"
         assert call_args[1]["headers"]["anthropic-version"] == "2023-06-01"
 
-    @patch("requests.Session")
+    @patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
     def test_openai_streaming_mocked(self, mock_session_class, mock_messages):
         """Test OpenAI streaming with mocked response."""
         # Setup mock session
@@ -217,7 +217,7 @@ class TestMockedChatAPIs:
 class TestMockedStreamingAPIs:
     """Test streaming functionality with mocks."""
 
-    @patch("requests.Session")
+    @patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
     def test_streaming_chunk_processing(self, mock_session_class):
         """Test that streaming chunks are processed correctly."""
         # Setup
@@ -277,7 +277,7 @@ class TestMockedStreamingAPIs:
 
         assert "".join(content) == "The answer is 42."
 
-    @patch("requests.Session")
+    @patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
     def test_streaming_error_handling(self, mock_client_class):
         """Test error handling during streaming."""
         # Setup

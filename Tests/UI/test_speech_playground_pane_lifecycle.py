@@ -3784,7 +3784,7 @@ async def test_legacy_control_state_is_restored_after_audio_cpp_switch(
             "professional_female",
             "Professional Female",
         ),
-        ("alltalk", "alltalk", "AllTalk TTS", "female_01.wav", "Female 01"),
+        ("alltalk", "alltalk", "AllTalk TTS", "alloy", "Alloy"),
     ),
 )
 async def test_legacy_provider_defaults_and_labels_are_preserved(

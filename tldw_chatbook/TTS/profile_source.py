@@ -54,7 +54,7 @@ _SELECTOR_FUNCTIONS = (
 
 
 def bind_app_repository(app) -> None:
-    """Bind only the original constructor's actual configured repository receiver."""
+    """Bind only the original lazy builder's actual configured repository receiver."""
     app_module = sys.modules.get("tldw_chatbook.app")
     repository_module = sys.modules.get("tldw_chatbook.TTS.profile_repository")
     config = sys.modules.get("tldw_chatbook.config")
@@ -62,7 +62,7 @@ def bind_app_repository(app) -> None:
     if (
         app_module is None
         or type(app) is not app_module.TldwCli
-        or sys._getframe(1).f_code is not app_module.TldwCli.__init__.__code__
+        or sys._getframe(1).f_code is not app_module.TldwCli._ensure_tts_profile_repository.__code__
         or repository_module is None
         or config is None
         or getattr(config, "_CONFIG_CACHE", None) is None

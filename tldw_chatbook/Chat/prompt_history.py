@@ -69,11 +69,28 @@ class PromptHistory:
         # interleave with another append from a concurrent send.
         self._append_lock = asyncio.Lock()
         self.persistence_error: str | None = None
+        # TASK-22218: monotonic counter bumped on every ``_entries`` mutation
+        # (load, optimistic append, cap trim, write-failure rollback). Lets a
+        # consumer key a cache on "has the history changed?" without hashing
+        # up to ``max_entries`` entries -- the composer's blink-tick render
+        # memo is the consumer that motivated it.
+        self._revision: int = 0
 
     @property
     def size(self) -> int:
         """Number of stored entries (excludes the live draft pseudo-entry)."""
         return len(self._entries)
+
+    @property
+    def revision(self) -> int:
+        """Counter that advances whenever the stored entries change.
+
+        Cheap invalidation key for caches over ``complete()``/``get_entry``
+        results: equal revisions guarantee the stored entries are unchanged.
+        The live-draft stash (``stash_draft``/``clear_draft``) does not
+        advance it -- the stash never affects ``complete()``.
+        """
+        return self._revision
 
     @property
     def current(self) -> str:
@@ -168,6 +185,7 @@ class PromptHistory:
             outcome = await job.run(None)
             if outcome.error is None:
                 self._entries = outcome.value[-self.max_entries :]
+                self._revision += 1
                 self._loaded = True
                 self.persistence_error = None
             else:
@@ -223,6 +241,7 @@ class PromptHistory:
                 outcome = await job.run((snapshot, rewrite))
                 if outcome.error is None:
                     self._entries = candidate
+                    self._revision += 1
                     if self._draft_revision == draft_revision:
                         self._current = None
                     self.persistence_error = None

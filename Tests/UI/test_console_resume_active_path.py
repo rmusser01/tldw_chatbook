@@ -11,19 +11,117 @@ Real DB round-trips: a real ``CharactersRAGDB`` behind the real
 full-tree flatten -- no hand-rolled fakes for the pieces under test.
 """
 
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from textual.app import ComposeResult
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_agent_bridge import (
+    ConsoleAgentBridge,
+    inject_resume_agent_markers,
+)
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_context_compaction import (
+    EffectiveMemoryKind,
+    prefix_digest,
+)
+from tldw_chatbook.Chat.console_context_repository import (
+    ConsoleContextRepository,
+    ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
+    ConsoleMemorySelectionRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
+    MemorySelectionKind,
+)
+from tldw_chatbook.Chat.console_cost_tracker import console_cost_snapshot_messages
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_turn_grouping import (
+    group_console_transcript_messages,
+    visual_messages,
+)
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Console_Modules.review_selection import (
+    _build_trajectory_snapshot,
+)
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    ChatScreen,
+)
+from tldw_chatbook.Widgets.Console.console_transcript import (
+    ConsoleMemoryBannerPresentation,
+    ConsoleTranscript,
+    derive_console_memory_banner_presentation,
+)
 
 from Tests.UI.test_destination_shells import _build_test_app
+
+
+def _append_local_command_run(
+    db: AgentRunsDB,
+    *,
+    conversation_id: str,
+    anchor: str | None,
+    command: str = "printf LOCAL_COMMAND_SECRET",
+    output: str = "[stdout]\nLOCAL_OUTPUT_SECRET\n",
+) -> str:
+    run_id = db.create_run(
+        conversation_id=conversation_id,
+        agent_kind="local_command",
+        task="Local command",
+        assistant_message_id=anchor,
+    )
+    db.append_steps(
+        run_id,
+        [
+            {
+                "index": 0,
+                "kind": "tool_call",
+                "summary": "Local command started",
+                "tool_name": "raw_cli",
+                "args": {
+                    "command": command,
+                    "shell": "/bin/zsh",
+                    "cwd": "/private/tmp",
+                    "invocation_id": "local-invocation",
+                },
+            },
+            {
+                "index": 1,
+                "kind": "tool_result",
+                "summary": "Local command completed",
+                "tool_name": "raw_cli",
+                "result": output,
+                "args": {
+                    "invocation_id": "local-invocation",
+                    "shell": "/bin/zsh",
+                    "cwd": "/private/tmp",
+                    "stdout_preview": "LOCAL_OUTPUT_SECRET\n",
+                    "stderr_preview": "",
+                    "elapsed_seconds": 0.25,
+                    "exit_code": 7,
+                    "terminal_state": "exited",
+                    "truncated": False,
+                    "cleanup_proven": True,
+                },
+                "status": "done",
+                "tool_outcome": "failed",
+            },
+        ],
+    )
+    db.set_status(run_id, "done")
+    return run_id
 
 
 def _persist_branched_conversation(db: CharactersRAGDB):
@@ -232,8 +330,8 @@ def _persist_genuine_multi_root_conversation(db: CharactersRAGDB):
 def _resume_into_store(db: CharactersRAGDB, conversation_id: str):
     """Mirror the production resume plumbing end to end.
 
-    Full-tree flatten via the REAL ChatScreen helper + the stored active-leaf
-    pointer, fed into ``restore_persisted_session`` exactly as
+    Full-tree flatten via the REAL ChatScreen helper + the stored cursor pair,
+    fed into ``restore_persisted_session`` exactly as
     ``_resume_console_workspace_conversation`` does.
     """
     service = ChatConversationService(db)
@@ -243,7 +341,9 @@ def _resume_into_store(db: CharactersRAGDB, conversation_id: str):
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = db
     all_nodes = screen._console_messages_from_conversation_tree(tree)
-    active_leaf_id = db.get_conversation_active_leaf(conversation_id)
+    active_leaf_id, before_message_id = db.get_conversation_active_cursor(
+        conversation_id
+    )
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     session = store.restore_persisted_session(
         title="Branchy",
@@ -251,8 +351,686 @@ def _resume_into_store(db: CharactersRAGDB, conversation_id: str):
         persisted_conversation_id=conversation_id,
         all_nodes=all_nodes,
         active_leaf_persisted_id=active_leaf_id,
+        active_leaf_before_persisted_id=before_message_id,
     )
     return store, session
+
+
+def _persist_memory_banner_conversation(db: CharactersRAGDB):
+    """Persist a six-row main lineage plus one complete sibling branch."""
+    service = ChatConversationService(db)
+    conversation_id = service.create_conversation(
+        id="memory-banner-conversation",
+        title="Memory banner",
+        scope_type="global",
+        state="in-progress",
+    )
+    ids: dict[str, str] = {}
+    parent = None
+    for index, (name, role) in enumerate(
+        (
+            ("u1", "user"),
+            ("a1", "assistant"),
+            ("u2", "user"),
+            ("a2", "assistant"),
+            ("u3", "user"),
+            ("a3", "assistant"),
+        )
+    ):
+        message_id = db.add_message(
+            {
+                "id": f"memory-{name}",
+                "conversation_id": conversation_id,
+                "parent_message_id": parent,
+                "sender": role,
+                "role": role,
+                "content": name,
+                "timestamp": f"2026-08-29T00:00:0{index}.000000+00:00",
+            }
+        )
+        ids[name] = message_id
+        parent = message_id
+    ids["u3-alt"] = db.add_message(
+        {
+            "id": "memory-u3-alt",
+            "conversation_id": conversation_id,
+            "parent_message_id": ids["a2"],
+            "sender": "user",
+            "role": "user",
+            "content": "u3-alt",
+            "timestamp": "2026-08-29T00:00:06.000000+00:00",
+        }
+    )
+    ids["a3-alt"] = db.add_message(
+        {
+            "id": "memory-a3-alt",
+            "conversation_id": conversation_id,
+            "parent_message_id": ids["u3-alt"],
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "a3-alt",
+            "timestamp": "2026-08-29T00:00:07.000000+00:00",
+        }
+    )
+    assert db.set_conversation_active_cursor(
+        conversation_id,
+        active_leaf_message_id=ids["a3"],
+        before_message_id=None,
+    )
+    return conversation_id, ids
+
+
+def _insert_memory_banner_selection(
+    db: CharactersRAGDB,
+    conversation_id: str,
+    ids: dict[str, str],
+    *,
+    case: str,
+) -> None:
+    """Insert one selector-valid memory, then apply the requested fault/event."""
+    store, session = _resume_into_store(db, conversation_id)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SimpleNamespace(),
+    )
+    snapshots = controller._durable_context_snapshots(session.id)
+    assert snapshots is not None
+    boundary_name = "a2" if case in {"range", "corrupt", "dangling"} else "a1"
+    boundary_index = next(
+        index
+        for index, snapshot in enumerate(snapshots)
+        if snapshot.message_id == ids[boundary_name]
+    )
+    memory = ConsoleMemoryRecord(
+        memory_id=f"memory-{case}",
+        conversation_id=conversation_id,
+        boundary_message_id=ids[boundary_name],
+        captured_leaf_message_id=ids["a3"],
+        lineage_json=json.dumps([snapshot.message_id for snapshot in snapshots]),
+        summary_text=f"private {case} summary",
+        provider="test",
+        model="test",
+        prompt_id="prompt",
+        prompt_revision=1,
+        prompt_digest="prompt-digest",
+        selected_units_json=json.dumps([ids[boundary_name]]),
+        summarized_prefix_digest=prefix_digest(snapshots[: boundary_index + 1]),
+        input_tokens=10,
+        output_tokens=4,
+        before_tokens=10,
+        after_tokens=4,
+        created_at="2026-08-29T00:01:00Z",
+    )
+    manual = case != "auto"
+    repository = ConsoleContextRepository(db)
+    repository.insert_memory(memory)
+    repository.insert_memory_scope(
+        ConsoleMemoryScopeRecord(
+            memory_id=memory.memory_id,
+            conversation_id=conversation_id,
+            coverage_kind=(
+                MemoryCoverageKind.RANGE
+                if case in {"range", "corrupt", "dangling"}
+                else MemoryCoverageKind.PREFIX
+            ),
+            origin_kind=(
+                MemoryOriginKind.MANUAL_REWIND
+                if manual
+                else MemoryOriginKind.AUTOMATIC
+            ),
+            selection_anchor_message_id=ids["u2"] if manual else None,
+        )
+    )
+    repository.insert_memory_selection(
+        ConsoleMemorySelectionRecord(
+            sequence=1,
+            selection_id=f"selection-{case}",
+            conversation_id=conversation_id,
+            activation_message_id=ids["a3"],
+            selected_memory_id=memory.memory_id,
+            event_kind=MemorySelectionKind.SELECT,
+            suppresses_legacy=manual,
+            created_at="2026-08-29T00:01:01Z",
+        )
+    )
+    if case == "reset":
+        repository.insert_memory_selection(
+            ConsoleMemorySelectionRecord(
+                sequence=2,
+                selection_id="selection-reset-tombstone",
+                conversation_id=conversation_id,
+                activation_message_id=ids["a3"],
+                selected_memory_id=None,
+                event_kind=MemorySelectionKind.RESET,
+                suppresses_legacy=True,
+                created_at="2026-08-29T00:01:02Z",
+            )
+        )
+    elif case == "corrupt":
+        with db.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM console_conversation_memory_scopes WHERE memory_id = ?",
+                (memory.memory_id,),
+            )
+    elif case == "dangling":
+        with db.transaction() as cursor:
+            cursor.execute(
+                "UPDATE console_conversation_memory_scopes "
+                "SET selection_anchor_message_id = ? WHERE memory_id = ?",
+                (ids["u3-alt"], memory.memory_id),
+            )
+
+
+def _restart_memory_banner_state(db_path, conversation_id: str):
+    """Reopen the file DB and return UI plus provider-dispatch selector state."""
+    db = CharactersRAGDB(db_path, "memory-banner-restart")
+    store, session = _resume_into_store(db, conversation_id)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SimpleNamespace(),
+    )
+    messages = store.messages_for_session(session.id)
+    effective = controller.context_control_inputs(session.id)[2]
+    provider_rows = controller._provider_message_payloads(
+        messages,
+        skip_failed=True,
+        annotate_ids=True,
+        session_id=session.id,
+    )
+    dispatch_effective, projection = controller._project_session_effective_memory(
+        session.id,
+        provider_rows,
+    )
+    presentation = derive_console_memory_banner_presentation(effective, messages)
+    return db, controller, messages, effective, dispatch_effective, projection, presentation
+
+
+class _MemoryBannerTranscriptHarness(ConsolidatedCSSApp):
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
+
+
+def _persisted_transcript_snapshot(
+    db: CharactersRAGDB,
+    conversation_id: str,
+) -> dict[str, object]:
+    """Capture every persisted transcript value plus its durable cursor/shape."""
+    with db.transaction() as cursor:
+        rows = cursor.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id",
+            (conversation_id,),
+        ).fetchall()
+    return {
+        "rows": tuple(tuple(row) for row in rows),
+        "count": len(rows),
+        "persisted_ids": tuple(row["id"] for row in rows),
+        "parents": tuple((row["id"], row["parent_message_id"]) for row in rows),
+        "cursor": db.get_conversation_active_cursor(conversation_id),
+    }
+
+
+def _store_tree_snapshot(
+    store: ConsoleChatStore,
+    session_id: str,
+) -> dict[str, object]:
+    """Capture the full native tree and active projection by immutable values."""
+    nodes = store._tree_nodes_parent_first(session_id)
+    return {
+        "count": len(nodes),
+        "tree": tuple(
+            (
+                node.id,
+                node.persisted_message_id,
+                store._native_parent_by_message.get(node.id),
+                node.role.value,
+                node.content,
+            )
+            for node in nodes
+        ),
+        "active_leaf": store.active_leaf(session_id),
+        "active_path": tuple(store.active_path_message_ids(session_id)),
+    }
+
+
+def _transcript_message_snapshot(
+    transcript: ConsoleTranscript,
+) -> tuple[tuple[object, ...], ...]:
+    """Capture the data rows banners must never enter or rebuild."""
+    return tuple(
+        (
+            message.id,
+            message.persisted_message_id,
+            message.parent_message_id,
+            message.role.value,
+            message.content,
+        )
+        for message in transcript._messages
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_kind", "expected_banner_kind", "expected_anchor", "expected_copy"),
+    [
+        (
+            "auto",
+            EffectiveMemoryKind.GENERATED_PREFIX,
+            "prefix",
+            "u2",
+            "⤵ Earlier turns summarized for context — full history above",
+        ),
+        (
+            "manual_prefix",
+            EffectiveMemoryKind.GENERATED_PREFIX,
+            "prefix",
+            "u2",
+            "⤵ Earlier turns summarized for context — full history above",
+        ),
+        (
+            "range",
+            EffectiveMemoryKind.GENERATED_RANGE,
+            "range",
+            "u2",
+            "Context uses a summary of turns #2-#2 - full transcript remains visible.",
+        ),
+        ("reset", EffectiveMemoryKind.RAW, None, None, None),
+        ("corrupt", EffectiveMemoryKind.RAW, None, None, None),
+        ("dangling", EffectiveMemoryKind.RAW, None, None, None),
+        ("sibling", EffectiveMemoryKind.RAW, None, None, None),
+    ],
+)
+def test_restart_memory_banner_matches_dispatch_effective_state(
+    tmp_path,
+    case,
+    expected_kind,
+    expected_banner_kind,
+    expected_anchor,
+    expected_copy,
+):
+    db_path = tmp_path / f"memory-banner-{case}.sqlite"
+    initial_db = CharactersRAGDB(db_path, "memory-banner-initial")
+    conversation_id, ids = _persist_memory_banner_conversation(initial_db)
+    _insert_memory_banner_selection(
+        initial_db,
+        conversation_id,
+        ids,
+        case=case,
+    )
+    if case == "sibling":
+        assert initial_db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=ids["a3-alt"],
+            before_message_id=None,
+        )
+    initial_db.close_connection()
+
+    (
+        restarted_db,
+        controller,
+        messages,
+        effective,
+        dispatch_effective,
+        projection,
+        presentation,
+    ) = _restart_memory_banner_state(db_path, conversation_id)
+    try:
+        assert effective == dispatch_effective
+        assert effective.kind is expected_kind
+        if expected_banner_kind is None:
+            assert presentation is None
+            assert projection.memory == ()
+            return
+
+        assert presentation is not None
+        assert presentation.kind == expected_banner_kind
+        assert presentation.copy == expected_copy
+        expected_native_anchor = next(
+            message.id
+            for message in messages
+            if message.persisted_message_id == ids[expected_anchor]
+        )
+        assert presentation.render_anchor_message_id == expected_native_anchor
+        assert len(projection.memory) == 1
+        assert "private" not in presentation.copy
+        assert "private" not in repr(presentation)
+    finally:
+        restarted_db.close_connection()
+
+
+def test_restart_legacy_prefix_banner_matches_dispatch_effective_state(tmp_path):
+    db_path = tmp_path / "memory-banner-legacy.sqlite"
+    initial_db = CharactersRAGDB(db_path, "memory-banner-legacy-initial")
+    conversation_id, ids = _persist_memory_banner_conversation(initial_db)
+    initial_db.set_conversation_context_summary(
+        conversation_id,
+        "private legacy summary",
+        ids["a1"],
+    )
+    initial_db.close_connection()
+
+    (
+        restarted_db,
+        controller,
+        messages,
+        effective,
+        dispatch_effective,
+        projection,
+        presentation,
+    ) = _restart_memory_banner_state(db_path, conversation_id)
+    try:
+        assert effective == dispatch_effective
+        assert effective.kind is EffectiveMemoryKind.LEGACY_PREFIX
+        assert presentation is not None
+        assert presentation.kind == "prefix"
+        assert presentation.copy == (
+            "⤵ Earlier turns summarized for context — full history above"
+        )
+        boundary_native_id = next(
+            message.id
+            for message in messages
+            if message.persisted_message_id == ids["a1"]
+        )
+        assert presentation.render_anchor_message_id == boundary_native_id
+        assert len(projection.memory) == 1
+        assert "private legacy summary" not in repr(presentation)
+    finally:
+        restarted_db.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("case", "off_lineage_leaf", "restored_kind"),
+    [
+        ("range", "u2", EffectiveMemoryKind.GENERATED_RANGE),
+        ("sibling", "a3-alt", EffectiveMemoryKind.GENERATED_PREFIX),
+    ],
+)
+def test_restart_hides_off_lineage_banner_and_returning_restores_it(
+    tmp_path,
+    case,
+    off_lineage_leaf,
+    restored_kind,
+):
+    db_path = tmp_path / f"memory-banner-return-{case}.sqlite"
+    initial_db = CharactersRAGDB(db_path, "memory-banner-return-initial")
+    conversation_id, ids = _persist_memory_banner_conversation(initial_db)
+    _insert_memory_banner_selection(
+        initial_db,
+        conversation_id,
+        ids,
+        case=case,
+    )
+    assert initial_db.set_conversation_active_cursor(
+        conversation_id,
+        active_leaf_message_id=ids[off_lineage_leaf],
+        before_message_id=None,
+    )
+    initial_db.close_connection()
+
+    (
+        off_lineage_db,
+        _off_lineage_controller,
+        _messages,
+        effective,
+        dispatch_effective,
+        projection,
+        presentation,
+    ) = _restart_memory_banner_state(db_path, conversation_id)
+    assert effective == dispatch_effective
+    assert effective.kind is EffectiveMemoryKind.RAW
+    assert projection.memory == ()
+    assert presentation is None
+    assert off_lineage_db.set_conversation_active_cursor(
+        conversation_id,
+        active_leaf_message_id=ids["a3"],
+        before_message_id=None,
+    )
+    off_lineage_db.close_connection()
+
+    (
+        returned_db,
+        _returned_controller,
+        _returned_messages,
+        effective,
+        dispatch_effective,
+        projection,
+        presentation,
+    ) = _restart_memory_banner_state(db_path, conversation_id)
+    try:
+        assert effective == dispatch_effective
+        assert effective.kind is restored_kind
+        assert len(projection.memory) == 1
+        assert presentation is not None
+    finally:
+        returned_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_file_backed_banner_add_replace_clear_restore_is_presentation_only(
+    tmp_path,
+):
+    """Mounted banner lifecycle cannot mutate or reconstruct transcript data."""
+    db_path = tmp_path / "memory-banner-presentation-only.sqlite"
+    initial_db = CharactersRAGDB(db_path, "memory-banner-presentation-initial")
+    conversation_id, ids = _persist_memory_banner_conversation(initial_db)
+    _insert_memory_banner_selection(
+        initial_db,
+        conversation_id,
+        ids,
+        case="range",
+    )
+    initial_db.close_connection()
+
+    (
+        restarted_db,
+        controller,
+        messages,
+        _effective,
+        _dispatch_effective,
+        _projection,
+        range_presentation,
+    ) = _restart_memory_banner_state(db_path, conversation_id)
+    assert range_presentation is not None
+    store = controller.store
+    session_id = store.active_session_id
+    assert session_id is not None
+    selected_id = next(
+        message.id
+        for message in messages
+        if message.persisted_message_id == ids["a2"]
+    )
+    replacement = ConsoleMemoryBannerPresentation(
+        kind="prefix",
+        render_anchor_message_id=range_presentation.render_anchor_message_id,
+        start_message_id=None,
+        end_message_id=range_presentation.end_message_id,
+        copy="⤵ Earlier turns summarized for context — full history above",
+    )
+
+    app = _MemoryBannerTranscriptHarness()
+    try:
+        async with app.run_test(size=(100, 32)):
+            transcript = app.query_one(
+                "#console-native-transcript",
+                ConsoleTranscript,
+            )
+            transcript.set_messages(messages, session_id=session_id)
+            transcript.selected_message_id = selected_id
+            await transcript.refresh_messages()
+
+            persisted_before = _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            )
+            tree_before = _store_tree_snapshot(store, session_id)
+            transcript_before = _transcript_message_snapshot(transcript)
+            plain_before = transcript.to_plain_text(width=80)
+            widgets_before = {
+                message.id: transcript.query_one(f"#console-message-{message.id}")
+                for message in messages
+            }
+
+            for presentation, expected_banner_count in (
+                (range_presentation, 1),
+                (replacement, 1),
+                (None, 0),
+                (range_presentation, 1),
+            ):
+                transcript.set_memory_banner_presentation(presentation)
+                await transcript.refresh_messages()
+
+                banners = transcript.query(".console-transcript-summary-banner")
+                assert len(banners) == expected_banner_count
+                assert _persisted_transcript_snapshot(
+                    restarted_db,
+                    conversation_id,
+                ) == persisted_before
+                assert _store_tree_snapshot(store, session_id) == tree_before
+                assert _transcript_message_snapshot(transcript) == transcript_before
+                assert len(transcript._messages) == len(transcript_before)
+                assert transcript.selected_message_id == selected_id
+                assert transcript.to_plain_text(width=80) == plain_before
+                assert all(
+                    transcript.query_one(f"#console-message-{message_id}")
+                    is widget
+                    for message_id, widget in widgets_before.items()
+                )
+    finally:
+        restarted_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_mounted_file_backed_sibling_navigation_clears_and_restores_banner(
+    tmp_path,
+):
+    """Real branch navigation keeps shared rows while scope follows lineage."""
+    db_path = tmp_path / "memory-banner-mounted-sibling.sqlite"
+    initial_db = CharactersRAGDB(db_path, "memory-banner-mounted-sibling-initial")
+    conversation_id, ids = _persist_memory_banner_conversation(initial_db)
+    _insert_memory_banner_selection(
+        initial_db,
+        conversation_id,
+        ids,
+        case="range",
+    )
+    initial_db.close_connection()
+
+    (
+        restarted_db,
+        controller,
+        main_messages,
+        _effective,
+        _dispatch_effective,
+        _projection,
+        main_presentation,
+    ) = _restart_memory_banner_state(db_path, conversation_id)
+    assert main_presentation is not None
+    store = controller.store
+    session_id = store.active_session_id
+    assert session_id is not None
+    nodes_by_persisted_id = {
+        node.persisted_message_id: node.id
+        for node in store._tree_nodes_parent_first(session_id)
+    }
+    main_leaf_id = nodes_by_persisted_id[ids["a3"]]
+    sibling_leaf_id = nodes_by_persisted_id[ids["a3-alt"]]
+    shared_ids = tuple(
+        nodes_by_persisted_id[ids[name]] for name in ("u1", "a1", "u2", "a2")
+    )
+    selected_id = shared_ids[-1]
+
+    app = _MemoryBannerTranscriptHarness()
+    try:
+        async with app.run_test(size=(100, 32)):
+            transcript = app.query_one(
+                "#console-native-transcript",
+                ConsoleTranscript,
+            )
+            transcript.set_messages(main_messages, session_id=session_id)
+            transcript.selected_message_id = selected_id
+            transcript.set_memory_banner_presentation(main_presentation)
+            await transcript.refresh_messages()
+
+            main_persisted = _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            )
+            main_tree = _store_tree_snapshot(store, session_id)
+            main_transcript = _transcript_message_snapshot(transcript)
+            main_plain = transcript.to_plain_text(width=80)
+            shared_widgets = {
+                message_id: transcript.query_one(f"#console-message-{message_id}")
+                for message_id in shared_ids
+            }
+            assert len(transcript.query(".console-transcript-summary-banner")) == 1
+
+            store.set_active_leaf(session_id, sibling_leaf_id)
+            sibling_messages = store.messages_for_session(session_id)
+            sibling_effective = controller.context_control_inputs(session_id)[2]
+            sibling_presentation = derive_console_memory_banner_presentation(
+                sibling_effective,
+                sibling_messages,
+            )
+            assert sibling_effective.kind is EffectiveMemoryKind.RAW
+            assert sibling_presentation is None
+            sibling_persisted_before_ui = _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            )
+            sibling_tree_before_ui = _store_tree_snapshot(store, session_id)
+            transcript.set_messages(sibling_messages, session_id=session_id)
+            sibling_transcript = _transcript_message_snapshot(transcript)
+            sibling_plain = transcript.to_plain_text(width=80)
+            transcript.set_memory_banner_presentation(sibling_presentation)
+            await transcript.refresh_messages()
+
+            assert len(transcript.query(".console-transcript-summary-banner")) == 0
+            assert transcript.selected_message_id == selected_id
+            assert transcript.to_plain_text(width=80) == sibling_plain
+            assert _transcript_message_snapshot(transcript) == sibling_transcript
+            assert _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            ) == sibling_persisted_before_ui
+            assert _store_tree_snapshot(store, session_id) == sibling_tree_before_ui
+            assert all(
+                transcript.query_one(f"#console-message-{message_id}") is widget
+                for message_id, widget in shared_widgets.items()
+            )
+
+            store.set_active_leaf(session_id, main_leaf_id)
+            returned_messages = store.messages_for_session(session_id)
+            returned_effective = controller.context_control_inputs(session_id)[2]
+            returned_presentation = derive_console_memory_banner_presentation(
+                returned_effective,
+                returned_messages,
+            )
+            assert returned_effective.kind is EffectiveMemoryKind.GENERATED_RANGE
+            assert returned_presentation == main_presentation
+            returned_persisted_before_ui = _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            )
+            returned_tree_before_ui = _store_tree_snapshot(store, session_id)
+            transcript.set_messages(returned_messages, session_id=session_id)
+            transcript.set_memory_banner_presentation(returned_presentation)
+            await transcript.refresh_messages()
+
+            assert len(transcript.query(".console-transcript-summary-banner")) == 1
+            assert transcript.selected_message_id == selected_id
+            assert transcript.to_plain_text(width=80) == main_plain
+            assert _transcript_message_snapshot(transcript) == main_transcript
+            assert returned_persisted_before_ui == main_persisted
+            assert returned_tree_before_ui == main_tree
+            assert _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            ) == returned_persisted_before_ui
+            assert _store_tree_snapshot(store, session_id) == returned_tree_before_ui
+            assert all(
+                transcript.query_one(f"#console-message-{message_id}") is widget
+                for message_id, widget in shared_widgets.items()
+            )
+    finally:
+        restarted_db.close_connection()
 
 
 def test_console_messages_from_conversation_tree_flattens_all_branches():
@@ -407,6 +1185,151 @@ def test_resume_falls_back_when_pointer_dangles():
         view = [m.content for m in store.messages_for_session(session.id)]
         assert view == ["u1", "a1-prime"]
         assert db.get_conversation_active_leaf(conversation_id) == a1_prime
+    finally:
+        db.close_connection()
+
+
+def test_resume_valid_leaf_wins_over_marker_and_repairs_cursor_pair():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id, u1, a1, _a1_prime = _persist_branched_conversation(db)
+        assert db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=a1,
+            before_message_id=u1,
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert [
+            message.content for message in store.messages_for_session(session.id)
+        ] == ["u1", "a1"]
+        assert db.get_conversation_active_cursor(conversation_id) == (a1, None)
+    finally:
+        db.close_connection()
+
+
+def test_resume_dangling_leaf_ignores_valid_marker_and_repairs_to_newest():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id, u1, _a1, a1_prime = _persist_branched_conversation(db)
+        assert db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id="missing-leaf",
+            before_message_id=u1,
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert [
+            message.content for message in store.messages_for_session(session.id)
+        ] == ["u1", "a1-prime"]
+        assert store.session_draft(session.id) == ""
+        assert db.get_conversation_active_cursor(conversation_id) == (
+            a1_prime,
+            None,
+        )
+    finally:
+        db.close_connection()
+
+
+def test_resume_invalid_marker_on_empty_tree_clears_cursor_pair():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id = ChatConversationService(db).create_conversation(
+            id="empty-invalid-marker",
+            title="Empty",
+            scope_type="global",
+            state="in-progress",
+        )
+        assert db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=None,
+            before_message_id="missing-root",
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert store.active_path_message_ids(session.id) == []
+        assert store.session_draft(session.id) == ""
+        assert db.get_conversation_active_cursor(conversation_id) == (None, None)
+    finally:
+        db.close_connection()
+
+
+def test_resume_marker_reads_current_durable_prompt_content():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id, u1, _a1, _a1_prime = _persist_branched_conversation(db)
+        assert db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=None,
+            before_message_id=u1,
+        )
+        row = db.get_message_by_id(u1)
+        assert row is not None
+        assert db.update_message(
+            u1,
+            {"content": "u1 changed in durable storage"},
+            expected_version=row["version"],
+            preserve_descendants=True,
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert store.active_path_message_ids(session.id) == []
+        assert store.session_draft(session.id) == "u1 changed in durable storage"
+        assert db.get_conversation_active_cursor(conversation_id) == (None, u1)
+    finally:
+        db.close_connection()
+
+
+def test_legacy_flat_before_first_then_new_root_restart_preserves_all_rows():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id = _persist_flat_legacy_conversation(db)
+        original_ids = {
+            row["id"] for row in db.get_messages_for_conversation(conversation_id)
+        }
+        assert original_ids == {
+            "m-flat-0",
+            "m-flat-1",
+            "m-flat-2",
+            "m-flat-3",
+        }
+
+        store, session = _resume_into_store(db, conversation_id)
+        first_prompt = store.messages_for_session(session.id)[0]
+        assert first_prompt.persisted_message_id == "m-flat-0"
+        assert store.set_active_path_before(session.id, first_prompt.id) is True
+        assert db.get_conversation_active_cursor(conversation_id) == (
+            None,
+            "m-flat-0",
+        )
+
+        new_root_id = db.add_message(
+            {
+                "id": "m-flat-new-root",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "u1 edited",
+                "timestamp": "2026-01-01T00:00:04.000000+00:00",
+            }
+        )
+        db.set_conversation_active_leaf(conversation_id, new_root_id)
+
+        _restarted_store, _restarted_session = _resume_into_store(
+            db, conversation_id
+        )
+        durable_rows = db.get_messages_for_conversation(conversation_id)
+        durable_ids = {row["id"] for row in durable_rows}
+        assert durable_ids == original_ids | {new_root_id}
+        assert len(durable_rows) == len(original_ids) + 1
+        assert all(
+            db.get_message_by_id(message_id) is not None
+            for message_id in original_ids
+        )
     finally:
         db.close_connection()
 
@@ -759,7 +1682,7 @@ def test_resume_restores_an_empty_transcript_row_and_its_explanation():
     writes so the row can be durably created at all (the DB layer refuses a
     message with neither text nor an image, so a metadata-only "empty"
     record could never survive to be resumed)."""
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
@@ -1072,7 +1995,7 @@ def test_character_screen_state_restore_discards_invalid_user_display_name(
 
 
 @pytest.mark.asyncio
-async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
+async def test_durable_resume_restores_only_guarded_roleplay_context():
     """Absent, invalid, and future metadata must never invent template provenance."""
     from Tests.UI.test_console_native_chat_flow import (
         StaticConversationTreeService,
@@ -1089,11 +2012,16 @@ async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
                 "id": "valid-roleplay",
                 "title": "Valid roleplay",
                 "system_prompt": "Speak with Captain Rowan.",
+                "runtime_backend": "local",
+                "assistant_kind": "character",
+                "assistant_id": "7",
+                "character_id": 7,
                 "metadata": {
                     "console_roleplay_context": {
-                        "version": 1,
+                        "version": 2,
                         "user_name_override": "Captain Rowan",
                         "character_system_template": "Speak with {{user}}.",
+                        "character_name_snapshot": "Alraune",
                     }
                 },
             },
@@ -1130,7 +2058,7 @@ async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
                 "system_prompt": "Ordinary safe future fallback.",
                 "metadata": {
                     "console_roleplay_context": {
-                        "version": 2,
+                        "version": 3,
                         "user_name_override": "Future Name",
                         "character_system_template": "Future {{user}}.",
                     }
@@ -1157,6 +2085,8 @@ async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
         assert valid.user_display_name_override == "Captain Rowan"
         assert valid.character_system_template == "Speak with {{user}}."
         assert valid.settings.system_prompt == "Speak with Captain Rowan."
+        assert valid.character_name == "Alraune"
+        assert valid.settings.character_label == "Alraune"
 
         assert await console._workspace._resume_console_workspace_conversation(
             "invalid-roleplay"
@@ -1181,3 +2111,201 @@ async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
         assert future.user_display_name_override is None
         assert future.character_system_template is None
         assert future.settings.system_prompt == "Ordinary safe future fallback."
+
+
+def test_local_command_resume_restores_one_anchored_display_only_marker(tmp_path):
+    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    conversation_id = "local-resume"
+    _append_local_command_run(
+        db, conversation_id=conversation_id, anchor="assistant-leaf"
+    )
+    _append_local_command_run(
+        db, conversation_id=conversation_id, anchor="deleted-leaf"
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(session_id=conversation_id)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="normal user prompt",
+    )
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="normal assistant reply",
+    )
+    assistant.persisted_message_id = "assistant-leaf"
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SimpleNamespace(),
+    )
+    before = json.dumps(
+        controller._provider_messages_for_session(session.id),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=SimpleNamespace(),
+    )
+    blocks = bridge.resume_marker_messages(conversation_id)
+    resumed = inject_resume_agent_markers(
+        [
+            ConsoleChatMessage(role=ConsoleMessageRole.USER, content="normal user prompt"),
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="normal assistant reply",
+                persisted_message_id="assistant-leaf",
+            ),
+        ],
+        blocks,
+    )
+
+    markers = [message for message in resumed if message.role is ConsoleMessageRole.TOOL]
+    assert len(markers) == 1
+    marker = markers[0]
+    assert resumed.index(marker) == 2
+    assert marker.raw_cli_presentation is not None
+    assert marker.raw_cli_presentation.exit_code == 7
+    assert marker.raw_cli_presentation.lifecycle_state == "exited"
+    units = group_console_transcript_messages(resumed)
+    assert units[1].assistant_turn is not None
+    assert units[1].assistant_turn.assistant is resumed[1]
+    assert units[1].assistant_turn.activities == ()
+    assert units[2].standalone is marker
+    assert tuple(visual_messages(units)) == tuple(resumed)
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.TOOL,
+        content=marker.content,
+        tool_output_full=marker.tool_output_full,
+        activity_presentation=marker.activity_presentation,
+        raw_cli_presentation=marker.raw_cli_presentation,
+        record_trajectory=False,
+    )
+    after = json.dumps(
+        controller._provider_messages_for_session(session.id),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert after == before
+
+
+@pytest.mark.parametrize("local_query_fails", [False, True])
+def test_resume_drops_poison_local_rows_without_breaking_primary_markers(
+    tmp_path,
+    monkeypatch,
+    local_query_fails,
+):
+    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    primary_id = db.create_run(
+        conversation_id="poison-local-resume",
+        agent_kind="primary",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        primary_id,
+        [
+            {
+                "index": 0,
+                "kind": "tool_result",
+                "tool_name": "calculator",
+                "result": "primary marker survived",
+                "args": None,
+            }
+        ],
+    )
+    db.set_status(primary_id, "done")
+    projection_calls: list[str] = []
+
+    def local_command_resume_records(conversation_id):
+        projection_calls.append(conversation_id)
+        if local_query_fails:
+            raise ValueError("corrupt local-command steps")
+        return [
+            42,
+            {
+                "id": "poison-local-run",
+                "agent_kind": "local_command",
+                "assistant_message_id": "assistant-leaf",
+                "status": "done",
+                "steps": "not-a-step-sequence",
+            },
+        ]
+
+    monkeypatch.setattr(
+        db,
+        "local_command_resume_records",
+        local_command_resume_records,
+        raising=False,
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=None,
+        provider_gateway=None,
+    )
+
+    blocks = bridge.resume_marker_messages("poison-local-resume")
+    markers = [marker for _anchor, block in blocks for marker in block]
+
+    assert projection_calls == ["poison-local-resume"]
+    assert len(markers) == 1
+    assert markers[0].raw_cli_presentation is None
+    assert "primary marker survived" in markers[0].content
+
+
+def test_local_command_is_ignored_by_trajectory_rails_fleet_and_cost(tmp_path):
+    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    conversation_id = "local-exclusions"
+    run_id = _append_local_command_run(
+        db, conversation_id=conversation_id, anchor="assistant-leaf"
+    )
+    store = ConsoleChatStore()
+    store.create_session(session_id=conversation_id)
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=SimpleNamespace(),
+    )
+
+    assert bridge.latest_primary_run_id(conversation_id) is None
+    assert bridge.subagent_count(conversation_id) == 0
+    assert bridge.subagent_runs(conversation_id) == []
+    assert bridge.fleet_snapshot(conversation_id) == []
+    historical = bridge.historical_snapshot(conversation_id)
+    assert historical.status == "idle"
+    assert historical.steps == ()
+    assert historical.subagents == ()
+
+    class _MessageDB:
+        def get_messages_for_conversation(self, *_args, **_kwargs):
+            return []
+
+        def get_trajectory_rows(self, *_args, **_kwargs):
+            return []
+
+        def get_conversation_active_leaf(self, *_args, **_kwargs):
+            return None
+
+    trajectory_store = SimpleNamespace(
+        persistence=SimpleNamespace(db=_MessageDB()),
+        variant_sets_for_conversation=lambda _conversation_id: (),
+    )
+    snapshot = _build_trajectory_snapshot(
+        trajectory_store,
+        conversation_id,
+        agent_runs_db=db,
+    )
+    assert run_id not in repr(snapshot)
+    assert "LOCAL_COMMAND_SECRET" not in repr(snapshot)
+    assert "LOCAL_OUTPUT_SECRET" not in repr(snapshot)
+
+    ordinary = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="ordinary",
+    )
+    (marker,) = bridge.resume_marker_messages(conversation_id)[0][1]
+    assert console_cost_snapshot_messages([ordinary, marker]) == [ordinary]

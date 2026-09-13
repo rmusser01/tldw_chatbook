@@ -843,6 +843,42 @@ def config_adapter() -> OwnerAdapter:
     return _Config("config", format="toml", max_bytes=_MAX_CONFIG_BYTES)
 
 
+class _ResearchPasteStaging(_RawDeclaration):
+    """Recognize dev's empty startup directory without adding payload coverage."""
+
+    def discover(self, config):
+        root = user_data_dir(config) / "research_paste_staging"
+        entries = self._tree(config, root)
+        if len(entries) == 1 and entries[0].status in {"unused", "included_directory"}:
+            return (replace(entries[0], status="unused"),)
+        if (
+            len(entries) == 2
+            and entries[0].status == "included_directory"
+            and entries[1].path == root / "index.json"
+            and entries[1].status == "included"
+        ):
+            from .storage_admission import _read_recovery_file
+
+            try:
+                data = _read_recovery_file(
+                    self.owner_id, entries[1].path, max_bytes=64 * 1024
+                )
+                # The shipped startup sweep writes this exact empty index even
+                # when no paste has ever been staged. Other bytes stay visible.
+                if data == b'{"operations":{},"schema_version":1}':
+                    return tuple(replace(item, status="unused") for item in entries)
+            except (OSError, ValueError, RuntimeError):
+                return tuple(replace(item, status="unavailable") for item in entries)
+        # Pending paste payloads were introduced after the backup scope was
+        # approved. Keep them visible as unsupported instead of losing them.
+        return tuple(
+            replace(item, status="unsupported")
+            if item.status in {"included", "included_directory"}
+            else item
+            for item in entries
+        )
+
+
 class _ExternalFiles(_RawDeclaration):
     """Capture explicitly selected external entries declared by inventory."""
 
@@ -850,6 +886,77 @@ class _ExternalFiles(_RawDeclaration):
         # Inventory attaches the reviewed external selections to each profile.
         # This installed adapter supplies their raw capture/validation policy.
         return ()
+
+
+class _ActorImportStaging(_RawDeclaration):
+    """The startup sweep creates an empty root; staged packs remain unsupported."""
+
+    def discover(self, config):
+        entries = self._tree(config, user_data_dir(config) / "actor_pack_imports")
+        if len(entries) == 1 and entries[0].status in {"unused", "included_directory"}:
+            return (replace(entries[0], status="unused"),)
+        return tuple(
+            replace(item, status="unsupported")
+            if item.status in {"included", "included_directory"}
+            else item
+            for item in entries
+        )
+
+
+class _CollectionsScaffolding(_RawDeclaration):
+    """Recognize only the current local archive authority's empty startup state."""
+
+    def discover(self, config):
+        from .profile_paths import database_path
+
+        profile = user_data_dir(config)
+        root = profile / "collections_archives"
+        entries = self._tree(config, root)
+        if len(entries) == 1 and entries[0].status in {"unused", "included_directory"}:
+            return (replace(entries[0], status="unused"),)
+        try:
+            # Match build_local_capture_authority's installed local identity
+            # without importing runtime services or constructing a store.
+            identity = "\0".join(
+                (
+                    str(profile.resolve()),
+                    str(database_path(config, "library_collections_db_path").resolve()),
+                )
+            )
+            authority = root / hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+            expected = {root: "included_directory", authority: "included_directory"}
+            if len(entries) == 2 and all(
+                expected.get(item.path) == item.status for item in entries
+            ):
+                return tuple(replace(item, status="unused") for item in entries)
+            lock = authority / ".lifecycle.lock"
+            expected[lock] = "included"
+            if len(entries) == 3 and all(
+                expected.get(item.path) == item.status for item in entries
+            ):
+                from .storage_admission import _read_recovery_file
+
+                if _read_recovery_file(self.owner_id, lock, max_bytes=1) == b"\0":
+                    return tuple(replace(item, status="unused") for item in entries)
+        except (OSError, ValueError, RuntimeError):
+            return tuple(replace(item, status="unavailable") for item in entries)
+        return tuple(
+            replace(item, status="unsupported")
+            if item.status in {"included", "included_directory"}
+            else item
+            for item in entries
+        )
+
+
+class _TransientRuntimeFile(_Definition):
+    """Exact process diagnostics/liveness files are excluded from all captures."""
+
+    def discover(self, config):
+        return (
+            _excluded_root(
+                config, self.owner_id, self._definition_path(config), kind="file"
+            ),
+        )
 
 
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
@@ -863,6 +970,13 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
         _CatalogCache("cache.model_catalog"),
         _InstanceLock("runtime.instance_lock"),
         _ChatbookScratch("runtime.chatbook_scratch"),
+        _ResearchPasteStaging("research.paste_staging"),
+        _ActorImportStaging("actor_packs.import_staging"),
+        _CollectionsScaffolding("collections.archives"),
+        _TransientRuntimeFile("runtime.crash_forensics", leaf="faulthandler.log"),
+        _TransientRuntimeFile(
+            "runtime.scheduler_heartbeat", leaf="scheduler_heartbeat.json"
+        ),
         _Definition("chat.prompt_history", leaf="prompt_history.jsonl"),
         _Definition(
             "ui.state",

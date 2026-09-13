@@ -43,6 +43,7 @@ async def test_reversible_pause_retires_native_on_worker_and_reopens_same_source
     tmp_path,
 ):
     import asyncio
+    import os
     import sqlite3
     import time
     from Tests.TTS.test_profile_repository_lifecycle import _draft
@@ -66,8 +67,13 @@ async def test_reversible_pause_retires_native_on_worker_and_reopens_same_source
         def prove_native_closed():
             with pytest.raises(sqlite3.ProgrammingError, match="closed"):
                 connection.execute("SELECT 1")
-            assert connection.parent_fd == -1 and connection.file_fd == -1
-            assert not connection.sidecar_fds
+            if os.name == "nt":
+                assert connection.parent_fd == -1 and connection.file_fd == -1
+                assert not connection.sidecar_fds
+            else:
+                assert connection._parent_fd == -1
+                assert connection._helper._reaped_child
+                assert connection._backup_lease is None
 
         await asyncio.wrap_future(executor.submit(prove_native_closed))
         with pytest.raises(ProfileRepositoryError):

@@ -1,6 +1,6 @@
 ---
 id: TASK-15474
-title: DB sundries: lazy BLOB logging and image-free list projections
+title: 'DB sundries: lazy BLOB logging and image-free list projections'
 status: Done
 assignee:
   - '@claude'

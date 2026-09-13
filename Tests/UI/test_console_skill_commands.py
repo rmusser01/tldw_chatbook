@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import time
 from typing import Any, Mapping
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import pytest
 from textual.widgets import Button
@@ -192,8 +192,8 @@ async def test_skills_command_named_run_form_shows_dollar_hint_for_unknown_name(
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/skills unknownskill")
-        submit_spy = AsyncMock()
-        console._submit_console_native_draft = submit_spy
+        submit_spy = MagicMock()
+        console._console_runtime().accept_turn = submit_spy
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
@@ -223,8 +223,8 @@ async def test_skills_command_named_run_form_shows_dollar_hint_for_blocked_name(
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/skills sketchy-skill")
-        submit_spy = AsyncMock()
-        console._submit_console_native_draft = submit_spy
+        submit_spy = MagicMock()
+        console._console_runtime().accept_turn = submit_spy
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
@@ -253,8 +253,8 @@ async def test_skills_command_exact_trusted_name_shows_hint_and_never_runs():
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/skills code-review fix it")
-        submit_spy = AsyncMock()
-        console._submit_console_native_draft = submit_spy
+        submit_spy = MagicMock()
+        console._console_runtime().accept_turn = submit_spy
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
@@ -337,14 +337,15 @@ async def test_bare_slash_skill_name_no_longer_auto_runs_shows_unknown_command_h
         available_skills=[_skill("code-review", "Reviews a diff.")]
     )
     app.skills_scope_service = skills
+    host = ConsoleHarness(app)
 
-    async with app.run_test(size=(160, 48)) as pilot:
-        console = await _wait_for_production_chat_screen(app, pilot)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/code-review fix it")
-        submit_spy = AsyncMock()
-        console._submit_console_native_draft = submit_spy
+        submit_spy = MagicMock()
+        console._console_runtime().accept_turn = submit_spy
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)

@@ -1,0 +1,192 @@
+"""Installed-wheel qualification for the native Canvas gateway."""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+import tarfile
+import zipfile
+from email.parser import Parser
+from pathlib import Path
+
+import pytest
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
+from Tests.Packaging.test_installed_distribution import (
+    _copy_build_inputs,
+    _sanitized_build_env,
+)
+
+pytestmark = pytest.mark.integration
+
+CANVAS_GATEWAY_PATHS = frozenset(
+    {
+        "tldw_chatbook/Canvas/capabilities.py",
+        "tldw_chatbook/Canvas/gateway.py",
+        "tldw_chatbook/Canvas/guide.py",
+        "tldw_chatbook/Canvas/guides/basics.md",
+        "tldw_chatbook/Canvas/guides/controls.md",
+        "tldw_chatbook/Canvas/guides/repair.md",
+        "tldw_chatbook/Canvas/native_authority.py",
+        "tldw_chatbook/Canvas/static/THIRD_PARTY_LICENSES.txt",
+        "tldw_chatbook/Canvas/static/canvas_renderer.js",
+        "tldw_chatbook/Canvas/static/canvas_shell.css",
+        "tldw_chatbook/Canvas/static/canvas_shell.html",
+        "tldw_chatbook/Canvas/static/canvas_shell.js",
+        "tldw_chatbook/Canvas/static/canvas_runtime_worker.js",
+        "tldw_chatbook/Canvas/static/quickjs-runtime.js",
+        "tldw_chatbook/Canvas/static/runtime-manifest.json",
+        "tldw_chatbook/Canvas/static/profile-catalog.json",
+        "tldw_chatbook/Canvas/static/mermaid-runtime-manifest.json",
+        "tldw_chatbook/Canvas/static/mermaid-subset.json",
+        "tldw_chatbook/Canvas/static/MERMAID_THIRD_PARTY_LICENSES.txt",
+        "tldw_chatbook/Canvas/static/mermaid-authoring.txt",
+        "tldw_chatbook/Canvas/static/canvas_runtime_worker_v2.js",
+        "tldw_chatbook/Canvas/static/canvas_renderer_v2.js",
+        "tldw_chatbook/Canvas/mermaid/scene.js",
+        "tldw_chatbook/Canvas/mermaid/flow_layout.js",
+        "tldw_chatbook/Canvas/mermaid/sequence_layout.js",
+        "tldw_chatbook/Canvas/mermaid/inputs.json",
+        "tldw_chatbook/Canvas/mermaid/budget.js",
+        "tldw_chatbook/Canvas/mermaid/text.js",
+        "tldw_chatbook/Canvas/mermaid/semantic.js",
+        "tldw_chatbook/Canvas/mermaid/entry.js",
+    }
+)
+
+_WHEEL_PROBE = r"""
+import sys
+import json
+
+wheel = sys.argv[1]
+sys.path.insert(0, wheel)
+
+from tldw_chatbook.Canvas.gateway import CanvasGateway
+from tldw_chatbook.Canvas.guide import (
+    CANVAS_GUIDE_PATHS, MAX_CANVAS_GUIDE_RESULT_BYTES, read_canvas_guide,
+)
+from tldw_chatbook.Canvas.runtime_assets import load_canvas_runtime_assets
+from tldw_chatbook.Canvas.profiles import load_profile_snapshot, runtime_assets_for
+from importlib.resources import files
+
+gateway = CanvasGateway(authority=object())
+assets = load_canvas_runtime_assets()
+assert ".whl/" in sys.modules[CanvasGateway.__module__].__file__
+assert ".whl/" in sys.modules[read_canvas_guide.__module__].__file__
+for topic in CANVAS_GUIDE_PATHS:
+    body = read_canvas_guide(topic)
+    assert body.strip()
+    content = json.dumps({"status": "ok", "topic": topic, "guide": body})
+    assert len(content.encode("utf-8")) <= MAX_CANVAS_GUIDE_RESULT_BYTES
+assert gateway.started is False
+assert assets.enabled
+assert assets.renderer_javascript
+assert assets.worker_javascript
+snapshot = load_profile_snapshot()
+diagram = runtime_assets_for(snapshot, "canvas-v2-mermaid-1")
+assert diagram.renderer_javascript and diagram.worker_javascript
+assert diagram.library_files["mermaid-subset.json"]
+assert diagram.library_files["MERMAID_THIRD_PARTY_LICENSES.txt"]
+guide = files("tldw_chatbook.Canvas").joinpath("static/mermaid-authoring.txt").read_text()
+assert "Complete flow example:" in guide and "Complete sequence example:" in guide
+print("canvas-gateway-wheel-ok")
+"""
+
+
+@pytest.fixture(scope="module")
+def canvas_gateway_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    source_root = tmp_path_factory.mktemp("canvas-gateway-distribution-source")
+    _copy_build_inputs(source_root)
+    dist_dir = source_root / "dist"
+    command = [
+        sys.executable,
+        "-m",
+        "build",
+        "--wheel",
+        "--sdist",
+        "--no-isolation",
+        "--outdir",
+        str(dist_dir),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=source_root,
+        env=_sanitized_build_env(source_root / "build-state"),
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert completed.returncode == 0, (
+        f"command: {command}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    wheels = sorted(dist_dir.glob("*.whl"))
+    assert len(wheels) == 1
+    return wheels[0]
+
+
+def test_canvas_profile_closure_and_notices_ship_byte_exact_in_both_distributions(
+    canvas_gateway_wheel: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    (source_archive,) = canvas_gateway_wheel.parent.glob("*.tar.gz")
+    with (
+        zipfile.ZipFile(canvas_gateway_wheel) as wheel,
+        tarfile.open(source_archive) as sdist,
+    ):
+        members = {
+            item.name.split("/", 1)[1]: item
+            for item in sdist.getmembers()
+            if item.isfile() and "/" in item.name
+        }
+        assert CANVAS_GATEWAY_PATHS <= members.keys()
+        for name in CANVAS_GATEWAY_PATHS:
+            assert wheel.read(name) == (root / name).read_bytes()
+            assert sdist.extractfile(members[name]).read() == (root / name).read_bytes()
+
+
+def test_canvas_gateway_and_core_dependency_ship_in_wheel(
+    canvas_gateway_wheel: Path,
+) -> None:
+    with zipfile.ZipFile(canvas_gateway_wheel) as archive:
+        members = set(archive.namelist())
+        metadata_names = [
+            name for name in members if name.endswith(".dist-info/METADATA")
+        ]
+        assert len(metadata_names) == 1
+        metadata = Parser().parsestr(archive.read(metadata_names[0]).decode("utf-8"))
+
+    assert CANVAS_GATEWAY_PATHS <= members
+    requirements = [
+        Requirement(value) for value in metadata.get_all("Requires-Dist") or []
+    ]
+    aiohttp_requirements = [
+        requirement
+        for requirement in requirements
+        if canonicalize_name(requirement.name) == "aiohttp"
+        and requirement.marker is None
+    ]
+    assert len(aiohttp_requirements) == 1
+    requirement = aiohttp_requirements[0]
+    assert str(requirement.specifier) == "<4,>=3.9"
+    assert requirement.marker is None
+    assert not requirement.extras
+    assert requirement.url is None
+
+
+def test_canvas_gateway_loads_packaged_runtime_from_wheel(
+    canvas_gateway_wheel: Path,
+    tmp_path: Path,
+) -> None:
+    completed = subprocess.run(
+        [sys.executable, "-c", _WHEEL_PROBE, str(canvas_gateway_wheel)],
+        cwd=tmp_path,
+        env=_sanitized_build_env(tmp_path / "probe-state"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "canvas-gateway-wheel-ok"

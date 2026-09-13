@@ -1,0 +1,2 @@
+https://huggingface.co/Qwen/Qwen3.5-27B/raw/main/chat_template.jinja
+Retrieved 2026-09-10. Upstream template; retained for exact fingerprint and rendered-prompt regression checks.

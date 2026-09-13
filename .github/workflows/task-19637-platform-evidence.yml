@@ -1,0 +1,57 @@
+name: TASK-19637 pinned workspace platform evidence
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platform-evidence:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'task-19637-platform-evidence')
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the exact tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run bounded pinned-workspace evidence
+        run: >-
+          python -m pytest
+          Tests/Tools/test_workspace_root_pin.py::test_root_replacement_before_pin_is_refused_by_identity
+          Tests/Tools/test_workspace_root_pin.py::test_root_replacement_after_pin_never_redirects_relative_io
+          Tests/Tools/test_workspace_root_pin.py::test_root_replacement_after_pin_never_redirects_relative_write
+          Tests/Tools/test_workspace_tool_executor.py::test_executor_uses_fixed_private_launch_and_admits_before_stdin
+          Tests/Tools/test_workspace_tool_executor.py::test_timeout_terminates_the_tree_and_returns_no_in_process_result
+          Tests/Tools/test_workspace_tool_executor.py::test_crash_and_bounded_stderr_return_only_fixed_metadata
+          Tests/Tools/test_workspace_tool_executor.py::test_platform_evidence_representative_one_shot_operations
+          Tests/Tools/test_workspace_tool_executor.py::test_platform_evidence_outer_executor_git_ignores_workspace_path
+          Tests/Tools/test_workspace_tool_executor.py::test_pinned_git_supports_linked_worktree_without_granting_metadata_fs_access
+          Tests/Agents/test_local_tool_provider.py::test_each_local_workspace_tool_routes_once_through_injected_executor
+          Tests/Agents/test_virtual_cli_provider.py::test_provider_constructs_and_injects_real_executor_by_default
+          --junitxml="${{ runner.temp }}/task-19637-platform-junit.xml"
+          -q --tb=short
+
+      - name: Upload JUnit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-19637-platform-evidence-${{ matrix.os }}
+          path: ${{ runner.temp }}/task-19637-platform-junit.xml
+          if-no-files-found: error

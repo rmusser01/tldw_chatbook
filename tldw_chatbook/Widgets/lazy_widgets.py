@@ -162,7 +162,7 @@ class VirtualListView(ListView):
         if len(self._items) <= self._rendered_range[1]:
             self.mount(self._item_factory(item))
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="lazy-widgets-update-visible-items")
     async def _update_visible_items(self) -> None:
         """Update which items are rendered based on scroll position."""
         if self._pending_update:

@@ -1,0 +1,899 @@
+"""sherpa-onnx diarizer engine: manifest, live `embed`, offline Stop `batch`.
+
+torch-free counterpart to `diarizer_engine_speechbrain.py` (task 2: 31827) --
+sherpa-onnx/numpy live ONLY inside `load()` and the functions it builds, so
+`import`ing this module alone (as `diarizer_worker.ENGINES["onnx"]` does by
+name, unconditionally) never pulls either in. Nothing here logs a path,
+vector, or audio sample (spec §8) -- this module logs nothing at all.
+
+Engine module contract (spec §2): `load(live, max_speakers) -> LoadedEngine`
+plus a `MODEL_ID` constant, same as the SpeechBrain engine. `main()` in
+`diarizer_worker.py` imports this module by name and calls `load()`;
+`serve()` never learns which engine is running.
+
+Model acquisition (spec §3, task 3: 31827): `ensure_models` places the
+manifest's assets under `models_dir()`, streaming through httpx (imported
+only inside `ensure_models`/`_stream_to_file`, never at module scope) so
+this module still never pulls httpx in just by being imported.
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import secrets
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:  # never at runtime: both modules are the worker's, not ours
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+    from tldw_chatbook.Audio.diarizer_worker import LoadedEngine
+
+
+@dataclass(frozen=True)
+class ModelAsset:
+    key: str
+    kind: str  # "segmentation" | "embedder"
+    file_name: str
+    url: str
+    sha256: str
+    size: int
+    licence: str
+    #: Bytes of the thing actually DOWNLOADED when it differs from `size`
+    #: (the segmentation asset is fetched as a tarball but `size`/`sha256`
+    #: describe the extracted member). The streamed-byte cap uses this so a
+    #: 6.9 MB archive is not judged against its 6.0 MB member (re-review).
+    download_size: int | None = None
+    #: For an asset downloaded as a tarball, the member `_fetch_asset`
+    #: extracts. `_fetch_asset` used to hard-code `"model.onnx"` for every
+    #: `kind == "segmentation"` asset, so fetching `SEGMENTATION_INT8` would
+    #: have extracted the FLOAT member, failed the size filter and raised
+    #: "download failed" (final review Minor 1). None for a plain file.
+    member_name: str | None = None
+
+
+#: The pyannote segmentation 3.0 model, used by every embedder's Stop pass
+#: (spec §3). `url` is the release TARBALL -- Task 3's downloader extracts
+#: `model.onnx` from it under this asset's `file_name`; `sha256`/`size` are
+#: of the extracted file, not the tarball; `download_size` is the tarball's.
+SEGMENTATION = ModelAsset(
+    "segmentation", "segmentation", "pyannote-segmentation-3-0.onnx",
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+    sha256="220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079",
+    size=5_992_913,
+    licence="MIT (pyannote/segmentation-3.0)",
+    download_size=6_958_444,
+    member_name="model.onnx",
+)
+
+#: The int8 variant of the same tarball's `model.int8.onnx`, kept for the
+#: bake-off (spec §7) -- not wired into `model_paths`/`load()` yet.
+SEGMENTATION_INT8 = ModelAsset(
+    "segmentation_int8", "segmentation", "pyannote-segmentation-3-0-int8.onnx",
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+    sha256="d582f4b4c6b48205de7e0643c57df0df5615a3c176189be3fc461e9d18827b5d",
+    size=1_540_506,
+    licence="MIT (pyannote/segmentation-3.0)",
+    download_size=6_958_444,  # the same tarball as SEGMENTATION
+    member_name="model.int8.onnx",
+)
+
+#: Bake-off candidate embedders (spec §3/§7). Each is used for BOTH the live
+#: path and the Stop pass -- the segmentation model never changes.
+EMBEDDERS: dict[str, ModelAsset] = {
+    "titanet_small": ModelAsset(
+        "titanet_small", "embedder", "nemo_en_titanet_small.onnx",
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx",
+        sha256="ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e",
+        size=40_257_283,
+        licence="CC-BY-4.0 (NVIDIA)",
+    ),
+    "wespeaker_resnet34": ModelAsset(
+        "wespeaker_resnet34", "embedder", "wespeaker_en_voxceleb_resnet34.onnx",
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx",
+        sha256="5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94",
+        size=26_534_365,
+        licence="Apache-2.0 (WeSpeaker)",
+    ),
+    "eres2net_en": ModelAsset(
+        "eres2net_en", "embedder", "3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx",
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx",
+        sha256="c59158379255ad66e161679cca6af8d52d51e389e3224ab7d7a7baae295c2db5",
+        size=26_485_263,
+        licence="Apache-2.0 (3D-Speaker; verify ModelScope terms)",
+    ),
+    "campplus_en": ModelAsset(
+        "campplus_en", "embedder", "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
+        sha256="357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b",
+        size=29_596_978,
+        licence="Apache-2.0 (3D-Speaker; verify ModelScope terms)",
+    ),
+}
+
+#: Kept by the bake-off (task 9: 31827): the best of the four candidates on
+#: every measured axis but one (DER 0.143, live purity 1.000, the lowest RTF
+#: and embed latency). It is NOT the default ENGINE -- no candidate passed the
+#: self-match separation gate, so `meeting_owner.AUTO_ORDER` stays
+#: SpeechBrain-first; see spec §10 and `Docs/STT_Evaluation/task-31827/`.
+DEFAULT_EMBEDDER = "titanet_small"
+
+#: Cosine-distance clustering threshold for the Stop pass, per embedder (spec
+#: §5). MEASURED (task 9: 31827, `Docs/STT_Evaluation/task-31827/report.md`) --
+#: the pre-bake-off 0.5-for-everything starting point was wrong for all four.
+CLUSTER_THRESHOLD: dict[str, float] = {
+    "titanet_small": 0.95,
+    "eres2net_en": 0.90,
+    "wespeaker_resnet34": 0.60,
+    "campplus_en": 0.80,
+}
+
+#: Cosine-distance threshold for the LIVE `OnlineClusterer` per embedder
+#: (task 8: 31827), from the same measured run. 0.25 -- ECAPA's value, and the
+#: starting point here -- over-splits every ONNX embedder: on titanet_small it
+#: minted S1..S8 inside 30 s, and the bake-off measures a mean live
+#: cluster-count error of +4.67 at 0.25 against +0.54 at 0.45. `load()` hands
+#: the chosen one to `diarizer_worker.main()` via `LoadedEngine.live_threshold`.
+LIVE_THRESHOLD: dict[str, float] = {
+    "titanet_small": 0.45,
+    "eres2net_en": 0.45,
+    "wespeaker_resnet34": 0.10,
+    "campplus_en": 0.15,
+}
+
+#: Env overrides for both thresholds, read by `load()` (task 8: 31827). They
+#: exist so the bake-off harness can sweep a 5x5 grid over four embedders
+#: without editing the manifest between cells; a normal run sets neither.
+LIVE_THRESHOLD_ENV = "TLDW_DIARIZER_LIVE_THRESHOLD"
+CLUSTER_THRESHOLD_ENV = "TLDW_DIARIZER_CLUSTER_THRESHOLD"
+#: The other two knobs `load()` reads from the environment (task 4: 31827) --
+#: how the worker process learns which files the app actually fetched, since
+#: it is spawned with a fixed argv. All four go through `_env_settings`.
+EMBEDDER_ENV = "TLDW_DIARIZER_EMBEDDER"
+MODELS_DIR_ENV = "TLDW_DIARIZER_MODELS_DIR"
+
+MIN_DURATION_ON, MIN_DURATION_OFF = 0.3, 0.5
+LIVE_THREADS, BATCH_THREADS = 2, 4
+#: Cap on the per-cluster centroid-building cost (spec §5): stop embedding a
+#: cluster's segments once this many seconds of it are covered.
+CENTROID_SECONDS = 30.0
+
+
+def model_id_for_embedder(key: str) -> str:
+    """The voiceprint model id for embedder `key` (spec §6).
+
+    Stable across a run and across app versions; it changes only when the
+    manifest's file name or sha256 for `key` changes, which is exactly when
+    a stored voiceprint stops being comparable with fresh embeddings.
+
+    Args:
+        key: One of `EMBEDDERS`' manifest keys (`"titanet_small"`, ...).
+
+    Returns:
+        ``"sherpa-onnx/<file name>@<first 12 hex of its sha256>"``.
+
+    Raises:
+        ValueError: `key` is not a manifest key -- the same type (and the
+            same wording) `model_paths` raises for the same mistake, so a
+            caller like `diarizer_local.model_id_for` has ONE exception type
+            to handle rather than a `KeyError` leaking the dict access.
+    """
+    asset = EMBEDDERS.get(key)
+    if asset is None:
+        raise ValueError(f"unknown embedder: {key}")
+    return f"sherpa-onnx/{asset.file_name}@{asset.sha256[:12]}"
+
+
+MODEL_ID = model_id_for_embedder(DEFAULT_EMBEDDER)
+
+
+#: Widest possible cosine distance (1 - cos, cos in [-1, 1]). A threshold at
+#: or past it matches every voice to every other.
+_MAX_THRESHOLD = 2.0
+
+
+def _env_value(name: str) -> str | None:
+    """`os.environ[name]` stripped, or None when unset OR blank.
+
+    ``FOO=`` is the shell's own way of saying "not set", so a blank value is
+    not an operator mistake and never frames an error line.
+    """
+    return os.environ.get(name, "").strip() or None
+
+
+def _env_error(name: str) -> None:
+    """Frame ONE unusable environment variable on stderr (Qodo 2).
+
+    Exactly the grammar `diarizer_worker.serve()` frames a failed command
+    with, and exactly as little: the variable's NAME, never its value (spec
+    §8 -- a models-dir value is a user path, and an embedder value is
+    whatever the operator typed).
+    """
+    sys.stderr.write(f"ERROR env {name}\n")
+    sys.stderr.flush()
+
+
+def _threshold_from_env(name: str, default: float | None) -> float | None:
+    """`os.environ[name]` as a cosine distance in ``(0, 2)``, or `default`.
+
+    An unset or blank value is `default` in silence; an unparseable or
+    UNUSABLE one is IGNORED with a single framed `ERROR env <NAME>` line
+    rather than raising: this is a sweep knob, and a typo in it must never
+    take the worker's load path down (`main()` would frame it as `ERROR load
+    ValueError` and the meeting would silently lose live labels).
+
+    "Unusable" is not just "unparseable" (task 8 review, Minor 3): `nan`,
+    `inf`, `-1` and `5.0` all parse as floats and all wreck live labelling
+    silently. `nan` makes ``(1 - sim) <= threshold`` false for every window, so
+    the clusterer mints a fresh speaker per window up to the cap; anything at
+    or past `_MAX_THRESHOLD` collapses every voice into one id; anything <= 0
+    can never match. Only a distance in ``(0, 2)`` is accepted -- 2.0 itself is
+    the collapse-everything value the sentence above names, and the guard used
+    to let it through (final review Minor 2).
+    """
+    raw = _env_value(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        _env_error(name)
+        return default
+    # This also rejects NaN, without a separate test: every comparison with NaN
+    # is False, so the chain is False and `not` makes it True.
+    if not (0.0 < value < _MAX_THRESHOLD):
+        _env_error(name)
+        return default
+    return value
+
+
+def _validated_models_dir(value: str | Path) -> Path:
+    """`value` as an existing model directory, through the CENTRAL validator.
+
+    Qodo 1 (Security): the models directory can come from an operator's
+    environment, and it decides which files are hashed and handed to
+    sherpa-onnx's own file open -- so it goes through
+    `Utils/path_validation.validate_path_simple` like every other externally
+    supplied path in this repo, not straight into `Path()`.
+
+    Imported HERE, not at module scope: `path_validation` is light (loguru and
+    the metrics counters, both already loaded in this process) but this
+    module's own scope stays stdlib-only for the worker's import-safety probes.
+
+    Raises:
+        ValueError: not a safe, existing directory. `load()` lets it out
+            unchanged and `diarizer_worker.main()` frames it as `ERROR load
+            ValueError` -- with no part of the value on stderr.
+    """
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    path = validate_path_simple(value, require_exists=True)
+    if not path.is_dir():
+        raise ValueError("models dir is not a directory")
+    return path
+
+
+def _env_settings() -> dict:
+    """Every `TLDW_DIARIZER_*` knob `load()` may read, under ONE rule (Qodo 2).
+
+    The rule: an unusable value is never guessed at. It frames exactly one
+    `ERROR env <NAME>` line (the name alone -- see `_env_error`) and then
+    either falls back to the manifest's measured default, for the two sweep
+    thresholds, or refuses the load, for the two that decide WHICH model file
+    is opened. Substituting a different embedder or directory there would load
+    a model the app never fetched while the app stamps every voiceprint with
+    the model id of the one it thinks ran (spec §6) -- silently, and for good.
+
+    Returns:
+        ``{"embedder", "models_dir", "live_threshold", "cluster_threshold"}``,
+        each None when its variable is unset, blank, or (thresholds only)
+        unusable -- meaning "the caller's own default applies".
+
+    Raises:
+        ValueError: `TLDW_DIARIZER_EMBEDDER` is not a manifest key, or
+            `TLDW_DIARIZER_MODELS_DIR` is not a safe existing directory.
+    """
+    embedder = _env_value(EMBEDDER_ENV)
+    if embedder is not None and embedder not in EMBEDDERS:
+        _env_error(EMBEDDER_ENV)
+        # No value in the message: unlike the kwarg form below, this one is
+        # an environment value and a caller may log what it catches.
+        raise ValueError("unknown embedder")
+    models_dir: Path | None = None
+    raw_dir = _env_value(MODELS_DIR_ENV)
+    if raw_dir is not None:
+        try:
+            models_dir = _validated_models_dir(raw_dir)
+        except ValueError:
+            _env_error(MODELS_DIR_ENV)
+            raise
+    return {
+        "embedder": embedder,
+        "models_dir": models_dir,
+        "live_threshold": _threshold_from_env(LIVE_THRESHOLD_ENV, None),
+        "cluster_threshold": _threshold_from_env(CLUSTER_THRESHOLD_ENV, None),
+    }
+
+
+def models_dir(override: Path | None = None) -> Path:
+    """Where ONNX model files live: `override`, or the user data dir's
+    standard placement (spec §3). No directory is created here -- Task 3's
+    downloader does that on write."""
+    if override is not None:
+        return Path(override)
+    from tldw_chatbook.config import get_user_data_dir
+
+    return get_user_data_dir() / "models" / "diarization" / "onnx"
+
+
+def model_paths(embedder: str, override: Path | None = None) -> tuple[Path, Path]:
+    """`(segmentation_path, embedder_path)` for `embedder` under `models_dir(override)`.
+
+    Raises:
+        ValueError: `embedder` is not a manifest key -- `models_ready` takes
+            the same input and returns False instead of raising (Task 3
+            calls both together; only one of them needs to raise).
+    """
+    if embedder not in EMBEDDERS:
+        raise ValueError(f"unknown embedder: {embedder}")
+    d = models_dir(override)
+    return d / SEGMENTATION.file_name, d / EMBEDDERS[embedder].file_name
+
+
+def models_ready(embedder: str, override: Path | None = None) -> bool:
+    """Presence + byte size only (spec §4) -- hashes are checked on download
+    and again on `load()`, never here (this runs on screen-open paths)."""
+    asset = EMBEDDERS.get(embedder)
+    if asset is None:
+        return False
+    seg_path, emb_path = model_paths(embedder, override)
+    return (
+        seg_path.is_file() and seg_path.stat().st_size == SEGMENTATION.size
+        and emb_path.is_file() and emb_path.stat().st_size == asset.size
+    )
+
+
+def assets_to_fetch(embedder: str, models_dir_override: Path | None = None) -> list[ModelAsset]:
+    """The subset of `embedder`'s two required assets not already present
+    under `models_dir(models_dir_override)` (presence + byte size only --
+    the same contract `models_ready` uses; a full hash check only ever runs
+    on an actual download or on `load()`, never here).
+
+    Shared by `ensure_models` (task 4, 31827 re-review, Minor 2/4: whenever
+    this returns without `ensure_models` itself raising -- its only extra
+    case, a corrupted PRE-PLACED air-gapped file, raises before either
+    total is used -- this is exactly its own `to_fetch` set) and
+    `LocalDiarizer.__init__`'s initial "downloading 0 / N MB" estimate, so
+    a partial re-fetch (one asset already on disk) can never show a bigger
+    total than what `ensure_models` actually streams.
+
+    Raises:
+        ValueError: `embedder` is not a manifest key (from `model_paths`).
+    """
+    seg_path, emb_path = model_paths(embedder, models_dir_override)
+    plan = ((SEGMENTATION, seg_path), (EMBEDDERS[embedder], emb_path))
+    return [asset for asset, path in plan if not (path.is_file() and path.stat().st_size == asset.size)]
+
+
+def _sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+class ModelsUnavailable(RuntimeError):
+    """`ensure_models` failed (spec §3/§8). The message is always one of the
+    four static strings below -- never a URL, host, path or file name."""
+
+
+#: The manifest's release host and the redirect target suffix a hop may land
+#: on (spec §3). A hop back to a host in `ALLOWED_HOSTS` is allowed too --
+#: GitHub release URLs really do bounce `github.com` -> objects on
+#: `*.githubusercontent.com` and sometimes back again, and re-admitting the
+#: initial host is strictly narrower than the spec sentence reads (final
+#: review Minor 6; spec §3 now says the same).
+ALLOWED_HOSTS = ("github.com",)
+ALLOWED_REDIRECT_SUFFIX = ".githubusercontent.com"
+DOWNLOAD_BUDGET_S = 600.0
+
+#: The only hosts allowed to use plain `http` -- the test stub's own loopback
+#: server. Every other hop must be `https` (review C1): a plaintext hop lets
+#: an on-path attacker choose the bytes `_extract_tar_member` consumes, which
+#: is not itself hash-pinned (the manifest sha256 is of the extracted file).
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
+
+_MAX_REDIRECTS = 5
+_MB = 1 << 20
+#: Slack over a landed file's declared manifest size before a download is
+#: refused outright (review C2) -- catches a hostile/misbehaving server
+#: filling the disk (or memory, for the tarball) well before any hash check
+#: could run.
+_DOWNLOAD_SLACK_BYTES = 1 << 20
+
+
+def _url_for(asset: ModelAsset) -> str:
+    """Seam tests monkeypatch by replacing the manifest asset itself
+    (`dataclasses.replace(asset, url=...)`) rather than this function."""
+    return asset.url
+
+
+def _temp_path_for(final: Path) -> Path:
+    return final.with_name(f"{final.name}.tmp-{os.getpid()}-{secrets.token_hex(4)}")
+
+
+def _scheme_allowed(url) -> bool:
+    """`https` everywhere, except the test stub's own loopback host."""
+    if url.scheme == "https":
+        return True
+    return url.scheme == "http" and (url.host or "") in _LOOPBACK_HOSTS
+
+
+def _new_http_client():
+    """Seam so a test can assert the exact client kwargs (`trust_env` for
+    proxy passthrough, `follow_redirects=False` so every hop is checked
+    here) without patching httpx itself."""
+    import httpx
+
+    return httpx.Client(follow_redirects=False, trust_env=True, timeout=30.0)
+
+
+def _extract_tar_member(tar_path: Path, wanted_basename: str | None, dest: Path, expected_size: int) -> None:
+    """Extract `wanted_basename` (`model.onnx` or `model.int8.onnx`) from the
+    segmentation release tarball, rejecting any candidate that is not an
+    exact `expected_size` (the manifest's size for the file it produces --
+    review C2: a header lying about size is refused before any byte is
+    read, never after), a link, or whose name escapes the archive (spec
+    §3's safe-member filter). Copies with `shutil.copyfileobj`, never a
+    single `.read()` of the whole member (review C2)."""
+    import shutil
+    import tarfile
+
+    with tarfile.open(tar_path, mode="r:bz2") as tf:
+        member = None
+        for candidate in tf.getmembers():
+            name = candidate.name
+            if os.path.basename(name) != wanted_basename:
+                continue
+            if candidate.size != expected_size:
+                continue
+            if name.startswith("/") or ".." in Path(name).parts:
+                continue
+            if not candidate.isfile() or candidate.issym() or candidate.islnk():
+                continue
+            member = candidate
+            break
+        if member is None:
+            raise ModelsUnavailable("download failed")
+        extracted = tf.extractfile(member)
+        if extracted is None:
+            raise ModelsUnavailable("download failed")
+        with open(dest, "wb") as out:
+            shutil.copyfileobj(extracted, out, 1 << 20)
+
+
+def _stream_to_file(
+    http_client, url: str, dest: Path, deadline: float, on_bytes: Callable[[int], None], max_bytes: int,
+) -> None:
+    """GET `url`, following at most `_MAX_REDIRECTS` 3xx hops whose target
+    host is allow-listed and whose scheme never changes (review C1),
+    streaming the final 2xx body to `dest` -- refusing past `max_bytes`
+    (review C2) before it is ever written. Raises
+    `ModelsUnavailable("download failed")` or `("budget exceeded")`; never
+    mentions the URL/host in the exception."""
+    import httpx
+
+    current = url
+    start = httpx.URL(current)
+    if start.host not in ALLOWED_HOSTS or not _scheme_allowed(start):
+        raise ModelsUnavailable("download failed")
+
+    for _ in range(_MAX_REDIRECTS + 1):
+        if time.monotonic() >= deadline:
+            raise ModelsUnavailable("budget exceeded")
+        try:
+            with http_client.stream("GET", current) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("location")
+                    if not location:
+                        raise ModelsUnavailable("download failed")
+                    cur_url = httpx.URL(current)
+                    next_url = cur_url.join(location)
+                    if next_url.scheme != cur_url.scheme or not _scheme_allowed(next_url):
+                        raise ModelsUnavailable("download failed")
+                    host = next_url.host or ""
+                    if host not in ALLOWED_HOSTS and not host.endswith(ALLOWED_REDIRECT_SUFFIX):
+                        raise ModelsUnavailable("download failed")
+                    current = str(next_url)
+                    continue
+                if not (200 <= resp.status_code < 300):
+                    raise ModelsUnavailable("download failed")
+                written = 0
+                with open(dest, "wb") as fh:
+                    # No `chunk_size`: httpx yields pieces as they arrive off
+                    # the wire instead of buffering up to a fixed size first,
+                    # which is what lets the budget check below actually cut
+                    # a slow transfer short between chunks (ruling 6) rather
+                    # than only after the whole body has landed.
+                    for piece in resp.iter_bytes():
+                        if time.monotonic() >= deadline:
+                            raise ModelsUnavailable("budget exceeded")
+                        written += len(piece)
+                        if written > max_bytes:
+                            raise ModelsUnavailable("download failed")
+                        fh.write(piece)
+                        on_bytes(len(piece))
+                return
+        except httpx.HTTPError:
+            raise ModelsUnavailable("download failed") from None
+    raise ModelsUnavailable("download failed")
+
+
+def _fetch_asset(http_client, asset: ModelAsset, path: Path, deadline: float, on_bytes: Callable[[int], None]) -> None:
+    """Download `asset` (retrying once on a verification failure) and
+    atomically place it at `path` (spec §3/§8 -- rulings 3/4/9)."""
+    # The member comes from the ASSET (final review Minor 1): hard-coding
+    # `"model.onnx"` for every `kind == "segmentation"` asset meant the int8
+    # twin -- same tarball, different member -- would silently extract the
+    # float member, fail the size filter and report "download failed".
+    is_tarball = asset.kind == "segmentation"
+    wanted_member = asset.member_name
+    # Cap the STREAM by what is downloaded (the archive for a tarball asset),
+    # never by the extracted member's size -- the two differ by ~1 MB here.
+    max_bytes = (asset.download_size or asset.size) + _DOWNLOAD_SLACK_BYTES
+
+    for attempt in range(2):
+        final_tmp = _temp_path_for(path)
+        try:
+            if is_tarball:
+                tar_tmp = _temp_path_for(path.with_suffix(".tar.bz2"))
+                try:
+                    _stream_to_file(http_client, _url_for(asset), tar_tmp, deadline, on_bytes, max_bytes)
+                    _extract_tar_member(tar_tmp, wanted_member, final_tmp, asset.size)
+                finally:
+                    tar_tmp.unlink(missing_ok=True)
+            else:
+                _stream_to_file(http_client, _url_for(asset), final_tmp, deadline, on_bytes, max_bytes)
+
+            if final_tmp.stat().st_size == asset.size and _sha256_of(final_tmp) == asset.sha256:
+                os.replace(final_tmp, path)
+                return
+        finally:
+            final_tmp.unlink(missing_ok=True)
+
+        if attempt == 1:
+            raise ModelsUnavailable("hash mismatch")
+
+
+def ensure_models(
+    embedder: str,
+    *,
+    models_dir_override: Path | None = None,
+    progress: Callable[[str], None] | None = None,
+    budget_s: float = DOWNLOAD_BUDGET_S,
+    client: Any | None = None,
+) -> tuple[Path, Path]:
+    """Place the segmentation + `embedder` ONNX models under
+    `models_dir(models_dir_override)`, downloading whatever is missing
+    (spec §3).
+
+    A failing asset only removes its own temp file -- a sibling asset that
+    already landed and verified in this same call is left in place (review
+    I5: spec §3's "concurrent fetches ... are harmless" and §8's "retried
+    next Start" both require that a valid, hash-verified file is never
+    rolled back just because a later asset in the same call failed).
+
+    Air-gapped installs (`models_dir_override` pointing at a pre-placed
+    directory): a file that already exists there is fully hash-verified and
+    never touched over the network, matching or not -- a mismatch is fatal
+    (`"air-gapped file invalid"`), never retried. A file that is simply
+    absent is still fetched normally, so an override directory can also be
+    used as a plain download destination (this is also how the test suite
+    redirects writes away from the real user data dir).
+
+    The default (no override) placement never hashes a pre-existing file
+    (presence + size only, like `models_ready`) -- hashing 40 MB on every
+    call would defeat the point of the no-op path; `load()` hashes on open.
+
+    Args:
+        embedder: One of `EMBEDDERS`' keys.
+        models_dir_override: Test/air-gapped seam for `models_dir()`.
+        progress: Called with static strings like `"downloading 12 / 35 MB"`
+            (integers only, no file names or paths), at most once per MB of
+            combined progress across whatever still needs fetching.
+        budget_s: Wall-clock ceiling for the whole call.
+        client: An httpx-client-shaped object (`.stream`); a fresh
+            `httpx.Client` is created (and closed) when omitted.
+
+    Returns:
+        `(segmentation_path, embedder_path)`.
+
+    Raises:
+        ValueError: `embedder` is not a manifest key (from `model_paths`).
+        ModelsUnavailable: `"download failed"`, `"hash mismatch"`,
+            `"budget exceeded"`, or `"air-gapped file invalid"`.
+    """
+    seg_path, emb_path = model_paths(embedder, models_dir_override)
+    plan = ((SEGMENTATION, seg_path), (EMBEDDERS[embedder], emb_path))
+
+    to_fetch: list[tuple[ModelAsset, Path]] = []
+    for asset, path in plan:
+        if models_dir_override is not None and path.is_file():
+            if path.stat().st_size == asset.size and _sha256_of(path) == asset.sha256:
+                continue
+            raise ModelsUnavailable("air-gapped file invalid")
+        # Mirrors `models_ready`'s presence+size contract (inline, since
+        # this loop also needs the per-asset `(asset, path)` pair for
+        # `to_fetch`) -- do not "fix" this into a hash check; ruling 8 is
+        # explicit that a fresh call must not re-hash an already-placed file.
+        if path.is_file() and path.stat().st_size == asset.size:
+            continue
+        to_fetch.append((asset, path))
+
+    if not to_fetch:
+        return seg_path, emb_path
+
+    if budget_s <= 0:
+        raise ModelsUnavailable("budget exceeded")
+    deadline = time.monotonic() + budget_s
+
+    # Fix round 2 (re-review Minor 2/4): routed through `assets_to_fetch` --
+    # the same helper `LocalDiarizer.__init__` calls for its initial status
+    # -- rather than re-deriving the total from `to_fetch` inline. Provably
+    # the same set here: `to_fetch`, above, only ever differs from
+    # `assets_to_fetch`'s presence+size verdict for a pre-placed air-gapped
+    # file with a hash mismatch, and that case already raised two lines
+    # above this one, before `total_mb` is ever computed.
+    total_mb = sum(asset.size for asset in assets_to_fetch(embedder, models_dir_override)) // _MB
+    state = {"done": 0, "reported_mb": 0}
+
+    def _on_bytes(n: int) -> None:
+        state["done"] += n
+        mb = min(state["done"] // _MB, total_mb)
+        if progress is not None and mb > state["reported_mb"]:
+            state["reported_mb"] = mb
+            progress(f"downloading {mb} / {total_mb} MB")
+
+    seg_path.parent.mkdir(parents=True, exist_ok=True)
+    owns_client = client is None
+    http_client = client
+    try:
+        for asset, path in to_fetch:
+            if owns_client and http_client is None:
+                http_client = _new_http_client()
+            _fetch_asset(http_client, asset, path, deadline, _on_bytes)
+    finally:
+        if owns_client and http_client is not None:
+            http_client.close()
+
+    return seg_path, emb_path
+
+
+def _embed_vector(extractor, np, samples, sr: int):
+    """Unit-normalised embedding (np.ndarray) for `samples` at `sr` via the
+    sherpa-onnx stream API. A zero-magnitude embedding is returned as-is --
+    the enroll/export paths' `_unit()` refuses it downstream; `assign` does
+    not (task 1's own surface, unaffected by this engine)."""
+    stream = extractor.create_stream()
+    stream.accept_waveform(sample_rate=sr, waveform=samples)
+    stream.input_finished()
+    vec = np.asarray(extractor.compute(stream), dtype=np.float32)
+    norm = float(np.linalg.norm(vec))
+    return vec / norm if norm > 0.0 else vec
+
+
+def _embed(extractor, np, pcm: bytes, sr: int) -> list:
+    """PCM16 bytes -> a unit-normalised embedding (the live path)."""
+    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+    return _embed_vector(extractor, np, samples, sr).tolist()
+
+
+def _cluster_centroids(extractor, np, samples, sr, groups):
+    """Per spec §5: for each Stop-pass cluster, embed its longest segments
+    SEPARATELY until `CENTROID_SECONDS` of that cluster is covered, average
+    the unit vectors, then unit-normalise. `seconds` is the cluster's FULL
+    total duration, uncapped -- the pipeline exposes no internal embeddings,
+    so this is the only way to get a centroid in the same vector space the
+    live centroids live in.
+
+    Args:
+        groups: `{speaker_label: [(start_s, end_s), ...]}` -- times relative
+            to the START of `samples` (i.e. span-relative, NOT yet offset);
+            the batch's own `start_s` is added back later, at segment
+            assembly in `_batch`.
+
+    Returns:
+        `{"F<label>": (centroid: np.ndarray, seconds: float)}`.
+    """
+    clusters = {}
+    for label, segs in groups.items():
+        total_secs = sum(e - s for s, e in segs)
+        vecs = []
+        covered = 0.0
+        for s, e in sorted(segs, key=lambda se: se[1] - se[0], reverse=True):
+            a, b = int(round(s * sr)), int(round(e * sr))
+            chunk = samples[a:b]
+            if chunk.size == 0:
+                continue
+            vecs.append(_embed_vector(extractor, np, chunk, sr))
+            covered += (e - s)
+            if covered >= CENTROID_SECONDS:
+                break
+        if vecs:
+            mean = np.mean(vecs, axis=0)
+            norm = float(np.linalg.norm(mean))
+            centroid = mean / norm if norm > 0.0 else mean
+        else:  # degenerate: every segment for this label was empty
+            centroid = np.zeros(extractor.dim, dtype=np.float32)
+        clusters[f"F{label}"] = (centroid, total_secs)
+    return clusters
+
+
+def _fold_to_cap(np, clusters, cap: int):
+    """Fold the smallest (by seconds) cluster into its nearest remaining
+    centroid (cosine) until at most `cap` remain (spec §5 -- mirrors the
+    live clusterer's own cap fold), re-normalising and adding the seconds.
+
+    Returns:
+        `(folded_clusters, redirect)` -- `redirect` maps every ORIGINAL
+        label to the (possibly transitively) folded-into survivor's label,
+        so a segment whose cluster got folded away can still be routed to
+        the surviving centroid's reconciled live id.
+    """
+    active = dict(clusters)
+    redirect = {label: label for label in clusters}
+    while len(active) > cap and len(active) > 1:
+        smallest = min(active, key=lambda k: active[k][1])
+        remaining = [k for k in active if k != smallest]
+        cen_s, secs_s = active[smallest]
+        target = max(remaining, key=lambda k: float(np.dot(cen_s, active[k][0])))
+        cen_t, secs_t = active[target]
+        combined = cen_t * secs_t + cen_s * secs_s
+        norm = float(np.linalg.norm(combined))
+        active[target] = (combined / norm if norm > 0.0 else combined, secs_t + secs_s)
+        del active[smallest]
+        for label, dest in redirect.items():
+            if dest == smallest:
+                redirect[label] = target
+    return active, redirect
+
+
+def _batch(sherpa_onnx, np, extractor, seg_path, emb_path, threshold, live, max_speakers, wav, start_s, end_s):
+    """Run the offline diarization pipeline over `[start_s, end_s)` of `wav`,
+    fold past `max_speakers`, and reconcile onto `live`'s cluster ids (spec §5).
+
+    Returns:
+        `(segments, final_centroids_by_live_id)` -- same shape the
+        SpeechBrain engine's `_batch` returns.
+    """
+    from tldw_chatbook.Audio.diarizer_worker import _map_final_clusters, read_pcm16_span
+
+    samples, sr = read_pcm16_span(wav, start_s, end_s)
+
+    diar_cfg = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+        segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+            pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(model=str(seg_path)),
+            num_threads=BATCH_THREADS,
+            provider="cpu",
+        ),
+        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+            model=str(emb_path), num_threads=BATCH_THREADS, provider="cpu",
+        ),
+        clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=threshold),
+        min_duration_on=MIN_DURATION_ON,
+        min_duration_off=MIN_DURATION_OFF,
+    )
+    result = sherpa_onnx.OfflineSpeakerDiarization(diar_cfg).process(samples).sort_by_start_time()
+
+    groups: dict = {}
+    for r in result:
+        groups.setdefault(r.speaker, []).append((r.start, r.end))
+
+    clusters = _cluster_centroids(extractor, np, samples, sr, groups)
+    clusters, redirect = _fold_to_cap(np, clusters, max_speakers)
+
+    final_clusters = [(label, cen, secs) for label, (cen, secs) in clusters.items()]
+    out_centroids: dict = {}
+    mapping = _map_final_clusters(
+        final_clusters, live.centroids(), threshold=live.threshold, start_id=live.max_id,
+        out_centroids=out_centroids,
+    )
+
+    segs = [
+        {
+            "start_s": start_s + r.start,
+            "end_s": start_s + r.end,
+            "speaker": mapping.get(redirect.get(f"F{r.speaker}", f"F{r.speaker}"), f"F{r.speaker}"),
+        }
+        for r in result
+    ]
+    return segs, out_centroids
+
+
+def load(
+    live: OnlineClusterer,
+    max_speakers: int,
+    *,
+    embedder: str | None = None,
+    models_dir_override: Path | None = None,
+    verify_hashes: bool = True,
+) -> LoadedEngine:
+    """Load the sherpa-onnx speaker embedding extractor and return the
+    worker's `LoadedEngine` triple (spec §2).
+
+    Args:
+        live: The `OnlineClusterer` held for the whole meeting -- `batch`
+            reads its centroids/threshold/max_id for reconciliation.
+        max_speakers: The Stop pass's speaker-count ceiling.
+        embedder: One of `EMBEDDERS`' keys; `DEFAULT_EMBEDDER` if omitted and
+            `TLDW_DIARIZER_EMBEDDER` is unset (task 4, 31827: the worker
+            process has no other way to learn which embedder the app fetched).
+        models_dir_override: Test/air-gapped seam for `models_dir()`; falls
+            back to `TLDW_DIARIZER_MODELS_DIR` when omitted (same reason).
+            Either form is validated (Qodo 1): a directory that does not
+            exist, or a path the central validator refuses, raises here
+            rather than surfacing inside sherpa-onnx's own file open.
+        verify_hashes: When true (the default), a SHA-256 mismatch against
+            the manifest raises before any model is constructed.
+
+    Returns:
+        A `diarizer_worker.LoadedEngine` bound to a freshly loaded extractor.
+
+    Raises:
+        ValueError: unknown `embedder`, an unusable models directory, or a
+            model hash mismatch ("model hash mismatch") --
+            `diarizer_worker.main()` frames all three as `ERROR load
+            ValueError` (an unusable env value is named first by
+            `_env_settings`, as `ERROR env <NAME>`).
+    """
+    import numpy as np
+    import sherpa_onnx
+
+    from tldw_chatbook.Audio.diarizer_worker import LoadedEngine
+
+    env = _env_settings()
+    if embedder is None:
+        embedder = env["embedder"]
+    if models_dir_override is None:
+        models_dir_override = env["models_dir"]
+    else:
+        models_dir_override = _validated_models_dir(models_dir_override)
+
+    key = embedder or DEFAULT_EMBEDDER
+    if key not in EMBEDDERS:
+        raise ValueError(f"unknown embedder: {key}")
+    seg_path, emb_path = model_paths(key, models_dir_override)
+
+    if verify_hashes:
+        if _sha256_of(seg_path) != SEGMENTATION.sha256 or _sha256_of(emb_path) != EMBEDDERS[key].sha256:
+            raise ValueError("model hash mismatch")
+
+    def _make_extractor(num_threads: int):
+        return sherpa_onnx.SpeakerEmbeddingExtractor(
+            sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(emb_path), num_threads=num_threads, provider="cpu")
+        )
+
+    extractor = _make_extractor(LIVE_THREADS)
+    threshold = env["cluster_threshold"]
+    if threshold is None:
+        threshold = CLUSTER_THRESHOLD[key]
+    live_threshold = env["live_threshold"]
+    if live_threshold is None:
+        live_threshold = LIVE_THRESHOLD[key]
+
+    return LoadedEngine(
+        lambda pcm, sr: _embed(extractor, np, pcm, sr),
+        # A fresh BATCH_THREADS extractor per Stop pass (spec §2: "4 for the
+        # Stop pass") -- built lazily here rather than eagerly alongside
+        # `extractor` above, since the Stop pass runs at most once per
+        # meeting and a live-only meeting should not pay for a second
+        # loaded model it never uses.
+        lambda wav, s, e: _batch(
+            sherpa_onnx, np, _make_extractor(BATCH_THREADS), seg_path, emb_path, threshold, live, max_speakers, wav, s, e
+        ),
+        model_id_for_embedder(key),
+        live_threshold=live_threshold,
+    )

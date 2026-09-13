@@ -1,9 +1,13 @@
-"""Command-palette entry for the throwaway Image Gen (dev) panel (Phase 1)."""
+"""Command-palette entry for the throwaway Image Gen (dev) panel (Phase 1).
+
+The demo screen is imported inside ``search`` (TASK-21103): this provider is
+imported by ``app.py`` at module scope, and a module-level screen import
+dragged ``Image_Generation.worker`` -> ``request_validation`` -> PIL onto
+the app boot path.
+"""
 from __future__ import annotations
 
 from textual.command import Hit, Hits, Provider
-
-from .Screens.image_gen_demo_screen import ImageGenDemoScreen
 
 
 class ImageGenCommandProvider(Provider):
@@ -14,6 +18,10 @@ class ImageGenCommandProvider(Provider):
         label = "Image Gen (dev)"
         score = matcher.match(label)
         if score > 0:
+            from .Screens.image_gen_demo_screen import (  # noqa: PLC0415 - keeps PIL off the boot path (TASK-21103)
+                ImageGenDemoScreen,
+            )
+
             yield Hit(
                 score,
                 matcher.highlight(label),

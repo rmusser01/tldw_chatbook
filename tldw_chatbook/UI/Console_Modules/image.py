@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 import threading
 from typing import Any
 
 from loguru import logger
 
 from ...Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from ...Chat.console_chat_fork import (
+    ConsoleForkImageSelectionFence,
+    fingerprint_console_fork_selected_image,
+)
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_command_grammar import CommandParse
 from ...Chat.console_generate_image import (
@@ -35,12 +39,25 @@ from ...Chat.console_image_view import (
     resolve_render_remote_images,
 )
 from ...Widgets.Console.console_generation_card import ConsoleGenerationCardSpec
-from ...Image_Generation.config import get_image_generation_config
-from ...Image_Generation.listing import list_image_models_for_catalog
-
 REMOTE_IMAGE_SCAN_WINDOW = 20
 REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 REMOTE_IMAGE_FETCH_ATTEMPT_LIMIT = 256
+
+
+def get_image_generation_config() -> Any:
+    """Load image-generation configuration only when an image action runs."""
+
+    from ...Image_Generation.config import get_image_generation_config as load
+
+    return load()
+
+
+def list_image_models_for_catalog() -> list[dict[str, Any]]:
+    """Load the image backend catalog only when an image action needs it."""
+
+    from ...Image_Generation.listing import list_image_models_for_catalog as load
+
+    return load()
 
 
 class ConsoleImageController:
@@ -106,6 +123,7 @@ class ConsoleImageController:
         self._recovered_image_lookup = None
         self._recovered_image_tasks: set[asyncio.Task] = set()
         self._recovered_image_paused = False
+        self._fork_image_browse_revisions: dict[str, int] = {}
 
     def _ensure_console_image_view(self) -> tuple[Any, Any]:
         return self._ensure_console_image_view_fn()
@@ -120,11 +138,96 @@ class ConsoleImageController:
     def _console_generation_browse(self) -> dict[str, int]:
         return self._console_generation_browse_fn()
 
+    def _bump_fork_image_browse_revision(self, message_id: str) -> None:
+        self._fork_image_browse_revisions[message_id] = (
+            self._fork_image_browse_revisions.get(message_id, 0) + 1
+        )
+
+    def capture_console_fork_image_selections(
+        self,
+        messages: Sequence[ConsoleChatMessage],
+    ) -> tuple[ConsoleForkImageSelectionFence, ...]:
+        """Capture selected generated-image facts for one fork prefix."""
+
+        browse = self._console_generation_browse()
+        selections: list[ConsoleForkImageSelectionFence] = []
+        for message in messages:
+            metadata = message.generation_metadata
+            if not metadata:
+                continue
+            if len(metadata) != len(message.attachments):
+                raise ValueError("Fork generated image metadata is unavailable.")
+            position = browse.get(message.id, 0)
+            if type(position) is not int or not 0 <= position < len(metadata):
+                raise ValueError("Fork generated image selection is unavailable.")
+            selections.append(
+                ConsoleForkImageSelectionFence(
+                    native_message_id=message.id,
+                    selected_position=position,
+                    browse_revision=self._fork_image_browse_revisions.get(
+                        message.id, 0
+                    ),
+                    attachment_meta_fingerprint=(
+                        fingerprint_console_fork_selected_image(
+                            message.attachments[position],
+                            metadata[position],
+                        )
+                    ),
+                )
+            )
+        return tuple(selections)
+
+    def validate_console_fork_image_selections(
+        self,
+        messages: Sequence[ConsoleChatMessage],
+        expected: Sequence[ConsoleForkImageSelectionFence],
+    ) -> bool:
+        """Return whether current generated-image choices exactly match a capture."""
+
+        try:
+            return self.capture_console_fork_image_selections(messages) == tuple(
+                expected
+            )
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return False
+
+    def invalidate_console_fork_image_selections(
+        self,
+        message_ids: Sequence[str],
+    ) -> None:
+        """Invalidate and clean browse state for removed messages or subtrees."""
+
+        browse = self._console_generation_browse()
+        for message_id in dict.fromkeys(message_ids):
+            browse.pop(message_id, None)
+            self._bump_fork_image_browse_revision(message_id)
+
     async def _sync_native_console_chat_ui(self) -> None:
         await self._sync_native_console_chat_ui_fn()
 
     def _ensure_console_chat_store(self) -> Any:
         return self._ensure_console_chat_store_fn()
+
+    def _append_durable_generation_message(
+        self,
+        store: Any,
+        session_id: str,
+        **kwargs: Any,
+    ) -> Any:
+        """Persist one terminal image and then refresh app-owned attention."""
+        message = store.append_generation_message(session_id, persist=True, **kwargs)
+        app_instance = getattr(self, "app_instance", None)
+        runtime = getattr(app_instance, "console_runtime", None)
+        recompute = getattr(runtime, "recompute_console_attention", None)
+        if callable(recompute):
+            try:
+                recompute()
+            except Exception as exc:  # noqa: BLE001 -- durable media already committed
+                logger.debug(
+                    "Console image attention refresh failed (exception_type={})",
+                    type(exc).__name__,
+                )
+        return message
 
     @property
     def _console_chat_store(self) -> ConsoleChatStore | None:
@@ -373,8 +476,6 @@ class ConsoleImageController:
             if not metadata:
                 continue
             mode = state.mode_for(message.id, default=default_mode)
-            if mode == "hidden":
-                continue
             browsed_index = browse.get(message.id, 0)
             if not 0 <= browsed_index < len(metadata):
                 browsed_index = 0
@@ -400,6 +501,8 @@ class ConsoleImageController:
         by_id = {message.id: message for message in messages}
         pending: list[tuple[str, bytes]] = []
         for message_id, spec in card_specs.items():
+            if spec.mode == "hidden":
+                continue
             message = by_id.get(message_id)
             attachments = getattr(message, "attachments", ()) or () if message else ()
             if not 0 <= spec.browsed_index < len(attachments):
@@ -545,6 +648,7 @@ class ConsoleImageController:
                 persist=True,
             )
             self._console_generation_browse()[message_id] = position
+            self._bump_fork_image_browse_revision(message_id)
             await self._sync_native_console_chat_ui()
         finally:
             inflight.discard(message_id)
@@ -568,6 +672,7 @@ class ConsoleImageController:
             return
         if 0 <= target < variant_count:
             browse[message.id] = target
+            self._bump_fork_image_browse_revision(message.id)
 
     def _keep_console_generation_variant(self, message: ConsoleChatMessage) -> None:
         """Promote the browsed variant to canonical and evict stale renders."""
@@ -584,6 +689,7 @@ class ConsoleImageController:
             session_id, message.id, position=browsed_index, persist=True
         )
         browse[message.id] = 0
+        self._bump_fork_image_browse_revision(message.id)
         _state, cache = self._ensure_console_image_view()
         stale_keys = [f"{message.id}:{index}" for index in range(variant_count)]
         cache.evict_session(stale_keys)
@@ -694,43 +800,13 @@ class ConsoleImageController:
         )
         if session is None:
             return False
-        recovered_conversation_id = False
-        if session.persisted_conversation_id is None and store.persistence is not None:
-            db = getattr(store.persistence, "db", None)
-            read_message = getattr(db, "get_message_by_id", None)
-            try:
-                row = (
-                    read_message(completion.message_id)
-                    if callable(read_message)
-                    else None
-                )
-            except Exception:  # noqa: BLE001 - retry the byte-free record later
-                row = None
-            conversation_id = (
-                row.get("conversation_id") if isinstance(row, Mapping) else None
-            )
-            if (
-                isinstance(row, Mapping)
-                and row.get("id") == completion.message_id
-                and row.get("sender") == ConsoleMessageRole.ASSISTANT.value
-                and type(row.get("image_data")) is bytes
-                and row.get("image_mime_type") == "image/png"
-                and type(conversation_id) is str
-                and conversation_id
-            ):
-                session.persisted_conversation_id = conversation_id
-                recovered_conversation_id = True
         try:
             message = store.merge_persisted_generation_message(
                 completion.session_id, completion.message_id
             )
         except Exception:  # noqa: BLE001 - keep cleanup pending for later retry
-            if recovered_conversation_id:
-                session.persisted_conversation_id = None
             return False
         if message is None:
-            if recovered_conversation_id:
-                session.persisted_conversation_id = None
             return False
 
         try:
@@ -827,74 +903,15 @@ class ConsoleImageController:
                 existing.role is ConsoleMessageRole.SYSTEM
                 and existing.content in self._H3_FAILURE_GUIDANCE_COPY
             )
-        if store.persistence is None:
-            return False
-        db = getattr(store.persistence, "db", None)
-        read_message = getattr(db, "get_message_by_id", None)
-        if not callable(read_message):
-            return False
         try:
-            row = read_message(notice.message_id)
-        except Exception:  # noqa: BLE001 - retain notice for a later retry
-            return False
-        if not isinstance(row, Mapping):
-            return False
-        conversation_id = row.get("conversation_id")
-        content = row.get("content")
-        if (
-            row.get("id") != notice.message_id
-            or row.get("sender") != ConsoleMessageRole.SYSTEM.value
-            or str(row.get("role") or ConsoleMessageRole.SYSTEM.value)
-            != ConsoleMessageRole.SYSTEM.value
-            or type(content) is not str
-            or content not in self._H3_FAILURE_GUIDANCE_COPY
-            or row.get("image_data") is not None
-            or row.get("image_mime_type") not in {None, ""}
-            or type(conversation_id) is not str
-            or not conversation_id
-        ):
-            return False
-        if (
-            session.persisted_conversation_id is not None
-            and session.persisted_conversation_id != conversation_id
-        ):
-            return False
-        recovered_conversation_id = session.persisted_conversation_id is None
-        if recovered_conversation_id:
-            session.persisted_conversation_id = conversation_id
-        try:
-            nodes = store._nodes_by_session[notice.session_id]
-            if notice.message_id in nodes:
-                raise ValueError("native message identity collision")
-            message = ConsoleChatMessage(
-                id=notice.message_id,
-                persisted_message_id=notice.message_id,
-                parent_message_id=row.get("parent_message_id"),
-                role=ConsoleMessageRole.SYSTEM,
-                content=content,
-                status="complete",
-            )
-            parent_native_id = next(
-                (
-                    node.id
-                    for node in nodes.values()
-                    if node.persisted_message_id == message.parent_message_id
-                ),
-                None,
-            )
-            store._register_tree_node(
+            recovered = store.merge_persisted_system_message(
                 notice.session_id,
-                message,
-                parent_native_id=parent_native_id,
+                notice.message_id,
+                allowed_content=frozenset(self._H3_FAILURE_GUIDANCE_COPY),
             )
-            store._active_leaf_by_session[notice.session_id] = message.id
-            store._recompute_active_path(notice.session_id)
-            store._bump_payload_revision(notice.session_id)
         except Exception:  # noqa: BLE001 - retain notice for a later retry
-            if recovered_conversation_id:
-                session.persisted_conversation_id = None
             return False
-        return True
+        return recovered is not None
 
     async def _settle_current_h3_outcome(
         self, session_id: str, generation: str
@@ -1132,11 +1149,12 @@ class ConsoleImageController:
                 message.id for message in store.messages_for_session(session.id)
             }
             try:
-                message = store.append_generation_message(
+                message = ConsoleImageController._append_durable_generation_message(
+                    self,
+                    store,
                     session.id,
                     content=generation_content_marker(instruction),
                     variants=batch.successes,
-                    persist=True,
                 )
                 persisted_message_id = message.persisted_message_id
                 if not persisted_message_id:
@@ -1345,11 +1363,12 @@ class ConsoleImageController:
                     f"Image generation failed: {detail}", session_id=session.id
                 )
                 return
-            store.append_generation_message(
+            ConsoleImageController._append_durable_generation_message(
+                self,
+                store,
                 session.id,
                 content=generation_content_marker(prepared.prompt),
                 variants=batch.successes,
-                persist=True,
             )
             if len(batch.successes) < count:
                 store.append_message(

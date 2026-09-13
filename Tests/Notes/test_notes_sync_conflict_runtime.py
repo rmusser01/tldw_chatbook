@@ -1,0 +1,2455 @@
+"""Fresh-authority and per-root serialization for conflict review."""
+
+from __future__ import annotations
+
+import asyncio
+import gc
+import hashlib
+from collections.abc import Callable
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from Tests.Notes.test_notes_sync_executor import (
+    FakeFilesystem,
+    FakeNoteAuthority,
+    _execution_store,
+    _file,
+    _note,
+    _request,
+)
+from Tests.Notes.test_notes_sync_runtime import (
+    _Coordinator as _StartupCoordinator,
+    _Watcher as _StartupWatcher,
+)
+from tldw_chatbook.Notes.notes_device_state_store import (
+    NotesDeviceStateStore,
+    NotesSyncResolutionHistoryRecord,
+    NotesSyncRootRecord,
+    NotesSyncStoreSetting,
+)
+from tldw_chatbook.Notes.notes_sync_conflicts import (
+    ConflictApplyResult,
+    ConflictComparison,
+    ConflictSelection,
+    NotesSyncConflictChoice,
+    build_conflict_comparison,
+    conflict_copies_folder_id,
+    conflict_copy_note_id,
+    conflict_resolution_operation_id,
+    conflict_root_folder_id,
+    linked_undo_operation_id,
+)
+from tldw_chatbook.Notes.notes_sync_authority import NotesSyncNoteSnapshot
+from tldw_chatbook.Notes.notes_sync_filesystem import NotesSyncFileSnapshot
+from tldw_chatbook.Notes.notes_sync_models import (
+    NotesSyncActionKind,
+    NotesSyncDirection,
+    NotesSyncFileIdentity,
+    NotesSyncFileObservation,
+    NotesSyncOperationState,
+    NotesSyncRootState,
+    NotesSyncSerializationProfile,
+)
+from tldw_chatbook.Notes.notes_sync_reconciler import (
+    BindingObservation,
+    DeletionGroup,
+    ManagedPlacementEffect,
+    ManagedPlacementEffectKind,
+    ReconciliationAttention,
+    ReconciliationAttentionKind,
+    ReconciliationInput,
+    ReconciliationSkip,
+    ReconciliationSkipKind,
+    plan_reconciliation,
+)
+from tldw_chatbook.Notes.notes_sync_runtime import (
+    NotesSyncRuntimeOwner,
+    RuntimeConflictLabel,
+    _ProductionRuntimeAdapter,
+)
+from tldw_chatbook.Notes.notes_sync_executor import (
+    NotesSyncDirectionOverride,
+    NotesSyncExecutionRequest,
+    NotesSyncExecutionResult,
+    NotesSyncExecutor,
+    NotesSyncKeepBothAuthority,
+)
+from tldw_chatbook.Notes.sync_paths import SafeSyncBytes, SafeSyncFileIdentity
+
+
+pytestmark = pytest.mark.unit
+_A = "a" * 64
+_B = "b" * 64
+_C = "c" * 64
+_PHASE_TIMEOUT = 1.0
+_CONFLICT_RETENTION_NS = 30 * 24 * 60 * 60 * 1_000_000_000
+
+
+async def _wait(event: asyncio.Event) -> None:
+    await asyncio.wait_for(event.wait(), _PHASE_TIMEOUT)
+
+
+async def _finish_tasks(*tasks: asyncio.Task[object]) -> tuple[object, ...]:
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    return tuple(await asyncio.gather(*tasks, return_exceptions=True))
+
+
+def _input(
+    root_id: str = "root-1",
+    *,
+    generation: int = 1,
+    file_digest: str = _B,
+    note_digest: str = _A,
+    direction: NotesSyncDirection = NotesSyncDirection.BIDIRECTIONAL,
+) -> ReconciliationInput:
+    return ReconciliationInput(
+        root_id=root_id,
+        direction=direction,
+        bindings=(
+            BindingObservation(
+                binding_id="binding-1",
+                baseline_file_digest=_A,
+                baseline_note_digest=_A,
+                baseline_identity_digest=_C,
+                baseline_relative_path="note.md",
+                file_digest=file_digest,
+                note_digest=note_digest,
+                file_identity_digest=_C,
+                relative_path="note.md",
+                note_scope_id="local_note",
+                note_id="note-1",
+                note_version=generation,
+            ),
+        ),
+        observation_generation=generation,
+        expected_generation=generation,
+    )
+
+
+def _root(
+    root_id: str = "root-1",
+    *,
+    direction: NotesSyncDirection = NotesSyncDirection.BIDIRECTIONAL,
+) -> NotesSyncRootRecord:
+    return NotesSyncRootRecord(
+        root_id=root_id,
+        note_scope_id="local_note",
+        logical_folder_id="folder-1",
+        canonical_path=f"/private/{root_id}",
+        direction=direction,
+        state=NotesSyncRootState.ACTIVE,
+    )
+
+
+class _Store:
+    def __init__(self, *roots: NotesSyncRootRecord) -> None:
+        self.roots = {root.root_id: root for root in roots}
+        self.history: list[NotesSyncResolutionHistoryRecord] = []
+
+    def get_root(self, root_id: str) -> NotesSyncRootRecord:
+        return self.roots[root_id]
+
+    def update_root_status(self, _root_id: str, _status: str) -> None:
+        return None
+
+    def list_resolution_history(
+        self, _root_id: str, *, limit: int, offset: int, now: int
+    ) -> tuple[NotesSyncResolutionHistoryRecord, ...]:
+        del now
+        return tuple(self.history[offset : offset + limit])
+
+
+class _Lease:
+    def __init__(self, authoritative: bool = True) -> None:
+        self.authoritative = authoritative
+
+
+class _Admission:
+    def __init__(self, lease: _Lease) -> None:
+        self.lease = lease
+
+    def require_authority(self, _operation: str) -> _Lease:
+        if not self.lease.authoritative:
+            raise RuntimeError("admission_closed")
+        return self.lease
+
+
+class _ObservedLock(asyncio.Lock):
+    def __init__(self) -> None:
+        super().__init__()
+        self.waiting = asyncio.Event()
+        self._attempts = 0
+
+    async def acquire(self) -> bool:
+        self._attempts += 1
+        if self._attempts > 1:
+            self.waiting.set()
+        return await super().acquire()
+
+
+class _Executor:
+    def __init__(self, adapter: "_Adapter") -> None:
+        self.adapter = adapter
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.resume_entered = asyncio.Event()
+        self.resume_release = asyncio.Event()
+        self.mutations = 0
+        self.undo_calls: list[tuple[str, str]] = []
+        self.undo_entered = asyncio.Event()
+        self.undo_release = asyncio.Event()
+        self.undo_release.set()
+        self.undo_projections: dict[str, SimpleNamespace] = {}
+        self.undo_projection_errors: dict[str, Exception] = {}
+        self.inspected_undo: list[tuple[str, str, int | None]] = []
+        self.undo_input = _input(generation=2, file_digest=_A, note_digest=_A)
+
+    async def execute(self, _request: object) -> object:
+        self.entered.set()
+        await self.release.wait()
+        self.mutations += 1
+        self.adapter.inputs["root-1"] = _input(
+            generation=2, file_digest=_A, note_digest=_A
+        )
+        return NotesSyncExecutionResult(
+            operation_id=getattr(_request, "operation_id", "operation-1"),
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
+            reason_code=None,
+        )
+
+    async def reconstruct_request(self, operation_id: str) -> str:
+        return operation_id
+
+    async def resume(self, _request: object) -> object:
+        self.resume_entered.set()
+        await self.resume_release.wait()
+        self.mutations += 1
+        self.adapter.inputs["root-1"] = _input(
+            generation=2, file_digest=_A, note_digest=_A
+        )
+        return SimpleNamespace(
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+        )
+
+    async def undo_resolution(
+        self, root_id: str, source_operation_id: str
+    ) -> NotesSyncExecutionResult:
+        self.undo_entered.set()
+        await self.undo_release.wait()
+        self.undo_calls.append((root_id, source_operation_id))
+        self.mutations += 1
+        self.adapter.inputs[root_id] = self.undo_input
+        return NotesSyncExecutionResult(
+            operation_id=f"undo-{source_operation_id}",
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
+            reason_code=None,
+        )
+
+    async def inspect_resolution_undo(
+        self,
+        root_id: str,
+        source_operation_id: str,
+        *,
+        now: int | None = None,
+    ) -> SimpleNamespace:
+        self.inspected_undo.append((root_id, source_operation_id, now))
+        error = self.undo_projection_errors.get(source_operation_id)
+        if error is not None:
+            raise error
+        return self.undo_projections.get(
+            source_operation_id,
+            SimpleNamespace(
+                undo_available=True,
+                undo_reason=None,
+                state="completed",
+                note_title="Title",
+                relative_path="note.md",
+            ),
+        )
+
+
+class _Adapter:
+    def __init__(self, *inputs: ReconciliationInput) -> None:
+        self.inputs = {item.root_id: item for item in inputs}
+        self.observe_calls: list[str] = []
+        self.executor = _Executor(self)
+        self.live_bundles: set[str] = set()
+        self.released: list[str] = []
+        self.comparison_started = asyncio.Event()
+        self.comparison_release: asyncio.Event | None = None
+        self.close_lease_on_observe: _Lease | None = None
+        self.comparison_builds = 0
+        self.label_builds = 0
+
+    async def observe_root(self, root: NotesSyncRootRecord) -> ReconciliationInput:
+        observed = self.inputs[root.root_id]
+        self.observe_calls.append(root.root_id)
+        token = plan_reconciliation(observed).observation_token
+        self.live_bundles.add(token)
+        if self.close_lease_on_observe is not None:
+            self.close_lease_on_observe.authoritative = False
+        return observed
+
+    async def build_execution_request(
+        self, _root: object, _observations: object, _plan: object, action: object
+    ) -> object:
+        return action
+
+    def executor_for(self, _root: object, **_kwargs: object) -> _Executor:
+        return self.executor
+
+    async def build_conflict_comparison(
+        self, _root: object, plan: object, binding_id: str
+    ) -> ConflictComparison:
+        token = plan.observation_token
+        assert token in self.live_bundles
+        self.comparison_builds += 1
+        self.comparison_started.set()
+        if self.comparison_release is not None:
+            await self.comparison_release.wait()
+        assert token in self.live_bundles
+        return build_conflict_comparison(
+            binding_id=binding_id,
+            title="Private title",
+            relative_path="note.md",
+            note_text="note side\n",
+            file_text="file side\n",
+            note_version=1,
+            note_updated_at="2026-08-22T12:30:00+00:00",
+            file_modified_ns=7,
+        )
+
+    async def build_conflict_labels(
+        self, _root: object, plan: object, binding_ids: tuple[str, ...]
+    ) -> tuple[RuntimeConflictLabel, ...]:
+        assert plan.observation_token in self.live_bundles
+        self.label_builds += 1
+        return tuple(
+            RuntimeConflictLabel(binding_id, "Private title", f"{binding_id}.md")
+            for binding_id in binding_ids
+        )
+
+    def release_observation(self, observation_token: str) -> None:
+        self.released.append(observation_token)
+        self.live_bundles.discard(observation_token)
+
+
+class _StartupUndoAdapter(_Adapter):
+    def __init__(
+        self,
+        store: NotesDeviceStateStore,
+        notes: FakeNoteAuthority,
+        files: FakeFilesystem,
+    ) -> None:
+        super().__init__(_input(file_digest=_A, note_digest=_A))
+        self._store = store
+        self._notes = notes
+        self._files = files
+
+    def executor_for(
+        self,
+        _root: object,
+        *,
+        after_stage: Callable[[NotesSyncOperationState], None],
+    ) -> NotesSyncExecutor:
+        return NotesSyncExecutor(
+            self._store,
+            self._notes,
+            self._files,
+            recovery_capacity_bytes=65_536,
+            after_stage=after_stage,
+        )
+
+
+class _SubsetExecutor:
+    def __init__(
+        self,
+        adapter: "_SubsetAdapter",
+        final_input: ReconciliationInput,
+        *,
+        stop_binding_id: str | None = None,
+        refuse_before_admission: bool = False,
+    ) -> None:
+        self.adapter = adapter
+        self.final_input = final_input
+        self.stop_binding_id = stop_binding_id
+        self.refuse_before_admission = refuse_before_admission
+        self.requests: list[object] = []
+
+    async def execute(self, request: object) -> NotesSyncExecutionResult:
+        self.requests.append(request)
+        binding_id = getattr(request, "binding_id")
+        operation_id = getattr(request, "operation_id")
+        if self.refuse_before_admission:
+            return NotesSyncExecutionResult(
+                operation_id=operation_id,
+                state=NotesSyncOperationState.NEEDS_ATTENTION,
+                recovery_required=False,
+                reason_code="recovery_capacity_exceeded",
+            )
+        if binding_id == self.stop_binding_id:
+            return NotesSyncExecutionResult(
+                operation_id=operation_id,
+                state=NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+                recovery_required=False,
+            )
+        self.adapter.inputs[self.final_input.root_id] = self.final_input
+        return NotesSyncExecutionResult(
+            operation_id=operation_id,
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
+        )
+
+
+class _SubsetAdapter(_Adapter):
+    def __init__(
+        self,
+        initial: ReconciliationInput,
+        final: ReconciliationInput,
+        *,
+        stop_binding_id: str | None = None,
+        refuse_before_admission: bool = False,
+    ) -> None:
+        super().__init__(initial)
+        self.executor = _SubsetExecutor(
+            self,
+            final,
+            stop_binding_id=stop_binding_id,
+            refuse_before_admission=refuse_before_admission,
+        )
+
+    async def build_execution_request(
+        self, root: object, _observations: object, _plan: object, action: object
+    ) -> object:
+        return SimpleNamespace(
+            operation_id=f"safe-{action.action_id}",
+            root_id=root.root_id,
+            binding_id=action.binding_id,
+            action_kind=action.kind,
+            direction_override=None,
+        )
+
+    async def build_conflict_execution_request(
+        self,
+        root: object,
+        _observations: object,
+        plan: object,
+        selection: ConflictSelection,
+    ) -> object:
+        action_kind = (
+            NotesSyncActionKind.UPDATE_NOTE
+            if selection.choice
+            in {
+                NotesSyncConflictChoice.KEEP_FILE,
+                NotesSyncConflictChoice.KEEP_BOTH,
+            }
+            else NotesSyncActionKind.UPDATE_FILE
+        )
+        return SimpleNamespace(
+            operation_id=f"conflict-{selection.binding_id}",
+            root_id=root.root_id,
+            binding_id=selection.binding_id,
+            action_kind=action_kind,
+            journal_kind=f"resolve_{selection.choice.value}",
+            direction_override=None,
+            observation_token=plan.observation_token,
+        )
+
+
+def _reviewed_subset_input(
+    *,
+    direction: NotesSyncDirection = NotesSyncDirection.BIDIRECTIONAL,
+    resolved: frozenset[str] = frozenset(),
+    conflict_count: int = 2,
+) -> ReconciliationInput:
+    bindings: list[BindingObservation] = [
+        BindingObservation(
+            binding_id="binding-safe",
+            baseline_file_digest=(_B if resolved else _A),
+            baseline_note_digest=(_B if resolved else _A),
+            baseline_identity_digest=_C,
+            baseline_relative_path="safe.md",
+            file_digest=_B,
+            note_digest=(_B if resolved else _A),
+            file_identity_digest=_C,
+            relative_path="safe.md",
+            note_scope_id="local_note",
+            note_id="note-safe",
+            note_version=2,
+        )
+    ]
+    for index, (file_digest, note_digest) in enumerate(
+        ((_B, _C), (_C, _B), (_B, _C))[:conflict_count],
+        start=1,
+    ):
+        binding_id = f"binding-{index}"
+        if binding_id in resolved:
+            baseline_file = file_digest
+            baseline_note = file_digest
+            note_digest = file_digest
+        else:
+            baseline_file = _A
+            baseline_note = _A
+        bindings.append(
+            BindingObservation(
+                binding_id=binding_id,
+                baseline_file_digest=baseline_file,
+                baseline_note_digest=baseline_note,
+                baseline_identity_digest=_C,
+                baseline_relative_path=f"note-{index}.md",
+                file_digest=file_digest,
+                note_digest=note_digest,
+                file_identity_digest=_C,
+                relative_path=f"note-{index}.md",
+                note_scope_id="local_note",
+                note_id=f"note-{index}",
+                note_version=2,
+            )
+        )
+    return ReconciliationInput(
+        root_id="root-1",
+        direction=direction,
+        bindings=tuple(bindings),
+        observation_generation=1,
+        expected_generation=1,
+    )
+
+
+def _owner(
+    adapter: _Adapter,
+    *roots: NotesSyncRootRecord,
+    store: _Store | None = None,
+) -> NotesSyncRuntimeOwner:
+    owner = NotesSyncRuntimeOwner(
+        store=_Store(*roots) if store is None else store,
+        migrate_legacy=lambda: None,
+        coordinator=object(),
+        adapter=adapter,
+        watcher_factory=lambda _schedule: object(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+    )
+    owner._admission_open = True
+    owner._status = "active"
+    for root in roots:
+        lease = _Lease()
+        owner._leases[root.root_id] = lease
+        owner._admissions[root.root_id] = _Admission(lease)
+    return owner
+
+
+def _install_review(owner: NotesSyncRuntimeOwner, observed: ReconciliationInput) -> str:
+    plan = plan_reconciliation(observed)
+    owner._reviews[observed.root_id] = plan
+    return plan.observation_token
+
+
+@pytest.mark.asyncio
+async def test_two_reviewed_apply_paths_share_one_root_lock_and_reobserve() -> None:
+    adapter = _Adapter(_input())
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, adapter.inputs["root-1"])
+    action_id = owner._reviews["root-1"].safe_actions[0].action_id
+    lock = _ObservedLock()
+    owner._mutation_locks["root-1"] = lock
+
+    first = asyncio.create_task(owner.apply_reviewed("root-1", token, (action_id,)))
+    second: asyncio.Task[object] | None = None
+    try:
+        await _wait(adapter.executor.entered)
+        second = asyncio.create_task(
+            owner.apply_reviewed("root-1", token, (action_id,))
+        )
+        await _wait(lock.waiting)
+        assert adapter.observe_calls == ["root-1"]
+        assert adapter.executor.mutations == 0
+        adapter.executor.release.set()
+        results = tuple(
+            await asyncio.wait_for(
+                asyncio.gather(first, second, return_exceptions=True),
+                _PHASE_TIMEOUT,
+            )
+        )
+    finally:
+        adapter.executor.release.set()
+        await _finish_tasks(
+            first,
+            *(() if second is None else (second,)),
+        )
+
+    assert adapter.observe_calls == ["root-1", "root-1", "root-1"]
+    assert adapter.executor.mutations == 1
+    assert any(isinstance(result, ValueError) for result in results)
+
+
+@pytest.mark.asyncio
+async def test_automatic_and_reviewed_apply_share_root_lock() -> None:
+    adapter = _Adapter(_input())
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, adapter.inputs["root-1"])
+    action_id = owner._reviews["root-1"].safe_actions[0].action_id
+    lock = _ObservedLock()
+    owner._mutation_locks["root-1"] = lock
+
+    automatic = asyncio.create_task(owner._reconcile(_root(), automatic=True))
+    reviewed: asyncio.Task[object] | None = None
+    try:
+        await _wait(adapter.executor.entered)
+        reviewed = asyncio.create_task(
+            owner.apply_reviewed("root-1", token, (action_id,))
+        )
+        await _wait(lock.waiting)
+        assert adapter.observe_calls == ["root-1"]
+        assert adapter.executor.mutations == 0
+        adapter.executor.release.set()
+        results = tuple(
+            await asyncio.wait_for(
+                asyncio.gather(automatic, reviewed, return_exceptions=True),
+                _PHASE_TIMEOUT,
+            )
+        )
+    finally:
+        adapter.executor.release.set()
+        await _finish_tasks(
+            automatic,
+            *(() if reviewed is None else (reviewed,)),
+        )
+
+    assert adapter.observe_calls == ["root-1", "root-1"]
+    assert adapter.executor.mutations == 1
+    assert isinstance(results[1], ValueError)
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_and_reviewed_apply_share_root_lock() -> None:
+    adapter = _Adapter(_input())
+    root = _root()
+    owner = _owner(adapter, root)
+    token = _install_review(owner, adapter.inputs["root-1"])
+    action_id = owner._reviews["root-1"].safe_actions[0].action_id
+    lock = _ObservedLock()
+    owner._mutation_locks["root-1"] = lock
+    operation = SimpleNamespace(
+        root_id="root-1",
+        operation_id="operation-1",
+        state=NotesSyncOperationState.RECOVERY_ADMITTED,
+    )
+
+    recovery = asyncio.create_task(
+        owner._resume_incomplete({"root-1": root}, (operation,))
+    )
+    reviewed: asyncio.Task[object] | None = None
+    try:
+        await _wait(adapter.executor.resume_entered)
+        reviewed = asyncio.create_task(
+            owner.apply_reviewed("root-1", token, (action_id,))
+        )
+        await _wait(lock.waiting)
+        assert adapter.observe_calls == []
+        assert adapter.executor.mutations == 0
+        adapter.executor.resume_release.set()
+        results = tuple(
+            await asyncio.wait_for(
+                asyncio.gather(recovery, reviewed, return_exceptions=True),
+                _PHASE_TIMEOUT,
+            )
+        )
+    finally:
+        adapter.executor.resume_release.set()
+        await _finish_tasks(
+            recovery,
+            *(() if reviewed is None else (reviewed,)),
+        )
+
+    assert adapter.observe_calls == ["root-1"]
+    assert adapter.executor.mutations == 1
+    assert isinstance(results[1], ValueError)
+
+
+@pytest.mark.parametrize(
+    "failure_state",
+    (
+        NotesSyncOperationState.RECOVERY_ADMITTED,
+        NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+        NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+        NotesSyncOperationState.BINDING_UPDATED,
+        NotesSyncOperationState.VERIFIED,
+    ),
+)
+@pytest.mark.asyncio
+async def test_production_startup_resumes_transient_linked_undo_attention(
+    tmp_path: Path,
+    failure_state: NotesSyncOperationState,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = FakeNoteAuthority(note)
+    files = FakeFilesystem(_file(content="file side"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE,
+            note=note,
+            file=files.snapshot,
+        ),
+        journal_kind="resolve_keep_file",
+    )
+    assert (
+        await NotesSyncExecutor(
+            store, notes, files, recovery_capacity_bytes=65_536
+        ).execute(request)
+    ).state is NotesSyncOperationState.COMPLETED
+    failed = False
+
+    def fail_once(state: NotesSyncOperationState) -> None:
+        nonlocal failed
+        if state is failure_state and not failed:
+            failed = True
+            raise RuntimeError("transient_startup_test_failure")
+
+    first = await NotesSyncExecutor(
+        store,
+        notes,
+        files,
+        recovery_capacity_bytes=65_536,
+        after_stage=fail_once,
+    ).undo_resolution("root-1", request.operation_id)
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+    assert first.state is NotesSyncOperationState.NEEDS_ATTENTION
+    effects_before_startup = notes.replace_calls
+    reopened = NotesDeviceStateStore(database)
+    reopened.set_setting(
+        NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1")
+    )
+    adapter = _StartupUndoAdapter(reopened, notes, files)
+    watcher = _StartupWatcher()
+    owner = NotesSyncRuntimeOwner(
+        store=reopened,
+        migrate_legacy=lambda: None,
+        coordinator=_StartupCoordinator(),
+        adapter=adapter,
+        watcher_factory=lambda _schedule_hint: watcher,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+    )
+
+    try:
+        await owner.start()
+
+        assert reopened.get_operation(linked).state is NotesSyncOperationState.COMPLETED
+        assert notes.snapshot.content == "note side"
+        assert files.snapshot.text == "file side"
+        assert notes.replace_calls == 2
+        assert notes.replace_calls - effects_before_startup in {0, 1}
+        assert files.replace_calls == 0
+    finally:
+        await owner.shutdown()
+
+
+@pytest.mark.parametrize("damage", ("missing", "corrupt"))
+@pytest.mark.asyncio
+async def test_production_startup_blocks_invalid_linked_undo_recovery(
+    tmp_path: Path,
+    damage: str,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = FakeNoteAuthority(note)
+    files = FakeFilesystem(_file(content="file side"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE,
+            note=note,
+            file=files.snapshot,
+        ),
+        journal_kind="resolve_keep_file",
+    )
+    assert (
+        await NotesSyncExecutor(
+            store, notes, files, recovery_capacity_bytes=65_536
+        ).execute(request)
+    ).state is NotesSyncOperationState.COMPLETED
+
+    def fail_after_admission(state: NotesSyncOperationState) -> None:
+        if state is NotesSyncOperationState.RECOVERY_ADMITTED:
+            raise RuntimeError("transient_startup_test_failure")
+
+    assert (
+        await NotesSyncExecutor(
+            store,
+            notes,
+            files,
+            recovery_capacity_bytes=65_536,
+            after_stage=fail_after_admission,
+        ).undo_resolution("root-1", request.operation_id)
+    ).state is NotesSyncOperationState.NEEDS_ATTENTION
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+    with store.transaction(immediate=True) as connection:
+        if damage == "missing":
+            connection.execute(
+                "DELETE FROM notes_sync_recovery WHERE operation_id = ?", (linked,)
+            )
+        else:
+            connection.execute(
+                "UPDATE notes_sync_recovery SET metadata = ? WHERE operation_id = ?",
+                (b"private-binding-id /absolute/private.md backend-secret", linked),
+            )
+    reopened = NotesDeviceStateStore(database)
+    reopened.set_setting(
+        NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1")
+    )
+    adapter = _StartupUndoAdapter(reopened, notes, files)
+    watcher = _StartupWatcher()
+    owner = NotesSyncRuntimeOwner(
+        store=reopened,
+        migrate_legacy=lambda: None,
+        coordinator=_StartupCoordinator(),
+        adapter=adapter,
+        watcher_factory=lambda _schedule_hint: watcher,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+    )
+
+    try:
+        await owner.start()
+
+        assert reopened.get_operation(linked).state is (
+            NotesSyncOperationState.NEEDS_ATTENTION
+        )
+        root = owner.snapshot().roots[0]
+        assert (root.status, root.next_action, root.action_id) == (
+            "needs_attention",
+            "review_changes",
+            linked,
+        )
+        assert notes.replace_calls == 1
+        assert files.replace_calls == 0
+        assert "private-binding-id" not in repr(root)
+        assert "backend-secret" not in repr(root)
+    finally:
+        await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_root_lock_waiter_retains_lock_across_registry_gc() -> None:
+    owner = _owner(_Adapter(_input()), _root())
+    lock_factory = owner._mutation_lock
+    holder_entered = asyncio.Event()
+    holder_release = asyncio.Event()
+    waiter_resolved = asyncio.Event()
+    waiter_entered = asyncio.Event()
+    identities: list[int] = []
+
+    async def holder() -> None:
+        lock = lock_factory("root-1")
+        identities.append(id(lock))
+        async with lock:
+            holder_entered.set()
+            await holder_release.wait()
+
+    async def waiter() -> None:
+        lock = lock_factory("root-1")
+        identities.append(id(lock))
+        waiter_resolved.set()
+        async with lock:
+            waiter_entered.set()
+
+    holding = asyncio.create_task(holder())
+    waiting: asyncio.Task[object] | None = None
+    try:
+        await _wait(holder_entered)
+        waiting = asyncio.create_task(waiter())
+        await _wait(waiter_resolved)
+        gc.collect()
+        identities.append(id(lock_factory("root-1")))
+        assert len(set(identities)) == 1
+        assert not waiter_entered.is_set()
+        holder_release.set()
+        await asyncio.wait_for(
+            asyncio.gather(holding, waiting),
+            _PHASE_TIMEOUT,
+        )
+    finally:
+        holder_release.set()
+        await _finish_tasks(
+            holding,
+            *(() if waiting is None else (waiting,)),
+        )
+
+
+@pytest.mark.asyncio
+async def test_different_root_locks_proceed_independently() -> None:
+    owner = _owner(_Adapter(_input(), _input("root-2")), _root(), _root("root-2"))
+    lock_factory = owner._mutation_lock
+    first_lock = lock_factory("root-1")
+    second_entered = asyncio.Event()
+
+    async with first_lock:
+
+        async def enter_second() -> None:
+            async with lock_factory("root-2"):
+                second_entered.set()
+
+        second = asyncio.create_task(enter_second())
+        try:
+            await _wait(second_entered)
+        finally:
+            await _finish_tasks(second)
+
+
+@pytest.mark.asyncio
+async def test_locked_execution_helper_does_not_reacquire_root_lock() -> None:
+    adapter = _Adapter(_input())
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, adapter.inputs["root-1"])
+    action_id = owner._reviews["root-1"].safe_actions[0].action_id
+    adapter.executor.release.set()
+    acquisitions = 0
+    lock = asyncio.Lock()
+
+    def guarded_lock(_root_id: str) -> asyncio.Lock:
+        nonlocal acquisitions
+        acquisitions += 1
+        if acquisitions > 1:
+            raise AssertionError("nested root-lock acquisition")
+        return lock
+
+    owner._mutation_lock = guarded_lock
+    result = await owner.apply_reviewed("root-1", token, (action_id,))
+
+    assert type(result) is ConflictApplyResult
+    assert len(result.results) == 1
+    assert acquisitions == 1
+
+
+@pytest.mark.asyncio
+async def test_comparison_reobserves_exact_authority_and_returns_projection() -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+
+    comparison = await owner.compare_conflict("root-1", token, "binding-1")
+
+    assert type(comparison) is ConflictComparison
+    assert comparison.binding_id == "binding-1"
+    assert comparison.note_updated_at == "2026-08-22T12:30:00+00:00"
+    assert comparison.diff.startswith("--- Note\n+++ File\n")
+    assert adapter.observe_calls == ["root-1"]
+    assert adapter.comparison_builds == 1
+    assert adapter.live_bundles == set()
+    assert not hasattr(comparison, "note")
+    assert not hasattr(comparison, "file")
+
+
+@pytest.mark.asyncio
+async def test_conflict_labels_reobserve_exact_authority_without_building_content() -> (
+    None
+):
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+
+    labels = await owner.conflict_labels("root-1", token)
+
+    assert labels == (
+        RuntimeConflictLabel("binding-1", "Private title", "binding-1.md"),
+    )
+    assert adapter.observe_calls == ["root-1"]
+    assert adapter.label_builds == 1
+    assert adapter.comparison_builds == 0
+    assert adapter.released == [token]
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+async def test_conflict_labels_reject_stale_review_and_ineligible_binding() -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.conflict_labels("root-1", "d" * 64)
+
+    owner._reviews["root-1"] = replace(  # noqa: SLF001 - exact reviewed authority
+        owner._reviews["root-1"], attention=()
+    )
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.conflict_labels("root-1", token)
+
+    assert adapter.label_builds == 0
+
+
+@pytest.mark.asyncio
+async def test_production_comparison_adapter_projects_only_bounded_content() -> None:
+    note_text = "private note\n"
+    file_text = "private file\n"
+    profile = NotesSyncSerializationProfile(False, "lf", True, 0o600)
+    note = NotesSyncNoteSnapshot(
+        note_scope_id="local_note",
+        note_id="note-1",
+        title="Private title",
+        content=note_text,
+        version=3,
+        content_digest=hashlib.sha256(note_text.encode()).hexdigest(),
+        updated_at=None,
+    )
+    reviewed_state = SafeSyncBytes(
+        relative_path=Path("note.md"),
+        content=file_text.encode(),
+        identity=SafeSyncFileIdentity(1, 2, 1),
+        mode=0o600,
+        size=len(file_text),
+        mtime_ns=9,
+        ctime_ns=8,
+        owner_user=1,
+        owner_group=1,
+        flags=0,
+        extended_attributes=(),
+        has_extended_acl=False,
+    )
+    file = NotesSyncFileSnapshot(
+        observation=NotesSyncFileObservation(
+            relative_path="note.md",
+            identity=NotesSyncFileIdentity(1, 2, 1),
+            content_digest=hashlib.sha256(file_text.encode()).hexdigest(),
+            size_bytes=len(file_text),
+            serialization=profile,
+        ),
+        text=file_text,
+        raw_bytes=file_text.encode(),
+        reviewed_state=reviewed_state,
+        representation_digest=_A,
+    )
+    plan = plan_reconciliation(_input(file_digest=_B, note_digest=_C))
+    adapter = object.__new__(_ProductionRuntimeAdapter)
+    adapter._bundles = {
+        plan.observation_token: {
+            "binding-1": SimpleNamespace(
+                record=SimpleNamespace(root_id="root-1"),
+                note=note,
+                file=file,
+            )
+        }
+    }
+
+    comparison = await adapter.build_conflict_comparison(_root(), plan, "binding-1")
+
+    assert type(comparison) is ConflictComparison
+    assert comparison.note_updated_at is None
+    assert comparison.file_modified_ns == 9
+    assert comparison.diff.startswith("--- Note\n+++ File\n")
+    assert not hasattr(comparison, "raw_bytes")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    ["missing_root", "missing_lease", "stale_lease", "inactive", "wrong"],
+)
+async def test_comparison_refuses_invalid_root_authority_before_content(
+    case: str,
+) -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    root = _root()
+    owner = _owner(adapter, root)
+    token = _install_review(owner, observed)
+    if case == "missing_root":
+        owner._store.roots.clear()
+    elif case == "missing_lease":
+        owner._admissions.clear()
+    elif case == "stale_lease":
+        owner._admissions["root-1"].lease.authoritative = False
+    elif case == "inactive":
+        owner._store.roots["root-1"] = replace(root, state=NotesSyncRootState.PAUSED)
+    else:
+        owner._store.roots["root-1"] = _root("root-wrong")
+
+    with pytest.raises((RuntimeError, ValueError, KeyError)):
+        await owner.compare_conflict("root-1", token, "binding-1")
+
+    assert adapter.observe_calls == []
+    assert adapter.comparison_builds == 0
+
+
+@pytest.mark.asyncio
+async def test_comparison_requires_exact_plan_even_with_reviewed_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    owner = _owner(adapter, _root())
+    reviewed = plan_reconciliation(observed)
+    owner._reviews["root-1"] = reviewed
+    monkeypatch.setattr(
+        runtime_module,
+        "plan_reconciliation",
+        lambda _value: replace(reviewed, attention=()),
+    )
+
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.compare_conflict("root-1", reviewed.observation_token, "binding-1")
+
+    assert adapter.comparison_builds == 0
+    assert adapter.released == [reviewed.observation_token]
+
+
+@pytest.mark.asyncio
+async def test_comparison_releases_bundle_on_stale_post_observation_authority() -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+    lease = owner._admissions["root-1"].lease
+    adapter.close_lease_on_observe = lease
+
+    with pytest.raises(RuntimeError, match="lease"):
+        await owner.compare_conflict("root-1", token, "binding-1")
+
+    assert adapter.comparison_builds == 0
+    assert adapter.released == [token]
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+async def test_comparison_releases_observation_when_planner_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
+    observed = _input(file_digest=_B, note_digest=_C)
+    token = plan_reconciliation(observed).observation_token
+    adapter = _Adapter(observed)
+    owner = _owner(adapter, _root())
+    _install_review(owner, observed)
+    monkeypatch.setattr(
+        runtime_module,
+        "plan_reconciliation",
+        lambda _value: (_ for _ in ()).throw(RuntimeError("planner_failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="planner_failed"):
+        await owner.compare_conflict("root-1", token, "binding-1")
+
+    assert adapter.released == [token]
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+async def test_comparison_releases_bundle_when_cancelled() -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    adapter.comparison_release = asyncio.Event()
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+    task = asyncio.create_task(owner.compare_conflict("root-1", token, "binding-1"))
+    try:
+        await _wait(adapter.comparison_started)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, _PHASE_TIMEOUT)
+    finally:
+        if adapter.comparison_release is not None:
+            adapter.comparison_release.set()
+        await _finish_tasks(task)
+
+    assert adapter.released == [token]
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+async def test_comparison_refuses_stale_plan_and_wrong_binding_then_releases() -> None:
+    reviewed_input = _input(file_digest=_B, note_digest=_C)
+    fresh_input = replace(
+        reviewed_input,
+        observation_generation=2,
+        expected_generation=2,
+    )
+    adapter = _Adapter(fresh_input)
+    owner = _owner(adapter, _root())
+    reviewed_token = _install_review(owner, reviewed_input)
+
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.compare_conflict("root-1", reviewed_token, "binding-1")
+    fresh_token = _install_review(owner, fresh_input)
+    with pytest.raises(ValueError, match="binding"):
+        await owner.compare_conflict("root-1", fresh_token, "binding-wrong")
+
+    assert adapter.comparison_builds == 0
+    assert adapter.live_bundles == set()
+    assert adapter.released == [
+        plan_reconciliation(fresh_input).observation_token,
+        plan_reconciliation(fresh_input).observation_token,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_comparison_requires_final_token_even_if_plan_claims_equality(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    owner = _owner(adapter, _root())
+    reviewed = plan_reconciliation(observed)
+    owner._reviews["root-1"] = reviewed
+    stale_token = hashlib.sha256(b"stale").hexdigest()
+
+    class _EqualPlan:
+        root_id = reviewed.root_id
+        observation_token = stale_token
+        attention = reviewed.attention
+        managed_placement_effects = reviewed.managed_placement_effects
+
+        def __eq__(self, _other: object) -> bool:
+            return True
+
+    async def observe_with_stale_bundle(_root: object) -> ReconciliationInput:
+        adapter.observe_calls.append("root-1")
+        adapter.live_bundles.add(reviewed.observation_token)
+        return observed
+
+    async def build_equal_plan_comparison(
+        _root: object, _plan: object, binding_id: str
+    ) -> ConflictComparison:
+        return build_conflict_comparison(
+            binding_id=binding_id,
+            title="Private title",
+            relative_path="note.md",
+            note_text="note side\n",
+            file_text="file side\n",
+            note_version=1,
+            note_updated_at=None,
+            file_modified_ns=7,
+        )
+
+    adapter.observe_root = observe_with_stale_bundle
+    adapter.build_conflict_comparison = build_equal_plan_comparison
+    monkeypatch.setattr(
+        runtime_module, "plan_reconciliation", lambda _value: _EqualPlan()
+    )
+
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.compare_conflict("root-1", reviewed.observation_token, "binding-1")
+
+    assert adapter.comparison_builds == 0
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "direction",
+        "choice",
+        "action",
+        "override_expected",
+        "file_digest",
+        "note_digest",
+    ),
+    (
+        (
+            NotesSyncDirection.BIDIRECTIONAL,
+            NotesSyncConflictChoice.KEEP_FILE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            False,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.BIDIRECTIONAL,
+            NotesSyncConflictChoice.KEEP_NOTE,
+            NotesSyncActionKind.UPDATE_FILE,
+            False,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.FOLDER_TO_NOTES,
+            NotesSyncConflictChoice.KEEP_FILE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            False,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.FOLDER_TO_NOTES,
+            NotesSyncConflictChoice.KEEP_NOTE,
+            NotesSyncActionKind.UPDATE_FILE,
+            True,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.NOTES_TO_FOLDER,
+            NotesSyncConflictChoice.KEEP_FILE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            True,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.NOTES_TO_FOLDER,
+            NotesSyncConflictChoice.KEEP_NOTE,
+            NotesSyncActionKind.UPDATE_FILE,
+            False,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.FOLDER_TO_NOTES,
+            NotesSyncConflictChoice.KEEP_FILE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            False,
+            _A,
+            _C,
+        ),
+        (
+            NotesSyncDirection.FOLDER_TO_NOTES,
+            NotesSyncConflictChoice.KEEP_NOTE,
+            NotesSyncActionKind.UPDATE_FILE,
+            True,
+            _A,
+            _C,
+        ),
+        (
+            NotesSyncDirection.NOTES_TO_FOLDER,
+            NotesSyncConflictChoice.KEEP_FILE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            True,
+            _B,
+            _A,
+        ),
+        (
+            NotesSyncDirection.NOTES_TO_FOLDER,
+            NotesSyncConflictChoice.KEEP_NOTE,
+            NotesSyncActionKind.UPDATE_FILE,
+            False,
+            _B,
+            _A,
+        ),
+    ),
+)
+async def test_production_keep_file_and_keep_note_requests_preserve_direction(
+    direction: NotesSyncDirection,
+    choice: NotesSyncConflictChoice,
+    action: NotesSyncActionKind,
+    override_expected: bool,
+    file_digest: str,
+    note_digest: str,
+) -> None:
+    note_text = "note side"
+    file_text = "file side"
+    note = NotesSyncNoteSnapshot(
+        note_scope_id="local_note",
+        note_id="note-1",
+        title="Title",
+        content=note_text,
+        version=5,
+        content_digest=hashlib.sha256(note_text.encode()).hexdigest(),
+    )
+    file = NotesSyncFileSnapshot(
+        observation=NotesSyncFileObservation(
+            relative_path="note.md",
+            identity=NotesSyncFileIdentity(1, 2, 1),
+            content_digest=hashlib.sha256(file_text.encode()).hexdigest(),
+            size_bytes=len(file_text),
+            serialization=NotesSyncSerializationProfile(False, "lf", False, 0o600),
+        ),
+        text=file_text,
+        raw_bytes=file_text.encode(),
+        reviewed_state=SafeSyncBytes(
+            relative_path=Path("note.md"),
+            content=file_text.encode(),
+            identity=SafeSyncFileIdentity(1, 2, 1),
+            mode=0o600,
+            size=len(file_text),
+            mtime_ns=9,
+            ctime_ns=8,
+            owner_user=1,
+            owner_group=1,
+            flags=0,
+            extended_attributes=(),
+            has_extended_acl=False,
+        ),
+        representation_digest=_A,
+    )
+    observed = _input(
+        file_digest=file_digest,
+        note_digest=note_digest,
+        direction=direction,
+    )
+    plan = plan_reconciliation(observed)
+    assert plan.attention[0].reason_code in {
+        "both_sides_changed",
+        "out_of_direction_change",
+    }
+    root = _root(direction=direction)
+    adapter = object.__new__(_ProductionRuntimeAdapter)
+    adapter._bundles = {
+        plan.observation_token: {
+            "binding-1": SimpleNamespace(
+                record=SimpleNamespace(
+                    binding_id="binding-1",
+                    root_id="root-1",
+                    normalized_relative_path="note.md",
+                    note_scope_id="local_note",
+                    note_id="note-1",
+                    serialization=file.observation.serialization,
+                ),
+                note=note,
+                file=file,
+            )
+        }
+    }
+    before = __import__("time").time_ns()
+
+    request = await adapter.build_conflict_execution_request(
+        root,
+        observed,
+        plan,
+        ConflictSelection("binding-1", choice),
+    )
+
+    assert type(request) is NotesSyncExecutionRequest
+    assert request.action_kind is action
+    assert request.journal_kind == f"resolve_{choice.value}"
+    assert request.direction is direction
+    assert request.operation_id == conflict_resolution_operation_id(
+        "root-1", "binding-1", plan.observation_token, choice
+    )
+    assert before + _CONFLICT_RETENTION_NS <= request.recovery_expires_at
+    assert isinstance(request.direction_override, NotesSyncDirectionOverride) is (
+        override_expected
+    )
+    if request.direction_override is not None:
+        assert request.direction_override.action_kind is action
+        assert request.direction_override.observation_token == plan.observation_token
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("direction", "file_digest", "note_digest", "override_expected"),
+    (
+        (NotesSyncDirection.BIDIRECTIONAL, _B, _C, False),
+        (NotesSyncDirection.FOLDER_TO_NOTES, _A, _C, False),
+        (NotesSyncDirection.NOTES_TO_FOLDER, _B, _A, True),
+    ),
+)
+async def test_production_keep_both_request_carries_complete_deterministic_authority(
+    direction: NotesSyncDirection,
+    file_digest: str,
+    note_digest: str,
+    override_expected: bool,
+) -> None:
+    note_text = "note side"
+    file_text = "file side"
+    note = NotesSyncNoteSnapshot(
+        "local_note",
+        "note-1",
+        "Original",
+        note_text,
+        5,
+        hashlib.sha256(note_text.encode()).hexdigest(),
+    )
+    file = NotesSyncFileSnapshot(
+        observation=NotesSyncFileObservation(
+            "note.md",
+            NotesSyncFileIdentity(1, 2, 1),
+            hashlib.sha256(file_text.encode()).hexdigest(),
+            len(file_text),
+            NotesSyncSerializationProfile(False, "lf", False, 0o600),
+        ),
+        text=file_text,
+        raw_bytes=file_text.encode(),
+        reviewed_state=SafeSyncBytes(
+            Path("note.md"),
+            file_text.encode(),
+            SafeSyncFileIdentity(1, 2, 1),
+            0o600,
+            len(file_text),
+            9,
+            8,
+            1,
+            1,
+            0,
+            (),
+            False,
+        ),
+        representation_digest=_A,
+    )
+    observed = _input(
+        file_digest=file_digest,
+        note_digest=note_digest,
+        direction=direction,
+    )
+    plan = plan_reconciliation(observed)
+    adapter = object.__new__(_ProductionRuntimeAdapter)
+    adapter._bundles = {
+        plan.observation_token: {
+            "binding-1": SimpleNamespace(
+                record=SimpleNamespace(
+                    binding_id="binding-1",
+                    root_id="root-1",
+                    note_scope_id="local_note",
+                    note_id="note-1",
+                    normalized_relative_path="note.md",
+                    serialization=file.observation.serialization,
+                ),
+                note=note,
+                file=file,
+            )
+        }
+    }
+
+    class _FolderService:
+        async def get_note_folder_by_id_for_sync(self, **_kwargs: object) -> object:
+            return SimpleNamespace(
+                folder_id="folder-1", name="My synced notes", deleted=False
+            )
+
+    adapter._service = _FolderService()
+    adapter._user_id = "user-1"
+    root = _root(direction=direction)
+    request = await adapter.build_conflict_execution_request(
+        root,
+        observed,
+        plan,
+        ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_BOTH),
+    )
+
+    assert type(request) is NotesSyncExecutionRequest
+    assert request.action_kind is NotesSyncActionKind.UPDATE_NOTE
+    assert request.journal_kind == "resolve_keep_both"
+    assert isinstance(request.keep_both, NotesSyncKeepBothAuthority)
+    assert request.keep_both.parent_folder_id == conflict_copies_folder_id("local_note")
+    assert request.keep_both.root_folder_id == conflict_root_folder_id(
+        "local_note", "root-1"
+    )
+    assert request.keep_both.copy_note_id == conflict_copy_note_id(
+        "root-1", "binding-1", plan.observation_token
+    )
+    assert request.keep_both.parent_folder_name == "Conflict copies"
+    assert request.keep_both.root_folder_name == "My synced notes"
+    assert request.keep_both.copy_title == "Original"
+    assert isinstance(request.direction_override, NotesSyncDirectionOverride) is (
+        override_expected
+    )
+    assert root.direction is direction
+
+
+@pytest.mark.asyncio
+async def test_selected_keep_file_executes_while_skip_remains_attention() -> None:
+    initial = _reviewed_subset_input()
+    final = _reviewed_subset_input(resolved=frozenset({"binding-1"}))
+    adapter = _SubsetAdapter(initial, final)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+    safe_id = owner._reviews["root-1"].safe_actions[0].action_id
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (safe_id,),
+        (
+            ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),
+            ConflictSelection("binding-2", NotesSyncConflictChoice.SKIP),
+        ),
+    )
+
+    assert type(result) is ConflictApplyResult
+    assert result.safe_completed == 1
+    assert result.conflicts_resolved == 1
+    assert result.unresolved_conflicts == 1
+    assert result.attention_remains is True
+    assert result.partial is False
+    assert result.needs_recovery is False
+    assert result.fresh_plan is not None
+    assert (
+        owner.snapshot().roots[0].status,
+        owner.snapshot().roots[0].next_action,
+    ) == (
+        "needs_attention",
+        "review_changes",
+    )
+    assert [request.binding_id for request in adapter.executor.requests] == [
+        "binding-safe",
+        "binding-1",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "direction",
+    (
+        NotesSyncDirection.BIDIRECTIONAL,
+        NotesSyncDirection.FOLDER_TO_NOTES,
+        NotesSyncDirection.NOTES_TO_FOLDER,
+    ),
+)
+async def test_keep_both_is_admitted_only_by_reviewed_runtime_without_direction_change(
+    direction: NotesSyncDirection,
+) -> None:
+    initial = _reviewed_subset_input(direction=direction, conflict_count=1)
+    final = _reviewed_subset_input(
+        direction=direction,
+        conflict_count=1,
+        resolved=frozenset({"binding-1"}),
+    )
+    adapter = _SubsetAdapter(initial, final)
+    root = _root(direction=direction)
+    owner = _owner(adapter, root)
+    token = _install_review(owner, initial)
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (),
+        (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_BOTH),),
+    )
+
+    assert result.conflicts_resolved == 1
+    assert adapter.executor.requests[0].journal_kind == "resolve_keep_both"
+    assert adapter.executor.requests[0].action_kind is NotesSyncActionKind.UPDATE_NOTE
+    assert owner._store.get_root("root-1").direction is direction
+
+
+@pytest.mark.asyncio
+async def test_terminal_refresh_with_fresh_safe_actions_remains_reviewable() -> None:
+    initial = _reviewed_subset_input(conflict_count=1)
+    resolved = _reviewed_subset_input(
+        resolved=frozenset({"binding-1"}),
+        conflict_count=1,
+    )
+    safe = replace(
+        resolved.bindings[0],
+        baseline_file_digest=_A,
+        baseline_note_digest=_A,
+        note_digest=_A,
+    )
+    final = replace(resolved, bindings=(safe, *resolved.bindings[1:]))
+    assert any(
+        action.kind
+        in {NotesSyncActionKind.UPDATE_NOTE, NotesSyncActionKind.UPDATE_FILE}
+        for action in plan_reconciliation(final).safe_actions
+    )
+    adapter = _SubsetAdapter(initial, final)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (),
+        (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),),
+    )
+
+    assert result.conflicts_resolved == 1
+    assert result.unresolved_conflicts == 0
+    assert result.attention_remains is False
+    assert result.partial is False
+    assert result.needs_recovery is False
+    assert result.fresh_plan is not None and any(
+        action.kind
+        in {NotesSyncActionKind.UPDATE_NOTE, NotesSyncActionKind.UPDATE_FILE}
+        for action in result.fresh_plan.safe_actions
+    )
+    root_status = owner.snapshot().roots[0]
+    assert (root_status.status, root_status.next_action) == (
+        "changes_available",
+        "review_changes",
+    )
+
+
+@pytest.mark.asyncio
+async def test_terminal_refresh_with_no_remaining_work_is_up_to_date() -> None:
+    initial = _reviewed_subset_input(conflict_count=1)
+    final = _reviewed_subset_input(
+        resolved=frozenset({"binding-1"}),
+        conflict_count=1,
+    )
+    assert not any(
+        action.kind
+        in {NotesSyncActionKind.UPDATE_NOTE, NotesSyncActionKind.UPDATE_FILE}
+        for action in plan_reconciliation(final).safe_actions
+    )
+    assert plan_reconciliation(final).attention == ()
+    adapter = _SubsetAdapter(initial, final)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (),
+        (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),),
+    )
+
+    assert result.attention_remains is False
+    assert result.fresh_plan == plan_reconciliation(final)
+    root_status = owner.snapshot().roots[0]
+    assert (root_status.status, root_status.next_action) == (
+        "up_to_date",
+        "sync_now",
+    )
+
+
+@pytest.mark.asyncio
+async def test_safe_actions_run_in_plan_order_before_conflicts_in_binding_order() -> (
+    None
+):
+    initial = _reviewed_subset_input(conflict_count=3)
+    final = _reviewed_subset_input(
+        resolved=frozenset({"binding-1", "binding-2"}),
+        conflict_count=3,
+    )
+    adapter = _SubsetAdapter(initial, final)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+    safe_id = owner._reviews["root-1"].safe_actions[0].action_id
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (safe_id,),
+        (
+            ConflictSelection("binding-2", NotesSyncConflictChoice.KEEP_NOTE),
+            ConflictSelection("binding-3", NotesSyncConflictChoice.SKIP),
+            ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),
+        ),
+    )
+
+    assert [request.binding_id for request in adapter.executor.requests] == [
+        "binding-safe",
+        "binding-1",
+        "binding-2",
+    ]
+    assert result.safe_completed == 1
+    assert result.conflicts_resolved == 2
+    assert result.unresolved_conflicts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "direction",
+    (
+        NotesSyncDirection.BIDIRECTIONAL,
+        NotesSyncDirection.FOLDER_TO_NOTES,
+        NotesSyncDirection.NOTES_TO_FOLDER,
+    ),
+)
+async def test_reviewed_conflict_apply_never_changes_root_direction(
+    direction: NotesSyncDirection,
+) -> None:
+    initial = _reviewed_subset_input(direction=direction)
+    final = _reviewed_subset_input(
+        direction=direction,
+        resolved=frozenset({"binding-1"}),
+    )
+    adapter = _SubsetAdapter(initial, final)
+    root = _root(direction=direction)
+    owner = _owner(adapter, root)
+    token = _install_review(owner, initial)
+
+    await owner.apply_reviewed(
+        "root-1",
+        token,
+        (),
+        (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_NOTE),),
+    )
+
+    assert owner._store.get_root("root-1").direction is direction
+
+
+@pytest.mark.asyncio
+async def test_nonterminal_conflict_stops_later_work_and_reports_honest_partial() -> (
+    None
+):
+    initial = _reviewed_subset_input(conflict_count=3)
+    final = _reviewed_subset_input(conflict_count=3)
+    adapter = _SubsetAdapter(initial, final, stop_binding_id="binding-1")
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+    safe_id = owner._reviews["root-1"].safe_actions[0].action_id
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (safe_id,),
+        (
+            ConflictSelection("binding-2", NotesSyncConflictChoice.KEEP_NOTE),
+            ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),
+        ),
+    )
+
+    assert [request.binding_id for request in adapter.executor.requests] == [
+        "binding-safe",
+        "binding-1",
+    ]
+    assert result.safe_completed == 1
+    assert result.conflicts_resolved == 0
+    assert result.partial is True
+    assert result.needs_recovery is False
+    assert result.fresh_plan is None
+
+
+@pytest.mark.asyncio
+async def test_first_conflict_capacity_refusal_is_not_published_as_recoverable() -> (
+    None
+):
+    initial = _reviewed_subset_input(conflict_count=1)
+    adapter = _SubsetAdapter(initial, initial, refuse_before_admission=True)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (),
+        (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),),
+    )
+
+    assert len(result.results) == 1
+    assert result.results[0].recovery_required is False
+    assert result.needs_recovery is False
+    assert result.partial is False
+    assert result.fresh_plan is None
+    root = owner.snapshot().roots[0]
+    assert (root.status, root.next_action, root.action_id) == (
+        "needs_attention",
+        "review_changes",
+        None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    (
+        "deletion_group",
+        "deletion_attention",
+        "pause",
+        "managed_placement",
+        "root_skip",
+        "capability_skip",
+        "ineligible_reason",
+    ),
+)
+async def test_non_content_blockers_refuse_before_recovery_admission(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
+    observed = _input(file_digest=_B, note_digest=_C)
+    plan = plan_reconciliation(observed)
+    deletion = ReconciliationAttention(
+        ReconciliationAttentionKind.DELETION_REVIEW,
+        "file_missing",
+        "binding-1",
+    )
+    if case == "deletion_group":
+        plan = replace(
+            plan, attention=(), deletion_groups=(DeletionGroup((deletion,)),)
+        )
+    elif case == "deletion_attention":
+        plan = replace(plan, attention=(deletion,))
+    elif case == "pause":
+        plan = replace(
+            plan,
+            attention=(
+                ReconciliationAttention(
+                    ReconciliationAttentionKind.PAUSE,
+                    "duplicate_authority",
+                    "binding-1",
+                ),
+            ),
+        )
+    elif case == "managed_placement":
+        plan = replace(
+            plan,
+            managed_placement_effects=(
+                ManagedPlacementEffect(
+                    ManagedPlacementEffectKind.FILE_MOVE,
+                    "binding-1",
+                ),
+            ),
+        )
+    elif case in {"root_skip", "capability_skip"}:
+        plan = replace(
+            plan,
+            attention=(),
+            skips=(
+                ReconciliationSkip(
+                    (
+                        ReconciliationSkipKind.OFFLINE
+                        if case == "root_skip"
+                        else ReconciliationSkipKind.CAPABILITY
+                    ),
+                    "root_offline" if case == "root_skip" else "write_unsupported",
+                ),
+            ),
+        )
+    else:
+        plan = replace(
+            plan,
+            attention=(
+                ReconciliationAttention(
+                    ReconciliationAttentionKind.CONFLICT,
+                    "duplicate_authority",
+                    "binding-1",
+                ),
+            ),
+        )
+    adapter = _SubsetAdapter(observed, observed)
+    owner = _owner(adapter, _root())
+    owner._reviews["root-1"] = plan
+    monkeypatch.setattr(runtime_module, "plan_reconciliation", lambda _value: plan)
+
+    with pytest.raises(ValueError, match="not_executable"):
+        await owner.apply_reviewed(
+            "root-1",
+            plan.observation_token,
+            (),
+            (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),),
+        )
+
+    assert adapter.executor.requests == []
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+async def test_activation_review_refuses_before_recovery_admission() -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    root = replace(_root(), last_status_code="migration_review_required")
+    adapter = _SubsetAdapter(observed, observed)
+    owner = _owner(adapter, root)
+    token = _install_review(owner, observed)
+
+    with pytest.raises(ValueError, match="not_executable"):
+        await owner.apply_reviewed(
+            "root-1",
+            token,
+            (),
+            (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),),
+        )
+
+    assert adapter.executor.requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ("unknown", "duplicate"))
+async def test_invalid_conflict_selection_refuses_before_recovery_admission(
+    case: str,
+) -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _SubsetAdapter(observed, observed)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+    selection = ConflictSelection(
+        "binding-other" if case == "unknown" else "binding-1",
+        NotesSyncConflictChoice.KEEP_FILE,
+    )
+    selections = (selection, selection) if case == "duplicate" else (selection,)
+
+    with pytest.raises(ValueError, match="selection"):
+        await owner.apply_reviewed("root-1", token, (), selections)
+
+    assert adapter.executor.requests == []
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+async def test_apply_requires_final_observation_token_even_if_plan_claims_equality(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _SubsetAdapter(observed, observed)
+    owner = _owner(adapter, _root())
+    reviewed = plan_reconciliation(observed)
+    owner._reviews["root-1"] = reviewed
+    stale_token = hashlib.sha256(b"stale-apply").hexdigest()
+
+    class _EqualPlan:
+        root_id = reviewed.root_id
+        observation_token = stale_token
+        safe_actions = reviewed.safe_actions
+        attention = reviewed.attention
+        skips = reviewed.skips
+        managed_placement_effects = reviewed.managed_placement_effects
+        deletion_groups = reviewed.deletion_groups
+
+        def __eq__(self, _other: object) -> bool:
+            return True
+
+    monkeypatch.setattr(
+        runtime_module, "plan_reconciliation", lambda _value: _EqualPlan()
+    )
+
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.apply_reviewed("root-1", reviewed.observation_token, (), ())
+
+    assert adapter.executor.requests == []
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+async def test_active_receipts_are_ordered_capped_dismissed_and_superseded() -> None:
+    owner = _owner(_Adapter(_input()), _root())
+    for index in range(101):
+        owner._remember_conflict_receipt(
+            "root-1",
+            f"binding-{index}",
+            f"operation-{index}",
+            NotesSyncConflictChoice.KEEP_FILE,
+        )
+
+    receipts = await owner.active_conflict_receipts("root-1")
+
+    assert len(receipts) == 100
+    assert receipts[0].operation_id == "operation-1"
+    assert receipts[-1].operation_id == "operation-100"
+    owner.dismiss_conflict_receipt("root-1", "operation-50")
+    assert "operation-50" not in {
+        receipt.operation_id
+        for receipt in await owner.active_conflict_receipts("root-1")
+    }
+    owner._remember_conflict_receipt(
+        "root-1",
+        "binding-100",
+        "operation-new",
+        NotesSyncConflictChoice.KEEP_NOTE,
+    )
+    superseded = await owner.active_conflict_receipts("root-1")
+    assert "operation-100" not in {receipt.operation_id for receipt in superseded}
+    assert superseded[-1].operation_id == "operation-new"
+    assert (
+        await _owner(_Adapter(_input()), _root()).active_conflict_receipts("root-1")
+        == ()
+    )
+
+
+@pytest.mark.asyncio
+async def test_active_receipts_use_fresh_bounded_authority_and_remove_undone() -> None:
+    adapter = _Adapter(_input())
+    owner = _owner(adapter, _root())
+    for operation_id in ("available-operation", "fallback-operation", "undone-op"):
+        owner._remember_conflict_receipt(
+            "root-1",
+            f"binding-{operation_id}",
+            operation_id,
+            NotesSyncConflictChoice.KEEP_FILE,
+        )
+    adapter.executor.undo_projections = {
+        "available-operation": SimpleNamespace(
+            undo_available=True,
+            undo_reason=None,
+            state="completed",
+            note_title="  Current\n" + "title " * 80,
+            relative_path="folder/note.md",
+        ),
+        "fallback-operation": SimpleNamespace(
+            undo_available=False,
+            undo_reason="Undo expired",
+            state="completed",
+            note_title=None,
+            relative_path="/private/root/note.md",
+        ),
+        "undone-op": SimpleNamespace(
+            undo_available=False,
+            undo_reason="Undone",
+            state="undone",
+            note_title="Old title",
+            relative_path="note.md",
+        ),
+    }
+
+    receipts = await owner.active_conflict_receipts("root-1")
+
+    assert [row.operation_id for row in receipts] == [
+        "available-operation",
+        "fallback-operation",
+    ]
+    assert receipts[0].item_label.startswith("Current title")
+    assert len(receipts[0].item_label) <= 160
+    assert receipts[0].undo_available is True
+    assert receipts[0].state == "completed"
+    assert receipts[1].item_label == "fallback"
+    assert receipts[1].undo_available is False
+    assert receipts[1].undo_reason == "Undo expired"
+    assert "/private/" not in repr(receipts)
+    assert repr(receipts[0]) == "RuntimeConflictReceipt(<private>)"
+    assert "undone-op" not in owner._active_receipts["root-1"]
+
+
+@pytest.mark.asyncio
+async def test_active_receipt_read_failure_is_unavailable_without_leakage() -> None:
+    adapter = _Adapter(_input())
+    owner = _owner(adapter, _root())
+    operation_id = "receipt-unavailable-operation"
+    owner._remember_conflict_receipt(
+        "root-1",
+        "private-binding-id",
+        operation_id,
+        NotesSyncConflictChoice.KEEP_FILE,
+    )
+    secret = "private-binding-id /absolute/private.md content-hash backend-secret"
+    adapter.executor.undo_projection_errors[operation_id] = RuntimeError(secret)
+
+    receipts = await owner.active_conflict_receipts("root-1")
+
+    assert len(receipts) == 1
+    assert receipts[0].item_label == operation_id[:8]
+    assert receipts[0].state == "unavailable"
+    assert receipts[0].undo_available is False
+    assert receipts[0].undo_reason == "Unavailable"
+    assert secret not in repr(receipts)
+    assert "private-binding-id" not in repr(receipts)
+
+
+@pytest.mark.asyncio
+async def test_resolution_history_uses_fresh_status_labels_and_fallback() -> None:
+    adapter = _Adapter(_input())
+    store = _Store(_root())
+    owner = _owner(adapter, _root(), store=store)
+    store.history = [
+        NotesSyncResolutionHistoryRecord(
+            operation_id="changed-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_file",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=3,
+            updated_at=4,
+            recovery_expires_at=999,
+            undo_state=None,
+            undo_reason_code=None,
+        ),
+        NotesSyncResolutionHistoryRecord(
+            operation_id="expired-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_note",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=2,
+            updated_at=3,
+            recovery_expires_at=1,
+            undo_state=None,
+            undo_reason_code=None,
+        ),
+        NotesSyncResolutionHistoryRecord(
+            operation_id="undone-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_both",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=1,
+            updated_at=2,
+            recovery_expires_at=None,
+            undo_state=NotesSyncOperationState.COMPLETED,
+            undo_reason_code=None,
+        ),
+    ]
+    adapter.executor.undo_projections = {
+        "changed-operation": SimpleNamespace(
+            undo_available=False,
+            undo_reason="Changed since resolution",
+            state="needs_attention",
+            note_title="Current title",
+            relative_path="folder/note.md",
+        ),
+        "expired-operation": SimpleNamespace(
+            undo_available=False,
+            undo_reason="Undo expired",
+            state="completed",
+            note_title=None,
+            relative_path=None,
+        ),
+        "undone-operation": SimpleNamespace(
+            undo_available=False,
+            undo_reason="Undone",
+            state="undone",
+            note_title=None,
+            relative_path=None,
+        ),
+    }
+
+    rows = await owner.resolution_history("root-1", now=100)
+
+    assert [row.item_label for row in rows] == [
+        "Current title — folder/note.md",
+        "expired-",
+        "undone-o",
+    ]
+    assert [row.state for row in rows] == [
+        "needs_attention",
+        "completed",
+        "undone",
+    ]
+    assert [row.undo_reason for row in rows] == [
+        "Changed since resolution",
+        "Undo expired",
+        "Undone",
+    ]
+    assert adapter.executor.inspected_undo == [
+        ("root-1", "changed-operation", 100),
+        ("root-1", "expired-operation", 100),
+        ("root-1", "undone-operation", 100),
+    ]
+    assert all("binding-1" not in repr(row) for row in rows)
+    assert repr(rows[0]) == "RuntimeConflictHistoryRow(<private>)"
+
+
+@pytest.mark.asyncio
+async def test_resolution_history_read_failure_is_unavailable_without_leakage() -> None:
+    adapter = _Adapter(_input())
+    store = _Store(_root())
+    owner = _owner(adapter, _root(), store=store)
+    operation_id = "history-unavailable-operation"
+    store.history = [
+        NotesSyncResolutionHistoryRecord(
+            operation_id=operation_id,
+            binding_id="private-binding-id",
+            kind="resolve_keep_note",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=2,
+            updated_at=3,
+            recovery_expires_at=999,
+            undo_state=None,
+            undo_reason_code=None,
+        )
+    ]
+    secret = "private-binding-id /absolute/private.md content-hash backend-secret"
+    adapter.executor.undo_projection_errors[operation_id] = RuntimeError(secret)
+
+    rows = await owner.resolution_history("root-1", now=100)
+
+    assert len(rows) == 1
+    assert rows[0].item_label == operation_id[:8]
+    assert rows[0].state == "completed"
+    assert rows[0].undo_available is False
+    assert rows[0].undo_reason == "Unavailable"
+    assert secret not in repr(rows)
+    assert "private-binding-id" not in repr(rows)
+
+
+@pytest.mark.parametrize(
+    "undo_state",
+    (
+        NotesSyncOperationState.RECOVERY_ADMITTED,
+        NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+        NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+        NotesSyncOperationState.BINDING_UPDATED,
+        NotesSyncOperationState.VERIFIED,
+        NotesSyncOperationState.NEEDS_ATTENTION,
+    ),
+)
+@pytest.mark.asyncio
+async def test_resolution_history_incomplete_undo_read_failure_is_unavailable(
+    undo_state: NotesSyncOperationState,
+) -> None:
+    adapter = _Adapter(_input())
+    store = _Store(_root())
+    owner = _owner(adapter, _root(), store=store)
+    operation_id = f"history-{undo_state.value}-operation"
+    store.history = [
+        NotesSyncResolutionHistoryRecord(
+            operation_id=operation_id,
+            binding_id="private-binding-id",
+            kind="resolve_keep_file",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=2,
+            updated_at=3,
+            recovery_expires_at=999,
+            undo_state=undo_state,
+            undo_reason_code="transient_backend_failure",
+        )
+    ]
+    adapter.executor.undo_projection_errors[operation_id] = RuntimeError(
+        "private-binding-id /absolute/private.md backend-secret"
+    )
+
+    rows = await owner.resolution_history("root-1", now=100)
+
+    assert len(rows) == 1
+    assert rows[0].item_label == operation_id[:8]
+    assert rows[0].state == undo_state.value
+    assert rows[0].undo_available is False
+    assert rows[0].undo_reason == "Unavailable"
+    assert "private-binding-id" not in repr(rows)
+    assert "backend-secret" not in repr(rows)
+
+
+@pytest.mark.asyncio
+async def test_resolution_history_fallback_preserves_proven_terminal_statuses() -> None:
+    adapter = _Adapter(_input())
+    store = _Store(_root())
+    owner = _owner(adapter, _root(), store=store)
+    store.history = [
+        NotesSyncResolutionHistoryRecord(
+            operation_id="changed-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_file",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=3,
+            updated_at=4,
+            recovery_expires_at=999,
+            undo_state=NotesSyncOperationState.NEEDS_ATTENTION,
+            undo_reason_code="changed_since_resolution",
+        ),
+        NotesSyncResolutionHistoryRecord(
+            operation_id="expired-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_note",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=2,
+            updated_at=3,
+            recovery_expires_at=99,
+            undo_state=None,
+            undo_reason_code=None,
+        ),
+        NotesSyncResolutionHistoryRecord(
+            operation_id="undone-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_both",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=1,
+            updated_at=2,
+            recovery_expires_at=999,
+            undo_state=NotesSyncOperationState.COMPLETED,
+            undo_reason_code=None,
+        ),
+    ]
+    secret = RuntimeError("private-binding-id /absolute/private.md backend-secret")
+    adapter.executor.undo_projection_errors = {
+        record.operation_id: secret for record in store.history
+    }
+
+    rows = await owner.resolution_history("root-1", now=100)
+
+    assert [row.state for row in rows] == [
+        "needs_attention",
+        "completed",
+        "undone",
+    ]
+    assert [row.undo_reason for row in rows] == [
+        "Changed since resolution",
+        "Undo expired",
+        "Undone",
+    ]
+    assert all("binding-1" not in repr(row) for row in rows)
+    assert all("backend-secret" not in repr(row) for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_undo_resolution_is_root_serialized_refreshes_and_dismisses_receipt() -> (
+    None
+):
+    adapter = _Adapter(_input())
+    owner = _owner(adapter, _root())
+    owner._remember_conflict_receipt(
+        "root-1",
+        "binding-1",
+        "source-operation",
+        NotesSyncConflictChoice.KEEP_FILE,
+    )
+
+    result = await owner.undo_resolution("root-1", "source-operation")
+
+    assert result.state is NotesSyncOperationState.COMPLETED
+    assert adapter.executor.undo_calls == [("root-1", "source-operation")]
+    assert await owner.active_conflict_receipts("root-1") == ()
+    assert adapter.observe_calls == ["root-1"]
+    assert owner._reviews["root-1"] == plan_reconciliation(adapter.inputs["root-1"])
+
+
+@pytest.mark.parametrize(
+    ("fresh_input", "expected_status", "expected_action", "blocked"),
+    (
+        (
+            _input(generation=2, file_digest=_B, note_digest=_C),
+            "needs_attention",
+            "review_changes",
+            True,
+        ),
+        (
+            _input(generation=2, file_digest=_B, note_digest=_A),
+            "changes_available",
+            "review_changes",
+            False,
+        ),
+        (
+            _input(generation=2, file_digest=_A, note_digest=_A),
+            "up_to_date",
+            "sync_now",
+            False,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_completed_undo_publishes_fresh_plan_status_once(
+    fresh_input: ReconciliationInput,
+    expected_status: str,
+    expected_action: str,
+    blocked: bool,
+) -> None:
+    adapter = _Adapter(_input())
+    adapter.executor.undo_input = fresh_input
+    owner = _owner(adapter, _root())
+
+    result = await owner.undo_resolution("root-1", "source-operation")
+
+    assert result.state is NotesSyncOperationState.COMPLETED
+    assert adapter.observe_calls == ["root-1"]
+    snapshot = owner.snapshot().roots[0]
+    assert (snapshot.status, snapshot.next_action) == (
+        expected_status,
+        expected_action,
+    )
+    assert ("root-1" in owner._blocked_roots) is blocked
+    assert owner._reviews["root-1"] == plan_reconciliation(fresh_input)
+
+
+@pytest.mark.asyncio
+async def test_apply_and_undo_share_root_lock_and_loser_revalidates() -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    adapter.executor.undo_release.clear()
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+    lock = _ObservedLock()
+    owner._mutation_locks["root-1"] = lock
+
+    undo = asyncio.create_task(owner.undo_resolution("root-1", "source-operation"))
+    await _wait(adapter.executor.undo_entered)
+    apply = asyncio.create_task(owner.apply_reviewed("root-1", token, (), ()))
+    await _wait(lock.waiting)
+    adapter.executor.undo_release.set()
+    undo_result, apply_result = await asyncio.gather(
+        undo, apply, return_exceptions=True
+    )
+
+    assert isinstance(undo_result, NotesSyncExecutionResult)
+    assert undo_result.state is NotesSyncOperationState.COMPLETED
+    assert isinstance(apply_result, ValueError)
+    assert str(apply_result) == "stale_review"
+    assert adapter.executor.mutations == 1

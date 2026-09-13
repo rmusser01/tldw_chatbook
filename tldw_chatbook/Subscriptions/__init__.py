@@ -35,8 +35,6 @@ _OPTIONAL = {
     "RateLimiter": (".monitoring_engine", "RateLimiter"),
     "CircuitBreaker": (".monitoring_engine", "CircuitBreaker"),
     "ContentExtractor": (".monitoring_engine", "ContentExtractor"),
-    "SecurityValidator": (".security", "SecurityValidator"),
-    "SSRFProtector": (".security", "SSRFProtector"),
     "CredentialEncryptor": (".security", "CredentialEncryptor"),
     "InputValidator": (".security", "InputValidator"),
 }

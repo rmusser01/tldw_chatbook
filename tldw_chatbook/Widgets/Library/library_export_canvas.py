@@ -13,6 +13,7 @@ from tldw_chatbook.Library.library_export_state import (
     DESTINATION_PLACEHOLDER_COPY,
     EXPORT_BUTTON_COPY,
     EXPORT_HEADER_COPY,
+    EXPORT_RETRY_BUTTON_COPY,
     MEDIA_QUALITY_OPTIONS,
     LibraryExportFormState,
     export_button_tooltip,
@@ -53,13 +54,26 @@ def apply_library_export_submit_gate(
         None.
     """
     submit_button.disabled = not state.export_enabled
+    # task-32232 AC#3: after a failed run the same button IS the retry --
+    # say so, rather than leaving "Export bundle (.zip)" to be re-pressed
+    # on faith (the ingest queue's "Retry this batch" grammar).
     submit_button.label = library_disabled_action_label(
-        EXPORT_BUTTON_COPY, submit_button.disabled
+        EXPORT_RETRY_BUTTON_COPY if state.error_line else EXPORT_BUTTON_COPY,
+        submit_button.disabled,
     )
     # task-2858 AC#3 (LIB-11): F-018 -- the tooltip always explains either
     # what pressing Export will do or the SAME blocker ``disabled``
     # reflects.
     submit_button.tooltip = export_button_tooltip(state)
+    # task-32362: the inline reason under the button is a fourth thing that
+    # flips with ``disabled``, so it flips here too -- otherwise the
+    # counts-landing patcher (which never recomposes) leaves it stale.
+    # ``parent`` is None during ``compose``, where the caller sets it
+    # directly; once mounted, ``query`` finds it without raising.
+    if submit_button.parent is not None:
+        for reason in submit_button.parent.query("#library-export-submit-reason"):
+            reason.update(state.submit_blocked_reason)
+            reason.display = bool(state.submit_blocked_reason)
 
 class LibraryExportCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library export canvas: scope summary + chatbook export form.
@@ -171,9 +185,13 @@ class LibraryExportCanvas(PostRecomposeCallback, VerticalScroll):
             classes="library-canvas-action",
             compact=True,
         )
+        # task-32251 AC#3: a refused destination says why HERE, on the row
+        # under the button that was just pressed -- not as a toast that has
+        # already gone by the time the eye gets back.
         yield Static(
-            state.destination or DESTINATION_PLACEHOLDER_COPY,
+            state.destination or state.destination_error or DESTINATION_PLACEHOLDER_COPY,
             id="library-export-destination-line",
+            classes="destination-purpose" if state.destination_error else "",
             markup=False,
         )
         if state.overwrite_line:
@@ -218,6 +236,26 @@ class LibraryExportCanvas(PostRecomposeCallback, VerticalScroll):
         )
         last_export_line.display = bool(state.last_export_line)
         yield last_export_line
+        # task-32353 AC#2: what the button will actually write, stated
+        # directly above it. Display-toggled rather than conditionally
+        # yielded for the same reason as the quiet lines above -- the
+        # counts-landing patcher updates it in place, never by recompose.
+        consequence_line = Static(
+            state.consequence_line,
+            id="library-export-consequence-line",
+            classes="library-export-quiet-line",
+            markup=False,
+        )
+        consequence_line.display = bool(state.consequence_line)
+        yield consequence_line
+        contents = Static(
+            "\n".join(state.contents_lines),
+            id="library-export-contents",
+            classes="library-export-quiet-line",
+            markup=False,
+        )
+        contents.display = bool(state.contents_lines)
+        yield contents
         submit_button = Button(
             EXPORT_BUTTON_COPY,
             id="library-export-submit",
@@ -229,6 +267,18 @@ class LibraryExportCanvas(PostRecomposeCallback, VerticalScroll):
         # ``apply_library_export_submit_gate``).
         apply_library_export_submit_gate(submit_button, state)
         yield submit_button
+        # task-32362: the reason reaches a keyboard-first user on the next
+        # line, not only a hover tooltip -- the same inline-reason grammar
+        # task-31981 gave the Reader's blocked Generate. Always mounted, so
+        # the in-place gate patchers can toggle it alongside `disabled`.
+        submit_reason = Static(
+            state.submit_blocked_reason,
+            id="library-export-submit-reason",
+            classes="library-media-action-reason",
+            markup=False,
+        )
+        submit_reason.display = bool(state.submit_blocked_reason)
+        yield submit_reason
         cancel_button = Button(
             "Cancel",
             id="library-export-cancel",

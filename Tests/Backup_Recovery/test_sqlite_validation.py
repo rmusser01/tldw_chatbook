@@ -156,9 +156,8 @@ def test_actual_operational_owners(tmp_path, name):
         if name == "file_notes":
             with closing(sqlite3.connect(path)) as destination:
                 store._get_connection().backup(destination)
-        if name == "receipts":
-            with store.transaction():
-                pass
+        if name in {"kanban", "notifications", "events", "sync"}:
+            store._ensure_schema()
     finally:
         if hasattr(store, "close"):
             store.close()

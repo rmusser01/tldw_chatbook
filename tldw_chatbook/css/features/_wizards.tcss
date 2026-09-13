@@ -1,10 +1,6 @@
-/* ========================================
- * Wizard Framework Styles
- * ======================================== */
+/* Wizard Framework Styles */
 
-/* ========================================
- * Base Wizard Container
- * ======================================== */
+/* Base Wizard Container */
 
 .wizard-container {
     layout: vertical;
@@ -26,14 +22,14 @@
     height: 3;
 }
 
-/* ========================================
- * Progress Indicator
- * ======================================== */
+/* Progress Indicator */
 
 .wizard-progress {
     layout: horizontal;
     align: center middle;
-    padding: 2;
+    /* TASK-21148 (UAT Z-3): 1-row padding — the old 2 spent four rows of
+       chrome before any step content at 40-row terminals. */
+    padding: 1 2;
     background: $panel;
     border-bottom: solid $primary-darken-2;
     height: auto;
@@ -93,9 +89,7 @@
     background: $success;
 }
 
-/* ========================================
- * Step Container
- * ======================================== */
+/* Step Container */
 
 .wizard-steps-container {
     height: 1fr;
@@ -108,7 +102,7 @@
 .wizard-step {
     width: 100%;
     height: 100%;
-    padding: 2;
+    padding: 1 2;
     display: block;
     visibility: hidden;
 }
@@ -123,9 +117,7 @@
 
 /* Step animations removed - not supported in Textual */
 
-/* ========================================
- * Navigation Bar
- * ======================================== */
+/* Navigation Bar */
 
 .wizard-navigation {
     layout: horizontal;
@@ -135,6 +127,20 @@
     border-top: thick $primary-darken-2;
     height: 5;
 }
+
+/* TASK-21142 (UAT N-2): Textual focus order is VISUAL (y, x) order, so the
+   footer adopts the Windows-wizard convention — progress text docked left,
+   right-aligned [Back][Next][Exit] cluster — making Next the first enabled
+   Tab stop after step content, before the abandon action. */
+.setup-navigation { align: right middle; }
+.setup-navigation .wizard-progress-text {
+    dock: left;
+    width: auto;
+    height: 100%;
+    content-align: left middle;
+    padding: 0 2;
+}
+.setup-navigation #wizard-cancel { height: 3; min-width: 12; }
 
 .wizard-progress-text {
     width: 1fr;
@@ -155,9 +161,7 @@
     opacity: 0.5;
 }
 
-/* ========================================
- * Content Type Selection
- * ======================================== */
+/* Content Type Selection */
 
 
 .content-type-card {
@@ -197,9 +201,7 @@
     text-style: bold underline;
 }
 
-/* ========================================
- * Content Selection
- * ======================================== */
+/* Content Selection */
 
 
 .content-search-input {
@@ -242,9 +244,7 @@
     padding: 2;
 }
 
-/* ========================================
- * Quick Settings
- * ======================================== */
+/* Quick Settings */
 
 .settings-section {
     margin-bottom: 2;
@@ -369,9 +369,7 @@
     margin-bottom: 1;
 }
 
-/* ========================================
- * Processing Step
- * ======================================== */
+/* Processing Step */
 
 
 .progress-text {
@@ -402,9 +400,7 @@
 }
 
 
-/* ========================================
- * Validation and Errors
- * ======================================== */
+/* Validation and Errors */
 
 .error-message {
     color: $error;
@@ -415,24 +411,18 @@
     text-align: center;
 }
 
-/* ========================================
- * Animations and Transitions
- * ======================================== */
+/* Animations and Transitions */
 
 /* Staggered entrance animations removed - not supported in Textual */
 
 /* Progress bar animation removed - not supported in Textual */
 
 
-/* ========================================
- * Responsive adjustments
- * ======================================== */
+/* Responsive adjustments */
 
 /* Media queries not supported in Textual - using fixed layouts */
 
-/* ========================================
- * Chatbook Creation Wizard Specific Styles
- * ======================================== */
+/* Chatbook Creation Wizard Specific Styles */
 
 /* Basic Info Step */
 BasicInfoStep {
@@ -632,9 +622,7 @@ ProgressStep .hidden {
     display: none;
 }
 
-/* ========================================
- * Chatbook Import Wizard Specific Styles
- * ======================================== */
+/* Chatbook Import Wizard Specific Styles */
 
 /* File Selection Step */
 FileSelectionStep {
@@ -917,12 +905,52 @@ ImportProgressStep .status-item.error {
     color: $error;
 }
 
+/* A type that imported nothing (all skipped) or only partly imported is not
+ * green -- the colour is part of the claim (task-19734). */
+ImportProgressStep .status-item.warning {
+    color: $warning;
+}
+
+/* The completion banner is coloured by the outcome it reports, so a run that
+ * imported nothing cannot be framed in the success palette (task-19734). */
 ImportProgressStep .completion-message {
     text-align: center;
     padding: 2;
     margin-top: 2;
+    background: $panel;
+    border: round $background-darken-1;
+}
+
+ImportProgressStep .completion-message.outcome-imported {
     background: $success 20%;
     border: round $success;
+}
+
+ImportProgressStep .completion-message.outcome-partial {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+ImportProgressStep .completion-message.outcome-skipped {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+ImportProgressStep .completion-message.outcome-empty {
+    background: $panel;
+    border: round $background-darken-1;
+}
+
+/* A chatbook that HAD items none of which were attempted is not the same as
+ * an empty one, and it is not a success either (task-19734). */
+ImportProgressStep .completion-message.outcome-excluded {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+ImportProgressStep .completion-message.outcome-failed {
+    background: $error 20%;
+    border: round $error;
 }
 
 ImportProgressStep .completion-stats {
@@ -948,9 +976,7 @@ ImportProgressStep .stat-value {
     text-align: right;
 }
 
-/* ========================================
- * SmartContentTree Styles (used by wizards)
- * ======================================== */
+/* SmartContentTree Styles (used by wizards) */
 
 SmartContentTree {
     layout: vertical;
@@ -1046,6 +1072,9 @@ SmartContentTree Tree > .selected-node {
     text-style: bold;
     margin-top: 1;
 }
+/* TASK-21140 (UAT G-3): calm informational lines that previously borrowed
+   the error class and rendered reassurance as a failure. */
+.setup-step-note { color: $text-muted; margin-top: 1; }
 .setup-field-label { margin-top: 1; }
 .setup-probe-status { color: $text-muted; margin-top: 1; }
 .setup-summary-row { height: 1; }
@@ -1144,19 +1173,9 @@ SmartContentTree Tree > .selected-node {
     margin-top: 1;
 }
 
-/* Design intent #2/#3: a step's internal choice list (Provider's ~27-row
- * catalog; Model's up-to-20 discovered models; Appearance's 20+ themes) must
- * not by itself consume the whole step's visible height and push the rest
- * of the step (the API-key field, Summary-style action rows) out of view.
- * RadioSet is a VerticalScroll (Textual default height: auto, no cap) --
- * capping it here gives it its OWN scrollbar so the step's remaining
- * content stays on screen without any manual scrolling.
- *
- * A five-row minimum keeps the control from collapsing as asynchronous
- * labels/statuses change; the seven-row cap exposes more choices when space
- * is available without letting the catalog displace the key field or footer.
- * At supported narrow sizes the containing .setup-step remains the scroll
- * viewport, while the fixed progress/navigation regions stay on screen. */
+/* Design intent #2/#3: keep choice lists independently scrollable at 5–7 rows
+ * so catalogs cannot displace the key field or footer. The containing step
+ * remains the narrow-screen viewport; progress/navigation stay fixed. */
 .setup-choice-list {
     min-height: 5;
     max-height: 7;
@@ -1178,6 +1197,12 @@ SmartContentTree Tree > .selected-node {
     dock: bottom;
     height: auto;
     padding: 0 4 1 4;
+}
+/* task-32140 review: five buttons no longer fit one non-wrapping row at
+ * 80x24 or 120x40 (Horizontal never wraps) -- two docked rows instead. */
+.setup-summary-actions-row {
+    height: auto;
+    margin-bottom: 1;
 }
 .setup-summary-actions Button {
     margin-right: 2;
@@ -1315,16 +1340,18 @@ SmartContentTree Tree > .selected-node {
     background: $panel;
 }
 
+/* TASK-21148 (UAT F-2/F-3): the tracker stacks each title UNDER its number
+   box, so the row needs box(3) + title(1) = 4 content rows and items size
+   themselves. The old fixed 4/3 caps clipped the stacked titles. */
 FirstRunSetupWizard SetupWizardContainer .wizard-progress {
-    height: 4;
-    min-height: 4;
-    max-height: 4;
+    height: auto;
+    max-height: 5;
     padding: 0 1;
     margin: 0;
 }
 
 .setup-progress-item {
-    height: 3;
+    height: auto;
     min-width: 0;
     margin: 0;
 }
@@ -1348,6 +1375,19 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
 
 .setup-progress-item.-complete .step-title {
     color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* TASK-21143 (UAT N-7): visited step whose probe failed — amber "!", never
+   the ✓ users read as "this part is OK". */
+.setup-progress-item.-attention .step-number {
+    background: $ds-surface-raised;
+    color: $warning;
+    border: solid $warning;
+    text-style: bold;
+}
+.setup-progress-item.-attention .step-title {
+    color: $warning;
     text-style: bold;
 }
 
@@ -1419,3 +1459,39 @@ WizardProgress .step-title.active {
     color: $ds-focus-fg;
     text-style: bold underline;
 }
+
+/* TASK-21148 (UAT Z-2): sub-minimum terminal nudge in the wizard chrome. */
+.setup-size-hint {
+    dock: bottom;
+    height: 1;
+    color: $warning;
+    text-align: center;
+}
+/* Explicit: the docked row must fully vanish when hidden — module concat
+   order must not decide whether .hidden wins. */
+.setup-size-hint.hidden { display: none; }
+
+/* TASK-21148 (UAT F-2/F-3): tracker titles under the number boxes; boxes
+   sized for two-digit steps. */
+.setup-progress-item .step-indicator-stack {
+    layout: vertical;
+    align: center top;
+    width: auto;
+    height: auto;
+}
+.setup-progress-item .step-number {
+    width: auto;
+    min-width: 4;
+    margin-right: 0;
+}
+.setup-progress-item .step-title {
+    margin-right: 0;
+    text-align: center;
+}
+
+
+/* TASK-21148 (UAT P-1/Z-3): collapsible sections inside steps spent ~3
+   blank rows before their first field. */
+.setup-step Collapsible > Contents { padding: 0 1; }
+.setup-step Collapsible > Contents .setup-field-label { margin-top: 0; }
+.setup-step Collapsible > Contents .setup-probe-status { margin-top: 0; }

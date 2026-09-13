@@ -60,12 +60,12 @@ class RollbackCredentialReviewRequired(CaptureReviewRequired):
 
 
 def _validate_builtin_safety(items, candidates, owners, plan):
-    """Validate finite builtin roots against the actual captured core and files."""
+    """Validate builtin and legacy persona roots against captured core and files."""
     from tldw_chatbook.Persona_Visual.recovery import _Assets
 
     for item in items:
         if (
-            item.owner == "persona.visual_identity_builtin"
+            item.owner in {"persona.visual_identity_builtin", "persona.assets"}
             and item.status == "included_directory"
             and item.metadata is not None
             and item.metadata.parent_id is None
@@ -510,7 +510,7 @@ def capture_verify_rollback(
             )
         for item in inventory.items:
             if (
-                item.owner != "persona.visual_identity_builtin"
+                item.owner not in {"persona.visual_identity_builtin", "persona.assets"}
                 or item.status != "included"
             ):
                 continue

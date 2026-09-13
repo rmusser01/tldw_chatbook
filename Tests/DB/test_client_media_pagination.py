@@ -10,6 +10,11 @@ import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
+#: The exact columns ``library_summary=True`` projects (task-28008 added
+#: ``has_analysis``; ``reviewed`` is not a media-DB fact and is decorated by
+#: the screen, so it is deliberately absent here).
+_SUMMARY_COLUMNS = {"id", "title", "type", "last_modified", "has_analysis"}
+
 
 @pytest.fixture
 def media_db(tmp_path):
@@ -59,9 +64,133 @@ def test_exact_offsets_return_20_20_5_summary_rows_and_stable_ids(media_db):
     assert [total for _rows, total in pages] == [45, 45, 45]
     rows = [row for page, _total in pages for row in page]
     assert [row["id"] for row in rows] == list(reversed(media_ids))
-    assert all(set(row) == {"id", "title", "type", "last_modified"} for row in rows)
+    assert all(set(row) == _SUMMARY_COLUMNS for row in rows)
     assert all(type(row["id"]) is int and row["id"] > 0 for row in rows)
     assert len({row["id"] for row in rows}) == 45
+
+
+def test_summary_rows_carry_the_newest_versions_analysis_presence(media_db):
+    """has_analysis follows the newest LIVE version, the rule the Reader uses."""
+    database, _path = media_db
+    analysed_id, _uuid, _message = database.add_media_with_keywords(
+        title="Analysed", media_type="article", content="v1 body", keywords=[]
+    )
+    plain_id, _uuid, _message = database.add_media_with_keywords(
+        title="Plain", media_type="article", content="only body", keywords=[]
+    )
+    cleared_id, _uuid, _message = database.add_media_with_keywords(
+        title="Cleared", media_type="article", content="cleared body", keywords=[]
+    )
+    trashed_version_id, _uuid, _message = database.add_media_with_keywords(
+        title="Trashed version", media_type="article", content="tv body", keywords=[]
+    )
+    versionless_id, _uuid, _message = database.add_media_with_keywords(
+        title="Versionless", media_type="article", content="vl body", keywords=[]
+    )
+    assert None not in (
+        analysed_id,
+        plain_id,
+        cleared_id,
+        trashed_version_id,
+        versionless_id,
+    )
+    # Newest version carries the analysis; the older one (created by the
+    # ingest itself) does not.
+    database.create_document_version(
+        media_id=analysed_id, content="v2 body", analysis_content="Key findings."
+    )
+    # The reverse: an older version was analysed and the newest cleared it.
+    database.create_document_version(
+        media_id=cleared_id,
+        content="cleared body v2",
+        analysis_content="Stale findings.",
+    )
+    database.create_document_version(
+        media_id=cleared_id, content="cleared body v3", analysis_content="   "
+    )
+    # The newest version is analysed but soft-deleted, so the Reader shows the
+    # older LIVE version -- which has no analysis. The list must agree.
+    soft_deleted = database.create_document_version(
+        media_id=trashed_version_id,
+        content="tv body v2",
+        analysis_content="Retracted findings.",
+    )
+    assert database.soft_delete_document_version(soft_deleted["uuid"]) is True
+    # No DocumentVersions rows at all (the ingest's own version removed).
+    connection = database.get_connection()
+    connection.execute(
+        "DELETE FROM DocumentVersions WHERE media_id = ?", (versionless_id,)
+    )
+    connection.commit()
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM DocumentVersions WHERE media_id = ?",
+            (versionless_id,),
+        ).fetchone()[0]
+        == 0
+    )
+
+    rows, _total = database.search_media_db(
+        None, results_per_page=20, offset=0, library_summary=True
+    )
+
+    presence = {row["id"]: row["has_analysis"] for row in rows}
+    assert presence == {
+        analysed_id: 1,
+        plain_id: 0,
+        cleared_id: 0,
+        trashed_version_id: 0,
+        versionless_id: 0,
+    }
+
+
+def test_summary_analysis_presence_uses_the_existing_document_versions_index(media_db):
+    """No new index: the plan must ride (media_id, version_number).
+
+    No DB module here runs ANALYZE, so ``sqlite_stat1`` is absent for every
+    real user -- the plan is captured in that same state (CLAUDE.md gotcha 1).
+    """
+    database, _path = media_db
+    media_id, _uuid, _message = database.add_media_with_keywords(
+        title="Planned", media_type="article", content="body", keywords=[]
+    )
+    assert media_id is not None
+    database.create_document_version(
+        media_id=media_id, content="body", analysis_content="Findings."
+    )
+    statements: list[str] = []
+    connection = database.get_connection()
+    connection.set_trace_callback(statements.append)
+    try:
+        database.search_media_db(
+            None, results_per_page=20, offset=0, library_summary=True
+        )
+    finally:
+        connection.set_trace_callback(None)
+
+    stat1_tables = connection.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE name = 'sqlite_stat1'"
+    ).fetchone()[0]
+    assert stat1_tables == 0
+    page_selects = [sql for sql in statements if " LIMIT 20 OFFSET 0" in sql]
+    assert len(page_selects) == 1
+    plan = [
+        str(row[3])
+        for row in connection.execute("EXPLAIN QUERY PLAN " + page_selects[0])
+    ]
+    existing_indexes = {
+        str(row[1])
+        for row in connection.execute("PRAGMA index_list('DocumentVersions')")
+    }
+    document_version_steps = [step for step in plan if "DocumentVersions" in step]
+    assert len(document_version_steps) == 2, plan  # the EXISTS and its MAX leg
+    for step in document_version_steps:
+        assert step.startswith("SEARCH"), plan
+        assert "USING INDEX" in step or "USING COVERING INDEX" in step, plan
+        assert "media_id=?" in step, plan
+        assert any(name in step for name in existing_indexes), plan
+    assert not any("SCAN DocumentVersions" in step for step in plan), plan
+    assert not any("TEMP B-TREE" in step.upper() for step in plan), plan
 
 
 def test_omitted_offset_keeps_legacy_page_coordinates_and_broad_rows(media_db):
@@ -121,7 +250,7 @@ def test_supported_sorts_end_with_stable_id_tie_breaker(
     assert total == 6
     expected = media_ids if expected_ids == "ascending" else list(reversed(media_ids))
     assert [row["id"] for row in rows] == expected
-    assert all(set(row) == {"id", "title", "type", "last_modified"} for row in rows)
+    assert all(set(row) == _SUMMARY_COLUMNS for row in rows)
 
 
 def test_offset_is_bound_directly_without_prefix_fetch(media_db):
@@ -309,3 +438,39 @@ def test_distinct_types_exclude_whitespace_only_and_preserve_nonblank_verbatim(
         assert media_id is not None
 
     assert database.get_distinct_media_types() == [" pdf "]
+
+
+def test_count_read_it_later_matches_list_and_filters():
+    """The scalar COUNT seam must agree with the list seam and honor the
+    same deleted/trash filters (Home's read-it-later suggestion)."""
+    db = MediaDatabase(":memory:", client_id="uat-count")
+    try:
+        for media_id, title in ((1, "live"), (2, "deleted"), (3, "trash")):
+            db.execute_query(
+                "INSERT INTO Media "
+                "(id,title,type,content_hash,uuid,client_id,last_modified,version) "
+                "VALUES (?,?,?,?,?,?,?,1)",
+                (media_id, title, "article", f"h{media_id}", f"u{media_id}", "c", "2026-01-01"),
+            )
+        db.execute_query(
+            "UPDATE Media SET deleted = 1, version = version + 1 WHERE id = 2", ()
+        )
+        db.execute_query(
+            "UPDATE Media SET is_trash = 1, version = version + 1 WHERE id = 3", ()
+        )
+        for media_id in (1, 2, 3):
+            db.execute_query(
+                "INSERT INTO MediaReadItLaterState "
+                "(media_id,is_read_it_later,saved_at,updated_at) "
+                "VALUES (?,1,'2026-01-02','2026-01-02')",
+                (media_id,),
+            )
+        assert db.count_read_it_later_media() == 1
+        assert db.count_read_it_later_media() == len(
+            db.list_read_it_later_media_ids()
+        )
+        assert db.count_read_it_later_media(
+            include_deleted=True, include_trash=True
+        ) == 3
+    finally:
+        db.close()

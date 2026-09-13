@@ -3,6 +3,7 @@
 import asyncio
 import itertools
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -11,21 +12,33 @@ from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+    CheckNowRequested,
+    InspectorPane,
+)
+from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
+from tldw_chatbook.UI.Watchlists_Modules.pane_grip import RegionToggled
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
-from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+from tldw_chatbook.UI.Watchlists_Modules.runs_pane import (
+    RerunRunRequested,
+    RunsPane,
+)
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import (
     WatchlistsBackendController,
 )
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
     WatchlistsWorkbench,
+)
+from tldw_chatbook.Widgets.Chat_Widgets.watchlists_operation_card import (
+    WatchlistsOperationCard,
 )
 
 
@@ -54,9 +67,7 @@ class _ScreenWorkerView:
 
     async def wait_for_complete(self) -> None:
         owned_workers = [
-            worker
-            for worker in self._owned_workers()
-            if not worker.is_finished
+            worker for worker in self._owned_workers() if not worker.is_finished
         ]
         if owned_workers:
             await self._app.workers.wait_for_complete(owned_workers)
@@ -137,6 +148,100 @@ async def test_watchlists_shell_has_tab_strip_and_panes():
 
 
 @pytest.mark.asyncio
+async def test_console_briefing_inspect_navigates_shell_to_exact_loaded_row():
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Threat intel")
+    db = service.db
+    target = db.accept_briefing(
+        watchlist["id"],
+        created_at="2026-08-27T10:00:00+00:00",
+    )
+    db.transition_briefing(target["id"], status="failed", error="Interrupted")
+    db.accept_briefing(
+        watchlist["id"],
+        created_at="2026-08-27T11:00:00+00:00",
+    )
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=_settings_without_splash,
+    ):
+        async with app.run_test(size=(180, 50)) as pilot:
+            posted = []
+            ChatScreen.on_watchlists_operation_inspect(
+                SimpleNamespace(post_message=posted.append),
+                WatchlistsOperationCard.InspectRequested(
+                    f"local:briefing:{target['id']}",
+                    "artifacts",
+                ),
+            )
+            await app.handle_screen_navigation(posted[0])
+            screen = app.screen
+            assert isinstance(screen, WatchlistsCollectionsScreen)
+            for _ in range(200):
+                await pilot.pause(0.01)
+                pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+                table = pane.query_one("#artifacts-table", DataTable)
+                if (
+                    (screen._selected_briefing or {}).get("id") == target["id"]
+                    and (pane.selected_briefing or {}).get("id") == target["id"]
+                    and table.cursor_row == 1
+                ):
+                    break
+            else:
+                pytest.fail("exact briefing row and cursor did not settle")
+
+            assert screen.tree_scope.watchlist_id == watchlist["id"]
+            assert screen._selected_briefing["id"] == target["id"]
+            assert pane.selected_briefing["id"] == target["id"]
+            assert table.cursor_row == 1
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        {
+            "section": "artifacts",
+            "backend": "local",
+            "briefing_id": "9",
+        },
+        {
+            "section": "artifacts",
+            "backend": "local",
+            "briefing_id": "server:briefing:9",
+        },
+        {
+            "section": "artifacts",
+            "backend": "server",
+            "briefing_id": "local:briefing:9",
+        },
+        {
+            "section": "artifacts",
+            "backend": "bogus",
+            "briefing_id": "local:briefing:9",
+        },
+        {
+            "section": "artifacts",
+            "briefing_id": "local:briefing:9",
+        },
+    ],
+)
+@pytest.mark.asyncio
+async def test_briefing_deep_link_rejects_malformed_or_wrong_backend_id(context):
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=_settings_without_splash,
+    ):
+        async with app.run_test():
+            screen.apply_navigation_context(context)
+            assert screen.active_section == "items"
+            assert screen._pending_navigation_briefing_id is None
+
+
+@pytest.mark.asyncio
 async def test_the_backend_value_is_stated_exactly_once_on_a_normal_section():
     """TASK-2313, AC#3: on a section where the Select is a live choice
     (Sources, not a `_LOCAL_ONLY_SECTIONS` member), the Select's own
@@ -155,8 +260,7 @@ async def test_the_backend_value_is_stated_exactly_once_on_a_normal_section():
         select = screen.query_one("#watchlists-backend-select", Select)
         assert select.disabled is False, "precondition: a real, live choice"
         assert not screen.query("#watchlists-backend-label"), (
-            "the value-restating label must not exist when the Select "
-            "already states it"
+            "the value-restating label must not exist when the Select already states it"
         )
         header_bar = screen.query_one("#watchlists-header-bar")
         children = list(header_bar.children)
@@ -202,9 +306,7 @@ async def test_the_inspector_first_run_hint_does_not_repeat_overviews_own_walkth
             await pilot.pause(0.02)
             if screen.query("#inspector-first-run-hint"):
                 break
-        hint = str(
-            screen.query_one("#inspector-first-run-hint", Static).renderable
-        )
+        hint = str(screen.query_one("#inspector-first-run-hint", Static).renderable)
         assert "New source" in hint, (
             "must still name the one action relevant to this pane"
         )
@@ -221,8 +323,7 @@ async def test_the_inspector_first_run_hint_does_not_repeat_overviews_own_walkth
             screen.query_one("#overview-first-run-body", Static).renderable
         )
         assert "New" in overview_body, (
-            "precondition: Overview is still the one place that teaches "
-            "the rail step"
+            "precondition: Overview is still the one place that teaches the rail step"
         )
 
 
@@ -242,7 +343,9 @@ async def test_the_selected_object_block_sits_above_console_actions():
         rail = screen.query_one("#watchlists-inspector-pane")
         children = list(rail.children)
         inspector_index = next(
-            i for i, child in enumerate(children) if child.id == "watchlists-entity-inspector"
+            i
+            for i, child in enumerate(children)
+            if child.id == "watchlists-entity-inspector"
         )
         console_heading_index = next(
             i
@@ -277,8 +380,7 @@ async def test_import_opml_appears_once_on_the_sources_tab():
         screen.active_section = "sources"
         await pilot.pause(0.2)
         assert not screen.query("#wc-empty-import-opml"), (
-            "the header's Import OPML must not duplicate the Sources "
-            "toolbar's own copy"
+            "the header's Import OPML must not duplicate the Sources toolbar's own copy"
         )
         assert not screen.query("#wc-empty-create-source")
         assert screen.query_one("#sources-import-opml-button"), (
@@ -561,6 +663,74 @@ async def test_server_run_deep_link_selects_server_backend_before_loading():
 
 
 @pytest.mark.asyncio
+async def test_mounted_server_run_deep_link_reseeds_server_rerun_identity():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen._controller.list_runs = AsyncMock(return_value=[])
+    host = WatchlistsContextHarness(screen)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen.active_section = "runs"
+        for _ in range(40):
+            await pilot.pause()
+            if screen.query("#watchlists-runs-pane"):
+                break
+        for _ in range(40):
+            await pilot.pause()
+            if screen._controller.list_runs.await_count:
+                break
+
+        pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+        assert pane.runtime_backend == "local", "precondition: pane mounted local"
+
+        server_run = {
+            "id": "server:watchlist_run:8",
+            "run_id": 8,
+            "backend": "server",
+            "source_id": "wrong-local-source",
+            "job_id": "server-job-8",
+            "source_title": "Server feed",
+            "status": "failed",
+        }
+        screen._controller.list_runs = AsyncMock(return_value=[server_run])
+        screen._controller.list_items = AsyncMock(return_value=[])
+        screen._controller.launch_run = AsyncMock(return_value={"status": "queued"})
+        screen._request_runs_refresh = Mock()
+
+        screen.apply_navigation_context(
+            {
+                "section": "runs",
+                "backend": "server",
+                "run_id": "server:watchlist_run:8",
+            }
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if pane.selected_run == server_run:
+                break
+
+        rerun = pane.query_one("#runs-rerun-button", Button)
+        assert pane.selected_run == server_run
+        assert pane.runtime_backend == "server"
+        assert pane.selected_operation_key == screen._rerun_operation_key(
+            "server", "server-job-8"
+        )
+        assert not rerun.disabled
+
+        rerun.press()
+        for _ in range(40):
+            await pilot.pause()
+            if screen._controller.launch_run.await_count:
+                break
+
+        screen._controller.launch_run.assert_awaited_once_with(
+            runtime_backend="server",
+            source_id=None,
+            job_id="server-job-8",
+        )
+
+
+@pytest.mark.asyncio
 async def test_missing_run_deep_link_is_consumed_without_later_stale_selection():
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
@@ -673,6 +843,93 @@ async def test_watchlists_notifications_context_loads_and_updates_local_inbox():
         screen._notifications_controller.dismiss.assert_awaited_once_with(
             7, is_dismissed=True
         )
+
+
+@pytest.mark.asyncio
+async def test_notification_mutation_refresh_cannot_overwrite_newer_pane_refresh():
+    """A mutation reconciliation and user refresh share latest-request-wins."""
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    original = {
+        "id": 7,
+        "title": "Research complete",
+        "message": "The synthesis is ready.",
+        "category": "research",
+        "severity": "info",
+        "is_read": False,
+    }
+    stale_after_mutation = {**original, "title": "Stale mutation snapshot"}
+    newest = {**original, "title": "Newest pane snapshot", "is_read": True}
+    screen._notifications_controller.load_rows = AsyncMock(return_value=[original])
+    screen._notifications_controller.mark_read = AsyncMock(return_value=True)
+    screen.apply_navigation_context({"section": "notifications"})
+    host = WatchlistsContextHarness(screen)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        async with asyncio.timeout(5):
+            while True:
+                pane = screen.query_one(
+                    "#watchlists-notifications-pane", NotificationsPane
+                )
+                if pane.notifications == [original]:
+                    break
+                await pilot.pause()
+
+        mutation_load_started = asyncio.Event()
+        pane_load_started = asyncio.Event()
+        release_mutation_load = asyncio.Event()
+        release_pane_load = asyncio.Event()
+        load_number = 0
+
+        async def controlled_load_rows():
+            nonlocal load_number
+            load_number += 1
+            if load_number == 1:
+                mutation_load_started.set()
+                await release_mutation_load.wait()
+                return [stale_after_mutation]
+            if load_number == 2:
+                pane_load_started.set()
+                await release_pane_load.wait()
+                return [newest]
+            raise AssertionError(f"unexpected notification load {load_number}")
+
+        screen._notifications_controller.load_rows = AsyncMock(
+            side_effect=controlled_load_rows
+        )
+        pane.select_notification_by_id("7")
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
+        pane.query_one("#notifications-mark-read-button", Button).press()
+
+        async with asyncio.timeout(5):
+            await mutation_load_started.wait()
+
+        pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
+        pane.query_one("#notifications-refresh-button", Button).press()
+        async with asyncio.timeout(5):
+            await pane_load_started.wait()
+
+        release_pane_load.set()
+        async with asyncio.timeout(5):
+            while screen._loaded_notifications != [newest]:
+                await pilot.pause()
+
+        release_mutation_load.set()
+        async with asyncio.timeout(5):
+            while any(
+                not worker.is_finished
+                for worker in app.workers
+                if screen in worker.node.ancestors_with_self
+            ):
+                await pilot.pause()
+
+        pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
+        screen._notifications_controller.mark_read.assert_awaited_once_with(
+            7, is_read=True
+        )
+        assert screen._loaded_notifications == [newest]
+        assert pane.notifications == [newest]
 
 
 @pytest.mark.asyncio
@@ -805,7 +1062,9 @@ async def test_existing_panes_survive_the_workbench_rehost():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        assert screen.query("#wl-workbench"), "the workbench container should be mounted"
+        assert screen.query("#wl-workbench"), (
+            "the workbench container should be mounted"
+        )
         # The panes that existed before must still be mounted, not replaced.
         # The section navigator was retired for a centre tab strip (Phase C,
         # task 3); #wl-tabs is its direct successor as "a working
@@ -851,7 +1110,8 @@ async def test_collapsing_a_region_persists(monkeypatch):
         # task-1344 review, B1: region-layout gestures only apply on the
         # Read tab -- which is now the default section (task-2513), so no
         # section switch is needed before the real toggle.
-        screen.focused_region = Region.ITEMS
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
         await pilot.press("z")
         await pilot.pause()
         assert screen.region_layout.is_collapsed(Region.ITEMS)
@@ -911,7 +1171,7 @@ async def test_persisted_layout_is_applied_on_mount(monkeypatch):
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
         assert screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
-        assert screen.query("#wl-header-right_rail")
+        assert screen.query("#wl-grip-right_rail")
         assert not screen.query("#watchlists-inspector-pane")
 
 
@@ -970,7 +1230,8 @@ async def test_a_real_toggle_performs_exactly_one_write(monkeypatch):
         # task-1344 review, B1: region-layout gestures only apply on the
         # Read tab -- the default section since task-2513, so no switch is
         # needed before the real toggle this test measures.
-        screen.focused_region = Region.ITEMS
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
         await pilot.press("z")
         await pilot.pause()
         await host.workers.wait_for_complete()
@@ -1000,7 +1261,8 @@ async def test_a_burst_of_toggles_persists_only_the_final_state(monkeypatch):
         saved.clear()  # `on_mount`'s own (no-op) apply may have run above.
 
         screen = host.screen_stack[-1]
-        screen.focused_region = Region.ITEMS
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
         # Fire off several toggles back-to-back with no pause in between, so
         # scheduling for all of them races ahead of any one write completing.
         await pilot.press("z")
@@ -1012,7 +1274,7 @@ async def test_a_burst_of_toggles_persists_only_the_final_state(monkeypatch):
 
         final_layout = screen.region_layout
         assert saved, "a real change occurred, so at least one write must have happened"
-        assert saved[-1].collapsed == final_layout.collapsed_for_persistence()
+        assert saved[-1].collapsed == final_layout.collapsed
 
 
 # --- Fix round 1, Finding 1: a bracket press must not destroy a half-typed
@@ -1073,13 +1335,15 @@ async def test_bracket_toggle_preserves_in_progress_create_form_draft():
         await pilot.press("[")
         await pilot.pause()
 
-        assert screen.query(
-            "#sources-create-name"
-        ), "the create form must still be open after an unrelated toggle"
+        assert screen.query("#sources-create-name"), (
+            "the create form must still be open after an unrelated toggle"
+        )
         name_after = screen.query_one("#sources-create-name", Input).value
         url_after = screen.query_one("#sources-create-url", Input).value
         assert name_after == "Draft Name", "typed Name text must survive the rebuild"
-        assert url_after == "https://draft.example", "typed URL text must survive the rebuild"
+        assert url_after == "https://draft.example", (
+            "typed URL text must survive the rebuild"
+        )
 
 
 @pytest.mark.asyncio
@@ -1178,9 +1442,9 @@ async def test_submitting_the_create_form_clears_the_draft():
         await pilot.press("[")
         await pilot.press("[")
         await pilot.pause()
-        assert not screen.query(
-            "#sources-create-name"
-        ), "the form should stay closed, not reopen with stale text"
+        assert not screen.query("#sources-create-name"), (
+            "the form should stay closed, not reopen with stale text"
+        )
 
 
 @pytest.mark.asyncio
@@ -1211,15 +1475,16 @@ async def test_cancelling_the_create_form_clears_the_draft():
 
 # --- Fix round 2 (final whole-branch review): Findings 2, 3, 4. `_build_
 # detail_pane`/`_build_inspector_pane` construct a brand new pane on EVERY
-# workbench rebuild, not just a section switch -- any region collapse/solo/
-# rail toggle recomposes the whole `WatchlistsWorkbench` (`region_layout` is
-# `recompose=True`). RunsPane/NotificationsPane/OverviewPane were already
+# workbench rebuild, not just a section switch. RunsPane/NotificationsPane/
+# OverviewPane were already
 # seeded from screen state; Sources/Items/Rules and the Inspector were not,
 # and an in-progress Rules edit had no screen-state mirror at all (unlike the
 # Sources create-form draft fixed in round 1).
 
 
-async def _wait_for_table_rows(pilot, table_id: str, screen, expected: int) -> DataTable:
+async def _wait_for_table_rows(
+    pilot, table_id: str, screen, expected: int
+) -> DataTable:
     table = screen.query_one(table_id, DataTable)
     for _ in range(30):
         if table.row_count >= expected:
@@ -1242,14 +1507,20 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
         )
         screen._controller.list_items = AsyncMock(
             return_value=[
-                {"id": "i1", "title": "Item One", "source_name": "Feed One",
-                 # The real backend always carries a status; without one the
-                 # reader-set filter (TASK-3072) legitimately hides the row.
-                 "status": "new"}
+                {
+                    "id": "i1",
+                    "title": "Item One",
+                    "source_name": "Feed One",
+                    # The real backend always carries a status; without one the
+                    # reader-set filter (TASK-3072) legitimately hides the row.
+                    "status": "new",
+                }
             ]
         )
         screen._controller.list_alert_rules = AsyncMock(
-            return_value=[{"id": "r1", "name": "Rule One", "condition_type": "no_items"}]
+            return_value=[
+                {"id": "r1", "name": "Rule One", "condition_type": "no_items"}
+            ]
         )
 
         for section, table_id in (
@@ -1287,9 +1558,7 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
             await pilot.pause()
             if pane.displayed_items():
                 break
-        assert len(pane.displayed_items()) == 1, (
-            "items list never loaded its one row"
-        )
+        assert len(pane.displayed_items()) == 1, "items list never loaded its one row"
 
         await pilot.press("[")
         await pilot.pause()
@@ -1327,7 +1596,9 @@ async def test_bracket_toggle_preserves_inspector_selection():
         await pilot.press("[")
         await pilot.pause()
 
-        rebuilt_inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        rebuilt_inspector = screen.query_one(
+            "#watchlists-entity-inspector", InspectorPane
+        )
         # task-15461 strengthened this from "rebuilt, and re-seeded correctly"
         # to "never rebuilt at all". A left-rail toggle used to recompose the
         # whole workbench, so the Inspector was torn down and rebuilt for a
@@ -1383,9 +1654,9 @@ async def test_bracket_toggle_preserves_in_progress_rule_edit():
         await pilot.press("[")
         await pilot.pause()
 
-        assert screen.query(
-            "#rules-create-name"
-        ), "the rule edit form must still be open after an unrelated toggle"
+        assert screen.query("#rules-create-name"), (
+            "the rule edit form must still be open after an unrelated toggle"
+        )
         name_input = screen.query_one("#rules-create-name", Input)
         assert name_input.value == "Rule One", (
             "the form must still be pre-filled for the SAME rule being edited"
@@ -1485,8 +1756,7 @@ async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
             "leaving an empty pane behind is the masked defect, not a fix"
         )
         assert not screen.query("#rules-create-name"), (
-            "no rule edit form fields should remain in the DOM after a "
-            "successful save"
+            "no rule edit form fields should remain in the DOM after a successful save"
         )
 
 
@@ -1545,7 +1815,7 @@ async def test_read_mode_class_is_set_before_each_section_layout_swap():
         assert workbench.has_class("watchlists-read-mode")
 
         observed: list[tuple[str, bool]] = []
-        apply_section_view = workbench.apply_section_view
+        reconcile_body = workbench._reconcile_body
 
         async def record_mode_before_layout(**kwargs):
             observed.append(
@@ -1554,9 +1824,9 @@ async def test_read_mode_class_is_set_before_each_section_layout_swap():
                     workbench.has_class("watchlists-read-mode"),
                 )
             )
-            await apply_section_view(**kwargs)
+            await reconcile_body(**kwargs)
 
-        workbench.apply_section_view = record_mode_before_layout
+        workbench._reconcile_body = record_mode_before_layout
 
         screen.active_section = "sources"
         await pilot.pause(0.2)
@@ -1584,7 +1854,9 @@ async def test_tree_selection_sets_the_screen_scope():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7))
+        )
         await pilot.pause()
         assert screen.selected_scope.kind == "watchlist"
         assert screen.selected_scope.watchlist_id == 7
@@ -1602,7 +1874,9 @@ async def test_scope_survives_a_region_toggle():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7))
+        )
         await pilot.pause()
         await pilot.press("[")
         await pilot.pause()
@@ -1621,7 +1895,10 @@ async def test_scoped_rows_follow_the_tree_scope():
     established pattern (see every other test above) rather than a
     `watchlists_app` fixture -- no such fixture exists in this file.
     """
-    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
 
     app = _build_test_app()
     # Seeded (fix round 1): against this harness's empty subscriptions DB
@@ -1667,7 +1944,10 @@ async def test_scoped_rows_follow_the_tree_scope():
 
 @pytest.mark.asyncio
 async def test_source_scope_narrows_to_exactly_one():
-    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
 
     app = _build_test_app()
     # Seeded (fix round 1): `len(rows) <= 1` is trivially true against an
@@ -1840,6 +2120,524 @@ async def test_moving_the_tree_disarms_run_actions_selected_before_the_move():
 
 
 @pytest.mark.asyncio
+async def test_rerun_busy_state_survives_a_mounted_runs_pane_rebuild():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    host = WatchlistsContextHarness(screen)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    app.notify = Mock()
+
+    async def launch(**kwargs):
+        started.set()
+        await release.wait()
+        return {"status": "completed", "found_count": 7, "processed_count": 3}
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen.active_section = "runs"
+        for _ in range(40):
+            await pilot.pause()
+            if screen.query("#watchlists-runs-pane"):
+                break
+
+        run = {
+            "id": "local:watchlist_run:5",
+            "run_id": 5,
+            "backend": "local",
+            "source_id": 5,
+            "source_title": "Feed [five]",
+            "status": "completed",
+        }
+        pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+        pane.runs = [run]
+        await pilot.pause()
+        pane.select_run_by_id(run["id"])
+        for _ in range(40):
+            await pilot.pause()
+            if screen.selected_run is not None:
+                break
+
+        screen._controller.launch_run = AsyncMock(side_effect=launch)
+        screen._request_runs_refresh = Mock()
+        app.notify.reset_mock()
+        pane.query_one("#runs-rerun-button", Button).press()
+        for _ in range(40):
+            await pilot.pause()
+            if started.is_set():
+                break
+
+        assert started.is_set(), "the gated Re-run must have reached launch_run"
+        button = pane.query_one("#runs-rerun-button", Button)
+        assert str(button.label) == "Re-running..."
+        assert button.disabled
+        app.notify.assert_any_call(
+            "Re-running Feed [five]...",
+            severity="information",
+            markup=False,
+        )
+
+        old_pane = pane
+        screen.active_section = "sources"
+        for _ in range(40):
+            await pilot.pause()
+            if not screen.query("#watchlists-runs-pane"):
+                break
+        screen.active_section = "runs"
+        for _ in range(40):
+            await pilot.pause()
+            if screen.query("#watchlists-runs-pane"):
+                pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+                if pane is not old_pane:
+                    break
+
+        assert pane is not old_pane, "the section swap must replace RunsPane"
+        rebuilt_button = pane.query_one("#runs-rerun-button", Button)
+        assert str(rebuilt_button.label) == "Re-running..."
+        assert rebuilt_button.disabled
+
+        release.set()
+        for _ in range(40):
+            await pilot.pause()
+            if screen._request_runs_refresh.call_count:
+                break
+
+        assert screen._checks_in_flight == set()
+        assert screen._reruns_in_flight == set()
+        assert str(rebuilt_button.label) == "Re-run source"
+        assert not rebuilt_button.disabled
+        screen._controller.launch_run.assert_awaited_once_with(
+            runtime_backend="local",
+            source_id=5,
+            job_id=None,
+        )
+        screen._request_runs_refresh.assert_called_once_with()
+        app.notify.assert_any_call(
+            "Re-run complete: Feed [five] — 7 found, 3 new.",
+            severity="information",
+            markup=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_unmounting_during_rerun_cleans_state_without_refreshing():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    host = WatchlistsContextHarness(screen)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    app.notify = Mock()
+
+    async def launch(**kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen._controller.launch_run = AsyncMock(side_effect=launch)
+        screen._request_runs_refresh = Mock()
+        app.notify.reset_mock()
+        operation_key = screen._rerun_operation_key("local", 5)
+
+        screen.post_message(
+            RerunRunRequested(runtime_backend="local", target_id=5, name="Feed [five]")
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if started.is_set():
+                break
+
+        assert started.is_set(), "the gated Re-run must reach launch_run"
+        assert operation_key in screen._checks_in_flight
+        assert operation_key in screen._reruns_in_flight
+
+        await screen.remove()
+        for _ in range(40):
+            await pilot.pause()
+            if cancelled.is_set() and not screen._checks_in_flight:
+                break
+
+        assert cancelled.is_set(), "unmount must cancel the screen-owned worker"
+        assert screen._checks_in_flight == set()
+        assert screen._reruns_in_flight == set()
+        screen._request_runs_refresh.assert_not_called()
+        assert not any(
+            "failed" in str(call.args[0]).lower() for call in app.notify.call_args_list
+        )
+
+
+@pytest.mark.asyncio
+async def test_external_local_check_now_paints_the_selected_run_as_checking():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    host = WatchlistsContextHarness(screen)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def check_now(**kwargs):
+        started.set()
+        await release.wait()
+        return {"status": "completed"}
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen.active_section = "runs"
+        for _ in range(40):
+            await pilot.pause()
+            if screen.query("#watchlists-runs-pane"):
+                break
+
+        run = {
+            "id": "local:watchlist_run:5",
+            "run_id": 5,
+            "backend": "local",
+            "source_id": 5,
+            "source_title": "Feed five",
+            "status": "completed",
+        }
+        pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+        pane.runs = [run]
+        await pilot.pause()
+        pane.select_run_by_id(run["id"])
+        for _ in range(40):
+            await pilot.pause()
+            if screen.selected_run is not None:
+                break
+
+        screen._controller.check_now = AsyncMock(side_effect=check_now)
+        screen.post_message(
+            CheckNowRequested(
+                {
+                    "id": "local:subscription:5",
+                    "source_id": 5,
+                    "name": "Feed five",
+                }
+            )
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if started.is_set():
+                break
+
+        assert started.is_set(), "the gated Check now must reach the controller"
+        button = pane.query_one("#runs-rerun-button", Button)
+        assert str(button.label) == "Checking..."
+        assert button.disabled
+
+        release.set()
+        for _ in range(40):
+            await pilot.pause()
+            if not screen._checks_in_flight:
+                break
+        assert str(button.label) == "Re-run source"
+        assert not button.disabled
+
+
+@pytest.mark.asyncio
+async def test_server_rerun_deduplicates_one_job_without_blocking_another():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "server"
+    host = WatchlistsContextHarness(screen)
+    started = {"job-5": asyncio.Event(), "job-6": asyncio.Event()}
+    release = asyncio.Event()
+    app.notify = Mock()
+
+    async def launch(*, runtime_backend, source_id, job_id):
+        started[job_id].set()
+        await release.wait()
+        return {"status": "queued"}
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen._controller.launch_run = AsyncMock(side_effect=launch)
+        screen._request_runs_refresh = Mock()
+        app.notify.reset_mock()
+
+        screen.post_message(
+            RerunRunRequested(
+                runtime_backend="server", target_id="job-5", name="Job [five]"
+            )
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if started["job-5"].is_set():
+                break
+
+        screen.post_message(
+            RerunRunRequested(
+                runtime_backend="server", target_id="job-5", name="Job [five]"
+            )
+        )
+        screen.post_message(
+            RerunRunRequested(
+                runtime_backend="server", target_id="job-6", name="Job six"
+            )
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if started["job-6"].is_set():
+                break
+
+        assert started["job-6"].is_set(), "a different job must launch independently"
+        assert screen._controller.launch_run.await_count == 2
+        app.notify.assert_any_call(
+            "Already checking Job [five].", severity="warning", markup=False
+        )
+        assert screen._checks_in_flight == {
+            screen._rerun_operation_key("server", "job-5"),
+            screen._rerun_operation_key("server", "job-6"),
+        }
+
+        release.set()
+        for _ in range(40):
+            await pilot.pause()
+            if screen._request_runs_refresh.call_count == 2:
+                break
+        assert screen._checks_in_flight == set()
+        assert screen._reruns_in_flight == set()
+        assert screen._request_runs_refresh.call_count == 2
+
+
+def test_rerun_rejects_an_old_backend_request_before_launch_or_busy_state():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "local"
+    screen._controller.launch_run = AsyncMock()
+    screen._set_check_now_busy = Mock()
+    screen.run_worker = Mock()
+
+    screen.handle_rerun_run_requested(
+        RerunRunRequested(
+            runtime_backend="server", target_id="job-5", name="Old server job"
+        )
+    )
+
+    screen._controller.launch_run.assert_not_awaited()
+    screen._set_check_now_busy.assert_not_called()
+    screen.run_worker.assert_not_called()
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+
+
+@pytest.mark.asyncio
+async def test_rerun_completion_after_backend_switch_does_not_repaint_old_state():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "server"
+    screen._controller.launch_run = AsyncMock(return_value={"status": "completed"})
+    screen._set_check_now_busy = Mock()
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("local", 5)
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="local",
+        target_id=5,
+        operation_key=operation_key,
+        name="Old local source",
+    )
+
+    screen._set_check_now_busy.assert_not_called()
+    screen._request_runs_refresh.assert_called_once_with()
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["queued", "running"])
+async def test_server_rerun_reports_started_and_launches_by_job_id(status):
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "server"
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(return_value={"status": status})
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("server", "job-7")
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="server",
+        target_id="job-7",
+        operation_key=operation_key,
+        name="Feed [seven]",
+    )
+
+    screen._controller.launch_run.assert_awaited_once_with(
+        runtime_backend="server",
+        source_id=None,
+        job_id="job-7",
+    )
+    app.notify.assert_called_once_with(
+        "Re-run started: Feed [seven].",
+        severity="information",
+        markup=False,
+    )
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+    screen._request_runs_refresh.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_running_server_rerun_with_skipped_stats_reports_started():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "server"
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(
+        return_value={
+            "status": "running",
+            "stats": {"dispositions": {"skipped": 1}},
+        }
+    )
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("server", "job-7")
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="server",
+        target_id="job-7",
+        operation_key=operation_key,
+        name="Feed [seven]",
+    )
+
+    app.notify.assert_called_once_with(
+        "Re-run started: Feed [seven].",
+        severity="information",
+        markup=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_unexpected_rerun_status_does_not_claim_the_run_started():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "server"
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(return_value={"status": "cancelled"})
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("server", "job-7")
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="server",
+        target_id="job-7",
+        operation_key=operation_key,
+        name="Feed [seven]",
+    )
+
+    app.notify.assert_called_once_with(
+        "Re-run returned an unexpected status: Feed [seven].",
+        severity="warning",
+        markup=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_rerun_reports_an_entirely_skipped_run():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(
+        return_value={
+            "status": "completed",
+            "stats": {"dispositions": {"skipped": 1}},
+        }
+    )
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("local", 5)
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="local",
+        target_id=5,
+        operation_key=operation_key,
+        name="Feed [five]",
+    )
+
+    app.notify.assert_called_once_with(
+        "Re-run skipped: Feed [five] — a check of this source is already running.",
+        severity="warning",
+        markup=False,
+    )
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+    screen._request_runs_refresh.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_rerun_reports_a_returned_failed_status():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(
+        return_value={"status": "failed", "error_msg": "source denied"}
+    )
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("local", 5)
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="local",
+        target_id=5,
+        operation_key=operation_key,
+        name="Feed [five]",
+    )
+
+    app.notify.assert_called_once_with(
+        "Re-run failed: Feed [five] — source denied",
+        severity="error",
+        markup=False,
+    )
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+    screen._request_runs_refresh.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_rerun_raises_with_a_safe_stated_error_and_warning_log():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(
+        side_effect=RuntimeError("unexpected /Users/private/feed.xml?token=secret")
+    )
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("local", 5)
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    with patch(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.logger"
+    ) as logger:
+        await screen._rerun_run(
+            runtime_backend="local",
+            target_id=5,
+            operation_key=operation_key,
+            name="Feed [five]",
+        )
+
+    logger.opt.assert_called_once_with(exception=True)
+    logger.opt.return_value.warning.assert_called_once()
+    app.notify.assert_called_once_with(
+        "Re-run failed: Feed [five].",
+        severity="error",
+        markup=False,
+    )
+    assert "/Users/private" not in app.notify.call_args.args[0]
+    assert "token=secret" not in app.notify.call_args.args[0]
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+    screen._request_runs_refresh.assert_called_once_with()
+
+
+@pytest.mark.asyncio
 async def test_moving_the_tree_disarms_source_actions_selected_before_the_move():
     """`SourcesPane`'s own Preview/Check-now post against `self.selected_source`.
 
@@ -1906,9 +2704,7 @@ async def test_moving_the_tree_clears_a_notification_selected_in_its_pane():
         screen.active_section = "notifications"
         await pilot.pause(0.2)
 
-        pane = screen.query_one(
-            "#watchlists-notifications-pane", NotificationsPane
-        )
+        pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
         pane.notifications = [
             {"id": 1, "title": "Feed failed", "message": "boom", "is_read": False}
         ]
@@ -1922,9 +2718,7 @@ async def test_moving_the_tree_clears_a_notification_selected_in_its_pane():
         )
         await pilot.pause()
 
-        pane = screen.query_one(
-            "#watchlists-notifications-pane", NotificationsPane
-        )
+        pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
         assert pane.selected_notification is None, (
             "the tree move must reach the pane's own copy, not only the mirror"
         )
@@ -1978,9 +2772,7 @@ async def test_tree_expansion_survives_a_section_switch():
         assert screen.query(source_node), "precondition: the watchlist expanded"
 
         screen.post_message(
-            TreeScopeChanged(
-                TreeScope(kind="source", watchlist_id=1, source_id=arxiv)
-            )
+            TreeScopeChanged(TreeScope(kind="source", watchlist_id=1, source_id=arxiv))
         )
         await pilot.pause()
 
@@ -2102,12 +2894,7 @@ async def test_seeded_tree_expansion_takes_effect_on_the_first_render():
             )
 
 
-# --- TASK-1344: CONTENT gated to the Read tab (AC#1); solo/toggle refused on
-# any region hidden on the active tab (AC#2); no sequence of tab switches and
-# region gestures may leave the centre with nothing expanded (AC#3). Mirrors
-# the CONTENT-only tests Task 4 added in `Tests/UI/test_watchlists_content_
-# pane.py`. task-2513 removed the FEEDS region outright, so FEEDS's halves
-# of these tests died with it; CONTENT's and ITEMS's remain.
+# --- Permanent Reader and management-canvas section contracts ------------
 
 
 @pytest.mark.asyncio
@@ -2116,8 +2903,7 @@ async def test_the_feeds_region_is_gone_and_content_stays_gated_to_read():
     DOM presence on ANY tab (no `#wl-region-feeds`, no `#wl-header-feeds`),
     and its old pane (`#watchlists-list-pane`) with it.
 
-    CONTENT's TASK-1344 gating (AC#1/AC#4) is unchanged: unmounted -- not
-    even a one-row header -- on every tab except Read.
+    CONTENT is the permanent Reader on Read and unmounted elsewhere.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -2142,30 +2928,11 @@ async def test_the_feeds_region_is_gone_and_content_stays_gated_to_read():
             "ITEMS is force-shown off Read -- the section's own full-width pane"
         )
         assert not screen.query("#wl-region-content")
-        assert not screen.query("#wl-header-content")
 
 
 @pytest.mark.asyncio
 async def test_the_items_toggle_off_the_read_tab_neither_collapses_nor_persists():
-    """task-1344 whole-branch review, B1 -- ITEMS's half of the off-Read
-    toggle-refusal contract (CONTENT's half lives in
-    `test_watchlists_content_pane.py`; FEEDS's died with the region in
-    task-2513), the one leg the original AC#3/#4 work never covered.
-
-    Unlike CONTENT, ITEMS is force-shown off the Read tab
-    (`_rendered_region_layout`) -- it is the section's own full-width pane,
-    never a member of `_hidden_centre_regions()`. But a stale
-    `focused_region == ITEMS` (set by `on_descendant_focus` any time the
-    user's focus lands inside that pane, e.g. simply using Sources) let
-    `z`/`Z` reach `_apply_layout(region_layout.toggle(ITEMS))` against the
-    REAL, persisted layout with zero visible feedback -- the render already
-    forces ITEMS back out of `collapsed`, so the collapse only bit the next
-    time the user visited Read, at which point it (and CONTENT, if
-    already collapsed there) could leave the centre with nothing expanded
-    at all. Must be refused exactly like CONTENT, with copy that is
-    actually true for ITEMS (it IS shown off Read, just not collapsible
-    from here).
-    """
+    """A stale Feed Items message cannot change preference off Read."""
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -2175,24 +2942,20 @@ async def test_the_items_toggle_off_the_read_tab_neither_collapses_nor_persists(
         screen.active_section = "sources"
         await pilot.pause(0.3)
         assert screen.query("#wl-region-items"), (
-            "unlike CONTENT, ITEMS IS rendered off Read -- the "
-            "section's own full-width pane"
+            "the management section owns the permanent centre canvas"
         )
-        assert not screen.region_layout.is_collapsed(Region.ITEMS), (
-            "the real preference is still expanded -- the precondition"
-        )
+        assert not screen.query("#wl-grip-items")
+        preferred_before = screen.region_layout
+        effective_before = screen._effective_region_layout
+        persisted_before = screen._last_persisted_collapsed
 
         screen.notify = Mock()
-        screen.focused_region = Region.ITEMS
-        screen.action_toggle_region()
+        screen.post_message(RegionToggled(Region.ITEMS))
         await pilot.pause(0.3)
 
-        assert not screen.region_layout.is_collapsed(Region.ITEMS), (
-            "the gesture must be refused, not run against the real preference"
-        )
-        assert Region.ITEMS not in (screen._last_persisted_collapsed or frozenset()), (
-            "and it must never reach the persisted collapse set"
-        )
+        assert screen.region_layout == preferred_before
+        assert screen._effective_region_layout == effective_before
+        assert screen._last_persisted_collapsed == persisted_before
         screen.notify.assert_called_once()
         message = screen.notify.call_args.args[0]
         assert "only shown on the Read tab" not in message, (
@@ -2204,18 +2967,12 @@ async def test_the_items_toggle_off_the_read_tab_neither_collapses_nor_persists(
         screen.active_section = "items"
         await pilot.pause(0.3)
         assert screen.query("#wl-region-items")
-        assert not screen.region_layout.is_collapsed(Region.ITEMS)
+        assert screen.query("#wl-grip-items")
 
 
 @pytest.mark.asyncio
-async def test_solo_on_items_off_the_read_tab_is_refused():
-    """AC#2, ITEMS's half of the off-Read solo-refusal contract (CONTENT's
-    half lives in `test_watchlists_content_pane.py`; task-1344 whole-branch
-    review, B1): the generalized `_refuse_region_gesture_off_read_tab` must
-    refuse ITEMS's solo gesture off Read too -- ITEMS is not hidden there,
-    but region-layout gestures still do not apply to it outside the Read
-    tab.
-    """
+async def test_article_focus_on_a_management_tab_is_refused():
+    """Article Focus is a Read-only effective layout, never a preference."""
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -2224,49 +2981,24 @@ async def test_solo_on_items_off_the_read_tab_is_refused():
 
         screen.active_section = "runs"
         await pilot.pause(0.3)
-        before = screen.region_layout
+        preferred_before = screen.region_layout
+        effective_before = screen._effective_region_layout
 
         screen.notify = Mock()
-        screen.focused_region = Region.ITEMS
-        screen.action_solo_region()
+        screen.action_article_focus()
         await pilot.pause(0.3)
 
-        assert screen.region_layout is before or screen.region_layout == before, (
-            "solo on ITEMS off Read must not touch the real layout"
-        )
-        assert screen.region_layout.solo_region is None
-        assert screen.query("#wl-region-items"), (
-            "and the centre must still have something in it"
-        )
+        assert screen.region_layout == preferred_before
+        assert screen._effective_region_layout == effective_before
+        assert screen._article_focus_active is False
+        assert screen.query("#wl-region-items")
         screen.notify.assert_called_once()
-        message = screen.notify.call_args.args[0]
-        assert "only shown on the Read tab" not in message, (
-            "ITEMS IS shown off Read -- claiming otherwise would be false"
-        )
+        assert screen.notify.call_args.kwargs.get("markup") is False
 
 
 @pytest.mark.asyncio
-async def test_no_sequence_of_tab_switches_and_region_gestures_leaves_the_centre_empty():
-    """AC#3: no sequence of tab switches and region toggles/solos may leave
-    the workbench with zero expanded centre regions -- recoverable only by
-    clicking a header the user has no reason to suspect (PR #1091 review,
-    F2's original report, now widened past the single CONTENT-solo path
-    Task 4 fixed: CONTENT's and ITEMS's solo/toggle gestures are all
-    refused off the Read tab).
-
-    Drives real gestures (tab switches, `z`, `Z`, `[`) through the full
-    production shell (`DestinationHarness`, the same harness every other
-    test in this file uses), asserting after EACH one that at least one
-    centre region is genuinely mounted and expanded -- not merely that the
-    real `region_layout` looks fine, which is exactly the gap a purely
-    layout-level (non-DOM) assertion could miss.
-    """
-
-    def _any_centre_region_expanded(screen) -> bool:
-        return bool(
-            screen.query("#wl-region-items")
-            or screen.query("#wl-region-content")
-        )
+async def test_tab_switches_grips_and_article_focus_never_remove_the_centre():
+    """Read keeps Reader mounted; management tabs keep their canvas mounted."""
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -2276,83 +3008,50 @@ async def test_no_sequence_of_tab_switches_and_region_gestures_leaves_the_centre
 
         async def step(label: str) -> None:
             await pilot.pause(0.2)
-            assert _any_centre_region_expanded(screen), (
-                f"the centre has nothing expanded after {label!r}: "
+            assert screen.query("#wl-region-content") or screen.query(
+                "#wl-region-items"
+            ), (
+                f"the centre is empty after {label!r}: "
                 f"active_section={screen.active_section!r} "
-                f"region_layout={screen.region_layout!r}"
+                f"preferred={screen.region_layout!r} "
+                f"effective={screen._effective_region_layout!r}"
             )
 
-        await step("mount (Read, the default since task-2513)")
-
-        screen.active_section = "items"
-        await step("switch to Read")
-
-        # The specific reported path: solo CONTENT on Read, then leave --
-        # now refused on return, but must never have emptied the centre
-        # even before this fix's refusal existed (Task 4's own regression).
-        screen.focused_region = Region.CONTENT
-        screen.action_solo_region()
-        await step("solo CONTENT on Read")
+        await step("mount")
+        preferred_before = screen.region_layout
+        screen.action_article_focus()
+        await step("Article Focus")
+        assert screen.query("#wl-region-content")
+        assert not screen.query("#wl-region-items")
+        assert screen.region_layout == preferred_before
 
         screen.active_section = "sources"
-        await step("leave Read with CONTENT soloed")
-
-        # A stale `focused_region` still pointed at a hidden region: both
-        # gestures must be refused, not just one.
-        screen.action_toggle_region()
-        await step("toggle refused on Sources (focused_region=CONTENT)")
-        screen.action_solo_region()
-        await step("solo refused on Sources (focused_region=CONTENT)")
+        await step("management section")
+        assert screen._article_focus_active is False
+        assert not screen.query("#wl-region-content")
 
         screen.active_section = "items"
-        await step("back to Read (CONTENT solo must have survived)")
-
-        # Un-solo, then manually collapse ITEMS itself on Read -- this is
-        # the OTHER route `_rendered_region_layout` has to guard (a manual
-        # `z` on ITEMS while soloing CONTENT, or a plain ITEMS collapse,
-        # both leave `region_layout.collapsed` containing ITEMS).
-        screen.focused_region = Region.CONTENT
-        screen.action_solo_region()
-        await step("un-solo CONTENT on Read")
-
-        screen.focused_region = Region.ITEMS
-        screen.action_toggle_region()
-        await step("collapse ITEMS on Read")
+        await step("return to Read")
+        screen.query_one("#wl-grip-items", Button).press()
+        await step("collapse Feed Items grip")
+        assert screen.query("#wl-region-content")
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
 
         screen.active_section = "runs"
-        await step("switch to Runs with ITEMS collapsed on Read")
-
-        # Rail toggles are orthogonal to the centre and must not interact.
+        await step("Runs with Feed Items preference collapsed")
         await pilot.press("[")
-        await step("collapse the left rail")
+        await step("toggle Navigation")
         await pilot.press("]")
-        await step("expand the left rail")
+        await step("toggle Inspector")
 
         screen.active_section = "items"
-        await step("back to Read with ITEMS still collapsed from before")
+        await step("return to Reader")
+        assert screen.query("#wl-region-content")
 
 
 @pytest.mark.asyncio
-async def test_off_read_items_toggle_never_empties_the_read_centre_or_persists():
-    """AC#3 gap the whole-branch review found (task-1344 review, B1): the
-    sequence test above never drove the ONE path that actually breaks
-    AC#3 -- collapse CONTENT on Read (a legitimate, persistable state),
-    leave for a non-Read tab where ITEMS is force-shown, then `z` with
-    `focused_region == ITEMS` (set by `on_descendant_focus` for anything
-    inside the section pane, so simply using Sources/Runs/... sets it up).
-
-    Before this fix that toggle was ACCEPTED: `region_layout.toggle(ITEMS)`
-    mutated and PERSISTED the real layout to `{items, content}` with
-    no visible change on the current tab (ITEMS is forced back out of
-    `collapsed` for the render), so returning to Read rendered two
-    headers over an empty centre -- on disk, surviving a restart.
-    """
-
-    def _any_centre_region_expanded(screen) -> bool:
-        return bool(
-            screen.query("#wl-region-items")
-            or screen.query("#wl-region-content")
-        )
+async def test_management_canvas_does_not_override_feed_items_preference():
+    """Management uses ITEMS as its canvas without changing Read preference."""
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -2363,65 +3062,35 @@ async def test_off_read_items_toggle_never_empties_the_read_centre_or_persists()
         screen.active_section = "items"
         await pilot.pause(0.3)
 
-        # Collapse CONTENT on Read -- the report's exact precondition, a
-        # legitimate and persistable state on its own.
-        screen.focused_region = Region.CONTENT
-        screen.action_toggle_region()
-        await pilot.pause(0.2)
-
-        assert screen.region_layout.is_collapsed(Region.CONTENT)
-        assert not screen.region_layout.is_collapsed(Region.ITEMS)
-        collapsed_before = screen.region_layout.collapsed
-        persisted_before = screen._last_persisted_collapsed
+        screen.query_one("#wl-grip-items", Button).press()
+        await pilot.pause(0.3)
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
+        assert screen._effective_region_layout.is_collapsed(Region.ITEMS)
+        preferred_before = screen.region_layout
 
         screen.active_section = "sources"
         await pilot.pause(0.3)
-        assert _any_centre_region_expanded(screen), (
-            "ITEMS is force-shown off Read even with CONTENT collapsed"
-        )
+        assert screen.query("#wl-region-items")
+        assert not screen.query("#wl-grip-items")
+        assert not screen._effective_region_layout.is_collapsed(Region.ITEMS)
 
         screen.notify = Mock()
-        screen.focused_region = Region.ITEMS
-        screen.action_toggle_region()
+        screen.post_message(RegionToggled(Region.ITEMS))
         await pilot.pause(0.3)
-
-        assert screen.region_layout.collapsed == collapsed_before, (
-            "an off-Read ITEMS toggle must be refused, not mutate the real, "
-            "persisted layout"
-        )
-        assert screen._last_persisted_collapsed == persisted_before, (
-            "and it must never reach the persisted collapse set"
-        )
-        screen.notify.assert_called_once()
-
-        screen.notify.reset_mock()
-        screen.action_solo_region()
-        await pilot.pause(0.3)
-        assert screen.region_layout.collapsed == collapsed_before, (
-            "solo on ITEMS off Read must be refused too"
-        )
-        assert screen._last_persisted_collapsed == persisted_before
+        assert screen.region_layout == preferred_before
         screen.notify.assert_called_once()
 
         screen.active_section = "items"
         await pilot.pause(0.3)
-        assert _any_centre_region_expanded(screen), (
-            "returning to Read must not land on a dead end -- ITEMS was "
-            "never actually collapsed by the refused off-Read gesture"
-        )
-        assert screen.query("#wl-region-items"), (
-            "ITEMS specifically must still be the expanded centre region"
-        )
+        assert screen.query("#wl-region-content")
+        assert not screen.query("#wl-region-items")
+        assert screen._effective_region_layout.is_collapsed(Region.ITEMS)
 
 
-# --- task-1344 fix wave (Qodo correctness): `z`/`Z` while focus is in the --
-# centre header/tab strip -----------------------------------------------
+# --- `z` / Article Focus while focus is in the status header ------------
 #
 # `#wl-centre-status`/`#wl-tabs` (`_build_centre_status_header`) are mounted
-# directly under `#wl-centre`, outside every `wl-region-*`/`wl-header-*`
-# wrapper -- so `on_descendant_focus` never updates `focused_region` while
-# focus sits there, leaving it naming whatever region the user last actually
-# visited.
+# above `#wl-workbench-body`, outside every `wl-region-*`/`wl-grip-*` wrapper.
 
 
 @pytest.mark.asyncio
@@ -2432,8 +3101,7 @@ async def test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region(
     `_refuse_region_gesture_off_read_tab` only gates `CENTRE_REGIONS`, so a
     rail's toggle was never refused there regardless of where real focus
     was. This is the one gesture the header-focus guard actually prevents
-    from mutating anything (unlike solo below, whose CENTRE-region path was
-    already refused by the existing off-Read gate regardless of focus).
+    from mutating anything.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -2454,8 +3122,7 @@ async def test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region(
         screen.query_one("#wl-tab-runs").focus()
         await pilot.pause()
         assert screen._focus_in_centre_header, (
-            "precondition: the tab strip must be recognized as the centre "
-            "header"
+            "precondition: the tab strip must be recognized as the centre header"
         )
 
         await pilot.press("z")
@@ -2466,7 +3133,7 @@ async def test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region(
             "focused_region left over from the rail"
         )
         assert not screen.region_layout.is_collapsed(Region.LEFT_RAIL)
-        assert screen._last_persisted_collapsed == before.collapsed_for_persistence()
+        assert screen._last_persisted_collapsed == before.collapsed
 
 
 @pytest.mark.asyncio
@@ -2512,50 +3179,36 @@ async def test_the_tab_strip_is_recognized_as_the_centre_header_on_the_read_tab_
 
 
 @pytest.mark.asyncio
-async def test_capital_z_with_focus_in_the_centre_header_does_not_solo_a_stale_region():
-    """The solo half of the test above.
-
-    Unlike the toggle case, ITEMS's solo off the Read tab is ALREADY
-    refused by `_refuse_region_gesture_off_read_tab` regardless of focus
-    (task-1344 whole-branch review, B1), so `region_layout` never had a
-    path to actually mutate here either way. What this fix changes instead:
-    without it, that refusal still fires its `self.notify(...)`, keyed to
-    a region (`focused_region`, stale) the user is not looking at and has
-    no reason to associate with the tab strip they actually pressed `Z`
-    in. With the fix, focus-in-header short-circuits before that notify.
-    """
+async def test_capital_z_in_the_header_activates_article_focus_only_effectively():
+    """Article Focus is independent of stale region focus and not persisted."""
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
 
-        screen.active_section = "sources"
-        await pilot.pause(0.2)
-        screen.query_one("#wl-region-items").focus()
+        screen.query_one("#wl-region-left_rail").focus()
         await pilot.pause()
-        assert screen.focused_region == Region.ITEMS, (
+        assert screen.focused_region == Region.LEFT_RAIL, (
             "precondition: focused_region names a REAL prior focus"
         )
-        before = screen.region_layout
+        preferred_before = screen.region_layout
 
         screen.query_one("#wl-tab-runs").focus()
         await pilot.pause()
         assert screen._focus_in_centre_header, (
-            "precondition: the tab strip must be recognized as the centre "
-            "header"
+            "precondition: the tab strip must be recognized as the centre header"
         )
 
-        screen.notify = Mock()
         await pilot.press("Z")
         await pilot.pause(0.2)
 
-        assert screen.region_layout == before, (
-            "Z with focus in the tab strip must not solo the stale "
-            "focused_region left over from ITEMS"
-        )
-        assert screen.region_layout.solo_region is None
-        screen.notify.assert_not_called()
+        assert screen._article_focus_active is True
+        assert screen.region_layout == preferred_before
+        assert screen.query("#wl-region-content")
+        assert not screen.query("#wl-region-items")
+        for region in (Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL):
+            assert screen._effective_region_layout.is_collapsed(region)
 
 
 @pytest.mark.asyncio
@@ -2574,6 +3227,9 @@ async def test_focus_leaving_the_header_for_a_non_region_widget_clears_the_flag(
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
+
+        screen.active_section = "runs"
+        await pilot.pause(0.2)
 
         screen.query_one("#wl-tab-runs").focus()
         await pilot.pause()
@@ -2643,7 +3299,13 @@ async def test_a_background_snapshot_lands_in_place_without_rebuilding_the_pane(
         )
         assert not screen.query("#wc-service-error")
 
-        screen._apply_local_wc_snapshot((), 0, True, "Watchlists services unavailable; retry Watchlists later.", None)
+        screen._apply_local_wc_snapshot(
+            (),
+            0,
+            True,
+            "Watchlists services unavailable; retry Watchlists later.",
+            None,
+        )
         for _ in range(200):
             await pilot.pause(0.01)
             if screen.query("#wc-service-error"):
@@ -2748,7 +3410,9 @@ def test_latest_run_status_text_distinguishes_not_configured_from_no_runs_yet():
     screen = object.__new__(WatchlistsCollectionsScreen)
     screen._id = 1
 
-    screen._reactive_overview_data = {"latest_run_status": WatchlistsBackendController.NOT_CONFIGURED_STATUS}
+    screen._reactive_overview_data = {
+        "latest_run_status": WatchlistsBackendController.NOT_CONFIGURED_STATUS
+    }
     not_configured_text = screen._latest_run_status_text()
 
     screen._reactive_overview_data = {"latest_run_status": None}
@@ -2771,7 +3435,9 @@ def test_latest_run_status_text_reports_a_real_lookup_failure_distinctly():
     """
     screen = object.__new__(WatchlistsCollectionsScreen)
     screen._id = 1
-    screen._reactive_overview_data = {"latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS}
+    screen._reactive_overview_data = {
+        "latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS
+    }
 
     text = screen._latest_run_status_text()
 
@@ -3106,8 +3772,7 @@ async def test_a_failed_surface_refresh_start_does_not_wedge_the_queue():
             if screen.query(node_id):
                 break
         assert screen.query(node_id), (
-            "the queue stayed wedged: a later background loader never reached "
-            "the rail"
+            "the queue stayed wedged: a later background loader never reached the rail"
         )
 
 
@@ -3302,9 +3967,8 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
     test that only covered the deep-link's own section would let the other five
     rot.
     """
+    from tldw_chatbook.Subscriptions.watchlist_item_page import WatchlistItemPage
     from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane  # noqa: F401
-    from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane  # noqa: F401
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
         TreeScope,
         TreeScopeChanged,
@@ -3331,11 +3995,25 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
         screen._controller.list_runs = AsyncMock(
             return_value=[{"id": "r1", "source_title": "Feed One", "status": "ok"}]
         )
-        screen._controller.list_items = AsyncMock(
-            return_value=[{"id": "i1", "title": "Item One", "source_name": "Feed One"}]
+        screen._controller.list_reader_items_page = AsyncMock(
+            return_value=WatchlistItemPage(
+                items=(
+                    {
+                        "id": "i1",
+                        "title": "Item One",
+                        "source_name": "Feed One",
+                    },
+                ),
+                has_more=False,
+                snapshot_max_item_id=1,
+                snapshot_count=1,
+                next_cursor=None,
+            )
         )
         screen._controller.list_alert_rules = AsyncMock(
-            return_value=[{"id": "a1", "name": "Rule One", "condition_type": "no_items"}]
+            return_value=[
+                {"id": "a1", "name": "Rule One", "condition_type": "no_items"}
+            ]
         )
         screen._notifications_controller.load_rows = AsyncMock(
             return_value=[
@@ -3352,8 +4030,18 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
 
         cases = [
             ("runs", "#watchlists-runs-pane", "runs", lambda: screen._load_runs()),
-            ("sources", "#watchlists-sources-pane", "sources", lambda: screen._load_sources()),
-            ("items", "#watchlists-items-pane", "items", lambda: screen._load_items()),
+            (
+                "sources",
+                "#watchlists-sources-pane",
+                "sources",
+                lambda: screen._load_sources(),
+            ),
+            (
+                "items",
+                "#watchlists-items-pane",
+                "items",
+                lambda: screen._replace_items_snapshot(reason="refresh"),
+            ),
             ("rules", "#watchlists-rules-pane", "rules", lambda: screen._load_rules()),
             (
                 "notifications",
@@ -3373,6 +4061,7 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
                     pane = found.first()
                     break
             assert pane is not None, f"precondition: the {section} pane mounted"
+            await host.workers.wait_for_complete()
 
             # Rewind the pane to "nothing loaded", so only an in-window push
             # can satisfy the assertion below.

@@ -57,6 +57,9 @@ class SyncProfileStatusDisplay:
         dataset_label: Sanitized dataset label for the active profile.
         device_label: Sanitized device label for the active profile.
         read_only_notice: Stable copy explaining the banner does not start sync.
+        notes_organization_state: Sanitized Notes organization enrollment phase.
+        notes_organization_captured_count: Server-captured organization item count.
+        notes_organization_expected_count: Server-expected organization item count.
     """
 
     status: str
@@ -69,6 +72,9 @@ class SyncProfileStatusDisplay:
     dataset_label: str
     device_label: str
     read_only_notice: str = "This view only reads sync state; it does not start sync."
+    notes_organization_state: str = "not_configured"
+    notes_organization_captured_count: int = 0
+    notes_organization_expected_count: int = 0
 
     @classmethod
     def from_summary(
@@ -91,6 +97,7 @@ class SyncProfileStatusDisplay:
         profile = _mapping(record.get("profile"))
         outbox = _mapping(record.get("outbox"))
         conflicts = _mapping(record.get("conflicts"))
+        notes_organization = _mapping(record.get("notes_organization"))
         pending_count = _count(outbox.get("pending"))
         dispatched_count = _count(outbox.get("dispatched"))
         conflict_count = _count(conflicts.get("count"))
@@ -123,6 +130,15 @@ class SyncProfileStatusDisplay:
             device_label=f"Device {device_id}"
             if device_id
             else "Device not registered",
+            notes_organization_state=_safe_text(
+                notes_organization.get("state"), "not_configured", max_length=40
+            ).lower(),
+            notes_organization_captured_count=_count(
+                notes_organization.get("captured_count")
+            ),
+            notes_organization_expected_count=_count(
+                notes_organization.get("expected_count")
+            ),
         )
 
 
