@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from textual.app import App, ComposeResult
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from tldw_chatbook.Chat.console_chat_models import (
     PROPRIETARY_THINKING_NOTICE,
     ConsoleActivityPresentation,
@@ -50,7 +52,7 @@ class ThinkingTranscriptHarness(App[None]):
 class StyledThinkingTranscriptHarness(ThinkingTranscriptHarness):
     """Thinking harness using the same bundled stylesheet as production."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH: ClassVar = list(APP_STYLESHEETS)
 
 
 def _displayable(
@@ -127,6 +129,7 @@ async def test_first_live_evidence_expands_and_delta_updates_same_widgets() -> N
 
         assert disclosure.expanded
         assert disclosure.detail_stack.children
+        thinking_body = disclosure.detail_stack.children[0]
         assert (
             transcript.thinking_detail_text(disclosure.activity_message_id) == "first"
         )
@@ -141,9 +144,57 @@ async def test_first_live_evidence_expands_and_delta_updates_same_widgets() -> N
         assert _disclosure(transcript, updated) is disclosure
         assert transcript.query_one(ConsoleAssistantTurnWidget) is turn
         assert turn.answer_widget is answer
+        assert disclosure.detail_stack.children[0] is thinking_body
         assert transcript.thinking_detail_text(disclosure.activity_message_id) == (
             "first second"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [60, 100])
+async def test_streaming_thinking_never_paints_an_empty_body(
+    width: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Removing the live body between deltas must not emit a blank frame."""
+    app = StyledThinkingTranscriptHarness()
+    initial = _assistant(blocks=(_displayable("Reasoning marker: examine each case."),))
+
+    async with app.run_test(size=(width, 28)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([initial], session_id="session-a")
+        await transcript.refresh_messages()
+        await pilot.pause()
+        disclosure = _disclosure(transcript, initial)
+        disclosure.header.focus()
+        await pilot.pause()
+        painted: list[bool] = []
+        display = app._display
+
+        def observe_display(screen, renderable) -> None:
+            if renderable is not None:
+                frame = "\n".join(
+                    strip.text for strip in screen._compositor.render_strips()
+                )
+                painted.append("Reasoning marker" in frame)
+            display(screen, renderable)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(app, "_display", observe_display)
+            for index in range(1, 41):
+                text = "Reasoning marker: examine each case." + " More." * index
+                updated = replace(
+                    initial, thinking=ThinkingEnvelope((_displayable(text),))
+                )
+                transcript.set_messages([updated], session_id="session-a")
+                await transcript.refresh_messages()
+                await asyncio.sleep(0.035)
+            await pilot.pause()
+
+        assert len(painted) >= 10, "The probe must observe actual streaming paints"
+        assert all(painted), f"Thinking disappeared in {painted.count(False)} frames"
+        assert app.focused is disclosure.header
+        assert disclosure.detail_stack.children[0].region.height > 1
+        assert disclosure.detail_stack.children[0].renderable.plain == text
 
 
 @pytest.mark.asyncio
@@ -634,7 +685,7 @@ async def test_editable_block_resolves_owner_block_and_text() -> None:
         blocks=(_displayable("full historical thinking"),),
     )
 
-    async with app.run_test(size=(100, 28)) as pilot:
+    async with app.run_test(size=(100, 28)):
         transcript = app.query_one(ConsoleTranscript)
         transcript.set_messages([historical], session_id="session-a")
         await transcript.refresh_messages()
@@ -658,13 +709,15 @@ async def test_editable_block_returns_none_for_proprietary() -> None:
         blocks=(_proprietary(),),
     )
 
-    async with app.run_test(size=(100, 28)) as pilot:
+    async with app.run_test(size=(100, 28)):
         transcript = app.query_one(ConsoleTranscript)
         transcript.set_messages([proprietary_owner], session_id="session-a")
         await transcript.refresh_messages()
         disclosure = _disclosure(transcript, proprietary_owner)
 
-        assert transcript.thinking_editable_block(disclosure.activity_message_id) is None
+        assert (
+            transcript.thinking_editable_block(disclosure.activity_message_id) is None
+        )
 
 
 @pytest.mark.asyncio
@@ -676,7 +729,7 @@ async def test_editable_block_refuses_streaming_owner() -> None:
         blocks=(_displayable("partial live thinking"),),
     )
 
-    async with app.run_test(size=(100, 28)) as pilot:
+    async with app.run_test(size=(100, 28)):
         transcript = app.query_one(ConsoleTranscript)
         transcript.set_messages([streaming], session_id="session-a")
         await transcript.refresh_messages()
@@ -685,4 +738,6 @@ async def test_editable_block_refuses_streaming_owner() -> None:
         # A live disclosure must not open the edit modal with partial text
         # (TASK-32312 review: saving a stale live prefill after completion
         # would truncate the finished reasoning).
-        assert transcript.thinking_editable_block(disclosure.activity_message_id) is None
+        assert (
+            transcript.thinking_editable_block(disclosure.activity_message_id) is None
+        )
