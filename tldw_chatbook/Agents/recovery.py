@@ -1,6 +1,5 @@
 """Retained run-log bytes from exact sandbox and registered workspace roots."""
 
-import os
 import sqlite3
 from contextlib import closing
 from dataclasses import replace
@@ -18,6 +17,7 @@ from tldw_chatbook.Backup_Recovery.profile_paths import (
     user_data_dir,
 )
 from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
+from tldw_chatbook.Utils.platform_files import os
 
 
 class _RunLogs(_RawDeclaration):
@@ -186,7 +186,7 @@ class _RunLogs(_RawDeclaration):
                                 metadata=replace(
                                     item.metadata,
                                     root_id=container.logical_id,
-                                    relative_path=str(item.path.relative_to(root)),
+                                    relative_path=item.path.relative_to(root).as_posix(),
                                     parent_id=container.logical_id
                                     if item.path == path
                                     else item.metadata.parent_id,

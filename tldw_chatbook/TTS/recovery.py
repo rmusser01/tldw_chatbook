@@ -1,7 +1,6 @@
 """Installed TTS profiles and voice inventory, without runtime constructors."""
 
 import hashlib
-import os
 import sqlite3
 import stat
 import sys
@@ -24,6 +23,7 @@ from tldw_chatbook.Backup_Recovery.profile_paths import (
 from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
 from tldw_chatbook.DB.recovery_operations import _SQLiteDeclaration
 from tldw_chatbook.DB.recovery_sqlite import _checked_capture, _validate_sqlite
+from tldw_chatbook.Utils.platform_files import os
 
 _SCHEMA = (
     (

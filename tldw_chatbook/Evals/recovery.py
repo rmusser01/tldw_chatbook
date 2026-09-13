@@ -228,7 +228,6 @@ def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
     incoming receipts cannot describe reinstated originals.
     """
     import hashlib
-    import os
     import stat
 
     from tldw_chatbook.Backup_Recovery import archive_reader, bootstrap
@@ -238,6 +237,7 @@ def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
     from tldw_chatbook.Backup_Recovery.plan_records import load_plan
     from tldw_chatbook.Backup_Recovery.recovery_copies import _journal
     from tldw_chatbook.Backup_Recovery.restore_plan import _ancestor
+    from tldw_chatbook.Utils.platform_files import os
 
     selector = bootstrap.lexical_path(context.config_path)
     root = bootstrap.default_bootstrap_root()

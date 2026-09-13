@@ -21,7 +21,7 @@ Root owns Linux native operations, integration imports and release contracts.
 Preserve containment, permissions, exclusive rename and failure propagation.
 
 ## Stage 3 — Actual product verification
-Status: In Progress. Revision9ec native Windows confirms exact database-default correction: valid inventory and explicit replacement safety review. Native294/product98 pass, two tests exit before asynchronous start dispatch and close the service. Test drivers now await matching Textual start worker and require a new operation ID/kind within original budgets. Actual macOS combined180.27s and Linux readers110/combined282.4s pass; full Windows verification of corrected test synchronization is next.
+Status: In Progress. Revision892 passes actual Windows replacement and99/100 product cases; later rollback preview exposes a raw os.geteuid call in retained eval discovery. That reader and adjacent Agents/TTS descriptor reads now use the existing native facade; nested Agents metadata uses portable archive spelling. Real owner-identity regression RED/GREEN and affected-owner suites29pass; review/static checks accepted. Full native Windows, macOS and Linux verification of this correction is next.
 Use installed package, private profile and synthetic data on supplied Linux host,
 GitHub Actions Windows runner and local macOS. Create and verify backups, restore
 and open them, then exercise replacement and retained-copy rollback. Fix failures.

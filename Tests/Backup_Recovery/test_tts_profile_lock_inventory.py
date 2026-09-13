@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from Tests.Backup_Recovery.test_complete_roundtrip import _run_profile_child
+from Tests.Backup_Recovery.test_complete_roundtrip import (
+    _CHILD_ENVIRONMENT_KEYS,
+    _run_profile_child,
+)
 
 _SCRIPT = r"""
 import asyncio,json,os,sys
@@ -101,7 +104,7 @@ def test_actual_tts_profile_lock_inventory(tmp_path, mode):
     selector.chmod(0o600)
     environment = {
         key: os.environ[key]
-        for key in ("PATH", "LANG", "LC_ALL", "GOMODCACHE", "GOCACHE", "GOPROXY")
+        for key in _CHILD_ENVIRONMENT_KEYS
         if key in os.environ
     }
     environment.update(

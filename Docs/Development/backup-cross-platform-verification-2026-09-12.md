@@ -4,6 +4,24 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Revision `892e11484b6436f0d554ad1a2b591ed6de69632e` passes actual Windows
+replacement, including21 displayed credential omissions, untouched abort,
+explicit acknowledgement and `restoration_validated`. Full
+[Windows34730198405](https://github.com/rmusser01/tldw_chatbook/actions/runs/34730198405)
+passes native294 and product99/100; all125 artifact hashes verify against clean
+9,854-file source, with seven2,030-file installed receipts. The only failure is
+later rollback preview: the retained eval manifest reader imports raw `os` and
+calls `geteuid`, unavailable on Windows. It now uses the existing platform file
+layer, preserving all ownership, mode and held-file identity checks. A regression
+using a real completed replacement fails before the correction and passes after.
+The same native-descriptor correction applies to adjacent agent-log and TTS-lock
+inventory readers; agent nested metadata now uses archive-format forward slashes.
+Twenty-nine focused retained-eval, TTS lock, agent-log and script-output checks
+pass14.79 seconds; production Bandit is clean and Ruff adds no findings. The18
+existing owner inventory cases are included in Windows support verification.
+Final892 actual macOS combined passes189.75 seconds; Linux passes282.95 seconds,
+source SHA256 `ed9445d09b1f877f4b1b7d6b137cd1b5ece4843a21d0131f68edd95e23b58866`.
+
 Revision `9ec5955105179a25223397e1e8f5b154d64db573` confirms the database
 default correction on [Windows34729579468](https://github.com/rmusser01/tldw_chatbook/actions/runs/34729579468):
 fresh target inventory has no blocking items, and replacement reaches explicit

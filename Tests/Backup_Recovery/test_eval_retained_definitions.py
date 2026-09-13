@@ -317,6 +317,25 @@ def test_pending_recovery_refuses_retained_definition_lookup(completed_replaceme
         path.unlink()
 
 
+def test_retained_manifest_checks_native_owner_identity(completed_replacement, monkeypatch):
+    from tldw_chatbook.Evals.recovery import _retained_definition_paths
+    from tldw_chatbook.Utils import platform_files
+
+    original = platform_files.os
+
+    class ForeignOwner:
+        def __getattr__(self, name):
+            return getattr(original, name)
+
+        def geteuid(self):
+            return original.geteuid() + 1
+
+    _, _, context, _ = completed_replacement
+    monkeypatch.setattr(platform_files, "os", ForeignOwner())
+    with pytest.raises(ValueError, match="verified_manifest_changed"):
+        _retained_definition_paths(context)
+
+
 def test_ordinary_profile_does_not_create_retained_authority(tmp_path, monkeypatch):
     from tldw_chatbook.Backup_Recovery import bootstrap
     from tldw_chatbook.Backup_Recovery.models import (
