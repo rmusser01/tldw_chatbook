@@ -28,7 +28,7 @@ from textual import events
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.pilot import _get_mouse_message_arguments
 from textual.widgets import Button, Input, SelectionList, Static, TextArea
 
@@ -519,7 +519,7 @@ class _EditorHost(ConsolidatedCSSApp):
 class _ProductionEditorHost(_EditorHost):
     """Mount the isolated editor with the real application stylesheet stack."""
 
-    CSS_PATH = TldwCli.CSS_PATH
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 @pytest.mark.asyncio
@@ -616,7 +616,7 @@ async def test_skill_editor_production_geometry_contains_basic_and_advanced_work
         tool_catalog=tuple(f"tool-{index:02d}" for index in range(60)),
     )
     async with app.run_test(size=size) as pilot:
-        assert app.CSS_PATH == TldwCli.CSS_PATH
+        assert app.CSS_PATH == [str(path) for path in APP_STYLESHEETS]
         canvas = app.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
         for selector in (
             "#library-skill-name",

@@ -32,6 +32,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     WorkspaceTreeMenuRequested,
 )
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 
 pytestmark = pytest.mark.ui
@@ -43,7 +44,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class _StyledConsoleHarness(ConsoleHarness):
     """Use the exact shipped CSS stack, not widget default CSS."""
 
-    CSS_PATH = str(ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss")
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 def _scratch_tree_fingerprint(root: Path) -> tuple[tuple[str, str, str], ...]:

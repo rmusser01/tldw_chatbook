@@ -6,7 +6,6 @@ will be sent); collapsed paste tokens are single units for movement, deletion,
 and word boundaries.
 """
 
-from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
@@ -25,6 +24,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 
 PASTE_CHUNK = "chunk of pasted console text " * 10
@@ -610,12 +610,7 @@ class _CssTrueConsoleHarness(ConsoleHarness):
     below both assert about real geometry, so they need the real sheet.
     """
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 async def _focused_composer(pilot, console, draft: str) -> ConsoleComposerBar:

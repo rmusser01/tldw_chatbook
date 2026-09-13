@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook import config
 from tldw_chatbook.UI.Screens.settings_config_models import (
@@ -20,7 +20,7 @@ from tldw_chatbook.Web_Scraping import search_backend_settings as catalog
 
 
 class SearchSettingsHarness(DestinationHarness):
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 @pytest.fixture
