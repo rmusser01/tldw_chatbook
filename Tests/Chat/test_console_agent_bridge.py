@@ -11120,6 +11120,78 @@ def test_terminal_usage_snapshot_failure_is_observational_and_finishes(
     )
 
 
+@pytest.mark.parametrize("fault", ["snapshot", "extractor"])
+def test_live_usage_chunk_observation_failure_does_not_truncate_provider_text(
+    monkeypatch,
+    fault,
+):
+    """Optional in-flight accounting cannot become a stream dependency."""
+
+    class TextGateway(ConsoleProviderGateway):
+        async def stream_chat(self, *_args, **_kwargs):
+            yield "complete "
+            yield "provider text"
+
+    if fault == "snapshot":
+        monkeypatch.setattr(
+            console_agent_bridge.ConsoleProviderCallSignals,
+            "usage_snapshot",
+            lambda _self: (_ for _ in ()).throw(RuntimeError("private snapshot")),
+        )
+    else:
+        monkeypatch.setattr(
+            _StreamingModelAdapter,
+            "_provider_output_count",
+            staticmethod(
+                lambda _usage: (_ for _ in ()).throw(RuntimeError("private extraction"))
+            ),
+        )
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    events = []
+    warnings = []
+    sink_id = logger.add(warnings.append, level="WARNING", format="{message}")
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=TextGateway(),
+        resolution=_test_resolution(),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        live_usage_sink=events.append,
+    )
+    try:
+        with adapter.run_scope("run", "primary"):
+            response = adapter.chat_call(
+                messages_payload=[{"role": "user", "content": "hi"}]
+            )
+    finally:
+        logger.remove(sink_id)
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(2)
+        loop.close()
+
+    assert response["choices"][0]["message"]["content"] == ("complete provider text")
+    assert store.get_message(assistant.id).content == "complete provider text"
+    assert events[0].kind == "started"
+    assert events[-1].kind == "finished"
+    assert adapter._failed_live_usage_sequences == set()
+    assert (
+        warnings.count(
+            "live provider usage observation failed; telemetry disabled for call\n"
+        )
+        == 1
+    )
+
+
 def test_terminal_usage_signal_fallback_preserves_explicit_output(monkeypatch):
     class MetadataGateway(ConsoleProviderGateway):
         async def stream_chat(self, *_args, **_kwargs):

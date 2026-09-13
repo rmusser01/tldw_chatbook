@@ -49,10 +49,8 @@ from Tests.Agents.test_agent_service import fence
 from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_fleet_runtime import (
     _JOIN_TIMEOUT,
-    _fs_local_provider,
     _tool_results,
     _wait_until,
-    git_repo,  # noqa: F401  -- pytest fixture, resolved via this import
     make_fleet_service,
 )
 from tldw_chatbook.Agents.agent_models import (
@@ -904,9 +902,8 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     assert f"run:{resumed_row['id']}" in sends[0]
 
 
-#: Isolation-capable resume config: spawn + wait + resume, no fs tools
-#: needed (the child never writes -- this test only checks worktree
-#: ADMISSION happens again on resume, not diff content).
+#: Isolation-capable resume config: the parent can address a retained child;
+#: the closed worktree boundary refuses before provider or filesystem work.
 ISO_RESUME_CFG = AgentConfig(
     model="test-model",
     system_prompt="You are helpful.",
@@ -915,16 +912,36 @@ ISO_RESUME_CFG = AgentConfig(
 )
 
 
-def test_resumed_worktree_isolated_child_gets_a_fresh_worktree(db, git_repo):
-    """Finding 7 (Qodo round): `RetainedTranscript` now threads the
-    original child's isolation flag through to a resume -- a resumed
-    isolation="worktree" child must get its OWN fresh worktree (a new
-    run_id, so a new admission is the correct outcome, per the T4
-    refusal machinery `_admit_agent_worktree` already covers), not
-    silently fall back to sharing the tree the way passing a literal
-    ``None`` for isolation used to.
-    """
-    provider = _fs_local_provider(git_repo)
+def _seed_retained_worktree_child(db, coordinator):
+    """Retain an isolated transcript without invoking Git or a provider."""
+    old_run_id = db.create_run(
+        conversation_id="c",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        task="iso task",
+    )
+    db.set_status(old_run_id, RUN_DONE, result="original result")
+    handle = coordinator.reserve(task="iso task", agent=None, isolation="worktree")
+    assert handle is not None
+    coordinator.attach_run(handle.handle_id, old_run_id)
+    history = [
+        {"role": "user", "content": "original task"},
+        {"role": "assistant", "content": "original answer"},
+    ]
+    coordinator.finish(
+        handle.handle_id,
+        RUN_DONE,
+        result="original result",
+        transcript=history,
+    )
+    retained = coordinator.get_retained(handle.handle_id)
+    assert retained is not None and retained.isolation == "worktree"
+    return handle, old_run_id, history
+
+
+def test_resumed_worktree_isolated_child_refuses_without_git_or_fallback(
+    db, monkeypatch
+):
+    """A retained isolated resume fails closed and preserves its history."""
     holder: dict = {}
 
     def resume():
@@ -936,47 +953,46 @@ def test_resumed_worktree_isolated_child_gets_a_fresh_worktree(db, git_repo):
     service, chat, coordinator = make_fleet_service(
         db,
         [
-            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn one answer",
             resume,
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn two answer",
+            "resume refused",
         ],
-        {"iso task": ["done once", "done twice"]},
-        providers=(provider,),
     )
-    run1, outcome1 = _run(service, config=ISO_RESUME_CFG)
-    assert outcome1.status == RUN_DONE
-    finished = _finished_child(coordinator)
-    holder["handle_id"] = finished.handle_id
-    _await_retained(coordinator, finished.handle_id)
-    retained = coordinator.get_retained(finished.handle_id)
-    assert retained.isolation == "worktree", (
-        "the original spawn's isolation was not recorded on retention"
+    original, old_run_id, history = _seed_retained_worktree_child(db, coordinator)
+    holder["handle_id"] = original.handle_id
+    monkeypatch.setattr(
+        "tldw_chatbook.Agents.agent_worktree.create_agent_worktree",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("closed resume boundary must not invoke Git")
+        ),
     )
 
-    run2, outcome2 = _run(service, config=ISO_RESUME_CFG)
-    assert outcome2.status == RUN_DONE
+    run_id, outcome = _run(service, config=ISO_RESUME_CFG)
+    join_fleet_children(service)
 
-    resumed_handle = next(
-        h for h in coordinator.snapshot() if h.handle_id != finished.handle_id
+    assert outcome.status == RUN_DONE
+    assert chat.child_calls.get("iso task") is None
+    assert service._agent_worktrees == {}
+    assert coordinator.get_retained(original.handle_id).messages == tuple(history)
+    assert coordinator.get(original.handle_id).status == RUN_DONE
+    refused_handle = next(
+        handle
+        for handle in coordinator.snapshot()
+        if handle.handle_id != original.handle_id
     )
-    assert resumed_handle.handle_id in service._agent_worktrees, (
-        "the resumed isolated child never got a fresh worktree admission"
-    )
+    assert refused_handle.status == RUN_ERROR and refused_handle.run_id is None
+    refused_row = next(row for row in _subagent_rows(db) if row["id"] != old_run_id)
+    assert refused_row["parent_run_id"] == run_id
+    assert refused_row["resumed_from_run_id"] == old_run_id
+    assert refused_row["status"] == RUN_ERROR
+    assert "unsupported_execution_boundary" in refused_row["result"]
+    sends = _tool_results(db.get_run(run_id), SEND_TO_AGENT_TOOL_NAME)
+    assert len(sends) == 1 and "unsupported_execution_boundary" in sends[0]
 
 
-def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
-    db, git_repo, monkeypatch
+def test_refused_isolated_resume_filters_shell_and_settles_without_child_script(
+    db, monkeypatch
 ):
-    """Finding 6 twin (Qodo round): the resume call site's own
-    child_allowed_tools composition (a deliberate duplicate of spawn's,
-    per this module's own "only the launch tail is shared" convention)
-    must exclude shell_exec/virtual_cli exactly like the spawn path does,
-    now that Finding 7 threads `retained.isolation` through instead of a
-    literal None.
-    """
+    """The closed resume path keeps its safe tool projection and settles."""
     from tldw_chatbook.Agents import agent_service as agent_service_module
     from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
     from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
@@ -991,7 +1007,6 @@ def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
 
     monkeypatch.setattr(agent_service_module, "AgentConfig", _spy_agent_config)
 
-    provider = _fs_local_provider(git_repo)
     shell_cli_resume_cfg = AgentConfig(
         model="test-model",
         system_prompt="You are helpful.",
@@ -1015,24 +1030,18 @@ def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
     service, chat, coordinator = make_fleet_service(
         db,
         [
-            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn one answer",
             resume,
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn two answer",
+            "resume refused",
         ],
-        {"iso task": ["done once", "done twice"]},
-        providers=(provider,),
     )
-    run1, outcome1 = _run(service, config=shell_cli_resume_cfg)
-    assert outcome1.status == RUN_DONE
-    finished = _finished_child(coordinator)
-    holder["handle_id"] = finished.handle_id
-    _await_retained(coordinator, finished.handle_id)
+    original, _old_run_id, history = _seed_retained_worktree_child(db, coordinator)
+    holder["handle_id"] = original.handle_id
 
-    run2, outcome2 = _run(service, config=shell_cli_resume_cfg)
-    assert outcome2.status == RUN_DONE
+    _run_id, outcome = _run(service, config=shell_cli_resume_cfg)
+    join_fleet_children(service)
+    assert outcome.status == RUN_DONE
+    assert chat.child_calls.get("iso task") is None
+    assert coordinator.get_retained(original.handle_id).messages == tuple(history)
 
     child_configs = [
         cfg for cfg in captured_configs if cfg is not shell_cli_resume_cfg
@@ -1040,6 +1049,7 @@ def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
     resumed_config = child_configs[-1]
     assert RAW_SHELL_TOOL_NAME not in resumed_config.allowed_tools
     assert VIRTUAL_CLI_TOOL_NAME not in resumed_config.allowed_tools
+    assert service._agent_worktrees == {}
 
 
 class _AgentLessonsCatalogProvider:
