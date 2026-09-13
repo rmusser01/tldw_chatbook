@@ -184,3 +184,54 @@ def observe_recovery_failures(path: Path) -> Callable[[], None]:
         service_class.issue_code = original_static
 
     return stop
+
+
+def observe_startup_refusals(path: Path) -> Callable[[], None]:
+    """Trace caught startup errors only during its calling thread's check."""
+    from tldw_chatbook.Backup_Recovery import bootstrap
+
+    original = bootstrap.startup_permission
+    records, lock = [], threading.Lock()
+
+    def observed(*args, **kwargs):
+        errors, return_line = [], None
+
+        def trace(frame, event, argument):
+            nonlocal return_line
+            if frame.f_code is not original.__code__:
+                return None
+            if event == "exception":
+                errors.append(_error_metadata(argument[1]))
+                del errors[:-16]
+            elif event == "return":
+                return_line = frame.f_lineno
+            return trace
+
+        previous = sys.gettrace()
+        sys.settrace(trace)
+        try:
+            result = original(*args, **kwargs)
+        finally:
+            sys.settrace(previous)
+        if result[0] is False:
+            reason = result[1]
+            if reason not in {"recovery_scope_uncertain", "recovery_pending"}:
+                reason = "unrecognized_startup_refusal"
+            record = {
+                "reason": reason,
+                "return_line": return_line,
+                "errors": errors,
+                "callers": _frames(sys._getframe().f_back, limit=16),
+            }
+            with lock:
+                records.append(record)
+                del records[:-8]
+                _write(Path(path), records)
+        return result
+
+    bootstrap.startup_permission = observed
+
+    def stop():
+        bootstrap.startup_permission = original
+
+    return stop

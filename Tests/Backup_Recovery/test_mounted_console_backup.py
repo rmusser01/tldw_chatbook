@@ -24,9 +24,10 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
 from tldw_chatbook.Backup_Recovery import archive_reader,storage_admission
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
-from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures
+from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures,observe_startup_refusals
 stop_stacks=observe_threads(Path.home()/'mounted-stacks.log',interval=30)
 stop_failures=observe_recovery_failures(Path.home()/'mounted-recovery-failures.log')
+stop_startup=observe_startup_refusals(Path.home()/'mounted-startup-refusals.log')
 import tldw_chatbook
 assert Path(tldw_chatbook.__file__).resolve()==Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])/'tldw_chatbook'/'__init__.py'
 async def main():
@@ -86,7 +87,7 @@ async def main():
   await asyncio.to_thread(service.close)
  assert not blocked_attempts(),blocked_attempts()
 try:asyncio.run(main())
-finally:stop_failures();stop_stacks()
+finally:stop_startup();stop_failures();stop_stacks()
 print('retired and reopened')
 '''
 
