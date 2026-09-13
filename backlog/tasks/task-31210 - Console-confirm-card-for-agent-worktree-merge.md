@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03 11:45'
-updated_date: '2026-09-13 02:12'
+updated_date: '2026-09-13 03:51'
 labels:
   - agents
   - console
@@ -34,6 +34,8 @@ Scope notes from the phase-2 review record:
 - [ ] #5 Worktree creation and confirmed mutations use the exact selected writable named binding with fresh binding and root identity checks; missing selection and observed stale/read-only/ambiguous/scratch authority refuse. Ordinary Git does not claim atomic protection against concurrent external metadata replacement. Existing child filesystem containment remains intact.
 - [ ] #6 Merge/discard eligibility requires durable positive physical-owner drain proof as well as terminal run ownership; a cancelled-but-live child remains protected.
 - [ ] #7 Confirmed discard removes the agent changes and exact branch while retaining a detached baseline checkout, and the card and result explicitly disclose retained cleanup; no automatic or forced pathname root deletion occurs.
+- [ ] #8 Both Console preview paths disclose queued agent progress tools exactly as the live first request does.
+- [ ] #9 Both Console previews forward the available virtual CLI and raw shell provider schemas consistently with the live first request, without creating runtime resources.
 <!-- AC:END -->
 
 ## Implementation Plan
