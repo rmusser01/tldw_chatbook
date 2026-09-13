@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 17:14'
-updated_date: '2026-09-13 17:31'
+updated_date: '2026-09-13 17:42'
 labels: []
 dependencies: []
 ---
@@ -462,6 +462,8 @@ Replayed all 286 commits onto dev1103 (local1746), preserving upstream endpoint/
 Post-1103 qualification: complete Library148pass/0SQLite/0locks; merged fixture95pass; CSS+boot67pass with unchanged768000 cap; latency10pass. Complete Console1013pass/15fail/2skip and resume15pass/7fail: all22failures reproduce on saved2a controls, remain open. Library size guard33pass/14fail unchanged. Full Console native retention111SQLite/0locks and CSS fastpath20SQLite/1lock remain unclosed. Diagnostics, scoped static checks,615filecompile and independent integration reviews recorded. Publishing checkpoint, not merge readiness; new Qodo review required.
 
 Final docs-only rebase complete: dev4cba44e612 ancestor of d117442564;287patches unchanged and qualified production/tests byte-identical. Recovery ref codex/pr2427-pre-4cba44e612-20260913 preserves c702a09ec1. Remote PR still2a02 for exact lease. Matched15case resource control: saved62SQLite/1lock vs current68/1; extra6 need attribution. Not merged; all existing failures and Qodo size thread remain open.
+
+Published1311041 on latestdev4cba; Qodo summary refreshed for that head and retains size finding/omitted50. GGUF CI exposed one more direct-push Lab fixture gap: existing route loader+parsed-source assertion added, all24testfunction ASTs unchanged; completeUI26passed and exactworkflow35passed with canonicalpytest, independent review approved. Observer report I/O tripped global no-write guard in initial diagnostic run; no test/application guard changed. Detailed external PR summary comment was safety-blocked and not posted; explicit user approval required before retry.
 <!-- SECTION:NOTES:END -->
 
 145. Complete folder-navigation/rename/scoped-sync/canvas-defect qualification finishes 149 passed/3 failed, with 24 retained SQLite handles attributed to two uniquely owned temporary databases in the folder-navigator file. Restore the filter-clear fake's existing settled-focus collaborator without replacing production behavior or weakening its trusted-range assertions. Prove the mounted topology Back scroll failure is a settlement-readiness issue using the existing queued-restoration boundary before adding a bounded exact-scroll wait; retain the exact receipt offset, selection, ranges and focus oracles. For the two attributed database owners, protect setup/body failure paths from allocation onward and use the existing bounded same-file quiescence barrier after worker/app settlement, with zero-registry assertions and no global cleanup. Require RED owner evidence, exact-finalizer setup/body/foreign-path controls as appropriate, complete owning-file native GREEN, and independent review. Do not modify production or any source imported by the still-running shell/reader/residency cohort. ADR required: no. ADR path: existing Notes return/settlement and database ownership contracts. Reason: current-collaborator/readiness fixture reconciliation and disposal of exact test-owned resources, not a new runtime policy.

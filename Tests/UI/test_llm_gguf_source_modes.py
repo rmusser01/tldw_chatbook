@@ -11,6 +11,8 @@ from textual.widgets import Button, Input, Select, Static
 from textual.widgets._select import SelectOverlay
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import CSS_DIR
+from tldw_chatbook.Constants import TAB_LLM
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.gguf_source_modes import (
     GGUFSourceMode,
     GGUFSourceSelection,
@@ -111,6 +113,9 @@ async def _mount_models(
     context = app.run_test(size=size)
     pilot = await context.__aenter__()
     screen = LLMScreen(app)
+    # Direct fixture pushes bypass production navigation's owned-CSS loading.
+    app._ensure_screen_owned_css(TAB_LLM)
+    assert app.stylesheet.has_source(str(CSS_DIR / "screen_feature_lab.tcss"), "")
     await app.push_screen(screen)
     for _ in range(4):
         await pilot.pause()

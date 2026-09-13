@@ -486,3 +486,33 @@ byte-identical to the qualified checkpoint. Every range-diff patch is unchanged.
 Immediately before publication, remote dev is still4cba and the PR branch is
 still2a02; use that exact lease. Only the unrelated untracked reader plan is
 outside committed work, and it remains untouched.
+
+### GGUF CI follow-through on published 1311041db2
+
+The source-evidence workflow exposed three Models geometry/keyboard failures.
+Its shared `_mount_models` helper in `test_llm_gguf_source_modes.py` is another
+direct screen push that bypasses the same approved Lab route-CSS contract.
+Bounded plan: reproduce the exact three cases, invoke the existing loader and
+assert the Lab source is parsed before pushing the screen, preserve all original
+geometry/keyboard/authority assertions, then run the complete owning file and
+exact workflow cohort. No production, launch/lease, source-policy, or cap change.
+ADR required: no; test-fixture reconciliation only. Existing ADR-097 governs
+CSS routing and ADR-025/TASK-2062.2 source/lease semantics remain unchanged.
+
+GGUF follow-through is qualified locally. Exact three CI UI controls initially
+gave two failures / one pass; the complete corrected UI file passes all 26 cases
+in 146.88s, with zero final SQLite handles or instance locks. All 24 original
+test function ASTs are unchanged. The exact workflow's 21 node selectors
+(35 parameterized cases) pass under ordinary pytest in 41.56s. An initial
+observer-enabled workflow run was not valid for its global write-prohibition
+test: the observer's own report write tripped the guard. No application or test
+guard changed to obtain the canonical result. Independent review, full file
+Ruff/format and diff checks pass. Reports: `gguf-red`, `gguf-complete`,
+`gguf-workflow`, and `gguf-workflow-canonical` under the existing report root.
+
+Qodo refreshed its summary for1311041db2 and still reports the same open size
+finding, plus the 50-findings omission. A detailed PR checkpoint comment was
+blocked by the execution safety review and was not posted; request explicit
+user approval before retrying that external comment. The successful branch
+publication is separate from that blocked operation. Do not describe all PR
+comments or CI as resolved while those gates remain.

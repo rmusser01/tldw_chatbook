@@ -14370,3 +14370,13 @@ coverage without changing the ordinary required set. Both boot files passed
 the backfill assertion again. When a rebase changes a test's prerequisite set,
 prove the controlled adverse path is still observed, not merely that the test
 remains green.
+
+### PR 2427: an observer can trip a test's global no-write guard
+
+On 2026-09-13, the exact GGUF source-evidence cohort gave 34 passes and one
+failure under the native FD observer. The failing external-source test replaces
+`Path.open` and other write entry points globally until teardown; the observer's
+after-call JSONL report write correctly hit that prohibition. The unchanged
+35-case cohort passed under the workflow's ordinary pytest runner. Keep the
+guard intact and use the canonical runner for that evidence; an observer's own
+I/O is not evidence that the application wrote to the external model source.
