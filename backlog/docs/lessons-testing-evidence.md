@@ -13389,6 +13389,48 @@ reveals whether the plan's code or its tests encode the wrong API. When a
 RED failure contradicts the plan, check the *test-side* API usage for
 version rot before hunting a bug in code that follows the plan.
 
+## A new schema artifact maintained ON WRITE breaks every historical-bootstrap fixture at once (TASK-32186, 2026-09-11)
+
+**What happened.** v73 added `note_links` and made every note writer maintain
+it. `Tests/ChaChaNotesDB/historical_bootstrap.py` builds a genuinely old
+database by patching `_CURRENT_SCHEMA_VERSION` — but fixtures then seed it
+through TODAY's `add_note`, which now wrote to a table a v35/v57/v58 schema
+does not have. Four unrelated migration test files would have gone red with
+`sqlite3.OperationalError: no such table: note_links` raised from deep inside
+`add_note` — an opaque failure with no connection to the fixture's subject.
+Production is never in that state (migration runs in `CharactersRAGDB.__init__`,
+before any write), so the gap belongs to the bootstrap alone.
+
+**What to do.** When a migration adds an artifact that a WRITE path maintains
+(not just one a read path queries), check `historical_bootstrap` in the same
+commit: add it to `_add_forward_write_dependencies` so older fixtures keep
+seeding, and make the test that PINS your migration drop it first — otherwise
+that test asserts against the scaffold and would pass with the migration's DDL
+deleted. The tell that you need this: your new code writes to the table from a
+method a fixture calls, not only from the migration.
+
+## `cursor.execute()` returns the cursor, so a follow-up write rewrites the `rowcount` you were about to check (TASK-32186, 2026-09-11)
+
+**What happened.** Adding note-link maintenance to
+`LocalNoteImportTarget._update_note` turned
+
+    result = cursor.execute("UPDATE notes SET …")
+    return result.rowcount == 1
+
+into the same lines with `replace_note_links(cursor, …)` — a DELETE plus an
+executemany — inserted between them. `sqlite3.Cursor.execute` returns the
+cursor **itself**, so `result is cursor`: the return value stopped reporting
+the note update and started reporting the link writes. Every optimistic-update
+path in the importer began reading as a conflict — 18 tests in
+`Tests/Notes/test_note_import_executor.py`. A targeted run of the one test I
+had added for the new behaviour was green; only the whole FILE showed it.
+
+**What to do.** Bind the count to a local the moment the statement returns
+(`updated = result.rowcount == 1`) before any other statement touches that
+cursor. And when a change adds a write inside an existing method, run that
+method's whole test FILE, not just your new test: the tests that catch a
+clobbered out-parameter are the ones you did not write.
+
 ## A refusal path needs its own test, or it will lose both its name and its cleanup (task-32243, 2026-09-11)
 
 Library ▸ Notes lasting sync shipped on 2026-08-21 with a working happy path and

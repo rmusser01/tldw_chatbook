@@ -165,6 +165,137 @@ async def test_a_prefix_of_another_note_id_is_not_a_backlink(notes_scope_service
     assert backlinks == []
 
 
+# --- task-32186: the answer comes from the persisted note_links relation ---
+#
+# The query above used to read every active body. These pin the relation's
+# side of the contract: it tracks edits, it survives the round trip through
+# Trash, and the lookup no longer scans the corpus.
+
+
+def _connection(notes_scope_service):
+    return notes_scope_service.local_notes_service._get_db(USER_ID).get_connection()
+
+
+@pytest.mark.asyncio
+async def test_editing_a_body_adds_and_removes_its_backlinks(notes_scope_service):
+    """An edit is reflected the next time Info is opened (AC #3)."""
+    first = await _add(notes_scope_service, "First target", "hub one")
+    second = await _add(notes_scope_service, "Second target", "hub two")
+    linker = await _add(notes_scope_service, "Linker", f"[a](note://{first})")
+
+    assert [row["id"] for row in await _backlinks(notes_scope_service, first)] == [
+        linker
+    ]
+
+    detail = await notes_scope_service.get_note_detail(
+        scope="local_note", note_id=linker, user_id=USER_ID
+    )
+    await notes_scope_service.save_note(
+        scope="local_note",
+        title="Linker",
+        content=f"[b](note://{second})",
+        note_id=linker,
+        version=detail["version"],
+        user_id=USER_ID,
+    )
+
+    assert await _backlinks(notes_scope_service, first) == []
+    assert [row["id"] for row in await _backlinks(notes_scope_service, second)] == [
+        linker
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_restored_note_brings_its_backlinks_back(notes_scope_service):
+    """Trash hides a linker's backlink; restoring it returns the row."""
+    target = await _add(notes_scope_service, "Target", "hub")
+    linker = await _add(notes_scope_service, "Linker", f"[t](note://{target})")
+
+    detail = await notes_scope_service.get_note_detail(
+        scope="local_note", note_id=linker, user_id=USER_ID
+    )
+    await notes_scope_service.delete_note(
+        scope="local_note",
+        note_id=linker,
+        version=detail["version"],
+        user_id=USER_ID,
+    )
+    assert await _backlinks(notes_scope_service, target) == []
+
+    await notes_scope_service.restore_note(
+        scope="local_note",
+        note_id=linker,
+        version=detail["version"] + 1,
+        user_id=USER_ID,
+    )
+
+    assert [row["id"] for row in await _backlinks(notes_scope_service, target)] == [
+        linker
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_lookup_does_not_scan_the_note_corpus(notes_scope_service):
+    """The budget: an indexed search on both tables, never a SCAN of notes.
+
+    A wall-clock budget would be a flake on shared CI; the query plan is the
+    durable form of "does not read every body". ``SCAN notes`` reappearing
+    here is exactly the regression task-32186 fixed.
+    """
+    target = await _add(notes_scope_service, "Target", "hub")
+    await _add(notes_scope_service, "Linker", f"[t](note://{target})")
+
+    # The plan is only evidence when captured the way production runs it:
+    # ChaChaNotes_DB.py never runs ANALYZE, so no user's database has a
+    # sqlite_stat1 and the planner works from default estimates
+    # (scripts/check_index_plan_pins.py, TASK-21593).
+    assert _connection(notes_scope_service).execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
+    ).fetchone() is None, (
+        "this fixture must reproduce the no-stats production state; a plan "
+        "captured with sqlite_stat1 present is not the plan users run"
+    )
+
+    plan = [
+        str(row["detail"])
+        for row in _connection(notes_scope_service).execute(
+            "EXPLAIN QUERY PLAN " + CharactersRAGDB._BACKLINK_SOURCES_SQL,
+            (target, 50),
+        )
+    ]
+
+    assert any("note_links" in step and "idx_note_links_target" in step for step in plan)
+    assert not any(step.startswith("SCAN notes") for step in plan), plan
+
+
+@pytest.mark.asyncio
+async def test_a_title_only_save_leaves_the_backlinks_alone(notes_scope_service):
+    """An update that carries no body must not touch the relation.
+
+    Pins the ``if "content" in update_data`` around the link rewrite in
+    ``_update_note_with_cursor``: a rename (or any metadata-only update)
+    neither clears the linker's edges nor fails for want of a body.
+    """
+    target = await _add(notes_scope_service, "Target", "hub")
+    linker = await _add(notes_scope_service, "Linker", f"[t](note://{target})")
+
+    db = notes_scope_service.local_notes_service._get_db(USER_ID)
+    detail = await notes_scope_service.get_note_detail(
+        scope="local_note", note_id=linker, user_id=USER_ID
+    )
+    assert db.update_note(
+        linker, {"title": "Linker, renamed"}, expected_version=detail["version"]
+    ) is True
+
+    assert [row["id"] for row in await _backlinks(notes_scope_service, target)] == [
+        linker
+    ]
+
+
+async def _backlinks(service, note_id):
+    return await service.list_note_backlinks(
+        scope="local_note", note_id=note_id, user_id=USER_ID
+    )
 @pytest.mark.asyncio
 async def test_backlinks_find_the_display_text_link_form_the_importer_writes(
     notes_scope_service,
