@@ -1,0 +1,120 @@
+=== uat2 isolation proof (post-boot) Sun Sep 13 09:14:03 PDT 2026 ===
+real config fingerprint (pre-session): 6c2577fb39ab993eb01fa7c6a69900e36e9d59db
+6c2577fb39ab993eb01fa7c6a69900e36e9d59db  /Users/macbook-dev/.config/tldw_cli/config.toml
+
+lsof -p 18702 | grep -E 'tldw|scratch' :
+
+cwd: 
+
+all tldw/scratch handles:
+tmux    18702 macbook-dev  cwd    DIR               1,13     2176            10639958 /Users/macbook-dev/Documents/GitHub/tldw_chatbook
+tmux    18702 macbook-dev    6u  unix 0xf3cb5c2aa58795f0      0t0                     /private/tmp/tmux-501/uat2
+--- end handles ---
+cwd: /Users/macbook-dev/Documents/GitHub/tldw_chatbook
+
+=== correct app process 18703 (child of tmux -L uat2, started 9:13AM) ===
+18703 Sun Sep 13 09:13:45 2026     /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m tldw_chatbook.app
+
+cwd + all tldw/scratch-related handles:
+python3.1 18703 macbook-dev  cwd      DIR               1,13     1472           183354712 /private/tmp/uat2-dev
+python3.1 18703 macbook-dev  txt      REG               1,13   149552            10807798 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/Cryptodome/Cipher/_raw_aes.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13    66592            10807240 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/charset_normalizer/md.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13   105920            10825448 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/psutil/_psutil_osx.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13    66352            10807514 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/Cryptodome/Util/_cpuid_c.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13   502216            10807244 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/charset_normalizer/md__mypyc.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13   116432            10807763 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/Cryptodome/Cipher/_Salsa20.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13    66320            10807495 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/Cryptodome/Util/_strxor.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13   117376            10807539 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/Cryptodome/Hash/_SHA1.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13  4219840            10829269 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pydantic_core/_pydantic_core.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13   381768            85770600 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/yaml/_yaml.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13   117392            10807545 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/Cryptodome/Hash/_SHA256.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13   116752            10807586 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/Cryptodome/Hash/_BLAKE2s.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13    32768           183372212 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-shm
+python3.1 18703 macbook-dev  txt      REG               1,13    32768           183372275 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_collections.db-shm
+python3.1 18703 macbook-dev  txt      REG               1,13    32768           183372279 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_workspaces.db-shm
+python3.1 18703 macbook-dev  txt      REG               1,13   116032            10807608 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/Cryptodome/Protocol/_scrypt.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13    70048            10783642 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libXau.6.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13    32768           183372283 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_subscriptions.db-shm
+python3.1 18703 macbook-dev  txt      REG               1,13  2917472            66606863 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/tiktoken/_tiktoken.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13   229456            10821828 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_cffi_backend.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13    55904            10783541 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/_imagingmath.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13    32768           183372312 /private/tmp/uat2-scratch/data/uat_ce2/evals.db-shm
+python3.1 18703 macbook-dev  txt      REG               1,13    32768           183372351 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_ingest_jobs.db-shm
+python3.1 18703 macbook-dev  txt      REG               1,13    32768           183372637 /private/tmp/uat2-scratch/data/uat_ce2/agent_runs.db-shm
+python3.1 18703 macbook-dev  txt      REG               1,13   177344            10783646 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libz.1.3.1.zlib-ng.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13    74000            10783671 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/_avif.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13    76288            10783491 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/_webp.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13   791104            10805532 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/regex/_regex.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13   106368            10783648 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libwebpmux.3.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13    69904            10783649 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libwebpdemux.2.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13   277664            10783639 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libxcb.1.1.0.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13    86240            10783644 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libsharpyuv.0.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13  8261072            10769789 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/tokenizers/tokenizers.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13    32768           183373240 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_media_v2.db-shm
+python3.1 18703 macbook-dev  txt      REG               1,13 11839072            66606896 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/cryptography/hazmat/bindings/_rust.abi3.so
+python3.1 18703 macbook-dev  txt      REG               1,13   572400            10783631 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/_imaging.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13   770432            10783651 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libtiff.6.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13   653536            10783640 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libjpeg.62.4.0.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13   666432            10783645 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libopenjp2.2.5.4.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13   325120            10783650 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/liblzma.5.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13   515712            10783647 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libwebp.7.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13   321968            10820137 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/tree_sitter/_binding.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13   154848            10805816 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/numpy/linalg/_umath_linalg.cpython-312-darwin.so
+python3.1 18703 macbook-dev  txt      REG               1,13  2983120            10783634 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/PIL/.dylibs/libavif.16.3.0.dylib
+python3.1 18703 macbook-dev  txt      REG               1,13  3678376            10806174 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/numpy/_core/_multiarray_umath.cpython-312-darwin.so
+python3.1 18703 macbook-dev    3w     REG               1,13        0           183372172 /private/tmp/uat2-scratch/data/uat_ce2/faulthandler.log
+python3.1 18703 macbook-dev    4w     REG               1,13    32853           183372173 /private/tmp/uat2-scratch/data/uat_ce2/tldw_cli_app.log
+python3.1 18703 macbook-dev    5u     REG               1,13       39           183372196 /private/tmp/uat2-scratch/data/uat_ce2/.instance.lock
+python3.1 18703 macbook-dev    6u     REG               1,13   362592           183372278 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_workspaces.db-wal
+python3.1 18703 macbook-dev    7u     REG               1,13     4096           183372347 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_ingest_jobs.db
+python3.1 18703 macbook-dev    8u     REG               1,13     4096           183372276 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_workspaces.db
+python3.1 18703 macbook-dev    9u     REG               1,13    94792           183372350 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_ingest_jobs.db-wal
+python3.1 18703 macbook-dev   10u     REG               1,13   362592           183372278 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_workspaces.db-wal
+python3.1 18703 macbook-dev   11u     REG               1,13  4243456           183372203 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db
+python3.1 18703 macbook-dev   12u     REG               1,13    32768           183372351 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_ingest_jobs.db-shm
+python3.1 18703 macbook-dev   13u     REG               1,13  4313672           183372211 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-wal
+python3.1 18703 macbook-dev   14u     REG               1,13    32768           183372212 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-shm
+python3.1 18703 macbook-dev   15u     REG               1,13     4096           183372272 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_collections.db
+python3.1 18703 macbook-dev   16u     REG               1,13   238992           183372274 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_collections.db-wal
+python3.1 18703 macbook-dev   17u     REG               1,13    32768           183372275 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_collections.db-shm
+python3.1 18703 macbook-dev   18u     REG               1,13     4096           183372276 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_workspaces.db
+python3.1 18703 macbook-dev   19u     REG               1,13   362592           183372278 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_workspaces.db-wal
+python3.1 18703 macbook-dev   20u     REG               1,13    32768           183372279 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_workspaces.db-shm
+python3.1 18703 macbook-dev   21u     REG               1,13   225280           183372280 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_subscriptions.db
+python3.1 18703 macbook-dev   22u     REG               1,13        0           183372282 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_subscriptions.db-wal
+python3.1 18703 macbook-dev   23u     REG               1,13    32768           183372283 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_subscriptions.db-shm
+python3.1 18703 macbook-dev   24u     REG               1,13  4243456           183372203 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db
+python3.1 18703 macbook-dev   25u     REG               1,13  4313672           183372211 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-wal
+python3.1 18703 macbook-dev   26u     REG               1,13     4096           183372309 /private/tmp/uat2-scratch/data/uat_ce2/evals.db
+python3.1 18703 macbook-dev   27u     REG               1,13   523272           183372311 /private/tmp/uat2-scratch/data/uat_ce2/evals.db-wal
+python3.1 18703 macbook-dev   28u     REG               1,13    32768           183372312 /private/tmp/uat2-scratch/data/uat_ce2/evals.db-shm
+python3.1 18703 macbook-dev   32u     REG               1,13     4096           183372276 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_workspaces.db
+python3.1 18703 macbook-dev   33u     REG               1,13  4243456           183372203 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db
+python3.1 18703 macbook-dev   34u     REG               1,13  4313672           183372211 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-wal
+python3.1 18703 macbook-dev   35u     REG               1,13     4096           183372634 /private/tmp/uat2-scratch/data/uat_ce2/agent_runs.db
+python3.1 18703 macbook-dev   36u     REG               1,13   473832           183372636 /private/tmp/uat2-scratch/data/uat_ce2/agent_runs.db-wal
+python3.1 18703 macbook-dev   37u     REG               1,13    32768           183372637 /private/tmp/uat2-scratch/data/uat_ce2/agent_runs.db-shm
+python3.1 18703 macbook-dev   38u     REG               1,13  4243456           183372203 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db
+python3.1 18703 macbook-dev   39u     REG               1,13  4313672           183372211 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-wal
+python3.1 18703 macbook-dev   40u     REG               1,13  4243456           183372203 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db
+python3.1 18703 macbook-dev   41u     REG               1,13  4313672           183372211 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-wal
+python3.1 18703 macbook-dev   42u     REG               1,13   238992           183372274 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_collections.db-wal
+python3.1 18703 macbook-dev   43r     REG               1,13     4096           183372634 /private/tmp/uat2-scratch/data/uat_ce2/agent_runs.db
+python3.1 18703 macbook-dev   44u     REG               1,13  4243456           183372203 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db
+python3.1 18703 macbook-dev   45u     REG               1,13     4096           183372272 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_collections.db
+python3.1 18703 macbook-dev   46u     REG               1,13   225280           183372280 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_subscriptions.db
+python3.1 18703 macbook-dev   47u     REG               1,13  4243456           183372203 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db
+python3.1 18703 macbook-dev   48u     REG               1,13     4096           183372634 /private/tmp/uat2-scratch/data/uat_ce2/agent_runs.db
+python3.1 18703 macbook-dev   49u     REG               1,13  4243456           183372203 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db
+python3.1 18703 macbook-dev   50u     REG               1,13  4243456           183372203 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db
+python3.1 18703 macbook-dev   51u     REG               1,13  4313672           183372211 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-wal
+python3.1 18703 macbook-dev   52u     REG               1,13   413696           183372201 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_media_v2.db
+python3.1 18703 macbook-dev   53u     REG               1,13  4313672           183372211 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-wal
+python3.1 18703 macbook-dev   54u     REG               1,13  4313672           183372211 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-wal
+python3.1 18703 macbook-dev   55u     REG               1,13  4313672           183372211 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-wal
+python3.1 18703 macbook-dev   56u     REG               1,13        0           183373239 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_media_v2.db-wal
+python3.1 18703 macbook-dev   57u     REG               1,13   238992           183372274 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_collections.db-wal
+python3.1 18703 macbook-dev   58u     REG               1,13   473832           183372636 /private/tmp/uat2-scratch/data/uat_ce2/agent_runs.db-wal
+python3.1 18703 macbook-dev   59u     REG               1,13    32768           183373240 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_media_v2.db-shm
+python3.1 18703 macbook-dev   62u     REG               1,13     4096           183372272 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_collections.db
+--- end ---
