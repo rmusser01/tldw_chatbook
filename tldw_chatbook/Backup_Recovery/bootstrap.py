@@ -13,7 +13,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
-from tldw_chatbook.Utils.platform_files import os
+from tldw_chatbook.Utils.platform_files import fcntl, os
 
 from ..Utils.private_paths import _open_verified_parent
 from .profile_paths import default_config_path, effective_config_path, lexical_path
@@ -254,6 +254,30 @@ def _records(root: Path) -> tuple[list[dict], list[dict]]:
     return pending, profiles
 
 
+@contextmanager
+def _registry_read_lock(parent: int):
+    """Observe a finished native publication; never create or repair its lock."""
+    fd = os.open(
+        "registry.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+    )
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or info.st_uid != os.geteuid()
+            or info.st_mode & 0o077
+        ):
+            raise ValueError("registry_lock_unsafe")
+        fcntl.flock(fd, fcntl.LOCK_SH)
+        current = os.stat("registry.lock", dir_fd=parent, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
+            raise ValueError("registry_lock_changed")
+        yield
+    finally:
+        os.close(fd)
+
+
 def _registry(root: Path) -> dict | None:
     authority = root / "admission"
     try:
@@ -271,7 +295,7 @@ def _registry(root: Path) -> dict | None:
         or marker_info.st_mode & 0o077
     ):
         raise ValueError("enrollment_marker_unsafe")
-    with pinned_directory(authority) as parent:
+    with pinned_directory(authority) as parent, _registry_read_lock(parent):
         if "registry.pending.json" in os.listdir(parent):
             raise ValueError("registry_pending")
         result = _read(parent, "registry.json")
