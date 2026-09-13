@@ -4872,21 +4872,6 @@ class ConsoleSettingsModal(
             and endpoint.checked
         )
 
-    @on(Input.Changed, "#console-settings-base-url")
-    def _base_url_changed(self, event: Input.Changed) -> None:
-        if self._updating_controls:
-            return
-        value = event.value.strip()
-        if value == self._endpoint_draft.value:
-            return
-        self._endpoint_draft = ConsoleEndpointDraft(
-            value=value,
-            bound_provider_config_key=provider_config_key(self._active_provider),
-            dirty=True,
-            checked=False,
-        )
-        self._sync_default_readiness()
-
     def _choice_placeholder(self, input_id: str) -> str:
         """Return the accepted-values placeholder for an enumerated choice input."""
         if input_id == "console-settings-reasoning-effort":
@@ -5470,11 +5455,33 @@ class ConsoleSettingsModal(
         self._sync_model_provenance_copy()
 
     @on(Input.Changed, "#console-settings-base-url")
-    def _base_url_changed(self, _event: Input.Changed) -> None:
-        """Invalidate request evidence as soon as canonical endpoint input changes."""
+    def _base_url_changed(self, event: Input.Changed) -> None:
+        """Bind the typed endpoint and invalidate request evidence on change.
+
+        CE-003: this method was defined twice on the class; the later
+        definition shadowed the draft-dirtying handler, so a typed Base URL
+        never became a live-bound endpoint draft. "Use for this
+        conversation" then stripped the endpoint and the controller rebase
+        reset ``base_url`` to the configured provider URL, so sends kept
+        targeting the stale provider-level endpoint. One handler now owns
+        both jobs: dirty the live-bound endpoint draft (outside
+        compose-time echoes), then invalidate probe/discovery evidence.
+        """
         if self._restoring_suspended_draft:
             return
         self._cancel_connection_probe()
+        if not self._updating_controls:
+            value = event.value.strip()
+            if value != self._endpoint_draft.value:
+                self._endpoint_draft = ConsoleEndpointDraft(
+                    value=value,
+                    bound_provider_config_key=provider_config_key(
+                        self._active_provider
+                    ),
+                    dirty=True,
+                    checked=False,
+                )
+                self._sync_default_readiness()
         self._advance_model_discovery_generation()
         self._sync_model_discover_controls(self._active_provider)
         self._sync_readiness_display()

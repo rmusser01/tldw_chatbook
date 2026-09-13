@@ -5399,6 +5399,114 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_typing_base_url_marks_endpoint_draft_dirty() -> None:
+    """CE-003: real keystrokes in Base URL must dirty the live-bound endpoint draft.
+
+    A second ``_base_url_changed`` definition shadowed the draft-dirtying
+    handler, so the field displayed the typed URL while ``_endpoint_draft``
+    stayed clean -- "Use for this conversation" then stripped the endpoint
+    and the rebase reset ``base_url`` to the configured provider URL.
+    """
+    app = ModalHarness()
+    app.app_config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://localhost:8080", "model": "model-a"}
+        }
+    }
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = _basic_modal(
+            ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        url_input = modal.query_one("#console-settings-base-url", Input)
+        assert url_input.value == "http://localhost:8080"
+        url_input.focus()
+        await pilot.pause()
+        for _ in range(len(url_input.value)):
+            await pilot.press("delete")
+        for ch in "http://127.0.0.1:9099":
+            await pilot.press(ch)
+        await pilot.pause()
+
+        assert url_input.value == "http://127.0.0.1:9099"
+        assert modal._endpoint_draft.dirty is True
+        assert modal._endpoint_draft.value == "http://127.0.0.1:9099"
+        assert modal._endpoint_draft.bound_provider_config_key == "llama_cpp"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_apply_to_chat_persists_typed_llama_endpoint() -> None:
+    """CE-003: "Use for this conversation" must land the typed endpoint in the store.
+
+    Drives the real submission machinery (modal -> controller rebase ->
+    store live commit) exactly like ``ChatScreen``'s live committer: after
+    typing a session Base URL that differs from the configured
+    ``api_settings.llama_cpp.api_url`` and applying, the session settings
+    must carry the typed URL so the send resolution consumes it.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    app_config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://localhost:8080", "model": "model-a"}
+        }
+    }
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        assistant_kind="generic",
+    )
+    origin = store.capture_console_settings_origin(session.id)
+    rebase_owner = object.__new__(ConsoleChatController)
+
+    def live_committer(submission):
+        rebased = ConsoleChatController.rebase_console_settings_draft(
+            rebase_owner,
+            submission.draft,
+            provider=submission.draft.settings.provider,
+            model=submission.draft.settings.model,
+            app_config=app_config,
+            exposed_fields=frozenset(
+                field.name for field in submission.draft.field_drafts
+            ),
+        )
+        return store.commit_console_settings_live(replace(submission, draft=rebased))
+
+    app = ModalHarness()
+    app.app_config = app_config
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleSettingsModal(
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+            app_config=app_config,
+            providers_models={"llama_cpp": ["model-a"]},
+            context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+            can_save=True,
+            origin=origin,
+            live_committer=live_committer,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        url_input = modal.query_one("#console-settings-base-url", Input)
+        url_input.focus()
+        await pilot.pause()
+        for _ in range(len(url_input.value)):
+            await pilot.press("delete")
+        for ch in "http://127.0.0.1:9099":
+            await pilot.press(ch)
+        await pilot.pause()
+
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+    effective = store.effective_session_settings(session.id)
+    assert effective is not None
+    assert effective.base_url == "http://127.0.0.1:9099"
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_renders_current_chat_identity() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
