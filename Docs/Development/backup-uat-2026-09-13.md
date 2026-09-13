@@ -68,7 +68,7 @@ A separate read-only reproduction using the recorded choices returned `shared_ta
 
 This establishes a failed user workflow for the submitted destinations, not that every possible destination layout fails. The assisted continuation is explicitly not an unassisted acceptance pass.
 
-Evidence: [all submitted destination labels and values](backup-uat-2026-09-13/restore-ui-destinations.json), [initial refusal](backup-uat-2026-09-13/power-61-review-restore-after.txt), [shared-path diagnostic](backup-uat-2026-09-13/restore-review-diagnostic.log), [assisted review](backup-uat-2026-09-13/power-64-assisted-review-after.txt), [restore failure](backup-uat-2026-09-13/power-67-restore-result-after.txt), [staging diagnostic](backup-uat-2026-09-13/restore-staging-diagnostic.log).
+Evidence: [all submitted destination labels and values](backup-uat-2026-09-13/restore-ui-destinations.json), [initial refusal](backup-uat-2026-09-13/power-61-review-restore-after.txt), [shared-path diagnostic](backup-uat-2026-09-13/restore-review-diagnostic.txt), [assisted review](backup-uat-2026-09-13/power-64-assisted-review-after.txt), [restore failure](backup-uat-2026-09-13/power-67-restore-result-after.txt), [staging diagnostic](backup-uat-2026-09-13/restore-staging-diagnostic.txt).
 
 ### 4. Navigation and recovery feedback need correction
 

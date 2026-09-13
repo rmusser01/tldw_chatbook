@@ -1,0 +1,10 @@
+Corrected diagnostic plan succeeded 162
+Traceback (most recent call last):
+  File "/private/tmp/chatbook-backup-uat-20260913-xtbqee8d/diagnose_restore_staging.py", line 19, in <module>
+    candidate=stage_restore(archive,plan,r/'diagnostic-stage',Event())
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/chatbook-backup-uat-20260913-xtbqee8d/installed/tldw_chatbook/Backup_Recovery/staging.py", line 586, in stage_restore
+    _config_targets(
+  File "/private/tmp/chatbook-backup-uat-20260913-xtbqee8d/installed/tldw_chatbook/Backup_Recovery/staging.py", line 211, in _config_targets
+    raise ValueError("owner_relocation_unverified:" + payload.owner_id)
+ValueError: owner_relocation_unverified:db.agent_runs
