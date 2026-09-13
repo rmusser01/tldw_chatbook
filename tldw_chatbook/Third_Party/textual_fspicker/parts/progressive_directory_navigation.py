@@ -1,0 +1,589 @@
+"""Progressive, cancellable picker listings (ADR-160).
+
+Records stay cheap; only visible rows or an explicit metadata sort need stat.
+The original navigation/message contract is retained for all picker consumers.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from pathlib import Path
+from queue import Empty, Full, Queue
+from threading import Event
+from time import monotonic
+
+from rich.table import Table
+from rich.text import Text
+from textual import work
+from textual.message import Message
+from textual.reactive import reactive
+from textual.visual import RichVisual
+from textual.widgets import OptionList
+from textual.widgets.option_list import Option
+from textual.worker import get_current_worker
+
+from .directory_navigation import (
+    DirectoryEntry,
+    DirectoryEntryStyling,
+    _human_readable_size,
+)
+from .directory_navigation import (
+    DirectoryNavigation as OriginalDirectoryNavigation,
+)
+
+SORT_OPTIONS = [
+    ("Discovery order", "discovery"),
+    ("Name", "name"),
+    ("Last modified", "modified"),
+    ("Last accessed", "accessed"),
+    ("Created", "created"),
+    ("Size", "size"),
+]
+
+
+@dataclass(frozen=True)
+class FileRecord:
+    """One directory entry, optionally hydrated with filesystem metadata."""
+
+    location: Path
+    is_directory: bool
+    is_symlink: bool = False
+    metadata: os.stat_result | None = None
+    metadata_loaded: bool = False
+
+    @property
+    def display_name(self) -> str:
+        """Keep unusual filesystem names on one terminal row."""
+        return (
+            self.location.name.replace("\n", "⏎").replace("\r", "␍").replace("\t", "⇥")
+        )
+
+    @property
+    def size_text(self) -> str:
+        if self.is_directory:
+            return ""
+        return _human_readable_size(self.metadata.st_size) if self.metadata else "—"
+
+    @property
+    def modified_text(self) -> str:
+        if self.metadata is None:
+            return "—"
+        try:
+            return (
+                datetime.fromtimestamp(self.metadata.st_mtime, tz=UTC)
+                .astimezone()
+                .strftime("%Y-%m-%d %H:%M")
+            )
+        except (ValueError, OverflowError, OSError):
+            return "—"
+
+
+def read_metadata(record: FileRecord) -> FileRecord:
+    """Read metadata in a worker; missing/inaccessible entries remain usable."""
+    if record.metadata_loaded:
+        return record
+    try:
+        metadata = record.location.stat()
+    except OSError:
+        metadata = None
+    return replace(record, metadata=metadata, metadata_loaded=True)
+
+
+def project_records(
+    records: Sequence[FileRecord],
+    *,
+    show_hidden: bool,
+    query: str,
+    file_filter: Callable[[Path], bool] | None,
+    sort_key: str,
+    descending: bool,
+    cancelled: Event,
+) -> tuple[list[FileRecord], int]:
+    """Filter/sort a snapshot off-loop, preserving unknown timestamps last."""
+    visible = []
+    hidden = 0
+    for record in records:
+        if cancelled.is_set():
+            return [], hidden
+        dot_hidden = record.location.name.startswith(".") and not show_hidden
+        if (
+            file_filter is not None
+            and not record.is_directory
+            and not file_filter(record.location)
+        ):
+            hidden += not dot_hidden
+            continue
+        if dot_hidden or (query and query not in record.location.name.casefold()):
+            continue
+        if sort_key not in ("discovery", "name"):
+            record = read_metadata(record)
+        visible.append(record)
+    if sort_key == "name":
+        visible.sort(
+            key=lambda r: (r.location.name.casefold(), r.location.name),
+            reverse=descending,
+        )
+    elif sort_key != "discovery":
+        attribute = {
+            "modified": "st_mtime",
+            "accessed": "st_atime",
+            "created": "st_birthtime",
+            "size": "st_size",
+        }[sort_key]
+        known, unknown = [], []
+        for record in visible:
+            value = getattr(record.metadata, attribute, None)
+            (unknown if value is None else known).append(record)
+        known.sort(
+            key=lambda r: (getattr(r.metadata, attribute), r.location.name.casefold()),
+            reverse=descending,
+        )
+        visible = known + unknown
+    return visible, hidden
+
+
+class SnapshotDirectoryEntry(DirectoryEntry):
+    """A compatible Option whose prompt never performs filesystem operations."""
+
+    def __init__(self, record: FileRecord, styles: DirectoryEntryStyling) -> None:
+        self.record = record
+        self.location = record.location
+        self._styles = styles
+        Option.__init__(self, self._as_renderable(self.location))
+
+    def _as_renderable(self, location):
+        record = self.record
+        table = Table.grid(expand=True)
+        column_styles = {
+            2: self._styles.name,
+            3: self._styles.size,
+            4: self._styles.time,
+        }
+        for column, width in enumerate((1, 3, None, 10, 20, 1)):
+            table.add_column(
+                width=width,
+                ratio=1 if width is None else None,
+                no_wrap=True,
+                overflow="ellipsis",
+                justify="right" if column in (3, 4) else "left",
+                style=self._style(column_styles[column], location)
+                if column in column_styles
+                else None,
+            )
+        table.add_row(
+            "",
+            self.FOLDER_ICON if record.is_directory else self.FILE_ICON,
+            Text.assemble(
+                record.display_name, " ", self.LINK_ICON if record.is_symlink else ""
+            ),
+            record.size_text,
+            record.modified_text,
+            "",
+        )
+        return table
+
+
+class _SingleLineVisual(RichVisual):
+    """Measure a fixed-height row without rendering its offscreen Rich table."""
+
+    def get_height(self, rules, width):
+        return 1
+
+    def get_optimal_width(self, rules, container_width):
+        return container_width
+
+
+class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
+    """Shared navigation with bounded publication and ephemeral snapshots."""
+
+    search_filter = reactive("")
+    sort_key = reactive("discovery")
+    sort_descending = reactive(False)
+    BATCH_SIZE = 64
+    PUBLISH_INTERVAL = 0.03
+
+    class ListingChanged(Message):
+        def __init__(self, navigation: ProgressiveDirectoryNavigation) -> None:
+            self.navigation = navigation
+            super().__init__()
+
+    def __init__(self, location: Path | str = ".") -> None:
+        self._generation = 0
+        self._revision = 0
+        self._scan_cancel = Event()
+        self._projection_cancel = Event()
+        self._records = []
+        self._metadata = {}
+        self._display_records = []
+        self._scan_queue = Queue(maxsize=4)
+        self._scan_finished = False
+        self._projection_running = False
+        self._projection_owner = None
+        self._projection_worker = None
+        self._projection_dirty = False
+        self._metadata_running = False
+        self._listing_error = ""
+        self._filter_hidden = 0
+        self._listing_timer = None
+        self._interaction_serial = 0
+        self._restore_highlight: tuple[Path, int] | None = None
+        self._projection_error = ""
+        super().__init__(location)
+
+    def _get_visual(self, option):
+        if isinstance(option, DirectoryEntry):
+            if option._visual is None:
+                option._visual = _SingleLineVisual(self, option.prompt)
+            return option._visual
+        return super()._get_visual(option)
+
+    def _get_dispatch_methods(self, method_name, message):
+        if (
+            isinstance(message, OptionList.OptionMessage)
+            and message.option_list is self
+            and message.option not in self._option_to_index
+        ):
+            message.stop()
+            return
+        for cls, method in super()._get_dispatch_methods(method_name, message):
+            # The framework uses an unchecked index from the painted frame.
+            # Navigation can replace that list before a queued click arrives.
+            if method.__func__ is OptionList._on_click:
+                continue
+            yield cls, method
+
+    def _get_option_render(self, option, style):
+        return [
+            strip.apply_meta({"picker_row": id(option)})
+            for strip in super()._get_option_render(option, style)
+        ]
+
+    def _current_clicked_index(self, event):
+        index = event.style.meta.get("option")
+        if index is None or not 0 <= index < self.option_count:
+            return None
+        if event.style.meta.get("picker_row") != id(self.options[index]):
+            return None
+        return index
+
+    def _on_click(self, event):
+        # Enhanced navigation handles the second click by opening the entry;
+        # its handler runs before this one and may already have navigated.
+        if event.chain > 1:
+            return
+        index = self._current_clicked_index(event)
+        if (
+            index is not None
+            and 0 <= index < self.option_count
+            and not self.options[index].disabled
+        ):
+            self._interaction_serial += 1
+            self.highlighted = index
+            self.action_select()
+
+    def on_key(self, event) -> None:
+        # Activation does not choose a new row. Invalidating restoration for
+        # Enter lets a publication batch highlight '..' before its binding runs.
+        if event.key in ("up", "down", "home", "end", "pageup", "pagedown"):
+            self._interaction_serial += 1
+
+    @property
+    def listing_status(self) -> str:
+        count = len(self._records)
+        if error := self._listing_error or self._projection_error:
+            return f"Stopped · {count} entries · {error}"
+        if not self._scan_finished:
+            return f"Scanning… · {count} entries found"
+        if self._projection_running or self._projection_dirty:
+            return f"{'Sorting' if self.sort_key != 'discovery' else 'Displaying'}… · {count} entries"
+        suffix = (
+            " · unavailable creation times last" if self.sort_key == "created" else ""
+        )
+        return f"Loaded · {count} entries{suffix}"
+
+    def _notify_listing(self):
+        self.post_message(self.ListingChanged(self))
+
+    def _load(self):
+        # The first read initializes a reactive and can reenter this method.
+        # Read inputs BEFORE assigning a generation/queue, so an outer load
+        # supersedes the inner load instead of starting two scans on its queue.
+        location, show_files = self.location, self.show_files
+        self._stop_projection()
+        self._metadata_running = False
+        self._scan_cancel.set()
+        self._projection_cancel.set()
+        self._generation += 1
+        self._revision += 1
+        self._restore_highlight = None
+        self._scan_cancel = Event()
+        self._projection_cancel = Event()
+        self._records = []
+        self._metadata = {}
+        self._display_records = []
+        self._entries = []
+        self._scan_queue = Queue(maxsize=4)
+        self._scan_finished = False
+        self._listing_error = ""
+        self._projection_error = ""
+        self._entry_styles = self._styles
+        self.clear_options()
+        if not self.is_root:
+            self.add_option(self._make_entry(FileRecord(self.location / "..", True)))
+        self._settle_highlight()
+        if self._listing_timer is None:
+            self._listing_timer = self.set_interval(
+                self.PUBLISH_INTERVAL, self._poll_listing
+            )
+        self._scan(location, show_files, self._scan_queue, self._scan_cancel)
+        self._request_projection()
+        self._notify_listing()
+
+    @work(thread=True, exclusive=True, group="picker-scan")
+    def _scan(self, location, show_files, queue, cancelled):
+        worker = get_current_worker()
+
+        def publish(value):
+            while not cancelled.is_set() and not worker.is_cancelled:
+                try:
+                    queue.put(value, timeout=self.PUBLISH_INTERVAL)
+                    return True
+                except Full:
+                    pass
+            return False
+
+        batch = []
+        last_publish = 0.0
+        error = ""
+        try:
+            with os.scandir(location) as entries:
+                for entry in entries:
+                    if cancelled.is_set() or worker.is_cancelled:
+                        return
+                    try:
+                        directory = entry.is_dir()
+                        if directory or (show_files and entry.is_file()):
+                            batch.append(
+                                FileRecord(
+                                    location / entry.name, directory, entry.is_symlink()
+                                )
+                            )
+                    except OSError:
+                        continue
+                    now = monotonic()
+                    if batch and (
+                        len(batch) >= self.BATCH_SIZE
+                        or now - last_publish >= self.PUBLISH_INTERVAL
+                    ):
+                        if not publish((batch, False, "")):
+                            return
+                        batch = []
+                        last_publish = now
+        except OSError as exc:
+            error = f"Cannot read folder ({type(exc).__name__})"
+        publish((batch, True, error))
+
+    def _poll_listing(self):
+        changed = False
+        # Drain at most the bounded queue capacity each tick, not one item:
+        # a fast local disk should not be throttled to 64 files per frame.
+        for _ in range(self._scan_queue.maxsize):
+            try:
+                batch, done, error = self._scan_queue.get_nowait()
+            except Empty:
+                break
+            self._records.extend(batch)
+            self._scan_finished = done
+            self._listing_error = error
+            changed = True
+            if done:
+                break
+        if changed:
+            self._request_projection()
+            self._notify_listing()
+        if not self._metadata_running:
+            start = max(0, int(self.scroll_y) - 8)
+            stop = min(self.option_count, int(self.scroll_y) + self.size.height + 8)
+            records = [
+                self.options[i].record
+                for i in range(start, stop)
+                if getattr(self.options[i], "record", None) is not None
+                and not self.options[i].record.metadata_loaded
+                and self.options[i].location.name != ".."
+            ]
+            if records:
+                self._metadata_running = True
+                self._hydrate_visible(self._generation, records)
+
+    def _repopulate_display(self):
+        self._stop_projection()
+        self._revision += 1
+        self._projection_cancel.set()
+        self._projection_cancel = Event()
+        self._request_projection()
+
+    def _watch_sort_key(self):
+        self._repopulate_display()
+
+    def _watch_sort_descending(self):
+        self._repopulate_display()
+
+    def _request_projection(self):
+        self._projection_dirty = True
+        if self.is_mounted and not self._projection_running:
+            self._projection_running = True
+            self._projection_owner = object()
+            self._projection_worker = self._project(self._projection_owner)
+
+    def _stop_projection(self):
+        self._projection_owner = None
+        if self._projection_worker is not None:
+            self._projection_worker.cancel()
+        self._projection_running = False
+
+    def _make_entry(self, record):
+        return SnapshotDirectoryEntry(record, self._entry_styles)
+
+    def _settle_projection_highlight(self, *, final=False):
+        if self._apply_pending_highlight(
+            final=final and self._scan_finished and not self._projection_dirty
+        ):
+            self._restore_highlight = None
+            return
+        if self._restore_highlight is not None:
+            path, interaction = self._restore_highlight
+            if interaction == self._interaction_serial:
+                # Keep the restore target across cancelled rebuilds. While
+                # publishing, no fallback row may silently become actionable.
+                if not final:
+                    return
+                for index, option in enumerate(self.options):
+                    if option.location == path:
+                        self.highlighted = index
+                        break
+            self._restore_highlight = None
+        self._settle_highlight()
+
+    @work(exclusive=True, group="picker-projection")
+    async def _project(self, owner):
+        try:
+            while self._projection_owner is owner and self._projection_dirty:
+                self._projection_dirty = False
+                generation, revision = self._generation, self._revision
+                cancelled = self._projection_cancel
+                records = [self._metadata.get(r.location, r) for r in self._records]
+                query = self.search_filter.strip().casefold()
+                try:
+                    visible, hidden = await asyncio.to_thread(
+                        project_records,
+                        records,
+                        show_hidden=self.show_hidden,
+                        query=query,
+                        file_filter=self.file_filter,
+                        sort_key=self.sort_key,
+                        descending=self.sort_descending,
+                        cancelled=cancelled,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- user-supplied filter boundary
+                    if generation == self._generation and revision == self._revision:
+                        self._projection_error = (
+                            f"Cannot filter/sort ({type(exc).__name__})"
+                        )
+                    continue
+                if generation != self._generation or revision != self._revision:
+                    continue
+                self._projection_error = ""
+                self._entry_styles = self._styles
+                self._metadata.update(
+                    (r.location, r) for r in visible if r.metadata_loaded
+                )
+                old = self._display_records
+                append = len(old) <= len(visible) and all(
+                    a.location == b.location for a, b in zip(old, visible)
+                )
+                offset = len(old) if append else 0
+                retained = (
+                    {}
+                    if append
+                    else {option.location: option for option in self.options}
+                )
+
+                def make_entry(record, retained=retained):
+                    record = self._metadata.get(record.location, record)
+                    option = retained.get(record.location)
+                    if option is not None and option.record == record:
+                        return option
+                    return self._make_entry(record)
+
+                if not append:
+                    if (
+                        self._restore_highlight is None
+                        or self._restore_highlight[1] != self._interaction_serial
+                    ):
+                        previous = self.highlighted_option
+                        self._restore_highlight = (
+                            (previous.location, self._interaction_serial)
+                            if isinstance(previous, DirectoryEntry)
+                            else None
+                        )
+                    self.clear_options()
+                    self._display_records = []
+                    if not self.is_root:
+                        self.add_option(
+                            self._make_entry(FileRecord(self.location / "..", True))
+                        )
+                for start in range(offset, len(visible), self.BATCH_SIZE):
+                    if generation != self._generation or revision != self._revision:
+                        break
+                    batch = visible[start : start + self.BATCH_SIZE]
+                    self.add_options(make_entry(r) for r in batch)
+                    self._display_records.extend(batch)
+                    self._settle_projection_highlight()
+                    await asyncio.sleep(0)
+                else:
+                    self._filter_hidden = hidden
+                    self._settle_projection_highlight(final=True)
+                    self._notify_listing()
+        finally:
+            if self._projection_owner is owner:
+                self._projection_running = False
+                self._notify_listing()
+
+    @work(exclusive=True, group="picker-visible-metadata")
+    async def _hydrate_visible(self, generation, records):
+        try:
+            cancelled = self._scan_cancel
+
+            def hydrate():
+                hydrated = []
+                for record in records:
+                    if cancelled.is_set():
+                        break
+                    hydrated.append(read_metadata(record))
+                return hydrated
+
+            hydrated = await asyncio.to_thread(hydrate)
+            if generation != self._generation:
+                return
+            self._metadata.update((r.location, r) for r in hydrated)
+            replacements = {r.location: r for r in hydrated}
+            for index, option in enumerate(self.options):
+                if option.location in replacements:
+                    record = replacements[option.location]
+                    replacement = self._make_entry(record)
+                    option.record = record
+                    self.replace_option_prompt_at_index(index, replacement.prompt)
+        finally:
+            if generation == self._generation:
+                self._metadata_running = False
+
+    def on_unmount(self):
+        self._scan_cancel.set()
+        self._projection_cancel.set()
+        self._generation += 1
+        if self._listing_timer is not None:
+            self._listing_timer.stop()

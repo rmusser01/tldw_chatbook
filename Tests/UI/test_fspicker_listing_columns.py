@@ -21,7 +21,7 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.style import Style
 from textual.app import App
-from textual.widgets import Input, Label
+from textual.widgets import Input, Label, Select
 
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
 from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import InputBar
@@ -181,6 +181,22 @@ async def test_listing_headers_align_with_their_columns(tmp_path, file_count):
         await pilot.pause()
         await pilot.pause()
         nav = host.screen.query_one(DirectoryNavigation)
+        # Discovery order no longer promises file_00 is initially visible.
+        host.screen.query_one("#listing-sort", Select).value = "name"
+        for _ in range(100):
+            await pilot.pause(0.02)
+            # Enumeration can finish before lazy viewport metadata arrives.
+            # Measure alignment only once the values under test are painted.
+            loaded = "Loaded" in str(
+                host.screen.query_one("#listing-progress").render()
+            )
+            painted = host.screen._compositor.render_strips()
+            if loaded and any(
+                "file_00.txt" in row.text and "100 B" in row.text for row in painted
+            ):
+                break
+        else:
+            pytest.fail("The visible file row did not paint its metadata")
         assert nav.show_vertical_scrollbar is (file_count > 10), (
             "precondition: this fixture must exercise the scrollbar case"
         )

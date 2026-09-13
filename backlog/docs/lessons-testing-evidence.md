@@ -13781,3 +13781,31 @@ through a symlinked temp base, stored in SQLite, then passed to recovery failed
 with `invalid_path`. Canonicalizing the new allocation parent before Git creation
 made that roundtrip pass. Keep loaded ownership paths strict: resolving an
 application-owned new allocation does not justify normalizing a stored authority.
+
+
+## A first reactive read can reenter a loader before its arguments finish evaluating
+
+**TASK-32565, 2026-09-13.** The native slow-directory picker showed duplicate
+rows despite passing partial-loading and cancellation tests. Both scan iterators
+returned unique names, but 3,370 published records contained only 1,698 unique
+paths. Evaluating `self.show_files` in the worker-launch argument list initialized
+a Textual reactive, called its watcher, and reentered `_load`. The inner load
+replaced the queue/token before the outer call evaluated those arguments, so both
+scans published into the same queue. Reading reactive inputs before assigning
+worker ownership isolated the queues; the next native run finished with exactly
+4,000 unique entries. A mounted regression recreates the descriptor's first-read
+state and proves superseded queues/tokens differ. Read potentially reentrant
+inputs before mutating ownership, and check uniqueness AND completed enumeration
+before calling a performance run complete.
+
+## Direct action calls can miss a keyboard-dispatch race
+
+**TASK-32565 review, 2026-09-13.** A picker regression called `action_select()`
+while a sorted listing was partially rebuilt and correctly did nothing with no
+highlight. The same mounted state followed by `pilot.press("enter")` navigated
+to the parent: the key handler invalidated highlight restoration, a publication
+batch installed the parent fallback, then the binding activated it. Restricting
+restoration invalidation to navigation keys and actual type-ahead matches fixed
+both picker families. For safety during asynchronous UI replacement, exercise
+real key dispatch as well as direct actions; verify an intentional movement key
+still overrides restoration.
