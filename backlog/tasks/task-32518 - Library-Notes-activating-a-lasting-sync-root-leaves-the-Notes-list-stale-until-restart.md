@@ -1,10 +1,13 @@
 ---
 id: TASK-32518
-title: "Library Notes: activating a lasting-sync root leaves the Notes list stale until restart"
-status: To Do
-assignee: []
+title: >-
+  Library Notes: activating a lasting-sync root leaves the Notes list stale
+  until restart
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-13 00:30'
-updated_date: '2026-09-13 02:40'
+updated_date: '2026-09-13 02:47'
 labels:
   - library
   - notes
@@ -60,3 +63,13 @@ the database was read directly between b06 and b10 (`notes` 70 rows,
 - [ ] #2 A manual Check changes that applies changes refreshes the list the same way
 - [ ] #3 A test on a seeded profile (existing notes and folders) pins the refresh; the fresh-profile path keeps working
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce on the real route: mount LibraryScreen (Tests/UI/test_library_notes_files_sync_journey.py harness) over a REAL NotesScopeService/CharactersRAGDB seeded with existing notes and a real lasting-sync runtime (build_notes_sync_runtime_owner) over a vault of .md files; walk Add from files -> Keep a folder synced -> Check changes -> Activate reviewed root -> Back. RED: the list still paints the pre-activation count and no managed folder row.
+2. Cause: the lasting-sync path has no counterpart of the import path's refresh_after_settlement. LibraryNotesSyncController.activate_root/apply_reviewed end in a receipt and refresh_roots() only; nothing tells the Notes list to refetch. Fix: give LibraryNotesSyncController one optional refresh_notes callback (same shape as the import controller's refresh_after_settlement), invoked after an accepted activation and after an apply that changed anything; the screen wires it to the existing _refresh_after_library_note_import (source snapshot + tree initial load) -- the same path a note import uses. No second refresh mechanism.
+3. Keep the fresh-profile journey green (existing test_lasting_review_activation_receipt_and_remount_recovery_journey).
+4. Live-verify on a seeded scratch profile at 235x52 and 100x30; captures under wave3-caps/sync-tail/.
+5. Guide: note the refresh in the lasting-sync chapter and stamp.
+<!-- SECTION:PLAN:END -->

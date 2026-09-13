@@ -1,10 +1,13 @@
 ---
 id: TASK-32519
-title: "Lasting sync: Resume after Pause always lands in ✕ Failed and leaves the root paused"
-status: To Do
-assignee: []
+title: >-
+  Lasting sync: Resume after Pause always lands in ✕ Failed and leaves the root
+  paused
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-13 00:35'
-updated_date: '2026-09-13 02:40'
+updated_date: '2026-09-13 02:46'
 labels:
   - library
   - notes
@@ -70,3 +73,13 @@ items, stale). Earlier run with a two-sided edit: `56-paused` → `61-resume-att
 - [ ] #3 A root that genuinely cannot resume says why on its row and its Review page does not describe it as still paused
 - [ ] #4 A test on the real runtime pins pause → resume → check, and pause → edit both sides → resume → check
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce on the real runtime: Tests/UI/test_library_notes_files_sync_journey.py already builds the production runtime/controller over disk state (_seed_real_conflict_authority + _start_real_conflict_stack); add a clean-root variant and a pause -> resume -> check test (RED: resume lands in failed, root stays PAUSED, check raises sync_root_not_active).
+2. Root cause is the order inside NotesSyncRuntimeOwner._resume_root (Notes/notes_sync_runtime.py): it reviews the root while the store's pause cascade still holds every binding at 'paused', and _ProductionRuntimeAdapter.observe_root refuses any non-active/candidate binding with binding_review_required. Fix at that seam: after the lease is re-acquired, transition the root to ACTIVE first (the store's ACTIVE cascade flips paused bindings back), then run the same manual mutation-free check an active root's Check changes runs (_reconcile(automatic=False)), and derive the control result from the published status. Root returns to service whether the plan is clean, has safe changes, or needs attention; a failed check leaves an ACTIVE root in failed/review_changes so Review names the real reason instead of 'that folder is paused'.
+3. Update the fake-adapter contract test (test_resume_checks_fresh_state_before_reopening_a_paused_root) to the new contract; add the two real-runtime tests (pause -> resume -> check; pause -> edit both sides -> resume -> check).
+4. Live-verify at 235x52 and 100x30 on a scratch profile (vault under $HOME/.cache/tldw-crit/t13/vault); captures under wave3-caps/sync-tail/.
+5. Guide: supersede the stale Resume sentences in Docs/User_Guide/library/notes.md and stamp.
+<!-- SECTION:PLAN:END -->
