@@ -773,6 +773,13 @@ completed, and archived Backlog buckets must use Win32-compatible basenames.
 The shared stdlib guard is the authoring-time source of truth because Windows
 cannot run repository code before checkout succeeds.
 
+**PR2665, 2026-09-13:** Windows runs34764839164/34764839191 also failed
+before Python setup because the descriptive TASK32540/32555 filenames exceeded
+the runner checkout path limit. Shorten the filename while preserving the full
+title and body in the task. The existing reserved-character/device-name guard
+does not check total checkout-path length; its passing result alone is not
+Windows checkout evidence.
+
 ---
 
 ## Rebase the feature commit, not a stale local dev ancestry

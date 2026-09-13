@@ -43,7 +43,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
-from tldw_chatbook.Chat.console_agent_bridge import AgentLiveSnapshot
+from tldw_chatbook.Chat.console_agent_bridge import AgentLiveSnapshot, AgentLiveTurnUsage
 from tldw_chatbook.Chat.console_chat_models import ConsoleFleetCompletionTarget
 from tldw_chatbook.Chat.console_fleet_attention import bump_fleet_unseen_revision
 from tldw_chatbook.Chat.conversation_local_marks_service import (
@@ -69,6 +69,7 @@ class _SurvivorBridge:
         self.started_at = 0.0
         self.status = "running"
         self.finished_at: float | None = None
+        self.output_tokens: int | None = None
 
     def fleet_snapshot(self, conversation_id: str) -> list[FleetHandle]:
         if conversation_id != self.conversation_id:
@@ -89,6 +90,18 @@ class _SurvivorBridge:
         if conversation_id != self.conversation_id:
             return AgentLiveSnapshot()
         return AgentLiveSnapshot(status="running", step=1)
+
+    def live_run_snapshot(
+        self, conversation_id: str, run_id: str
+    ) -> AgentLiveSnapshot | None:
+        if conversation_id != self.conversation_id or run_id != "run-1":
+            return None
+        usage = (
+            AgentLiveTurnUsage(self.output_tokens, "local", self.started_at, 1)
+            if self.output_tokens is not None
+            else None
+        )
+        return AgentLiveSnapshot(status=self.status, turn_usage=usage)
 
     def has_unsettled_children(self, conversation_id: str) -> bool:
         return self.unsettled
@@ -181,6 +194,36 @@ async def test_survivor_elapsed_advances_with_no_other_interaction():
         )
         _assert_widget_and_ancestors_displayed(primary)
         _assert_painted_at_own_region(host, primary)
+
+
+@pytest.mark.asyncio
+async def test_survivor_tick_observes_new_published_usage_without_a_new_timer():
+    """The owned one-second survivor clock must advance a child's published scalar."""
+    import time as _time
+
+    bridge = _SurvivorBridge()
+    bridge.started_at = _time.monotonic() - 2.0
+    bridge.output_tokens = 3
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
+        console, _controller = await _wire_survivor(pilot, host, bridge)
+        console._sync_console_agent_section()
+        await pilot.pause()
+        section = console.query_one(
+            "#console-agent-section-subagents", ConsoleInspectorSection
+        )
+        assert section.rows[0].secondary_text == "long job · ~3 local output tok"
+
+        console._start_console_transcript_sync_timer()
+        await pilot.pause(0.5)
+        assert console._fleet._console_fleet_survivor_timer is not None
+        timer = console._fleet._console_fleet_survivor_timer
+        bridge.output_tokens = 11
+        await pilot.pause(1.5)
+
+        assert console._fleet._console_fleet_survivor_timer is timer
+        assert section.rows[0].secondary_text == "long job · ~11 local output tok"
 
 
 @pytest.mark.asyncio

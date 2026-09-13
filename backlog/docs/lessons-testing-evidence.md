@@ -2117,6 +2117,16 @@ before patching application code. Re-run collection under a supported project
 interpreter to distinguish an interpreter-assumption failure from a product
 regression, and record both results.
 
+**Recurrence, agent-orchestration remaining-work review, 2026-09-12.** Root
+launched the AST-only diagnostic inventory with the host `python3`, which was
+Apple Python 3.9. It failed on an unchanged `match` statement in
+`UI/LLM_Management/vllm_setup_view.py`, before producing any drift verdict.
+The original command/traceback/exit are preserved in the workstream evidence.
+Use the already provisioned supported project interpreter for AST inspection
+as well as pytest; a stdlib-only checker can still require the project's
+Python grammar. This incident did not justify changing source syntax or
+regenerating the inventory without reviewing its result.
+
 ---
 
 ## A suite that no gate runs can rot invisibly for days
@@ -11619,6 +11629,14 @@ AND the owning screen's split sheet (`screen_agentic_console|library|settings.tc
 in the app's order. When a bundle grep says a Settings/Console/Library class has no
 rule, grep the split sheets before concluding the state is unstyled.
 
+**PR2665 integration, 2026-09-13:** the real multi-sheet harness exposed a
+second trap: splitting moved the generic `.settings-input-row` rule after the
+bundle while leaving `.agents-enabled-row` in it. Their equal specificity let
+the generic one-row height clip the three-row Switch. Both production-width
+checks failed before scoping the specialized rule to `#agents-form`, then
+passed with unchanged paint, focus, content-bounds and Space-toggle assertions.
+Source-module order alone does not prove precedence after stylesheet splitting.
+
 ---
 
 ## Textual's `Color.hsl` hue is 0-1, not degrees
@@ -13659,3 +13677,107 @@ which service method the current code calls and whether the fake has it —
 contract copy; when production moves to a new seam, the fake keeps passing
 whatever it still implements. And treat a production `if not callable(...):
 return` as a place where a missing seam becomes invisible, not as a safety net.
+
+
+## Completed first-run setup is not a send-ready Console (TASK-13154.4, 2026-09-12)
+
+Six approval-card tests still reached a blocking provider-setup modal after the app factory marked first-run setup complete. A fixed 250 ms grace appeared to repair focus/geometry, but review exposed its scheduling assumption. Waiting for the actual attach reconciliation and resume-state projection exposed six modal assertion failures; persisting the existing send-ready llama_cpp fixture made all six pass. Mounted decision tests need both the real provider-ready fixture and observable startup completion before injecting pending state. Do not replace those conditions with a longer pause or patch away setup guards.
+
+
+## Paging checks must reject full-history reads in ownership lookups
+
+**TASK-18601, 2026-09-12.** The bounded segment reader reconstructed a 3 MB UTF-8 record correctly, but the combined viewer review found that its parent-ownership helper still called `subagent_run`/`get_run`, hydrating the entire database step log before every page. Switching that helper to `get_run_metadata` removed the hidden allocation. A real SQLite/scratch-authority regression now makes `get_run` and `_batch_hydrate_steps` fail while reading first/later primary and child pages and probing availability; the final affected integration selection passed 61 tests.
+
+**What to do.** Qualify the whole read path, including target and ownership resolution. A page-size assertion proves little if a helper materializes the complete history first. Seed real stored history, forbid its hydration in the bounded path, and separately verify that metadata lookups run off the UI thread.
+
+## Reusable workers change the test cleanup boundary
+
+**TASK-31511, 2026-09-12.** Replacing per-event webhook threads with a reusable worker left the old enabled-scheduler test passing while its module worker remained alive for 30 seconds after fake transports were restored. Independent review also found that polling a mutable current-thread field could return before the exact thread exited. The corrected tests inject an isolated worker, capture each started Thread under a delivery gate, and release/join those exact objects in finally before dependency restoration; all 25 webhook tests passed. When production resource lifetime grows, revisit existing test ownership, not only new tests.
+
+
+## Nested interpreter tests must inherit both dependencies and test isolation
+
+**TASK-31210 preparation, 2026-09-12.** Four workspace-executor tests failed because their temporary interpreter copied only `site.getsitepackages()` from a parent virtualenv whose dependencies came through a `.pth` file. Adding the missing dependency site in a test-only control exposed another defect: three harnesses replaced the environment with PATH and locale alone, losing the pytest-owned HOME/config boundary and reading the live config before returning an unrelated refusal. Preserving the owned config/data/keyring/offline values and installing the test network guard before product imports made all four original subprocess cases pass. The contained worker environment was unchanged.
+
+**What to do.** Inspect both the nested interpreter search path and the outer harness environment before running product imports. A parent pytest sandbox does not reach a subprocess whose explicit environment discards it; dependency repair can uncover that hidden leak. Preserve the worktree source-path assertion and keep test harness isolation separate from the production worker allowlist.
+
+
+## Approval metadata can change permission selection unless absence and fallback stay exact
+
+**TASK-18929, 2026-09-12.** Adding exact-call approval metadata initially made a new proceed entry override an id-less same-name refusal; a failing builder regression exposed the accidental dispatch widening. Independent review then found the opposite change: wrapping a raw None stamp made MCP skip its fresh policy/callback gate. Six real invocation cases comparing absent and None-valued stamps across Allow/Off/Ask reproduced three failures before the fix; all81MCP tests passed afterward.
+
+**What to do.** Treat lookup precedence and raw absence as part of the existing permission contract. Settle the original refusal map before adding observational entries, and keep metadata-wrapper presence separate from decision presence. Exercise actual builders and invocation owners with exact/name keys, id-less rows, unanswered choices and malformed stamps; testing the new metadata field alone can miss both broader and narrower permissions.
+
+
+## Verify retries through the runtime that failed (TASK-18929)
+
+During denial-breaker verification, a Console test initially used a real store and controller but disabled the agent runtime for its next submit. That passed while proving only ordinary-chat retry acceptance. Root review corrected the harness to use the real ConsoleAgentBridge with temporary AgentRunsDB, assert the failed state and unchanged partial answer, then observe completion of the next agent submit. The final six-case selection passed. A post-failure retry test must cross the same runtime/admission path whose recovery it claims to verify; a shared controller alone does not establish that boundary.
+
+
+## A pinned worktree cwd does not pin Git's shared metadata
+
+**TASK-31210/31211 qualification, 2026-09-12.** A real spawned worker held both source and linked-child directory pins, then waited on an owned Pipe. After the source was renamed and a temporary replacement received copied Git metadata, a commit from the still-pinned original child advanced the replacement repository's agent branch; the original repository stayed at its base. A separate CREATE probe similarly reopened a replacement through an absolute Git-dir argument. The races reproduced against actual Git2.39.5 on macOS, before any new product implementation.
+
+**What to do.** Verify bytes, index and refs in both original and replacement repositories, not just the worker cwd or command exit. Trace administrative paths Git follows; a source-local CREATE control does not establish atomic protection for later operations. In this incident, treating the stronger guarantee as a prerequisite also expanded two UI/persistence tasks into a replacement-execution project and disabled existing worktree creation. The user challenged that scope and approved restoring ordinary Git with authorization/identity checks; ADR-155 records that correction. Preserve the experimental result and explicitly state the accepted concurrent-replacement limit. Do not describe an unresolved design choice as a missing external backend.
+
+
+## Pytest helpers outside Tests do not inherit the repository isolation
+
+**TASK-13154.6, agent preset verification, 2026-09-12.** Three artifact attempts
+used a helper under `.superpowers/sdd` rather than under `Tests/`. Although
+invoked with pytest and the isolated interpreter, they did not load
+`Tests/conftest.py`; importing the UI helper read and merged the real user
+configuration. The default sandbox then blocked an append-open of the data-root
+lock. The traces do not prove zero earlier import side effects. A later
+`-k regenerate` selection repeated the mistake because it matched the helper
+filename and selected sibling artifact nodes too. Final UI probes were moved
+under `Tests/UI`, run with its conftest isolation, and removed after capture.
+
+**What to do.** Put any temporary probe that imports product/UI code below
+`Tests/`, inspect its collected node list before execution, and select the exact
+node when a helper contains unrelated tests. Merely running `python -m pytest`
+or importing another test module does not activate that module's conftest. Keep
+exports under the plan's evidence directory, but keep the executable probe under
+the isolated test tree. Never retry an isolation failure by loosening the
+sandbox; qualify actual reads and failed writes from preserved traces without
+reopening user configuration.
+
+
+## Recovery tests must cross accepted close and actual picker routing
+
+**TASK-31210/31211, Console recovery, 2026-09-12.** The initial lifetime test replaced the entire accepted-close/drain method and passed while new manual recovery remained admissible during a real session close. Gating the actual fleet-drain await exposed that late admission and three premature-cancellation cases: stale revision, refused close and provisional voice close. The fix uses the existing runtime admission fence and signals recovery only after the exact close ticket is accepted. The four cases failed before the fix and passed afterward.
+
+A second gap survived direct helper-to-confirmation tests and native visual inspection: the actual recovery picker put its payload in Button.action, a Textual routing attribute, so pressing its button did not emit the expected event. A mounted command action → async list → real picker → inline card → Git test reproduced it; renaming the payload to recovery_action restored the flow. Test the application's actual entry and lifetime boundary, and gate only the external wait needed for determinism. A working helper or correctly painted button does not establish that callers can reach it.
+
+
+## Protect the gap before a background worker starts
+
+**TASK-31210/31211 final integration, 2026-09-12, e135a085f2.** Git reader threads were started before the process cleanup finally block; manual recovery allocated a capacity owner before submitting its worker but released it only inside that worker. Eleven focused failures reproduced live gated processes after reader-start failure, false positive drain after denied retirement, and lost or leaked ownership around submission. A fixture using a real executor also queued work and then raised at the submission boundary, showing why an exception alone is not proof that no worker can run.
+
+The correction protects resources immediately after creation and uses a standard Future to arbitrate worker entry versus revoked admission. Tests assert process retirement and absence of later Git effects before fallback test cleanup. For ambiguous submission they release queued work after revocation and prove no engine/DB entry; an already-entered worker remains owned even after its waiter is cancelled. Include these pre-entry cases alongside ordinary running-worker cancellation tests. A worker's finally block cannot clean up an allocation if that worker never starts.
+
+
+## Cancelled DNS waiters do not prove native resolver retirement
+
+**PR2665 review, 2026-09-13.** A full webhook deadline fixed queue progress,
+but real executor-backed DNS remained alive after cancellation. With only a
+worker-count cap, eight timed-out arrivals still admitted eight native jobs.
+A cancellation-before-entry test exposed the same problem when the queued
+native Future could be cancelled and release its slot early. Bound admission
+until the actual native Future settles, and test it with releasable gates.
+
+A second regression refused only the event loop's shutdown-helper thread start.
+Runner cleanup then exited while the held DNS thread still ran. Join the retained
+executor on the existing delivery thread before publishing retirement; if
+settlement cannot be confirmed, retain the nonaccepting owner. Assert refusal
+and ownership before releasing the gate, then join every exact owned thread.
+A coroutine timeout alone proves neither physical cleanup nor prompt process exit.
+
+## Test newly allocated paths through their strict recovery consumer
+
+**PR2665 review, 2026-09-13.** Canonical recovery fixtures hid macOS's normal
+`/var` to `/private/var` temporary-directory alias. A real Git checkout created
+through a symlinked temp base, stored in SQLite, then passed to recovery failed
+with `invalid_path`. Canonicalizing the new allocation parent before Git creation
+made that roundtrip pass. Keep loaded ownership paths strict: resolving an
+application-owned new allocation does not justify normalizing a stored authority.

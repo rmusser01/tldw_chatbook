@@ -37,6 +37,7 @@ The plan-mandated reds live here:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 
@@ -45,12 +46,11 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from Tests.Agents.test_agent_service import fence
+from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_fleet_runtime import (
     _JOIN_TIMEOUT,
-    _fs_local_provider,
     _tool_results,
     _wait_until,
-    git_repo,  # noqa: F401  -- pytest fixture, resolved via this import
     make_fleet_service,
 )
 from tldw_chatbook.Agents.agent_models import (
@@ -74,6 +74,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
     ToolCatalogEntry,
     ToolResult,
+    ToolReviewDecision,
     ToolSchema,
     definition_fingerprint,
     format_steering_message,
@@ -901,9 +902,8 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     assert f"run:{resumed_row['id']}" in sends[0]
 
 
-#: Isolation-capable resume config: spawn + wait + resume, no fs tools
-#: needed (the child never writes -- this test only checks worktree
-#: ADMISSION happens again on resume, not diff content).
+#: Isolation-capable resume config: the parent can address a retained child;
+#: the closed worktree boundary refuses before provider or filesystem work.
 ISO_RESUME_CFG = AgentConfig(
     model="test-model",
     system_prompt="You are helpful.",
@@ -912,16 +912,36 @@ ISO_RESUME_CFG = AgentConfig(
 )
 
 
-def test_resumed_worktree_isolated_child_gets_a_fresh_worktree(db, git_repo):
-    """Finding 7 (Qodo round): `RetainedTranscript` now threads the
-    original child's isolation flag through to a resume -- a resumed
-    isolation="worktree" child must get its OWN fresh worktree (a new
-    run_id, so a new admission is the correct outcome, per the T4
-    refusal machinery `_admit_agent_worktree` already covers), not
-    silently fall back to sharing the tree the way passing a literal
-    ``None`` for isolation used to.
-    """
-    provider = _fs_local_provider(git_repo)
+def _seed_retained_worktree_child(db, coordinator):
+    """Retain an isolated transcript without invoking Git or a provider."""
+    old_run_id = db.create_run(
+        conversation_id="c",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        task="iso task",
+    )
+    db.set_status(old_run_id, RUN_DONE, result="original result")
+    handle = coordinator.reserve(task="iso task", agent=None, isolation="worktree")
+    assert handle is not None
+    coordinator.attach_run(handle.handle_id, old_run_id)
+    history = [
+        {"role": "user", "content": "original task"},
+        {"role": "assistant", "content": "original answer"},
+    ]
+    coordinator.finish(
+        handle.handle_id,
+        RUN_DONE,
+        result="original result",
+        transcript=history,
+    )
+    retained = coordinator.get_retained(handle.handle_id)
+    assert retained is not None and retained.isolation == "worktree"
+    return handle, old_run_id, history
+
+
+def test_resumed_worktree_isolated_child_refuses_without_git_or_fallback(
+    db, monkeypatch
+):
+    """A retained isolated resume fails closed and preserves its history."""
     holder: dict = {}
 
     def resume():
@@ -933,47 +953,46 @@ def test_resumed_worktree_isolated_child_gets_a_fresh_worktree(db, git_repo):
     service, chat, coordinator = make_fleet_service(
         db,
         [
-            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn one answer",
             resume,
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn two answer",
+            "resume refused",
         ],
-        {"iso task": ["done once", "done twice"]},
-        providers=(provider,),
     )
-    run1, outcome1 = _run(service, config=ISO_RESUME_CFG)
-    assert outcome1.status == RUN_DONE
-    finished = _finished_child(coordinator)
-    holder["handle_id"] = finished.handle_id
-    _await_retained(coordinator, finished.handle_id)
-    retained = coordinator.get_retained(finished.handle_id)
-    assert retained.isolation == "worktree", (
-        "the original spawn's isolation was not recorded on retention"
+    original, old_run_id, history = _seed_retained_worktree_child(db, coordinator)
+    holder["handle_id"] = original.handle_id
+    monkeypatch.setattr(
+        "tldw_chatbook.Agents.agent_worktree.create_agent_worktree",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("closed resume boundary must not invoke Git")
+        ),
     )
 
-    run2, outcome2 = _run(service, config=ISO_RESUME_CFG)
-    assert outcome2.status == RUN_DONE
+    run_id, outcome = _run(service, config=ISO_RESUME_CFG)
+    join_fleet_children(service)
 
-    resumed_handle = next(
-        h for h in coordinator.snapshot() if h.handle_id != finished.handle_id
+    assert outcome.status == RUN_DONE
+    assert chat.child_calls.get("iso task") is None
+    assert service._agent_worktrees == {}
+    assert coordinator.get_retained(original.handle_id).messages == tuple(history)
+    assert coordinator.get(original.handle_id).status == RUN_DONE
+    refused_handle = next(
+        handle
+        for handle in coordinator.snapshot()
+        if handle.handle_id != original.handle_id
     )
-    assert resumed_handle.handle_id in service._agent_worktrees, (
-        "the resumed isolated child never got a fresh worktree admission"
-    )
+    assert refused_handle.status == RUN_ERROR and refused_handle.run_id is None
+    refused_row = next(row for row in _subagent_rows(db) if row["id"] != old_run_id)
+    assert refused_row["parent_run_id"] == run_id
+    assert refused_row["resumed_from_run_id"] == old_run_id
+    assert refused_row["status"] == RUN_ERROR
+    assert "no_local_provider" in refused_row["result"]
+    sends = _tool_results(db.get_run(run_id), SEND_TO_AGENT_TOOL_NAME)
+    assert len(sends) == 1 and "no_local_provider" in sends[0]
 
 
-def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
-    db, git_repo, monkeypatch
+def test_refused_isolated_resume_filters_shell_and_settles_without_child_script(
+    db, monkeypatch
 ):
-    """Finding 6 twin (Qodo round): the resume call site's own
-    child_allowed_tools composition (a deliberate duplicate of spawn's,
-    per this module's own "only the launch tail is shared" convention)
-    must exclude shell_exec/virtual_cli exactly like the spawn path does,
-    now that Finding 7 threads `retained.isolation` through instead of a
-    literal None.
-    """
+    """The closed resume path keeps its safe tool projection and settles."""
     from tldw_chatbook.Agents import agent_service as agent_service_module
     from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
     from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
@@ -988,7 +1007,6 @@ def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
 
     monkeypatch.setattr(agent_service_module, "AgentConfig", _spy_agent_config)
 
-    provider = _fs_local_provider(git_repo)
     shell_cli_resume_cfg = AgentConfig(
         model="test-model",
         system_prompt="You are helpful.",
@@ -1012,24 +1030,18 @@ def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
     service, chat, coordinator = make_fleet_service(
         db,
         [
-            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn one answer",
             resume,
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn two answer",
+            "resume refused",
         ],
-        {"iso task": ["done once", "done twice"]},
-        providers=(provider,),
     )
-    run1, outcome1 = _run(service, config=shell_cli_resume_cfg)
-    assert outcome1.status == RUN_DONE
-    finished = _finished_child(coordinator)
-    holder["handle_id"] = finished.handle_id
-    _await_retained(coordinator, finished.handle_id)
+    original, _old_run_id, history = _seed_retained_worktree_child(db, coordinator)
+    holder["handle_id"] = original.handle_id
 
-    run2, outcome2 = _run(service, config=shell_cli_resume_cfg)
-    assert outcome2.status == RUN_DONE
+    _run_id, outcome = _run(service, config=shell_cli_resume_cfg)
+    join_fleet_children(service)
+    assert outcome.status == RUN_DONE
+    assert chat.child_calls.get("iso task") is None
+    assert coordinator.get_retained(original.handle_id).messages == tuple(history)
 
     child_configs = [
         cfg for cfg in captured_configs if cfg is not shell_cli_resume_cfg
@@ -1037,6 +1049,7 @@ def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
     resumed_config = child_configs[-1]
     assert RAW_SHELL_TOOL_NAME not in resumed_config.allowed_tools
     assert VIRTUAL_CLI_TOOL_NAME not in resumed_config.allowed_tools
+    assert service._agent_worktrees == {}
 
 
 class _AgentLessonsCatalogProvider:
@@ -1201,6 +1214,7 @@ def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
             name="helper",
             description="a helper",
             instructions="Original instructions.",
+            max_wall_seconds=0.75,
         )
     )
     holder: dict = {}
@@ -1220,24 +1234,62 @@ def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
             resume,
             fence(WAIT_AGENTS_TOOL_NAME, {}),
             "turn two answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn three answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn four answer",
         ],
-        {"helper task": ["helper done", "resumed helper done"]},
+        {
+            "helper task": [
+                "helper done",
+                "resumed helper done",
+                "resumed again",
+                "resumed after removal",
+            ]
+        },
     )
+    controlled_clock = [10.0]
+    service.clock = lambda: controlled_clock[0]
     run1, outcome1 = _run(service)
     assert outcome1.status == RUN_DONE
     finished = _finished_child(coordinator)
     holder["handle_id"] = finished.handle_id
     _await_retained(coordinator, finished.handle_id)
+    # Move beyond the original run's admitted deadline. A continuation that
+    # reused that deadline would be stuck before its first model call; the
+    # successful resumed row below proves a fresh per-run allowance.
+    controlled_clock[0] = 100.0
 
     updated = AgentDefinition(
         name="helper",
         description="a helper",
         instructions="Updated instructions.",
+        max_wall_seconds=0.25,
     )
     db.update_agent_definition(definition_id, updated)
+    real_list_definitions = db.list_agent_definitions
+    resume_roster_reads = 0
+
+    def freeze_resume_roster_then_mutate(*args, **kwargs):
+        nonlocal resume_roster_reads
+        resume_roster_reads += 1
+        if resume_roster_reads > 1:
+            raise AssertionError("continuation re-read definitions after planning")
+        frozen = real_list_definitions(*args, **kwargs)
+        db.update_agent_definition(
+            definition_id,
+            dataclasses.replace(updated, max_wall_seconds=9.0),
+        )
+        return frozen
+
+    db.list_agent_definitions = freeze_resume_roster_then_mutate
 
     run2, outcome2 = _run(service)
     assert outcome2.status == RUN_DONE
+    assert resume_roster_reads == 1
+    db.list_agent_definitions = real_list_definitions
 
     resumed_system = chat.child_calls["helper task"][1]["messages_payload"][0][
         "content"
@@ -1245,23 +1297,57 @@ def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
     assert "Updated instructions." in resumed_system
     assert "Original instructions." not in resumed_system
 
+    second = next(
+        handle
+        for handle in coordinator.snapshot()
+        if handle.run_id is not None and handle.run_id != finished.run_id
+    )
+    holder["handle_id"] = second.handle_id
+    _await_retained(coordinator, second.handle_id)
+    db.update_agent_definition(
+        definition_id,
+        dataclasses.replace(updated, max_wall_seconds=9.0),
+    )
+    controlled_clock[0] = 200.0
+    _run3, outcome3 = _run(service)
+    assert outcome3.status == RUN_DONE
+
+    third = max(coordinator.snapshot(), key=lambda handle: handle.started_at)
+    holder["handle_id"] = third.handle_id
+    _await_retained(coordinator, third.handle_id)
+    db.update_agent_definition(
+        definition_id,
+        dataclasses.replace(updated, max_wall_seconds=None),
+    )
+    controlled_clock[0] = 300.0
+    _run4, outcome4 = _run(service)
+    assert outcome4.status == RUN_DONE
+
     rows = _subagent_rows(db)
-    assert len(rows) == 2
+    assert len(rows) == 4
     old_row = next(r for r in rows if r["resumed_from_run_id"] is None)
-    new_row = next(r for r in rows if r["resumed_from_run_id"] is not None)
+    new_row = next(r for r in rows if r["resumed_from_run_id"] == old_row["id"])
+    newest_row = next(r for r in rows if r["resumed_from_run_id"] == new_row["id"])
+    final_row = next(r for r in rows if r["resumed_from_run_id"] == newest_row["id"])
     assert new_row["agent_definition"] == "helper"
     assert new_row["definition_fingerprint"] == definition_fingerprint(updated)
     assert new_row["definition_fingerprint"] != old_row["definition_fingerprint"]
+    assert old_row["budget"]["max_wall_seconds"] == 0.75
+    assert new_row["budget"]["max_wall_seconds"] == 0.25
+    assert newest_row["budget"]["max_wall_seconds"] == 0.25
+    assert final_row["budget"]["max_wall_seconds"] == 0.25
+    assert all(row["status"] == RUN_DONE for row in rows)
 
 
-def test_a_deleted_definition_refuses_the_resume_and_suggests_a_fresh_spawn(db):
+@pytest.mark.parametrize("remove_mode", ["deleted", "disabled"])
+def test_an_unavailable_definition_refuses_resume_and_suggests_fresh_spawn(
+    db, remove_mode
+):
     """Ruling #1's other half: a deleted/disabled definition refuses
     clearly -- silent downgrade to a generic child would be the only
     WRONG option."""
     definition_id = db.create_agent_definition(
-        AgentDefinition(
-            name="helper", description="a helper", instructions="Help."
-        )
+        AgentDefinition(name="helper", description="a helper", instructions="Help.")
     )
     holder: dict = {}
 
@@ -1288,7 +1374,18 @@ def test_a_deleted_definition_refuses_the_resume_and_suggests_a_fresh_spawn(db):
     holder["handle_id"] = finished.handle_id
     _await_retained(coordinator, finished.handle_id)
 
-    db.soft_delete_agent_definition(definition_id)
+    if remove_mode == "deleted":
+        db.soft_delete_agent_definition(definition_id)
+    else:
+        db.update_agent_definition(
+            definition_id,
+            AgentDefinition(
+                name="helper",
+                description="a helper",
+                instructions="Help.",
+                enabled=False,
+            ),
+        )
 
     run2, outcome2 = _run(service)
     assert outcome2.status == RUN_DONE
@@ -1645,6 +1742,93 @@ def test_a_finished_child_remains_continuable_after_prune_terminal(db):
     # The seed really carried the transcript (second call under the task).
     resumed_payload = chat.child_calls["pruned task"][1]["messages_payload"]
     assert {"role": "assistant", "content": "first answer"} in resumed_payload
+
+
+def test_resumed_denial_streak_is_fresh_and_seeds_complete_native_batch(db):
+    holder = {}
+
+    def native_denials(prefix, count):
+        return {
+            "role": "assistant",
+            "content": "partial denied batch",
+            "tool_calls": [
+                {
+                    "id": f"{prefix}-{index}",
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "arguments": json.dumps({"expression": f"{index}+1"}),
+                    },
+                }
+                for index in range(count)
+            ],
+        }
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["run_id"], "message": "retry with a fresh streak"},
+        )
+
+    def deny(calls, _run_id):
+        return {
+            call.call_id: ToolReviewDecision("denied", "denied")
+            for call in calls
+            if call.name == "calculator"
+        }
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "denial task"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one done",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two done",
+        ],
+        {
+            "denial task": [
+                native_denials("first", 3),
+                native_denials("second", 2),
+                "fresh run completed",
+            ]
+        },
+        review_tool_calls=deny,
+    )
+
+    def run_openai():
+        return service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=RESUME_CFG,
+            api_endpoint="openai",
+        )
+
+    try:
+        _, first = run_openai()
+    finally:
+        join_fleet_children(service)
+    assert first.status == RUN_DONE
+    original = _finished_child(coordinator)
+    assert original.status == RUN_STUCK
+    holder["run_id"] = original.run_id
+    _await_retained(coordinator, original.handle_id)
+
+    try:
+        _, second = run_openai()
+    finally:
+        join_fleet_children(service)
+    assert second.status == RUN_DONE
+    rows = _subagent_rows(db)
+    resumed = next(row for row in rows if row["resumed_from_run_id"] is not None)
+    assert resumed["resumed_from_run_id"] == original.run_id
+    assert resumed["status"] == RUN_DONE
+    resumed_payload = chat.child_calls["denial task"][1]["messages_payload"]
+    assert [
+        row["tool_call_id"] for row in resumed_payload if row.get("role") == "tool"
+    ] == ["first-0", "first-1", "first-2"]
+    assert len(chat.child_calls["denial task"]) == 3
 
 
 def test_a_cancelled_child_draws_the_honest_not_retained_refusal_not_unknown(db):

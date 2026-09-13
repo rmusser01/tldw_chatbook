@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.agent_models import ToolCall, normalize_tool_review
 from tldw_chatbook.Agents.local_tool_provider import (
     PROMOTION_APPROVAL_REQUIRED,
     PROMOTION_FOREGROUND_REQUIRED,
@@ -379,7 +379,12 @@ def test_subagent_cannot_present_or_invoke_promotion(tmp_path):
     args = _prepare_args()
 
     with use_run_actor(CurrentRunActor("subagent", "child-1", RUN)):
-        assert hook([ToolCall("fs_write", args, "child-call")], "child-1") == {}
+        assert {
+            key: normalize_tool_review(value).verdict
+            for key, value in hook(
+                [ToolCall("fs_write", args, "child-call")], "child-1"
+            ).items()
+        } == {}
         with use_tool_call_id("child-call"):
             result = provider.invoke("fs_write", args)
 
@@ -395,6 +400,11 @@ def test_unencodable_preparation_does_not_arm_a_review(tmp_path):
     args = _prepare_args("bad \ud800")
 
     with use_run_actor(CurrentRunActor("primary", RUN, None)):
-        assert hook([ToolCall("fs_write", args, "bad-call")], RUN) == {}
+        assert {
+            key: normalize_tool_review(value).verdict
+            for key, value in hook(
+                [ToolCall("fs_write", args, "bad-call")], RUN
+            ).items()
+        } == {}
 
     assert seen == []
