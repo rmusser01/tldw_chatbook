@@ -3751,6 +3751,9 @@ class LibraryScreen(BaseAppScreen):
             runtime=lasting_runtime,
             import_controller=self._library_note_import_controller,
             publish_snapshot=self._publish_library_notes_lasting_sync_snapshot,
+            # task-32518: activation / apply refresh the Notes list through the
+            # same path an import does (source snapshot + tree initial load).
+            refresh_notes=self._refresh_after_library_note_import,
         )
         self._notes_state.lasting_sync_snapshot = (
             self._library_notes_sync_controller.snapshot

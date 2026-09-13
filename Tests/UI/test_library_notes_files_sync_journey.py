@@ -14,6 +14,7 @@ import subprocess
 import sys
 import textwrap
 from types import SimpleNamespace
+from typing import Callable
 from unittest.mock import Mock
 
 import pytest
@@ -237,7 +238,10 @@ def _seed_real_conflict_authority(
 
 
 async def _start_real_conflict_stack(
-    notes_path: Path, state_path: Path
+    notes_path: Path,
+    state_path: Path,
+    *,
+    refresh_notes: Callable[[], object] | None = None,
 ) -> tuple[
     NotesSyncRuntimeOwner,
     CharactersRAGDB,
@@ -270,6 +274,7 @@ async def _start_real_conflict_stack(
     controller = LibraryNotesSyncController(
         runtime=owner,
         import_controller=SimpleNamespace(begin_selection=lambda: None),
+        refresh_notes=refresh_notes,
     )
     return owner, database, interop, controller
 
@@ -422,6 +427,151 @@ async def test_real_runtime_resumes_a_root_the_old_resume_left_paused_on_disk(
         )
         assert row.category == "safe"
         assert row.effect != "No change"
+    finally:
+        await _close_real_conflict_stack(owner, database, interop)
+
+
+@pytest.mark.asyncio
+async def test_activating_a_lasting_root_refreshes_a_seeded_notes_list(
+    tmp_path: Path,
+) -> None:
+    """task-32518: on a profile that already holds notes, Activate refreshes the list.
+
+    The lasting-sync path had no counterpart of the import path's
+    refresh-after-settlement: activation wrote the synced notes and their
+    managed folder to the database, but the Notes list kept its
+    pre-activation count and never showed the managed folder row until the
+    app was restarted. The fresh-profile walk never saw it because an empty
+    list recomposes on its own.
+    """
+
+    notes_path = tmp_path / "notes.sqlite3"
+    state_path = tmp_path / "sync.sqlite3"
+    vault = (tmp_path / "vault").resolve()
+    vault.mkdir()
+    for index in range(3):
+        (vault / f"synced-{index}.md").write_text(
+            f"# Synced {index}\n\nbody {index}\n", encoding="utf-8"
+        )
+    database = CharactersRAGDB(notes_path, client_id="task-32518")
+    folders = LocalNoteFolderRepository(database)
+    for index in range(2):
+        assert database.add_note(
+            f"Existing {index}", f"existing body {index}", f"existing-{index}"
+        )
+    folders.create_folder(
+        name="Existing folder", parent_id=None, folder_id="folder-existing"
+    )
+    interop = NotesInteropService(
+        base_db_directory=notes_path.parent,
+        api_client_id="task-32518",
+        global_db_to_use=database,
+    )
+    scope_service = NotesScopeService(
+        local_notes_service=interop,
+        server_service=None,
+        folder_repository=folders,
+    )
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=scope_service,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=state_path,
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    app.notes_scope_service = scope_service
+    app.notes_sync_runtime_owner = owner
+    host = _JourneyHarness(app)
+    try:
+        async with host.run_test(size=(120, 40)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-notes", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+            await _wait_for_condition(
+                pilot,
+                lambda: "Notes (2)" in _painted_text(host),
+                message="seeded list never painted its count",
+            )
+            assert "Existing folder" in _painted_text(host)
+
+            screen.query_one("#library-notes-add-from-files", Button).press()
+            await _wait_for_selector(screen, pilot, "#notes-add-keep-synced")
+            screen.query_one("#notes-add-keep-synced", Button).press()
+            await _wait_for_selector(screen, pilot, "#notes-sync-display-name")
+            controller = screen._library_notes_sync_controller
+            controller.set_setup("display_name", "Vault sync")
+            controller.set_setup("folder", str(vault))
+            await pilot.pause()
+            screen.query_one("#notes-sync-check", Button).press()
+            activate = await _wait_for_selector(screen, pilot, "#notes-sync-activate")
+            await _wait_for_condition(
+                pilot,
+                lambda: not activate.disabled,
+                message=f"review never admitted activation: {controller.snapshot.status_line}",
+            )
+            activate.press()
+            await _wait_for_selector(screen, pilot, "#notes-sync-receipt")
+            assert "3 applied · durable receipt recorded" in _painted_text(host)
+            assert database.count_notes() == 5
+
+            screen.query_one("#notes-sync-back", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._notes_state.view == "list",
+                message="lasting Back did not return to Notes",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: "Notes (5)" in _painted_text(host),
+                message="list count never refreshed after activation",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: "Sync managed" in _painted_text(host),
+                message="managed folder row never painted after activation",
+            )
+            painted = _painted_text(host)
+            assert "Vault sync" in painted
+            assert "Existing folder" in painted
+    finally:
+        await owner.shutdown()
+        interop.close_all_user_connections()
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_applying_a_reviewed_conflict_refreshes_the_notes_list_once(
+    tmp_path: Path,
+) -> None:
+    """task-32518 AC#2: an apply that changed something refreshes the list.
+
+    A Check alone is mutation-free and must not refresh; the apply that
+    resolves the conflict writes the note and must refresh exactly once.
+    """
+
+    refreshes: list[str] = []
+    notes_path, state_path, _sync_root = _seed_real_conflict_authority(tmp_path)
+    owner, database, interop, controller = await _start_real_conflict_stack(
+        notes_path, state_path, refresh_notes=lambda: refreshes.append("refresh")
+    )
+    try:
+        await controller.check_root("root-1")
+        assert refreshes == []
+        reviewed = controller.snapshot.review
+        controller.stage_attention_choice(
+            "root-1", reviewed.observation_token, "binding-1", "Keep file"
+        )
+
+        await controller.apply_reviewed("root-1", reviewed.observation_token)
+
+        assert controller.snapshot.receipts, controller.snapshot.status_line
+        assert refreshes == ["refresh"]
     finally:
         await _close_real_conflict_stack(owner, database, interop)
 
