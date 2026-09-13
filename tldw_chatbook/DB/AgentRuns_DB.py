@@ -29,7 +29,9 @@ from tldw_chatbook.Agents.agent_models import (
     validate_agent_definition,
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
+from .agent_worktrees import AGENT_WORKTREES_SCHEMA
 from .base_db import BaseDB
+
 if TYPE_CHECKING:
     from .automatic_work import AutomaticWorkLedger
 
@@ -214,7 +216,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 19
+    _CURRENT_SCHEMA_VERSION = 20
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -635,6 +637,7 @@ class AgentRunsDB(BaseDB):
                     "REFERENCES automatic_work_chains(id)"
                 )
             conn.executescript(AUTOMATIC_WORK_SCHEMA)
+            conn.executescript(AGENT_WORKTREES_SCHEMA)
             definition_columns = {
                 row[1]
                 for row in conn.execute(
@@ -762,6 +765,7 @@ class AgentRunsDB(BaseDB):
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (17)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (18)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (19)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (20)")
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection
