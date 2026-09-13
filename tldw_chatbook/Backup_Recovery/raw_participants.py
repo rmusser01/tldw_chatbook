@@ -670,19 +670,28 @@ def _scope(
             _states[operation] = state
             storage._raw_operations.add(operation)
         # Every publication/creation target is admitted before any side effect.
-        for path in (
+        admission_paths = (
             ((parent,) if route in {"pet", "theme_directory"} else ())
             + paths
             + directories
             + ((selected,) if directory_only and not directories else ())
-        ):
+        ) or (selected,)
+        if route in config_files.ROUTES:
+            # All config members use the selected profile's same native group.
+            # Check every member together rather than reopening its control tree
+            # once per lock, backup and temporary file on each cached config read.
             attempt.check()
-            state.leases.append(storage.acquire_storage(path))
+            state.leases.append(storage.acquire_storage(
+                admission_paths[0], related_paths=admission_paths[1:]
+            ))
             state.holds.append(storage._holds.get(state.leases[-1]._key))
             attempt.check()
-        if not state.leases:
-            state.leases.append(storage.acquire_storage(selected))
-            state.holds.append(storage._holds.get(state.leases[-1]._key))
+        else:
+            for path in admission_paths:
+                attempt.check()
+                state.leases.append(storage.acquire_storage(path))
+                state.holds.append(storage._holds.get(state.leases[-1]._key))
+                attempt.check()
         if pinned:
             fd, _ = _open_verified_parent(
                 anchor / ".raw-pin",

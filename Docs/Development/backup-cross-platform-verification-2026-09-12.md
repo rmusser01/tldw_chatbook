@@ -8,7 +8,7 @@ not been merged. Backup task IDs that collided with upstream voice tasks were
 renumbered to TASK-32560, TASK-32561 and TASK-32562; the voice records and
 historical receipt paths remain unchanged.
 
-Final [Windows support run 34746306846](https://github.com/rmusser01/tldw_chatbook/actions/runs/34746306846)
+The latest completed [Windows support run 34746306846](https://github.com/rmusser01/tldw_chatbook/actions/runs/34746306846)
 at `bc2c2d001a5e6cd5a76ac1bba6af5253938e6692` passes **133/133 support tests
 and 42/42 native tests**, with zero failures, errors or skips. All four native
 TTS close cases pass, including successful release and all uncertain-close
@@ -18,7 +18,8 @@ remaining Windows backup support failure described below; no production lock
 change was necessary. Receipts are retained under
 `/private/tmp/backup-final-bc2c-windows-34746306846`.
 
-The last production correction is `7666ebf6b9fbe234e7bb220e9e09fd1f06e4a539`.
+The native filesystem/restore correction tested below is
+`7666ebf6b9fbe234e7bb220e9e09fd1f06e4a539`.
 [Windows run 34743946448](https://github.com/rmusser01/tldw_chatbook/actions/runs/34743946448)
 passes all six actual installed workflows: plaintext 331.630s, encrypted 326.884s,
 credential-inclusive 474.703s, two-profile restore 705.195s, replacement 591.235s,
@@ -85,6 +86,29 @@ as their original outcomes. Two execution-capacity tests now wait for actual
 tool entry before joining the thread; the original 20ms cancellation/timeout
 and capacity assertions remain, and all 19 capacity cases pass. Broader fast-lane
 widget profile-lifetime verification is in progress.
+The MCP widget group subsequently passes 384 of 386 cases; the two failures
+expose a merged duplicate `on_unmount` method overriding upstream preview
+revocation. Revision `5a21bd29a0` combines recovery-token invalidation with the
+original async cleanup. Both reproduced failures and all 17 MCP recovery-control
+cases pass together (19 passed, 59.62s). A scan of the changed production Python
+files finds no other newly duplicated methods. Scoped static checks add no findings.
+
+At `5a21bd29a0`, GGUF source checks pass on Ubuntu and macOS but its four Windows
+full-app cases exceed their existing 60s deadlines. Linux Console arrival takes
+10.9s against the unchanged 10s threshold. A native macOS profile of 100 cached
+config reads records 500 repeated admission setups and 83,000 native opens,
+taking 1.351s. Config companion paths now share one admission setup while each
+path retains pre/post-lock containment checks; native group, cancellation,
+uncertain-close retention and primary-only execution borrowing remain unchanged.
+The same probe takes 0.345s with 100 setups and 17,000 native opens. The local
+Console tour passes with its original budget. Seven native regressions verify
+exclusion, all companion paths, exact-file sidecar refusal, pending recovery,
+pause and a companion redirected outside enrollment during acquisition.
+Independent review accepts the narrow change. Targeted config/raw checks retain
+exactly the same 2/19 failures on a clean archive of the preceding commit;
+no new failure is attributed to this correction. Native CI verification of the
+admission correction remains pending; earlier platform receipts remain tied to
+their stated revisions.
 The separate binary Windows checkout failure names long upstream task paths
 introduced after the merged dev revision; it occurs before packaging and remains
 outside this backup correction. No full-repository test pass is claimed.

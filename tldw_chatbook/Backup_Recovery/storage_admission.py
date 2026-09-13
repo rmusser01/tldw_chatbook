@@ -651,6 +651,7 @@ def _scope(
     *,
     startup_attempt=None,
     authority=None,
+    related_paths: tuple[Path, ...] = (),
 ) -> tuple[str, ...]:
     pending, profiles = bootstrap._records(root)
     registry = bootstrap._registry(root)
@@ -695,19 +696,26 @@ def _scope(
         if pending:
             raise bootstrap.RecoveryRequired("recovery_scope_uncertain")
         return (UNBOUND_NAMESPACE,)
-    if path is not None and not any(
-        _contains_owned_path(Path(p), path)
-        for p in binding["roots"] + [binding["selector"]]
-    ):
-        raise bootstrap.RecoveryRequired("storage_scope_not_enrolled")
+    for selected in (path, *related_paths):
+        if selected is not None and not any(
+            _contains_owned_path(Path(p), selected)
+            for p in binding["roots"] + [binding["selector"]]
+        ):
+            raise bootstrap.RecoveryRequired("storage_scope_not_enrolled")
     return tuple(binding["namespaces"])
 
 
-def acquire_storage(path: Path | None = None) -> StorageLease:
-    """Acquire ordinary admission, reporting only bounded refusal codes."""
+def acquire_storage(
+    path: Path | None = None, *, related_paths: tuple[Path, ...] = ()
+) -> StorageLease:
+    """Admit every operation path under one native group, without creating files.
+
+    Companion paths receive the same pre/post-lock scope checks as the primary.
+    The returned lease's borrowable execution selection remains the primary path.
+    """
     attempt = _Acquisition()
     try:
-        return _acquire_storage(path, attempt)
+        return _acquire_storage(path, attempt, related_paths=related_paths)
     except bootstrap.RecoveryRequired:
         raise
     except (OSError, ValueError, RuntimeError):
@@ -716,7 +724,9 @@ def acquire_storage(path: Path | None = None) -> StorageLease:
         attempt.close()
 
 
-def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
+def _acquire_storage(
+    path: Path | None, attempt: _Acquisition, *, related_paths: tuple[Path, ...] = ()
+) -> StorageLease:
     """Check fixed evidence and hold declared scope before any owned open/write.
 
     An ordinary seam used inside maintenance refuses promptly; later capture owners
@@ -726,11 +736,17 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
         raise bootstrap.RecoveryRequired("forked_owner_restart_required")
     root = bootstrap.default_bootstrap_root()
     selector = effective_config_path()
+    related_paths = tuple(lexical_path(selected) for selected in related_paths)
+
+    def check():
+        for selected in (path, *related_paths):
+            attempt.check(selected)
+
     execution_selection = _execution_selection_for(path)
     if execution_selection[1:3] != (root, selector):
         raise bootstrap.RecoveryRequired("execution_selection_changed")
     with _lock:
-        attempt.check(path)
+        check()
         if (
             attempt.operation is not None
             and attempt.operation.key is not None
@@ -738,6 +754,7 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
         ):
             raise bootstrap.RecoveryRequired("operation_native_scope_changed")
     with attempt.initializing(root, path):
+        check()
         allowed, reason = bootstrap.startup_permission(selector, root)
         if not allowed:
             raise bootstrap.RecoveryRequired(reason)
@@ -751,12 +768,15 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
             # Preserve a positively disjoint startup decision, while still limiting
             # each owner path to its verified scope. Native unavailability is not a
             # conflict with an unrelated operation and never qualifies maintenance.
-            _scope(root, selector, lexical_path(path) if path is not None else None)
+            _scope(
+                root, selector, lexical_path(path) if path is not None else None,
+                related_paths=related_paths,
+            )
             allowed, reason = bootstrap.startup_permission(selector, root)
             if not allowed:
                 raise bootstrap.RecoveryRequired(reason)
             with _lock:
-                attempt.check(path)
+                check()
                 token = StorageLease(None)
                 token._execution_selection = execution_selection
                 return token
@@ -764,13 +784,14 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
         # owners must remain possible while that or a native gate is contended.
         authority = admission_authority(root)
     with _lock:
-        attempt.check(path)
+        check()
         names = _scope(
             root,
             selector,
             lexical_path(path) if path is not None else None,
             startup_attempt=attempt,
             authority=authority,
+            related_paths=related_paths,
         )
         key = (os.getpid(), str(root))
         hold = _holds.get(key)
@@ -787,13 +808,13 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
     try:
         while not hold.ready.wait(0.01):
             with _lock:
-                attempt.check(path)
+                check()
         if hold.error is not None:
             raise bootstrap.RecoveryRequired("storage_admission_unavailable")
         # Enrollment races an unbound selection. Revalidate after acquiring its
         # lease; never enter on a stale pre-enrollment decision.
         with _lock:
-            attempt.check(path)
+            check()
             allowed, reason = bootstrap.startup_permission(selector, root)
             if not allowed:
                 raise bootstrap.RecoveryRequired(reason)
@@ -804,6 +825,7 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
                     lexical_path(path) if path is not None else None,
                     startup_attempt=attempt,
                     authority=authority,
+                    related_paths=related_paths,
                 )
                 != names
             ):

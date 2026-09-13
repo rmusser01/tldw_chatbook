@@ -105,3 +105,23 @@ envelope covers the serial child budgets. Windows and product deadlines remain
 unchanged. All34 assertions are unchanged, independent review accepts the change,
 and static checks add no findings. Final committed-fixture Linux verification
 and the remaining Windows7666 groups are pending.
+
+All six Windows7666 product flows subsequently pass, including validated rollback;
+294 native cases pass. Final Linux071 checks pass26 with actual F9 modes and
+replacement/rollback. Windowsbc2c support passes133 and native42 with exact source,
+installed payload and artifact hashes verified. The remaining TTS fixture failure
+was a child inheriting Windows USERPROFILE from the parent, corrected without a
+production lock change. Current platform receipts are in the verification document.
+
+Current dev integration also preserves upstream MCP async unmount cleanup:
+5a21 removes a duplicate overriding handler and retains recovery-token invalidation.
+Both upstream regressions and17 recovery controls pass. GGUF source CI now passes
+Ubuntu/macOS; Windows60s timeouts and Linux Console10.9s>10s reveal repeated
+config admission setup. A bounded correction shares that setup across config
+companion paths while checking every path before and after native admission.
+Measured cached-read cost drops1.351s→0.345s per100 reads; local Console budget
+passes, seven native safety cases pass, independent review accepts the change,
+and scoped static checks add no findings. The same2 config and19 raw test failures
+reproduce on the unchanged clean baseline. Publish and verify this correction on
+native Windows and Linux before closing Stage5. No new backup payload, deadline
+relaxation, or merge into dev is authorized or performed.
