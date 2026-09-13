@@ -13483,3 +13483,10 @@ exports under the plan's evidence directory, but keep the executable probe under
 the isolated test tree. Never retry an isolation failure by loosening the
 sandbox; qualify actual reads and failed writes from preserved traces without
 reopening user configuration.
+
+
+## Recovery tests must cross accepted close and actual picker routing
+
+**TASK-31210/31211, Console recovery, 2026-09-12.** The initial lifetime test replaced the entire accepted-close/drain method and passed while new manual recovery remained admissible during a real session close. Gating the actual fleet-drain await exposed that late admission and three premature-cancellation cases: stale revision, refused close and provisional voice close. The fix uses the existing runtime admission fence and signals recovery only after the exact close ticket is accepted. The four cases failed before the fix and passed afterward.
+
+A second gap survived direct helper-to-confirmation tests and native visual inspection: the actual recovery picker put its payload in Button.action, a Textual routing attribute, so pressing its button did not emit the expected event. A mounted command action → async list → real picker → inline card → Git test reproduced it; renaming the payload to recovery_action restored the flow. Test the application's actual entry and lifetime boundary, and gate only the external wait needed for determinism. A working helper or correctly painted button does not establish that callers can reach it.

@@ -56,17 +56,27 @@ supersedes its pending-integration and remaining-work labels.
   integration passed independent review. Confirmed operations
   (`720bc15f92`, merge-receipt correction `fc9c01473e`) now share the durable
   apply/merge/discard engine and passed independent review. Console card and
-  manual recovery integration remain unfinished.
-- **Final integration review complete:** all four identified integration defects
+  retained manual recovery are implemented atc5edf2741b. Fix7faf6d2742 closes
+  late recovery admission during accepted session close, restores actual picker
+  routing and aligns both previews with live progress/virtual CLI/raw shell
+  disclosure. The scoped re-review approved all findings; final restoration integration review remains.
+- **Earlier-wave final integration review complete:** all four identified integration defects
   are fixed and independently re-reviewed in `7852cf47ba`, including replacement
   of obsolete worktree-positive continuation tests and the required diagnostic
   inventory refresh. No new Critical/Important finding remains in that correction.
   The [complete review, evidence and 50-ruling record](../../Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md)
   preserves historical failures, decisions and process qualifications.
-- **Remaining functional work:** Wire the Console
-  confirmation card and prior-turn recovery list. TASK-31210, TASK-31211 and
-  parent TASK-13154 remain In Progress. Earlier work is committed locally;
-  this restoration is ongoing. No new PR, push or merge was performed.
+- **Remaining closeout:** finish the broad restoration integration review, then check TASK-31210/TASK-31211 acceptance and close
+  parent TASK-13154. All three remain In Progress until those gates finish.
+  Source is committed locally; no new PR, push or merge was performed.
+- **Verification limits:** targeted Console fix selections pass25mounted UI,
+  23preview/raw-shell and60lifetime cases, with zero added scoped static
+  diagnostics. Current diagnostic inventory/sink verification passes. The
+  inherited ChatScreen size guards and eight stale historical diagnostic-label
+  expectations remain failures; the latter are absent at the pre-restoration
+  baseline too. UI-ready passes at973/973 with no headroom. Exact qualifications
+  and restoration rulings are in the
+  [restoration review record](../../Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md).
 
 
 

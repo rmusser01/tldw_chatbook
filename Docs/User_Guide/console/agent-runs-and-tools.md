@@ -774,12 +774,32 @@ changes in your working folder stay there. The child uses its own local file
 tools and checkout. Missing or revoked authority refuses the request without
 running the child in the shared folder.
 
-Console merge/discard confirmation and recovery across turns are still being
-completed. Checkouts and branches survive normal completion and failed starts;
-automatic cleanup is disabled. Existing work remains available for manual
-review. Repository identity checks detect changes at application boundaries;
-ordinary Git does not guarantee protection against another process replacing
-repository metadata during a command.
+Worktree actions show a confirmation card with the source checkout, destination
+repository and change summary. Choose **Allow once** or **Deny**. Switching
+conversations or screens parks the card; returning restores the same pending
+request. A changed source or repository selection requires fresh confirmation.
+
+For work saved by an earlier turn, open the command palette and choose
+**Console: Recover agent work…**. The list belongs to the current conversation
+and its selected repository. Choose an action to review its confirmation card:
+
+- **Apply** brings the changes into your working folder as unstaged edits,
+  preserving unrelated staged work.
+- **Merge** requires a clean destination checkout and creates a merge commit,
+  or reports that the child commit has already been incorporated.
+- **Discard** removes the agent changes and its recorded branch, then leaves
+  the checkout folder at its original baseline commit. The result identifies
+  this retained folder.
+
+Work whose execution has not been confirmed finished remains protected.
+Interrupted actions with uncertain results remain available for manual review
+and are not retried automatically. Checkouts and branches also survive failed
+starts; automatic cleanup is disabled.
+
+Repository identity checks detect changes at application boundaries. Ordinary
+Git does not guarantee protection against another process replacing repository
+metadata during a command. Unsupported filesystem operations receive a specific
+refusal; discard does not silently fall back to deleting the checkout folder.
 
 Sub-agents the supervisor spawns within a **single reply** no longer run one
 at a time — up to a configured number can be live together, each working its

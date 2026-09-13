@@ -4512,14 +4512,10 @@ def build_console_first_request_plan(
         turn_bundle_block: Exact automatic context rider for the next request.
         install_skill_enabled: Whether the skill installer is available.
         run_skill_script_enabled: Whether skill scripts are available.
-        worktree_merge_enabled: Whether a run-entry confirm surface exists to
-            approve merge_agent_worktree/discard_agent_worktree (TASK-28238
-            phase 2 Task 7 ruling) -- the two preview call sites,
-            `build_project_instruction_preview_request` and
-            `build_personal_context_preview_snapshot`, intentionally omit
-            this today since no production confirm surface exists yet; the
-            future UI-card task must thread it there too for preview/live
-            parity.
+        worktree_merge_enabled: Whether the actual worktree confirmation
+            surface is available. Both Console preview paths and live dispatch
+            pass the same surface gate to this shared planner so worktree tool
+            disclosure matches the live first request.
         agent_messages: Exact conversation messages before optional riders.
         agent_definitions: Named sub-agent definitions available this turn.
         fleet_max_live: Maximum simultaneously live agents for this run.
