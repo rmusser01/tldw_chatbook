@@ -131,3 +131,12 @@ are identical. The branch contains all current dev commits.
 
 All confirmed local review findings are addressed. Publication, review-thread
 replies and remote checks are pending. This record is not a merge claim.
+
+
+### Windows checkout correction
+
+The first published-head Windows GGUF jobs failed before Python setup in runs
+34764839164 and34764839191: two inherited Backlog filenames exceeded the default
+checkout path limit. Shortened only the filenames for TASK32540 and TASK32555;
+task IDs, titles, statuses and bodies are byte-identical. Their actual Library
+work remains To Do. No workflow gate or long-path setting was bypassed.
