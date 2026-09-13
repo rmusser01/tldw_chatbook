@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 14:40
+updated_date: 2026-09-13 14:44
 ---
 
 ## Description
@@ -164,6 +164,7 @@ MCP selected-profile correction passes39representatives and full386run has only2
 Final MCP integration correction: original async unmount now clears recovery token before original tool-preview generation/revocation; duplicate overriding method removed. Both existing nonce/reclamation regressions reproduceRED thenpass; combined2regressions+17actualMCP-recoverycontrolcases19pass59.62s, including unmount/cancellation/staleapproval. Full386widgetgroupbeforeunmountfix384pass/onlythose2fail; no remainingconfigselectionerrors. Exact2MCPmodules keep originalprecollectionprivateprofile; allrealgetters/originalwidgetfakes retained, no blanketmocking. ASTreview of340changedproductionPythonfiles findsno othernewduplicatefunctions. Scopecompile/Bandit/Ruffcomparison addsno newfindings; removesproductionduplicate-methodfinding. FinalCIrerunneededafterpush.
 Continuation at 5a21bd29a0: GitHub reports MERGEABLE; native GGUF Ubuntu/macOS now pass. Investigating the remaining Windows 60s full-app timeouts and Linux latency result without weakening assertions or backup guards. A fresh private-profile cProfile probe on macOS records 100 cached config reads taking 1.351s: 500 redundant path admissions account for 1.143s and 83,000 native opens. This is measurement only; no production performance change has been made.
 Config admission correction: 100 real cached reads improve 1.351s→0.345s and 83,000→17,000 native opens by sharing setup across companion paths. Every companion keeps pre/post-lock containment; exact primary execution borrowing, cancellation, pending recovery, uncertain resource retention and native group remain unchanged. Seven native safety regressions pass (six initially RED), including related-path redirection during acquisition; local Console tour passes unchanged10s threshold. Independent review accepts the narrow production diff. Scoped Bandit adds0 findings (production0); Ruff retains12/2 existing findings and new test/harness0. Existing config/raw targeted runs retain exactly2/19 failures, reproduced identically in clean git archive5a21 baseline. Installed macOS actual F9 confirmation and native Windows/Linux correction verification are next.
+Published admission correction9cdba197eb. Actual installed macOS F9 plaintext backup/restore/reopen passes59.76s;7native related-path regressions and19workflow checks pass. Native Windows full run34763393568 and supplied Linux correction/F9/rollback run are verifying that immutable production revision. Fast Lane5a21 finishes1123passed/2failed, both exact GGUF workflow contract assertions left stale by the prior direct per-case launcher change. Updated only that contract to require the helper trigger, exact4expanded UI nodes, separate interpreter selection, unchanged60s budget and aggregated failure exit; all4contract tests pass with Ruff/Bandit/compile clean.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
