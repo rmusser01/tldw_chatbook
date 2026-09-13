@@ -5399,6 +5399,114 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_typing_base_url_marks_endpoint_draft_dirty() -> None:
+    """CE-003: real keystrokes in Base URL must dirty the live-bound endpoint draft.
+
+    A second ``_base_url_changed`` definition shadowed the draft-dirtying
+    handler, so the field displayed the typed URL while ``_endpoint_draft``
+    stayed clean -- "Use for this conversation" then stripped the endpoint
+    and the rebase reset ``base_url`` to the configured provider URL.
+    """
+    app = ModalHarness()
+    app.app_config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://localhost:8080", "model": "model-a"}
+        }
+    }
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = _basic_modal(
+            ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        url_input = modal.query_one("#console-settings-base-url", Input)
+        assert url_input.value == "http://localhost:8080"
+        url_input.focus()
+        await pilot.pause()
+        for _ in range(len(url_input.value)):
+            await pilot.press("delete")
+        for ch in "http://127.0.0.1:9099":
+            await pilot.press(ch)
+        await pilot.pause()
+
+        assert url_input.value == "http://127.0.0.1:9099"
+        assert modal._endpoint_draft.dirty is True
+        assert modal._endpoint_draft.value == "http://127.0.0.1:9099"
+        assert modal._endpoint_draft.bound_provider_config_key == "llama_cpp"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_apply_to_chat_persists_typed_llama_endpoint() -> None:
+    """CE-003: "Use for this conversation" must land the typed endpoint in the store.
+
+    Drives the real submission machinery (modal -> controller rebase ->
+    store live commit) exactly like ``ChatScreen``'s live committer: after
+    typing a session Base URL that differs from the configured
+    ``api_settings.llama_cpp.api_url`` and applying, the session settings
+    must carry the typed URL so the send resolution consumes it.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    app_config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://localhost:8080", "model": "model-a"}
+        }
+    }
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        assistant_kind="generic",
+    )
+    origin = store.capture_console_settings_origin(session.id)
+    rebase_owner = object.__new__(ConsoleChatController)
+
+    def live_committer(submission):
+        rebased = ConsoleChatController.rebase_console_settings_draft(
+            rebase_owner,
+            submission.draft,
+            provider=submission.draft.settings.provider,
+            model=submission.draft.settings.model,
+            app_config=app_config,
+            exposed_fields=frozenset(
+                field.name for field in submission.draft.field_drafts
+            ),
+        )
+        return store.commit_console_settings_live(replace(submission, draft=rebased))
+
+    app = ModalHarness()
+    app.app_config = app_config
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleSettingsModal(
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+            app_config=app_config,
+            providers_models={"llama_cpp": ["model-a"]},
+            context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+            can_save=True,
+            origin=origin,
+            live_committer=live_committer,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        url_input = modal.query_one("#console-settings-base-url", Input)
+        url_input.focus()
+        await pilot.pause()
+        for _ in range(len(url_input.value)):
+            await pilot.press("delete")
+        for ch in "http://127.0.0.1:9099":
+            await pilot.press(ch)
+        await pilot.pause()
+
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+    effective = store.effective_session_settings(session.id)
+    assert effective is not None
+    assert effective.base_url == "http://127.0.0.1:9099"
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_renders_current_chat_identity() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
@@ -6356,6 +6464,253 @@ async def test_console_settings_modal_entry_url_not_captured_into_provider_draft
         assert base_url_input.value == "http://192.168.1.9:8080"
         assert base_url_input.disabled is True
         assert modal._current_base_url_value("custom-ep:gpu-box") is None
+
+
+def _registry_rebase_harness(**kwargs) -> tuple[ModalHarness, ConsoleSettingsModal]:
+    """Mounted modal wired with the REAL controller rebaser (CE-001 setup).
+
+    The suite's existing custom-ep tests mount the modal without
+    ``draft_rebaser``, so ``_switch_provider`` never enters the production
+    rebase path -- exactly why the CE-001 crash escaped them. This harness
+    binds the real ``ConsoleChatController.rebase_console_settings_draft``
+    so selection messages exercise ``_switch_provider -> _rebase_to ->
+    _apply_rebased_state`` as in the live app.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    controller = ConsoleChatController.__new__(ConsoleChatController)
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=app.app_config,
+        providers_models={"llama_cpp": ["model-a"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+        draft_rebaser=controller.rebase_console_settings_draft,
+        **kwargs,
+    )
+    return app, modal
+
+
+async def _unreachable_connection_tester(
+    _identity: ProviderDraftIdentity,
+) -> ProviderProbeResult:
+    """Offline probe seam: entry discovery settles unreachable instantly."""
+    return ProviderProbeResult("unreachable", (), "connection_error")
+
+
+@pytest.mark.asyncio
+async def test_endpoint_created_message_switches_selection_without_crash() -> None:
+    """CE-001 regression: the automatic post-Create switch must not crash.
+
+    Posting the template modal's EndpointCreated (the real create-switch
+    message) drives Select.Changed -> _switch_provider -> _rebase_to ->
+    _apply_rebased_state; the rebased settings.provider must stay the dashed
+    registry id the Select's options carry, not the config-key canonicalized
+    ``custom_ep:...`` spelling that raised InvalidSelectValueError live.
+    """
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    app, modal = _registry_rebase_harness(
+        connection_tester=_unreachable_connection_tester
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        modal.post_message(
+            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
+        )
+        await pilot.pause()
+
+        provider_select = modal.query_one("#console-settings-provider", Select)
+        assert provider_select.value == "custom-ep:gpu-box"
+        assert modal._active_provider == "custom-ep:gpu-box"
+        assert modal._draft.settings.provider == "custom-ep:gpu-box"
+
+
+@pytest.mark.asyncio
+async def test_provider_picker_selection_message_switches_entry_without_crash() -> None:
+    """CE-001 regression (explicit selection): picking a registry entry from
+    the provider picker must rebase and re-project the dashed id, not crash
+    with an illegal Select value."""
+    app, modal = _registry_rebase_harness(
+        connection_tester=_unreachable_connection_tester
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        modal.post_message(ConsoleProviderPicker.ProviderSelected("custom-ep:gpu-box"))
+        await pilot.pause()
+
+        provider_select = modal.query_one("#console-settings-provider", Select)
+        assert provider_select.value == "custom-ep:gpu-box"
+        assert modal._active_provider == "custom-ep:gpu-box"
+        assert modal._draft.settings.provider == "custom-ep:gpu-box"
+
+
+def test_suspended_draft_snapshot_accepts_registry_provider_identity() -> None:
+    """CE-001 (snapshot layer): a suspended draft captured while a registry
+    entry is selected must validate -- the dashed ``custom-ep:<slug>`` id is
+    a legal provider identity, not a rejected snapshot value."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="custom-ep:gpu-box", model="model-a", base_url=None
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-provider": "custom-ep:gpu-box"},
+        provider_model_drafts={"custom-ep:gpu-box": "model-a"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    assert snapshot.settings.provider == "custom-ep:gpu-box"
+    assert snapshot.provider_model_drafts == {"custom-ep:gpu-box": "model-a"}
+
+    restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
+    assert restored is not None
+    assert restored.settings.provider == "custom-ep:gpu-box"
+    assert restored.raw_values["console-settings-provider"] == "custom-ep:gpu-box"
+    assert restored.provider_model_drafts == {"custom-ep:gpu-box": "model-a"}
+
+
+@pytest.mark.parametrize(
+    "malformed_provider",
+    [
+        "custom-ep:bad/value",  # path separator
+        "custom-ep:bad value",  # punctuation/space
+        "custom-ep:UPPER",  # slug alphabet is [a-z0-9-]
+        "custom-ep:" + "a" * 65,  # overlong slug (SLUG_PATTERN caps at 64)
+        "custom-ep:",  # bare prefix, empty slug
+    ],
+)
+def test_suspended_draft_snapshot_rejects_malformed_registry_slugs(
+    malformed_provider: str,
+) -> None:
+    """PR-2668 review: the snapshot's fail-closed deserialization must bound
+    registry ids to the registry's slug pattern. Canonical-spelling-only
+    checking accepted any printable ``custom-ep:`` value, so a malformed
+    restored payload survived ``from_mapping`` and crashed the provider
+    ``Select`` with an illegal value on ``_restore_suspended_draft``."""
+    with pytest.raises(ValueError):
+        ConsoleSettingsDraftSnapshot(
+            settings=ConsoleSessionSettings(
+                provider=malformed_provider, model="model-a", base_url=None
+            ),
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            raw_values={},
+            provider_model_drafts={},
+            provider_base_url_drafts={},
+            active_view="model",
+            scroll_anchor=0,
+            focus_control_id=None,
+            disclosure_state={
+                "advanced_generation": False,
+                "connection_details": False,
+            },
+        )
+
+    valid = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="custom-ep:gpu-box", model="model-a", base_url=None
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-provider": "custom-ep:gpu-box"},
+        provider_model_drafts={"custom-ep:gpu-box": "model-a"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    payload = valid.to_mapping()
+    payload["settings"] = {**payload["settings"], "provider": malformed_provider}
+    assert ConsoleSettingsDraftSnapshot.from_mapping(payload) is None
+
+    payload = valid.to_mapping()
+    payload["raw_values"] = {
+        **payload["raw_values"],
+        "console-settings-provider": malformed_provider,
+    }
+    assert ConsoleSettingsDraftSnapshot.from_mapping(payload) is None
+
+
+@pytest.mark.parametrize(
+    "valid_provider",
+    ["custom-ep:gpu-box", "custom-ep:a", "custom-ep:" + "a" * 64],
+)
+def test_suspended_draft_snapshot_accepts_pattern_valid_registry_slugs(
+    valid_provider: str,
+) -> None:
+    """PR-2668 review companion: pattern bounding must not over-reject --
+    every ``SLUG_PATTERN``-valid dashed id still snapshots and round-trips."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider=valid_provider, model="model-a", base_url=None
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-provider": valid_provider},
+        provider_model_drafts={valid_provider: "model-a"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
+    assert restored is not None
+    assert restored.settings.provider == valid_provider
+    assert restored.raw_values["console-settings-provider"] == valid_provider
+
+
+def test_screen_send_selection_keeps_hyphenated_registry_entry_identity() -> None:
+    """PR-2668 review (High): ChatScreen's send-path selection builder is the
+    screen-side spelling of the CE-001 identity rule. Canonicalizing the
+    dashed registry id into its ``api_settings`` lookup key left
+    ``ConsoleProviderSelection.provider`` as ``custom_ep:gpu_box``; registry
+    slugs are dashed, so the gateway's ``entry_for`` missed and the send was
+    blocked as an unsupported provider instead of executing through the
+    entry's family and URL."""
+    app_config = {
+        "api_settings": {},
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU box",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.9:9090",
+                "models": ["model-a"],
+            }
+        },
+    }
+    screen = SimpleNamespace(
+        _provider_readiness_app_config=lambda: app_config,
+        _ensure_console_chat_store=lambda: None,
+        _config_section=lambda config, key: dict(config.get(key, {})),
+        _workspace=SimpleNamespace(
+            _current_console_workspace_context=lambda: ConsoleWorkspaceContext(
+                active_workspace_id=None
+            )
+        ),
+        _normalize_llamacpp_base_url=lambda value: value,
+    )
+
+    selection = ChatScreen._build_console_provider_selection_from_settings(
+        screen,
+        None,
+        ConsoleSessionSettings(provider="custom-ep:gpu-box", model="model-a"),
+        legacy_model=None,
+    )
+
+    assert selection.provider == "custom-ep:gpu-box"
 
 
 @pytest.mark.asyncio

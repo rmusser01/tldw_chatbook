@@ -13,7 +13,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     normalize_console_model_value,
 )
-from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 
 
 QUICK_MODEL_DEFAULT_FIELDS = frozenset({"temperature", "streaming"})
@@ -202,9 +202,24 @@ def validate_console_settings_origin(
 def remember_model_draft(
     state: ConsoleSettingsDraftState,
 ) -> ConsoleSettingsDraftState:
-    """Return ``state`` with its current exact provider/model draft remembered."""
+    """Return ``state`` with its current exact provider/model draft remembered.
 
-    provider = provider_config_key(state.settings.provider)
+    Args:
+        state: The draft whose current provider/model pair should survive a
+            later switch back; never mutated.
+
+    Returns:
+        A new ``ConsoleSettingsDraftState`` whose ``model_drafts`` carry one
+        entry for the current provider/model pair, keyed by the canonical
+        provider IDENTITY (registry entries keep the dashed
+        ``custom-ep:<slug>`` spelling) so rebase targets and popover
+        carried-source lookups address the same key.
+    """
+    # CE-001: drafts are keyed by provider IDENTITY. Registry ids
+    # (``custom-ep:<slug>``) must stay dashed so the key matches the rebase
+    # target and the popover's carried-source lookups -- the config-key
+    # normalizer's underscore rewriting would fork the spellings.
+    provider = provider_identity_key(state.settings.provider)
     model = normalize_console_model_value(state.settings.model)
     remembered = ConsoleModelDraft(
         provider=provider,

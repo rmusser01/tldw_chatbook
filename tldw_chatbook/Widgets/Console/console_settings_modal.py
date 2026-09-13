@@ -48,9 +48,12 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
+    SLUG_PATTERN,
+    canonical_custom_endpoint_id,
     entry_for,
     family_execution_key,
     load_custom_endpoints,
+    split_custom_endpoint_id,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ChatDisplayNameError,
@@ -408,10 +411,27 @@ def _snapshot_text(
 
 
 def _snapshot_provider(value: object) -> str | None:
-    """Return one already-normalized bounded provider identifier, or ``None``."""
+    """Return one already-normalized bounded provider identifier, or ``None``.
+
+    Registry entry ids (``custom-ep:<slug>``) are provider IDENTITY values
+    (CE-001): the config-key normalizer would rewrite their dashes to
+    underscores, so they validate against the dashed canonical spelling
+    instead of the plain-key idempotence check below. The suffix must also
+    satisfy the registry's :data:`SLUG_PATTERN` -- canonical-spelling
+    idempotence alone accepted any printable ``custom-ep:`` value, so a
+    malformed restored payload survived fail-closed deserialization and
+    crashed the provider ``Select`` with an illegal value on restore
+    (PR-2668 review).
+    """
     if not _snapshot_text(value, limit=128, allow_blank=False):
         return None
     assert type(value) is str
+    registry_id = canonical_custom_endpoint_id(value)
+    if registry_id is not None:
+        slug = split_custom_endpoint_id(value)
+        if registry_id != value or slug is None or not SLUG_PATTERN.fullmatch(slug):
+            return None
+        return value
     normalized = provider_config_key(value)
     if normalized != value or _SNAPSHOT_PROVIDER_RE.fullmatch(value) is None:
         return None
@@ -4593,10 +4613,13 @@ class ConsoleSettingsModal(
         provider_select = self.query_one("#console-settings-provider", Select)
         # The creation modal mirrored the persisted entry into the shared
         # app_config mapping, so the rebuilt options include the new id.
-        # Assigning the value fires Select.Changed, which runs the same
-        # switch path a manual selection uses and consumes the pending
-        # entry discovery above.
-        provider_select.set_options(self._provider_select_options())
+        # The rebuild itself is mechanical: suppress its selection-reset
+        # Changed(NULL) (CE-001) so the blank value never enters the switch
+        # path -- only the explicit assignment below fires Select.Changed,
+        # which runs the same switch path a manual selection uses and
+        # consumes the pending entry discovery above.
+        with provider_select.prevent(Select.Changed):
+            provider_select.set_options(self._provider_select_options())
         provider_select.value = provider_id
 
     def _probe_entry_models(
@@ -4607,13 +4630,24 @@ class ConsoleSettingsModal(
         Args:
             provider: Entry provider id the results apply to.
             base_url: Entry endpoint to probe.
-            provider_key: Family execution key for the probe identity.
+            provider_key: Family execution key for the probe identity. The
+                raw entry id (``custom-ep:<slug>``) cannot form a connection
+                identity -- the endpoint contract keys on URL-based provider
+                keys -- so probing the entry resolves through its family
+                (CE-001: raising here crashed the post-Create switch).
         """
         normalized_probe_url = normalize_probe_base_url(base_url)
         if normalized_probe_url is None or not validate_url(normalized_probe_url):
             self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
             return
-        identity = self._begin_model_discovery_identity(provider, base_url)
+        discovery_identity = self._begin_model_discovery_identity(
+            provider_key, base_url
+        )
+        # Same two-identity pattern as the manual Discover press: the
+        # evidence store settles a ProviderDraftIdentity, while the worker
+        # matches its result against the discovery identity (CE-001: the
+        # entry id itself can form neither).
+        identity = self._current_connection_probe_identity()
         if identity is None:
             self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
             return
@@ -4625,7 +4659,7 @@ class ConsoleSettingsModal(
             "generation not tested."
         )
         self.run_worker(
-            self._run_model_discovery(identity, identity, token),
+            self._run_model_discovery(discovery_identity, identity, token),
             exclusive=True,
             group="console-model-discovery",
         )
@@ -4847,21 +4881,6 @@ class ConsoleSettingsModal(
             and endpoint is not None
             and endpoint.checked
         )
-
-    @on(Input.Changed, "#console-settings-base-url")
-    def _base_url_changed(self, event: Input.Changed) -> None:
-        if self._updating_controls:
-            return
-        value = event.value.strip()
-        if value == self._endpoint_draft.value:
-            return
-        self._endpoint_draft = ConsoleEndpointDraft(
-            value=value,
-            bound_provider_config_key=provider_config_key(self._active_provider),
-            dirty=True,
-            checked=False,
-        )
-        self._sync_default_readiness()
 
     def _choice_placeholder(self, input_id: str) -> str:
         """Return the accepted-values placeholder for an enumerated choice input."""
@@ -5446,11 +5465,33 @@ class ConsoleSettingsModal(
         self._sync_model_provenance_copy()
 
     @on(Input.Changed, "#console-settings-base-url")
-    def _base_url_changed(self, _event: Input.Changed) -> None:
-        """Invalidate request evidence as soon as canonical endpoint input changes."""
+    def _base_url_changed(self, event: Input.Changed) -> None:
+        """Bind the typed endpoint and invalidate request evidence on change.
+
+        CE-003: this method was defined twice on the class; the later
+        definition shadowed the draft-dirtying handler, so a typed Base URL
+        never became a live-bound endpoint draft. "Use for this
+        conversation" then stripped the endpoint and the controller rebase
+        reset ``base_url`` to the configured provider URL, so sends kept
+        targeting the stale provider-level endpoint. One handler now owns
+        both jobs: dirty the live-bound endpoint draft (outside
+        compose-time echoes), then invalidate probe/discovery evidence.
+        """
         if self._restoring_suspended_draft:
             return
         self._cancel_connection_probe()
+        if not self._updating_controls:
+            value = event.value.strip()
+            if value != self._endpoint_draft.value:
+                self._endpoint_draft = ConsoleEndpointDraft(
+                    value=value,
+                    bound_provider_config_key=provider_config_key(
+                        self._active_provider
+                    ),
+                    dirty=True,
+                    checked=False,
+                )
+                self._sync_default_readiness()
         self._advance_model_discovery_generation()
         self._sync_model_discover_controls(self._active_provider)
         self._sync_readiness_display()

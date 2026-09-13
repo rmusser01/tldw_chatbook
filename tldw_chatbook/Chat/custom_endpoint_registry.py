@@ -153,6 +153,57 @@ def split_custom_endpoint_id(provider: str | None) -> str | None:
     return None
 
 
+def canonical_custom_endpoint_id(provider: str | None) -> str | None:
+    """Return the canonical dashed registry id for either accepted spelling.
+
+    ``provider_config_key`` (the config-table lookup normalizer) rewrites
+    hyphens to underscores, which mangles ``custom-ep:<slug>`` into
+    ``custom_ep:<slug>`` -- and mangles the slug's own hyphens too, so the
+    mangled spelling no longer resolves through :func:`entry_for` for
+    hyphenated slugs. Slugs are restricted to ``[a-z0-9-]``
+    (:data:`SLUG_PATTERN`), so every underscore in a mangled slug came from
+    a dash and the dashed identity reconstructs exactly.
+
+    Args:
+        provider: Candidate provider id (may be None or any string).
+
+    Returns:
+        ``custom-ep:<dashed-slug>``, or None when ``provider`` is not a
+        registry id.
+    """
+    slug = split_custom_endpoint_id(provider)
+    if slug is None:
+        return None
+    return CUSTOM_ENDPOINT_ID_PREFIX + slug.replace("_", "-")
+
+
+def provider_identity_key(provider: str | None) -> str:
+    """Return the canonical provider IDENTITY, keeping registry ids dashed.
+
+    CE-001: values destined to be a provider IDENTITY -- Select option
+    values, ``ConsoleSessionSettings.provider``, remembered model drafts,
+    suspended-draft snapshots -- must never pass through
+    ``provider_config_key`` unchecked: it canonicalizes ``custom-ep:<slug>``
+    into an id that is not among the dashed option values, so assigning it
+    back into the provider Select crashes the app. Registry ids pass through
+    unmangled (canonicalized to the dashed spelling); every other value
+    keeps the plain config-key normalization those callers applied before.
+
+    Args:
+        provider: Candidate provider id.
+
+    Returns:
+        The dashed registry id for registry entries, else the normalized
+        provider config key.
+    """
+    registry_id = canonical_custom_endpoint_id(provider)
+    if registry_id is not None:
+        return registry_id
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+    return provider_config_key(provider)
+
+
 def _custom_endpoints_section(
     app_config: Mapping[str, object],
 ) -> Mapping[str, object]:

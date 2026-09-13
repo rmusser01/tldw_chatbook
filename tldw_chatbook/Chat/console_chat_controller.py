@@ -271,6 +271,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
+from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
@@ -603,9 +604,18 @@ def build_console_provider_selection_from_settings(
         text = str(value).strip() if value is not None else ""
         return text if text and text.lower() not in {"none", "null"} else None
 
-    provider = provider_config_key(settings.provider) or "llama_cpp"
+    # PR-2668 review (CE-001 class): ``ConsoleProviderSelection.provider`` is
+    # a provider IDENTITY -- the gateway resolves registry entries through
+    # ``entry_for``, whose slugs are dashed, so the config-key normalizer's
+    # underscore rewriting must not reach it (``custom-ep:gpu-box`` mangled to
+    # ``custom_ep:gpu_box`` misses the registry and the send is blocked as an
+    # unsupported provider). Only the ``api_settings`` section lookup below
+    # wants the config-table key.
+    provider = provider_identity_key(settings.provider) or "llama_cpp"
     explicit_model = selected(settings.model)
-    provider_config = section(section(app_config, "api_settings"), provider)
+    provider_config = section(
+        section(app_config, "api_settings"), provider_config_key(provider)
+    )
     configured_model = selected(
         provider_config.get("model")
         or provider_config.get("api_model")
@@ -12541,6 +12551,25 @@ class ConsoleChatController:
         Only dirty fields exposed by the calling surface and supported by the
         target survive a switch. A remembered exact target draft takes precedence
         over carried values from the provider/model being left.
+
+        Args:
+            state: The draft being switched away from; never mutated.
+            provider: Exact target provider IDENTITY. Registry entries use
+                the dashed ``custom-ep:<slug>`` spelling (config-table keys
+                such as ``custom_ep:<slug>`` are canonicalized back to it);
+                every other provider is a plain config key.
+            model: Literal target model ID, or ``None`` to take the target
+                provider's default model.
+            app_config: The live application configuration snapshot the
+                target's default chain resolves against.
+            exposed_fields: Exact field names the calling surface can carry;
+                dirty drafts outside this set are dropped.
+
+        Returns:
+            A new ``ConsoleSettingsDraftState`` rebased onto the target:
+            ``settings.provider`` carries the target's canonical identity
+            spelling, remembered drafts stay keyed by provider identity, and
+            the input ``state`` is left untouched.
         """
 
         target_defaults = build_target_default_console_session_settings(
@@ -12549,10 +12578,17 @@ class ConsoleChatController:
             model,
         )
         target_provider = provider_config_key(target_defaults.provider)
+        # CE-001: ``settings.provider`` and the remembered-draft keys are
+        # provider IDENTITY values, not config-table lookup keys -- a dashed
+        # ``custom-ep:<slug>`` id canonicalized here would arrive at the
+        # provider Select as an illegal underscored value and crash the app.
+        # Registry ids keep their dashed spelling; config-key lookups below
+        # still use ``target_provider``.
+        target_provider_id = provider_identity_key(target_defaults.provider)
         target_model = normalize_console_model_value(target_defaults.model)
-        target_key = (target_provider, target_model)
+        target_key = (target_provider_id, target_model)
         current_key = (
-            provider_config_key(state.settings.provider),
+            provider_identity_key(state.settings.provider),
             normalize_console_model_value(state.settings.model),
         )
         remembered_target = next(
@@ -12592,7 +12628,10 @@ class ConsoleChatController:
         if inherited_dirty_fields:
             target_defaults = build_target_default_console_session_settings(
                 app_config,
-                target_provider,
+                # Identity spelling: the dashed registry id must resolve
+                # through entry_for, which the mangled key does not for
+                # hyphenated slugs (CE-001).
+                target_provider_id,
                 target_model,
                 excluded_model_profile_fields=inherited_dirty_fields,
             )
@@ -12666,7 +12705,7 @@ class ConsoleChatController:
 
         unsupported_provider_fields = FULL_MODEL_DEFAULT_FIELDS - supported_fields
         settings_changes: dict[str, object | None] = {
-            "provider": target_provider,
+            "provider": target_provider_id,
             "model": target_model,
             "character_label": state.settings.character_label,
             "system_prompt": state.settings.system_prompt,
