@@ -430,6 +430,16 @@ class DatabaseNoteSessionCoordinator:
         self._active_conflict_operation = None
         self._destructive = None
 
+    @staticmethod
+    def saved_status_message(saved_at: datetime) -> str:
+        """The status line's "Saved HH:MM", in the reader's zone.
+
+        The clock is UTC and the persisted ``modified_at`` stays UTC; only
+        this rendering converts (task-32542: "Saved 05:48" at 22:48 PDT,
+        beside Info's local "Modified 2026-09-12 22:54").
+        """
+        return f"Saved {saved_at.astimezone().strftime('%H:%M')}"
+
     def mutate(
         self,
         *,
@@ -676,7 +686,7 @@ class DatabaseNoteSessionCoordinator:
                 status_message=(
                     "Unsaved changes"
                     if has_newer_draft
-                    else f"Saved {saved_at.strftime('%H:%M')}"
+                    else self.saved_status_message(saved_at)
                 ),
             )
             if has_newer_draft:
