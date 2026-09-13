@@ -4,7 +4,7 @@ title: "Library Notes: activating a lasting-sync root leaves the Notes list stal
 status: To Do
 assignee: []
 created_date: '2026-09-13 00:30'
-updated_date: '2026-09-13 02:40'
+updated_date: '2026-09-13 03:40'
 labels:
   - library
   - notes
@@ -28,6 +28,18 @@ Library notes round trip refreshes it. Restarting the app shows
 "Notes (70)" and the "t12b sync ⇄ Sync managed" folder at once. The wave-3
 sync walk (task-32269) saw the folder appear because it ran on a fresh
 profile, where the empty state recomposes; the seeded case was never walked.
+
+Reproduction (dev 7159fc0b99, 235x52):
+1. A seeded scratch profile (10 notes) and a 60-`.md` vault under `$HOME`
+   (`mkvault.py <dest> --git --archive 45`).
+2. Library ▸ Notes → **Add from files…** → **Keep a folder synced** → type a
+   label → **Choose folder…** → type the vault path into "File name" → Enter
+   → **Select folder** → **Check changes** ("60 safe · 0 need attention").
+3. **Activate reviewed root** ("Sync root activated. 60 applied") → **Back
+   to Notes**: still "Notes (10)", no ⇄ Sync managed row.
+4. **Manage sync folders** → **Check changes** → **Back to Notes**; re-select
+   the rail's Notes row; **Folder files** → **Library notes**: still 10.
+5. Quit and relaunch: "Notes (70)" and the folder row.
 
 **Cause (inferred from code, not yet proven by a test).** The import path has
 `_refresh_after_library_note_import` (`library_notes_controller.py`), which

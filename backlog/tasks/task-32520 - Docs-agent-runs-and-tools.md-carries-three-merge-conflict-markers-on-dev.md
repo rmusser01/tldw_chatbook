@@ -19,9 +19,11 @@ priority: medium
 three unresolved merge-conflict markers — `>>>>>>> 31da72f8a5 (feat: agent
 chat fork & spawn tools (fork_chat / new_chat) — rebased onto dev)` at line
 470, `<<<<<<< HEAD` at line 1249 and `=======` at line 1455 — left by commit
-6a6242ce3a (PR #2643, agent chat fork & spawn). The stray `>>>>>>>` at 470
-has no matching opener, so the block between 1249 and 1455 is one side of a
-conflict and the page's other side is lost; a reader sees the markers as
+6a6242ce3a (PR #2643, agent chat fork & spawn). The closing `>>>>>>>` at
+470 sits above the `<<<<<<< HEAD` at 1249, and the `=======` at 1455 is
+followed by "### Project instructions before tools run" with no closing
+marker after it — so the markers do not pair, and which text belongs to
+which side is not decidable from the file; a reader sees the markers as
 text. Found by the wave-3 docs sweep's conflict-marker sweep (task-32271);
 outside the Library ▸ Notes scope, so filed rather than fixed there.
 

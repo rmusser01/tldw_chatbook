@@ -5,8 +5,7 @@ status: To Do
 assignee: []
 created_date: '2026-09-13 00:13'
 labels:
-  - library
-  - notes
+  - console
   - rider
 dependencies: []
 priority: low
@@ -18,16 +17,22 @@ priority: low
 During CI's warm-up for
 `test_library_opens_within_budget_on_a_seeded_profile`, the Console left
 rail's `_sync_progress_count` (`tldw_chatbook/UI/Console_Modules/left_rail.py`)
-raised a Textual `NoMatches` for `#console-agent-progress`: the count sync
-runs before the progress widget has mounted, so the first query on a cold
-start finds nothing. The test recovered on its own, so today this is a
-startup-log error rather than a failure, but a sync that runs against a
-not-yet-mounted widget is a real ordering bug and will surface as a hang or
-a crash the day the handler stops swallowing it.
+raised a Textual `NoMatches` for `#console-agent-progress`. Cause INFERRED,
+not proven: either the 0.5 s count sync fires before the progress widget has
+mounted on a cold start, or it keeps firing after the widget is torn down —
+`left_rail.py` guards both the compose and the sync with the same
+`_open_agent_progress` flag, so a query after unmount is at least as likely
+as one before mount; the fix has to establish which. The test recovered on
+its own, so today this is a startup-log error rather than a failure, but a
+sync that queries a widget that is not there is an ordering bug and will
+surface as a hang or a crash the day the handler stops swallowing it.
 
-Evidence: CI log for the wave-3 layout PR run of
-`test_library_opens_within_budget_on_a_seeded_profile` (task-32260),
-recorded in the wave-3 docs sweep, 2026-09-12.
+Evidence: the non-required "UI latency" CI job of PR #2654's run (wave-3
+backlinks-table, 2026-09-13), red on
+`test_library_opens_within_budget_on_a_seeded_profile` with this NoMatches
+during the test's Chat warm-up — not a budget overrun (branch 7.15 s vs dev
+8.90 s, both under 10 s). Recorded by the T11 landing pass; carried here by
+the wave-3 docs sweep.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
