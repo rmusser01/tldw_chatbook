@@ -261,10 +261,16 @@ class LibraryNotesSyncController:
         import_controller: _ImportOncePort,
         publish_snapshot: Callable[[LibraryNotesLastingSyncSnapshot], None]
         | None = None,
+        refresh_notes: Callable[[], object] | None = None,
     ) -> None:
         self._runtime = runtime
         self._import_controller = import_controller
         self._publish_snapshot = publish_snapshot
+        # task-32518: the one seam that tells the Notes list to refetch after
+        # this controller wrote notes or their managed folder -- the same
+        # callback shape as the import controller's refresh_after_settlement,
+        # and the screen wires both to the same refresh.
+        self._refresh_notes = refresh_notes
         self._review_plan: ReconciliationPlan | None = None
         self._review_labels: dict[str, RuntimeConflictLabel] = {}
         self._selections: dict[tuple[str, str], NotesSyncConflictChoice] = {}
@@ -283,6 +289,12 @@ class LibraryNotesSyncController:
         )
         self._all_roots: tuple[LastingSyncRootRow, ...] = ()
         self.refresh_roots()
+
+    def _notes_changed(self) -> None:
+        """Ask the Notes list to refetch after a write reached the database."""
+
+        if self._refresh_notes is not None:
+            self._refresh_notes()
 
     def _current_selections(self) -> tuple[ConflictSelection, ...]:
         plan = self._review_plan
@@ -1036,6 +1048,11 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
+        # task-32518: the write is durable by now, so the Notes list refreshes
+        # before any lifecycle return -- Back during the apply would otherwise
+        # skip it and re-create the stale list.
+        if result.safe_completed + result.conflicts_resolved > 0:
+            self._notes_changed()
         if not self._lifecycle_is_current(root_id, epoch):
             return
         receipt_generation = self._start_receipt_request(root_id)
@@ -1868,6 +1885,10 @@ class LibraryNotesSyncController:
                 )
                 self._publish()
                 return False
+            # task-32518: same as apply -- the activation wrote the notes and
+            # their folder; refresh before the lifecycle check can return.
+            if type(result) is NotesSyncControlResult and result.accepted:
+                self._notes_changed()
             if not self._lifecycle_is_current(root_id, epoch):
                 return False
             if type(result) is not NotesSyncControlResult:
