@@ -5,6 +5,20 @@ Date: 2026-09-12
 Tasks: TASK-31210, TASK-31211
 Related: ADR-067, ADR-069, ADR-082, ADR-101, ADR-129, ADR-139, ADR-150
 
+## Current decision: restore ordinary local Git operations
+
+The user approved restoring worktree creation with repository authorization and identity checks, followed by Console confirmation and durable recovery. This section supersedes the execution mechanism and platform-qualification requirements below. The earlier blanket refusal was an interim implementation decision, not a missing external dependency.
+
+Use the existing local Git lifecycle implementation. Thread the exact selected `RunAdmittedWorkspaceRoot` from the accepted Console turn through its bridge into AgentService. Do not derive it from the provider compatibility root, the currently viewed workspace, a stored locator, or an arbitrary first binding. No selected writable named binding means refusal. Revalidate the captured binding, root identity, and tool kill switch before creation, after creation, and before child path operations. Parent/child metadata identity and source state must also be checked before confirmed recovery. Revocation refuses further work; partially created checkouts are retained.
+
+These checks detect observable changes at application boundaries. They do not provide atomic protection against an external process replacing a repository or its Git administrative metadata during a Git command. The copied-metadata experiment remains valid evidence of that limit. Ordinary local Git operation with this documented limit is the selected scope; a new sandbox, alternate Git implementation, metadata alias scheme, or proof against every concurrent root replacement is not a prerequisite. ADR-101's existing filesystem/read-only Git worker behavior is unchanged. Internal Git commands remain fixed application operations, with no model-selected executable, argv, environment, network operation, or hooks for generated mutations.
+
+Keep automatic cleanup and failed-start deletion disabled. Creation does not depend on a merge card. Enable merge/discard only after exact human confirmation and durable positive writer-drain checks are implemented. Preserve the original-base/ownership records, transactional mutation claim, no uncertain replay, and separate recovery cancellation lifetime described below. Confirmed logical discard retains a detached baseline checkout and never force-removes a root by pathname. Platform support follows the actual operation: portable creation is not blocked by a missing descriptor-relative discard primitive.
+
+Current spec: [Worktree restoration](../../Docs/superpowers/specs/2026-09-12-agent-worktree-restoration-design.md). First implementation slice: [Creation restoration](../../Docs/superpowers/plans/2026-09-12-agent-worktree-creation-restoration.md). Previous execution experiments and results remain historical evidence; they do not override this decision.
+
+## Historical design before the scope correction
+
 ## Decision
 
 Console exposes a per-call same-turn confirmation and a user-operated Recover agent work list. Previous-turn work is identified by local durable structural records joined to AgentRuns ownership; old fleet handles and model conversations are not revived. Every operation captures the current exact writable named Workspace binding and validates its fingerprint/root identity again after consent. Stored locators and repository branch names are evidence, not authority.

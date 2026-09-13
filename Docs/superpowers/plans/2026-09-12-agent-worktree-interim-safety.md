@@ -1,5 +1,7 @@
 # Interim agent worktree safety
 
+Historical completed prerequisite. The user has approved replacing the blanket creation refusal with exact selected-authority checks. Continue under [creation restoration](2026-09-12-agent-worktree-creation-restoration.md) and ADR-155's current decision. Automatic and failed-start deletion remain disabled.
+
 **Goal:** Stop known unqualified agent-driven Git mutation and automatic pathname cleanup while TASK-31210/31211's complete recovery execution boundary is unresolved.
 
 **Spec:** TASK-31210 AC5/6/7 and TASK-31211 AC5/6/8; Docs/superpowers/specs/2026-09-12-agent-worktree-recovery-design.md (execution qualification checkpoint). These functional recovery tasks remain incomplete after this prerequisite.

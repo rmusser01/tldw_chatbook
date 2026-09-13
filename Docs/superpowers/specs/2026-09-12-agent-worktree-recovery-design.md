@@ -1,5 +1,7 @@
 # Agent worktree confirmation and recovery
 
+Historical design: its execution-qualification requirement is superseded by ADR-155's current decision and [the restoration design](2026-09-12-agent-worktree-restoration-design.md). Original experiments remain evidence of ordinary Git's concurrent replacement limit; they are not a missing-backend prerequisite. Use the current design for implementation.
+
 2026-09-12. Scope: TASK-31210 and TASK-31211. Decision: backlog/decisions/155-agent-worktree-recovery.md. ADR-158 sequences definition caps first (schema18→19); recovery then uses19→20. Recheck actual schema before implementation.
 
 ## Product outcome

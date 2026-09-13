@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03 11:45'
-updated_date: '2026-09-12 21:19'
+updated_date: '2026-09-13 01:29'
 labels:
   - agents
   - console
@@ -31,7 +31,7 @@ Scope notes from the phase-2 review record:
 - [ ] #2 `merge_agent_worktree`/`discard_agent_worktree` are disclosed to the model exactly when the card surface is wired, and preview/live plan builders agree on disclosure.
 - [ ] #3 Card parks/remounts across session switch like the skill-script confirm card.
 - [ ] #4 An end-to-end test threads the real controller callable through a real `run_turn`.
-- [ ] #5 Worktree creation and confirmed mutations use the exact current writable named binding and contained root-pinned operations; stale, read-only, ambiguous, scratch or unsupported authority refuses before mutation.
+- [ ] #5 Worktree creation and confirmed mutations use the exact selected writable named binding with fresh binding and root identity checks; missing selection and observed stale/read-only/ambiguous/scratch authority refuse. Ordinary Git does not claim atomic protection against concurrent external metadata replacement. Existing child filesystem containment remains intact.
 - [ ] #6 Merge/discard eligibility requires durable positive physical-owner drain proof as well as terminal run ownership; a cancelled-but-live child remains protected.
 - [ ] #7 Confirmed discard removes the agent changes and exact branch while retaining a detached baseline checkout, and the card and result explicitly disclose retained cleanup; no automatic or forced pathname root deletion occurs.
 <!-- AC:END -->
@@ -39,11 +39,5 @@ Scope notes from the phase-2 review record:
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes. ADR path: backlog/decisions/155-agent-worktree-recovery.md. Reason: closed mutating Git authority, positive physical drain and exact visible confirmation. Execute Docs/superpowers/plans/2026-09-12-agent-worktree-recovery.md Tasks 1-3 in order under its spec: contained authority/operations, durable ownership and drain fences, then actual card/disclosure integration. No visible mutation capability is enabled before prerequisite review. Real temporary Git, SQLite and mounted tests qualify POSIX behavior; unsupported platforms refuse honestly.
-
-Execution qualification remains open: actual Git2.39.5 temp-repository tests show linked administrative paths can reopen a replaced parent despite both root pins. Only the test-isolation prerequisite has been implemented and independently reviewed (32557b80f2; four affected tests passed). Do not enable the new mutation capability or mark these tasks Done until the execution boundary is redesigned and qualified. See backlog/docs/agent-orchestration-followups-2026-09-12.md for current status.
-
-ADR-158 (backlog/decisions/158-agent-runs-migration-order-after-worktree-qualification.md) changes only migration order: caps18→19, recovery later19→20 after execution qualification. Recheck actual schema before source edits; all existing authority and definition-policy requirements remain binding.
-
-The interim prerequisite Docs/superpowers/plans/2026-09-12-agent-worktree-interim-safety.md is implemented and independently reviewed in 93ee16a144 and 534ad2c890. Fleet and inline worktree requests refuse unsupported_execution_boundary without shared fallback; Console preview/live omit mutation tools; confirmed calls cannot reach Git helpers; automatic/failed-start cleanup retains existing work while retiring provider routes. Final targeted Console/service selection: 25 passed, 246 deselected, no new skips; changed-hunk static checks passed with inherited dependency warnings qualified. This does not complete functional recovery or any acceptance criterion requiring a qualified mutation backend; the task stays In Progress.
+ADR required: yes, amendment. ADR path: backlog/decisions/155-agent-worktree-recovery.md. Reason: restore ordinary local Git with exact selected writable authority and explicit limits, then finish confirmation and durable ownership/recovery. Current spec: Docs/superpowers/specs/2026-09-12-agent-worktree-restoration-design.md. First slice: Docs/superpowers/plans/2026-09-12-agent-worktree-creation-restoration.md. Keep automatic deletion disabled. Application checks do not promise atomic protection against an external process replacing Git metadata during a command. The former qualified-backend blocker is superseded by the user-approved restoration scope. Tasks remain In Progress until their actual acceptance criteria and targeted verification are complete. Recovery migration remains 19 to 20 after caps (ADR-158).
 <!-- SECTION:PLAN:END -->
