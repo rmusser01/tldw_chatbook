@@ -29,7 +29,11 @@ What each test pins, and against WHICH producer it runs today:
 
 import pytest
 
+from tldw_chatbook.Chunking.Chunk_Lib import Chunker
 from tldw_chatbook.RAG_Search import chunking_service
+from tldw_chatbook.RAG_Search.enhanced_chunking_service import (
+    EnhancedChunkingService,
+)
 
 
 TEXT = ("The first sentence is here. The second sentence follows. "
@@ -117,7 +121,8 @@ def test_xml_ingestion_import():
 # §7.3 preview/ingest agreement (task 10)
 # ---------------------------------------------------------------------------
 #
-# The chunk preview modal (Widgets/chunk_preview_modal.py) has TWO branches:
+# The (deleted, TASK-19905) chunk preview modal had TWO branches, whose
+# seam bodies these pins still drive directly:
 #
 # * basic-chunker branch (chunk_preview_modal.py:132-138): builds a
 #   ``Chunk_Lib.Chunker`` with ``chunk_size``/``chunk_overlap`` from the
@@ -148,31 +153,57 @@ def test_xml_ingestion_import():
 PREVIEW_TEXT = "# H\n\nBody text here. More text. " * 10
 
 
-async def _drive_preview_modal(config):
-    """Mount the real ChunkPreviewModal in a host app, return its chunks.
+def _drive_preview_branches(config):
+    """Drive the two chunk seams the preview modal used to call (TASK-19905).
 
-    The modal is a ModalScreen and needs an active app to mount; this drives
-    the actual widget code (``_generate_chunks`` runs in ``on_mount``), not a
-    replica of its branches.
+    The modal widget itself was dead code and is deleted; these §7.3 pins
+    drive the exact branch bodies it delegated to -- the structural branch's
+    ``EnhancedChunkingService.chunk_text_with_structure`` and the basic
+    branch's ``Chunker`` with ``max_size``/``overlap`` options -- so the
+    preview==ingest agreement contract stays pinned at the seam level. A
+    future preview surface must keep agreeing with the ingest seams these
+    tests pin.
     """
-    from textual.app import App
-    from tldw_chatbook.Widgets.chunk_preview_modal import ChunkPreviewModal
-
-    class _Host(App):
-        def __init__(self):
-            super().__init__()
-            self.modal = None
-
-        def on_mount(self) -> None:
-            self.modal = ChunkPreviewModal(
-                content=PREVIEW_TEXT, config=config, media_title="test"
+    method = config.get("method", "words")
+    if method in ["hierarchical", "structural", "contextual"]:
+        service = EnhancedChunkingService()
+        structured = service.chunk_text_with_structure(
+            content=PREVIEW_TEXT,
+            chunk_size=config.get("chunk_size", 400),
+            chunk_overlap=config.get("chunk_overlap", 100),
+            method=method,
+        )
+        return [
+            {
+                "text": chunk.text,
+                "index": chunk.chunk_index,
+                "word_count": chunk.word_count,
+                "char_count": chunk.char_count,
+                "type": chunk.chunk_type.value,
+                "metadata": chunk.metadata,
+            }
+            for chunk in structured
+        ]
+    chunker = Chunker()
+    chunker.options["max_size"] = config.get("chunk_size", 400)
+    chunker.options["overlap"] = config.get("chunk_overlap", 100)
+    chunk_results = chunker.chunk_text(PREVIEW_TEXT, method=method)
+    chunks = []
+    for i, chunk in enumerate(chunk_results):
+        if isinstance(chunk, dict):
+            chunks.append(chunk)
+        else:
+            chunks.append(
+                {
+                    "text": chunk,
+                    "index": i,
+                    "word_count": len(chunk.split()),
+                    "char_count": len(chunk),
+                    "type": "text",
+                    "metadata": {},
+                }
             )
-            self.push_screen(self.modal)
-
-    app = _Host()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        return list(app.modal.chunks)
+    return chunks
 
 
 @pytest.mark.parametrize("method", ["words", "sentences", "paragraphs"])
@@ -182,7 +213,7 @@ async def test_preview_matches_ingest_basic_chunker_branch(method):
     # for the same method and options (the media-details form feeds the modal
     # ``chunk_size``/``chunk_overlap``; ingestion passes the same values as
     # ``max_size``/``overlap``).
-    modal_chunks = await _drive_preview_modal(
+    modal_chunks = _drive_preview_branches(
         {"method": method, "chunk_size": 20, "chunk_overlap": 5}
     )
     ingest_chunks = chunking_service.improved_chunking_process(
@@ -212,7 +243,7 @@ async def test_preview_matches_ingest_structural_branch(method):
         chunk_with_parent_retrieval,
     )
 
-    modal_chunks = await _drive_preview_modal(
+    modal_chunks = _drive_preview_branches(
         {"method": method, "chunk_size": 20, "chunk_overlap": 5}
     )
     ingest_result = chunk_with_parent_retrieval(PREVIEW_TEXT, max_size=20, overlap=5)

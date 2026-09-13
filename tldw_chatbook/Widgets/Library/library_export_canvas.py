@@ -185,9 +185,13 @@ class LibraryExportCanvas(PostRecomposeCallback, VerticalScroll):
             classes="library-canvas-action",
             compact=True,
         )
+        # task-32251 AC#3: a refused destination says why HERE, on the row
+        # under the button that was just pressed -- not as a toast that has
+        # already gone by the time the eye gets back.
         yield Static(
-            state.destination or DESTINATION_PLACEHOLDER_COPY,
+            state.destination or state.destination_error or DESTINATION_PLACEHOLDER_COPY,
             id="library-export-destination-line",
+            classes="destination-purpose" if state.destination_error else "",
             markup=False,
         )
         if state.overwrite_line:

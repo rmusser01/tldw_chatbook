@@ -246,6 +246,10 @@ class LibraryExportFormState:
     quality_choices_visible: bool = False
     consequence_line: str = ""
     contents_lines: tuple[str, ...] = ()
+    # task-32251 AC#3: why the last "Choose destination…" pick was
+    # refused, rendered on the destination line itself. "" once a usable
+    # destination is chosen.
+    destination_error: str = ""
 
     @property
     def submit_blocked_reason(self) -> str:
@@ -268,6 +272,7 @@ def build_library_export_form_state(
     description: str,
     media_quality: str,
     destination: str,
+    destination_error: str = "",
     destination_exists: bool = False,
     running: bool = False,
     status_line: str = "",
@@ -291,6 +296,8 @@ def build_library_export_form_state(
         media_quality: The quality control's current value.
         destination: The chosen destination path (already ``.zip``-
             normalized by the caller), or ``""``.
+        destination_error: Why the last chosen destination was refused,
+            or ``""``.
         destination_exists: Whether ``destination`` already exists on
             disk -- an already-observed filesystem truth the caller
             supplies; this function performs no I/O of its own.
@@ -398,6 +405,7 @@ def build_library_export_form_state(
         quality_choices_visible=quality_choices_visible,
         consequence_line=consequence_line,
         contents_lines=contents_lines,
+        destination_error=destination_error,
     )
 
 
@@ -519,6 +527,35 @@ def format_last_export_line(
     return f"Last export: {clean_path} · {relative}"
 
 
+def describe_unusable_destination(path: Path) -> str:
+    """Say why a chosen export destination cannot be written, or "".
+
+    task-32251 AC#3/AC#4: the form accepted anything ``FileSave`` handed
+    back -- including the concatenated
+    ``.../Library export.zip/private/tmp/.../notes-bundle.zip`` a
+    pre-filled path field produced -- and only found out at write time,
+    where the user got ``[Errno 2] No such file or directory:
+    '...notes-bundle.zip.partial'``. The same facts are knowable the
+    moment the destination is chosen.
+
+    Args:
+        path: The ``.zip``-normalized destination.
+
+    Returns:
+        A sentence naming what is wrong, or ``""`` when the destination
+        can be written.
+    """
+    parent = path.parent
+    try:
+        if parent.is_dir():
+            return "That name is a folder." if path.is_dir() else ""
+        if parent.exists():
+            return f"{parent.name} is a file, not a folder."
+        return f"The folder {parent} does not exist."
+    except OSError as error:
+        return f"That destination cannot be used ({error.strerror or error})."
+
+
 def normalize_export_destination(path: Path) -> Path:
     """Normalize a chosen destination path's suffix to ``.zip``.
 
@@ -532,10 +569,15 @@ def normalize_export_destination(path: Path) -> Path:
         path: The raw path returned by the ``FileSave`` dialog.
 
     Returns:
-        ``path`` unchanged if it already ends in ``.zip`` (case-
-        insensitive), else ``path`` with its suffix replaced by
-        ``.zip``.
+        ``path`` with its suffix canonically ``.zip`` (lowercase): an
+        existing case-insensitive ``.ZIP``/``.Zip`` suffix is REWRITTEN to
+        ``.zip``, any other suffix is replaced, a missing one appended.
+
+        The archive writer compares suffixes case-sensitively and writes
+        the lowercase file; preserving an uppercase suffix here made the
+        form show -- and overwrite-check -- a different file from the one
+        the writer replaces (PR #2634 review).
     """
-    if path.suffix.lower() == ".zip":
+    if path.suffix == ".zip":
         return path
     return path.with_suffix(".zip")

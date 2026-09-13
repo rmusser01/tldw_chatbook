@@ -1020,3 +1020,94 @@ def test_a_foreign_live_survivor_is_steerable(db):
     )
     second_payload = chat.child_calls["survivor"][1]["messages_payload"]
     assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
+
+
+# -- SubagentStop at the settle seam (console run hooks Task 8) ---------------
+
+
+@pytest.mark.parametrize("notify_raises", [False, True])
+def test_subagent_stop_fires_on_child_settle(tmp_path, notify_raises):
+    """A fleet child settling through a real bridge turn fires SubagentStop
+    exactly once -- ``run_id`` naming the CHILD run, ``data`` carrying
+    ``child_run_id`` and the child's terminal status -- and the wrapped
+    settle partial still runs afterwards (the drain fan-out still delivers
+    the same child record; the wrapper fires the hook BEFORE the settle)."""
+    from Tests.Chat.test_console_agent_bridge import (
+        _FleetTwoChildGateway,
+        _fence as fence_chunk,
+        _join_fleet_threads,
+        _run,
+    )
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    notifications: list[tuple[str, dict]] = []
+
+    class _RecordingEngine:
+        """Records every notify() fire; runs nothing. ``post_tool_dep``
+        satisfies the one other engine surface run_reply consumes (the
+        PostToolUse dep) with a no-op, so this test observes ONLY the
+        settle seam."""
+
+        def notify(self, event, **kwargs):
+            notifications.append((event, kwargs))
+            if notify_raises:
+                raise RuntimeError("observer failed")
+
+        def wrap_review(self, inner, **kwargs):
+            return inner
+
+        def post_tool_dep(self, *, session_id):
+            return lambda *args, **kwargs: None
+
+    engine = _RecordingEngine()
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [fence_chunk("spawn_subagent", {"task": "long job"})],
+            ["turn final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+        ensure_run_hooks=lambda: engine,
+    )
+    drains: list = []
+    bridge.on_fleet_drained("settle-test", drains.append)
+
+    outcome = _run(bridge, store, session, assistant.id, conversation_id=session.id)
+    assert outcome.status == RUN_DONE
+    assert gateway.entered_event.wait(5), "the child never started"
+    gate.set()
+    _join_fleet_threads()
+
+    settle_fires = [
+        kwargs for event, kwargs in notifications if event == "SubagentStop"
+    ]
+    assert len(settle_fires) == 1, notifications
+    child_rows = [
+        row for row in db.list_runs(session.id) if row["agent_kind"] == "subagent"
+    ]
+    child_run_id = child_rows[0]["id"]
+    assert settle_fires[0]["session_id"] == session.id
+    assert settle_fires[0]["run_id"] == child_run_id
+    assert settle_fires[0]["data"]["child_run_id"] == child_run_id
+    assert settle_fires[0]["data"]["status"] == RUN_DONE
+    # The wrapped partial still ran AFTER the hook: the last-child settle
+    # reached the drain fan-out with this child's record intact.
+    assert drains, "the original settle partial never ran"
+    assert [child.run_id for child in drains[0].children] == [child_run_id]
+    assert drains[0].children[0].status == RUN_DONE

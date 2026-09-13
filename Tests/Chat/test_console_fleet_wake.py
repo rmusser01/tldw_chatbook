@@ -214,7 +214,7 @@ def _terminal_subagent_run(
     return parent_id, run_id
 
 
-def _controller_rig(tmp_path, *, session_title="Research"):
+def _controller_rig(tmp_path, *, session_title="Research", ensure_run_hooks=None):
     """Controller + fake bridge + real runs DB + real marks DB + app stub."""
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     app = _AppStub(chacha)
@@ -246,6 +246,7 @@ def _controller_rig(tmp_path, *, session_title="Research"):
         provider_gateway=gateway,
         agent_bridge=bridge,
         agent_runtime_enabled=False,
+        ensure_run_hooks=ensure_run_hooks,
     )
     controller.fleet_wake.wire(app=app)
     return chacha, app, runs_db, store, session, gateway, bridge, controller
@@ -955,6 +956,47 @@ async def test_a_queue_owned_session_defers_the_wake(tmp_path):
         assert await _settle(lambda: gateway.payloads), (
             "queue-chain end never retried the deferred wake"
         )
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_fires_for_wake_run_terminal_state(tmp_path):
+    """console run hooks Task 8: a headless wake turn reaching terminal
+    state fires ``Stop`` exactly once -- no Console view is attached (the
+    rig never wires a screen), so the run-state terminal stamp itself is
+    the seam. Wake turns report run outcomes like any other (spec: Stop
+    fires for wake turns too; only UserPromptSubmit is wake-exempt)."""
+    notifications: list[tuple[str, dict]] = []
+
+    class _RecordingEngine:
+        """Records every notify() fire; runs nothing. Every instance
+        appends to the ONE shared list, so the controller's per-send
+        accessor resolution all lands in the same recorder."""
+
+        def notify(self, event, **kwargs):
+            notifications.append((event, kwargs))
+
+    chacha, app, runs_db, store, session, gateway, bridge, controller = (
+        _controller_rig(tmp_path, ensure_run_hooks=lambda: _RecordingEngine())
+    )
+
+    try:
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        controller.fleet_wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+        assert await _settle(lambda: gateway.payloads), (
+            "the wake turn never reached the provider"
+        )
+        assert await _settle(
+            lambda: any(event == "Stop" for event, _ in notifications)
+        ), "Stop never fired for the headless wake run's terminal state"
+
+        stop_fires = [kw for event, kw in notifications if event == "Stop"]
+        assert len(stop_fires) == 1, notifications
+        assert stop_fires[0]["session_id"] == session.id
+        assert stop_fires[0]["data"] == {"status": "completed"}
     finally:
         chacha.close()
 

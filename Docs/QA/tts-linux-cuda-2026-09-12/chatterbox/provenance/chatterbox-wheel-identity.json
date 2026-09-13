@@ -1,0 +1,7 @@
+{
+  "status": "installed_python_identity_passed",
+  "wheel_sha256": "f07dd76f6fb4e5b6712bd61407a644de3432533ff175b83ada3da5eced3c83c1",
+  "python_file_count": 2352,
+  "source_manifest": "wheel-identity.json",
+  "installed_root": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages"
+}

@@ -184,7 +184,44 @@ from ...Library.collections_capture_models import (
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_COLLECTIONS
 from ...Third_Party.textual_fspicker import FileSave
 from ...Utils.adaptive_reader_state import resolve_adaptive_reader_layout
-from ...Utils.input_validation import validate_url
+from ...Utils.input_validation import (
+    validate_navigation_context_text,
+    validate_text_input,
+    validate_url,
+)
+
+# TASK-31205: bounded-field caps for the Collections quick-capture form.
+_QUICK_CAPTURE_TITLE_MAX_LENGTH = 300
+_QUICK_CAPTURE_TAG_MAX_LENGTH = 64
+_QUICK_CAPTURE_NOTE_MAX_LENGTH = 4000
+
+
+def _validated_quick_capture_fields(
+    title: str, tags: tuple[str, ...], note: str
+) -> tuple[str, tuple[str, ...], str]:
+    """Validate quick-capture title/tags/note through the shared seams.
+
+    Single-line fields use ``validate_navigation_context_text`` (rejects
+    blank/padded/non-printable/dangerous/oversized); the freeform note uses
+    ``validate_text_input``'s dangerous-pattern check only, so ordinary
+    prose with angle brackets stays acceptable. Raises ``ValueError`` with
+    a field label on rejection; returns the validated values otherwise.
+    (Extracted to module level for direct unit coverage -- PR #2634
+    review.)
+    """
+    if title:
+        title = validate_navigation_context_text(
+            title, name="Title", max_length=_QUICK_CAPTURE_TITLE_MAX_LENGTH
+        )
+    for tag in tags:
+        validate_navigation_context_text(
+            tag, name="Tag", max_length=_QUICK_CAPTURE_TAG_MAX_LENGTH
+        )
+    if note and not validate_text_input(
+        note, max_length=_QUICK_CAPTURE_NOTE_MAX_LENGTH, allow_html=False
+    ):
+        raise ValueError("Note is invalid")
+    return title, tags, note
 from ...Utils.path_validation import validate_path_simple
 from ...Widgets.Library import (
     CollectionsCaptureReaderPresentation,
@@ -873,6 +910,19 @@ class LibraryCollectionsController:
             if part.strip()
         )
         note = self._library_collections_quick_capture_note
+        # TASK-31205: the URL was the only field through the shared
+        # validation seam; title/tags/note went to CaptureSaveRequest raw.
+        try:
+            title, tags, note = _validated_quick_capture_fields(title, tags, note)
+        except ValueError:
+            self._library_collections_action_status = (
+                "Capture was not saved: check the Title, Tags, and Note fields."
+            )
+            self._notify_library_collections_warning(
+                self._library_collections_action_status
+            )
+            self._refresh_library_collections_capture_reader()
+            return
         self._library_collections_quick_capture_saving = True
         self._library_collections_action_status = "Saving capture…"
         self._library_collections_action_content = ""

@@ -1,0 +1,628 @@
+{
+  "pid": 972067,
+  "native_calls": [
+    {
+      "sequence": 0,
+      "child_pid": 972067,
+      "class": "chatterbox.tts.ChatterboxTTS",
+      "method": "t3.inference",
+      "device": "cuda:0",
+      "model_components": {
+        "t3": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 292
+        },
+        "s3gen": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 2122
+        },
+        "ve": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 16
+        }
+      },
+      "generation_sequence": 0,
+      "text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "enter_at": 125041.125977579,
+      "thread_id": 140588934691904,
+      "host_returned_at": 125042.4677089,
+      "exit_at": 125042.468199604,
+      "cuda_synchronized": true,
+      "completion_kind": "native_return",
+      "memory_after_native": {
+        "at": 125042.468213951,
+        "threads": 2,
+        "rss_bytes": 1917915136,
+        "peak_rss_bytes": 5336391680,
+        "cuda_device": "cuda:0",
+        "cuda_synchronized": true,
+        "cuda_allocated_bytes": 3216507392,
+        "cuda_reserved_bytes": 3516923904,
+        "cuda_peak_allocated_bytes": 3352660992,
+        "cuda_peak_reserved_bytes": 3516923904
+      }
+    },
+    {
+      "sequence": 1,
+      "child_pid": 972067,
+      "class": "chatterbox.tts.ChatterboxTTS",
+      "method": "s3gen.inference",
+      "device": "cuda:0",
+      "model_components": {
+        "t3": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 292
+        },
+        "s3gen": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 2122
+        },
+        "ve": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 16
+        }
+      },
+      "generation_sequence": 0,
+      "text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "enter_at": 125042.491626639,
+      "thread_id": 140588934691904,
+      "host_returned_at": 125042.931954361,
+      "exit_at": 125042.932567145,
+      "cuda_synchronized": true,
+      "completion_kind": "native_return",
+      "memory_after_native": {
+        "at": 125042.932584087,
+        "threads": 2,
+        "rss_bytes": 2269159424,
+        "peak_rss_bytes": 5336391680,
+        "cuda_device": "cuda:0",
+        "cuda_synchronized": true,
+        "cuda_allocated_bytes": 3259601920,
+        "cuda_reserved_bytes": 3567255552,
+        "cuda_peak_allocated_bytes": 3360084992,
+        "cuda_peak_reserved_bytes": 3567255552
+      }
+    },
+    {
+      "sequence": 2,
+      "child_pid": 972067,
+      "class": "chatterbox.tts.ChatterboxTTS",
+      "method": "t3.inference",
+      "device": "cuda:0",
+      "model_components": {
+        "t3": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 292
+        },
+        "s3gen": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 2122
+        },
+        "ve": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 16
+        }
+      },
+      "generation_sequence": 1,
+      "text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "enter_at": 125055.444393343,
+      "thread_id": 140588934691904,
+      "host_returned_at": 125056.936020729,
+      "exit_at": 125056.936609838,
+      "cuda_synchronized": true,
+      "completion_kind": "native_return",
+      "memory_after_native": {
+        "at": 125056.936624746,
+        "threads": 2,
+        "rss_bytes": 2434371584,
+        "peak_rss_bytes": 5336391680,
+        "cuda_device": "cuda:0",
+        "cuda_synchronized": true,
+        "cuda_allocated_bytes": 3258449408,
+        "cuda_reserved_bytes": 3588227072,
+        "cuda_peak_allocated_bytes": 3404017664,
+        "cuda_peak_reserved_bytes": 3588227072
+      }
+    },
+    {
+      "sequence": 3,
+      "child_pid": 972067,
+      "class": "chatterbox.tts.ChatterboxTTS",
+      "method": "s3gen.inference",
+      "device": "cuda:0",
+      "model_components": {
+        "t3": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 292
+        },
+        "s3gen": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 2122
+        },
+        "ve": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 16
+        }
+      },
+      "generation_sequence": 1,
+      "text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "enter_at": 125056.9510853,
+      "thread_id": 140588934691904,
+      "host_returned_at": 125057.387159943,
+      "exit_at": 125057.387806851,
+      "cuda_synchronized": true,
+      "completion_kind": "native_return",
+      "memory_after_native": {
+        "at": 125057.38782213,
+        "threads": 2,
+        "rss_bytes": 2434703360,
+        "peak_rss_bytes": 5336391680,
+        "cuda_device": "cuda:0",
+        "cuda_synchronized": true,
+        "cuda_allocated_bytes": 3259755008,
+        "cuda_reserved_bytes": 3646947328,
+        "cuda_peak_allocated_bytes": 3404017664,
+        "cuda_peak_reserved_bytes": 3646947328
+      }
+    },
+    {
+      "sequence": 4,
+      "child_pid": 972067,
+      "class": "chatterbox.tts.ChatterboxTTS",
+      "method": "t3.inference",
+      "device": "cuda:0",
+      "model_components": {
+        "t3": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 292
+        },
+        "s3gen": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 2122
+        },
+        "ve": {
+          "devices": [
+            "cuda:0"
+          ],
+          "dtypes": [
+            "torch.float32"
+          ],
+          "parameter_tensors": 16
+        }
+      },
+      "generation_sequence": 2,
+      "text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise. Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise. Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise. Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "enter_at": 125064.23679661,
+      "thread_id": 140588934691904
+    }
+  ],
+  "assets": [
+    {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18/ve.safetensors",
+      "resolved_path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/blobs/f0921cab452fa278bc25cd23ffd59d36f816d7dc5181dd1bef9751a7fb61f63c",
+      "sha256": "f0921cab452fa278bc25cd23ffd59d36f816d7dc5181dd1bef9751a7fb61f63c",
+      "repo_id": "ResembleAI/chatterbox",
+      "filename": "ve.safetensors"
+    },
+    {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18/t3_cfg.safetensors",
+      "resolved_path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/blobs/914cb1696f47527fe8852ca8f1fe1fa63cb34f76f9c715e84e067b744dd0da81",
+      "sha256": "914cb1696f47527fe8852ca8f1fe1fa63cb34f76f9c715e84e067b744dd0da81",
+      "repo_id": "ResembleAI/chatterbox",
+      "filename": "t3_cfg.safetensors"
+    },
+    {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18/s3gen.safetensors",
+      "resolved_path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/blobs/2b78103c654207393955e4900aac14a12de8ef25f4b09424f1ef91941f161d4e",
+      "sha256": "2b78103c654207393955e4900aac14a12de8ef25f4b09424f1ef91941f161d4e",
+      "repo_id": "ResembleAI/chatterbox",
+      "filename": "s3gen.safetensors"
+    },
+    {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18/tokenizer.json",
+      "resolved_path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/blobs/abd07c710243ba89bf1b21780e7c37ddde92334e",
+      "sha256": "d71e3a44eabb1784df9a68e9f95b251ecbf1a7af6a9f50835856b2ca9d8c14a5",
+      "repo_id": "ResembleAI/chatterbox",
+      "filename": "tokenizer.json"
+    },
+    {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18/conds.pt",
+      "resolved_path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/blobs/6552d70568833628ba019c6b03459e77fe71ca197d5c560cef9411bee9d87f4e",
+      "sha256": "6552d70568833628ba019c6b03459e77fe71ca197d5c560cef9411bee9d87f4e",
+      "repo_id": "ResembleAI/chatterbox",
+      "filename": "conds.pt"
+    }
+  ],
+  "original_script": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/tldw_chatbook/TTS/backends/chatterbox_process.py",
+  "original_script_sha256": "613d71c1f681326e23dd92d5f66bffe344fb69428dc0a734786d6b76619008d3",
+  "pytorch_device": {
+    "device": "cuda:0",
+    "torch_version": "2.6.0+cu124",
+    "cuda_version": "12.4",
+    "name": "NVIDIA GeForce RTX 3090",
+    "total_memory_bytes": 25295323136,
+    "compute_capability": [
+      8,
+      6
+    ]
+  },
+  "memory_before_model": {
+    "at": 125035.115369429,
+    "threads": 1,
+    "rss_bytes": 998207488,
+    "peak_rss_bytes": 1047629824,
+    "cuda_device": "cuda:0",
+    "cuda_synchronized": true,
+    "cuda_allocated_bytes": 0,
+    "cuda_reserved_bytes": 0,
+    "cuda_peak_allocated_bytes": 0,
+    "cuda_peak_reserved_bytes": 0
+  },
+  "runtime_files": {
+    "chatterbox_observation": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/chatterbox_observation.py",
+      "sha256": "e5bae94545ff15a2dccf248ef75109e02e20fd72af86b04548d238b062ebfdc8"
+    },
+    "torch._C": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/torch/_C.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "3b4fcc74e3b3470934e8cd1b67c291058293dafcdb4231b91be8af3969adc2e4"
+    },
+    "chatterbox.models": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "transformers": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/transformers/__init__.py",
+      "sha256": "91b2c544c6848f4ce8213c770aaa705ce682ee656c995f4ce58352c4b7368ee7"
+    },
+    "chatterbox.models.t3.modules.learned_pos_emb": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/t3/modules/learned_pos_emb.py",
+      "sha256": "2ec5b09ce94d71261e9c25833a08f666bd6e2d5439b2314123e035c02df8b7af"
+    },
+    "chatterbox.models.t3.modules.perceiver": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/t3/modules/perceiver.py",
+      "sha256": "f9c4b0130652e94d05873ead931ecd399a9dd644b7a17edf1b76d7d7f2bfbf42"
+    },
+    "chatterbox.models.t3.llama_configs": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/t3/llama_configs.py",
+      "sha256": "2501a407224b283f07ffdf4f93b6139fdb8977075ff4f3d79c72bbd7709b759c"
+    },
+    "chatterbox.models.t3.modules.t3_config": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/t3/modules/t3_config.py",
+      "sha256": "e07d8c09f85242f061a036cb1ac56de5b49cd5444790e8ac35098df44348801f"
+    },
+    "chatterbox.models.t3.modules.cond_enc": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/t3/modules/cond_enc.py",
+      "sha256": "d8128803091423141051caf295de6208113da987fe537de5566c4b84e19df847"
+    },
+    "chatterbox.models.t3.inference.t3_hf_backend": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/t3/inference/t3_hf_backend.py",
+      "sha256": "a87ae044d9777589ac531360bb3f9096adfe724cf84b92ca6f4306f405de61dd"
+    },
+    "chatterbox.models.t3.inference.alignment_stream_analyzer": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/t3/inference/alignment_stream_analyzer.py",
+      "sha256": "d8430efa92aedb8e59b782c1d299fe7238570eecea9d293c0981a5ee2e82c8c7"
+    },
+    "chatterbox.models.utils": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/utils.py",
+      "sha256": "c30615629f906acf71c67104a78d36f682c635e55b808d7d8022d47a2738b225"
+    },
+    "chatterbox.models.t3.t3": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/t3/t3.py",
+      "sha256": "6d8be2af8fa203e755d5316d817b73ca8e2a385204b8e4efe92c6446595c71b1"
+    },
+    "chatterbox.models.t3": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/t3/__init__.py",
+      "sha256": "cfecc1c7df7d22398157d40605abfa64f30ef9b697190dc4f57b229299f70538"
+    },
+    "chatterbox.models.s3tokenizer.s3tokenizer": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3tokenizer/s3tokenizer.py",
+      "sha256": "76eae9f95b14608c4847c9d7acfcf08138c365640b0d4589de01e742b0e5eb43"
+    },
+    "chatterbox.models.s3tokenizer": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3tokenizer/__init__.py",
+      "sha256": "7357ce9a0349bae51e8e8cabcdd01ba8534dd6a2373c1e092291ecb716414fe0"
+    },
+    "chatterbox.models.s3gen.const": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/const.py",
+      "sha256": "0a3a957453060ca081a427e71559889f65e45181e6d7befa649e7314cd90e516"
+    },
+    "chatterbox.models.s3gen.utils.mask": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/utils/mask.py",
+      "sha256": "902c85fbbd1e30a0cb9792cdcf1b9acd97804bd5cb3b5d6a440dc236f274bb3e"
+    },
+    "chatterbox.models.s3gen.configs": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/configs.py",
+      "sha256": "15a84f5819e0fe1371ae4f5ac7e3cfb56df52cf36704401586efddd0383697fb"
+    },
+    "chatterbox.models.s3gen.flow": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/flow.py",
+      "sha256": "1e9bc8219eb0832b6db2b86bf7e4085dc9d0c0de47e5c496eb94bbd38b01511d"
+    },
+    "chatterbox.models.s3gen.xvector": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/xvector.py",
+      "sha256": "c7c759920cbf1aac9f12e0a15c1bf3d38da51ca9d3ea7a7b53cf740c86fe17fa"
+    },
+    "chatterbox.models.s3gen.utils.mel": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/utils/mel.py",
+      "sha256": "afbb6fe14c30e104cb2617230daa2a6770f97452948b2e6f6eea4a4c2f4ff3ba"
+    },
+    "chatterbox.models.s3gen.f0_predictor": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/f0_predictor.py",
+      "sha256": "917825eec353b9601b9f7af0c0e3603eb1061d8b641539225e78c910d7bc2255"
+    },
+    "chatterbox.models.s3gen.hifigan": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/hifigan.py",
+      "sha256": "e49f4723323937493ecf5f6c7f1934f57766ef46c74eaf7c60bf456a1c6fe897"
+    },
+    "chatterbox.models.s3gen.transformer": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/transformer/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "chatterbox.models.s3gen.transformer.convolution": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/transformer/convolution.py",
+      "sha256": "eb5f41f324a97225c73b9c430af8bb231bd77386ef18450bb0fd329f469ab4e1"
+    },
+    "chatterbox.models.s3gen.transformer.encoder_layer": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/transformer/encoder_layer.py",
+      "sha256": "1920582be2c9b7cf7835e7b539118ec1eb9da8f2c711c6257f8598b3792951b9"
+    },
+    "chatterbox.models.s3gen.transformer.positionwise_feed_forward": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/transformer/positionwise_feed_forward.py",
+      "sha256": "6e8038e3bcc8ca086ddca508fb9b9d40bf3ab98bebabcf5c94935d032329d0f8"
+    },
+    "chatterbox.models.s3gen.transformer.activation": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/transformer/activation.py",
+      "sha256": "a4a96caea9f7b05111286de5ea760bdfdf9c4e53448f53420857dc04a50440c2"
+    },
+    "chatterbox.models.s3gen.transformer.subsampling": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/transformer/subsampling.py",
+      "sha256": "31fc0347a851abc1205dfd4cf68099c0c416589c3e99a07b250e8630cece19d0"
+    },
+    "chatterbox.models.s3gen.transformer.embedding": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/transformer/embedding.py",
+      "sha256": "3646e748783fe6c069b424cc9cbfe81bc54a5ccfea1ae7041df398a603cccd3e"
+    },
+    "chatterbox.models.s3gen.transformer.attention": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/transformer/attention.py",
+      "sha256": "28c38f1e3ea1aeac1526e98f8349d9f068e25f1f6ae246c60badc3d540d62794"
+    },
+    "chatterbox.models.s3gen.utils.class_utils": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/utils/class_utils.py",
+      "sha256": "02f3cb3a55ee124c279777245b09061fa15a8182e6e7d7762f8fa45c0a631948"
+    },
+    "chatterbox.models.s3gen.transformer.upsample_encoder": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/transformer/upsample_encoder.py",
+      "sha256": "1794ff01b678791ad665d7b0c0999448e760fc1dcb3bc8208de5f58510c1f68c"
+    },
+    "chatterbox.models.s3gen.matcha.transformer": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/matcha/transformer.py",
+      "sha256": "66ff2092d974a99b251b9d8e5c08bbcecceaedfaf41e2bd8af2b4bc7a56dcbea"
+    },
+    "chatterbox.models.s3gen.matcha.decoder": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/matcha/decoder.py",
+      "sha256": "a9f35df7b3eb1c7defb8744626b32ef0504a519a066f3240fde90393a39b3488"
+    },
+    "chatterbox.models.s3gen.matcha.flow_matching": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/matcha/flow_matching.py",
+      "sha256": "56614b92aad52f713c198ae089d47e6a7df13450f3cf5d1144f65fb34c35107d"
+    },
+    "chatterbox.models.s3gen.flow_matching": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/flow_matching.py",
+      "sha256": "63fc979521e1b758f0e8f3bee00a496a53184a714ef1a7a723b319a58158d612"
+    },
+    "chatterbox.models.s3gen.utils.intmeanflow": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/utils/intmeanflow.py",
+      "sha256": "df3c73d77244518c7b90224c2a5180bf0435d27868f598cb876cfcf812aa5285"
+    },
+    "chatterbox.models.s3gen.decoder": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/decoder.py",
+      "sha256": "40d093fd61549a09f5f71d74081585df1e3871b3a8e6b6fafde12bb447701810"
+    },
+    "chatterbox.models.s3gen.s3gen": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/s3gen.py",
+      "sha256": "b3ea20b6f3f98dacfa3c2c99502bbf3dfbe7a77362f2ce0d16783d4324e6fc96"
+    },
+    "chatterbox.models.s3gen": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/s3gen/__init__.py",
+      "sha256": "1eb98b785c481502e515676da0e65afbfd8fa2254ae303b6fa9714db6a52730c"
+    },
+    "chatterbox.models.tokenizers.tokenizer": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/tokenizers/tokenizer.py",
+      "sha256": "e169f02f14b008e8e7a4f29df66ecafaa29972ff4a38724b51545b8563861889"
+    },
+    "chatterbox.models.tokenizers": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/tokenizers/__init__.py",
+      "sha256": "6759fb8b4f6d50b8e4ab8ddd0e39d44e1ca7196544f93311b385a7eeea6c38c2"
+    },
+    "chatterbox.models.voice_encoder.config": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/voice_encoder/config.py",
+      "sha256": "0b41d794a16fd94929b37fd229dc61d3634178a11046a6b5834e109109a8e3c8"
+    },
+    "chatterbox.models.voice_encoder.melspec": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/voice_encoder/melspec.py",
+      "sha256": "0f5fea173841c5150fa6ea9236160798c8ee24afba724d65da61dce78a4d48e8"
+    },
+    "chatterbox.models.voice_encoder.voice_encoder": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/voice_encoder/voice_encoder.py",
+      "sha256": "4b12e9d49cbb7ce81e6731c02d4f37a9b763ef7419dba95a7e66ea078d49a9c3"
+    },
+    "chatterbox.models.voice_encoder": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/models/voice_encoder/__init__.py",
+      "sha256": "adf1bcef74e90dae0fcb5c2945103cbc0bd9af15cc9be4288f960ad7d22ce678"
+    },
+    "chatterbox.tts": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/tts.py",
+      "sha256": "7896787bc17e20eafcd1dce7b8a4a6ea3a6478baab771c60d63e9e81f5564195"
+    },
+    "chatterbox.vc": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/vc.py",
+      "sha256": "4093a7edf32b1174999b00a74b5b83de193763c65249b0d5288d5f45f3ac2d71"
+    },
+    "chatterbox.mtl_tts": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/mtl_tts.py",
+      "sha256": "117c5ba0ed55812440ff7ed9e0db28b674779ca93b17533c0b6b927a80111cf8"
+    },
+    "chatterbox": {
+      "path": "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/lib/python3.12/site-packages/chatterbox/__init__.py",
+      "sha256": "dab20a9fb088c06cba044bc3b0ba2c52a914d5b5d51e6266bfd220d23f1bea41"
+    }
+  },
+  "initialize_enter_at": 125035.128780236,
+  "model_components": {
+    "t3": {
+      "devices": [
+        "cuda:0"
+      ],
+      "dtypes": [
+        "torch.float32"
+      ],
+      "parameter_tensors": 292
+    },
+    "s3gen": {
+      "devices": [
+        "cuda:0"
+      ],
+      "dtypes": [
+        "torch.float32"
+      ],
+      "parameter_tensors": 2122
+    },
+    "ve": {
+      "devices": [
+        "cuda:0"
+      ],
+      "dtypes": [
+        "torch.float32"
+      ],
+      "parameter_tensors": 16
+    }
+  },
+  "initialize_exit_at": 125041.038308479,
+  "memory_after_model": {
+    "at": 125041.038327114,
+    "threads": 1,
+    "rss_bytes": 1819791360,
+    "peak_rss_bytes": 5336391680,
+    "cuda_device": "cuda:0",
+    "cuda_synchronized": true,
+    "cuda_allocated_bytes": 3207370240,
+    "cuda_reserved_bytes": 3238002688,
+    "cuda_peak_allocated_bytes": 3207370240,
+    "cuda_peak_reserved_bytes": 3238002688
+  },
+  "generate_calls": [
+    {
+      "sequence": 0,
+      "text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "kwargs": {
+        "exaggeration": 0.525,
+        "cfg_weight": 0.4875
+      },
+      "enter_at": 125041.114427654,
+      "exit_at": 125049.058267031
+    },
+    {
+      "sequence": 1,
+      "text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "kwargs": {
+        "exaggeration": 0.525,
+        "cfg_weight": 0.4875
+      },
+      "enter_at": 125055.436825075,
+      "exit_at": 125057.410234615
+    },
+    {
+      "sequence": 2,
+      "text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise. Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise. Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise. Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "kwargs": {
+        "exaggeration": 0.525,
+        "cfg_weight": 0.4875
+      },
+      "enter_at": 125064.2293927
+    }
+  ],
+  "delivery_pending": false,
+  "memory_after_delivery": {
+    "at": 125057.412744681,
+    "threads": 2,
+    "rss_bytes": 2450493440,
+    "peak_rss_bytes": 5336391680,
+    "cuda_device": "cuda:0",
+    "cuda_synchronized": true,
+    "cuda_allocated_bytes": 3258446848,
+    "cuda_reserved_bytes": 3646947328,
+    "cuda_peak_allocated_bytes": 3404017664,
+    "cuda_peak_reserved_bytes": 3646947328
+  }
+}

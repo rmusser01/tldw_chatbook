@@ -1743,13 +1743,29 @@ async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkey
     controller.app = _fake_app()  # no unified_mcp_service -- MCP is irrelevant here
 
     sentinel = _SentinelBuiltinGate()
-    monkeypatch.setattr(
-        controller_module, "build_builtin_gate", lambda service=None, **_policy: sentinel
-    )
+
+    # TASK-633: a call-COUNTING factory, not a constant-returning lambda.
+    # The old stub could not distinguish "built once and threaded to both
+    # consumers" from "built twice and merely coincidentally equal" -- a
+    # regression to two build_builtin_gate calls per run would have passed
+    # unchanged, since the real factory builds a fresh gate per call.
+    factory_calls = []
+
+    def _single_call_factory(service=None, **_policy):
+        factory_calls.append(service)
+        if len(factory_calls) > 1:
+            raise AssertionError(
+                f"build_builtin_gate was called {len(factory_calls)}x for "
+                "one run; the review hook and run_reply must share ONE gate"
+            )
+        return sentinel
+
+    monkeypatch.setattr(controller_module, "build_builtin_gate", _single_call_factory)
 
     result = await controller.submit_draft("hi")
 
     assert result.accepted is True
+    assert len(factory_calls) == 1
     assert captured[0]["builtin_gate"] is sentinel
 
     review_hook = captured[0]["review_tool_calls"]

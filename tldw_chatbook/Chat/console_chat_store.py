@@ -2019,6 +2019,16 @@ class ConsoleChatStore:
         ] = {}
         self._next_message_completed_subscriber_id = 1
         self._speech_preference_epochs: dict[str, int] = {}
+        # Final-review fix wave (Finding 2): conversation ids whose persisted
+        # ``console_agent_handoff`` metadata key is still owed a clear. The
+        # draft REHYDRATES at restore, but the durable key is consumed only
+        # when that session FIRST becomes active
+        # (``_consume_pending_agent_handoff_clear`` from ``_activate_session``)
+        # -- restore alone must never clear it, so a never-opened handoff
+        # chat keeps its draft across app restarts (TASK-32482 AC #4).
+        # Process-local, like the epochs above.
+        self._pending_agent_handoff_clears: dict[str, None] = {}
+
 
         # Trajectory sidecar (schema v38) capture state. LOCAL-ONLY: the
         # ``message_trajectory_metadata`` table is never synced. Timing is
@@ -2283,6 +2293,16 @@ class ConsoleChatStore:
             self._session_mru.appendleft(session_id)
         self.active_session_id = session_id
         self._active_session_epoch += 1
+        # Final-review fix wave (Finding 2): the FIRST activation of a
+        # session with a pending agent-handoff clear consumes it here -- the
+        # draft is already in that session's composer (rehydrated at
+        # restore), so past this point a restart must never re-fill it. No
+        # store lock is held on any ``_activate_session`` call path (the
+        # trajectory lock is never taken around activation), so the
+        # best-effort DB write runs inline; its failures only debug-log and
+        # can never fail the activation itself.
+        if session_id is not None:
+            self._consume_pending_agent_handoff_clear(session_id)
         self._notify_canvas_context_changed(session_id)
         callback = self.on_active_session_changed
         if not callable(callback):
@@ -2293,6 +2313,80 @@ class ConsoleChatStore:
             logger.debug(
                 "Console active-session subscriber raised (exception_type={})",
                 type(exc).__name__,
+            )
+
+
+    def _consume_pending_agent_handoff_clear(self, session_id: str) -> None:
+        """Clear a restored handoff key when its session first activates.
+
+        Final-review fix wave (Finding 2), consume-on-first-ACTIVATION: the
+        OLD behavior cleared the persisted ``console_agent_handoff`` key at
+        RESTORE time, which -- because the agent-create completion restores
+        with ``activate=False`` -- meant the draft lived only in the running
+        app; a restart before the user ever opened the chat lost it. The key
+        is now cleared exactly once, at the session's first activation in
+        this process: same run (the user switches to the tab) or
+        post-restart (the conversation is reopened, restoring with
+        ``activate=True`` -- ``restore_persisted_session`` re-consumes
+        directly in that case, since ``create_session`` activates before the
+        pending clear is registered).
+
+        The entry is popped BEFORE the DB write, so a second activation can
+        never double-write; the write itself re-reads the row for a fresh
+        optimistic-lock version (a rename between restore and activation
+        must not ConflictError the clear away) and is skipped entirely when
+        the key is already gone. Best-effort by contract: on a version race
+        or DB failure the key survives and the worst case is the draft
+        re-filling once on a later restore -- debug-logged, never raised.
+        """
+        session = self._sessions.get(session_id)
+        conversation_id = (
+            getattr(session, "persisted_conversation_id", None)
+            if session is not None
+            else None
+        )
+        if not conversation_id:
+            return
+        conversation_id = str(conversation_id)
+        if conversation_id not in self._pending_agent_handoff_clears:
+            return
+        self._pending_agent_handoff_clears.pop(conversation_id, None)
+        database = (
+            getattr(self.persistence, "db", None) if self.persistence else None
+        )
+        if database is None:
+            return
+        updater = getattr(database, "update_conversation", None)
+        reader = getattr(database, "get_conversation_by_id", None)
+        if not callable(updater) or not callable(reader):
+            return
+        try:
+            row = reader(conversation_id)
+            if row is None:
+                return
+            raw_metadata = row.get("metadata") or "{}"
+            try:
+                metadata_obj = (
+                    json.loads(raw_metadata)
+                    if isinstance(raw_metadata, str)
+                    else {}
+                )
+            except ValueError:
+                metadata_obj = {}
+            if not (
+                isinstance(metadata_obj, dict)
+                and "console_agent_handoff" in metadata_obj
+            ):
+                return
+            metadata_obj.pop("console_agent_handoff", None)
+            updater(
+                conversation_id,
+                {"metadata": json.dumps(metadata_obj, allow_nan=False)},
+                int(row.get("version") or 1),
+            )
+        except Exception:  # noqa: BLE001 — ConflictError et al.; never fail activation
+            logger.opt(exception=True).debug(
+                "Failed to clear console_agent_handoff on first activation"
             )
 
     def _notify_canvas_context_changed(self, session_id: str | None) -> None:
@@ -2820,6 +2914,47 @@ class ConsoleChatStore:
                 session.id,
                 str(persisted_conversation_id),
             )
+            handoff_draft = None
+            database = getattr(self.persistence, "db", None) if self.persistence else None
+            reader = getattr(database, "get_conversation_by_id", None)
+            if callable(reader):
+                try:
+                    row = reader(str(persisted_conversation_id))
+                except Exception:
+                    row = None
+                raw_metadata = (row or {}).get("metadata") or "{}"
+                try:
+                    metadata_obj = (
+                        json.loads(raw_metadata)
+                        if isinstance(raw_metadata, str)
+                        else {}
+                    )
+                except ValueError:
+                    metadata_obj = {}
+                handoff = (
+                    metadata_obj.get("console_agent_handoff")
+                    if isinstance(metadata_obj, dict)
+                    else None
+                )
+                if isinstance(handoff, dict) and handoff.get("draft"):
+                    handoff_draft = str(handoff["draft"])
+                    # Final-review fix wave (Finding 2): record a PENDING clear
+                    # instead of clearing the key here. Restore alone (the
+                    # agent-create completion path restores with activate=False)
+                    # must keep the durable key so an unopened draft survives an
+                    # app restart; the clear fires when this session first
+                    # becomes active -- see
+                    # `_consume_pending_agent_handoff_clear`.
+                    self._pending_agent_handoff_clears[
+                        str(persisted_conversation_id)
+                    ] = None
+            if handoff_draft:
+                self.set_session_draft(session.id, handoff_draft)
+            if self.active_session_id == session.id:
+                # An ACTIVATING restore (the post-restart open path) activates
+                # inside `create_session` -- before the pending clear above was
+                # registered -- so consume it directly here.
+                self._consume_pending_agent_handoff_clear(session.id)
             with self._progress_identity_lock:
                 sibling = next(
                     (other for other in self._sessions.values()

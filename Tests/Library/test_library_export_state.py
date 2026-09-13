@@ -329,9 +329,16 @@ def test_normalize_destination_replaces_a_different_suffix():
     )
 
 
-def test_normalize_destination_leaves_zip_suffix_untouched_case_insensitive():
+def test_normalize_destination_canonicalizes_zip_suffix_case():
+    """PR #2634 review: the writer compares suffixes case-sensitively, so
+    an uppercase pick must normalize to the lowercase file actually written
+    (previously ``foo.ZIP`` was preserved verbatim and the form's overwrite
+    check examined a different file than the writer replaced)."""
     assert normalize_export_destination(PurePath("/tmp/foo.ZIP")) == PurePath(
-        "/tmp/foo.ZIP"
+        "/tmp/foo.zip"
+    )
+    assert normalize_export_destination(PurePath("/tmp/foo.Zip")) == PurePath(
+        "/tmp/foo.zip"
     )
     assert normalize_export_destination(PurePath("/tmp/foo.zip")) == PurePath(
         "/tmp/foo.zip"
@@ -419,3 +426,68 @@ def test_build_library_export_form_state_passes_last_export_line_through():
 def test_build_library_export_form_state_defaults_last_export_line_empty():
     state = _state()
     assert state.last_export_line == ""
+
+
+# --- task-32251 AC#3/AC#4: the destination is judged when it is chosen -------
+
+
+def test_a_usable_destination_has_nothing_to_report(tmp_path):
+    from tldw_chatbook.Library.library_export_state import (
+        describe_unusable_destination,
+    )
+
+    assert describe_unusable_destination(tmp_path / "bundle.zip") == ""
+
+
+def test_a_destination_under_a_missing_folder_is_refused(tmp_path):
+    """The shape a pre-filled path field produced live:
+    ``.../Library export.zip/private/tmp/.../notes-bundle.zip``."""
+    from tldw_chatbook.Library.library_export_state import (
+        describe_unusable_destination,
+    )
+
+    reason = describe_unusable_destination(
+        tmp_path / "Library export.zip" / "private" / "notes-bundle.zip"
+    )
+    assert "does not exist" in reason
+
+
+def test_a_destination_under_a_file_says_so(tmp_path):
+    from tldw_chatbook.Library.library_export_state import (
+        describe_unusable_destination,
+    )
+
+    (tmp_path / "report.zip").write_bytes(b"PK")
+    reason = describe_unusable_destination(
+        tmp_path / "report.zip" / "notes-bundle.zip"
+    )
+    assert "is a file, not a folder" in reason
+
+
+def test_a_destination_that_is_itself_a_folder_is_refused(tmp_path):
+    from tldw_chatbook.Library.library_export_state import (
+        describe_unusable_destination,
+    )
+
+    (tmp_path / "bundle.zip").mkdir()
+    assert describe_unusable_destination(tmp_path / "bundle.zip") == (
+        "That name is a folder."
+    )
+
+
+def test_the_destination_line_carries_the_refusal_reason():
+    """AC#3: the reason renders at the control, not as a passing toast."""
+    state = build_library_export_form_state(
+        scope=ExportScope("everything"),
+        counts={"notes": 2},
+        name="Bundle",
+        description="",
+        media_quality=DEFAULT_MEDIA_QUALITY,
+        destination="",
+        destination_error="Can't save there: The folder /nope does not exist.",
+        running=False,
+        status_line="",
+        error_line="",
+    )
+    assert state.destination_error.startswith("Can't save there:")
+    assert not state.export_enabled

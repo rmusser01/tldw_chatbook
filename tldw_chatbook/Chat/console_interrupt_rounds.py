@@ -692,6 +692,16 @@ class InterruptRoundHost:
             if on_outcome is not None:
                 on_outcome("revoked")
             return "revoked"
+        if kind in {"approval", "skill_install", "skill_script"}:
+            with self.lock:
+                notify_hook = not state.get("run_hook_notified", False)
+                state["run_hook_notified"] = True
+            notify = getattr(self._seams, "_notify_run_hook_approval", None)
+            if notify_hook and callable(notify):
+                try:
+                    notify(kind, payload, state)
+                except Exception:
+                    logger.warning("ApprovalRequested hook notification failed")
         is_head = True
         publish_decision = getattr(self._seams, "_publish_pending_decision", None)
         retained_decision = (

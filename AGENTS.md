@@ -168,6 +168,10 @@ Key sections:
 - Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
 - Console file authority: every live Chat gets private temporary scratch. Named Workspaces may add explicit folder bindings; local `fs_*`/Git uses scratch unless project instructions explicitly select one binding. `[console] workspace_root` is compatibility-only outside this Console path and never grants a Console Chat access.
 
+### Console Run Hooks
+- User-configured external commands at six lifecycle events (UserPromptSubmit, PreToolUse, PostToolUse, ApprovalRequested, Stop, SubagentStop); config: `[hooks]` in config.toml (ADR-148).
+- Deny-only: hooks can refuse tool calls but never bypass the permission store; PreToolUse fails closed, UserPromptSubmit fails open; argv-list commands only, process-group timeout kill.
+
 ### Console Project Instructions
 - `AGENTS.override.md` / `AGENTS.md` startup and lazy nested guidance is untrusted, ephemeral user context bounded by one selected local-filesystem binding; it never grants tool permission.
 - Registry ownership and path targets feed one shared activation ledger before normal tool review; read-only bindings do not advertise mutating tools.

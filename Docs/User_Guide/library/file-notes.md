@@ -234,7 +234,12 @@ titled "Trust Session Git repository?" appears:
 
 **Cancel** is focused first, so Enter alone runs nothing. Confirming with
 **Trust and check status** checks the repository and, from then on, a
-**Refresh** button takes the trust button's place.
+**Refresh** button takes the trust button's place. Focus lands on the row
+list as soon as the first status arrives, so the panel's own line is true
+from where it leaves you: **Up/Down** moves between rows, **Tab** steps into
+that row's actions, **Enter** runs the focused one. The actions render
+directly under the rows — **Stage** / **Unstage**, then bulk actions, then
+**Commit staged (N)** — rather than at the floor of the pane.
 
 **Rows.** Each file edited this session gets a row whose second line states
 where it stands:
@@ -258,7 +263,7 @@ is staged. It then opens the commit form — **Subject** (placeholder
 "Required commit subject") and **Body (optional)** — and **Review commit**
 runs a pre-check ("Checking commit...") before showing a decision-first
 review. **What** contains the exact message as Git will record it. **Where**
-names the local repository, full branch ref, and exact parent commit. **Impact**
+names the local repository, branch, and exact parent commit. **Impact**
 lists the author/committer, included-note counts and complete staged-file scope,
 plus the hook and signing policy. **Recovery** explains when to edit, cancel,
 or use **Check again** without retrying an uncertain commit. **Technical
@@ -268,8 +273,9 @@ in. Finish with **Confirm commit**, or step back with **Edit message** /
 **Cancel commit**.
 
 The commit review states the exact scope — for example, "2 session notes will
-be committed; unrelated changes untouched". A successful commit is still
-local: Chatbook never starts a push automatically.
+be committed; unrelated changes untouched", or "1 session note will be
+committed" for a single file. A successful commit is still local: Chatbook
+never starts a push automatically.
 
 #### Guarded push
 
@@ -417,6 +423,13 @@ save shortcut. File edits save automatically.
   not leave it. See [Library overview](../library.md); demoting it is
   tracked as task-32064.
 
+- **YAML frontmatter is hidden from the editor and kept exactly as it is on
+  disk.** A file that opens with a `---` block (Obsidian properties, for
+  example) shows only the body below it; the block itself is never displayed
+  and never edited here. A line above the editor says so — "N lines of YAML
+  frontmatter above this body are hidden here and kept exactly as they are on
+  disk" — and every save writes those bytes back unchanged, so properties
+  survive a Chatbook edit. Edit the block itself in your own editor.
 - **Per-file caps: 8 MB and 2,000,000 characters.** Edits that would push a
   file past either limit are refused at save time. A body above 200,000
   characters opens read-only with exact byte and character sizes and a labeled
@@ -550,3 +563,14 @@ per Notes source. This page, the canvas authority line and the F1 Escape row
 all say **Folder files** and **Library notes**; the capitalised "Folder Files"
 and the "back to Database" footer chip are retired. Escape from Folder files
 now reads `esc back to Library notes`.)*
+
+*Verified against fix/library-notes-w3-pickers-git — 2026-09-11 (task-32248,
+task-32265, task-32264, task-32251 AC#5. Session Git now honours the keyboard
+contract it prints: focus lands on the row list after **Trust and check
+status**, Tab from a row reaches **Stage**, and the actions render under the
+rows instead of ~24 rows below them at 235x52. The pre-commit disclosure says
+**main**, not `refs/heads/main`, and pluralises the session-note count. The
+editor discloses hidden-but-preserved YAML frontmatter. The folder picker now
+falls back to `[notes] sync_directory` before your home directory. Verified
+live against a real git-backed vault: keyboard staging and a real commit
+(`git log`: `e69848b w3 round2 commit`).)*

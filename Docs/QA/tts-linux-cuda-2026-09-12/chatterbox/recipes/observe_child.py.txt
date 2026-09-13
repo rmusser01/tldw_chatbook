@@ -1,0 +1,232 @@
+"""Execute the original installed child script with task-owned native observers."""
+
+import contextlib
+import os
+import runpy
+import sys
+import threading
+import time
+import traceback
+from pathlib import Path
+from unittest.mock import patch
+
+from chatterbox_observation import check_model_devices, hash_file
+from qualify_chatterbox import (
+    _deny_network,
+    memory_snapshot,
+    pytorch_device_provenance,
+    write_evidence,
+)
+
+
+def main():
+    original, receipt = map(Path, sys.argv[1:3])
+    state = {
+        "pid": os.getpid(),
+        "native_calls": [],
+        "assets": [],
+        "original_script": str(original),
+        "original_script_sha256": hash_file(original),
+    }
+
+    def checkpoint():
+        write_evidence(receipt, state)
+
+    sys.addaudithook(_deny_network)
+    checkpoint()
+    try:
+        # Preserve the original script's stdout protocol: upstream imports may
+        # write to either Python streams or native file descriptors.
+        saved = [os.dup(1), os.dup(2)]
+        with open(os.devnull, "w") as quiet:
+            try:
+                os.dup2(quiet.fileno(), 1)
+                os.dup2(quiet.fileno(), 2)
+                with (
+                    contextlib.redirect_stdout(quiet),
+                    contextlib.redirect_stderr(quiet),
+                ):
+                    import torch
+                    from chatterbox import tts
+            finally:
+                for target, descriptor in zip((1, 2), saved):
+                    os.dup2(descriptor, target)
+                    os.close(descriptor)
+
+        state["pytorch_device"] = pytorch_device_provenance(torch, "cuda")
+        if state["pytorch_device"]["device"] != "cuda:0":
+            raise ValueError("This qualification requires selected cuda:0")
+        device = "cuda:0"
+        torch.set_num_threads(6)
+        state["memory_before_model"] = memory_snapshot(cuda_device=device)
+        state["runtime_files"] = {
+            name: {
+                "path": str(Path(module.__file__).resolve()),
+                "sha256": hash_file(module.__file__),
+            }
+            for name, module in list(sys.modules.items())
+            if (name.startswith("chatterbox") or name in {"torch._C", "transformers"})
+            and getattr(module, "__file__", None)
+        }
+        checkpoint()
+        original_load = tts.ChatterboxTTS.from_pretrained
+        original_generate = tts.ChatterboxTTS.generate
+        original_download = tts.hf_hub_download
+
+        def download(*args, **kwargs):
+            path = Path(original_download(*args, **kwargs))
+            cache = Path(os.environ["HF_HUB_CACHE"]).resolve()
+            if not path.resolve().is_relative_to(cache):
+                raise ValueError("Loaded Chatterbox asset escaped the explicit cache")
+            state["assets"].append(
+                {
+                    "path": str(path),
+                    "resolved_path": str(path.resolve()),
+                    "sha256": hash_file(path),
+                    "repo_id": kwargs.get("repo_id"),
+                    "filename": kwargs.get("filename"),
+                }
+            )
+            checkpoint()
+            return str(path)
+
+        def load(cls, *args, **kwargs):
+            requested = kwargs.get("device", args[0] if args else None)
+            if requested not in {"cuda", "cuda:0"}:
+                raise ValueError("Registered child requested a CUDA fallback")
+            state["initialize_enter_at"] = time.monotonic()
+            checkpoint()
+            model = original_load(*args, **kwargs)
+            state["model_components"] = check_model_devices(model, device)
+            torch.cuda.synchronize(device)
+            state["initialize_exit_at"] = time.monotonic()
+            state["memory_after_model"] = memory_snapshot(cuda_device=device)
+            # Observe the original inference methods after reference decoding,
+            # conditioning and text preprocessing. The outer generate boundary
+            # alone cannot prove Stop overlapped actual CUDA inference.
+            for name in ("t3", "s3gen"):
+                component = getattr(model, name)
+                component.inference = inference_observer(
+                    component.inference, model, name + ".inference"
+                )
+            checkpoint()
+            return model
+
+        active_generation = [None]
+
+        def inference_observer(original_inference, model, method):
+            def infer(*args, **kwargs):
+                placement = check_model_devices(model, device)
+                torch.cuda.synchronize(device)
+                native = {
+                    "sequence": len(state["native_calls"]),
+                    "child_pid": os.getpid(),
+                    "class": type(model).__module__ + "." + type(model).__name__,
+                    "method": method,
+                    "device": device,
+                    "model_components": placement,
+                    "generation_sequence": active_generation[0]["sequence"],
+                    "text": active_generation[0]["text"],
+                    "enter_at": time.monotonic(),
+                    "thread_id": threading.get_ident(),
+                }
+                state["native_calls"].append(native)
+                checkpoint()
+                try:
+                    return original_inference(*args, **kwargs)
+                except BaseException as error:
+                    native["exception"] = type(error).__name__
+                    raise
+                finally:
+                    native["host_returned_at"] = time.monotonic()
+                    checkpoint()
+                    try:
+                        torch.cuda.synchronize(device)
+                    except BaseException as error:
+                        native["synchronization_exception"] = type(error).__name__
+                        checkpoint()
+                        raise
+                    native.update(
+                        exit_at=time.monotonic(),
+                        cuda_synchronized=True,
+                        completion_kind="native_return",
+                    )
+                    native["memory_after_native"] = memory_snapshot(cuda_device=device)
+                    checkpoint()
+
+            return infer
+
+        def generate(model, *args, **kwargs):
+            generation = {
+                "sequence": len(state.setdefault("generate_calls", [])),
+                "text": args[0] if args else kwargs.get("text"),
+                "kwargs": kwargs,
+                "enter_at": time.monotonic(),
+            }
+            reference = kwargs.get("audio_prompt_path")
+            if reference:
+                generation["reference_audio"] = {
+                    "path": reference,
+                    "sha256": hash_file(reference),
+                }
+            state["generate_calls"].append(generation)
+            active_generation[0] = generation
+            checkpoint()
+            try:
+                result = original_generate(model, *args, **kwargs)
+            except BaseException as error:
+                generation["exception"] = type(error).__name__
+                raise
+            else:
+                state["delivery_pending"] = True
+                return result
+            finally:
+                generation["exit_at"] = time.monotonic()
+                active_generation[0] = None
+                checkpoint()
+
+        def profile(frame, event, arg):
+            # Install one protocol observer when original main is called, then
+            # disable profiling before any model work. No per-layer tracing.
+            if (
+                event != "call"
+                or frame.f_code.co_name != "main"
+                or Path(frame.f_code.co_filename).resolve() != original.resolve()
+            ):
+                return
+            sys.setprofile(None)
+            original_send = frame.f_globals["send_chunked_audio"]
+
+            def send(*args, **kwargs):
+                result = original_send(*args, **kwargs)
+                state["memory_after_delivery"] = memory_snapshot(cuda_device=device)
+                state["delivery_pending"] = False
+                checkpoint()
+                return result
+
+            frame.f_globals["send_chunked_audio"] = send
+
+        with (
+            patch.object(tts, "hf_hub_download", download),
+            patch.object(tts.ChatterboxTTS, "from_pretrained", classmethod(load)),
+            patch.object(tts.ChatterboxTTS, "generate", generate),
+        ):
+            sys.argv = [str(original)]
+            sys.setprofile(profile)
+            runpy.run_path(str(original), run_name="__main__")
+        state["original_main_returned_at"] = time.monotonic()
+        state["memory_before_process_exit"] = memory_snapshot(cuda_device=device)
+    except BaseException as error:
+        state["failure"] = {
+            "type": type(error).__name__,
+            "message": str(error),
+            "traceback": traceback.format_exc(),
+        }
+        raise
+    finally:
+        sys.setprofile(None)
+        checkpoint()
+
+
+if __name__ == "__main__":
+    main()

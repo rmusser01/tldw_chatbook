@@ -1924,6 +1924,14 @@ def _load_settings_uncached(
     # loader) never saw a completed/started run and the wizard re-offered on
     # every launch even after real completion.
     final_first_run_settings_cli = get_toml_section("first_run")
+    # Console run hooks (spec 2026-09-11, Task 4): the RAW [hooks] table
+    # passes through untouched. Same shape as the first_run projection
+    # above -- a section only one consumer reads, and that consumer
+    # (Agents/run_hooks.py load_hooks_config) re-validates on every fire,
+    # so coercing here would only duplicate that logic. Without this
+    # projection the runtime could not reach [hooks] at all: the dict
+    # returned below is curated, not the parsed TOML.
+    final_hooks_settings_cli = get_toml_section("hooks")
     final_console_settings_cli = copy.deepcopy(get_toml_section("console"))
     if not isinstance(final_console_settings_cli, dict):
         final_console_settings_cli = {}
@@ -2305,6 +2313,7 @@ def _load_settings_uncached(
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
+        "hooks": final_hooks_settings_cli,  # Raw [hooks] table for Agents/run_hooks.py (Console run hooks)
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
         "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
@@ -3652,6 +3661,14 @@ effect = "none"  # none, snow, rain, matrix
 scope = "transcript"  # transcript, workbench
 intensity = "low"  # low, medium, high
 fps = 6  # 1-12
+
+[hooks]
+enabled = true  # master switch for Console run hooks (external commands on session/run lifecycle events)
+# [[hooks.hook]] entries: event / matcher / command / timeout_s
+# event: UserPromptSubmit | PreToolUse | PostToolUse | ApprovalRequested | Stop | SubagentStop
+# matcher: tool-name glob, valid only on PreToolUse/PostToolUse
+# command: argv list, no shell — e.g. ["/usr/local/bin/guard.sh", "--strict"]
+# timeout_s: per-hook ceiling in seconds (default 10); PreToolUse fails closed on timeout
 
 [skills]
 # project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17

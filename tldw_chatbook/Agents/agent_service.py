@@ -173,6 +173,8 @@ from .project_instruction_runtime import (
 from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
     DISCARD_AGENT_WORKTREE_SCHEMA,
+    NEW_CHAT_TOOL_SCHEMA,
+    FORK_CHAT_TOOL_SCHEMA,
     build_find_tools_schema,
     INSTALL_SKILL_TOOL_SCHEMA,
     MERGE_AGENT_WORKTREE_SCHEMA,
@@ -665,6 +667,23 @@ class RunLogRequestPlan:
     min_recent_rounds: int
 
 
+
+def _chat_create_runtime_schemas(
+    agent_kind: str,
+    fork_chat_tool: "Callable[[dict], ToolResult] | None",
+    new_chat_tool: "Callable[[dict], ToolResult] | None",
+) -> list[ToolSchema]:
+    """ADR-150: fork_chat/new_chat are primary-only in v1 (sub-agents: TASK-32480)."""
+    if agent_kind != AGENT_KIND_PRIMARY:
+        return []
+    schemas: list[ToolSchema] = []
+    if fork_chat_tool is not None:
+        schemas.append(FORK_CHAT_TOOL_SCHEMA)
+    if new_chat_tool is not None:
+        schemas.append(NEW_CHAT_TOOL_SCHEMA)
+    return schemas
+
+
 def build_first_request_schema_plan(
     registry: ToolCatalogRegistry,
     allowed_tools: tuple[str, ...],
@@ -682,6 +701,8 @@ def build_first_request_schema_plan(
     progress_available: bool = False,
     reporting_available: bool = False,
     worktree_merge_enabled: bool = False,
+    fork_chat_enabled: bool = False,
+    new_chat_enabled: bool = False,
     fleet_max_live: int | None = None,
     agent_kind: str = AGENT_KIND_PRIMARY,
     direct_system_prompt: str | None = None,
@@ -707,6 +728,10 @@ def build_first_request_schema_plan(
             approve merge_agent_worktree/discard_agent_worktree -- like
             run_skill_script_enabled, this disclosure is additionally gated
             beyond fleet_active alone.
+        fork_chat_enabled: Whether the primary may fork this chat into a new
+            chat (ADR-150; confirmation-gated).
+        new_chat_enabled: Whether the primary may create a fresh chat
+            (ADR-150; confirmation-gated).
         fleet_max_live: Maximum live agents recorded in the frozen plan.
         agent_kind: Primary or sub-agent disclosure policy selector.
         direct_system_prompt: Prompt used when all allowed schemas fit directly.
@@ -782,6 +807,10 @@ def build_first_request_schema_plan(
             runtime.append(PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA)
         if run_skill_script_enabled:
             runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
+        if fork_chat_enabled and agent_kind == AGENT_KIND_PRIMARY:
+            runtime.append(FORK_CHAT_TOOL_SCHEMA)
+        if new_chat_enabled and agent_kind == AGENT_KIND_PRIMARY:
+            runtime.append(NEW_CHAT_TOOL_SCHEMA)
         log_active = bool(
             agent_kind == AGENT_KIND_PRIMARY
             and run_log_active
@@ -1926,6 +1955,7 @@ class AgentService:
         skill_file_bindings: SkillFileBindings | None = None,
         review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
         | None = None,
+        guard_tool_calls: Callable[[list[ToolCall], str], dict[str, str]] | None = None,
         before_tool_dispatch: (
             Callable[[list[ToolCall], frozenset[str]], None] | None
         ) = None,
@@ -1959,6 +1989,10 @@ class AgentService:
         | None = None,
         run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
         | None = None,
+        post_tool_call: Callable[[str, str, dict, str, bool, str], None]
+        | None = None,
+        fork_chat_tool: Callable[[dict], ToolResult] | None = None,
+        new_chat_tool: Callable[[dict], ToolResult] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         run_log_request_plan: RunLogRequestPlan | None = None,
         fleet_coordinator: FleetCoordinator | None = None,
@@ -2046,6 +2080,7 @@ class AgentService:
         # and this is where a run's identity reaches the review hook that
         # writes them.
         self.review_tool_calls = review_tool_calls
+        self.guard_tool_calls = guard_tool_calls
         #: TASK-26010: observational post-completion seam -- (call, result,
         #: duration_seconds, run_id) after EVERY tool call completes, whatever
         #: the outcome. Strictly observational: a raising hook costs nothing
@@ -2114,6 +2149,21 @@ class AgentService:
         # see the schema-pin comment in _run_one for the rationale. `None`
         # (the default) means the run is not wired for it.
         self._run_skill_script_tool = run_skill_script_tool
+        # run-hooks PostToolUse (Task 5): the bridge supplies
+        # `engine.post_tool_dep(session_id=...)` -- ONLY when a run-hooks
+        # engine exists -- and every LoopDeps this service builds (primary
+        # and sub-agent alike) fires it at the dispatch capture point for
+        # calls that actually dispatched. The 6th parameter (R20) is the
+        # FIRING run's id, bound per run in `_run_one` exactly the way the
+        # review hook's run id is bound, so the engine's envelope can
+        # attribute a fleet child's tool use to the child's own run.
+        # `None` (the default, and every pre-hooks caller) means the loop
+        # never fires PostToolUse: behavior is byte-identical to before
+        # this seam existed.
+        self._post_tool_call = post_tool_call
+        # Primary-only by design (ADR-150): children never create chats in v1.
+        self._fork_chat_tool = fork_chat_tool
+        self._new_chat_tool = new_chat_tool
         # Round-1 review fix (spec §3.1): the writer is per RUN TREE, not
         # per service instance -- `bind()` latches permanently (see its own
         # docstring), so a writer built here in __init__ and reused across
@@ -4714,6 +4764,14 @@ class AgentService:
                     and self._prepare_managed_skill_promotion_tool is not None
                 ),
                 run_skill_script_enabled=self._run_skill_script_tool is not None,
+                fork_chat_enabled=bool(
+                    agent_kind == AGENT_KIND_PRIMARY
+                    and self._fork_chat_tool is not None
+                ),
+                new_chat_enabled=bool(
+                    agent_kind == AGENT_KIND_PRIMARY
+                    and self._new_chat_tool is not None
+                ),
                 run_log_active=bool(
                     agent_kind == AGENT_KIND_PRIMARY and writer.is_active
                 ),
@@ -7603,6 +7661,10 @@ class AgentService:
                 else None,
                 run_id,
             ),
+            guard_tool_calls=(
+                (lambda calls: self.guard_tool_calls(calls, run_id))
+                if self.guard_tool_calls is not None else None
+            ),
             is_tool_call_preauthorized=(
                 lambda call: self.registry.is_canvas_reversible_conversation_local_mutation(
                     call.name
@@ -7638,6 +7700,34 @@ class AgentService:
                 else None
             ),
             run_skill_script=self._run_skill_script_tool,
+            # R20: bind THIS run's id into the dep, mirroring the review
+            # lambda above -- the engine's notify carries it as the
+            # PostToolUse envelope's run_id, so each firing names the run
+            # that dispatched it (a fleet child's own run, not the
+            # session's primary). `None` (the default) stays a true no-op.
+            post_tool_call=(
+                (
+                    lambda name, call_id, tool_args, content, ok: (
+                        self._post_tool_call(
+                            name, call_id, tool_args, content, ok, run_id
+                        )
+                    )
+                )
+                if self._post_tool_call is not None
+                else None
+            ),
+            fork_chat=(
+                self._fork_chat_tool
+                if agent_kind == AGENT_KIND_PRIMARY
+                and self._fork_chat_tool is not None
+                else None
+            ),
+            new_chat=(
+                self._new_chat_tool
+                if agent_kind == AGENT_KIND_PRIMARY
+                and self._new_chat_tool is not None
+                else None
+            ),
             search_run_log=(
                 search_run_log if agent_kind == AGENT_KIND_PRIMARY else None
             ),

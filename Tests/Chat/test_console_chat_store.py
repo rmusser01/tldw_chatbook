@@ -2691,6 +2691,139 @@ def test_real_persistence_round_trips_roleplay_and_reply_speech_metadata(tmp_pat
         db.close_connection()
 
 
+@pytest.fixture
+def real_db_store(tmp_path):
+    """Store over a real SQLite DB for agent-handoff restore tests.
+
+    Construction mirrors the real-DB restore tests above (same class,
+    same file-per-test pattern, no workspace_registry).
+    """
+    db = CharactersRAGDB(tmp_path / "console-agent-handoff.db", "console-handoff-test")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        yield store, db
+    finally:
+        db.close_connection()
+
+
+def test_restore_persisted_session_activate_false_keeps_current(real_db_store):
+    store, db = real_db_store
+    first = store.create_session(title="A")
+    conv = store.persistence.create_conversation(conversation_title="B")
+    restored = store.restore_persisted_session(
+        title="B", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert store.active_session_id == first.id  # NOT switched
+    assert restored.persisted_conversation_id == conv
+
+
+def test_restore_rehydrates_handoff_draft_once(real_db_store):
+    """Final-review fix wave (Finding 2), consume-on-first-ACTIVATION: the
+    draft rehydrates at RESTORE, the persisted key is cleared at the
+    session's FIRST activation (verified via durable metadata), and a
+    second restore after that first open never re-fills the composer."""
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(
+        conversation_title="C",
+        metadata={"console_agent_handoff": {"draft": "please plan the migration",
+                                            "created_via": "fork_chat", "source_run_id": "r9"}},
+    )
+    restored = store.restore_persisted_session(
+        title="C", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert restored.draft == "please plan the migration"
+    # restore alone does NOT clear the key (never-opened drafts survive
+    # restarts)
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" in (row.get("metadata") or "{}")
+    # first activation -- same run -- clears the key exactly once
+    store.switch_session(restored.id)
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" not in (row.get("metadata") or "{}")
+    # and a later restore (post-restart reopen) no longer re-fills the draft
+    again = store.restore_persisted_session(
+        title="C", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=True,
+    )
+    assert again.draft == ""
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" not in (row.get("metadata") or "{}")
+
+
+def test_never_opened_handoff_keeps_key_across_activity(real_db_store):
+    """Semantics (a): restore with activate=False records the pending clear
+    but the durable key survives other sessions' activity -- only THIS
+    session's first activation may consume it."""
+    store, db = real_db_store
+    store.create_session(title="owner")
+    conv = store.persistence.create_conversation(
+        conversation_title="Keep",
+        metadata={"console_agent_handoff": {"draft": "unopened",
+                                            "created_via": "new_chat", "source_run_id": "r1"}},
+    )
+    restored = store.restore_persisted_session(
+        title="Keep", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert restored.draft == "unopened"
+    # other sessions come and go; the handoff session is never activated
+    store.create_session(title="other-1")
+    other2 = store.create_session(title="other-2")
+    store.switch_session(other2.id)
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" in (row.get("metadata") or "{}")
+
+
+def test_activating_restore_clears_handoff_key_immediately(real_db_store):
+    """Semantics (b), post-restart leg: the normal open path restores with
+    activate=True -- the draft rehydrates and the key clears in the same
+    restore (create_session activates before the pending clear is
+    registered, so restore re-consumes directly)."""
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(
+        conversation_title="Open",
+        metadata={"console_agent_handoff": {"draft": "hello",
+                                            "created_via": "fork_chat", "source_run_id": "r2"}},
+    )
+    restored = store.restore_persisted_session(
+        title="Open", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=True,
+    )
+    assert restored.draft == "hello"
+    assert store.active_session_id == restored.id
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" not in (row.get("metadata") or "{}")
+
+
+def test_handoff_read_failure_never_fails_restore(real_db_store, monkeypatch):
+    """Semantics (d): a raising metadata read degrades to no draft and never
+    fails the restore."""
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(conversation_title="Boom")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("metadata read exploded")
+
+    monkeypatch.setattr(db, "get_conversation_by_id", _boom)
+    restored = store.restore_persisted_session(
+        title="Boom", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=True,
+    )
+    assert restored.draft == ""
+
+
+def test_restore_without_handoff_leaves_draft_alone(real_db_store):
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(conversation_title="D")
+    restored = store.restore_persisted_session(
+        title="D", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert restored.draft == ""
+
+
 def test_initial_reply_speech_is_inserted_at_version_one_with_sibling_metadata(
     tmp_path,
 ):

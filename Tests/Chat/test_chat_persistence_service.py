@@ -2866,6 +2866,40 @@ class TestChatPersistenceService:
         assert extra[0]["data"] == b"img-1"
         assert extra[0]["display_name"] == "b.jpg"
 
+    def test_create_conversation_records_fork_lineage(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        parent_id = service.create_conversation(conversation_title="Source")
+        # ``forked_from_message_id`` carries a real FK to messages(id) (the
+        # pool runs with PRAGMA foreign_keys = ON), so the referenced fork
+        # point must exist as a persisted message row.
+        service.create_message(
+            conversation_id=parent_id,
+            sender="user",
+            content="Fork point",
+            message_id="msg-abc",
+        )
+        child_id = service.create_conversation(
+            conversation_title="Fork of Source",
+            parent_conversation_id=parent_id,
+            forked_from_message_id="msg-abc",
+        )
+        row = db_instance.get_conversation_by_id(child_id)
+        assert row is not None
+        assert row["parent_conversation_id"] == parent_id
+        assert row["forked_from_message_id"] == "msg-abc"
+        assert row["title"] == "Fork of Source"
+
+    def test_create_conversation_without_lineage_unchanged(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conv_id = service.create_conversation(conversation_title="Plain")
+        row = db_instance.get_conversation_by_id(conv_id)
+        assert row["parent_conversation_id"] is None
+        assert row["forked_from_message_id"] is None
+
 
 class _RoleplayConflictDB:
     """Small optimistic-lock seam whose first write preserves a sibling."""

@@ -164,6 +164,14 @@ TIKTOKEN_RESOURCE_PATHS = {
 }
 TIKTOKEN_REQUIREMENT = "tiktoken==0.14.0"
 
+# Fixed runtime reads in Canvas.guide (ADR-149), not development documentation.
+CANVAS_GUIDE_RESOURCE_PATHS = {
+    "tldw_chatbook/Canvas/guides/basics.md",
+    "tldw_chatbook/Canvas/guides/controls.md",
+    "tldw_chatbook/Canvas/guides/repair.md",
+    "tldw_chatbook/Canvas/static/mermaid-authoring.txt",
+}
+
 REQUIRED_SDIST_PATHS = (
     {
         "LICENSE",
@@ -190,6 +198,7 @@ REQUIRED_SDIST_PATHS = (
     | SAMIRA_RESOURCE_PATHS
     | PIXEL_MIGU_RESOURCE_PATHS
     | TIKTOKEN_RESOURCE_PATHS
+    | CANVAS_GUIDE_RESOURCE_PATHS
 )
 
 REQUIRED_WHEEL_PATHS = (
@@ -210,6 +219,7 @@ REQUIRED_WHEEL_PATHS = (
     | SAMIRA_RESOURCE_PATHS
     | PIXEL_MIGU_RESOURCE_PATHS
     | TIKTOKEN_RESOURCE_PATHS
+    | CANVAS_GUIDE_RESOURCE_PATHS
 )
 
 REQUIRED_SDIST_GLOBS = {
@@ -499,6 +509,7 @@ def _validate_content(
                 and not name.startswith("tldw_chatbook/Config_Files/")
                 and name != f"{SAMIRA_RESOURCE_ROOT}/ASSET_LICENSE.md"
                 and name not in PIXEL_MIGU_RESOURCE_PATHS
+                and name not in CANVAS_GUIDE_RESOURCE_PATHS
             ):
                 errors.append(f"{label}: forbidden development Markdown: {name}")
 
