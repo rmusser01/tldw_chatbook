@@ -11,8 +11,7 @@ branch `codex/agent-orchestration-remaining-pre-rebase-20260913`. All 84 feature
 commits were replayed from original base `d66908a69ef03066fed77a92edf77a326f44bd89`
 onto dev `3e28c9e7279c9d59b37e7d57662bc8e2fd20295f`, producing `73fba740c6` before
 these corrections. No feature commit was skipped. The later dev update
-`a51edff97f` contains only approval-wave Backlog documentation; final integration
-of that update is recorded below once complete.
+`a51edff97f` contains only approval-wave Backlog documentation; all 85 commits replayed cleanly onto that update.
 
 Existing ADR148 (run hooks),153,154,155 and158 govern the changes. ADR153 is
 amended to state physical resolver ownership and its limits. No new backend,
@@ -124,5 +123,11 @@ correction files; unrelated whole-file debt remains.
 
 ## Final integration record
 
-Pending final edge-case verification, current-dev reconciliation, publication,
-review-thread replies and remote checks. This record is not a merge claim.
+The reviewed correction commit `cd6a725463` was replayed with the84 preceding
+feature commits onto dev `a51edff97f`, producing `a51812e5c6`. The rebase was
+conflict-free and its tree differs from the verified candidate only by the three
+upstream Backlog documentation files; production, tests and generated sources
+are identical. The branch contains all current dev commits.
+
+All confirmed local review findings are addressed. Publication, review-thread
+replies and remote checks are pending. This record is not a merge claim.

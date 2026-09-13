@@ -4,7 +4,7 @@ title: Supervisor agent fleet program
 status: In Progress
 assignee: []
 created_date: '2026-08-09 13:57'
-updated_date: '2026-09-13 14:35'
+updated_date: '2026-09-13 15:10'
 labels: []
 dependencies: []
 ---
@@ -18,7 +18,7 @@ Named sub-agent definitions, background/parallel execution, steering, Console fl
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 All approved fleet outcomes are delivered and verified: definitions, concurrency runtime, fleet panel, cross-turn lifetime, wake and notification, steering and continuation, and phase-four polish; every remaining TASK-13154 child is Done.
-- [ ] #2 PR2665 is rebased onto current dev with upstream hooks and chat-creation contracts preserved; all Qodo findings have evidence-backed dispositions and confirmed defects have regression coverage.
+- [x] #2 PR2665 is rebased onto current dev with upstream hooks and chat-creation contracts preserved; all Qodo findings have evidence-backed dispositions and confirmed defects have regression coverage.
 - [ ] #3 Affected integration and static checks are verified at the final PR head; review feedback and documented integration blockers are resolved before merge.
 <!-- AC:END -->
 
@@ -26,7 +26,6 @@ Named sub-agent definitions, background/parallel execution, steering, Console fl
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR. ADR path: backlog/decisions/129-fleet-mailbox-and-wake-reliability.md plus current accounting/admission and implementation decisions. Reason: records-only reconciliation after all implementation children complete. Execute Docs/superpowers/plans/2026-09-12-agent-fleet-program-closeout.md last: verify six historical core deliveries and the seventh polish slice, checked child criteria/reviews, prior and fresh evidence with limits, current authority/remaining optional extensions, independent records and final branch review, then Backlog Done. Do not invent retroactive children or erase unfinished outcomes.
-
 
 PR2665 integration reopened 2026-09-13 at user request. ADR required: no new ADR for the rebase and contract-preserving review fixes; existing ADR153/154/155 apply. Preserve configured parent merge identity and protected failed-admission checkouts. Execute Docs/superpowers/plans/2026-09-13-agent-orchestration-pr-2665.md; update decisions before any boundary change. Earlier completion evidence remains historical feature-head evidence, not verification of the rebased result.
 <!-- SECTION:PLAN:END -->
