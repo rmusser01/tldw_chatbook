@@ -156,5 +156,22 @@ Remote evidence: [UI latency](https://github.com/rmusser01/tldw_chatbook/actions
 [GGUF import on Linux/macOS/Windows](https://github.com/rmusser01/tldw_chatbook/actions/runs/34764991583),
 [GGUF source on Linux/macOS/Windows](https://github.com/rmusser01/tldw_chatbook/actions/runs/34764991580).
 These platform jobs cover their GGUF scope; they do not certify Windows worktree
-recovery or external-provider behavior. Production and test bytes have not
-changed since the verified code commit `a51812e5c6`.
+recovery or external-provider behavior. Production bytes have not changed since the verified code commit `a51812e5c6`;
+the later migration-test correction is recorded below.
+
+
+### Final-head fast-lane correction
+
+Run 34765414377 on 258b71a6ee completed the fast lane with 1125 passes and four
+failures: both historical migration tests still expected version 18 after the
+current schema 20 runtime had fully opened the database. Those are integration
+test defects; standalone 18 checks remain valid. Reopened the integration
+criterion while correcting the seeds to remove later cap/worktree shape and
+checking current-version completion without dropping any record, receipt,
+budget, foreign-key or authority assertions. No production migration change
+is required. Local reproduction retained all four failures. The corrected four-file
+migration/worktree selection passes 29 tests; both changed files pass Ruff and
+formatting. Standalone migration scripts still require version 18 before the
+full runtime open. Added assertions require empty new worktree ownership and
+no invented definition cap. Record/receipt/owner/budget/foreign-key assertions
+remain intact. No production file or migration script changed.

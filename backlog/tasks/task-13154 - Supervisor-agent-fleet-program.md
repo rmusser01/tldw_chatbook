@@ -4,7 +4,7 @@ title: Supervisor agent fleet program
 status: Done
 assignee: []
 created_date: '2026-08-09 13:57'
-updated_date: '2026-09-13 15:21'
+updated_date: '2026-09-13 15:40'
 labels: []
 dependencies: []
 ---
@@ -105,4 +105,11 @@ Full evidence, inherited guard failures and explicit OS DNS/ordinary Git limits:
 Docs/superpowers/reviews/2026-09-13-agent-orchestration-pr-2665.md. This closes
 implementation and review; the required remote derived-artifacts gate and actual
 PR merge are still being followed in the active task. No merge is claimed here.
+
+CI follow-up: final-head fast lane1125passed/4failed exposed stale schema18
+expectations after a full runtime schema20 open. Historical fixtures now remove
+later worktree/cap shape; standalone18 pins and all original data/authority
+assertions remain. Full runtime completion uses the current schema and verifies
+empty new ownership/cap authority. Local RED4 → GREEN29 across four migration
+modules; Ruff/format pass. Product and migration scripts are unchanged.
 <!-- SECTION:NOTES:END -->
