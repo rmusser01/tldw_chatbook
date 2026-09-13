@@ -559,6 +559,38 @@ class _InstanceLock(_Definition):
         )
 
 
+class _ConfigLock(_RawDeclaration):
+    def discover(self, config):
+        """Exclude only the exact empty private lock created by config writes."""
+        import stat
+
+        from tldw_chatbook.Utils.platform_files import os
+
+        from .bootstrap import pinned_directory
+
+        selected = discovery_context(config).config_path
+        item = self._item(config, selected.with_name(selected.name + ".lock"))
+        if item.status == "unused":
+            return (replace(item, status="intentionally_excluded"),)
+        if item.status != "included":
+            return (item,)
+        try:
+            with pinned_directory(item.path.parent) as parent:
+                info = os.stat(item.path.name, dir_fd=parent, follow_symlinks=False)
+                valid = (
+                    stat.S_ISREG(info.st_mode)
+                    and info.st_uid == os.geteuid()
+                    and stat.S_IMODE(info.st_mode) == 0o600
+                    and info.st_nlink == 1
+                    and info.st_size == 0
+                )
+            return (
+                replace(item, status="intentionally_excluded" if valid else "unsupported"),
+            )
+        except (OSError, ValueError, RuntimeError):
+            return (replace(item, status="unavailable"),)
+
+
 class _ChatbookScratch(_Definition):
     def discover(self, config):
         root = user_data_dir(config) / "temp"
@@ -969,6 +1001,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
         _Diagnostics("diagnostics.logs"),
         _CatalogCache("cache.model_catalog"),
         _InstanceLock("runtime.instance_lock"),
+        _ConfigLock("runtime.config_lock"),
         _ChatbookScratch("runtime.chatbook_scratch"),
         _ResearchPasteStaging("research.paste_staging"),
         _ActorImportStaging("actor_packs.import_staging"),

@@ -13,20 +13,22 @@ This ensures consistent behavior across all DB classes for:
 - Private file connection enforcement
 """
 
+import asyncio
 import sqlite3
+import threading
+import time
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-import threading
-import time
 from typing import Union
 from weakref import WeakValueDictionary
-from abc import ABC, abstractmethod
+
 from loguru import logger
 
-from .private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import lexical_path
 
+from .private_sqlite import connect_private_sqlite
 
 SEMANTIC_MUTATION_GUARD_FUNCTION = "console_semantic_mutation_authorized"
 TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
@@ -43,20 +45,23 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     registry = getattr(database, "_connection_quiescence", None)
     close = getattr(database, "close_connection", None)
     if local is None or registry is None or not callable(close):
+        from .AgentRuns_DB import AgentRunsDB
         from .Library_Collections_DB import LibraryCollectionsDB
         from .Workspace_DB import WorkspaceDB
 
         if (
-            type(database) not in {LibraryCollectionsDB, WorkspaceDB}
+            type(database) not in {AgentRunsDB, LibraryCollectionsDB, WorkspaceDB}
             or database.is_memory_db
         ):
             yield
             return
-        # These installed stores own a separate cache on each thread. Their
-        # explicit close clears it, so an existing cache belongs to the caller.
+        from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+
+        # A raw close can leave a stale cache. Use the same native retirement
+        # evidence as the getter; a still-live borrowed handle remains owned.
         local = database._thread_local
         close = database.close
-        borrowed = getattr(local, "conn", None) is not None
+        borrowed = _core_cached_connection(database, getattr(local, "conn", None)) is not None
     else:
         previous = getattr(local, "conn", None)
         borrowed = previous is not None and registry.is_registered(previous)
@@ -65,6 +70,32 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     finally:
         if not borrowed and getattr(local, "conn", None) is not None:
             close()
+
+
+async def run_owned_db_call[**_CallParameters, _CallResult](
+    database: object,
+    operation: Callable[_CallParameters, _CallResult],
+    /,
+    *args: _CallParameters.args,
+    **kwargs: _CallParameters.kwargs,
+) -> _CallResult:
+    """Run a finite callback and retire only its newly opened worker handle.
+
+    Cancellation of the awaiting task does not close a handle still in use by
+    its executor callback. Existing connections and memory/custom owners retain
+    their original lifetimes.
+    """
+    def invoke() -> _CallResult:
+        from .AgentRuns_DB import AgentRunsDB
+        from .ChaChaNotes_DB import CharactersRAGDB
+        from .Workspace_DB import WorkspaceDB
+
+        if type(database) not in {AgentRunsDB, CharactersRAGDB, WorkspaceDB} or database.is_memory_db:
+            return operation(*args, **kwargs)
+        with operation_owned_connection(database):
+            return operation(*args, **kwargs)
+
+    return await asyncio.to_thread(invoke)
 
 
 class SQLiteConnectionQuiescenceRegistry:

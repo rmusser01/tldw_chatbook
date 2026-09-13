@@ -30,9 +30,28 @@ def worker_leases(db):
         ]
 
 
-@pytest.fixture(params=["subscriptions", "conversations"])
+@pytest.fixture(params=["subscriptions", "conversations", "owned_notes", "owned_runs", "owned_workspaces"])
 def offload(request, tmp_path, local_root, monkeypatch):
-    if request.param == "subscriptions":
+    if request.param.startswith("owned_"):
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.DB.base_db import run_owned_db_call
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+        if request.param == "owned_notes":
+            db = CharactersRAGDB(tmp_path / "notes.db", "test")
+            read = db.list_all_active_conversations
+        elif request.param == "owned_runs":
+            db = AgentRunsDB(tmp_path / "runs.db")
+            read = db.pending_wake_conversation_ids
+        else:
+            db = WorkspaceDB(tmp_path / "workspaces.db")
+            def read():
+                with db.connection() as connection:
+                    return connection.execute("SELECT 1").fetchone()[0]
+
+        async def call(body):
+            return await run_owned_db_call(db, body)
+    elif request.param == "subscriptions":
         db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
         row_id = db.add_subscription("retained", "rss", "https://example.invalid/feed", auto_pause_threshold=3)
 

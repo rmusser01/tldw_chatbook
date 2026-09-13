@@ -118,12 +118,28 @@ def _console_snapshot_dirty(state) -> bool:
         "pending_console_launch",
         "console_evidence_sent_notice",
     }
-    if type(native) is not dict or set(native) != keys or native["version"] != "1.0":
+    optional = {
+        "pending_console_launch_revision",
+        "suspended_conversation_settings",
+        "suspended_conversation_settings_token",
+        "pending_conversation_settings_return_target",
+    }
+    if (
+        type(native) is not dict
+        or not keys <= native.keys()
+        or native.keys() - keys - optional
+        or native["version"] != "1.0"
+    ):
         raise TypeError("unknown retained Console snapshot")
     resume = native["task_resume_state"]
     text_keys = {"summary", "last_step", "diff_summary", "next_action"}
-    pending_keys = {"pending_approval", "pending_skill_install", "pending_skill_script"}
-    if type(resume) is not dict or set(resume) != text_keys | pending_keys:
+    pending_keys = {
+        "pending_approval", "pending_skill_install", "pending_skill_script",
+        "pending_question", "pending_chat_create",
+    }
+    if type(resume) is not dict or set(resume) != (
+        text_keys | pending_keys | {"followed_watchlists_operations"}
+    ):
         raise TypeError("unknown retained task state")
     if any(type(resume[key]) is not str for key in text_keys):
         raise TypeError("unknown retained task summary")
@@ -132,6 +148,16 @@ def _console_snapshot_dirty(state) -> bool:
             # These rounds are owned by live controller workers, not restorable
             # draft text; never silently classify their retained input as clean.
             raise TypeError("retained approval requires live owner settlement")
+    followed = resume["followed_watchlists_operations"]
+    if type(followed) is not list or any(type(value) is not str for value in followed):
+        raise TypeError("unknown retained watchlist selection")
+    revision = native.get("pending_console_launch_revision", 0)
+    if type(revision) is not int or revision < 0:
+        raise TypeError("unknown retained launch revision")
+    if any(native.get(key) is not None for key in optional - {"pending_console_launch_revision"}):
+        # These fields retain a settings draft and its return claim. Keep it
+        # for explicit save/discard instead of treating navigation as a save.
+        return True
     modes = native["image_view_modes"]
     if type(modes) is not dict or any(
         type(key) is not str or value not in {"pixels", "graphics", "hidden"}
@@ -433,17 +459,20 @@ def _editor(owner: object) -> list[UnsavedEditor]:
             if type(snapshot) is not tuple or len(snapshot) != 3:
                 raise TypeError("unknown draft transition")
             dirty = _text(snapshot[1]) or dirty
-        stashes = owner._console_inflight_send_stashes
-        if type(stashes) is not dict:
-            raise TypeError("unknown inflight draft stashes")
-        for stash in (owner._console_pending_send_stash, *stashes.values()):
-            if stash is None:
-                continue
-            if not _exact(
+        # Enter retains a typed capture until its callback takes custody. The
+        # composer keeps the draft until accepted work owns it; there is no
+        # separate screen-owned inflight stash in the installed send path.
+        pending = owner._console_pending_send
+        if pending is not None:
+            if not _exact(pending, "UI.Screens.chat_screen", "_ConsolePendingSend"):
+                raise TypeError("unknown pending send")
+            stash = pending.stash
+            if stash is not None and not _exact(
                 stash, "Widgets.Console.console_composer_bar", "ConsoleDraftStash"
             ):
                 raise TypeError("unknown draft stash")
-            dirty = _text(stash.text) or bool(stash.segments) or dirty
+            if stash is not None:
+                dirty = _text(stash.text) or bool(stash.segments) or dirty
     elif _exact(owner, "Widgets.Console.console_composer_bar", "ConsoleComposerBar"):
         label, dirty = "Console composer", _text(owner.draft_text())
     elif _exact(owner, "UI.Screens.library_screen", "LibraryScreen"):

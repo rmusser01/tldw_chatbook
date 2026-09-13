@@ -114,9 +114,9 @@ it left behind — tree, active leaf, drafts, pending attachments and all.
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import os
-import functools
 import threading
 import time
 from dataclasses import dataclass, field
@@ -133,24 +133,26 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
 )
+from tldw_chatbook.Chat.console_display_state import console_prompted_source_count
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicyDefaults,
 )
-from tldw_chatbook.Chat.console_display_state import console_prompted_source_count
 from tldw_chatbook.Chat.console_onboarding_state import (
     coerce_console_first_send_completed,
 )
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+from tldw_chatbook.DB.base_db import run_owned_db_call
+
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
-    from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
     from tldw_chatbook.Chat.console_voice_promotion import (
         VoicePromotionOwner,
         VoicePromotionQuitPermit,
         VoicePromotionSessionCloseToken,
     )
+    from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Chat.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.config import coerce_bool_setting, runtime_capture_policy
@@ -1163,7 +1165,9 @@ class ConsoleRuntime:
         if self._voice_dispatch_supervisor is None:
             if self._disposed:
                 raise RuntimeError("voice_runtime_disposed")
-            from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
+            from tldw_chatbook.Chat.console_voice_supervisor import (
+                VoiceDispatchSupervisor,
+            )
 
             self._voice_dispatch_supervisor = VoiceDispatchSupervisor()
         return self._voice_dispatch_supervisor
@@ -3090,7 +3094,7 @@ class ConsoleRuntime:
             pending_gc_result: Any | None = None
             while not self._disposed:
                 try:
-                    result = await asyncio.to_thread(maintenance.run_batch)
+                    result = await run_owned_db_call(database, maintenance.run_batch)
                 except Exception as exc:  # noqa: BLE001 - retry remains restart-safe
                     logger.warning(
                         "legacy trace maintenance paused after {}",
@@ -3146,14 +3150,14 @@ class ConsoleRuntime:
                             None,
                         )
                         collector = TraceGarbageCollector(database)
-                        current_epoch = await asyncio.to_thread(
+                        current_epoch = await run_owned_db_call(database,
                             collector.current_graph_epoch
                         )
                         if pending_gc_result is None:
                             if current_epoch == last_collected_epoch:
                                 await asyncio.sleep(1.0)
                                 continue
-                            pending_gc_result = await asyncio.to_thread(
+                            pending_gc_result = await run_owned_db_call(database,
                                 collector.collect,
                                 request_id=f"auto-{new_opaque_id()}",
                             )
@@ -3179,7 +3183,7 @@ class ConsoleRuntime:
                             resume_dispatch=resume,
                             cancel_requested=lambda: self._disposed,
                         )
-                        outcome = await asyncio.to_thread(
+                        outcome = await run_owned_db_call(database,
                             compactor.run_after_gc,
                             pending_gc_result,
                         )

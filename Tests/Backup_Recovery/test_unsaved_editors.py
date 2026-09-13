@@ -160,33 +160,36 @@ def test_file_notes_checks_live_body_before_changed_message(state, body, blocked
     assert owner._editor_widget.text == body
 
 
-@pytest.mark.parametrize("location", ["transition", "pending", "inflight"])
+@pytest.mark.parametrize("location", ["clean", "visible", "transition", "pending"])
 def test_console_transition_and_send_stashes_are_not_reconciled(location):
     from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.UI.Screens.chat_screen import _ConsolePendingSend
     from tldw_chatbook.Widgets.Console.console_composer_bar import (
         ConsoleComposerBar,
         ConsoleDraftStash,
     )
 
     composer = ConsoleComposerBar()
-    composer.load_draft("")
-    view = object.__new__(ChatScreen)
+    composer.load_draft("visible draft" if location == "visible" else "")
+    view = ChatScreen(SimpleNamespace(app_config={}))
     view.query = lambda kind: [composer]
     snapshot = ("session", "transition draft", 1) if location == "transition" else None
     stash = ConsoleDraftStash([], "send draft", False)
-    view._session = SimpleNamespace(_console_draft_switch_snapshot=snapshot)
-    view._console_pending_send_stash = stash if location == "pending" else None
-    view._console_inflight_send_stashes = (
-        {"session": stash} if location == "inflight" else {}
+    view._session._console_draft_switch_snapshot = snapshot
+    view._console_pending_send = (
+        _ConsolePendingSend("session", stash, object()) if location == "pending" else None
     )
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.view = view
     result = probe_unsaved_editors(console_runtime=runtime)
-    assert result[0].reason == "needs-user-save-discard"
+    if location == "clean":
+        assert result == ()
+    else:
+        assert result[0].reason == "needs-user-save-discard"
     assert view._session._console_draft_switch_snapshot is snapshot
     assert stash.text == "send draft"
-    assert composer.draft_text() == ""
+    assert composer.draft_text() == ("visible draft" if location == "visible" else "")
 
 
 def test_unknown_store_does_not_execute_sessions():
@@ -329,7 +332,11 @@ def _retained_console_snapshot():
             "image_view_modes": {},
             "library_rag_source_types": ["media"],
             "pending_console_launch": None,
+            "pending_console_launch_revision": 0,
             "console_evidence_sent_notice": None,
+            "suspended_conversation_settings": None,
+            "suspended_conversation_settings_token": None,
+            "pending_conversation_settings_return_target": None,
         },
     }
 
@@ -342,6 +349,9 @@ def _retained_console_snapshot():
         "pending_approval",
         "pending_skill_install",
         "pending_skill_script",
+        "pending_question",
+        "pending_chat_create",
+        "suspended_conversation_settings",
         "unknown_nested",
     ],
 )
@@ -354,7 +364,7 @@ def test_retained_console_nested_authoring_is_not_assumed_passive(pending):
 
     snapshot = _retained_console_snapshot()
     native = snapshot["native_console_state"]
-    if pending == "pending_console_launch":
+    if pending in {"pending_console_launch", "suspended_conversation_settings"}:
         native[pending] = {"evidence": "not submitted"}
     elif pending is not None:
         native["task_resume_state"][pending] = {"draft": "pending"}
@@ -427,7 +437,8 @@ def test_retained_speech_realtime_draft_is_compared_without_panel_sync(changed):
     )
 
     realtime = _RealtimeSettingsDraft(
-        False, "openai", "gpt-realtime", "", "30", "auto", "semantic_vad", "0.5", "500"
+        False, "openai", "gpt-realtime", "", "30", "auto", "semantic_vad", "0.5", "500",
+        "", False,
     )
     snapshot = SpeechTTSPanelDraftSnapshot(
         state=load_global_speech_tts_state({}),

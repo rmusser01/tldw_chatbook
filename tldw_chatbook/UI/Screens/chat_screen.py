@@ -13045,12 +13045,15 @@ class ChatScreen(BaseAppScreen):
             live = set(live_scope_ids)
             offset = 0
             page_size = 1000
-            while True:
-                rows = db.list_all_active_conversations(limit=page_size, offset=offset)
-                live.update(str(row["id"]) for row in rows if row.get("id"))
-                if len(rows) < page_size:
-                    break
-                offset += page_size
+            from tldw_chatbook.DB.base_db import operation_owned_connection
+
+            with operation_owned_connection(db):
+                while True:
+                    rows = db.list_all_active_conversations(limit=page_size, offset=offset)
+                    live.update(str(row["id"]) for row in rows if row.get("id"))
+                    if len(rows) < page_size:
+                        break
+                    offset += page_size
             prunable = collect_prunable_console_rail_keys(
                 stored_keys, live_scope_ids=live
             )
@@ -15158,7 +15161,7 @@ class ChatScreen(BaseAppScreen):
         # TASK-2154.10 (AC-04): vestibular-accessible static backdrop when the
         # user opts into reduced motion; refreshed with every guidance sync.
         modal.reduced_motion = bool(
-            get_cli_setting("appearance", "reduce_motion", False)
+            self.app_instance.app_config.get("appearance", {}).get("reduce_motion", False)
         )
         modal.sync_card_state(
             card_state,

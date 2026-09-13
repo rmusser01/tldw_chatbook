@@ -17206,6 +17206,8 @@ class TldwCli(
         frees its slot immediately -- the queue must advance past it in the
         same pass rather than waiting for a completion that will never come.
         """
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
         gate = getattr(self, "_boot_worker_gate", None)
         if gate is None:
             return
@@ -17216,11 +17218,18 @@ class TldwCli(
             admitted = gate.admit()
             if not admitted:
                 break
-            for key in admitted:
+            for index, key in enumerate(admitted):
                 worker: Optional[Worker] = None
                 try:
                     worker = self._start_boot_worker(key)
-                except Exception:
+                except Exception as error:
+                    if isinstance(error, RecoveryRequired) and str(error) == "storage_locally_paused":
+                        # Native intent can arrive after admission but before a
+                        # starter reads its config. Retain all unstarted keys;
+                        # the existing reconcile timer retries after readmission.
+                        gate.defer(admitted[index:])
+                        self._arm_boot_worker_reconcile()
+                        return
                     self.loguru_logger.opt(exception=True).warning(
                         f"Staggered boot worker {key!r} failed to start"
                     )
@@ -17292,7 +17301,7 @@ class TldwCli(
                 continue
             self._boot_worker_handles.pop(key, None)
             released = gate.complete(key) or released
-        if released:
+        if released or gate.pending:
             self._admit_staggered_boot_workers()
         if gate.is_drained or gate.is_closed:
             self._stop_boot_worker_reconcile()

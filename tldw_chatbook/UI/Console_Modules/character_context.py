@@ -21,6 +21,7 @@ from ...Character_Chat.character_conversation_navigation import (
     UnavailableCharacterReason,
     UnresolvedConversationKey,
 )
+from ...DB.base_db import run_owned_db_call
 from ...Utils.input_validation import validate_console_character_query
 
 if TYPE_CHECKING:
@@ -368,8 +369,8 @@ class ConsoleCharacterContextController:
                     )
                 continue
             try:
-                metadata_before = await asyncio.to_thread(
-                    self._read_database_scope_metadata, database
+                metadata_before = await run_owned_db_call(
+                    database, self._read_database_scope_metadata, database
                 )
             except Exception:  # noqa: BLE001 - DB adapters have no shared error base.
                 if not self._ambient_scope_matches(
@@ -382,8 +383,8 @@ class ConsoleCharacterContextController:
             if not self._ambient_scope_matches(database, current, open_conversation_id):
                 continue
             try:
-                metadata_after = await asyncio.to_thread(
-                    self._read_database_scope_metadata, database
+                metadata_after = await run_owned_db_call(
+                    database, self._read_database_scope_metadata, database
                 )
             except Exception:  # noqa: BLE001 - DB adapters have no shared error base.
                 if not self._ambient_scope_matches(
@@ -565,8 +566,8 @@ class ConsoleCharacterContextController:
                     )
                 return
             try:
-                groups, details = await asyncio.to_thread(
-                    self._load_recent_sync, database, fingerprint
+                groups, details = await run_owned_db_call(
+                    database, self._load_recent_sync, database, fingerprint
                 )
             except Exception:  # noqa: BLE001 - DB boundary becomes visible recovery
                 if generation != self._generation:
@@ -633,8 +634,8 @@ class ConsoleCharacterContextController:
                 service = self._service_factory(
                     snapshot.database, current_character=None
                 )
-                details = await asyncio.to_thread(
-                    self._load_unavailable_details_sync, service, bounded_groups
+                details = await run_owned_db_call(
+                    snapshot.database, self._load_unavailable_details_sync, service, bounded_groups
                 )
             except Exception:  # noqa: BLE001 - stale DB failures fail closed
                 if generation != self._generation:
@@ -758,8 +759,8 @@ class ConsoleCharacterContextController:
                 return CharacterConversationPage(
                     (), 0, None, 0, CharacterKeywordIndexStatus.ABSENT
                 )
-            page = await asyncio.to_thread(
-                self._keyword_page_sync,
+            page = await run_owned_db_call(
+                snapshot.database, self._keyword_page_sync,
                 snapshot.database,
                 snapshot.fingerprint,
                 query,
@@ -856,8 +857,8 @@ class ConsoleCharacterContextController:
                     )
                 return
             try:
-                rows, status = await asyncio.to_thread(
-                    self._search_sync,
+                rows, status = await run_owned_db_call(
+                    snapshot.database, self._search_sync,
                     snapshot.database,
                     snapshot.fingerprint,
                     normalized,
@@ -1046,8 +1047,8 @@ class ConsoleCharacterContextController:
                 service = self._service_factory(
                     snapshot.database, current_character=None
                 )
-                evidence, page = await asyncio.to_thread(
-                    lambda service=service: (
+                evidence, page = await run_owned_db_call(
+                    snapshot.database, lambda service=service: (
                         service.refresh_unresolved_evidence(key),
                         service.repair_candidates(
                             key, limit=CONSOLE_CHARACTER_REPAIR_CANDIDATE_LIMIT

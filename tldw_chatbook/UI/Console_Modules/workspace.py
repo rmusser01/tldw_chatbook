@@ -17,32 +17,46 @@ DOM or reach through sibling controllers.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
-from functools import partial
-from types import MappingProxyType
-from typing import Any, Optional, TYPE_CHECKING
 import asyncio
-from datetime import datetime, timezone
 import inspect
 import re
 import time
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+from functools import partial
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.css.query import NoMatches
 
+from tldw_chatbook.DB.base_db import operation_owned_connection
+
+from ...Character_Chat.character_conversation_navigation import (
+    LocalCharacterConversationTarget,
+)
 from ...Chat.console_appearance import ConsoleConversationAppearance
-from ...Chat.console_chat_models import (    CONSOLE_GLOBAL_WORKSPACE_ID,
+from ...Chat.console_chat_models import (
+    CONSOLE_GLOBAL_WORKSPACE_ID,
     CONSOLE_RUN_MARKER_GLYPHS,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleRunMarker,
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
 )
+from ...Chat.console_conversation_hydration import (
+    ConsoleGenerationSettingsHydration,
+    ConversationLoadFailed,
+    ConversationServiceUnavailable,
+    hydrate_console_session,
+    load_console_conversation_tree,
+)
 from ...Chat.console_display_state import evidence_bundle_from_launch
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
+from ...Chat.console_session_settings import blank_console_session_settings
 from ...Chat.console_switcher_state import (
     CONSOLE_SWITCHER_PAGE_LIMIT,
     ConsoleSwitcherActivitySignal,
@@ -56,38 +70,28 @@ from ...Chat.console_switcher_state import (
     plan_console_history_query,
     resolve_console_history_timezone,
 )
-from ...Chat.console_conversation_hydration import (
-    ConversationLoadFailed,
-    ConversationServiceUnavailable,
-    ConsoleGenerationSettingsHydration,
-    hydrate_console_session,
-    load_console_conversation_tree,
-)
-from ...Character_Chat.character_conversation_navigation import (
-    LocalCharacterConversationTarget,
-)
-from ...Chat.console_session_settings import blank_console_session_settings
 from ...Chat.rag_scope import RagScope
 from ...config import save_setting_to_cli_config
+from ...Utils.input_validation import (
+    CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
+    sanitize_string,
+    validate_console_switcher_query,
+    validate_text_input,
+)
 from ...Widgets.confirmation_dialog import ConfirmationDialog
-from ...Widgets.glyph_fallback import resolve_glyph
 from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
-from ...Workspaces.models import (
-    RuntimeBindingKind,
-    RuntimeBindingStatus,
-    WorkspaceRuntimeBinding,
-)
+from ...Widgets.glyph_fallback import resolve_glyph
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+    DEFAULT_WORKSPACE_ID,
     ConsoleConversationBrowserInputRow,
     ConsoleConversationBrowserRow,
-    DEFAULT_WORKSPACE_ID,
     WorkspaceRecord,
     WorkspaceTreeWorkspace,
     build_console_conversation_browser_state,
@@ -108,11 +112,10 @@ from ...Workspaces.display_state import (
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
 )
-from ...Utils.input_validation import (
-    CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
-    sanitize_string,
-    validate_console_switcher_query,
-    validate_text_input,
+from ...Workspaces.models import (
+    RuntimeBindingKind,
+    RuntimeBindingStatus,
+    WorkspaceRuntimeBinding,
 )
 from ...Workspaces.registry_service import (
     WorkspaceNotFound,
@@ -6142,40 +6145,41 @@ class ConsoleWorkspaceController:
     ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
         """Read runtime bindings and folder readiness off-loop into a snapshot."""
         registry = getattr(self.app_instance, "workspace_registry_service", None)
-        availability: dict[str, bool] = {}
-        bindings_by_id: dict[str, tuple[WorkspaceRuntimeBinding, ...]] = {}
-        for workspace_id in workspace_ids:
-            if registry is None:
-                availability[workspace_id] = False
-                bindings_by_id[workspace_id] = ()
-                continue
-            try:
-                folder_bindings = tuple(registry.list_folder_bindings(workspace_id))
-                list_runtime_bindings = getattr(registry, "list_runtime_bindings", None)
-                runtime_bindings = (
-                    tuple(list_runtime_bindings(workspace_id))
-                    if callable(list_runtime_bindings)
-                    else folder_bindings
-                )
-                refreshed_by_binding_id = {
-                    str(getattr(binding, "binding_id", "")): binding
-                    for binding in folder_bindings
-                }
-                bindings_by_id[workspace_id] = tuple(
-                    refreshed_by_binding_id.get(
-                        str(getattr(binding, "binding_id", "")), binding
+        with operation_owned_connection(getattr(registry, "db", None)):
+            availability: dict[str, bool] = {}
+            bindings_by_id: dict[str, tuple[WorkspaceRuntimeBinding, ...]] = {}
+            for workspace_id in workspace_ids:
+                if registry is None:
+                    availability[workspace_id] = False
+                    bindings_by_id[workspace_id] = ()
+                    continue
+                try:
+                    folder_bindings = tuple(registry.list_folder_bindings(workspace_id))
+                    list_runtime_bindings = getattr(registry, "list_runtime_bindings", None)
+                    runtime_bindings = (
+                        tuple(list_runtime_bindings(workspace_id))
+                        if callable(list_runtime_bindings)
+                        else folder_bindings
                     )
-                    for binding in runtime_bindings
-                )
-                availability[workspace_id] = any(
-                    binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
-                    and binding.status is RuntimeBindingStatus.READY
-                    for binding in folder_bindings
-                )
-            except Exception:
-                availability[workspace_id] = False
-                bindings_by_id[workspace_id] = ()
-        return availability, bindings_by_id
+                    refreshed_by_binding_id = {
+                        str(getattr(binding, "binding_id", "")): binding
+                        for binding in folder_bindings
+                    }
+                    bindings_by_id[workspace_id] = tuple(
+                        refreshed_by_binding_id.get(
+                            str(getattr(binding, "binding_id", "")), binding
+                        )
+                        for binding in runtime_bindings
+                    )
+                    availability[workspace_id] = any(
+                        binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
+                        and binding.status is RuntimeBindingStatus.READY
+                        for binding in folder_bindings
+                    )
+                except Exception:
+                    availability[workspace_id] = False
+                    bindings_by_id[workspace_id] = ()
+            return availability, bindings_by_id
 
     async def _refresh_workspace_files_availability_snapshot(self) -> None:
         """Publish only the latest completed folder-availability generation."""
