@@ -21,6 +21,7 @@ was written here and moved next to ``ScriptedChat`` in Task 6.5, when
 flipping the default made nine other suites need it too.
 """
 
+import dataclasses
 import json
 import subprocess
 import threading
@@ -59,13 +60,14 @@ from tldw_chatbook.Agents.agent_models import (
     ToolReviewDecision,
     ToolSchema,
 )
-from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.agent_service import AgentService, _call_with_timeout
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
 from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolProvider,
     _default_specs,
 )
-from tldw_chatbook.Agents.run_context import current_run_id
+from tldw_chatbook.Agents.run_context import current_run_id, use_run_id
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Agents.tool_catalog import (
     CHECK_AGENTS_SCHEMA,
@@ -75,6 +77,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
@@ -4111,7 +4114,7 @@ def test_isolated_child_writes_only_to_selected_repository_worktree(
         binding_id="selected",
         alias="selected",
         root=git_repo,
-        locator_fingerprint="selected-fingerprint",
+        locator_fingerprint="f" * 64,
         root_identity=agent_worktree._worktree_root_identity(git_repo),
         allow_write=True,
         guard=lambda write: (
@@ -4154,6 +4157,377 @@ def test_isolated_child_writes_only_to_selected_repository_worktree(
             agent_worktree.discard_agent_worktree(git_repo, created)
 
 
+def test_worktree_creation_is_durable_until_exact_execution_owner_drains(db, git_repo):
+    """The created checkout stays held until its real owner physically drains."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    provider = _fs_local_provider(git_repo)
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="f" * 64,
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda _write: True,
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[],
+        providers=(provider,),
+        worktree_repo_authority=authority,
+    )
+    handle = coordinator.reserve(task="iso", agent=None, isolation="worktree")
+    assert handle is not None
+    service._agent_worktrees = {}
+    run_id = "child-durable"
+    db.create_run(
+        run_id=run_id,
+        conversation_id="c",
+        agent_kind="subagent",
+        task="iso",
+        parent_run_id=None,
+        budget={},
+    )
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="c", child=True
+    )
+    operation = owner.reserve_tool()
+
+    refusal = service._admit_agent_worktree(handle, run_id, owner)
+    assert refusal is None
+    created = service._agent_worktrees[handle.handle_id]
+    reopened = AgentRunsDB(db.db_path, client_id="reopened")
+    record = AgentWorktreeRepository(reopened).get_for_conversation(run_id, "c")
+    assert record is not None
+    assert record["writer_state"] == "held"
+    assert record["workspace_id"] == "workspace"
+    assert record["binding_id"] == "selected"
+    assert record["locator_fingerprint"] == "f" * 64
+    assert record["repo_identity"] == authority.root_identity
+    assert record["child_identity"] == agent_worktree._worktree_root_identity(
+        created.worktree_path
+    )
+    assert record["base_sha"] == created.base_sha
+    assert record["execution_id"] == owner.execution_id
+    assert owner.run_id == run_id
+    borrowed_connection = db._thread_local.conn
+
+    owner.finish_root()
+    assert (
+        AgentWorktreeRepository(reopened).get_for_conversation(run_id, "c")[
+            "writer_state"
+        ]
+        == "held"
+    )
+    operation.finish()
+    assert db._thread_local.conn is borrowed_connection
+    assert (
+        AgentWorktreeRepository(reopened).get_for_conversation(run_id, "c")[
+            "writer_state"
+        ]
+        == "drained"
+    )
+    agent_worktree.discard_agent_worktree(git_repo, created)
+
+
+def test_drain_callback_closes_only_connection_created_on_callback_thread(
+    db, git_repo, monkeypatch
+):
+    """A drain worker closes its own DB handle without closing the caller's."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    provider = _fs_local_provider(git_repo)
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="c" * 64,
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda _write: True,
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db, [], providers=(provider,), worktree_repo_authority=authority
+    )
+    service._agent_worktrees = {}
+    handle = coordinator.reserve(task="iso", agent=None, isolation="worktree")
+    assert handle is not None
+    run_id = "child-callback-connection"
+    db.create_run(
+        run_id=run_id,
+        conversation_id="c",
+        agent_kind="subagent",
+        task="iso",
+        parent_run_id=None,
+        budget={},
+    )
+    owner = service.runtime_capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="c", child=True
+    )
+    operation = owner.reserve_tool()
+    assert service._admit_agent_worktree(handle, run_id, owner) is None
+    created = service._agent_worktrees[handle.handle_id]
+    caller_connection = db._thread_local.conn
+    closed_on = []
+    real_close = db.close
+
+    def record_close():
+        closed_on.append(threading.get_ident())
+        real_close()
+
+    monkeypatch.setattr(db, "close", record_close)
+    owner.finish_root()
+    worker = threading.Thread(target=operation.finish)
+    worker.start()
+    worker.join(5)
+    assert not worker.is_alive()
+    assert closed_on == [worker.ident]
+    assert db._thread_local.conn is caller_connection
+    agent_worktree.discard_agent_worktree(git_repo, created)
+
+
+def test_logical_tool_timeout_stays_held_until_physical_worker_finishes(db, git_repo):
+    """Terminal status cannot drain a timed-out operation still executing."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    provider = _fs_local_provider(git_repo)
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="b" * 64,
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda _write: True,
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db, [], providers=(provider,), worktree_repo_authority=authority
+    )
+    service._agent_worktrees = {}
+    handle = coordinator.reserve(task="iso", agent=None, isolation="worktree")
+    assert handle is not None
+    run_id = "child-timeout"
+    db.create_run(
+        run_id=run_id,
+        conversation_id="c",
+        agent_kind="subagent",
+        task="iso",
+        parent_run_id=None,
+        budget={},
+    )
+    owner = service.runtime_capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="c", child=True
+    )
+    assert service._admit_agent_worktree(handle, run_id, owner) is None
+    created = service._agent_worktrees[handle.handle_id]
+    release = threading.Event()
+
+    def blocked_tool():
+        assert release.wait(5)
+        return ToolResult(ok=True, content="late")
+
+    result = _call_with_timeout(blocked_tool, 0.02, "slow", lambda: False, owner=owner)
+    assert not result.ok and "timed out" in str(result.error)
+    db.set_status(run_id, RUN_ERROR, result="timed out")
+    owner.finish_root()
+    repository = AgentWorktreeRepository(
+        AgentRunsDB(db.db_path, client_id="reopened-timeout")
+    )
+    assert repository.get_for_conversation(run_id, "c")["writer_state"] == "held"
+    release.set()
+    _wait_until(
+        lambda: (
+            repository.get_for_conversation(run_id, "c")["writer_state"] == "drained"
+        ),
+        "physical tool completion did not drain ownership",
+    )
+    agent_worktree.discard_agent_worktree(git_repo, created)
+
+
+def test_failed_record_insertion_retains_checkout_and_never_routes(
+    db, git_repo, monkeypatch
+):
+    """A durable-record failure refuses the child and preserves manual recovery."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    provider = _fs_local_provider(git_repo)
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="a" * 64,
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda _write: True,
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db, [], providers=(provider,), worktree_repo_authority=authority
+    )
+    service._agent_worktrees = {}
+    handle = coordinator.reserve(task="iso", agent=None, isolation="worktree")
+    assert handle is not None
+    run_id = "child-record-failure"
+    db.create_run(
+        run_id=run_id,
+        conversation_id="c",
+        agent_kind="subagent",
+        task="iso",
+        parent_run_id=None,
+        budget={},
+    )
+    owner = service.runtime_capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="c", child=True
+    )
+    monkeypatch.setattr(
+        AgentWorktreeRepository,
+        "record_created",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("db failed")),
+    )
+
+    refusal = service._admit_agent_worktree(handle, run_id, owner)
+    created = service._agent_worktrees[handle.handle_id]
+    assert refusal is not None and "admit_failed" in refusal
+    assert created.worktree_path.is_dir()
+    assert run_id not in provider._agent_roots
+    assert AgentWorktreeRepository(db).get_for_conversation(run_id, "c") is None
+    owner.finish_root()
+    agent_worktree.discard_agent_worktree(git_repo, created)
+
+
+def test_real_child_creation_is_durable_before_its_first_write(db, git_repo):
+    """A gated child is durably held before its first provider tool call."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    entered = threading.Event()
+    release = threading.Event()
+    provider = _fs_local_provider(git_repo)
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="d" * 64,
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda _write: True,
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "gated iso", "isolation": "worktree"}),
+            _after(entered, "parent done"),
+        ],
+        child_replies={
+            "gated iso": [
+                _gated_child(
+                    entered,
+                    release,
+                    fence("fs_write", {"path": "child.txt", "content": "owned\n"}),
+                ),
+                "child done",
+            ]
+        },
+        providers=(provider,),
+        worktree_repo_authority=authority,
+    )
+    try:
+        _parent_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=ISO_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome.status == RUN_DONE
+        child = _child_row(db)
+        reopened = AgentRunsDB(db.db_path, client_id="reopened-gated")
+        repository = AgentWorktreeRepository(reopened)
+        record = repository.get_for_conversation(child["id"], "c")
+        assert record is not None and record["writer_state"] == "held"
+        created = next(iter(service._agent_worktrees.values()))
+        assert not (created.worktree_path / "child.txt").exists()
+
+        release.set()
+        _wait_until(coordinator.all_finished, "the gated child never finished")
+        assert (created.worktree_path / "child.txt").read_text() == "owned\n"
+        assert (
+            repository.get_for_conversation(child["id"], "c")["writer_state"]
+            == "drained"
+        )
+    finally:
+        release.set()
+        join_fleet_children(service)
+        for created in service._agent_worktrees.values():
+            agent_worktree.discard_agent_worktree(git_repo, created)
+
+
+def test_cleanup_unproven_stays_uncertain_after_exact_owner_drains(db, git_repo):
+    """Provider cleanup refusal durably poisons its admitted child owner."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+    from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutionError
+
+    provider = _fs_local_provider(git_repo)
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="e" * 64,
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda _write: True,
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[],
+        providers=(provider,),
+        worktree_repo_authority=authority,
+    )
+    service._agent_worktrees = {}
+    handle = coordinator.reserve(task="iso", agent=None, isolation="worktree")
+    assert handle is not None
+    run_id = "child-uncertain"
+    db.create_run(
+        run_id=run_id,
+        conversation_id="c",
+        agent_kind="subagent",
+        task="iso",
+        parent_run_id=None,
+        budget={},
+    )
+    owner = service.runtime_capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="c", child=True
+    )
+    operation = owner.reserve_tool()
+    assert service._admit_agent_worktree(handle, run_id, owner) is None
+    created = service._agent_worktrees[handle.handle_id]
+    admitted = provider._agent_roots[run_id]
+    spec = provider._path_specs_by_alias[admitted.alias]["fs_read"]
+
+    def fail(_args):
+        raise WorkspaceToolExecutionError("cleanup_unproven")
+
+    provider._path_specs_by_alias[admitted.alias]["fs_read"] = dataclasses.replace(
+        spec, handler=fail
+    )
+    with use_run_id(run_id):
+        result = provider.invoke("local:fs_read", {"path": "note.txt"})
+    assert not result.ok
+    reopened = AgentRunsDB(db.db_path, client_id="reopened-uncertain")
+    repository = AgentWorktreeRepository(reopened)
+    assert repository.get_for_conversation(run_id, "c")["writer_state"] == "uncertain"
+
+    owner.finish_root()
+    operation.finish()
+    assert repository.get_for_conversation(run_id, "c")["writer_state"] == "uncertain"
+    agent_worktree.discard_agent_worktree(git_repo, created)
+
+
 @pytest.mark.parametrize(
     ("allow_write", "guard_result"),
     [(False, True), (True, False)],
@@ -4171,7 +4545,7 @@ def test_worktree_admission_refuses_invalid_source_authority_before_git(
         binding_id="selected",
         alias="selected",
         root=git_repo,
-        locator_fingerprint="selected-fingerprint",
+        locator_fingerprint="f" * 64,
         root_identity=agent_worktree._worktree_root_identity(git_repo),
         allow_write=allow_write,
         guard=lambda _write: guard_result,
@@ -4193,7 +4567,11 @@ def test_worktree_admission_refuses_invalid_source_authority_before_git(
         ),
     )
 
-    refusal = service._admit_agent_worktree(handle, "child-run")
+    child_owner = service.runtime_capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="c", child=True
+    )
+    refusal = service._admit_agent_worktree(handle, "child-run", child_owner)
+    child_owner.finish_root()
 
     assert refusal is not None and "source_authority_revoked" in refusal
     assert service._agent_worktrees == {}
@@ -4209,7 +4587,7 @@ def test_post_create_authority_drift_retains_created_checkout(db, git_repo):
         binding_id="selected",
         alias="selected",
         root=git_repo,
-        locator_fingerprint="selected-fingerprint",
+        locator_fingerprint="f" * 64,
         root_identity=agent_worktree._worktree_root_identity(git_repo),
         allow_write=True,
         guard=lambda _write: next(guard_results),
@@ -4225,7 +4603,11 @@ def test_post_create_authority_drift_retains_created_checkout(db, git_repo):
     handle = coordinator.reserve(task="iso", agent=None, isolation="worktree")
     assert handle is not None
 
-    refusal = service._admit_agent_worktree(handle, "child-drift")
+    child_owner = service.runtime_capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="c", child=True
+    )
+    refusal = service._admit_agent_worktree(handle, "child-drift", child_owner)
+    child_owner.finish_root()
 
     assert refusal is not None and "source_authority_revoked" in refusal
     created = service._agent_worktrees[handle.handle_id]
@@ -4248,7 +4630,7 @@ def test_provider_admission_failure_retains_real_created_checkout(
         binding_id="selected",
         alias="selected",
         root=git_repo,
-        locator_fingerprint="selected-fingerprint",
+        locator_fingerprint="f" * 64,
         root_identity=agent_worktree._worktree_root_identity(git_repo),
         allow_write=True,
         guard=lambda _write: True,
@@ -4296,7 +4678,7 @@ def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
         binding_id="selected",
         alias="selected",
         root=git_repo,
-        locator_fingerprint="selected-fingerprint",
+        locator_fingerprint="f" * 64,
         root_identity=agent_worktree._worktree_root_identity(git_repo),
         allow_write=True,
         guard=lambda _write: True,

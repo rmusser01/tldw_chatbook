@@ -406,6 +406,7 @@ class RunAdmittedWorkspaceRoot:
     guard: Callable[[bool], bool]
     workspace_executor: WorkspaceToolExecutor | None = None
     authority_scope: Callable[[], ContextManager[Path]] | None = None
+    on_cleanup_unproven: Callable[[], None] | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -421,6 +422,10 @@ class RunAdmittedWorkspaceRoot:
             raise ValueError("root_identity must be non-empty")
         if not callable(self.guard):
             raise ValueError("guard must be callable")
+        if self.on_cleanup_unproven is not None and not callable(
+            self.on_cleanup_unproven
+        ):
+            raise ValueError("on_cleanup_unproven must be callable")
 
 
 def _fit_result(text: str) -> str:
@@ -1892,6 +1897,18 @@ class LocalToolProvider:
                         provider_terminal=provider_terminal,
                     )
                 except WorkspaceToolExecutionError as exc:
+                    if (
+                        exc.code == "cleanup_unproven"
+                        and authority is not None
+                        and authority.on_cleanup_unproven is not None
+                    ):
+                        try:
+                            authority.on_cleanup_unproven()
+                        except Exception as observer_exc:  # noqa: BLE001 - preserve refusal
+                            logger.warning(
+                                "Cleanup observer failed (exception_type={})",
+                                type(observer_exc).__name__,
+                            )
                     if stale_guard is not None and _is_cas_precondition_failure(
                         str(exc)
                     ):

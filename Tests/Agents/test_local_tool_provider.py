@@ -1,4 +1,5 @@
 import copy
+import dataclasses
 import json
 import logging
 import os
@@ -4274,6 +4275,56 @@ def test_lock_contention_is_not_relabeled_stale_write(tmp_path):
     assert not result.ok
     assert "Stale write refused" not in str(result.error)
     assert "target is being modified" in str(result.error)
+
+
+def test_cleanup_unproven_notifies_exact_admitted_root_before_refusal(tmp_path):
+    """A cleanup failure poisons ownership before its refusal is returned."""
+    observed = []
+    authority = _agent_authority(tmp_path)
+    object.__setattr__(
+        authority, "on_cleanup_unproven", lambda: observed.append("seen")
+    )
+    provider = _guard_provider(tmp_path)
+    provider.admit_run_workspace_root(RUN, authority)
+    spec = provider._path_specs_by_alias[authority.alias]["fs_read"]
+
+    def fail(_args):
+        raise WorkspaceToolExecutionError("cleanup_unproven", "private/path leaked")
+
+    provider._path_specs_by_alias[authority.alias]["fs_read"] = dataclasses.replace(
+        spec, handler=fail
+    )
+    result = provider.invoke("local:fs_read", {"path": "note.txt"})
+
+    assert observed == ["seen"]
+    assert not result.ok
+    assert "private/path leaked" not in str(result.error)
+
+
+def test_cleanup_unproven_observer_failure_preserves_original_refusal(tmp_path, capsys):
+    """Observer failure stays bounded and cannot replace the cleanup refusal."""
+    authority = _agent_authority(tmp_path)
+
+    def observer():
+        raise RuntimeError("private/path leaked")
+
+    object.__setattr__(authority, "on_cleanup_unproven", observer)
+    provider = _guard_provider(tmp_path)
+    provider.admit_run_workspace_root(RUN, authority)
+    spec = provider._path_specs_by_alias[authority.alias]["fs_read"]
+
+    def fail(_args):
+        raise WorkspaceToolExecutionError("cleanup_unproven")
+
+    provider._path_specs_by_alias[authority.alias]["fs_read"] = dataclasses.replace(
+        spec, handler=fail
+    )
+    result = provider.invoke("local:fs_read", {"path": "note.txt"})
+    captured = capsys.readouterr()
+
+    assert not result.ok
+    assert result.error == "Private scratch space is unavailable; the tool was not run."
+    assert "private/path leaked" not in captured.err
 
 
 def test_fs_write_dry_run_previews_even_with_stale_stamp(tmp_path):

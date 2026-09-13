@@ -161,6 +161,21 @@ def _worktree_root_identity(path: Path) -> tuple[tuple[str, int, int, int], ...]
     return tuple(identities)
 
 
+def _git_common_directory_identity(
+    checkout: Path,
+) -> tuple[Path, tuple[tuple[str, int, int, int], ...]]:
+    """Resolve and capture the fixed Git common-directory structure."""
+    checkout = Path(checkout).resolve()
+    code, out, _err = _git(checkout, "rev-parse", "--git-common-dir")
+    if code != 0 or not out.strip():
+        raise RuntimeError("could not resolve Git common directory")
+    common_dir = Path(out.strip())
+    if not common_dir.is_absolute():
+        common_dir = checkout / common_dir
+    common_dir = common_dir.resolve(strict=True)
+    return common_dir, _worktree_root_identity(common_dir)
+
+
 def discard_agent_worktree(
     repo_root: Path, wt: AgentWorktree, *, force: bool = True
 ) -> WorktreeRefusal | None:
