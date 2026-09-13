@@ -5459,6 +5459,56 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 #agent-progress-actions { height: 3; align-horizontal: right; }
 #agent-progress-actions Button { min-width: 10; margin-left: 1; }
 
+/* Recorded agent work uses the native inline decision and modal shells. */
+#chat-worktree-confirm-card {
+    height: auto;
+    max-height: 22;
+    padding: $ds-space-inset;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    border: solid $ds-status-approval-required;
+}
+#worktree-action, .worktree-recovery-title {
+    height: auto;
+    text-style: $ds-text-strong;
+}
+#worktree-details {
+    height: auto;
+    max-height: 12;
+}
+#worktree-source, #worktree-destination, #worktree-diffstat, #worktree-consequence,
+.worktree-recovery-context, .worktree-recovery-row Static {
+    height: auto;
+    width: 100%;
+}
+#worktree-buttons, .worktree-recovery-actions, #worktree-recovery-footer {
+    height: $ds-control-height;
+}
+#worktree-buttons Button, .worktree-recovery-actions Button,
+#worktree-recovery-footer Button {
+    margin-right: $ds-space-inline;
+    min-width: 10;
+}
+WorktreeRecoveryDialog {
+    align: center middle;
+}
+#worktree-recovery-dialog {
+    width: 90%;
+    max-width: 110;
+    height: 90%;
+    padding: $ds-space-inset;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+#worktree-recovery-rows {
+    height: 1fr;
+}
+.worktree-recovery-row {
+    height: auto;
+    margin-bottom: $ds-space-section;
+}
+
 /* ===== MODULE: components/_workbench.tcss ===== */
 /* ========================================
  * COMPONENTS: Workbench

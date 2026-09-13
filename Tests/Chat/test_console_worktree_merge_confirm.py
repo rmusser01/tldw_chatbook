@@ -501,3 +501,115 @@ def test_bridge_disables_worktree_merge_disclosure_when_confirm_is_absent(
         tmp_path, monkeypatch, request_worktree_merge_confirm=None
     )
     assert captured.get("worktree_merge_enabled") is False
+
+
+def test_explicit_recovery_event_ignores_old_primary_stop(make_controller):
+    controller = make_controller()
+    session_id = controller.store.ensure_session().id
+    stopped = threading.Event()
+    stopped.set()
+    controller._active_cancel_events[session_id] = stopped
+    independent = threading.Event()
+    result = {}
+
+    def worker():
+        result["decision"] = controller.request_worktree_merge_confirm(
+            {"action": "apply"},
+            session_id=session_id,
+            operation_cancel_event=independent,
+        )
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    try:
+        _wait_until(lambda: bool(controller.pending_worktree_merge_ids()), timeout=1)
+        request_id = controller.pending_worktree_merge_ids()[0]
+        time.sleep(1.2)
+        assert controller.pending_worktree_merge_ids() == [request_id]
+        controller.resolve_pending_worktree_merge(True, request_id=request_id)
+    finally:
+        independent.set()
+        thread.join(3)
+    assert result["decision"] == {"allow": True}
+
+
+def test_first_worktree_decision_cannot_be_overwritten(make_controller):
+    controller = make_controller()
+    event = threading.Event()
+    decision = {}
+    controller._pending_worktree_merge_rounds["round"] = {
+        "event": event,
+        "decision": decision,
+    }
+    try:
+        controller.resolve_pending_worktree_merge(False, request_id="round")
+        controller.resolve_pending_worktree_merge(True, request_id="round")
+        assert decision == {"allow": False}
+    finally:
+        controller._pending_worktree_merge_rounds.clear()
+
+
+def test_generic_retained_target_is_not_a_worktree_surface(
+    make_controller, monkeypatch
+):
+    controller = make_controller()
+    controller.set_pending_worktree_merge = None
+    monkeypatch.setattr(
+        controller._interrupt_host, "has_retained_decision_target", lambda sid: True
+    )
+    assert controller.worktree_confirmation_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_worktree_round_survives_session_switch_and_detached_remount(
+    make_controller,
+):
+    import asyncio
+
+    from Tests.Chat.test_console_runtime_lifetime import _runtime_with, _View
+
+    controller = make_controller()
+    session = controller.store.ensure_session()
+    other = controller.store.create_session(title="Other", activate=False)
+    shown = []
+    view = _View({"set_pending_worktree_merge": shown.append})
+    runtime = _runtime_with(controller, view)
+    cancel = threading.Event()
+    result = {}
+
+    def worker():
+        result.update(
+            controller.request_worktree_merge_confirm(
+                {"action": "apply"},
+                session_id=session.id,
+                operation_cancel_event=cancel,
+            )
+        )
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    try:
+        await asyncio.to_thread(
+            _wait_until, lambda: bool(controller.pending_worktree_merge_ids())
+        )
+        request_id = controller.pending_worktree_merge_ids()[0]
+        controller.switch_session(other.id)
+        assert shown[-1] is None
+        controller.switch_session(session.id)
+        assert shown[-1]["request_id"] == request_id
+        await runtime.leave_console(view, view.attachment_generation)
+        await asyncio.sleep(1.2)
+        assert thread.is_alive()
+        replacement_shown = []
+        replacement = _View({"set_pending_worktree_merge": replacement_shown.append})
+        replacement.attachment_generation = runtime.attach_view(replacement)
+        runtime.finish_view_reconciliation(
+            replacement, replacement.attachment_generation
+        )
+        assert replacement_shown[-1]["request_id"] == request_id
+        controller.resolve_pending_worktree_merge(True, request_id=request_id)
+        await asyncio.to_thread(thread.join, 3)
+        assert result == {"allow": True}
+    finally:
+        cancel.set()
+        await asyncio.to_thread(thread.join, 3)
