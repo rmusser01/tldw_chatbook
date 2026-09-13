@@ -589,3 +589,11 @@ routes write under it. Also from fix round 1: a captured reply that opens with
 a code fence or a heading is titled by its first line of text, and Capture as
 note refuses at dispatch in a temporary chat as well as being offered
 disabled — copy-only, checked against the notes schema and list query.)*
+
+*Verified against fix/library-notes-wave3-docs — 2026-09-12 (task-32271:
+**Capture as note** re-walked on dev 7159fc0b99 at 235x52 and 100x30 on a
+seeded profile — More… ▸ Capture as note ▸ "Saved to Notes" ▸ **Open note**
+landing in the Library editor with the captured note's Info showing its
+`console` / `conversation:<id>` / `message:<id>` keywords; **Save as…** ▸
+Note still titles after the conversation; Alt+C and Alt+I open the rails at
+235x52.)*

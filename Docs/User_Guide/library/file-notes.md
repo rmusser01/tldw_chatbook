@@ -576,3 +576,12 @@ editor discloses hidden-but-preserved YAML frontmatter. The folder picker now
 falls back to `[notes] sync_directory` before your home directory. Verified
 live against a real git-backed vault: keyboard staging and a real commit
 (`git log`: `e69848b w3 round2 commit`).)*
+
+*Verified against fix/library-notes-wave3-docs — 2026-09-12 (task-32271: the
+Session Git chapter re-walked on dev 7159fc0b99 at 235x52 against a
+git-backed vault — Trust and check status → "Trust repository for session
+changes?" (the title corrected above; this page used to say "Trust Session
+Git repository?") → focus on the row list → Tab to **Stage** → **Commit
+staged (1)** → the commit review → committed; the "Choose File Notes Folder"
+picker's pre-filled **Folder path** selects on the click that focuses it; the
+hidden-frontmatter line reads as described.)*

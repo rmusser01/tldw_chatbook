@@ -607,11 +607,13 @@ configured sync folder.
 recovery, stopped, and migrated-candidate states. Use **Check changes** to scan
 an available root. **Review** appears when its changes need attention;
 legacy candidates use **Review migration**. **Pause** and **Resume** control an
-active root — though today a paused root whose note changed on both sides
-while it was paused does not come back on **Resume**: its row reads "✕ Failed
-· Next: Review changes", **Check changes** answers "Manual check failed", and
-**Review** says the folder is still paused (task-32519). **Retarget** and **Disconnect** remain visibly disabled with an
-unavailable-in-this-release reason; no files or notes change.
+active root — though today **Resume** does not bring a paused root back at
+all, whether or not anything changed while it was paused: its row reads
+"✕ Failed · Next: Review changes", **Check changes** answers "Manual check
+failed", and **Review** says the folder is still paused, so pause only when
+you can live with a restart (task-32519). **Retarget** and **Disconnect**
+remain visibly disabled with an unavailable-in-this-release reason; no files
+or notes change.
 
 ### Import once
 
@@ -684,11 +686,13 @@ headed for the same place — collapses to one summary row with a disclosure
 Open it to reach every individual **Skip** / **Create new**; the group's own
 bulk actions settle the whole run without opening it. Pages are filled by the
 rows they *show*, so a collapsed run costs a page one line and never has a
-page break through the middle of it. When there is more than one page, a
-pager strip closes the list — **Previous page**, "Page 1 of 3", **Next
-page** — and the two buttons say which end you are at ("Previous page
-unavailable — this is the first page") rather than merely greying out. A
-single-page review has no pager at all.
+page break through the middle of it. When there is more than one page,
+three lines close the page under its last group — **Previous page**, "Page 1
+of 4", **Next page** — and the button at either end says which end you are at
+("Previous page unavailable — this is the first page", "Next page unavailable
+— this is the last page") rather than merely greying out; a group that
+continues on another page says so in its header ("New (25 of 73 on this
+page)"). A single-page review has no pager at all.
 A `.git` folder is never walked, whatever the source and whatever the Obsidian
 toggle says: it is listed once under **Skipped** as "Git repository data —
 skipped. Nothing in it becomes a note." A git-backed vault would otherwise
@@ -1309,7 +1313,7 @@ where the entry is recorded "undone" → **Pause** (the action becomes Resume)
 → **Resume**. **Retarget** and **Disconnect** stay visibly disabled
 throughout, as this chapter says. (The Resume step was recorded as done, but
 that walk's own capture ends on "✕ Failed · Next: Review changes", and the
-docs sweep reproduced it: with a change pending on both sides, Resume leaves
+docs sweep reproduced it with nothing changed on either side: Resume leaves
 the root paused and every later Check changes fails — superseded by
 task-32271 below, rider task-32519.)
 
@@ -1384,3 +1388,32 @@ with the vault — to 0.08 ms flat. Upgrading an existing database backfills
 the relation from the bodies it already holds. task-32467: a "Linked from"
 answer that lands while the work pane is mid-recompose is now held for the
 next paint instead of terminating the app.)*
+
+*Verified against fix/library-notes-wave3-docs — 2026-09-12 (task-32271, the
+wave-3 docs sweep, on dev 7159fc0b99 merged into this branch: every wave-3
+claim on this page re-walked live at 235x52, the compact claims at 100x30 and
+the below-64-column claim at 60x24, on two seeded scratch profiles with
+git-backed vaults under `$HOME`. Contradictions found and superseded above:
+the Import once and Keep a folder synced pickers are the files-or-one-folder
+dialog with an empty "File name" field, not the pre-filled "Folder path" one
+(that is Folder files'); the review's pager is three stacked lines under a
+page's last group, present only past one page ("Page 1 of 4" on an 81-source
+vault — a 67-source vault with a collapsed run fits one page); the chooser
+heading reads "Add files to Library notes." over "Choose how files should
+relate to Library notes."; and the Session Git trust dialog is "Trust
+repository for session changes?" (see [File notes](file-notes.md)). Two
+defects found and filed rather than fixed: activating a lasting-sync root on
+a profile that already holds notes leaves the Notes list at its old count
+with no ⇄ Sync managed folder until the app restarts (task-32518), and Resume
+after Pause always lands the root in "✕ Failed" with every later Check
+changes failing (task-32519 — the paused bindings are refused by the
+observation Resume runs before it re-activates them; the task-32269 walk's
+own Resume capture shows the same row). Everything else on this page held:
+the third-part row disambiguator, one selection count, Tab staying inside the
+editor with the footer naming focus, Ctrl+End, Shift+Tab into the Title, the
+delete prompt inside the Info box, Preview taking focus, the chrome strip at
+235x52 and 100x30 and gone at 60x24, Linked from after import, trash and
+undo, the `.git` skip, the collision default, the receipt's two
+denominators, the export destination refusal, the ingest browser opening at
+`[notes] sync_directory`, and Capture as note's Open note landing in this
+editor.)*
