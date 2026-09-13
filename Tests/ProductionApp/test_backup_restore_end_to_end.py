@@ -385,9 +385,14 @@ try:
     runpy.run_path(sys.argv[1], run_name="__main__")
     state["status"] = "completed"
     record()
-except BaseException:
+except BaseException as error:
     state["status"] = "failed"
     state["traceback"] = traceback.format_exc()[-24000:]
+    # Textual's WorkerFailed wrapper stores the original exception in .error
+    # without chaining it; retain that traceback in this private test receipt.
+    worker_error = getattr(error, "error", None)
+    if isinstance(worker_error, BaseException):
+        state["worker_traceback"] = "".join(traceback.format_exception(worker_error))[-12000:]
     record()
     raise
 """
