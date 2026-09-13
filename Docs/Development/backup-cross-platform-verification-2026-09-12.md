@@ -4,6 +4,38 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Revision `95f22d9126708499a52c648599fbd2c498713a22` passes every actual
+installed macOS product flow: F9 three modes (90.46 seconds), two-profile restore
+and open (48.97 seconds), combined replacement/later rollback (181.76 seconds).
+The supplied Linux host passes 81 admission/reader checks (17.11 seconds), F9
+three (111.75 seconds), two-profile (68.07 seconds), and combined (281.20 seconds).
+Linux public source SHA256 is
+`85f93f09f407eff93ec53d9dac7edf61c7ee86e780ae2b644184777404d41b92`.
+
+Windows [34726981082](https://github.com/rmusser01/tldw_chatbook/actions/runs/34726981082)
+at that exact revision passes native294/294 and product69/71: support65, all three
+F9 modes and installed two-profile pass. Both shared seeds now pass and reach
+normal F9 restart, but replacement exits with `0xC0000005` and rollback's fresh
+interpreter receives a truncated script (`SyntaxError` at standalone `import`).
+Neither reaches the fresh replacement driver. All121 artifact hashes and seven
+2,030-file installed receipts verify against clean source, 9,850 tracked files.
+
+The Windows restart now uses `subprocess.Popen` with fixed argv, filtered
+environment, explicit standard handles and `close_fds=True`, followed by `_exit`
+only after successful creation. This preserves old-process native-lease release
+while bypassing the UCRT exec environment construction and argument splitting.
+The failure matches [CPython143327](https://github.com/python/cpython/issues/143327)
+and the underlying [UCRT report](https://github.com/python/cpython/issues/137934).
+POSIX still uses `execve`. Two regressions fail before the Windows branch and
+pass after it; the existing restart suite also passes (14 cases, 48.69 seconds).
+Independent review requires and confirms explicit forwarding of handles0/1/2.
+The Windows test observes a private PID/creation-time receipt and actual fresh
+process completion within the original total deadline; it still requires the
+unchanged restored-content/result assertions. Four observer regressions cover
+delayed completion, timeout cleanup, identity mismatch and missing receipt.
+Production and helper Bandit report zero findings; Ruff is clean. Native Windows
+verification of this restart correction remains pending.
+
 Current correction replaces startup readmission's 10ms timer polling with a
 completion future posted by the same native worker after all cleanup. Its owning
 task shields that future through cancellation, then performs the original pause,

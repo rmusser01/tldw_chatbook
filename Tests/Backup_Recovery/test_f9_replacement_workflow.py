@@ -4,11 +4,13 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from Tests.Backup_Recovery.native_package import (
     native_package as native_package,  # noqa: PLC0414 - installed product fixture
 )
+from Tests.Backup_Recovery.restart_observation import wait_for_restart
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 # The seed uses real native stores and proves public Complete capture, captured
@@ -111,8 +113,18 @@ print('retired and reopened')
 # This terminal driver runs before the fixed production fresh-process entry.
 # It chooses only displayed controls; all plans and native effects are real.
 _MINIMAL_DRIVER = r"""
+import faulthandler
+faulthandler.enable()
+print('FRESH_DRIVER_STARTED',flush=True)
 import asyncio,json,os,sys
 from pathlib import Path
+if sys.platform=='win32':
+ import psutil
+ process=psutil.Process()
+ receipt=Path.home()/'restart-process.json'
+ pending=receipt.with_suffix('.tmp')
+ pending.write_text(json.dumps({'pid':process.pid,'create_time':process.create_time()}))
+ pending.replace(receipt)
 saved=json.loads((Path.home()/'probe-mapping.json').read_text())
 sys.path.append(saved['test_root'])
 from Tests.network_guard import install,blocked_attempts
@@ -350,9 +362,10 @@ def test_full_f9_replacement_after_explicit_safety_and_credential_review(
         TLDW_TEST_ROOT=str(test_root),
     )
     log = tmp_path / "f9-child.log"
+    deadline = time.monotonic() + (600 if sys.platform == "win32" else 150)
     with log.open("w") as output:
         result = subprocess.run(
-            [sys.executable, "-c", _CHILD],
+            [sys.executable, "-X", "faulthandler", "-c", _CHILD],
             cwd=tmp_path,
             env=env,
             stdout=output,
@@ -360,9 +373,14 @@ def test_full_f9_replacement_after_explicit_safety_and_credential_review(
             text=True,
             # Includes normal-app restart, omission review, and native replacement.
             # The accepted second replacement alone exceeded the old 55s observer.
-            timeout=600 if sys.platform == "win32" else 150,
+            timeout=max(0, deadline - time.monotonic()),
             check=False,
         )
+        if sys.platform == "win32" and result.returncode == 0:
+            fresh_code = wait_for_restart(
+                tmp_path / "home" / "restart-process.json", deadline
+            )
+            assert fresh_code in (None, 0), log.read_text()[-8000:]
     assert result.returncode == 0, log.read_text()[-8000:]
     state = json.loads((tmp_path / "home" / "probe-result.json").read_text())
     assert (

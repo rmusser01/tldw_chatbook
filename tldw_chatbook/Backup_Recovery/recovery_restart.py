@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess  # nosec B404 - fixed interpreter and separate argument values.
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,14 +42,20 @@ def restart(request: RecoveryRestart) -> None:
     if type(request) is not RecoveryRestart:
         raise ValueError("invalid_recovery_restart")
     # Fixed interpreter and code; reviewed path hints are separate argv values.
-    os.execve(  # nosec B606
+    argv = [
         sys.executable,
-        [
-            sys.executable,
-            "-c",
-            _ENTRY,
-            str(request.archive) if request.archive else "",
-            str(request.target_config),
-        ],
-        _launch_environment(),
-    )
+        "-c",
+        _ENTRY,
+        str(request.archive) if request.archive else "",
+        str(request.target_config),
+    ]
+    environment = _launch_environment()
+    if os.name == "nt":
+        # CreateProcess supplies argv quoting without UCRT execve's environment
+        # construction. Forward only standard handles, then release this
+        # process's native leases by exiting rather than waiting on the child.
+        _child = subprocess.Popen(  # nosec B603 - fixed interpreter, no shell.
+            argv, env=environment, stdin=0, stdout=1, stderr=2, close_fds=True
+        )
+        os._exit(0)
+    os.execve(sys.executable, argv, environment)  # nosec B606

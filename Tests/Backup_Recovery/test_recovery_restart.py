@@ -19,18 +19,22 @@ def test_restart_hints_require_absolute_local_paths(source, target):
 def test_restart_exec_uses_fixed_fresh_interpreter_and_filtered_environment(
     monkeypatch, tmp_path
 ):
-    import os
     import sys
+    from types import SimpleNamespace
 
+    from tldw_chatbook.Backup_Recovery import recovery_restart
     from tldw_chatbook.Backup_Recovery.recovery_restart import RecoveryRestart, restart
 
     request = RecoveryRestart(tmp_path / "archive.zip", tmp_path / "config.toml")
     monkeypatch.setenv("TEST_PROVIDER_API_KEY", "private-fixture-key")
     calls = []
     monkeypatch.setattr(
-        os,
-        "execve",
-        lambda executable, argv, env: calls.append((executable, argv, env)),
+        recovery_restart,
+        "os",
+        SimpleNamespace(
+            name="posix",
+            execve=lambda executable, argv, env: calls.append((executable, argv, env)),
+        ),
     )
     restart(request)
     executable, argv, environment = calls[0]
@@ -252,7 +256,9 @@ if mode=='shutdown_failure':
   raise RuntimeError('fixture actual unmount failure')
  TldwCli.on_unmount=failed_unmount
 calls=[]
-os.execve=lambda executable,args,environment:calls.append((executable,args,environment))
+from types import SimpleNamespace
+from tldw_chatbook.Backup_Recovery import recovery_restart
+recovery_restart.os=SimpleNamespace(name='posix',execve=lambda executable,args,environment:calls.append((executable,args,environment)))
 sys.argv=['tldw-chatbook']
 from tldw_chatbook.cli import main_cli_runner
 main_cli_runner()
