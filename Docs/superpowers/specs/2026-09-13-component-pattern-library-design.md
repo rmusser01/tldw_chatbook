@@ -2,7 +2,7 @@
 
 Date: 2026-09-13
 Status: approved in brainstorming (sections 1–3, with review corrections); pending implementation plan
-Extends: ADR-150 (design-token system and design-language constitution)
+Extends: ADR-150 (design-token system and design-language constitution); amends ADR-150 §6's opportunistic migration policy (see §3.10)
 ADR required: yes — `backlog/decisions/161-component-pattern-library.md` (next free number; the decisions directory runs to 160 and carries three colliding 150s, so the number was verified, not assumed)
 Absorbs: TASK-24451 (split the agentic terminal CSS grab-bag) — to be marked superseded-by the parent task filed for this project
 
@@ -47,11 +47,20 @@ screens; 375 `Button` instantiations), while two Python builder libraries
    promoted class landing in a canonical home.
 4. A live pattern gallery that makes "consistent look" verifiable: snapshot tests fail
    when any canonical pattern's rendering changes.
+5. Every legacy literal retires — not opportunistically, but as committed,
+   ratcheted, project-owned work: the ~6,250 raw dimension declarations across the
+   source sheets and the ~580 Python-side ad-hoc `styles.*` visual assignments all
+   migrate onto the token system. End state: every color and dimension value in every
+   stylesheet traces to a `$ds-*` token (shared or feature-scoped), and Python sets
+   visual values only through token-backed classes. This amends ADR-150 §6's
+   "migrate opportunistically" policy; ADR-161 records the amendment.
 
 ### Non-goals (explicitly out of scope)
 
-- Migrating the ~6,250 legacy dimension literals that stay in their current sheets —
-  remains opportunistic per ADR-150 §6. Only rules that *change homes* are tokenized.
+- A single big-bang migration pass. The literal migration is in scope (goal 5) but
+  ships as ratcheted per-sheet PRs following the `features/_chat.tcss` exemplar —
+  ADR-150 rejected the unreviewable one-pass rewrite, and this project keeps that
+  shape while committing to its completion.
 - Redesigning the visual identity (palette/density changes at the token layer).
 - Theme-system extensions and composite (multi-value) tokens — separate futures.
 - Reviving Python builder APIs (rejected below).
@@ -171,12 +180,46 @@ allowance that can outlive the project.
 
 **Tokenization-on-move, precisely bounded.** New sheets fall under the post-ADR-150
 ratchet: no raw hex, no raw numeric `padding`/`margin` (width/height literals remain
-legal). So each moved rule converts colors and padding/margin to tokens following the
-`features/_chat.tcss` exemplar (TASK-32480): 1:1 mappings become `$ds-*`; genuine
-feature geometry stays literal; values outside the spacing scale become tokens first
-per the constitution. The monolith's single grandfathered hex does not travel — it is
+legal until §3.10 reaches them). So each moved rule converts following the
+`features/_chat.tcss` exemplar (TASK-32480) extended to the project's end state:
+recurring values map 1:1 to shared `$ds-*` tokens; genuine feature-specific geometry
+becomes a feature-scoped `$ds-<feature>-*` token per §3.10 — moved rules arrive
+fully on-system, not partially. The monolith's single grandfathered hex does not travel — it is
 tokenized. This forced tokenization of ~12K lines is the project's real cost and its
-point: nothing re-homes without going on-system.
+point: nothing re-homes without going on-system. Sheets whose rules do not move are
+migrated in place by §3.10.
+
+### 3.10 Legacy-literal migration (in place)
+
+Every remaining legacy sheet — the ~27 feature sheets and anything else that kept its
+home — goes through the `features/_chat.tcss` exemplar pass (TASK-32480 is the
+canonical end-to-end example), extended to the stricter end state the project
+commits to:
+
+- **Recurring values map 1:1 to shared tokens** (`$ds-space-*`, `$ds-control-height`,
+  …). A value that appears in two sheets is by definition recurring and must be a
+  shared token.
+- **Genuinely feature-specific geometry becomes a feature-scoped token** in
+  `_variables.tcss` (`$ds-<feature>-<name>`, following the existing
+  `$ds-home-followup-row-height` / `$ds-library-source-browser-width` pattern) — not a
+  bare literal in the sheet. Feature-scoped tokens promote to layout laws when a
+  second consumer appears (existing constitution rule). Sheets reach **zero raw
+  numeric dimension and color literals**; the token file is where every value lives.
+- **Comments stay load-bearing**: each migrated rule keeps the TASK/defect rationale
+  comments the exemplar pattern requires.
+- **Python side**: ad-hoc `styles.*` assignments for token-covered values are
+  replaced by token-backed CSS classes (the constitution's existing rule for new
+  code, now applied to legacy), not by duplicated Python constants.
+
+Ordering: moves and renames first (§3.5, §3.6) — they touch the same lines, and
+migrating literals first would double-handle every rule — then one migration PR per
+sheet.
+
+Ratchets land with the first migration PR, pinned at then-current counts, and may
+only decrease (mirroring the hex ratchet): per-sheet raw numeric
+`padding`/`margin`/`width`/`height` declaration counts, and per-file Python
+`.styles.<visual-property> = <literal>` assignment counts. The ratchet floor is zero
+on both.
 
 ### 3.6 Consolidation pipeline (top offenders)
 
@@ -226,6 +269,13 @@ source of truth for bundle membership):
 4. **Sheet size ceiling** (ships with the split's completion PR).
 5. **Fallback-ban ratchet** — existing per-screen blocks carrying local `$ds-*`
    fallbacks are a grandfathered manifest; new blocks may not add them.
+6. **Dimension-literal ratchet** — per-sheet counts of raw numeric
+   `padding`/`margin`/`width`/`height` declarations (comment-stripped, same regex
+   family the token test uses), pinned at migration-start values; may only decrease;
+   floor zero.
+7. **Python ad-hoc style ratchet** — per-file counts of
+   `.styles.<visual-property> = <literal>` assignments, pinned; may only decrease;
+   floor zero.
 
 ### 3.8 Dead code
 
@@ -237,10 +287,19 @@ are documented as composition recipes; toasts are Textual's built-in `notify()`.
 
 ### 3.9 Sequencing with the byte ratchet
 
-The bundle is over its 806 KB ratchet (TASK-31500). Dedupe PRs (four
-`.section-title`s → one; per-widget dialog copies → one; double `.form-input` → one;
-orphaned sheet deleted) are net-negative and land **before** the gallery sheet lands,
-so every commit the ratchet evaluates is ≤ 0.
+The bundle is already over its 806 KB ratchet (TASK-31500: 821,753 B). Two effects
+must be sequenced:
+
+- **Dedupe is net-negative** (four `.section-title`s → one; per-widget dialog copies
+  → one; double `.form-input` → one; orphaned sheet deleted) and lands **before**
+  the gallery sheet lands, so the gallery spends bytes the dedupe freed.
+- **Tokenization is net-positive**: `$ds-space-section` is longer than `2`, across
+  thousands of declarations plus the new feature-scoped token definitions. The
+  migration's byte growth is bounded but real (order: tens of KB), so the
+  in-place migration PRs (§3.10) coordinate with TASK-31500's pay-down: either the
+  pay-down lands first and creates headroom, or migration PRs land alongside
+  pay-down chunks so every ratchet-evaluated commit stays under the limit. The
+  implementation plan makes this ordering explicit per PR.
 
 ## 4. Risks
 
@@ -252,24 +311,31 @@ so every commit the ratchet evaluates is ≤ 0.
 | Catalog/registry/gallery drift | One registry artifact + sync tests fail CI on drift |
 | Snapshot flake | Exact-pinned Textual; fixed size; two pinned themes; explicit regen path |
 | Project stalls mid-carve-up | Size-ceiling test ships only with completion; governance lands early and independently protects what has shipped |
+| Literal migration (~6,250 sheet declarations + ~580 Python sites, ~30 sheets) is the largest workstream | Ratchets pin counts on day one so progress is one-way; per-sheet exemplar-pattern PRs; snapshot + pilot verification per sheet; completion is measurable (ratchet floor zero) |
+| Tokenization grows the bundle against an already-breached byte ratchet | Sequencing rule in §3.9 coordinates with TASK-31500's pay-down; per-PR byte accounting in the implementation plan |
 
 ## 5. Task structure
 
 One parent backlog task (component-pattern library) with subtasks, each a single PR:
 catalog + registry; governance tests; gallery + snapshots; per-family rename
 consolidations; monolith carve-up (supersedes TASK-24451, which is closed when the
-split lands); dead-code deletions; ADR-161 + constitution/AGENTS.md linkage. ADR-161
+split lands); dead-code deletions; per-sheet in-place literal-migration PRs plus the
+Python `styles.*` cleanup (§3.10); constitution update (`design-language.md` §6
+shrinks to reflect the amended migration policy and the zero-literal end state);
+ADR-161 + constitution/AGENTS.md linkage. ADR-161
 is created before implementation begins and records: the CSS-catalog-over-builders
-decision (with the dead-builder evidence), the two-track move rule, and the
-registry/governance model.
+decision (with the dead-builder evidence), the two-track move rule, the
+registry/governance model, and the amendment of ADR-150 §6's opportunistic migration
+policy to a committed, ratcheted, project-owned migration with a zero-literal end
+state.
 
 ## 6. Testing strategy
 
 - Governance tests (§3.7) run in the normal suite; they are the system's teeth.
 - Gallery snapshot tests (SVG, fixed size, dark + light) cover every canonical
   pattern's rendering.
-- Rename PRs run the touched files' existing UI tests plus targeted new assertions;
-  full sweeps only on explicit request.
+- Rename and migration PRs run the touched files' existing UI tests plus targeted
+  new assertions; full sweeps only on explicit request.
 - Live tmux verification for intentional visual changes (§3.6).
 - The repo's evidence rules apply throughout: `backlog/docs/lessons-testing-evidence.md`
   (what counts as evidence) and `lessons-live-verification.md` (the real-app recipe).
