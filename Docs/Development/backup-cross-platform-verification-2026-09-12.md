@@ -4,6 +4,21 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Revision `e733d34d0043bd4dee54914ae2cede3a4a8e11af` passes actual macOS
+combined replacement/later rollback in171.53 seconds. The supplied Linux host
+passes129 reader cases in33.54 seconds and combined replacement/later rollback
+in284.85 seconds; source SHA256
+`aa663897d5b3fbb50386f496007be8fa48f40ec92f5e60c93febe96dfc9889f4`.
+[Windows34731218691](https://github.com/rmusser01/tldw_chatbook/actions/runs/34731218691)
+has passed replacement, roundtrip and all three backup modes; later rollback is
+still running. Expanded support passes101/112 cases. Three script topology
+fixtures wrote unescaped Windows paths into TOML; these now use JSON string
+escaping. Eight TTS lock cases fail during repository startup, before the backup
+reader; a bounded test-only observer now records original exception metadata at
+the repository's error mappers without changing their behavior. Fourteen affected
+fixture cases pass locally; Ruff and test-scope Bandit pass. Native verification
+of the fixture correction and investigation of the TTS failure remain pending.
+
 Revision `892e11484b6436f0d554ad1a2b591ed6de69632e` passes actual Windows
 replacement, including21 displayed credential omissions, untouched abort,
 explicit acknowledgement and `restoration_validated`. Full

@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 01:42
+updated_date: 2026-09-13 02:02
 ---
 
 ## Description
@@ -116,6 +116,9 @@ Final892 actualmacOS combinedPASS189.75s and actualLinuxcombinedPASS282.95s. Win
 892 Windows roundtrip nowPASS, along with support94 andF9three modes. Only actualreplacement andlaterrollback remainactive. No success claimed from elapsed runtime; awaiting targetreceipts.
 Windows892 replacement passes actual end-to-end including21 credential omissions, untouched abort, explicit acknowledgements and restoration_validated. Later rollback lists verified copy then restored inventory fails in Evals/recovery._retained_definition_paths: local raw os import calls geteuid on Windows. Correct via existing native platform facade, preserving owner/mode/identity checks. Adjacent backup-owner review found Agents/recovery raw listdir(native fd), TTS/recovery raw stat(dir_fd); inspecting those within existing backup discovery scope. Unrelated TTS migration module excluded.
 Owner corrections verified: retained eval manifest uses facade fstat/geteuid; Agents listdir and TTS stat(dir_fd) use facade; nested Agents metadata uses as_posix. New completed-replacement wrong-owner regression RED (did not raise), then GREEN. Existing affected-owner suites total29 passed14.79s. Added18 existing TTS lock/Agents/script-topology cases to Windows support; TTS child reuses fixed native-runtime environment allowlist. Production Bandit0; Evals3existing Ruff findings unchanged, remaining touched files clean. Independent review accepted. Full892 proof independently verified125hashes: Windows replacement passed663.905s; rollback695.513s failed only later eval reader before mutation.
+Revision e733d34d0043bd4dee54914ae2cede3a4a8e11af: actual Linux reader/admission/owner suite passes129 tests in33.54s, zero skips. Source archive SHA256 aa663897d5b3fbb50386f496007be8fa48f40ec92f5e60c93febe96dfc9889f4. Artifacts: artifacts-platform-private-e733d34d0043bd4dee54914ae2cede3a4a8e11af-20260912-184508. Linux combined and macOS combined are active; Windows full run34731218691 is active.
+Windows e733 full run: replacement, roundtrip, and all three backup modes passed; rollback still active. Expanded support has 11 failures: three script topology fixture cases interpolate native Windows paths into TOML without escaping; eight actual TTS lock inventory cases fail during repository.open before capture. Correct fixture quoting and collect bounded original TTS exception metadata before deciding any runtime change.
+e733 actual macOS combined PASS171.53s; supplied Linux host129 reader tests PASS33.54s and combined PASS284.85s (source SHA256 aa663897d5b3fbb50386f496007be8fa48f40ec92f5e60c93febe96dfc9889f4). Corrected three script fixture path strings with json.dumps; added bounded test-only TTS mapper exception metadata retaining original behavior. Affected14 tests PASS7.91s; Ruff and Bandit clean. Windows e733 replacement/roundtrip/three backup modes PASS; rollback still active. No runtime TTS fix yet.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

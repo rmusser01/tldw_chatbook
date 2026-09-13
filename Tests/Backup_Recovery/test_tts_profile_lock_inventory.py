@@ -22,11 +22,24 @@ keyring.set_keyring(Keyring())
 mode=os.environ['TTS_LOCK_CASE']
 from tldw_chatbook.config import get_tts_profiles_db_path
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS import profile_repository
+from Tests.Backup_Recovery.thread_diagnostics import _error_metadata
 from tldw_chatbook.TTS.profile_types import TTSProfileDraft
 from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
 selector=Path(os.environ['TLDW_CONFIG_PATH'])
 database=get_tts_profiles_db_path()
 lock=database.with_name(database.name+'.lock')
+diagnostic_errors=[]
+def observe_mapper(original):
+ def observed(*errors):
+  for error in errors:
+   if isinstance(error,BaseException):
+    diagnostic_errors.append(_error_metadata(error))
+    del diagnostic_errors[:-16]
+  return original(*errors)
+ return observed
+for mapper in ('_raise_operation_error','_raise_with_cleanup_precedence'):
+ setattr(profile_repository,mapper,observe_mapper(getattr(profile_repository,mapper)))
 async def main():
  repository=TTSProfileRepository(database)
  await repository.open()
@@ -67,7 +80,10 @@ async def main():
   after=lock.lstat();assert (after.st_dev,after.st_ino,after.st_mode,after.st_size)==(before.st_dev,before.st_ino,before.st_mode,before.st_size)
  assert not blocked_attempts(),blocked_attempts()
  print('NATIVE_TTS_LOCK',mode,row.status)
-asyncio.run(main())
+try:asyncio.run(main())
+except BaseException:
+ print('TTS_REPOSITORY_FAILURE_METADATA',json.dumps(diagnostic_errors),flush=True)
+ raise
 """
 
 

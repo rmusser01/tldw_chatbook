@@ -118,7 +118,7 @@ def test_populated_skills_chatbooks_complete_capture_resumes_before_packaging(tm
 
 
 _OUTPUT = r"""
-import os,sys
+import json,os,sys
 from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
 install()
@@ -126,11 +126,11 @@ route=sys.argv[1];selector=Path(os.environ['TLDW_CONFIG_PATH'])
 text='[general]\nusers_name="fixture"\n'
 if route in ('scratch','sandbox'):
  key='[skills]\nscript_scratch_root' if route=='scratch' else '[tools]\nfile_sandbox_root'
- text+=key+'="'+str(Path.home()/'unsupported-custom')+'"\n'
+ text+=key+'='+json.dumps(str(Path.home()/'unsupported-custom'))+'\n'
 if route=='canonical':
  from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
  canonical=user_data_dir({'general':{'users_name':'fixture'}})/'tool_sandbox'
- text+='[tools]\nfile_sandbox_root="'+str(canonical)+'"\n[skills]\nscript_scratch_root="'+str(canonical/'skill_script_output')+'"\n'
+ text+='[tools]\nfile_sandbox_root='+json.dumps(str(canonical))+'\n[skills]\nscript_scratch_root='+json.dumps(str(canonical/'skill_script_output'))+'\n'
 selector.write_text(text);selector.chmod(0o600)
 from tldw_chatbook.config import get_user_data_dir
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
