@@ -1,5 +1,5 @@
 ---
-id: TASK-32472
+id: TASK-32515
 title: 'ChaChaNotes index census is red on dev: v70-v72 indexes were never pinned'
 status: To Do
 assignee: []
