@@ -1,8 +1,23 @@
 # Cross-platform backup verification — 2026-09-12
 
-TASK-32496; PR2642 targets dev. This record supersedes the platform limitation in
-the earlier Python encryption verification. Work remains in progress until the
-Windows installed product cases pass.
+TASK-32496; PR2642 targets dev. The cross-platform backup correction is implemented
+and verified. Actual installed backup creation, restore/open, replacement and
+retained-copy rollback have passed on macOS/APFS, Linux/ext4 and Windows/local NTFS.
+This record supersedes the platform limitation in the earlier Python encryption
+verification.
+
+Final [Windows run 34734023282](https://github.com/rmusser01/tldw_chatbook/actions/runs/34734023282)
+at `a5a5365656cfabc9ccf247d16a3b97c91bb5794f` passes **117/117 support tests**
+and **42/42 native tests**, with zero skips. All 31 artifact hashes verify against
+clean source and the 2,030-file installed receipt. The support suite includes the
+canonical TTS reference archive, isolated restore and fresh native readback.
+The earlier `e733` full run proves all six installed product workflows, including
+replacement and later rollback with explicit credential review. Final Linux
+inventory/reference checks pass 19/19; the corresponding local macOS checks pass.
+
+Earlier failed runs and pre-existing broader test/static-analysis findings remain
+documented below. The PR still conflicts with dev and requires a requester-written
+change summary before merge; completion of this correction is not a merge approval.
 
 Revision `e733d34d0043bd4dee54914ae2cede3a4a8e11af` passes actual macOS
 combined replacement/later rollback in171.53 seconds. The supplied Linux host
@@ -79,6 +94,19 @@ existing unsafe-object and TTS inventory cases,16 pass in6.77 seconds. Review ha
 no findings; production Bandit is clean and eight existing test-file Ruff findings
 remain unchanged. A bounded test-only inventory exception trace is retained for
 native failure diagnostics. No assertion, traversal restriction or timeout is relaxed.
+
+Revision `a5a5365656cfabc9ccf247d16a3b97c91bb5794f` passes19 final Linux
+checks in31.28 seconds: native leaf refusal contracts, actual unsafe objects,
+ancestor/missing refusals, TTS locks and the canonical reference roundtrip. Source
+archive SHA256
+`f7d5c4293eb08c7976e72bcde80dbbbccda4c2f1051191765b1ef4a706b8ce41`.
+The final local trace-instrumented TTS and leaf-refusal checks pass12 cases in6.28
+seconds; ancestor/missing checks pass2 in0.52 seconds. Windows117 support is
+[34734023282](https://github.com/rmusser01/tldw_chatbook/actions/runs/34734023282).
+It passes all117 support and42 native cases in465.704 seconds, with no skips or
+parse errors. All31 artifact hashes verify; source is clean with9,854 tracked
+files and a2,030-file installed receipt. Source archive SHA256:
+`48297f6ce915b1cb15a24bbe89725145da8b9af3eb5b1f4600486df9f8b7ef73`.
 
 Revision `892e11484b6436f0d554ad1a2b591ed6de69632e` passes actual Windows
 replacement, including21 displayed credential omissions, untouched abort,

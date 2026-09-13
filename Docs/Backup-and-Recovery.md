@@ -245,8 +245,8 @@ exclusive publication, locking and persistence checks still apply to the actual
 storage used by each operation. Missing capabilities produce a refusal.
 
 The full installed backup, restore, replacement and retained-copy rollback flows
-have passed on macOS, Linux and Windows. Additional Windows TTS owner verification
-is still in progress.
+have passed on macOS, Linux and Windows. Native TTS reference backup, isolated
+restore and fresh readback are also verified on all three platforms.
 See the [cross-platform verification record](Development/backup-cross-platform-verification-2026-09-12.md)
 for exact revisions, environments and results. Other filesystems and application
 upgrade pairs have not been qualified.

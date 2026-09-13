@@ -1,13 +1,13 @@
 ---
 id: TASK-32496
 title: Make complete backup and recovery work on macOS Linux and Windows
-status: In Progress
+status: Done
 created_date: 2026-09-12 16:36
 labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 02:50
+updated_date: 2026-09-13 03:03
 ---
 
 ## Description
@@ -18,9 +18,9 @@ Correct the backup implementation's platform-specific filesystem and release ass
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Existing complete backup, isolated restore, replacement and retained-copy rollback have working platform operations on macOS, Linux and Windows without Go.
-- [ ] #2 Actual installed application workflows create archives and restore/verify synthetic data on the supplied Linux host and native Windows GitHub runner; macOS covering regression tests pass. No component-only result is represented as product success.
-- [ ] #3 Preserve private storage, no-overwrite publication, cooperative locking, authentication, cancellation and interruption recovery; update PR2642 with exact tests, limitations and source identities.
+- [x] #1 Existing complete backup, isolated restore, replacement and retained-copy rollback have working platform operations on macOS, Linux and Windows without Go.
+- [x] #2 Actual installed application workflows create archives and restore/verify synthetic data on the supplied Linux host and native Windows GitHub runner; macOS covering regression tests pass. No component-only result is represented as product success.
+- [x] #3 Preserve private storage, no-overwrite publication, cooperative locking, authentication, cancellation and interruption recovery; update PR2642 with exact tests, limitations and source identities.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -131,13 +131,14 @@ Final refusal/output corrections reviewed with no findings. Explicit ELOOP is un
 Final471e9715db6d202bfae2097c4f0ee1de893a1a32 supplied Linux TTS suite9/9PASS30.57s,0failures/errors/skips. Exact source archiveSHA256d3f605c4b7e9325f1b204fd51baf908a9983577ba980fe2f7bbc87c81660ac05; artifacts /home/ml-user/Working/chatbook-backup-linux-20260912/artifacts-platform-private-471e9715db6d202bfae2097c4f0ee1de893a1a32-20260912-193600. Windows support113 currently34733401709. No test budget increases or relaxed assertions.
 471e Windows34733401709:42native and112/113supportPASS; canonical TTS reference seed/capture/restore/fresh-read allPASS.31artifact hashes verified, clean9854-file source/archive9e1994abd1caa681f3f26d863138ee44e91c98c328f8c4a46a4bff6951dc2d84. Sole remaining symlink row is preclassified unavailable by file_inventory._inventory_tree walk: its no-follow stat only catches FileNotFoundError, so ELOOP reaches outer whole-root unavailable catch before TTS-specific code. Correct explicit leaf ELOOP classification at that shared inventory boundary; preserve missing/permission/ancestor refusals. Add native-refusal contract regression root/nested vs access denial before implementation.
 Shared no-follow leaf ELOOP correction reviewed nofindings. Root/nested xELOOP/EACCES regression RED2fail2pass, GREEN4pass. Existing unsafe-object+TTSlock cases16PASS6.77s; final trace-instrumented TTSlock+regression12PASS6.28s; ancestor and missing-external refusals2PASS0.52s. Production Bandit0; no new Ruff (8 existing file-inventory test findings). Windows support gains4 contract cases, now117. Retains bounded inventory exception metadata only if the TTS child fails.
+Final a5a5365656cfabc9ccf247d16a3b97c91bb5794f supplied Linux checks19/19PASS31.28s,0failures/errors/skips. Covers4native leaf refusal regressions,4real unsafe object types, ancestor/missing refusal,8TTS lock cases and canonical reference roundtrip. ArchiveSHA256f7d5c4293eb08c7976e72bcde80dbbbccda4c2f1051191765b1ef4a706b8ce41; artifacts /home/ml-user/Working/chatbook-backup-linux-20260912/artifacts-platform-private-a5a5365656cfabc9ccf247d16a3b97c91bb5794f-20260912-195104. Windows117support run34734023282 active.
+Final Windows34734023282 SUCCESS at a5a5365656cfabc9ccf247d16a3b97c91bb5794f:117support and42native pass, zero skips/parse errors,465.704s.31/31 artifact hashes verified; clean9854-file source/archive48297f6ce915b1cb15a24bbe89725145da8b9af3eb5b1f4600486df9f8b7ef73; installed2030-file receipt. Completed cross-platform correction; plan/ADR/user guide/evidence updated and PR final results published. Remaining merge conflicts/human Change summary are explicitly outside this completed implementation/testing step.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Implemented and verified the approved Python backup/recovery functionality on macOS/APFS, Linux/ext4 and Windows/local NTFS. Actual installed backup, restore/open, replacement and retained-copy rollback pass across all three platforms. Final Windows a5a536565 passes117/117 support and42/42 native cases with31/31 artifact hashes verified; this includes canonical TTS reference archive/restore/fresh-read and link-refusal regressions. Final supplied Linux checks19/19 pass; macOS regressions pass. Native boundary reviews accepted and scoped static/security checks add no findings. PR2642 targets dev and records exact source/installed receipts, historical failures and pre-existing broader failures. Existing dev conflicts and the requester-written merge summary remain merge blockers; no merge performed.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->

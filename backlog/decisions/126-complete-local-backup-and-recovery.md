@@ -20,6 +20,11 @@ standard-library monkeypatch, new language, archive format or encryption depende
 is introduced. Real installed product tests on each platform are required before
 claiming completion; native primitive tests alone are insufficient.
 
+The correction is verified by actual installed backup/restore/replacement/rollback
+workflows on all three platforms and final Windows owner support tests. Exact
+revisions, artifact receipts and remaining merge limitations are recorded in the
+[cross-platform verification record](../../Docs/Development/backup-cross-platform-verification-2026-09-12.md).
+
 Revision: 4 — incorporates the fourth user-requested design review.
 
 Task: [TASK-31978](../tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)
