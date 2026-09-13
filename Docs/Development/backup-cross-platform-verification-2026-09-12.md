@@ -2,6 +2,13 @@
 
 ## Current merged revision
 
+Production corrections are published in `7666ebf6b9fbe234e7bb220e9e09fd1f06e4a539`.
+Its installed macOS plaintext F9 backup/restore/open passes in 55.05s, with
+committed build inputs and installed wheel bytes verified. Native
+[Windows run 34743946448](https://github.com/rmusser01/tldw_chatbook/actions/runs/34743946448)
+tests that exact revision; plaintext and encrypted flows pass, with remaining
+groups in progress.
+
 [Windows run 34742763471](https://github.com/rmusser01/tldw_chatbook/actions/runs/34742763471)
 tests `a5657079cd28983247a670102eab8cd087f9eeef`. Encrypted backup/restore and
 two-profile restore pass. All 294 native checks pass; support passes 118 of 127
@@ -31,6 +38,20 @@ later subprocess's 180-second limit. Its journal records continuing publication
 and installed-state validation near that limit, without a completed restoration
 receipt. Neither run is counted as passing. Product operation deadlines have
 not been changed.
+
+An observer-free controlled Linux fixture variation against unchanged `a5657079`
+production passes the combined workflow in 349.07s, including validated rollback
+and inspection of the new retained copy. The final native wait takes 77.259s and
+the later flow takes 188.993s. These measurements support exactly two non-Windows
+test wait corrections: final service observation 65 to 120 seconds, and the later
+child 180 to 300 seconds. The combined pytest bound is 600 seconds, covering its
+110-second seed, 150-second replacement and 300-second later child plus setup;
+Windows retains 2400 seconds. All 34 assertions are unchanged; product deadlines
+are unchanged. Independent review accepts the correction, Ruff/compile pass,
+and Bandit retains the same five existing test findings. A prior diagnostic
+variation crashed when its added thread-dump observer fired; that run is retained
+as uncertain instrumentation evidence and is not counted as passing. A fresh run
+of the committed fixture is still required.
 
 ## Conflict resolution and earlier verification
 

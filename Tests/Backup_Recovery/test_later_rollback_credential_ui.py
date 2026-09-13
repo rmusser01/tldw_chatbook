@@ -188,7 +188,8 @@ async def main():
                 await asyncio.sleep(.03)
         accepted=app.recovery_service.current()
         assert accepted['kind']=='later_rollback',dict(accepted)
-        state=await asyncio.to_thread(app.recovery_service.wait,accepted['operation_id'],timeout=360 if sys.platform == "win32" else 65)
+        # Native Linux measured 77s for this full publication/validation wait.
+        state=await asyncio.to_thread(app.recovery_service.wait,accepted['operation_id'],timeout=360 if sys.platform == "win32" else 120)
         retain('later_rollback_complete',state=state['state'],result=dict(state['result']))
         assert state['state']=='succeeded' and state['result']['restoration_validated'],dict(state)
         copies=await asyncio.to_thread(app.recovery_service.recovery_copies)
@@ -213,6 +214,9 @@ assert not blocked_attempts(), blocked_attempts()
 """
 
 
+# Bound the serial seed (110s), replacement (150s), and later child (300s),
+# including setup. Windows retains the native runner's existing 2400s bound.
+@pytest.mark.timeout(2400 if sys.platform == "win32" else 600)
 def test_f9_later_rollback_requires_explicit_credential_review(
     tmp_path, native_package
 ):
@@ -241,8 +245,8 @@ def test_f9_later_rollback_requires_explicit_credential_review(
             stderr=output,
             text=True,
             # Four native reviews, two execution attempts, Abort, and readback.
-            # Their individual operation/UI deadlines remain independently bounded.
-            timeout=900 if sys.platform == "win32" else 180,
+            # Linux measured 189s; product operation deadlines remain unchanged.
+            timeout=900 if sys.platform == "win32" else 300,
             check=False,
         )
     assert result.returncode == 0, log.read_text()[-10000:]

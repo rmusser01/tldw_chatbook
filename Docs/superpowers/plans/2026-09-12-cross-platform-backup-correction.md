@@ -97,3 +97,11 @@ writes and scheduler access are refused before the maintenance gate is held.
 The correction will register pending recovery under the existing gate, before
 publication. Linux final rollback remains under measured timing investigation;
 ongoing publication at the test cutoff is not recorded as a passing run.
+
+The observer-free Linux diagnostic subsequently passes in 349.07s with validated
+restoration. Measured final wait77.259s and later flow188.993s justify only the
+fixture's 65→120s observer wait and 180→300s child bound; its combined pytest
+envelope covers the serial child budgets. Windows and product deadlines remain
+unchanged. All34 assertions are unchanged, independent review accepts the change,
+and static checks add no findings. Final committed-fixture Linux verification
+and the remaining Windows7666 groups are pending.
