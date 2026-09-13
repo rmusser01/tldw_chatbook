@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-19 09:55'
-updated_date: '2026-09-12 23:45'
+updated_date: '2026-09-13 00:05'
 labels:
   - agents
   - tools
@@ -39,6 +39,8 @@ Port of hermes-agent's consecutive-denial circuit breaker (2026-08-19 hermes-rel
 ADR required: yes. ADR path: backlog/decisions/154-agent-denial-streak-boundary.md. Reason: compatible structured provider/review/runtime provenance and coherent stop boundary. Execute Docs/superpowers/plans/2026-09-12-agent-denial-breaker.md: compatible typed review facts; authoritative producers; run-local budget/counter; Console and real persistence/fleet evidence; docs and independent review. Accepted ADR-078 remains unchanged.
 
 Final integration correction: preserve ordinary non-denial budget and cancellation continuation boundaries while retaining every settled reply when the denial breaker itself trips. Use the existing loop-top continuation regression and denial/cancellation neighbors, then independent combined review. ADR required: no new ADR; this is a regression repair within ADR 154 and its existing runtime boundary.
+
+Execute the four confirmed integration findings together via Docs/superpowers/plans/2026-09-12-agent-orchestration-final-integration.md. One source correction wave and one scoped re-review; preserve final provider errors, existing authority, and honest task completion.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

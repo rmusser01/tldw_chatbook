@@ -2053,6 +2053,16 @@ before patching application code. Re-run collection under a supported project
 interpreter to distinguish an interpreter-assumption failure from a product
 regression, and record both results.
 
+**Recurrence, agent-orchestration remaining-work review, 2026-09-12.** Root
+launched the AST-only diagnostic inventory with the host `python3`, which was
+Apple Python 3.9. It failed on an unchanged `match` statement in
+`UI/LLM_Management/vllm_setup_view.py`, before producing any drift verdict.
+The original command/traceback/exit are preserved in the workstream evidence.
+Use the already provisioned supported project interpreter for AST inspection
+as well as pytest; a stdlib-only checker can still require the project's
+Python grammar. This incident did not justify changing source syntax or
+regenerating the inventory without reviewing its result.
+
 ---
 
 ## A suite that no gate runs can rot invisibly for days

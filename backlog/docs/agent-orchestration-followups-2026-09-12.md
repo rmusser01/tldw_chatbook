@@ -20,14 +20,16 @@ supersedes its pending-integration and remaining-work labels.
   focused correction must retain complete denial-terminal history without
   changing unrelated budget/cancellation boundaries. Earlier completion notes
   are historical; the task is In Progress until repair and review finish.
-- **Done and independently reviewed:** TASK-18923 live per-run usage, from
+- **Reopened for integration repair:** TASK-18923 live per-run usage, from
   service/adapter/bridge attribution through primary/child Console rendering
   (`16c10faca7`, `2f39215549`, `ca9418b33a`, `c1b2bf984b`, `3580bc6ae0`).
   The UI gate passed 88 tests; exact test-owner cleanup was followed by 15 usage
   selectors and 12 fleet-panel tests with zero regular-file descriptor growth.
   Provider/local labels, zero omission, current-call reset and existing timer
-  ownership are verified; final accounting is unchanged. Scope and warning
-  qualifications are in the task notes.
+  ownership are verified. Final review confirmed that a per-chunk telemetry
+  extraction fault can abort a valid stream; that narrow failure boundary needs
+  repair while preserving genuine provider errors and final accounting. Earlier
+  reviewed results and warning qualifications remain in the task notes.
 - **Settings ownership and feedback done:** TASK-13154.5 closes only panel-owned
   connections and explains filtered runtime tools after Save (`97c3bce2e0`,
   `1b9cff9776`). Independent review, real held-connection tests and wide/narrow
@@ -56,8 +58,8 @@ supersedes its pending-integration and remaining-work labels.
   Ordinary agents remain available; existing work is retained. The final affected
   Console/service selection passed 25 tests with no new skips. Functional
   recovery itself remains incomplete.
-- Four of the eight requested outcome areas are complete; denial-breaker
-  integration repair is reopened. The parent stays open
+- Three of the eight requested outcome areas are complete; denial-breaker
+  and live-usage integration repairs are reopened. The parent stays open
   until the remaining implementation and combined branch review finish. No new
   PR, push or merge has been performed for this continuation.
 
