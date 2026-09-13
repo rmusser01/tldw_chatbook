@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+
 import asyncio
 import contextlib
 import inspect
@@ -3579,6 +3581,7 @@ class ConsoleProviderGateway:
 
         future.add_done_callback(_log_close_failure)
 
+    @_provider_recovery.unqualified
     async def resolve_llamacpp(
         self, config: LlamaCppProviderConfig
     ) -> ConsoleProviderResolution:
@@ -4243,6 +4246,7 @@ class ConsoleProviderGateway:
             )
         return _cap_automatic_prepared(prepared, cap)
 
+    @_provider_recovery.unqualified
     async def stream_llamacpp_chat(
         self,
         *,
@@ -4544,6 +4548,7 @@ class ConsoleProviderGateway:
         if stream_error is not None:
             raise stream_error
 
+    @_provider_recovery.unqualified
     async def complete_llamacpp_chat(
         self,
         *,
@@ -4722,6 +4727,7 @@ class ConsoleProviderGateway:
                 call_signals.close_usage_call()
 
     @staticmethod
+    @_provider_recovery.unqualified
     async def _post_without_high_level_http_log(
         client: httpx.AsyncClient,
         url: str,
@@ -6774,6 +6780,7 @@ class ConsoleProviderGateway:
     def _authorization_headers(api_key: str | None) -> dict[str, str] | None:
         return {"Authorization": f"Bearer {api_key}"} if api_key else None
 
+    @_provider_recovery.unqualified
     async def _is_reachable(self, base_url: str, *, api_key: str | None = None) -> bool:
         try:
             await self._active_http_client().get(

@@ -530,10 +530,13 @@ class ResearchSourceAssociationScheduler:
     async def resume_incomplete(self, *, limit: int = 50) -> None:
         """Resume a bounded startup page of catalog/association work."""
 
-        operations = await asyncio.to_thread(
-            self._operation_store.list_association_actionable,
-            limit=limit,
-        )
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        def list_in_worker():
+            with operation_owned_connection(getattr(self._operation_store, "_db", None)):
+                return self._operation_store.list_association_actionable(limit=limit)
+
+        operations = await asyncio.to_thread(list_in_worker)
         actionable = (
             operation
             for operation in operations

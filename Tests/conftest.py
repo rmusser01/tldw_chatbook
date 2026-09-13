@@ -1018,7 +1018,7 @@ def _shutdown_prompts_interop_if_loaded():
 
 
 @pytest.fixture(autouse=True)
-def isolate_test_environment(monkeypatch, tmp_path):
+def isolate_test_environment(monkeypatch, tmp_path, request):
     """Automatically isolate test environment to prevent production data access.
 
     This fixture:
@@ -1029,17 +1029,23 @@ def isolate_test_environment(monkeypatch, tmp_path):
     # Set test mode
     monkeypatch.setenv("TLDW_TEST_MODE", "1")
 
-    # Create a unique test data directory
-    test_data_dir = tmp_path / "test_data"
+    from Tests.private_profile import is_private_profile_child
+
+    # Opted-in full-app children selected their private source before collection.
+    # Keep that exact selection through the existing fixture/owner teardown.
+    private_child = is_private_profile_child(request)
+    test_data_dir = _BOOTSTRAP_CONFIG_ROOT if private_child else tmp_path / "test_data"
     test_data_dir.mkdir(exist_ok=True)
 
     # Common paths that need isolation
-    monkeypatch.setenv("XDG_DATA_HOME", str(test_data_dir))
+    monkeypatch.setenv(
+        "XDG_DATA_HOME", str(_BOOTSTRAP_DATA_HOME if private_child else test_data_dir)
+    )
     test_config_dir = test_data_dir / "config"
     test_config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(test_config_dir))
     test_home_dir = test_data_dir / "home"
-    test_home_dir.mkdir(mode=0o700)
+    test_home_dir.mkdir(mode=0o700, exist_ok=private_child)
     monkeypatch.setenv("HOME", str(test_home_dir))
     monkeypatch.setenv(
         "TLDW_CONFIG_PATH",

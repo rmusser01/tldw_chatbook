@@ -295,10 +295,13 @@ class ResearchSourceReadinessCoordinator:
         return await self.resume(operation.operation_id)
 
     async def resume_incomplete(self, *, limit: int = 50) -> None:
-        operations = await asyncio.to_thread(
-            self._operation_store.list_readiness_actionable,
-            limit=limit,
-        )
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        def list_in_worker():
+            with operation_owned_connection(getattr(self._operation_store, "_db", None)):
+                return self._operation_store.list_readiness_actionable(limit=limit)
+
+        operations = await asyncio.to_thread(list_in_worker)
         await asyncio.gather(
             *(self.resume(operation.operation_id) for operation in operations),
             return_exceptions=True,

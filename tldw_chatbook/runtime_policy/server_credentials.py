@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import quote
+from threading import RLock
 
 
 SERVER_CREDENTIAL_ACCESS_TOKEN = "access_token"
@@ -11,7 +12,9 @@ SERVER_CREDENTIAL_REFRESH_TOKEN = "refresh_token"
 SERVER_CREDENTIAL_API_KEY = "api_key"
 SERVER_CREDENTIAL_BEARER_TOKEN = "bearer_token"
 DEFAULT_KEYRING_SERVICE_NAME = "tldw_chatbook.server_credentials"
+RECOVERY_SETUP_REQUIRED = "recovery:setup_required"
 _KEYRING_INDEX_USERNAME = "__credential_refs__"
+_RECOVERY_SCOPE_LOCK = RLock()
 
 _KNOWN_SERVER_CREDENTIAL_PURPOSES = (
     SERVER_CREDENTIAL_ACCESS_TOKEN,
@@ -511,10 +514,18 @@ class KeyringServerCredentialStore:
 
     def set_scoped_secret(self, scope: ServerCredentialScope, secret: str) -> None:
         scope = _normalize_scope(scope)
-        self._keyring.set_password(
-            self.service_name, _username_for_scope(scope), secret
-        )
-        self._add_scope_to_index(scope)
+        with _RECOVERY_SCOPE_LOCK:
+            self._keyring.set_password(
+                self.service_name, _username_for_scope(scope), secret
+            )
+            self._add_scope_to_index(scope)
+
+    def set_recovery_secret_if_absent(self, scope: ServerCredentialScope, secret: str) -> None:
+        """Create an operation-unique scope; never replace an existing value."""
+        with _RECOVERY_SCOPE_LOCK:
+            if self.get_scoped_secret(scope) is not None:
+                raise ValueError("credential_scope_changed")
+            self.set_scoped_secret(scope, secret)
 
     def get_scoped_secret(self, scope: ServerCredentialScope) -> str | None:
         scope = _normalize_scope(scope)

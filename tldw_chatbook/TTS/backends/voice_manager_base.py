@@ -1,3 +1,4 @@
+from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
 # voice_manager_base.py
 # Description: Base class for TTS voice profile managers
 #
@@ -28,7 +29,7 @@ class VoiceManagerBase(ABC):
             voice_samples_dir: Directory for storing voice samples and profiles
         """
         self.voice_samples_dir = Path(voice_samples_dir)
-        self.voice_samples_dir.mkdir(parents=True, exist_ok=True)
+        voice_files.mkdir(self, self.voice_samples_dir, parents=True, exist_ok=True)
         self.backend_name = self.__class__.__name__.replace("VoiceManager", "").replace(
             "VoiceProfileManager", ""
         )

@@ -123,4 +123,12 @@ def reset_override(prompt_id: str) -> bool:
 
 
 def customized_count() -> int:
-    return sum(1 for pid in CATALOG if override_state(pid).customized)
+    """Count one live configuration view under its existing native lifetime."""
+    from tldw_chatbook import config  # lazy
+    from tldw_chatbook.Backup_Recovery.config_participants import operation
+
+    # Each resolver read still checks the held config source. Keep that source
+    # admitted across this count instead of reopening the complete profile's
+    # native registry for every prompt while Settings is being composed.
+    with operation(config):
+        return sum(1 for pid in CATALOG if override_state(pid).customized)

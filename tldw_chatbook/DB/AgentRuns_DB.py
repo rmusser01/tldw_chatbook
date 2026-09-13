@@ -116,6 +116,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_operation,
+    _core_transaction,
+    _register_core_connection,
+)
+
 # SQLite caps host parameters per statement. The ceiling is build-dependent:
 # 32766 on SQLite >= 3.32, but 999 on older builds, and this project's floor
 # is Python 3.11, which can ship either. 900 is under the OLD ceiling, so the
@@ -245,40 +255,51 @@ class AgentRunsDB(BaseDB):
 
         return AutomaticWorkLedger(self)
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        _core_access(self)
         conn = super()._get_connection()
-        conn.execute("PRAGMA foreign_keys = ON")
-        # busy_timeout FIRST: the journal_mode=WAL conversion below is the
-        # one PRAGMA here that can itself contend (switching a rollback-
-        # journal file to WAL briefly needs an exclusive lock), so it must
-        # not run while busy_timeout is still 0 -- a contended cross-process
-        # first conversion would otherwise raise 'database is locked'
-        # immediately instead of waiting. busy_timeout is harmless to set
-        # for in-memory DBs too, so it's unconditional (kept for
-        # uniformity); WAL itself is unavailable for in-memory DBs, so that
-        # one stays guarded on is_memory_db.
-        conn.execute("PRAGMA busy_timeout = 5000")
-        if not self.is_memory_db:
-            conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit or two, acceptable for this local agent-run
-        # ledger) and avoids an fsync on every commit -- the default FULL was
-        # fsyncing the WAL on every commit despite WAL already being enabled,
-        # on a per-agent-step persistence path. See Library_Ingest_Jobs_DB.py:
-        # 57-61 for the original template (task-15465).
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.row_factory = sqlite3.Row
-        # task-3012: the held (long-lived) connection needs true autocommit.
-        # Python's default isolation mode auto-BEGINs on any DML, and an
-        # implicit transaction accumulated outside `transaction()` makes the
-        # explicit `BEGIN IMMEDIATE` there fail with "cannot start a
-        # transaction within a transaction" (per-call connections masked
-        # this — and silently ROLLED BACK any bare DML on close). Audited:
-        # every `connection()` site is read-only except `_initialize_schema`,
-        # whose `executescript` self-commits under either mode.
-        conn.isolation_level = None
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+            conn.execute("PRAGMA foreign_keys = ON")
+            # busy_timeout FIRST: the journal_mode=WAL conversion below is the
+            # one PRAGMA here that can itself contend (switching a rollback-
+            # journal file to WAL briefly needs an exclusive lock), so it must
+            # not run while busy_timeout is still 0 -- a contended cross-process
+            # first conversion would otherwise raise 'database is locked'
+            # immediately instead of waiting. busy_timeout is harmless to set
+            # for in-memory DBs too, so it's unconditional (kept for
+            # uniformity); WAL itself is unavailable for in-memory DBs, so that
+            # one stays guarded on is_memory_db.
+            conn.execute("PRAGMA busy_timeout = 5000")
+            if not self.is_memory_db:
+                conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit or two, acceptable for this local agent-run
+            # ledger) and avoids an fsync on every commit -- the default FULL was
+            # fsyncing the WAL on every commit despite WAL already being enabled,
+            # on a per-agent-step persistence path. See Library_Ingest_Jobs_DB.py:
+            # 57-61 for the original template (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.row_factory = sqlite3.Row
+            # task-3012: the held (long-lived) connection needs true autocommit.
+            # Python's default isolation mode auto-BEGINs on any DML, and an
+            # implicit transaction accumulated outside `transaction()` makes the
+            # explicit `BEGIN IMMEDIATE` there fail with "cannot start a
+            # transaction within a transaction" (per-call connections masked
+            # this — and silently ROLLED BACK any bare DML on close). Audited:
+            # every `connection()` site is read-only except `_initialize_schema`,
+            # whose `executescript` self-commits under either mode.
+            conn.isolation_level = None
+            _core_access(self)
+        except BaseException:
+            # Registration retains uncertain native close; never drop its lease.
+            conn.close()
+            raise
         return conn
 
+    @_core_getter
     def _held_connection(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening or reviving it.
 
@@ -287,7 +308,9 @@ class AgentRunsDB(BaseDB):
         — WAL, busy_timeout, foreign keys, row factory — is applied by
         ``_get_connection`` when the held connection is (re)opened.
         """
+        _core_access(self)
         conn = getattr(self._thread_local, "conn", None)
+        conn = _core_cached_connection(self, conn)
         if conn is not None:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
@@ -297,10 +320,13 @@ class AgentRunsDB(BaseDB):
                 try:
                     conn.execute("SELECT 1")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    # A failed probe does not retire a live native borrower.
                     try:
-                        conn.close()
-                    except Exception:  # noqa: BLE001 - already unusable
-                        pass
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        conn.close()  # Positively closed; failure retains cache.
+                    else:
+                        raise
                     conn = None
         if conn is None:
             conn = self._get_connection()
@@ -308,6 +334,7 @@ class AgentRunsDB(BaseDB):
         self._thread_local.conn_last_used = time.monotonic()
         return conn
 
+    @_core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Yield the calling thread's held read connection.
@@ -323,13 +350,17 @@ class AgentRunsDB(BaseDB):
         """Close the current thread's held connection, if any."""
 
         conn = getattr(self._thread_local, "conn", None)
-        self._thread_local.conn = None
         if conn is not None:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
+            with _core_closing(self, conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001 - preserve explicit retirement route
+                    return
+                self._thread_local.conn = None
 
+    @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Yield a write connection inside an immediate transaction.
@@ -2454,14 +2485,15 @@ class AgentRunsDB(BaseDB):
         """
         if self.is_memory_db:
             return self.get_run(run_id)
-        conn = self._get_connection()
-        try:
-            row = conn.execute(
-                "SELECT * FROM agent_runs WHERE id = ?", (run_id,)
-            ).fetchone()
-            return self._row_to_dict(conn, row) if row else None
-        finally:
-            conn.close()
+        with _core_operation(self):
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM agent_runs WHERE id = ?", (run_id,)
+                ).fetchone()
+                return self._row_to_dict(conn, row) if row else None
+            finally:
+                conn.close()
 
     def get_run_metadata_fresh(self, run_id: str) -> dict | None:
         """``get_run_metadata`` through the same dedicated-connection
@@ -2485,15 +2517,16 @@ class AgentRunsDB(BaseDB):
         """
         if self.is_memory_db:
             return self.get_run_metadata(run_id)
-        conn = self._get_connection()
-        try:
-            row = conn.execute(
-                f"SELECT {self._METADATA_COLUMNS} FROM agent_runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-            return self._metadata_row_to_dict(row) if row else None
-        finally:
-            conn.close()
+        with _core_operation(self):
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    f"SELECT {self._METADATA_COLUMNS} FROM agent_runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()
+                return self._metadata_row_to_dict(row) if row else None
+            finally:
+                conn.close()
 
     def latest_primary_run(self, conversation_id: str) -> dict | None:
         """Fetch the newest non-superseded PRIMARY run for a conversation.

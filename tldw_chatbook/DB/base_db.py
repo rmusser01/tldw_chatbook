@@ -43,10 +43,23 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     registry = getattr(database, "_connection_quiescence", None)
     close = getattr(database, "close_connection", None)
     if local is None or registry is None or not callable(close):
-        yield
-        return
-    previous = getattr(local, "conn", None)
-    borrowed = previous is not None and registry.is_registered(previous)
+        from .Library_Collections_DB import LibraryCollectionsDB
+        from .Workspace_DB import WorkspaceDB
+
+        if (
+            type(database) not in {LibraryCollectionsDB, WorkspaceDB}
+            or database.is_memory_db
+        ):
+            yield
+            return
+        # These installed stores own a separate cache on each thread. Their
+        # explicit close clears it, so an existing cache belongs to the caller.
+        local = database._thread_local
+        close = database.close
+        borrowed = getattr(local, "conn", None) is not None
+    else:
+        previous = getattr(local, "conn", None)
+        borrowed = previous is not None and registry.is_registered(previous)
     try:
         yield
     finally:

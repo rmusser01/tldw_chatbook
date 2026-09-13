@@ -552,6 +552,11 @@ from ..destination_recovery import (
     sync_load_failure_callout,
 )
 from .model_browser_state import install_failure_message
+from .skills_screen import (
+    SkillRecoveryReviewModal,
+    SkillTrustBootstrapModal,
+    SkillTrustPassphraseModal,
+)
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
@@ -9189,6 +9194,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sync_controller.invalidate_for_remount()
         # A local thread read may outlive this screen. Revoke apply authority
         # before any awaited shutdown work can yield back to its completion.
+        self._supersede_library_notes_navigation()
         self._library_onboarding_generation += 1
         self._conversations_state.request_generation += 1
         self._invalidate_library_prompts_browse()
@@ -18450,7 +18456,9 @@ class LibraryScreen(BaseAppScreen):
         to remove and the editor owns unsaved live fields.
         """
         service = getattr(self.app_instance, "local_skill_trust_service", None)
-        posture_fn = getattr(service, "trust_posture", None)
+        posture_fn = getattr(service, "recovery_posture", None)
+        if not callable(posture_fn):
+            posture_fn = getattr(service, "trust_posture", None)
         if not callable(posture_fn):
             should_repaint = (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
@@ -19328,8 +19336,100 @@ class LibraryScreen(BaseAppScreen):
         return LibraryExportController._build_library_export_payload(name=name, description=description, selections=selections, destination=destination, media_quality=media_quality)
 
     @staticmethod
-    def _run_library_export_via_service(service: Any, payload: dict[str, Any], *, name: str, description: str, progress_callback=None, cancel_check=None) -> dict[str, Any]:
-        return LibraryExportController._run_library_export_via_service(service, payload, name=name, description=description, progress_callback=progress_callback, cancel_check=cancel_check)
+    def _run_library_export_via_service(
+        service: Any,
+        payload: dict[str, Any],
+        *,
+        name: str,
+        description: str,
+        progress_callback=None,
+        cancel_check=None,
+    ) -> dict[str, Any]:
+        """Execute one export through ``service``, synchronously: zip first, registry only on success.
+
+        Runs both of ``service``'s async-signature/sync-body methods
+        through ``asyncio.run`` -- they never touch the app's own event
+        loop, so this is only ever safe to call from a genuine OS thread
+        (never the UI thread, which already owns a running loop). Exposed
+        as its own (non-``@work``) static method so tests can call it
+        directly with a fake ``service`` and assert call ordering /
+        the include_media invariant without booting a real thread.
+
+        ``create_chatbook`` (the registry record) is attempted ONLY when
+        ``export_chatbook`` reports ``success`` -- the F4 plan's Global
+        Constraints' "zip first, registry record only on success". A
+        registry-recording failure AFTER a successful zip does not flip
+        the overall outcome to failure (the artifact genuinely exists on
+        disk; only the bookkeeping failed) -- ``registry_recorded``
+        reports that separately for callers/tests that care.
+
+        Returns a plain dict: ``success``, ``message``, ``path``,
+        ``dependency_info``, ``registry_recorded``.
+        """
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
+            operation,
+            run_async,
+        )
+
+        paths = (getattr(service, "registry_path", None), payload.get("output_path"))
+        with operation(paths):
+            try:
+                export_result = run_async(
+                    service.export_chatbook(
+                        payload,
+                        progress_callback=progress_callback,
+                        cancel_check=cancel_check,
+                    )
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning("Library export service call failed.")
+                return {
+                    "success": False,
+                    "message": f"Export failed: {exc}",
+                    "path": "",
+                    "dependency_info": {},
+                    "registry_recorded": False,
+                    "cancelled": False,
+                }
+
+            if not export_result.get("success"):
+                return {
+                    "success": False,
+                    "message": str(export_result.get("message") or "Export failed."),
+                    "path": export_result.get("path") or payload.get("output_path", ""),
+                    "dependency_info": export_result.get("dependency_info") or {},
+                    "registry_recorded": False,
+                    "cancelled": bool(export_result.get("cancelled", False)),
+                }
+
+            output_path = export_result.get("path") or payload.get("output_path", "")
+            dependency_info = export_result.get("dependency_info") or {}
+            registry_recorded = False
+            try:
+                run_async(
+                    service.create_chatbook(
+                        name=name,
+                        description=description,
+                        file_path=output_path,
+                        tags=["library-export"],
+                    )
+                )
+                registry_recorded = True
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Library export succeeded but registry recording failed for {output_path!r}."
+                )
+
+            return {
+                "success": True,
+                "message": export_result.get("message") or "",
+                "path": output_path,
+                "dependency_info": dependency_info,
+                "registry_recorded": registry_recorded,
+                "cancelled": False,
+                "item_count": export_result.get("item_count"),
+                "size_bytes": export_result.get("size_bytes"),
+            }
 
     @work(thread=True, exclusive=True, group="library_export")
     def _run_library_export_worker(
@@ -19347,80 +19447,92 @@ class LibraryScreen(BaseAppScreen):
         preresolved_selections: dict[ContentType, list[str]] | None,
         cancel_event: threading.Event | None,
     ) -> None:
-        if preresolved_selections is not None:
-            selections = preresolved_selections
-        else:
-            try:
-                selections = resolve_export_selections(
-                    scope, media_db, chachanotes_db, prompts_db
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Library export selection resolution failed "
-                    "scope_kind={} category={}",
-                    scope.kind,
-                    type(exc).__name__,
-                )
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
+            operation,
+            worker_databases,
+        )
+
+        databases = (
+            media_db if scope.kind in ('everything', 'media') else None,
+            chachanotes_db if scope.kind in ('everything', 'conversations', 'notes') else None,
+            prompts_db if scope.kind in ('everything', 'prompts') else None,
+        )
+        paths = tuple(getattr(db, "db_path", None) for db in databases) + (destination,)
+        with operation(paths), worker_databases(databases):
+            if preresolved_selections is not None:
+                selections = preresolved_selections
+            else:
+                try:
+                    selections = resolve_export_selections(
+                        scope, media_db, chachanotes_db, prompts_db
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Library export selection resolution failed "
+                        "scope_kind={} category={}",
+                        scope.kind,
+                        type(exc).__name__,
+                    )
+                    self._marshal_library_export_failure(
+                        run_id, "Unable to resolve export selections."
+                    )
+                    return
+
+            service = getattr(self.app_instance, "local_chatbook_service", None)
+            if service is None:
                 self._marshal_library_export_failure(
-                    run_id, "Unable to resolve export selections."
+                    run_id, "Bundle export service unavailable."
                 )
                 return
 
-        service = getattr(self.app_instance, "local_chatbook_service", None)
-        if service is None:
-            self._marshal_library_export_failure(
-                run_id, "Bundle export service unavailable."
+            payload = self._build_library_export_payload(
+                name=name,
+                description=description,
+                selections=selections,
+                destination=destination,
+                media_quality=media_quality,
             )
-            return
+            throttle = ExportProgressThrottle()
 
-        payload = self._build_library_export_payload(
-            name=name,
-            description=description,
-            selections=selections,
-            destination=destination,
-            media_quality=media_quality,
-        )
-        throttle = ExportProgressThrottle()
+            def _progress_cb(evt) -> None:
+                try:
+                    if not throttle.should_emit(
+                        evt.phase, evt.current, evt.total, time.monotonic()
+                    ):
+                        return
+                    self.app.call_from_thread(
+                        self._apply_library_export_progress,
+                        run_id,
+                        evt.phase,
+                        evt.current,
+                        evt.total,
+                    )
+                except Exception:
+                    # NoApp/shutdown mid-marshal must not crash the worker.
+                    pass
 
-        def _progress_cb(evt) -> None:
-            try:
-                if not throttle.should_emit(
-                    evt.phase, evt.current, evt.total, time.monotonic()
-                ):
-                    return
-                self.app.call_from_thread(
-                    self._apply_library_export_progress,
+            outcome = self._run_library_export_via_service(
+                service,
+                payload,
+                name=name,
+                description=description,
+                progress_callback=_progress_cb,
+                cancel_check=(cancel_event.is_set if cancel_event is not None else None),
+            )
+            if outcome.get("cancelled"):
+                self._marshal_library_export_cancelled(run_id)
+            elif outcome["success"]:
+                self._marshal_library_export_success(
                     run_id,
-                    evt.phase,
-                    evt.current,
-                    evt.total,
+                    outcome["path"],
+                    outcome["dependency_info"],
+                    bool(outcome["registry_recorded"]),
+                    outcome["message"],
+                    item_count=outcome.get("item_count"),
+                    size_bytes=outcome.get("size_bytes"),
                 )
-            except Exception:
-                # NoApp/shutdown mid-marshal must not crash the worker.
-                pass
-
-        outcome = self._run_library_export_via_service(
-            service,
-            payload,
-            name=name,
-            description=description,
-            progress_callback=_progress_cb,
-            cancel_check=(cancel_event.is_set if cancel_event is not None else None),
-        )
-        if outcome.get("cancelled"):
-            self._marshal_library_export_cancelled(run_id)
-        elif outcome["success"]:
-            self._marshal_library_export_success(
-                run_id,
-                outcome["path"],
-                outcome["dependency_info"],
-                bool(outcome["registry_recorded"]),
-                outcome["message"],
-                item_count=outcome.get("item_count"),
-                size_bytes=outcome.get("size_bytes"),
-            )
-        else:
-            self._marshal_library_export_failure(run_id, outcome["message"])
+            else:
+                self._marshal_library_export_failure(run_id, outcome["message"])
 
     def _marshal_library_export_success(self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool, message: str='', *, item_count: int | None=None, size_bytes: int | None=None) -> None:
         return self._export_controller._marshal_library_export_success(run_id, path, dependency_info, registry_recorded, message, item_count=item_count, size_bytes=size_bytes)
@@ -25378,7 +25490,13 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         action = getattr(event.button, "trust_action", "")
-        if action in ("setup", "resetup"):
+        if action == "recovery_review":
+            self.run_worker(
+                self._review_restored_skill_trust(),
+                exclusive=True,
+                group="library_skill_trust",
+            )
+        elif action in ("setup", "resetup"):
             self._begin_library_skill_trust_setup()
         elif action == "unlock":
             self.run_worker(
@@ -25390,6 +25508,45 @@ class LibraryScreen(BaseAppScreen):
             self._refresh_library_skills_trust_posture()
         elif action == "review":
             self._open_first_blocked_skill()
+
+    async def _review_restored_skill_trust(self) -> None:
+        """Review exact restored bundles before the existing fresh-passphrase flow."""
+        service = getattr(self.app_instance, "local_skill_trust_service", None)
+        if service is None:
+            return
+        route = self._library_entry_route_key()
+        paths = (service.skills_dir, service.trust_store.store_dir)
+
+        def current() -> bool:
+            return (
+                self.is_mounted
+                and getattr(self.app_instance, "local_skill_trust_service", None) is service
+                and self._library_entry_route_key() == route
+                and (service.skills_dir, service.trust_store.store_dir) == paths
+            )
+
+        review, ok = await self._call_library_skill_trust_service("capture_recovery_review")
+        if not ok or not current():
+            return
+        confirmed = await self.app.push_screen_wait(
+            SkillRecoveryReviewModal(review, paths[1], current)
+        )
+        if confirmed is not True or not current():
+            return
+        passphrase = await self._request_library_skill_trust_bootstrap_passphrase()
+        if passphrase is None or not current():
+            return
+        _, ok = await self._call_library_skill_trust_service(
+            "trust_reviewed_recovery", review, passphrase,
+            failure_copy={
+                "skills_recovery_review_changed": "Skills changed after review. Capture a fresh review before setting up trust.",
+                "skills_recovery_root_changed": "The selected trust root changed. Reopen the profile and review again.",
+                "skills_recovery_binding_changed": "The local trust binding cannot be verified. The retained trust files were not reset.",
+            },
+        )
+        if ok and current():
+            self._refresh_library_skills_trust_posture()
+            self._refresh_local_source_snapshot()
 
     def _begin_library_skill_trust_setup(self) -> None:
         return self._skills_controller._begin_library_skill_trust_setup()

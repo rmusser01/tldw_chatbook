@@ -10,12 +10,26 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant
+
 from .config import RAGConfig, validate_chroma_persist_directory
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 
 _LEGACY_BASE = "default"  # the pre-fingerprint canonical collection name
 
 
+def _close_client(client: Any) -> None:
+    """Release a finite borrower without changing legacy operation results.
+
+    The supported dependency range includes engines without public close().
+    Those engines, and failed closes, do not provide native retirement proof.
+    """
+    if client is None:
+        return
+    participant.close_client(client)
+
+
+@participant.sync_operation
 def _client(persist_directory) -> Any:
     import chromadb
     from chromadb.config import Settings
@@ -37,10 +51,13 @@ def _client(persist_directory) -> Any:
     # with the SharedSystemClient cache above even for the same physical
     # directory.
     validated = validate_chroma_persist_directory(persist_directory)
-    return chromadb.PersistentClient(
-        path=str(validated),
-        settings=Settings(anonymized_telemetry=False, allow_reset=True),
-    )
+    with participant.opening(validated) as borrower:
+        client = chromadb.PersistentClient(
+            path=str(validated),
+            settings=Settings(anonymized_telemetry=False, allow_reset=True),
+        )
+        borrower.attach(client)
+        return client
 
 
 def _is_persistent_chroma(config: RAGConfig) -> bool:
@@ -58,6 +75,7 @@ def _is_persistent_chroma(config: RAGConfig) -> bool:
     )
 
 
+@participant.sync_operation
 def adopt_legacy_collection(
     persist_directory, legacy_name: str, target_name: str, provenance: dict
 ) -> bool:
@@ -83,6 +101,7 @@ def adopt_legacy_collection(
     differ, e.g. after a config edit, and we must never paper over that by
     relabeling the index).
     """
+    client = None
     try:
         client = _client(persist_directory)
         existing = {c.name for c in client.list_collections()}
@@ -117,6 +136,8 @@ def adopt_legacy_collection(
         # not debug.
         logger.warning(f"Legacy collection adoption no-op (assumed lost race): {e}")
         return False
+    finally:
+        _close_client(client)
 
 
 def maybe_adopt_legacy_collection(config: RAGConfig) -> None:
@@ -157,9 +178,11 @@ def maybe_adopt_legacy_collection(config: RAGConfig) -> None:
     )
 
 
+@participant.sync_operation
 def list_indexes(persist_directory) -> list[dict]:
     """List on-disk collections with provenance + document count."""
     out: list[dict] = []
+    client = None
     try:
         client = _client(persist_directory)
         for col in client.list_collections():
@@ -172,11 +195,15 @@ def list_indexes(persist_directory) -> list[dict]:
             })
     except Exception as e:
         logger.error(f"list_indexes failed: {e}")
+    finally:
+        _close_client(client)
     return out
 
 
+@participant.sync_operation
 def delete_index(persist_directory, name: str) -> bool:
     """Delete the collection ``name``. False when absent or on error."""
+    client = None
     try:
         client = _client(persist_directory)
         if name not in {c.name for c in client.list_collections()}:
@@ -187,6 +214,8 @@ def delete_index(persist_directory, name: str) -> bool:
     except Exception as e:
         logger.error(f"delete_index failed: {e}")
         return False
+    finally:
+        _close_client(client)
 
 
 def index_status(config: RAGConfig) -> dict:

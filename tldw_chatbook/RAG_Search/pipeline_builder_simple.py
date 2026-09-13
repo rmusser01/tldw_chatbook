@@ -13,6 +13,7 @@ if sys.version_info < (3, 11):
     import tomli as tomllib
 else:
     import tomllib
+from ..Backup_Recovery.storage_admission import acquire_storage
 from pathlib import Path
 
 from ..Chat.rag_scope import EffectiveScope
@@ -560,8 +561,6 @@ def load_pipelines_from_toml():
     if _TOML_PIPELINES is not None:
         return _TOML_PIPELINES
 
-    _TOML_PIPELINES = {}
-
     from tldw_chatbook.config import _get_effective_config_path
 
     # Check user config directory first
@@ -582,18 +581,21 @@ def load_pipelines_from_toml():
         logger.info(f"Loading pipeline config from default location: {config_file}")
 
         # Copy default file to user directory if it doesn't exist
-        try:
-            user_config_dir.mkdir(parents=True, exist_ok=True)
-            import shutil
+        with acquire_storage(user_config_file):
+            try:
+                user_config_dir.mkdir(parents=True, exist_ok=True)
+                import shutil
 
-            shutil.copy2(default_config_file, user_config_file)
-            logger.info(
-                f"Copied default pipeline config to user directory: {user_config_file}"
-            )
-        except Exception as e:
-            logger.warning(
-                f"Could not copy default pipeline config to user directory: {e}"
-            )
+                shutil.copy2(default_config_file, user_config_file)
+                logger.info(
+                    f"Copied default pipeline config to user directory: {user_config_file}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Could not copy default pipeline config to user directory: {e}"
+                )
+
+    _TOML_PIPELINES = {}
 
     if not config_file:
         logger.warning("Pipeline config file not found in user or default locations")

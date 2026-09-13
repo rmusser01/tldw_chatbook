@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from tldw_chatbook.config import get_chachanotes_db_lazy, get_media_db_lazy
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 
+from .activation import batch_guard, guarded, in_worker, request_guard
 from .server import MCP_AVAILABLE, describe_local_mcp_capabilities
 
 # Fix Round A (PR-T3 whole-branch review), Item 2. Task 6 (PR-T3) refused a
@@ -394,6 +394,7 @@ class LocalMCPRuntimeDelegate:
             "issues": issues,
         }
 
+    @guarded
     async def execute_tool(
         self, tool_name: str, arguments: Mapping[str, Any] | None = None
     ) -> Any:
@@ -405,14 +406,15 @@ class LocalMCPRuntimeDelegate:
             # and the service payload returns unchanged (structured errors
             # included -- they are data, not exceptions).
             service = self._get_library_service()
-            return await asyncio.to_thread(
-                service.invoke, normalized_name, payload
+            return await in_worker(
+                self, service.invoke, normalized_name, payload
             )
         handler = getattr(self, f"_tool_{normalized_name}", None)
         if handler is None:
             raise KeyError(f"Unsupported local MCP tool: {normalized_name}")
         return await handler(payload)
 
+    @request_guard
     async def request(
         self, method: str, params: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -482,6 +484,7 @@ class LocalMCPRuntimeDelegate:
             }
         raise KeyError(f"Unsupported local MCP runtime method: {normalized_method}")
 
+    @batch_guard
     async def batch(
         self, requests: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...]
     ) -> list[dict[str, Any]]:
@@ -515,6 +518,7 @@ class LocalMCPRuntimeDelegate:
                 )
         return results
 
+    @guarded
     async def read_resource(self, resource_uri: str) -> dict[str, Any]:
         normalized_uri = str(resource_uri or "").strip()
         resources = self._get_resources()
@@ -540,6 +544,7 @@ class LocalMCPRuntimeDelegate:
             )
         raise KeyError(f"Unsupported local MCP resource URI: {normalized_uri}")
 
+    @guarded
     async def get_prompt(
         self, prompt_name: str, arguments: Mapping[str, Any] | None = None
     ) -> list[dict[str, Any]]:

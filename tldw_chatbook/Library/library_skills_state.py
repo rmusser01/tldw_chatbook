@@ -808,6 +808,11 @@ def skill_trust_header_line(posture: str, blocked_count: int) -> tuple[str, str]
         (posture is ``"ready"`` with nothing blocked -- shown but with no
         action), or ``None`` to hide the header entirely.
     """
+    if posture == "recovery_review":
+        return (
+            "Restored skill permissions are inactive. Review the current local files to set up fresh trust.",
+            "recovery_review",
+        )
     if posture == "needs_setup":
         # task-32363 (critique #10, B D5): with no trust store every skill
         # reads "needs review", including ones approved earlier -- the list

@@ -1,0 +1,504 @@
+name: Backup recovery native qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-recovery:
+    name: Darwin 25.5.0 arm64 Python 3.12.11
+    runs-on:
+      - self-hosted
+      - backup-helper
+      - darwin
+      - arm64
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.12.11
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-test.txt
+            pyproject.toml
+
+      - name: Verify the finite qualification scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          export EVIDENCE_ROOT="${RUNNER_TEMP}/backup-recovery-qualification"
+          echo "EVIDENCE_ROOT=$EVIDENCE_ROOT" >> "$GITHUB_ENV"
+          install -d -m 700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/artifacts" "$EVIDENCE_ROOT/artifacts/setup"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          entries = [
+              "Tests/Backup_Recovery/test_complete_roundtrip.py",
+              "Tests/Backup_Recovery/test_recovery_release_gate.py",
+              "Tests/ProductionApp/test_backup_restore_end_to_end.py",
+              "Tests/Architecture/test_backup_owner_inventory.py",
+              "Tests/ProductionApp/test_service_composition_lifecycle.py",
+              "Tests/Backup_Recovery/test_saved_generation_roundtrip.py",
+              "Tests/Backup_Recovery/test_tts_retained_references_roundtrip.py",
+              "Tests/Backup_Recovery/test_rag_retained_roundtrip.py",
+              "Tests/Backup_Recovery/test_mcp_retained_history_roundtrip.py",
+              "Tests/Backup_Recovery/test_legacy_chat_context_roundtrip.py",
+              "Tests/Backup_Recovery/test_external_partial_reporting.py",
+              # Runs the full replacement test first, then retained-copy rollback.
+              "Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review",
+          ]
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          receipt = Path(os.environ["EVIDENCE_ROOT"]) / "artifacts" / "setup"
+          missing = [
+              entry
+              for entry in entries
+              if not (workspace / entry.split("::", 1)[0]).is_file()
+          ]
+          (receipt / "requested-scope.json").write_text(
+              json.dumps({"entries": entries, "missing": missing}, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          if missing:
+              raise SystemExit("required qualification paths are missing")
+          PY
+
+      - name: Provision pinned Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          exec > >(tee "$EVIDENCE_ROOT/artifacts/setup/dependencies.log") 2>&1
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r requirements.txt -r requirements-test.txt
+          python -m pip install -e '.[embeddings_rag,websearch,chunker]'
+          python -m pip install 'chromadb==1.5.8' pydub 'audioop-lts; python_version >= "3.13"'
+          python -m pip check
+
+          git rev-parse HEAD > "$EVIDENCE_ROOT/artifacts/setup/checkout-head.txt"
+          git status --porcelain=v1 > "$EVIDENCE_ROOT/artifacts/setup/checkout-status.txt"
+          python --version > "$EVIDENCE_ROOT/artifacts/setup/python-version.txt" 2>&1
+          python -m pip freeze > "$EVIDENCE_ROOT/artifacts/setup/pip-freeze.txt"
+          shasum -a 256 \
+            tldw_chatbook/Backup_Recovery/native_qualification.json \
+            tldw_chatbook/Backup_Recovery/age_worker.py \
+            > "$EVIDENCE_ROOT/artifacts/setup/source-sha256.txt"
+          cp tldw_chatbook/Backup_Recovery/native_qualification.json \
+            "$EVIDENCE_ROOT/artifacts/setup/native-qualification.json"
+          cp tldw_chatbook/Backup_Recovery/age_worker.py \
+            "$EVIDENCE_ROOT/artifacts/setup/source-age-worker.py"
+
+      - name: Establish the private offline runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          PRIVATE_ROOT="$EVIDENCE_ROOT/private"
+          install -d -m 700 \
+            "$PRIVATE_ROOT/home" \
+            "$PRIVATE_ROOT/xdg-config" \
+            "$PRIVATE_ROOT/xdg-data" \
+            "$PRIVATE_ROOT/xdg-cache" \
+            "$PRIVATE_ROOT/xdg-state" \
+            "$PRIVATE_ROOT/tmp"
+          SELECTOR="$PRIVATE_ROOT/xdg-config/config.toml"
+          printf '%s\n' \
+            '[general]' \
+            'users_name="qualification"' \
+            '[first_run]' \
+            'setup_completed=true' \
+            > "$SELECTOR"
+          chmod 600 "$SELECTOR"
+          {
+            echo "HOME=$PRIVATE_ROOT/home"
+            echo "USERPROFILE=$PRIVATE_ROOT/home"
+            echo "XDG_CONFIG_HOME=$PRIVATE_ROOT/xdg-config"
+            echo "XDG_DATA_HOME=$PRIVATE_ROOT/xdg-data"
+            echo "XDG_CACHE_HOME=$PRIVATE_ROOT/xdg-cache"
+            echo "XDG_STATE_HOME=$PRIVATE_ROOT/xdg-state"
+            echo "TMPDIR=$PRIVATE_ROOT/tmp"
+            echo "TLDW_CONFIG_PATH=$SELECTOR"
+            echo "TLDW_TEST_MODE=1"
+            echo "TLDW_DISABLE_CONFIG_WATCH=1"
+            echo "PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring"
+            echo "PYTHONDONTWRITEBYTECODE=1"
+            echo "PYTHONNOUSERSITE=1"
+            echo "PYTHONUNBUFFERED=1"
+            echo "HF_HUB_OFFLINE=1"
+            echo "HF_HUB_DISABLE_TELEMETRY=1"
+            echo "TRANSFORMERS_OFFLINE=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify native identity and Python encryption backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python - <<'PY'
+          from Tests.network_guard import blocked_attempts, install
+
+          install()
+
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          from threading import Event
+
+          import keyring
+          from keyring.backends.null import Keyring
+
+          keyring.set_keyring(Keyring())
+
+          from tldw_chatbook.Backup_Recovery import crypto, native_files, qualification
+
+          evidence = Path(os.environ["EVIDENCE_ROOT"]) / "artifacts"
+          native_root = Path(os.environ["EVIDENCE_ROOT"]) / "native-root"
+          native_root.mkdir(mode=0o700)
+          expected_identity = {
+              "os": "Darwin",
+              "release": "25.5.0",
+              "arch": "arm64",
+              "python": "3.12.11",
+              "filesystem": "apfs",
+              "flags": 76583040,
+          }
+          with native_files.pinned_directory(native_root) as descriptor:
+              identity = qualification.native_identity(descriptor)
+          operations = {}
+          for operation in (
+              "publish_new",
+              "publish_file",
+              "publish_directory",
+              "admission",
+          ):
+              result = qualification.qualified_for(operation, native_root)
+              operations[operation] = list(result)
+          native_receipt = {
+              "identity": identity,
+              "qualification_protocol": qualification._QUALIFICATION_PROTOCOL,
+              "operations": operations,
+          }
+          (evidence / "native-identity.json").write_text(
+              json.dumps(native_receipt, indent=2) + "\n", encoding="utf-8"
+          )
+          assert identity == expected_identity, identity
+          assert qualification._QUALIFICATION_PROTOCOL == 2
+          assert all(
+              tuple(result) == (True, "qualified_native_evidence")
+              for result in operations.values()
+          ), operations
+
+          worker = Path(crypto.__file__).with_name("age_worker.py")
+          completed = subprocess.run(
+              [sys.executable, "-I", str(worker), "info"],
+              check=True,
+              capture_output=True,
+              text=True,
+              timeout=30,
+          )
+          info = json.loads(completed.stdout)
+          assert info == {
+              "protocol": 2,
+              "implementation": "python",
+              "format": "age-v1",
+          }
+          assert crypto.helper_capability() == (True, "available")
+          backend_work = Path(os.environ["EVIDENCE_ROOT"]) / "backend-work"
+          backend_work.mkdir(mode=0o700)
+          plain = backend_work / "plain.bin"
+          sealed = backend_work / "sealed.age"
+          restored = backend_work / "restored.bin"
+          plain.write_bytes(b"native qualification Python backend" * 4096)
+          crypto.transform(
+              plain,
+              sealed,
+              password=b"qualification-worker-password",
+              decrypt=False,
+              cancel=Event(),
+          )
+          crypto.transform(
+              sealed,
+              restored,
+              password=b"qualification-worker-password",
+              decrypt=True,
+              cancel=Event(),
+          )
+          assert restored.read_bytes() == plain.read_bytes()
+          (evidence / "worker-info.json").write_text(
+              json.dumps(
+                  {
+                      "worker_info": info,
+                      "capability": [True, "available"],
+                      "transform": "passed_actual_encrypt_decrypt",
+                      "native_qualification": "separately_verified",
+                  },
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          assert not blocked_attempts(), blocked_attempts()
+          PY
+
+      - name: Run the finite recovery qualification scope serially
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+
+          entries = [
+              "Tests/Backup_Recovery/test_complete_roundtrip.py",
+              "Tests/Backup_Recovery/test_recovery_release_gate.py",
+              "Tests/ProductionApp/test_backup_restore_end_to_end.py",
+              "Tests/Architecture/test_backup_owner_inventory.py",
+              "Tests/ProductionApp/test_service_composition_lifecycle.py",
+              "Tests/Backup_Recovery/test_saved_generation_roundtrip.py",
+              "Tests/Backup_Recovery/test_tts_retained_references_roundtrip.py",
+              "Tests/Backup_Recovery/test_rag_retained_roundtrip.py",
+              "Tests/Backup_Recovery/test_mcp_retained_history_roundtrip.py",
+              "Tests/Backup_Recovery/test_legacy_chat_context_roundtrip.py",
+              "Tests/Backup_Recovery/test_external_partial_reporting.py",
+              # Runs the full replacement test first, then retained-copy rollback.
+              "Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review",
+          ]
+          root = Path(os.environ["EVIDENCE_ROOT"])
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          reports = root / "artifacts" / "pytest"
+          work = root / "work"
+          for path in (root, reports, work):
+              path.mkdir(parents=True, exist_ok=True, mode=0o700)
+              path.chmod(0o700)
+          missing = [
+              entry
+              for entry in entries
+              if not (workspace / entry.split("::", 1)[0]).is_file()
+          ]
+          if missing:
+              (reports / "preflight.txt").write_text(
+                  "Missing required entries:\n" + "\n".join(missing) + "\n",
+                  encoding="utf-8",
+              )
+              raise SystemExit(2)
+          child = """from Tests.network_guard import install
+          install()
+          import keyring
+          from keyring.backends.null import Keyring
+          keyring.set_keyring(Keyring())
+          import pytest, sys
+          raise SystemExit(pytest.main(sys.argv[1:]))
+          """
+          allowed = (
+              "PATH",
+              "LANG",
+              "LC_ALL",
+              "LC_CTYPE",
+              "TERM",
+              "COLORTERM",
+              "SYSTEMROOT",
+              "TZ",
+          )
+          results = []
+          for number, entry in enumerate(entries, 1):
+              name = f"{number:02d}-{Path(entry.split('::', 1)[0]).stem}"
+              case = work / name
+              report = reports / name
+              for path in (
+                  case,
+                  report,
+                  *(case / leaf for leaf in (
+                      "home",
+                      "xdg-config",
+                      "xdg-data",
+                      "xdg-cache",
+                      "xdg-state",
+                      "tmp",
+                      "pytest",
+                  )),
+              ):
+                  path.mkdir(parents=True, exist_ok=True, mode=0o700)
+                  path.chmod(0o700)
+              selector = case / "xdg-config" / "config.toml"
+              selector.write_text(
+                  '[general]\nusers_name="qualification"\n'
+                  "[first_run]\nsetup_completed=true\n",
+                  encoding="utf-8",
+              )
+              selector.chmod(0o600)
+              env = {key: os.environ[key] for key in allowed if key in os.environ}
+              env.update(
+                  HOME=str(case / "home"),
+                  USERPROFILE=str(case / "home"),
+                  XDG_CONFIG_HOME=str(case / "xdg-config"),
+                  XDG_DATA_HOME=str(case / "xdg-data"),
+                  XDG_CACHE_HOME=str(case / "xdg-cache"),
+                  XDG_STATE_HOME=str(case / "xdg-state"),
+                  TMPDIR=str(case / "tmp"),
+                  TLDW_CONFIG_PATH=str(selector),
+                  TLDW_TEST_MODE="1",
+                  TLDW_DISABLE_CONFIG_WATCH="1",
+                  PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+                  PYTHONDONTWRITEBYTECODE="1",
+                  PYTHONNOUSERSITE="1",
+                  PYTHONUNBUFFERED="1",
+                  PYTHONPATH=str(workspace),
+                  HF_HUB_OFFLINE="1",
+                  HF_HUB_DISABLE_TELEMETRY="1",
+                  TRANSFORMERS_OFFLINE="1",
+              )
+              xml_path = report / "pytest.xml"
+              args = [
+                  sys.executable,
+                  "-c",
+                  child,
+                  entry,
+                  "-q",
+                  f"--basetemp={case / 'pytest'}",
+                  f"--junitxml={xml_path}",
+              ]
+              with (report / "pytest.log").open("wb") as output:
+                  completed = subprocess.run(
+                      args,
+                      cwd=workspace,
+                      env=env,
+                      stdout=output,
+                      stderr=subprocess.STDOUT,
+                      check=False,
+                  )
+              skipped = []
+              xml_error = None
+              try:
+                  document = ET.parse(xml_path)
+                  for case_node in document.iter():
+                      if case_node.tag.rsplit("}", 1)[-1] != "testcase":
+                          continue
+                      if any(
+                          child_node.tag.rsplit("}", 1)[-1] == "skipped"
+                          for child_node in case_node
+                      ):
+                          skipped.append(
+                              "::".join(
+                                  filter(
+                                      None,
+                                      (
+                                          case_node.attrib.get("classname"),
+                                          case_node.attrib.get("name"),
+                                      ),
+                                  )
+                              )
+                          )
+              except (OSError, ET.ParseError) as error:
+                  xml_error = f"{type(error).__name__}: {error}"
+              effective_returncode = completed.returncode
+              if xml_error is not None and effective_returncode == 0:
+                  effective_returncode = 3
+              if skipped and effective_returncode == 0:
+                  effective_returncode = 4
+              status = {
+                  "entry": entry,
+                  "pytest_returncode": completed.returncode,
+                  "effective_returncode": effective_returncode,
+                  "skipped": skipped,
+                  "junit_error": xml_error,
+              }
+              (report / "status.json").write_text(
+                  json.dumps(status, indent=2) + "\n", encoding="utf-8"
+              )
+              results.append(status)
+          (reports / "summary.json").write_text(
+              json.dumps(results, indent=2) + "\n", encoding="utf-8"
+          )
+          raise SystemExit(
+              1 if any(row["effective_returncode"] for row in results) else 0
+          )
+          PY
+
+      - name: Collect failure-preserving receipts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          export EVIDENCE_ROOT="${EVIDENCE_ROOT:-${RUNNER_TEMP}/backup-recovery-qualification}"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+
+          root = Path(os.environ["EVIDENCE_ROOT"])
+          artifacts = root / "artifacts"
+          fixtures = artifacts / "fixture-receipts"
+          artifacts.mkdir(parents=True, exist_ok=True, mode=0o700)
+          fixtures.mkdir(parents=True, exist_ok=True, mode=0o700)
+          work = root / "work"
+
+          def is_receipt(path):
+              name = path.name
+              if "credential" in name.lower() or "secret" in name.lower():
+                  return False
+              if "seed" in name.lower() and path.suffix == ".json":
+                  return False
+              if name.endswith(("capture.json", "preview.json", "restored.json")):
+                  return False
+              if name in {"native-package.json", "readback.json"}:
+                  return True
+              if path.suffix == ".whl":
+                  return True
+              if name.startswith(("ui-", "f9-")) and path.suffix in {".json", ".log", ".txt"}:
+                  return True
+              return any(
+                  name.endswith(suffix)
+                  for suffix in (
+                      "-installed.json",
+                      "-manifest.json",
+                      "-mapping.json",
+                      "-readback.json",
+                      "-refusal.json",
+                  )
+              )
+
+          if work.is_dir():
+              for source in work.rglob("*"):
+                  if source.is_symlink() or not source.is_file() or not is_receipt(source):
+                      continue
+                  destination = fixtures / source.relative_to(work)
+                  destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                  shutil.copy2(source, destination)
+
+          hashes = {}
+          hash_receipt = artifacts / "artifact-sha256.json"
+          for path in sorted(artifacts.rglob("*")):
+              if path.is_file() and path != hash_receipt and not path.is_symlink():
+                  hashes[str(path.relative_to(artifacts))] = hashlib.sha256(
+                      path.read_bytes()
+                  ).hexdigest()
+          hash_receipt.write_text(
+              json.dumps(hashes, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backup-recovery-Darwin-arm64-py3.12.11-${{ github.sha }}
+          path: ${{ runner.temp }}/backup-recovery-qualification/artifacts
+          if-no-files-found: error

@@ -19,7 +19,9 @@ def managed_model_artifact_root() -> Path:
     """
     from tldw_chatbook.Utils.paths import get_user_data_dir
 
-    return get_user_data_dir() / "models" / "managed"
+    from .recovery import managed_artifact_root
+
+    return managed_artifact_root(get_user_data_dir())
 
 
 def managed_service(root: Path | None = None) -> ModelArtifactService:

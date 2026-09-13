@@ -1926,11 +1926,29 @@ class NotesScopeService:
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope == ScopeType.LOCAL_NOTE:
-            return self.local_notes_service.list_notes(
-                self._require_user_id(user_id),
-                limit=limit,
-                offset=offset,
-            )
+            from threading import current_thread, main_thread
+            from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+            from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+            local_user = self._require_user_id(user_id)
+            service = self.local_notes_service
+            list_notes = service.list_notes
+            template = getattr(service, "unified_db_template", None)
+            db = None
+            try:
+                if (
+                    type(self) is NotesScopeService
+                    and type(service) is NotesInteropService
+                    and getattr(list_notes, "__func__", None) is NotesInteropService.list_notes
+                    and type(template) is CharactersRAGDB
+                    and not template.is_memory_db
+                    and current_thread() is not main_thread()
+                ):
+                    db = service._get_db(local_user)
+                return list_notes(local_user, limit=limit, offset=offset)
+            finally:
+                if type(db) is CharactersRAGDB and not db.is_memory_db:
+                    db.close_connection()
         if normalized_scope == ScopeType.SERVER_NOTE:
             return await self.server_service.list_server_notes(
                 limit=limit, offset=offset
@@ -2043,10 +2061,30 @@ class NotesScopeService:
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope == ScopeType.LOCAL_NOTE:
-            return await asyncio.to_thread(
-                self.local_notes_service.count_notes,
-                self._require_user_id(user_id),
-            )
+            from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+            from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+            service = self.local_notes_service
+            count = service.count_notes
+            local_user = self._require_user_id(user_id)
+            template = getattr(service, "unified_db_template", None)
+            if (
+                type(self) is NotesScopeService
+                and type(service) is NotesInteropService
+                and getattr(count, "__func__", None) is NotesInteropService.count_notes
+                and type(template) is CharactersRAGDB
+                and not template.is_memory_db
+            ):
+                def count_in_worker():
+                    db = service._get_db(local_user)
+                    try:
+                        return count(local_user)
+                    finally:
+                        if type(db) is CharactersRAGDB and not db.is_memory_db:
+                            db.close_connection()
+
+                return await asyncio.to_thread(count_in_worker)
+            return await asyncio.to_thread(count, local_user)
         # Neither the server nor workspace note backends expose a dedicated
         # count-only seam today: ``server_service.list_server_notes`` only
         # surfaces a total as a side effect of fetching a page of notes

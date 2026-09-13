@@ -2695,11 +2695,15 @@ def test_sample_evidence_rejects_path_replaced_after_bounded_read(
     replacement.write_bytes(successful_audio_path.read_bytes())
     original_read = sample_audio_validation._read_bounded_regular_file
 
+    reached = []
+
     def replace_after_read(
         artifact_path: Path,
         max_bytes: int,
+        **kwargs,
     ) -> tuple[bytes, os.stat_result] | None:
-        result = original_read(artifact_path, max_bytes)
+        result = original_read(artifact_path, max_bytes, **kwargs)
+        reached.append(result)
         os.replace(replacement, artifact_path)
         return result
 
@@ -2730,6 +2734,7 @@ def test_sample_evidence_rejects_path_replaced_after_bounded_read(
 
     service.record_sample_evidence(loaded, _successful_artifact(selection, path))
 
+    assert len(reached) == 1 and reached[0] is not None
     assert service._sample_evidence == {}
 
 

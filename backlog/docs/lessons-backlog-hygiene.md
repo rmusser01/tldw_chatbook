@@ -5,6 +5,22 @@ known, expensive to rediscover. Every entry states the incident that produced it
 
 ---
 
+## A removed worktree path can make Git operate on a parent checkout (TASK-31985, 2026-09-07)
+
+**Incident.** A broad worktree cleanup stashed active TASK-31985 packaging changes
+and then removed its registered checkout. With the task directory and its `.git`
+metadata gone, Git invoked from a surviving descendant path could walk upward and
+resolve the unrelated main checkout. Work stopped before further mutation; the exact
+stash OID `3de040179723f7ae95dbbf2d63cf73bfff753771` and an external patch preserved the
+changes, which were resumed in a self-contained local clone.
+
+**What to do.** Before any recovery mutation, run `git rev-parse --show-toplevel` and
+compare its exact output with the intended checkout. Preserve active changes by
+immutable stash/patch identity outside disposable worktrees before cleanup or
+recovery. A directory path alone does not prove which repository Git will mutate.
+
+---
+
 ## Task IDs collide constantly — sweep every remote, not just dev
 
 **What happened.** This has recurred **ten-plus times**. Most recently, in one session:

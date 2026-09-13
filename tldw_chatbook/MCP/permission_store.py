@@ -80,6 +80,8 @@ from typing import Any, Callable, Iterator, Literal, Mapping
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
+
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
 SCHEMA_VERSION = 1
@@ -702,12 +704,18 @@ class MCPPermissionStore:
     holding that fence, preventing in-process lost updates.
     """
 
+    @mcp_sources.guarded
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+        from .recovery_activation import select
+
+        select(self)
         self._path_lock = _resolved_path_lock(self.path)
+        self._mutation_lock = self._path_lock
 
     # -- raw load/save -----------------------------------------------------
 
+    @mcp_sources.guarded
     def load(self) -> dict[str, Any]:
         """Return the full store payload, always valid.
 
@@ -722,18 +730,23 @@ class MCPPermissionStore:
 
         Returns:
             The payload dict, always shaped so ``profiles["default"]`` and
-            its ``servers`` key are dicts. Never raises.
+            its ``servers`` key are dicts. Admission and uncertain native
+            persistence failures propagate without resetting policy.
         """
         with self.mutation_fence():
             return self._load_locked()
 
+    @mcp_sources.guarded
     def _load_locked(self) -> dict[str, Any]:
         """Load with legacy recovery while the resolved-path fence is held."""
-        if not self.path.exists():
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.permissions") or not self.path.exists():
             return _fresh_payload()
 
         try:
-            raw_text = self.path.read_text(encoding="utf-8")
+            with mcp_sources.reader(self) as handle:
+                raw_text = handle.read()
             payload = json.loads(raw_text)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             logger.warning(
@@ -756,6 +769,7 @@ class MCPPermissionStore:
 
         return _normalize_payload_shape(payload)
 
+    @mcp_sources.guarded
     def read_snapshot_strict(self) -> PermissionStoreSnapshot:
         """Read schema 1 once without creating, renaming, normalizing, or saving.
 
@@ -768,7 +782,11 @@ class MCPPermissionStore:
                 exact, schema-1 permission payload.
         """
         try:
-            raw_bytes = self.path.read_bytes()
+            if mcp_sources.binding(self)[2]:
+                with mcp_sources.reader(self) as handle:
+                    raw_bytes = handle.buffer.read()
+            else:
+                raw_bytes = self.path.read_bytes()
         except FileNotFoundError:
             fresh = _fresh_payload()
             frozen = _freeze_snapshot(fresh)
@@ -803,6 +821,7 @@ class MCPPermissionStore:
             file_exists=True,
         )
 
+    @mcp_sources.guarded
     def read_profile_inventory_snapshot(self) -> PermissionStoreSnapshot:
         """Read profile rows without recovering globally corrupt authority.
 
@@ -826,7 +845,11 @@ class MCPPermissionStore:
                 raise
 
         try:
-            raw_bytes = self.path.read_bytes()
+            if mcp_sources.binding(self)[2]:
+                with mcp_sources.reader(self) as handle:
+                    raw_bytes = handle.buffer.read()
+            else:
+                raw_bytes = self.path.read_bytes()
             payload = json.loads(
                 raw_bytes.decode("utf-8"),
                 object_pairs_hook=_reject_duplicate_keys,
@@ -854,6 +877,7 @@ class MCPPermissionStore:
             file_exists=True,
         )
 
+    @mcp_sources.guarded
     def _load_for_raw_getter(self) -> dict[str, Any]:
         """Load a legacy-compatible payload without recovery side effects.
 
@@ -862,7 +886,8 @@ class MCPPermissionStore:
         create, normalize on disk, or otherwise alter a policy file.
         """
         try:
-            raw_text = self.path.read_text(encoding="utf-8")
+            with mcp_sources.reader(self) as handle:
+                raw_text = handle.read()
             payload = json.loads(raw_text)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
             return _fresh_payload()
@@ -880,6 +905,7 @@ class MCPPermissionStore:
         with self._path_lock:
             yield
 
+    @mcp_sources.guarded
     def save(
         self,
         payload: dict[str, Any],
@@ -890,7 +916,7 @@ class MCPPermissionStore:
 
         Args:
             payload: Full store payload to persist. Mutated in place to
-                add/overwrite ``updated_at`` before it is written.
+                add/overwrite ``updated_at`` after successful publication and native close.
             expected_generation: Optional generation captured before deriving
                 ``payload``. A changed store is rejected rather than replaced.
         """
@@ -901,10 +927,19 @@ class MCPPermissionStore:
                     raise ProfileMutationError("stale_store")
             self._save_locked(payload)
 
+    @mcp_sources.guarded
     def _save_locked(self, payload: dict[str, Any]) -> None:
         """Durably replace the store while the caller holds the path fence."""
+        from .recovery_activation import require_store_write
+
+        require_store_write(self, "mcp.permissions")
+        stamp = _iso_utc_now()
+        persisted = dict(payload, updated_at=stamp)
+        if mcp_sources.binding(self)[2]:
+            mcp_sources.write_json(self, persisted)
+            mcp_sources.stamp_payload(self, payload, stamp)
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload["updated_at"] = _iso_utc_now()
         temp_fd, raw_temp_path = tempfile.mkstemp(
             prefix=f".{self.path.name}.",
             suffix=".tmp",
@@ -915,7 +950,7 @@ class MCPPermissionStore:
             handle = os.fdopen(temp_fd, "w", encoding="utf-8")
             temp_fd = -1
             with handle:
-                json.dump(payload, handle, indent=2, sort_keys=True)
+                json.dump(persisted, handle, indent=2, sort_keys=True)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_path, self.path)
@@ -929,7 +964,9 @@ class MCPPermissionStore:
             raise
 
         _fsync_parent_directory(self.path.parent)
+        payload["updated_at"] = stamp
 
+    @mcp_sources.guarded
     def _mutate_locked(self, change: Callable[[dict[str, Any]], bool]) -> bool:
         """Load, mutate, and durably save once under the shared path fence."""
         with self.mutation_fence():
@@ -939,10 +976,13 @@ class MCPPermissionStore:
                 self._save_locked(payload)
             return changed
 
+    @mcp_sources.guarded
     def _backup_corrupt_file(self) -> None:
-        backup_path = self.path.with_suffix(f"{self.path.suffix}.bak")
+        from .recovery_activation import require_store_write
+
+        require_store_write(self, "mcp.permissions")
         try:
-            self.path.replace(backup_path)
+            mcp_sources.backup_corrupt(self)
         except OSError as exc:
             logger.warning(
                 f"Failed to back up corrupt MCP permission store at '{self.path}': {exc}"
@@ -1001,6 +1041,7 @@ class MCPPermissionStore:
                 raise ProfileMutationError("policy_digest_mismatch")
         return disposition
 
+    @mcp_sources.guarded
     def _mutate_profile_locked(
         self,
         profile_id: str,
@@ -1053,6 +1094,7 @@ class MCPPermissionStore:
             self._save_locked(payload)
             return True
 
+    @mcp_sources.guarded
     def install_profile_if_absent(
         self,
         profile_id: str,
@@ -1103,6 +1145,7 @@ class MCPPermissionStore:
             store_generation=generation,
         )
 
+    @mcp_sources.guarded
     def update_imported_profile(
         self,
         profile_id: str,
@@ -1161,6 +1204,7 @@ class MCPPermissionStore:
             store_generation=generation,
         )
 
+    @mcp_sources.guarded
     def replace_profile_with_tombstone(
         self,
         profile_id: str,
@@ -1231,6 +1275,7 @@ class MCPPermissionStore:
             store_generation=generation,
         )
 
+    @mcp_sources.guarded
     def ensure_profile(self, profile_id: str) -> None:
         """Create the named profile if it does not exist.
 
@@ -1255,6 +1300,7 @@ class MCPPermissionStore:
 
         self._mutate_locked(change)
 
+    @mcp_sources.guarded
     def list_profiles(self) -> list[str]:
         """Return every stored profile id, sorted.
 
@@ -1266,6 +1312,7 @@ class MCPPermissionStore:
 
     # -- kill switch -----------------------------------------------------
 
+    @mcp_sources.guarded
     def get_kill_switch(self) -> bool:
         """Return whether the global kill switch is enabled.
 
@@ -1276,6 +1323,7 @@ class MCPPermissionStore:
         """
         return bool(self.load().get("kill_switch", False))
 
+    @mcp_sources.guarded
     def set_kill_switch(self, value: bool) -> None:
         """Persist the global kill switch.
 
@@ -1295,6 +1343,7 @@ class MCPPermissionStore:
 
     # -- global default -----------------------------------------------------
 
+    @mcp_sources.guarded
     def get_global_default(self, *, profile_id: str = _DEFAULT_PROFILE_ID) -> str:
         """Return the profile's global default permission state.
 
@@ -1309,6 +1358,7 @@ class MCPPermissionStore:
         profile = _as_mapping(profiles.get(profile_id))
         return profile.get("global_default", DEFAULT_GLOBAL)
 
+    @mcp_sources.guarded
     def set_global_default(
         self,
         state: str,
@@ -1344,6 +1394,7 @@ class MCPPermissionStore:
 
     # -- server default -----------------------------------------------------
 
+    @mcp_sources.guarded
     def get_server_entry(
         self, server_key: str, *, profile_id: str = _DEFAULT_PROFILE_ID
     ) -> dict[str, Any] | None:
@@ -1364,6 +1415,7 @@ class MCPPermissionStore:
         servers = _as_mapping(profile.get("servers"))
         return servers.get(server_key)
 
+    @mcp_sources.guarded
     def set_server_default(
         self,
         server_key: str,
@@ -1417,6 +1469,7 @@ class MCPPermissionStore:
 
     # -- tool state -----------------------------------------------------
 
+    @mcp_sources.guarded
     def get_tool_entry(
         self,
         server_key: str,
@@ -1444,6 +1497,7 @@ class MCPPermissionStore:
         tools = _as_mapping(entry.get("tools"))
         return tools.get(tool_name)
 
+    @mcp_sources.guarded
     def set_tool_state(
         self,
         server_key: str,
@@ -1528,6 +1582,7 @@ class MCPPermissionStore:
         )
 
 
+    @mcp_sources.guarded
     def add_tool_arg_rule(
         self,
         server_key: str,
@@ -1592,6 +1647,7 @@ class MCPPermissionStore:
             expected_revision=None,
         )
 
+    @mcp_sources.guarded
     def list_tool_arg_rules(
         self,
         server_key: str,
@@ -1658,6 +1714,7 @@ class MCPPermissionStore:
             ]
         return []
 
+    @mcp_sources.guarded
     def remove_tool_arg_rule(
         self,
         server_key: str,
@@ -1753,6 +1810,7 @@ class MCPPermissionStore:
         tool_entry = tools.get(tool_name)
         return tool_entry if isinstance(tool_entry, Mapping) else None
 
+    @mcp_sources.guarded
     def mark_config_changed(
         self,
         server_key: str,

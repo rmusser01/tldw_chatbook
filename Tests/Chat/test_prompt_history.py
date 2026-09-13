@@ -24,6 +24,24 @@ def _seed(history: PromptHistory, *inputs: str) -> None:
     history._loaded = True
 
 
+@pytest.fixture(autouse=True)
+def isolated_default_history_path(monkeypatch, tmp_path):
+    """Keep explicit-path IO tests independent of the process config singleton.
+
+    These stores intentionally use custom paths. Their default-path comparison
+    must not rebind the already imported production config when the shared
+    fixture changes HOME between tests. The real source jobs, native files and
+    persistence admission remain active.
+    """
+    from tldw_chatbook.Chat import prompt_history
+
+    monkeypatch.setattr(
+        prompt_history,
+        "default_prompt_history_path",
+        lambda: tmp_path / "default-profile" / "prompt_history.jsonl",
+    )
+
+
 @pytest.fixture
 def history(tmp_path):
     return PromptHistory(tmp_path / "prompt_history.jsonl")

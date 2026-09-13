@@ -74,17 +74,19 @@ async def test_live_open_control_retains_shared_owner_for_teardown_only_retry(
     owners, worker_errors, close_threads, statements = [], [], [], []
     fail_close = True
 
-    class RetainedConnection(sqlite3.Connection):
-        def close(self):
-            close_threads.append(threading.get_ident())
-            assert self.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)
-            if fail_close:
-                raise sqlite3.OperationalError("owned close failure")
-            super().close()
-
     def connect(database, *args, **kwargs):
         if database == ":memory:":
             return real_connect(database, *args, **kwargs)
+        factory = kwargs.pop("factory", sqlite3.Connection)
+
+        class RetainedConnection(factory):
+            def close(self):
+                close_threads.append(threading.get_ident())
+                assert self.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)
+                if fail_close:
+                    raise sqlite3.OperationalError("owned close failure")
+                super().close()
+
         return real_connect(database, *args, **kwargs, factory=RetainedConnection)
 
     def interrupt_validation(connection, **kwargs):
@@ -112,7 +114,7 @@ async def test_live_open_control_retains_shared_owner_for_teardown_only_retry(
     try:
         with pytest.raises(BaseException) as caught:
             await repository.open()
-        assert len(owners) == 1  # The real live opener, past the memory probe.
+        assert len(owners) == 1, repr(caught.value)  # Past the memory probe.
         owner = owners[0]
         lease, executor = repository._lease, repository._executor
         assert repository._connection is owner
@@ -468,9 +470,9 @@ async def test_repository_open_recovers_before_access_and_publishes_exact_bounda
     real_open = module.open_profile_store
     real_schema_connect = module._profile_schema.connect_private_sqlite
 
-    def tracked_recover(path: Path) -> bool:
+    def tracked_recover(path: Path, **kwargs: object) -> bool:
         events.append("recover")
-        return real_recover(path)
+        return real_recover(path, **kwargs)
 
     def tracked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
         events.append("sqlite")
@@ -6336,17 +6338,16 @@ async def test_restore_fsyncs_recovery_directory_entry_before_publication_ponr(
     repository = _repository(database_path)
     await repository.open()
     events: list[tuple[str, Path | None]] = []
-    real_fsync_file = module._fsync_file
-    real_fsync_directory = module._fsync_directory
+    real_fsync = module.os.fsync
     real_publish = module.publish_profile_migration
 
-    def observed_fsync_file(path: Path) -> None:
-        events.append(("file", path))
-        real_fsync_file(path)
-
-    def observed_fsync_directory(path: Path) -> None:
-        events.append(("directory", path))
-        real_fsync_directory(path)
+    def observed_fsync(descriptor: int) -> None:
+        for operation in repository._backup_native_operations:
+            if operation.descriptors.get("file_sync") == descriptor:
+                events.append(("file", operation.temporary_path))
+            elif operation.descriptors.get("parent") == descriptor:
+                events.append(("directory", operation.destination.path.parent))
+        real_fsync(descriptor)
 
     def observed_publish(**kwargs: object) -> None:
         repository_hook = kwargs.pop("stage_hook", None)
@@ -6359,8 +6360,7 @@ async def test_restore_fsyncs_recovery_directory_entry_before_publication_ponr(
 
         real_publish(**kwargs, stage_hook=stage_hook)
 
-    monkeypatch.setattr(module, "_fsync_file", observed_fsync_file)
-    monkeypatch.setattr(module, "_fsync_directory", observed_fsync_directory)
+    monkeypatch.setattr(module.os, "fsync", observed_fsync)
     monkeypatch.setattr(module, "publish_profile_migration", observed_publish)
 
     try:
@@ -6760,8 +6760,9 @@ async def test_backup_rechecks_configured_symlink_after_worker_snapshot(
     def drifting_backup(
         source: sqlite3.Connection,
         target: sqlite3.Connection,
+        **kwargs: object,
     ) -> None:
-        real_backup(source, target)
+        real_backup(source, target, **kwargs)
         configured_path.unlink()
         configured_path.symlink_to(alternate_path)
 
@@ -6770,6 +6771,7 @@ async def test_backup_rechecks_configured_symlink_after_worker_snapshot(
         with pytest.raises(ProfileRepositoryError) as caught:
             await repository.backup_to(destination)
 
+        assert configured_path.resolve() == alternate_path
         _assert_safe_error(caught.value, "backup_failed", str(configured_path))
         assert destination.exists() is False
         assert not tuple(tmp_path.glob(f".{destination.name}.*.backup"))

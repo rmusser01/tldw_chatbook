@@ -1,23 +1,23 @@
-"""Server sync transport interoperability services."""
+"""Compatibility-preserving lazy public exports; recovery imports no services."""
 
-from .key_recovery_service import SyncKeyRecoveryService
-from .chat_outbox_producer import ChatSyncV2OutboxProducer
-from .local_first_sync_service import LocalFirstSyncService
-from .manual_sync_control import ManualSyncControlService
-from .restore_service import SyncRestoreService
-from .server_sync_service import ServerSyncService
-from .sync_scope_service import SyncBackend, SyncScopeService
-from .sync_state_repository import SyncStateRepository
+from importlib import import_module
 
+_EXPORTS = {
+    "SyncKeyRecoveryService": (".key_recovery_service", "SyncKeyRecoveryService"),
+    "ChatSyncV2OutboxProducer": (".chat_outbox_producer", "ChatSyncV2OutboxProducer"),
+    "LocalFirstSyncService": (".local_first_sync_service", "LocalFirstSyncService"),
+    "ManualSyncControlService": (".manual_sync_control", "ManualSyncControlService"),
+    "NotesSyncV2OutboxProducer": (
+        ".notes_outbox_producer",
+        "NotesSyncV2OutboxProducer",
+    ),
+    "SyncRestoreService": (".restore_service", "SyncRestoreService"),
+    "ServerSyncService": (".server_sync_service", "ServerSyncService"),
+    "SyncBackend": (".sync_scope_service", "SyncBackend"),
+    "SyncScopeService": (".sync_scope_service", "SyncScopeService"),
+    "SyncStateRepository": (".sync_state_repository", "SyncStateRepository"),
+}
 
-def __getattr__(name: str):
-    """Load the Notes producer only when Notes mutation wiring requests it."""
-
-    if name == "NotesSyncV2OutboxProducer":
-        from .notes_outbox_producer import NotesSyncV2OutboxProducer
-
-        return NotesSyncV2OutboxProducer
-    raise AttributeError(name)
 
 __all__ = [
     "LocalFirstSyncService",
@@ -31,3 +31,12 @@ __all__ = [
     "SyncScopeService",
     "SyncStateRepository",
 ]
+
+
+def __getattr__(name):
+    if name not in _EXPORTS:
+        raise AttributeError(name)
+    module, symbol = _EXPORTS[name]
+    value = getattr(import_module(module, __name__), symbol)
+    globals()[name] = value
+    return value

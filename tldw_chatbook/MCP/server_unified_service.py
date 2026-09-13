@@ -5,6 +5,11 @@ from typing import Any, Callable, TYPE_CHECKING
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
+
 from tldw_chatbook.runtime_policy.enforcement import (
     ServicePolicyEnforcer,
     classify_backend_exception,
@@ -15,6 +20,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.tldw_api.mcp_unified_schemas import UnifiedMCPAccessContext
 
 
+from .activation import guarded
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_control_models import (
     ConfiguredServerTarget,
@@ -27,6 +33,18 @@ from .unified_control_models import (
 class ServerUnifiedMCPService:
     """Resolve server-side MCP browse capabilities and provide section reads."""
 
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for accepted calls without cancelling their native work."""
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self):
+        """Reopen only after accepted work and ordinary storage have settled."""
+        self._producer_lifetime.resume()
+
     def __init__(
         self,
         *,
@@ -35,6 +53,7 @@ class ServerUnifiedMCPService:
         policy_enforcer: ServicePolicyEnforcer | None = None,
         target_store: ConfiguredServerTargetStore | None = None,
     ) -> None:
+        self._producer_lifetime = ProducerLifetime()
         self.client = client
         self.client_factory = client_factory
         self.policy_enforcer = policy_enforcer
@@ -3285,3 +3304,98 @@ class ServerUnifiedMCPService:
             selected_scope_ref,
             section,
         )
+
+
+# Every named operation below can create/use the configured remote client. Keeping
+# the finite list here makes cache hits and future direct service consumers enter
+# activation before client construction, credential resolution, or network work.
+_REMOTE_SERVER_OPERATIONS = (
+    "resolve_access_context",
+    "get_overview",
+    "get_inventory",
+    "get_catalogs",
+    "get_external_servers",
+    "get_governance",
+    "get_advanced",
+    "create_catalog",
+    "create_catalog_entry",
+    "delete_catalog",
+    "delete_catalog_entry",
+    "create_external_server",
+    "update_external_server",
+    "delete_external_server",
+    "import_external_server",
+    "update_external_server_auth_template",
+    "list_external_server_credential_slots",
+    "create_external_server_credential_slot",
+    "update_external_server_credential_slot",
+    "delete_external_server_credential_slot",
+    "set_external_server_slot_secret",
+    "clear_external_server_slot_secret",
+    "create_permission_profile",
+    "update_permission_profile",
+    "delete_permission_profile",
+    "create_policy_assignment",
+    "update_policy_assignment",
+    "delete_policy_assignment",
+    "get_policy_assignment_override",
+    "upsert_policy_assignment_override",
+    "delete_policy_assignment_override",
+    "create_approval_policy",
+    "update_approval_policy",
+    "delete_approval_policy",
+    "create_approval_decision",
+    "create_acp_profile",
+    "update_acp_profile",
+    "delete_acp_profile",
+    "get_assignment_external_access",
+    "list_policy_assignment_workspaces",
+    "add_policy_assignment_workspace",
+    "delete_policy_assignment_workspace",
+    "list_profile_credential_bindings",
+    "upsert_profile_credential_binding",
+    "delete_profile_credential_binding",
+    "get_profile_slot_credential_status",
+    "list_assignment_credential_bindings",
+    "upsert_assignment_credential_binding",
+    "delete_assignment_credential_binding",
+    "get_assignment_slot_credential_status",
+    "set_external_server_secret",
+    "update_governance_pack_trust_policy",
+    "dry_run_governance_pack",
+    "prepare_governance_pack_source",
+    "dry_run_governance_pack_source",
+    "check_governance_pack_updates",
+    "prepare_governance_pack_upgrade_candidate",
+    "dry_run_governance_pack_upgrade",
+    "dry_run_governance_pack_source_upgrade",
+    "import_governance_pack",
+    "import_governance_pack_source",
+    "execute_governance_pack_source_upgrade",
+    "execute_governance_pack_upgrade",
+    "get_governance_pack_detail",
+    "list_governance_pack_upgrade_history",
+    "create_path_scope_object",
+    "preview_capability_mapping",
+    "create_capability_mapping",
+    "update_capability_mapping",
+    "delete_capability_mapping",
+    "update_path_scope_object",
+    "delete_path_scope_object",
+    "create_workspace_set_object",
+    "update_workspace_set_object",
+    "delete_workspace_set_object",
+    "list_workspace_set_members",
+    "add_workspace_set_member",
+    "delete_workspace_set_member",
+    "create_shared_workspace",
+    "update_shared_workspace",
+    "delete_shared_workspace",
+)
+
+for _operation_name in _REMOTE_SERVER_OPERATIONS:
+    setattr(
+        ServerUnifiedMCPService,
+        _operation_name,
+        guarded(producer_call(getattr(ServerUnifiedMCPService, _operation_name))),
+    )

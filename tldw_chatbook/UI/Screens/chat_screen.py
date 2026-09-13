@@ -238,6 +238,8 @@ from ...Chat.console_roleplay_identity import (
     resolve_send_system_prompt,
 )
 from ...Chat.prompt_history import PromptHistory
+from ...Backup_Recovery import raw_participants as raw
+from ...Backup_Recovery.async_file_participants import _FileJob
 from ...Chat.console_cost_tracker import (
     ConsoleCacheState,
     ConsoleCostRow,
@@ -7511,12 +7513,15 @@ class ChatScreen(BaseAppScreen):
         # inspector block's Attach/Detach picker flow.
         self._console_worldbook_dialog_active = False
         self.ui_state = UIState()
-        self._load_sidebar_state()
+        self._sidebar_state_persist_lock = asyncio.Lock()
+        self._sidebar_state_revision = 0
+        self._sidebar_state_persistence_error: str | None = None
         # task-15470: debounce state for `watch_sidebar_state` -- see
         # `SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS`.
         self._sidebar_state_save_timer: Any | None = None
         self._sidebar_state_dirty = False
         self._sidebar_state_persist_worker: Any | None = None
+        self._load_sidebar_state()
 
     # Sections `load_settings()` always injects into a disk-loaded config but
     # which Console test fakes never carry. Used to tell a real boot snapshot
@@ -9588,18 +9593,17 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleProviderSelection:
         """Return an owning-session provider selection without switching tabs.
 
-        Served from the per-pass memo inside a `_console_derivation_scope`
-        (task-15452): one draft-edit sync built this 7 times for the same
-        session.
+        Reuse an enclosing derivation memo, or share config reads only for
+        this synchronous selection. The next independent call remains fresh.
         """
-        memo = self._console_derivation_memo
-        memo_key = ("provider_selection", session_id)
-        if memo is not None and memo_key in memo:
-            return memo[memo_key]
-        selection = self._build_console_provider_selection_uncached(session_id)
-        if memo is not None:
+        with self._console_derivation_scope():
+            memo = self._console_derivation_memo
+            memo_key = ("provider_selection", session_id)
+            if memo_key in memo:
+                return memo[memo_key]
+            selection = self._build_console_provider_selection_uncached(session_id)
             memo[memo_key] = selection
-        return selection
+            return selection
 
     def _build_console_provider_selection_uncached(
         self, session_id: str | None = None
@@ -12737,8 +12741,15 @@ class ChatScreen(BaseAppScreen):
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             return ""
+
+        def _read_card() -> dict[str, Any] | None:
+            from tldw_chatbook.DB.base_db import operation_owned_connection
+
+            with operation_owned_connection(db):
+                return db.get_character_card_by_id(character_id)
+
         try:
-            card = await asyncio.to_thread(db.get_character_card_by_id, character_id)
+            card = await asyncio.to_thread(_read_card)
         except Exception:
             logger.opt(exception=True).warning(
                 "Resume: character card fetch failed; identity row falls back."
@@ -18327,6 +18338,35 @@ class ChatScreen(BaseAppScreen):
         active_run_copy = self._console_active_run_copy()
         status_chips.sync_run_chip(bool(active_run_copy), active_run_copy)
 
+    def _console_sync_maintenance_close_admission(self) -> None:
+        """Defer new UI sync passes while an admitted pass finishes naturally."""
+        self._console_sync_maintenance_paused = True
+
+    async def _console_sync_maintenance_drain(self, deadline: float) -> bool:
+        """Observe actual sync completion without cancelling its publication."""
+        if not getattr(self, "_console_sync_maintenance_paused", False):
+            raise RuntimeError("console_sync_maintenance_not_paused")
+        while self._console_sync_in_progress:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.01))
+        return True
+
+    def _console_sync_maintenance_resume(self) -> None:
+        """Replay a coalesced request after ordinary storage admission resumes."""
+        if not getattr(self, "_console_sync_maintenance_paused", False):
+            return
+        self._console_sync_maintenance_paused = False
+        if self._console_sync_requested and not self._console_sync_in_progress:
+            self._console_sync_requested = False
+            if not _console_screen_is_torn_down(self):
+                self.run_worker(
+                    self._sync_native_console_chat_ui(),
+                    exclusive=True,
+                    group="console-sync",
+                )
+
     async def _sync_native_console_chat_ui(self) -> None:
         """Refresh visible Console-native state after send/stop transitions.
 
@@ -18356,7 +18396,10 @@ class ChatScreen(BaseAppScreen):
             # coalesced request.
             self._console_sync_requested = False
             return
-        if self._console_sync_in_progress:
+        if (
+            getattr(self, "_console_sync_maintenance_paused", False)
+            or self._console_sync_in_progress
+        ):
             self._console_sync_requested = True
             return
         self._console_sync_in_progress = True
@@ -18472,7 +18515,9 @@ class ChatScreen(BaseAppScreen):
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
-            if self._console_sync_requested:
+            if self._console_sync_requested and not getattr(
+                self, "_console_sync_maintenance_paused", False
+            ):
                 self._console_sync_requested = False
                 # A dead screen must not re-arm itself: `run_worker` here
                 # runs AFTER Textual's unmount sweep
@@ -24406,6 +24451,7 @@ class ChatScreen(BaseAppScreen):
         a pending write is unconditionally scheduled.
         """
         self._sidebar_state_dirty = True
+        self._sidebar_state_revision += 1
         if self._sidebar_state_save_timer is not None:
             self._sidebar_state_save_timer.stop()
         self._sidebar_state_save_timer = self.set_timer(
@@ -24422,94 +24468,86 @@ class ChatScreen(BaseAppScreen):
             group="sidebar-state-persist",
         )
 
-    async def _persist_sidebar_state_off_loop(self) -> None:
-        """Write `ui_state.toml` on a worker thread, off the event loop.
+    async def _persist_sidebar_state_off_loop(self) -> bool:
+        """Serialize native IO through result delivery, including cancellation."""
+        async with self._sidebar_state_persist_lock:
+            if not self._sidebar_state_dirty:
+                return self._sidebar_state_persistence_error is None
+            try:
+                with _FileJob(self, "sidebar_state") as job:
+                    revision = self._sidebar_state_revision
+                    snapshot = self._sidebar_state_snapshot()
+                    outcome = await job.run(snapshot)
+                    self._sidebar_state_persistence_error = (
+                        type(outcome.error).__name__
+                        if outcome.error is not None
+                        else None
+                    )
+                    if (
+                        outcome.error is None
+                        and revision == self._sidebar_state_revision
+                    ):
+                        self._sidebar_state_dirty = False
+                    if outcome.cancelled:
+                        raise asyncio.CancelledError
+                    if outcome.error is not None:
+                        logger.error(
+                            "Sidebar-state write failed: {}",
+                            self._sidebar_state_persistence_error,
+                        )
+                    return outcome.error is None
+            except Exception as error:
+                self._sidebar_state_persistence_error = type(error).__name__
+                logger.error(
+                    "Sidebar-state write failed: {}",
+                    self._sidebar_state_persistence_error,
+                )
+                return False
 
-        Snapshots `self.ui_state` here, on the main thread, before handing
-        the write to `to_thread` -- a further toggle can still arrive and
-        mutate `collapsible_states` while this write is in flight, and it
-        must not race the worker thread's read of that same dict.
+    async def _flush_sidebar_state_now(self) -> bool:
+        """Reach the actual source safe point and persist the latest dirty revision.
 
-        Clears `_sidebar_state_dirty` immediately after taking the
-        snapshot, NOT after the write completes (review round,
-        task-15470): the awaited `to_thread` call below yields to the
-        event loop, and a further toggle can land while this write is
-        still in flight. Clearing dirty only after the write finished
-        would blindly stamp it False again on completion -- clobbering
-        the True a mid-flight toggle had just set -- so a quit landing
-        before that toggle's own new debounce timer fires would see
-        `dirty=False` and lose it. Clearing right here instead means the
-        dirty flag always answers "is there a toggle newer than the
-        snapshot this worker is holding", which a mid-flight toggle
-        correctly flips back to True.
-        """
-        snapshot = self._sidebar_state_snapshot()
-        self._sidebar_state_dirty = False
-        await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
-
-    async def _flush_sidebar_state_now(self) -> None:
-        """Force-flush a pending sidebar-state write (unmount/quit path).
-
-        Cancels any pending debounce timer and writes off the loop via
-        `to_thread` so the screen never unmounts with an unpersisted toggle
-        -- the AC #2 flush-on-quit guarantee. If a debounced write is
-        already in flight (the timer fired moments before quit), this waits
-        for it rather than dispatching a second writer against the same
-        file -- `_write_sidebar_state_snapshot` does an unlocked
-        read-modify-write of `ui_state.toml`, so two concurrent writers
-        could interleave.
+        A Textual worker's finished/cancelled flag does not establish native
+        retirement. The source lock remains held through real IO and bookkeeping.
+        Refusal leaves dirty data/error available to later maintenance composition;
+        this method grants no permission to flush after admission closes.
         """
         if self._sidebar_state_save_timer is not None:
             self._sidebar_state_save_timer.stop()
             self._sidebar_state_save_timer = None
-        worker = self._sidebar_state_persist_worker
-        if worker is not None and not worker.is_finished:
-            try:
-                await worker.wait()
-            except Exception as error:
-                logger.error(
-                    "Pending sidebar-state write failed: {}", type(error).__name__
-                )
-            # Falls through to the dirty re-check below (review round,
-            # task-15470) rather than returning here: a toggle can land
-            # while THIS await was in flight, re-dirtying the state after
-            # the awaited worker already took its own snapshot. Returning
-            # unconditionally after the wait would silently drop it.
-        if self._sidebar_state_dirty:
-            snapshot = self._sidebar_state_snapshot()
-            await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
-            self._sidebar_state_dirty = False
+        while True:
+            if not await self._persist_sidebar_state_off_loop():
+                return False
+            if not self._sidebar_state_dirty:
+                return True
 
     def _load_sidebar_state(self) -> None:
-        """Load sidebar state from config file."""
-        config_path = _get_effective_config_path().parent / "ui_state.toml"
-
+        """Read the selected UI-state owner under ordinary source admission."""
         try:
-            if config_path.exists():
-                with open(config_path, "r") as f:
-                    data = toml.load(f)
-                    sidebar_data = data.get("sidebar", {})
-
-                    # Load collapsible states into UIState
-                    self.ui_state.collapsible_states = sidebar_data.get(
-                        "collapsible_states", {}
-                    )
-                    self.ui_state.sidebar_search_query = sidebar_data.get(
-                        "search_query", ""
-                    )
-                    self.ui_state.last_active_section = sidebar_data.get(
-                        "last_active_section", None
-                    )
-
-                    # Update reactive property
-                    self.sidebar_state = dict(self.ui_state.collapsible_states)
-
-                    logger.debug(
-                        f"Loaded sidebar state with {len(self.ui_state.collapsible_states)} collapsibles"
-                    )
-        except Exception as e:
-            logger.error(f"Failed to load sidebar state: {e}")
-            self.sidebar_state = {}
+            with raw._scope(self, "sidebar_state") as operation:
+                try:
+                    with raw._file(operation, raw._selected(operation), "r") as f:
+                        data = toml.load(f)
+                except FileNotFoundError:
+                    return
+                sidebar_data = data.get("sidebar", {})
+                self.ui_state.collapsible_states = sidebar_data.get(
+                    "collapsible_states", {}
+                )
+                self.ui_state.sidebar_search_query = sidebar_data.get(
+                    "search_query", ""
+                )
+                self.ui_state.last_active_section = sidebar_data.get(
+                    "last_active_section", None
+                )
+                self.sidebar_state = dict(self.ui_state.collapsible_states)
+                self._sidebar_state_persistence_error = None
+        except Exception as error:
+            self._sidebar_state_persistence_error = type(error).__name__
+            logger.error(
+                "Failed to load sidebar state: {}",
+                self._sidebar_state_persistence_error,
+            )
 
     def _sidebar_state_snapshot(self) -> Dict[str, Any]:
         """Copy the sidebar-persisted fields off `self.ui_state`.
@@ -24526,46 +24564,48 @@ class ChatScreen(BaseAppScreen):
             "last_active_section": self.ui_state.last_active_section,
         }
 
-    def _write_sidebar_state_snapshot(self, snapshot: Dict[str, Any]) -> None:
-        """Write a pre-captured sidebar-state snapshot to `ui_state.toml`.
-
-        Safe to call from a worker thread: touches only the passed-in
-        `snapshot`, never `self.ui_state`.
-        """
-        config_path = _get_effective_config_path().parent / "ui_state.toml"
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # Load existing config or create new
-            if config_path.exists():
-                with open(config_path, "r") as f:
+    def _write_sidebar_state_snapshot(
+        self, snapshot: Dict[str, Any], *, _selected=None
+    ) -> None:
+        """Own the real fixed-target merge/publication scope on the calling thread."""
+        with raw._scope(
+            self, "sidebar_state", writing=True, selected_read=_selected
+        ) as operation:
+            selected = raw._selected(operation)
+            raw._mkdirs(operation)
+            try:
+                with raw._file(operation, selected, "r") as f:
                     data = toml.load(f)
-            else:
+            except FileNotFoundError:
                 data = {}
-
-            # Update sidebar section
             data["sidebar"] = snapshot
+            temporary = selected.with_suffix(selected.suffix + ".tmp")
+            try:
+                with raw._file(operation, temporary, "w") as f:
+                    toml.dump(data, f)
+                raw._replace(operation, temporary, selected)
+            finally:
+                raw._remove_temporary(operation, temporary)
 
-            # Save back to file
-            with open(config_path, "w") as f:
-                toml.dump(data, f)
-
-            logger.debug(
-                f"Saved sidebar state with {len(snapshot['collapsible_states'])} collapsibles"
+    def _save_sidebar_state(self) -> bool:
+        """Legacy synchronous source entry; errors remain visible for maintenance."""
+        try:
+            # Admission/path selection precedes even the snapshot copy.
+            with raw._scope(self, "sidebar_state", writing=True) as operation:
+                snapshot = self._sidebar_state_snapshot()
+                ChatScreen._write_sidebar_state_snapshot(
+                    self, snapshot, _selected=raw._selected(operation)
+                )
+                self._sidebar_state_persistence_error = None
+                return True
+        except Exception as error:
+            self._sidebar_state_persistence_error = type(error).__name__
+            self._sidebar_state_dirty = True
+            logger.error(
+                "Failed to save sidebar state: {}",
+                self._sidebar_state_persistence_error,
             )
-        except Exception as e:
-            logger.error(f"Failed to save sidebar state: {e}")
-
-    def _save_sidebar_state(self) -> None:
-        """Save sidebar state to config file, synchronously, on this thread.
-
-        Convenience wrapper around `_sidebar_state_snapshot` +
-        `_write_sidebar_state_snapshot` for a caller that is already off the
-        event loop (a worker thread via `to_thread`) or does not care (a
-        direct test call). Callers on the event loop that must NOT block it
-        should go through `watch_sidebar_state`'s debounce instead.
-        """
-        self._write_sidebar_state_snapshot(self._sidebar_state_snapshot())
+            return False
 
     def _restore_collapsible_states(self) -> None:
         """Restore collapsible states from saved state."""

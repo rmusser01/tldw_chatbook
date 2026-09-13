@@ -2918,6 +2918,7 @@ class ConsoleRuntime:
                 ),
                 citation_repository=citation_repository,
             )
+            persistence.retry_recovered_media_references()
             legacy_normalization_enabled = callable(getattr(db, "transaction", None))
             legacy_normalizer: Any | None = None
             native_reader: Any | None = None

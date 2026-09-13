@@ -101,7 +101,7 @@ def test_immutable_validation_retains_pins_when_sqlite_close_fails(
             isolation_level=None,
         )
     )
-    monkeypatch.setattr(module, "_open_exact", lambda value: (parent_fd, file_fd, leaf))
+    monkeypatch.setattr(module, "_open_exact", lambda value, **kwargs: (parent_fd, file_fd, leaf))
     monkeypatch.setattr(
         module, "connect_private_sqlite_descriptor", lambda *a, **k: proxy
     )
@@ -1091,6 +1091,8 @@ def test_initial_journal_failure_removes_exact_partial_generation(
             ),
         ),
     )
+    from types import SimpleNamespace
+    monkeypatch.setattr(module, "os", SimpleNamespace(**vars(os)))
     real_write = module.os.write
     real_fsync = module.os.fsync
     journal_fd = -1
@@ -1158,7 +1160,9 @@ def test_initial_journal_cleanup_preserves_foreign_holding_race(
 
     def partial_write(file_fd: int, value: bytes) -> int:
         nonlocal failed
-        if not failed:
+        named = journal_path.lstat() if journal_path.exists() else None
+        opened = os.fstat(file_fd)
+        if not failed and named is not None and (opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino):
             failed = True
             real_write(file_fd, value[:5])
             raise OSError(errno.ENOSPC, "PRIVATE write failure")
@@ -1830,8 +1834,8 @@ def test_publication_retains_close_failure_without_resuming_multislot_work(
     real_connect = module.connect_private_sqlite_descriptor
     real_close = os.close
 
-    def open_exact(identity):
-        result = real_open(identity)
+    def open_exact(identity, **kwargs):
+        result = real_open(identity, **kwargs)
         if armed and not proxies:
             pins.append(result[:2])
         return result
@@ -1919,7 +1923,10 @@ def test_publication_retains_close_failure_without_resuming_multislot_work(
         owner.close()
         owner.close()
         assert proxies[0].close_calls == 2
-        assert raw_closes == [file_fd, parent_fd]
+        assert [fd for fd in raw_closes if fd in {file_fd, parent_fd}] == [
+            file_fd, parent_fd
+        ]
+        assert not owner.native.active
         assert post_failure == []
         assert journal.read_bytes() == journal_before
         assert sorted(path.name for path in tmp_path.iterdir()) == namespace_before
@@ -1975,11 +1982,11 @@ def test_completion_and_restoration_failure_retains_recovery_set_and_unavailable
     real_rename = module._rename_exact
 
     def fail_active_rollback(
-        source: object, destination: Path, parent_authority: object
+        source: object, destination: Path, parent_authority: object, *, _native=None
     ) -> object:
         if str(source._path).endswith(".profile-migration-active.rollback.sqlite3"):
             raise OSError(f"PRIVATE total storage failure at {tmp_path}")
-        return real_rename(source, destination, parent_authority)
+        return real_rename(source, destination, parent_authority, _native=_native)
 
     monkeypatch.setattr(module, "_rename_exact", fail_active_rollback)
 
@@ -2027,16 +2034,16 @@ def test_unavailable_dominates_deferred_cancellation_when_restore_also_fails(
     real_validate = module._immutable_validate
     real_rename = module._rename_exact
 
-    def fail_completion(identity: object) -> None:
+    def fail_completion(identity: object, *, _native=None) -> None:
         if identity._path == active_path and identity._slot is slot.ACTIVE:
             if identity._schema_version == 4:
                 raise OSError("PRIVATE completion failure")
-        real_validate(identity)
+        real_validate(identity, _native=_native)
 
-    def fail_restore(source: object, target: Path, parent_authority: object) -> object:
+    def fail_restore(source: object, target: Path, parent_authority: object, *, _native=None) -> object:
         if str(source._path).endswith(".profile-migration-active.rollback.sqlite3"):
             raise OSError("PRIVATE rollback failure")
-        return real_rename(source, target, parent_authority)
+        return real_rename(source, target, parent_authority, _native=_native)
 
     monkeypatch.setattr(module, "_immutable_validate", fail_completion)
     monkeypatch.setattr(module, "_rename_exact", fail_restore)

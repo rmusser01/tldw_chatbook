@@ -8,11 +8,12 @@ import os
 import stat
 import tempfile
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import wraps
 from pathlib import Path
-from threading import RLock
-from typing import Literal, TypeVar, cast
+from threading import RLock, current_thread
+from typing import TYPE_CHECKING, Literal, TypeVar, cast
 
 from loguru import logger
 
@@ -24,12 +25,16 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
 )
 from tldw_chatbook.Utils.path_validation import get_safe_relative_path
 
+if TYPE_CHECKING:
+    from .recovery_review import NotesRecoveryReview
+
 MAX_FILE_BYTES = 8_000_000
 MAX_FILE_CHARS = 2_000_000
 INTERACTIVE_FILE_CHARS = 200_000
 LARGE_FILE_EXCERPT_CHARS = 100_000
 EXACT_EXPORT_CHUNK_BYTES = 64 * 1024
 SUPPORTED_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".text"})
+_ACTIVATION_WARNING = "Recovery activation required; replica refresh is inactive"
 UTF8_BOM = b"\xef\xbb\xbf"
 
 OperationStatus = Literal[
@@ -54,6 +59,28 @@ def _serialized(method: _ServiceMethod) -> _ServiceMethod:
         *args: object,
         **kwargs: object,
     ) -> object:
+        if method.__name__ not in {"session_changes", "close"}:
+            with (
+                service._session_owner._maintenance_operation(current_thread()),
+                service._operation_lock,
+            ):
+                if method.__name__ in {"scan", "open_file", "reconcile"}:
+                    with service._replica_execution_scope() as allowed:
+                        previous = service._inspection_refresh_allowed
+                        service._inspection_refresh_allowed = allowed
+                        try:
+                            if method.__name__ == "reconcile" and not allowed:
+                                scan = FileNotesService.scan.__wrapped__(service)
+                                return ReconcileResult(
+                                    status=scan.status,
+                                    entries=scan.entries,
+                                    offline=scan.offline,
+                                    replica_warning=_ACTIVATION_WARNING,
+                                )
+                            return method(service, *args, **kwargs)
+                        finally:
+                            service._inspection_refresh_allowed = previous
+                return method(service, *args, **kwargs)
         with service._operation_lock:
             return method(service, *args, **kwargs)
 
@@ -214,6 +241,53 @@ class FileNotesService:
         self._session_binding = session_binding
         self._entry_cache: dict[str, FileNoteEntry] = {}
         self._pending_replica_moves: dict[str, str] = {}
+        self._inspection_refresh_allowed = False
+        with session_owner._lock:
+            session_owner._maintenance_file_sources.add(self)
+
+    @contextmanager
+    def _replica_execution_scope(self):
+        """Keep the selected folder and installed replica admitted in this worker."""
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        if self._replica is not None and not isinstance(
+            self._replica, FileNotesReplica
+        ):
+            yield False
+            return
+        replica_path = (
+            Path(self._replica.db_path)
+            if self._replica is not None and not self._replica.is_memory_db
+            else None
+        )
+        owners = ("notes.file_notes",)
+        with (
+            execution_scope(owners, self.root) as root_allowed,
+            execution_scope(owners, replica_path) as replica_allowed,
+        ):
+            allowed = root_allowed and replica_allowed
+            if allowed:
+                from .recovery_review import file_paths, require_pairing
+
+                try:
+                    require_pairing("notes.file_notes", file_paths(self))
+                except (PermissionError, ValueError):
+                    allowed = False
+            yield allowed
+
+    @_serialized
+    def preview_recovery(self) -> NotesRecoveryReview:
+        """Compare current disk bytes and the retained replica without refreshing it."""
+        from .recovery_review import review_pairing
+
+        return review_pairing("notes.file_notes", self, self.root)
+
+    @_serialized
+    def approve_recovery(self, review: NotesRecoveryReview) -> NotesRecoveryReview:
+        """Recheck complete pairing evidence and approve only File Notes."""
+        from .recovery_review import review_pairing
+
+        return review_pairing("notes.file_notes", self, self.root, expected=review)
 
     @property
     @_serialized
@@ -262,7 +336,9 @@ class FileNotesService:
             return ScanResult(status="offline", offline=True)
 
         entries: list[FileNoteEntry] = []
-        warning: str | None = None
+        warning: str | None = (
+            None if self._inspection_refresh_allowed else _ACTIVATION_WARNING
+        )
         observed, uncertain_paths, _ = self._walk_candidates(
             should_cancel=should_cancel,
             on_progress=on_progress,
@@ -276,8 +352,9 @@ class FileNotesService:
                 entries.append(_unreadable_entry(observed_file))
                 continue
             entries.append(_entry_from_opened(opened))
-            replica_warning = self._upsert_opened(opened)
-            warning = _merge_warnings(warning, replica_warning)
+            if self._inspection_refresh_allowed:
+                replica_warning = self._upsert_opened(opened)
+                warning = _merge_warnings(warning, replica_warning)
         entries.extend(
             FileNoteEntry(
                 relative_path=relative_path,
@@ -328,7 +405,12 @@ class FileNotesService:
                 )
             except Exception as error:
                 warning = _replica_warning(error)
-        warning = _merge_warnings(warning, self._upsert_opened(opened))
+        warning = _merge_warnings(
+            warning,
+            self._upsert_opened(opened)
+            if self._inspection_refresh_allowed
+            else _ACTIVATION_WARNING,
+        )
         return _replace_opened(
             opened,
             protected=protected,
@@ -1423,6 +1505,8 @@ class FileNotesService:
             raise ValueError("session binding belongs to another File Notes root")
         self._session_owner = owner
         self._session_binding = binding
+        with owner._lock:
+            owner._maintenance_file_sources.add(self)
 
     def _upsert_opened(self, opened: OpenedFileNote) -> str | None:
         return self._upsert_bytes(

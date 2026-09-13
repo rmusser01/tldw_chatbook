@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+
 import re
 import json
 import math
@@ -478,6 +480,7 @@ def hosted_chat_request(
     return normalize_hosted_chat_response(response, finish_policy=finish_policy)
 
 
+@_provider_recovery.unqualified
 def owned_json_post(
     *,
     config: HostedHTTPTransportConfig,

@@ -18,7 +18,9 @@ from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 
 @pytest.fixture
 def db(tmp_path):
-    return SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    owner = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    yield owner
+    owner.close()
 
 
 def _columns(db, table):
@@ -54,19 +56,21 @@ def test_site_configs_index_created(db):
     assert "idx_site_configs_domain" in indices
 
 
-def test_site_configs_schema_creation_is_idempotent_across_reopen(tmp_path):
+def test_site_configs_schema_creation_is_idempotent_across_reopen(request, tmp_path):
     # "Already migrated" case: opening the same file a second time must be a
     # silent no-op, not an error, since _initialize_schema always runs and
     # uses CREATE TABLE IF NOT EXISTS.
     path = tmp_path / "subs.db"
     first = SubscriptionsDB(str(path), client_id="test")
+    request.addfinalizer(first.close)
     assert "site_configs" in _tables(first)
 
     second = SubscriptionsDB(str(path), client_id="test")
+    request.addfinalizer(second.close)
     assert "site_configs" in _tables(second)
 
 
-def test_site_configs_table_and_rows_survive_legacy_lazy_creation(tmp_path):
+def test_site_configs_table_and_rows_survive_legacy_lazy_creation(request, tmp_path):
     # A database created before this relocation: it already has site_configs
     # (created on demand by the old SiteConfigManager._create_tables path, on
     # a CharactersRAGDB connection pointed at this same file), with an
@@ -92,6 +96,7 @@ def test_site_configs_table_and_rows_survive_legacy_lazy_creation(tmp_path):
         legacy_conn.commit()
 
     migrated = SubscriptionsDB(str(path), client_id="test")
+    request.addfinalizer(migrated.close)
     assert "site_configs" in _tables(migrated)
     rows = migrated.conn.execute(
         "SELECT domain, config_data FROM site_configs"

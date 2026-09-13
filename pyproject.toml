@@ -587,6 +587,7 @@ exclude = [
 "tldw_chatbook.Evals" = ["config/*.yaml", "eval_datasets/*.json"]
 "tldw_chatbook.Image_Generation" = ["workflows/*.json"]
 "tldw_chatbook.Video_Generation" = ["workflows/*.json"]
+"tldw_chatbook.Backup_Recovery" = ["native_qualification.json"]
 "tldw_chatbook.Audio" = [
     "voice_qualification_manifest.json",
     "voice_build_identity.json",

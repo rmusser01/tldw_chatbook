@@ -507,7 +507,8 @@ class ConsoleFleetWakeCoordinator:
 
     def _priority_allows(self, session_id, *, accepting=False):
         controller = self._controller
-        if not autowake_enabled() or getattr(controller, "_disposed", False):
+        if (not autowake_enabled() or getattr(controller, "_disposed", False)
+                or getattr(controller, "_maintenance_paused", False)):
             return False
         if not any(s.id == session_id for s in controller.store.sessions()):
             return False
@@ -530,6 +531,8 @@ class ConsoleFleetWakeCoordinator:
             return False
 
     def _attempt(self, conversation_id):
+        if self._controller is None or getattr(self._controller, "_maintenance_paused", False):
+            return
         if not self._recovery_ready or conversation_id in self._active:
             return
         if self._disposed or getattr(self._controller, "_disposed", False) or conversation_id in self._conversation_fences:

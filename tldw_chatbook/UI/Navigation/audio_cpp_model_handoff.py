@@ -8,6 +8,7 @@ import logging
 from pathlib import PurePosixPath, PureWindowsPath
 import re
 import threading
+import time
 from typing import Awaitable, Callable
 import unicodedata
 
@@ -159,6 +160,26 @@ class AudioCppModelInstallOwner:
         self._active: set[AudioCppModelInstallOperation] = set()
         self._lease_holds: set[AudioCppManagedLeaseHold] = set()
         self._sealed = False
+        self._maintenance_paused = False
+
+    def maintenance_close_admission(self) -> None:
+        """Pause new installations and acquisitions without cancelling work."""
+        self._maintenance_paused = True
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Wait for actual publication and consumer-owned lease retirement."""
+        if not self._maintenance_paused:
+            raise RuntimeError("audio.cpp install maintenance is not paused")
+        while self._active or self._lease_holds:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.01))
+        return True
+
+    def maintenance_resume(self) -> None:
+        """Reopen ordinary intake; terminal shutdown remains authoritative."""
+        self._maintenance_paused = False
 
     @property
     def cleanup_pending(self) -> bool:
@@ -206,6 +227,8 @@ class AudioCppModelInstallOwner:
 
         if self._sealed:
             raise RuntimeError("audio.cpp model cleanup owner is shut down")
+        if self._maintenance_paused:
+            raise RuntimeError("audio.cpp model owner is paused for maintenance")
         hold = AudioCppManagedLeaseHold()
         self._lease_holds.add(hold)
 
@@ -345,6 +368,8 @@ class AudioCppModelInstallOwner:
 
         if self._sealed:
             raise RuntimeError("audio.cpp install owner is shut down")
+        if self._maintenance_paused:
+            raise RuntimeError("audio.cpp install owner is paused for maintenance")
         if not callable(runner) or not callable(on_settled):
             raise TypeError("audio.cpp install runner and callback must be callable")
         operation = AudioCppModelInstallOperation(threading.Event())

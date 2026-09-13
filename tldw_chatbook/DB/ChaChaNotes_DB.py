@@ -87,6 +87,13 @@ from .sql_validation import (
     validate_column_name,
 )
 from .sql_logging import preview_params
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_operation,
+    _register_core_connection,
+)
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from .base_db import (
     _QuiescentSQLiteConnection,
@@ -520,40 +527,10 @@ def _split_sql_statements(script: str) -> List[str]:
     return statements
 
 
-def _canvas_revision_payload_valid(
-    source_bytes: object,
-    content_sha256: object,
-    declared_bytes: object,
-) -> int:
-    """Validate one Canvas payload without exposing its source bytes."""
-
-    if (
-        type(source_bytes) is not bytes
-        or type(content_sha256) is not str
-        or type(declared_bytes) is not int
-    ):
-        return 0
-    try:
-        source_bytes.decode("utf-8", errors="strict")
-    except UnicodeDecodeError:
-        return 0
-    return int(
-        declared_bytes == len(source_bytes)
-        and content_sha256 == hashlib.sha256(source_bytes).hexdigest()
-    )
-
-
-def _install_canvas_revision_payload_validator(
-    connection: sqlite3.Connection,
-) -> None:
-    """Install the pure Canvas payload validator required by the schema."""
-
-    connection.create_function(
-        _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION,
-        3,
-        _canvas_revision_payload_valid,
-        deterministic=True,
-    )
+from tldw_chatbook.DB.canvas_payload_validation import (
+    canvas_revision_payload_valid as _canvas_revision_payload_valid,
+    install_canvas_revision_payload_validator as _install_canvas_revision_payload_validator,
+)
 
 
 class _CanvasRevisionDeletionAuthorization:
@@ -3436,6 +3413,7 @@ UPDATE db_schema_version
             ) from exc
 
     # --- Connection Management ---
+    @_core_getter
     def _get_thread_connection(self) -> sqlite3.Connection:
         """
         Retrieves or creates a thread-local SQLite connection.
@@ -3449,7 +3427,7 @@ UPDATE db_schema_version
         roughly doubling the raw statement count for query-heavy paths. It is
         now gated behind an idle threshold (``_LIVENESS_PING_IDLE_SECONDS``):
         connections here are thread-local and long-lived, and
-        ``close_connection()`` always clears the thread-local reference, so a
+        successful ``close_connection()`` clears the thread-local reference, so a
         recently-used connection is known-good without a ping. A connection
         idle past the threshold still gets the full ping + transparent-reopen
         treatment.
@@ -3460,12 +3438,15 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: If connecting to the database fails.
         """
+        from tldw_chatbook.Backup_Recovery.participants import _core_access
+
+        _core_access(self)
         try:
             self._connection_quiescence.begin_acquisition()
         except RuntimeError as exc:
             raise CharactersRAGDBError(str(exc)) from exc
         try:
-            conn = getattr(self._local, "conn", None)
+            conn = _core_cached_connection(self, getattr(self._local, "conn", None))
             if conn is not None and not self._connection_quiescence.is_registered(conn):
                 conn = None
                 self._local.conn = None
@@ -3482,15 +3463,14 @@ UPDATE db_schema_version
                     try:
                         conn.execute("SELECT 1")  # Check if connection is still alive
                     except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                        logger.warning(
-                            f"Thread-local connection was closed or became unusable; "
-                            f"reopening db_sha256={self._db_diagnostic_ref}."
-                        )
+                        # Reopen only when SQLite proves the handle is closed;
+                        # an uncertain borrower keeps both maintenance pins.
                         try:
+                            sqlite3.Connection.in_transaction.__get__(conn)
+                        except sqlite3.ProgrammingError:
                             conn.close()
-                        except sqlite3.Error:
-                            # Ignore connection close errors - connection may already be closed
-                            pass
+                        else:
+                            raise
                         self._connection_quiescence.unregister(conn)
                         conn = None
 
@@ -3506,6 +3486,8 @@ UPDATE db_schema_version
                     )
                     if not isinstance(conn, _QuiescentSQLiteConnection):
                         raise RuntimeError("quiescent_connection_factory")
+                    _register_core_connection(self, conn)
+                    _core_access(self)
                     conn.attach_quiescence_registry(self._connection_quiescence)
                     conn.row_factory = sqlite3.Row
                     if not self.is_memory_db:
@@ -3552,6 +3534,7 @@ UPDATE db_schema_version
                     self._local.canvas_revision_deletion_authorization = (
                         canvas_deletion_authorization
                     )
+                    _core_access(self)
                     self._connection_quiescence.register(conn)
                     self._local.conn = conn
                     logger.debug(
@@ -3821,79 +3804,83 @@ UPDATE db_schema_version
         If the database is file-based and in WAL mode, it attempts to perform
         a WAL checkpoint (TRUNCATE) before closing to commit changes from the WAL file
         to the main database file.
-        If a transaction is active and uncommitted on this connection, it attempts a rollback.
-        Clears the connection reference from `threading.local` for the current thread.
+        Explicit ordinary close retains its legacy rollback behavior. Active
+        managed file work and paused borrowed transactions instead keep the handle.
+        The caller must release its native borrowers before requesting close; the
+        cache reference is cleared only after successful native retirement.
         """
         conn = getattr(self._local, "conn", None)
         if conn is not None:
-            try:
-                if not self.is_memory_db:
-                    # Resolve any pending transaction before checkpointing
-                    if conn.in_transaction:
-                        try:
-                            logger.warning(
-                                f"Connection is in an uncommitted transaction during "
-                                f"close; attempting rollback "
-                                f"db_sha256={self._db_diagnostic_ref}."
-                            )
-                            conn.rollback()  # Attempt rollback if transaction is open
-                        except sqlite3.Error as exc:
-                            logger.error(
-                                f"Rollback attempt during close failed "
-                                f"db_sha256={self._db_diagnostic_ref} "
-                                f"exception_type={type(exc).__name__}"
-                            )
-                            # Don't proceed to checkpoint if rollback fails and we're still in transaction potentially
-                            # However, conn.close() below should still be attempted.
-
-                    # Checkpoint WAL only if not in a failed transaction state that prevents it
-                    # and WAL mode is active.
-                    # We assume if conn.in_transaction is false now, any transaction was committed/rolled back.
-                    if not conn.in_transaction:  # Re-check after potential rollback
-                        mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
-                        if mode_row and mode_row[0].lower() == "wal":
+            with _core_closing(self, conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    if not self.is_memory_db:
+                        # Resolve any pending transaction before checkpointing
+                        if conn.in_transaction:
                             try:
-                                logger.debug(
-                                    f"Attempting WAL checkpoint (TRUNCATE) before close "
-                                    f"db_sha256={self._db_diagnostic_ref} "
-                                    f"thread={threading.get_ident()}."
-                                )
-                                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-                                logger.debug(
-                                    f"WAL checkpoint TRUNCATE executed "
+                                logger.warning(
+                                    f"Connection is in an uncommitted transaction during "
+                                    f"close; attempting rollback "
                                     f"db_sha256={self._db_diagnostic_ref}."
                                 )
+                                conn.rollback()  # Attempt rollback if transaction is open
                             except sqlite3.Error as exc:
-                                logger.warning(
-                                    f"WAL checkpoint failed "
+                                logger.error(
+                                    f"Rollback attempt during close failed "
                                     f"db_sha256={self._db_diagnostic_ref} "
                                     f"exception_type={type(exc).__name__}"
                                 )
-                conn.close()
-                logger.debug(
-                    f"Closed SQLite connection "
-                    f"db_sha256={self._db_diagnostic_ref} "
-                    f"thread={threading.get_ident()}."
-                )
-            except (
-                sqlite3.Error
-            ) as exc:  # Catches errors from execute, checkpoint, or close
-                logger.warning(
-                    f"Error during SQLite connection close/checkpoint "
-                    f"db_sha256={self._db_diagnostic_ref} "
-                    f"thread={threading.get_ident()} "
-                    f"exception_type={type(exc).__name__}"
-                )
-            finally:
-                self._connection_quiescence.unregister(conn)
-                # This ensures that the reference is cleared from threading.local
-                # even if conn.close() itself raised an exception.
-                if hasattr(self._local, "conn"):
-                    self._local.conn = None
-                self._local.canvas_revision_deletion_authorization = None
-                self._local.semantic_mutation_authorization = None
-                self._local.voice_trace_import_authorization = None
+                                # Don't proceed to checkpoint if rollback fails and we're still in transaction potentially
+                                # However, conn.close() below should still be attempted.
 
+                        # Checkpoint WAL only if not in a failed transaction state that prevents it
+                        # and WAL mode is active.
+                        # We assume if conn.in_transaction is false now, any transaction was committed/rolled back.
+                        if not conn.in_transaction:  # Re-check after potential rollback
+                            mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
+                            if mode_row and mode_row[0].lower() == "wal":
+                                try:
+                                    logger.debug(
+                                        f"Attempting WAL checkpoint (TRUNCATE) before close "
+                                        f"db_sha256={self._db_diagnostic_ref} "
+                                        f"thread={threading.get_ident()}."
+                                    )
+                                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                                    logger.debug(
+                                        f"WAL checkpoint TRUNCATE executed "
+                                        f"db_sha256={self._db_diagnostic_ref}."
+                                    )
+                                except sqlite3.Error as exc:
+                                    logger.warning(
+                                        f"WAL checkpoint failed "
+                                        f"db_sha256={self._db_diagnostic_ref} "
+                                        f"exception_type={type(exc).__name__}"
+                                    )
+                    conn.close()
+                    self._connection_quiescence.unregister(conn)
+                    # This ensures that the reference is cleared from threading.local
+                    # even if conn.close() itself raised an exception.
+                    if hasattr(self._local, "conn"):
+                        self._local.conn = None
+                    self._local.canvas_revision_deletion_authorization = None
+                    self._local.semantic_mutation_authorization = None
+                    self._local.voice_trace_import_authorization = None
+
+                    logger.debug(
+                        f"Closed SQLite connection "
+                        f"db_sha256={self._db_diagnostic_ref} "
+                        f"thread={threading.get_ident()}."
+                    )
+                except (
+                    sqlite3.Error
+                ) as exc:  # Catches errors from execute, checkpoint, or close
+                    logger.warning(
+                        f"Error during SQLite connection close/checkpoint "
+                        f"db_sha256={self._db_diagnostic_ref} "
+                        f"thread={threading.get_ident()} "
+                        f"exception_type={type(exc).__name__}"
+                    )
     def backup_database(self, backup_file_path: str) -> bool:
         """
         Creates a backup of the current database to the specified file path.
@@ -23972,17 +23959,21 @@ class TransactionContextManager:
         self.immediate = bool(immediate)
 
     def __enter__(self):
-        """Reserve this managed use before entering its SQLite transaction."""
-
+        self._maintenance_context = _core_operation(self.db)
+        self._maintenance_context.__enter__()
         try:
-            self.connection_use_token = self.db._connection_quiescence.begin_use()
-        except RuntimeError as exc:
-            raise CharactersRAGDBError(str(exc)) from exc
-        try:
-            return self._enter_transaction()
-        except BaseException:
-            self.db._connection_quiescence.end_use(self.connection_use_token)
-            self.connection_use_token = None
+            try:
+                self.connection_use_token = self.db._connection_quiescence.begin_use()
+            except RuntimeError as exc:
+                raise CharactersRAGDBError(str(exc)) from exc
+            try:
+                return self._enter_transaction()
+            except BaseException:
+                self.db._connection_quiescence.end_use(self.connection_use_token)
+                self.connection_use_token = None
+                raise
+        except BaseException as error:
+            self._maintenance_context.__exit__(type(error), error, error.__traceback__)
             raise
 
     def _enter_transaction(self):
@@ -24032,19 +24023,22 @@ class TransactionContextManager:
             return self.cursor
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Finish SQLite work before releasing the maintenance reservation."""
-
         try:
-            return self._exit_transaction(exc_type, exc_val, exc_tb)
-        finally:
+            """Finish SQLite work before releasing the maintenance reservation."""
+
             try:
-                if self.cursor is not None:
-                    self.cursor.close()
-                    self.cursor = None
+                return self._exit_transaction(exc_type, exc_val, exc_tb)
             finally:
-                if self.connection_use_token is not None:
-                    self.db._connection_quiescence.end_use(self.connection_use_token)
-                    self.connection_use_token = None
+                try:
+                    if self.cursor is not None:
+                        self.cursor.close()
+                        self.cursor = None
+                finally:
+                    if self.connection_use_token is not None:
+                        self.db._connection_quiescence.end_use(self.connection_use_token)
+                        self.connection_use_token = None
+        finally:
+            self._maintenance_context.__exit__(exc_type, exc_val, exc_tb)
 
     def _exit_transaction(self, exc_type, exc_val, exc_tb):
         """

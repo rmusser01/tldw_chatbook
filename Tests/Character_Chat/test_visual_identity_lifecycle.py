@@ -414,7 +414,8 @@ def test_valid_profile_owned_fork_is_terminal_without_package_reads_or_warning(
 def test_config_eager_and_lazy_paths_seed_the_exact_constructed_database(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tldw_chatbook import config
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+    config = install_config_source(monkeypatch)
 
     created: list[object] = []
     seeded: list[object] = []
@@ -442,6 +443,8 @@ def test_config_eager_and_lazy_paths_seed_the_exact_constructed_database(
 def test_app_injected_notes_database_uses_shared_seed_helper_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+    install_config_source(monkeypatch)
     import tldw_chatbook.app as app_module
 
     db = object()

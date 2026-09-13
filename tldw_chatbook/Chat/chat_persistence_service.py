@@ -222,6 +222,17 @@ class ChatPersistenceService:
         self.workspace_registry = workspace_registry
         self.citation_repository = citation_repository
         self.context_repository = ConsoleContextRepository(db)
+        self.recovered_media_cleanup_pending = False
+        self._recovered_messages = None
+        try:
+            from tldw_chatbook.Backup_Recovery.recovered_media_messages import (
+                RecoveredMessageReferences,
+            )
+
+            self._recovered_messages = RecoveredMessageReferences(db)
+        except Exception:  # noqa: BLE001 - ancillary binding must not prevent ordinary chat
+            logger.debug("Recovered-media message source is unavailable.")
+
         self.console_library_policy_repository = ConsoleLibraryPolicyRepository(db)
         self.console_dispatch_repository = ConsoleDispatchRepository(db)
         self._console_trace_repository = ConsoleTraceRepository()
@@ -231,6 +242,36 @@ class ChatPersistenceService:
         )
         self.local_marks = ConversationLocalMarksService(db)
 
+    @property
+    def recovered_media_cleanup_warning(self) -> str | None:
+        from tldw_chatbook.Backup_Recovery.recovered_media_messages import (
+            CLEANUP_PENDING,
+        )
+
+        return CLEANUP_PENDING if self.recovered_media_cleanup_pending else None
+
+    def _release_recovered_messages(self, message_ids) -> None:
+        if not message_ids:
+            return
+        try:
+            if self._recovered_messages is None:
+                raise ValueError("recovered_message_source_unavailable")
+            self._recovered_messages.release(message_ids)
+        except Exception:  # noqa: BLE001 - preserve the already committed chat result
+            # Chat committed already. Retain refs for a positive-tombstone retry.
+            self.recovered_media_cleanup_pending = True
+            logger.warning("Recovered-media reference cleanup is pending.")
+
+    def retry_recovered_media_references(self) -> bool:
+        try:
+            if self._recovered_messages is None:
+                raise ValueError("recovered_message_source_unavailable")
+            self._recovered_messages.retry()
+        except Exception:  # noqa: BLE001 - report unavailable retry without changing chat
+            self.recovered_media_cleanup_pending = True
+            return False
+        self.recovered_media_cleanup_pending = False
+        return True
     @property
     def console_trace_repository(self) -> ConsoleTraceRepository:
         """Return the cursor-only semantic trace transaction participant."""
@@ -3116,10 +3157,12 @@ class ChatPersistenceService:
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
-        return self.db.soft_delete_message_subtree(
+        rows = self.db.soft_delete_message_subtree(
             message_id,
             expected_version=current_message["version"],
         )
+        self._release_recovered_messages([row["message_id"] for row in rows])
+        return rows
 
     def write_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> bool:
         """Persist trajectory sidecar rows; LOCAL-ONLY, never raises.
@@ -3743,11 +3786,13 @@ class ChatPersistenceService:
                     variants_added = True
 
         for existing_message in existing_messages:
-            if existing_message["id"] not in retained_existing_ids:
-                self.db.soft_delete_message(
-                    existing_message["id"],
-                    existing_message["version"],
+            if (
+                existing_message["id"] not in retained_existing_ids
+                and self.db.soft_delete_message(
+                    existing_message["id"], existing_message["version"]
                 )
+            ):
+                self._release_recovered_messages([existing_message["id"]])
 
         return saved_count
 

@@ -685,11 +685,26 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         """Fetch the watchlist run snapshot once per dashboard build."""
         if self.watchlist_service is None:
             return []
+        from threading import current_thread, main_thread
+        from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+        service = self.watchlist_service
+        db = None
         try:
-            return list(self.watchlist_service.list_home_run_snapshot(limit=20))
+            if (
+                type(self) is LocalNotificationHomeActiveWorkAdapter
+                and type(service) is LocalWatchlistsService
+                and current_thread() is not main_thread()
+            ):
+                db = service._db()
+            return list(service.list_home_run_snapshot(limit=20))
         except Exception as e:
             logger.warning(f"Failed to fetch local watchlist runs for Home: {e}")
             return []
+        finally:
+            if type(db) is SubscriptionsDB and not db.is_memory_db:
+                db.close()
 
     def _local_watchlist_run_items(self, runs: list[Any]) -> list[HomeActiveWorkItem]:
         items: list[HomeActiveWorkItem] = []

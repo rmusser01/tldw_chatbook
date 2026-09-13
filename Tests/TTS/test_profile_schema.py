@@ -97,7 +97,8 @@ def test_candidate_close_failure_retains_snapshot_handles_and_artifacts(
         assert paths[0].exists()
         failure.value.owner.close()
         assert proxies[0].close_calls == 2
-        assert len(attempts) == 2
+        # The merged owner also pins the snapshot and its directory parents.
+        assert len(attempts) == (5 if failure.value.owner.parent_pins_available else 2)
         assert not paths[0].exists()
         assert path.exists()
     finally:
@@ -1413,6 +1414,8 @@ def test_live_store_no_create_mode_uses_quoted_rw_uri_and_validates_current(
     finally:
         connection.close()
 
+    assert len(calls) == 1
+    assert issubclass(calls[0][1].pop("factory"), sqlite3.Connection)
     assert calls == [
         (
             f"{path.resolve().as_uri()}?mode=rw",
@@ -2715,9 +2718,41 @@ def test_candidate_source_open_flags_include_every_available_required_flag() -> 
     assert profile_schema._candidate_source_open_flags(ReadOnlyFlag()) == 1
 
 
+def _run_retained_candidate_child(tmp_path: Path, name: str, arguments: list) -> bool:
+    import os
+    import json
+    from Tests.TTS.test_profile_repository_maintenance import _run_private_child
+
+    if os.environ.get("TASK10_CANDIDATE_RETAINED_CHILD") == name:
+        return False
+    values = [
+        value.__name__ if isinstance(value, type) else value for value in arguments
+    ]
+    _run_private_child(
+        tmp_path,
+        """
+import builtins, json, os, sys, pytest
+from pathlib import Path
+import Tests.TTS.test_profile_schema as module
+name = sys.argv[2]
+os.environ['TASK10_CANDIDATE_RETAINED_CHILD'] = name
+args = [getattr(builtins, value) if value in ('KeyboardInterrupt', 'SystemExit') else value for value in json.loads(sys.argv[3])]
+with pytest.MonkeyPatch.context() as patch:
+    getattr(module, name)(Path(sys.argv[1]), patch, *args)
+""",
+        name,
+        json.dumps(values),
+    )
+    return True
+
+
 def test_candidate_rejects_private_snapshot_path_replacement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    if _run_retained_candidate_child(
+        tmp_path, "test_candidate_rejects_private_snapshot_path_replacement", []
+    ):
+        return
     path = tmp_path / "candidate.sqlite3"
     connection = open_profile_store(path)
     connection.close()
@@ -2757,7 +2792,7 @@ def test_candidate_rejects_private_snapshot_path_replacement(
 
     assert replaced
     assert path.read_bytes() == original
-    assert list(private_directory.iterdir()) == []
+    assert list(private_directory.iterdir()) == snapshot_paths
 
 
 def test_candidate_rejects_sidecar_created_after_preflight(
@@ -2910,6 +2945,12 @@ def test_candidate_fd_cleanup_control_flow_signal_is_preserved_after_all_cleanup
     exception_type: type[BaseException],
     fd_kind: str,
 ) -> None:
+    if _run_retained_candidate_child(
+        tmp_path,
+        "test_candidate_fd_cleanup_control_flow_signal_is_preserved_after_all_cleanup",
+        [exception_type, fd_kind],
+    ):
+        return
     path = tmp_path / "candidate.sqlite3"
     connection = open_profile_store(path)
     connection.close()
@@ -2957,8 +2998,8 @@ def test_candidate_fd_cleanup_control_flow_signal_is_preserved_after_all_cleanup
     for fd in (*snapshot_fds, *source_fds):
         with pytest.raises(OSError):
             real_candidate_close(fd)
-    assert not snapshot_paths[0].exists()
-    assert list(private_directory.iterdir()) == []
+    assert snapshot_paths[0].exists()
+    assert list(private_directory.iterdir()) == snapshot_paths
 
 
 @pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit])
@@ -2967,6 +3008,12 @@ def test_candidate_unlink_cleanup_control_flow_signal_is_preserved(
     monkeypatch: pytest.MonkeyPatch,
     exception_type: type[BaseException],
 ) -> None:
+    if _run_retained_candidate_child(
+        tmp_path,
+        "test_candidate_unlink_cleanup_control_flow_signal_is_preserved",
+        [exception_type],
+    ):
+        return
     path = tmp_path / "candidate.sqlite3"
     connection = open_profile_store(path)
     connection.close()
@@ -2974,6 +3021,11 @@ def test_candidate_unlink_cleanup_control_flow_signal_is_preserved(
     private_directory = tmp_path / "private-snapshots"
     private_directory.mkdir()
     real_mkstemp = profile_schema.tempfile.mkstemp
+    import types
+
+    monkeypatch.setattr(
+        profile_schema, "os", types.SimpleNamespace(**vars(profile_schema.os))
+    )
     real_unlink = profile_schema.os.unlink
     snapshot_paths: list[Path] = []
     unlink_attempts: list[Path] = []
@@ -2984,10 +3036,10 @@ def test_candidate_unlink_cleanup_control_flow_signal_is_preserved(
         snapshot_paths.append(Path(name))
         return fd, name
 
-    def interrupting_unlink(target: object) -> None:
-        target_path = Path(str(target))
+    def interrupting_unlink(target: object, **kwargs) -> None:
+        target_path = private_directory / str(target)
         unlink_attempts.append(target_path)
-        real_unlink(target)
+        real_unlink(target, **kwargs)
         if target_path in snapshot_paths:
             raise signal
 
@@ -3010,6 +3062,12 @@ def test_candidate_connection_cleanup_control_flow_signal_wins_ordinary_body_err
     monkeypatch: pytest.MonkeyPatch,
     exception_type: type[BaseException],
 ) -> None:
+    if _run_retained_candidate_child(
+        tmp_path,
+        "test_candidate_connection_cleanup_control_flow_signal_wins_ordinary_body_error",
+        [exception_type],
+    ):
+        return
     path = tmp_path / "candidate.sqlite3"
     connection = open_profile_store(path)
     connection.close()
@@ -3080,6 +3138,12 @@ def test_candidate_ordinary_cleanup_failure_maps_without_detail_leaks(
     body_mode: str,
     expected_code: str,
 ) -> None:
+    if _run_retained_candidate_child(
+        tmp_path,
+        "test_candidate_ordinary_cleanup_failure_maps_without_detail_leaks",
+        [body_mode, expected_code],
+    ):
+        return
     path = tmp_path / "candidate.sqlite3"
     connection = open_profile_store(path)
     if body_mode == "structured_error":
@@ -3101,6 +3165,11 @@ def test_candidate_ordinary_cleanup_failure_maps_without_detail_leaks(
     private_directory = tmp_path / "private-snapshots"
     private_directory.mkdir()
     real_mkstemp = profile_schema.tempfile.mkstemp
+    import types
+
+    monkeypatch.setattr(
+        profile_schema, "os", types.SimpleNamespace(**vars(profile_schema.os))
+    )
     real_unlink = profile_schema.os.unlink
     snapshot_paths: list[Path] = []
 
@@ -3110,8 +3179,8 @@ def test_candidate_ordinary_cleanup_failure_maps_without_detail_leaks(
         snapshot_paths.append(Path(name))
         return fd, name
 
-    def fail_after_unlink(target: object) -> None:
-        real_unlink(target)
+    def fail_after_unlink(target: object, **kwargs) -> None:
+        real_unlink(target, **kwargs)
         raise RuntimeError("private cleanup detail")
 
     with monkeypatch.context() as context:

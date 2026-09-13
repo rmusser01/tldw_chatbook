@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import wraps
 from types import MappingProxyType
 from typing import Any
 
@@ -138,7 +140,72 @@ class TTSAdapterLease:
         await self.release()
 
 
+def _maintenance_call(function):
+    """Keep admitted calls live through their own nested publication."""
+    @wraps(function)
+    async def call(self, *args, **kwargs):
+        task = asyncio.current_task()
+        depth = self._maintenance_calls.get(task, 0)
+        if self._maintenance_paused and not (depth):
+            raise TTSRegistryClosedError("TTS admission is paused for maintenance")
+        self._maintenance_calls[task] = depth + 1
+        try:
+            return await function(self, *args, **kwargs)
+        finally:
+            if depth:
+                self._maintenance_calls[task] = depth
+            else:
+                self._maintenance_calls.pop(task, None)
+    return call
+
+
 class TTSAdapterRegistry:
+    def maintenance_close_admission(self) -> None:
+        """Fence new work without starting terminal shutdown."""
+        self._maintenance_paused = True
+
+    @property
+    def maintenance_ready(self) -> bool:
+        """Require actual calls, responses and owned lease publication to settle."""
+        if (
+            self._maintenance_calls or self._total_leases()
+            or self._maintenance_reconfiguration_tasks or self._transition_tasks
+        ):
+            return False
+        for slot in self._slots.values():
+            if slot.reconfiguring or (
+                slot.handoff_task is not None and not slot.handoff_task.done()
+            ):
+                return False
+            records = list(slot.retired)
+            if slot.active is not None:
+                records.append(slot.active)
+            if slot.exclusive_record is not None:
+                records.append(slot.exclusive_record)
+            if any(
+                record.leases or (
+                    record.close_task is not None and not record.close_task.done()
+                )
+                for record in records
+            ):
+                return False
+        return True
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Wait without cancelling accepted work or releasing its resources."""
+        if not self._maintenance_paused:
+            raise RuntimeError("tts_maintenance_not_paused")
+        while not self.maintenance_ready:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def maintenance_resume(self) -> None:
+        """Reopen this owner's intake after downstream owners resume."""
+        self._maintenance_paused = False
+
     def __init__(
         self,
         *,
@@ -149,6 +216,9 @@ class TTSAdapterRegistry:
         if shutdown_timeout_seconds < 0:
             raise ValueError("shutdown_timeout_seconds cannot be negative")
 
+        self._maintenance_paused = False
+        self._maintenance_calls: dict[asyncio.Task, int] = {}
+        self._maintenance_reconfiguration_tasks: set[asyncio.Task[ReconfigureResult]] = set()
         self._slots: dict[str, _ProviderSlot] = {}
         for spec in tuple(specs):
             provider_id = spec.descriptor.provider_id
@@ -208,6 +278,7 @@ class TTSAdapterRegistry:
         """
         return self._slots[self._resolve_id(provider_id)].applied_generation
 
+    @_maintenance_call
     async def provider_configuration_snapshot(
         self,
         provider_id: str,
@@ -228,6 +299,7 @@ class TTSAdapterRegistry:
                 ),
             )
 
+    @_maintenance_call
     async def stage_provider_configuration(
         self,
         provider_id: str,
@@ -264,6 +336,7 @@ class TTSAdapterRegistry:
             slot.staged_generation = generation
             return ReconfigureResult.CHANGED
 
+    @_maintenance_call
     async def run_exclusive_provider_transition(
         self,
         provider_id: str,
@@ -299,6 +372,7 @@ class TTSAdapterRegistry:
         self._generation_sequence += 1
         return self._generation_sequence
 
+    @_maintenance_call
     async def acquire(
         self,
         provider_id: str,
@@ -365,6 +439,7 @@ class TTSAdapterRegistry:
             release,
         )
 
+    @_maintenance_call
     async def get_catalog(
         self, provider_id: str, refresh: bool = False
     ) -> TTSProviderCatalog:
@@ -374,6 +449,7 @@ class TTSAdapterRegistry:
         finally:
             await lease.release()
 
+    @_maintenance_call
     async def get_voices(
         self,
         provider_id: str,
@@ -386,6 +462,7 @@ class TTSAdapterRegistry:
         finally:
             await lease.release()
 
+    @_maintenance_call
     async def observe_voices(
         self,
         provider_id: str,
@@ -404,6 +481,7 @@ class TTSAdapterRegistry:
         finally:
             await lease.release()
 
+    @_maintenance_call
     async def reconfigure_provider(
         self, provider_id: str, config: Mapping[str, Any]
     ) -> ReconfigureResult:
@@ -424,6 +502,7 @@ class TTSAdapterRegistry:
         ticket = await self.begin_reconfigure_provider(provider_id, config)
         return await asyncio.shield(ticket.completion)
 
+    @_maintenance_call
     async def begin_reconfigure_provider(
         self,
         provider_id: str,
@@ -490,6 +569,7 @@ class TTSAdapterRegistry:
             selected_generation,
         )
 
+    @_maintenance_call
     async def seal_provider_unavailable(self, provider_id: str) -> None:
         """Seal a provider slot after a reviewed handoff fails.
 
@@ -878,6 +958,10 @@ class TTSAdapterRegistry:
                 return result
 
         completion = asyncio.create_task(apply())
+        # The ticket is returned before apply gets its first turn. Retain it
+        # synchronously; slot flags cannot prove that accepted work has settled.
+        self._maintenance_reconfiguration_tasks.add(completion)
+        completion.add_done_callback(self._maintenance_reconfiguration_tasks.discard)
         completion.add_done_callback(self._observe_task_result)
         return TTSReconfigurationTicket(provider_id, generation, completion)
 
@@ -939,6 +1023,8 @@ class TTSAdapterRegistry:
             return ReconfigureResult.CHANGED
 
         completion = asyncio.create_task(ticket_result())
+        self._maintenance_reconfiguration_tasks.add(completion)
+        completion.add_done_callback(self._maintenance_reconfiguration_tasks.discard)
         completion.add_done_callback(self._observe_task_result)
         return TTSReconfigurationTicket(provider_id, generation, completion)
 

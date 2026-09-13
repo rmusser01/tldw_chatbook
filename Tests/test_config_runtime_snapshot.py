@@ -6,6 +6,8 @@ from pathlib import Path
 import toml
 
 from tldw_chatbook import config
+import sys
+from Tests.Backup_Recovery.config_test_support import install_config_source
 
 
 def _reset_config_state() -> None:
@@ -30,6 +32,7 @@ def test_runtime_snapshot_is_defensive_and_advances_after_successful_save(
         encoding="utf-8",
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
     _reset_config_state()
 
     before = config.get_runtime_config_snapshot(force_reload=True)
@@ -56,6 +59,7 @@ def test_concurrent_runtime_reads_never_observe_file_cache_split(
     target = tmp_path / "config.toml"
     target.write_text('[chat_defaults]\nprovider = "before"\n', encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
     _reset_config_state()
     initial = config.get_runtime_config_snapshot(force_reload=True)
 

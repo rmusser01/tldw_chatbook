@@ -603,6 +603,8 @@ class MCPWorkbench(Container):
     def __init__(self, app_instance: Any = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._app_instance = app_instance
+        self._mcp_recovery_token = None
+        self._mcp_recovery_busy = False
         self._active_mode = "servers"
         #: Mode requested before the deferred canvases mounted (task-2901);
         #: replayed by `_mount_deferred_canvases`.
@@ -3085,6 +3087,188 @@ class MCPWorkbench(Container):
             f"across {len(override_servers)} {server_word}"
         )
 
+    def on_unmount(self) -> None:
+        self._mcp_recovery_token = None
+
+    def _mcp_recovery_view(self):
+        from tldw_chatbook.Backup_Recovery.bootstrap import effective_config_path
+
+        service = self._service()
+        context = getattr(service, "context", None)
+        return (
+            effective_config_path(),
+            self._active_mode,
+            self._source,
+            self._selected_server_key,
+            self._scope,
+            self._scope_ref,
+            getattr(context, "selected_source", None),
+            getattr(context, "selected_active_server_id", None),
+            getattr(context, "selected_scope", None),
+            getattr(context, "selected_scope_ref", None),
+        )
+
+    def _mcp_recovery_current(self, token) -> bool:
+        return (
+            self.is_mounted
+            and token is self._mcp_recovery_token
+            and token[1] is self._service()
+            and token[2] is self.screen
+            and self._active_mode == "permissions"
+            and token[3] == self._mcp_recovery_view()
+        )
+
+    def on_mcp_permissions_mode_recovery_review_requested(
+        self,
+        event: MCPPermissionsMode.RecoveryReviewRequested,
+    ) -> None:
+        event.stop()
+        if self._mcp_recovery_busy or self._mcp_recovery_token is not None:
+            return
+        service = self._service()
+        if service is None or self._active_mode != "permissions":
+            return
+        if not all(
+            callable(getattr(service, name, None))
+            for name in (
+                "capture_recovery_review",
+                "approve_recovery_review",
+            )
+        ):
+            self.app.notify(
+                "Restored MCP review is unavailable for this service.",
+                severity="warning",
+            )
+            return
+        token = (object(), service, self.screen, self._mcp_recovery_view())
+        self._mcp_recovery_token = token
+        self.run_worker(
+            self._prepare_mcp_recovery_review(token),
+            group="mcp-recovery-preview",
+            exit_on_error=False,
+        )
+
+    async def _prepare_mcp_recovery_review(self, token) -> None:
+        from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+        from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+        try:
+            task = asyncio.create_task(
+                asyncio.to_thread(token[1].capture_recovery_review)
+            )
+            await join_retained_task(task)
+            review = task.result()
+        except (OSError, ValueError, TypeError, RuntimeError):
+            current = self._mcp_recovery_current(token)
+            if token is self._mcp_recovery_token:
+                self._mcp_recovery_token = None
+            if current:
+                self.app.notify(
+                    "Restored MCP review is unavailable or changed. Ordinary profiles "
+                    "use the existing permission controls.",
+                    severity="warning",
+                )
+            return
+        except asyncio.CancelledError:
+            if token is self._mcp_recovery_token:
+                self._mcp_recovery_token = None
+            raise
+        if not self._mcp_recovery_current(token) or self.app.screen is not token[2]:
+            if token is self._mcp_recovery_token:
+                self._mcp_recovery_token = None
+            return
+        generations = sorted(
+            {
+                json.loads(witness)["generation"]
+                for source in review.sources
+                for witness in source.witnesses
+            }
+        )
+        paths = "\n".join(
+            f"{source.owner}: {source.path} → {source.target}"
+            for source in review.sources
+        )
+        message = (
+            f"Workspace: {review.workspace}\nGenerations: {', '.join(generations)}\n"
+            f"Files present: {sum(source.payload is not None for source in review.sources)}\n"
+            f"{paths}\n\n"
+            "Create fresh Ask/local permission state for these MCP roots? Historical "
+            "rules, grants and context remain retained and inactive. No server will "
+            "connect and no tool permission will be granted."
+        )
+        dialog = ConfirmationDialog(
+            title="Review restored MCP roots",
+            message=escape_markup(message),
+            confirm_label="Use fresh MCP defaults",
+        )
+        await self.app.push_screen(
+            dialog,
+            lambda accepted: self._confirm_mcp_recovery_review(token, review, accepted),
+        )
+        content = dialog.query_one("#confirmation-dialog")
+        content.styles.max_height = "90%"
+        content.styles.overflow_y = "auto"
+
+    def _confirm_mcp_recovery_review(self, token, review, accepted: bool) -> None:
+        current = self._mcp_recovery_current(token) and self.app.screen is token[2]
+        if token is self._mcp_recovery_token:
+            self._mcp_recovery_token = None
+        if not accepted or not current or self._mcp_recovery_busy:
+            return
+        self._mcp_recovery_busy = True
+        self.app.run_worker(
+            self._record_mcp_recovery_review(token[1], review),
+            group="mcp-recovery-confirm",
+            exit_on_error=False,
+        )
+
+    async def _record_mcp_recovery_review(self, service, review) -> None:
+        from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+
+        try:
+            task = asyncio.create_task(
+                asyncio.to_thread(service.approve_recovery_review, review)
+            )
+            await join_retained_task(task)
+        except (OSError, ValueError, TypeError, RuntimeError):
+            if self.is_mounted:
+                self.app.notify(
+                    "MCP roots changed or are unavailable. Request a fresh review.",
+                    severity="warning",
+                )
+            return
+        finally:
+            self._mcp_recovery_busy = False
+        if not self.is_mounted or service is not self._service():
+            return
+        # The owner reset local context. Refresh only passive local display.
+        self._source = "local"
+        self._selected_server_key = None
+        self._scope = service.context.selected_scope or "personal"
+        self._scope_ref = service.context.selected_scope_ref
+        self._server_mutations_available = False
+        self.query_one(MCPRail).sync_state(
+            source="local",
+            snapshots=[],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value=self._scope,
+            scope_ref_options=[],
+            scope_ref_value=self._scope_ref,
+        )
+        inspector = self.query_one(MCPInspector)
+        await inspector.show_tool(None)
+        await inspector.show_finding(None)
+        self._last_hub_tools = []
+        self._snapshots = []
+        self._catalog_records = {}
+        self._governance_profiles_cache = None
+        self._findings_cache = None
+        await self._sync_permissions_mode(effective={})
+        self.app.notify(
+            "Fresh MCP roots reviewed. Connect and tool grants remain separate actions."
+        )
+
     async def on_mcp_permissions_mode_state_cycle_requested(
         self, event: MCPPermissionsMode.StateCycleRequested
     ) -> None:
@@ -3369,6 +3553,8 @@ class MCPWorkbench(Container):
     # -- modes & view state ---------------------------------------------------
 
     def set_mode(self, mode: str) -> None:
+        if mode != self._active_mode:
+            self._mcp_recovery_token = None
         if mode not in MCP_HUB_MODES:
             mode = "servers"
         # task-2901: `ContentSwitcher.current` raises for an id with no
@@ -3531,6 +3717,7 @@ class MCPWorkbench(Container):
         # `scope_ref` handling below.
         if "selected_server_key" in state:
             server_key = state["selected_server_key"]
+            previous_server_key = self._selected_server_key
             if server_key is None:
                 self._selected_server_key = None
             elif (
@@ -3538,6 +3725,8 @@ class MCPWorkbench(Container):
                 and self._snapshot_for(server_key) is not None
             ):
                 self._selected_server_key = server_key
+            if self._selected_server_key != previous_server_key:
+                self._mcp_recovery_token = None
         scope = state.get("scope") or state.get("selected_scope")
         if isinstance(scope, str) and scope:
             self._scope = scope
@@ -3559,6 +3748,7 @@ class MCPWorkbench(Container):
     # -- event wiring -----------------------------------------------------------
 
     async def _switch_source(self, source: str) -> None:
+        self._mcp_recovery_token = None
         service = self._service()
         if service is not None:
             try:
@@ -3610,6 +3800,8 @@ class MCPWorkbench(Container):
         target while still toasting a success message. Mirrors
         `_switch_source()`'s identical T6 clear.
         """
+        if server_key != self._selected_server_key:
+            self._mcp_recovery_token = None
         self._selected_server_key = server_key
         # Wave C (F1): an explicit selection (rail row, table row, callout,
         # breadcrumb) is real navigation intent -- the first-load
@@ -3660,6 +3852,7 @@ class MCPWorkbench(Container):
         # recompose storm even if some future caller posts one.
         if (event.scope, event.scope_ref) == (self._scope, self._scope_ref):
             return
+        self._mcp_recovery_token = None
         service = self._service()
         if service is not None:
             try:

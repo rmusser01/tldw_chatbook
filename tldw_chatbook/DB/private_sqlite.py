@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import contextlib
-import os
+import errno
+import functools
 import sqlite3
 import stat
 import sys
 import warnings
+import weakref
+from dataclasses import dataclass, field
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path, PureWindowsPath
 from threading import Lock, RLock, get_ident
@@ -33,7 +35,10 @@ from tldw_chatbook.DB.private_sqlite_protocol import (
     PrepareResult,
 )
 from tldw_chatbook.Utils import private_paths
+from tldw_chatbook.Utils.platform_files import os
 from tldw_chatbook.Utils.private_paths import (
+    PrivatePathError,
+    PrivatePathResult,
     PrivatePathStatus,
     lexical_path,
     secure_private_directory,
@@ -41,6 +46,9 @@ from tldw_chatbook.Utils.private_paths import (
 )
 
 _SQLITE_CONNECT = sqlite3.connect
+_ORIGINAL_DESCRIPTOR_DUP = os.dup
+# Identity lookup only. Actual ordinary leases and core participants own lifetimes.
+_ordinary_connections = weakref.WeakKeyDictionary()
 
 
 class SQLiteTargetKind(StrEnum):
@@ -86,6 +94,8 @@ class SQLiteOwnerPolicy:
     reason: str
     centralized_backup_allowed: bool = False
     preserve_read_only_source_mode: bool = False
+    foreign_read_only_source: bool = False
+    recovery_capture_allowed: bool = False
 
 
 _PRIVATE_FILE = frozenset({SQLiteTargetKind.PRIVATE_FILE})
@@ -104,6 +114,38 @@ _PRIVATE_MEMORY_AND_READ_ONLY = frozenset(
 )
 
 _SQLITE_OWNER_POLICIES = {
+    "recovery.credentials": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/credentials",
+        _PRIVATE_FILE,
+        "Fresh disposable credential reconstruction from installed schema and parameterized rows.",
+    ),
+    "recovery.validation": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/private_sqlite",
+        _PRIVATE_AND_READ_ONLY,
+        "Restricted disposable imported candidate, never a live repository open.",
+    ),
+    "recovery.rag_projection_validation": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/rag_projection_validation",
+        _READ_ONLY_URI,
+        "Restricted disposable Chroma candidate metadata with copied WAL visibility; never a live root.",
+    ),
+    "recovery.validation_schema": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/sqlite_validation",
+        _MEMORY,
+        "Installed SQL only, in-memory reference for exact physical schema metadata.",
+    ),
+    "recovered.media": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/recovered_media",
+        _PRIVATE_FILE,
+        "Profile-owned durable recovered-media catalog and operation journal.",
+    ),
+    "recovery.recovered_media": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/recovered_media",
+        _PRIVATE_AND_READ_ONLY,
+        "Installed recovered-media catalog capture and validation.",
+        centralized_backup_allowed=True,
+        recovery_capture_allowed=True,
+    ),
     "app.prompts_parent": SQLiteOwnerPolicy(
         "tldw_chatbook/app",
         _PRIVATE_FILE,
@@ -134,16 +176,19 @@ _SQLITE_OWNER_POLICIES = {
         "tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner",
         _READ_ONLY_URI,
         "Chrome cookie clones are validated read-only SQLite sources.",
+        foreign_read_only_source=True,
     ),
     "cookies.edge": SQLiteOwnerPolicy(
         "tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner",
         _READ_ONLY_URI,
         "Edge cookie clones are validated read-only SQLite sources.",
+        foreign_read_only_source=True,
     ),
     "cookies.firefox": SQLiteOwnerPolicy(
         "tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner",
         _READ_ONLY_URI,
         "Firefox cookie clones are validated read-only SQLite sources.",
+        foreign_read_only_source=True,
     ),
     "db.base": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/base_db",
@@ -162,6 +207,129 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_FILE,
         "ensure_site_configs_schema declares site_configs on a caller-supplied "
         "path without opening the whole SubscriptionsDB.",
+    ),
+    "recovery.operations.workspaces": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.agent_runs": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.subscriptions": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.scheduled_tasks": SQLiteOwnerPolicy(
+        "tldw_chatbook/Scheduling/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.notifications": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notifications/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.events": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notifications/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.sync": SQLiteOwnerPolicy(
+        "tldw_chatbook/Sync_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.file_notes": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notes/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.agent_logs": SQLiteOwnerPolicy(
+        "tldw_chatbook/Agents/recovery", _READ_ONLY_URI,
+        "Read exact workspace and historical change roots for retained run logs.",
+        preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+    ),
+    "recovery.operations.kanban": SQLiteOwnerPolicy(
+        "tldw_chatbook/Kanban_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed Kanban content/history snapshot with explicit schema metadata.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.note_bindings": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notes/recovery", _READ_ONLY_URI,
+        "Semantic sync/member validation of core-owned shared payload.",
+        preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+    ),
+    "recovery.domain.study": SQLiteOwnerPolicy(
+        "tldw_chatbook/Study_Interop/recovery", _READ_ONLY_URI,
+        "Semantic study/quiz validation of the core-owned shared physical payload.",
+        preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+    ),
+    "recovery.domain.research": SQLiteOwnerPolicy(
+        "tldw_chatbook/Research_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "Fixed native-held lossless domain recovery; ordinary exports unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.domain.writing": SQLiteOwnerPolicy(
+        "tldw_chatbook/Writing_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "Fixed native-held lossless domain recovery; ordinary exports unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.domain.evals": SQLiteOwnerPolicy(
+        "tldw_chatbook/Evals/recovery", _PRIVATE_AND_READ_ONLY,
+        "Fixed native-held lossless domain recovery; ordinary exports unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.rag_indexing": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/rag_indexing", _PRIVATE_AND_READ_ONLY,
+        "Exact installed RAG indexing schema; no vector engine startup.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.core.chachanotes": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "Native-held complete recovery snapshot; selective export policy unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.core.media": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "Native-held complete recovery snapshot; selective export policy unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.core.prompts": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "Native-held complete recovery snapshot; selective export policy unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.core.library_collections": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "Native-held complete recovery snapshot; selective export policy unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.core.library_ingest_jobs": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "Native-held complete recovery snapshot; selective export policy unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
     ),
     "db.chachanotes.backup": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/ChaChaNotes_DB",
@@ -347,10 +515,32 @@ _SQLITE_OWNER_POLICIES = {
         _MEMORY,
         "Sync state currently uses only an in-memory database.",
     ),
+    "recovery.files.persona": SQLiteOwnerPolicy(
+        "tldw_chatbook/Persona_Visual/recovery",
+        _READ_ONLY_URI,
+        "Read current/retained installed core asset references without activation.",
+        preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.files.tts": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/recovery",
+        _PRIVATE_AND_READ_ONLY,
+        "Installed TTS profile schema4 and embedded clone-reference recovery.",
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
     "tts.profile_store": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_schema",
         _PRIVATE_FILE,
         "TTS profile storage requires a checked writable private database.",
+    ),
+    "tts.profile_store_descriptor": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_schema",
+        _READ_ONLY_URI,
+        "TTS shared startup proves the exact current store through an immutable "
+        "view bound to its retained descriptor before opening the live path.",
+        preserve_read_only_source_mode=True,
     ),
     "tts.profile_candidate": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_schema",
@@ -567,10 +757,456 @@ def _warn_unverified_platform(owner_id: str) -> None:
         _WARNED_UNVERIFIED_OWNER_IDS.add(owner_id)
 
 
-_failure = private_sqlite_files._failure
-_open_artifact_fd = private_sqlite_files._open_artifact_fd
-_artifact_postcondition_holds = private_sqlite_files._artifact_postcondition_holds
-_path_error_from_oserror = private_sqlite_files._path_error_from_oserror
+def _failure(
+    selected: Path,
+    status: PrivatePathStatus,
+    reason: str,
+) -> PrivatePathError:
+    return PrivatePathError(PrivatePathResult(selected, status, reason=reason))
+
+
+def _open_artifact_fd(
+    parent_fd: int,
+    leaf: str,
+    *,
+    writable: bool,
+    create: bool,
+    _outcome: private_paths._NativeOpenOutcome | None = None,
+) -> int:
+    flags = os.O_RDWR if writable else os.O_RDONLY
+    flags |= (
+        getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOCTTY", 0)
+    )
+    if create:
+        flags |= os.O_CREAT | os.O_EXCL
+    open = os.open
+    try:
+        descriptor = open(leaf, flags, _PRIVATE_FILE_MODE, dir_fd=parent_fd)
+    except OSError:
+        if _outcome is not None and open is private_paths._ORIGINAL_NATIVE_OPEN:
+            _outcome.rejected = True
+        raise
+    if _outcome is not None:
+        _outcome.descriptor = descriptor
+    return descriptor
+
+
+def _artifact_postcondition_holds(
+    file_fd: int,
+    parent_fd: int,
+    leaf: str,
+    *,
+    expected_identity: os.stat_result,
+    selected: Path,
+    enforce_private_mode: bool = True,
+) -> bool:
+    del selected
+    opened = os.fstat(file_fd)
+    entry = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+    return (
+        private_paths._same_identity(opened, expected_identity)
+        and private_paths._same_identity(entry, expected_identity)
+        and stat.S_ISREG(opened.st_mode)
+        and opened.st_nlink == 1
+        and entry.st_nlink == 1
+        and opened.st_uid == os.geteuid()
+        and (
+            not enforce_private_mode
+            or stat.S_IMODE(opened.st_mode) == _PRIVATE_FILE_MODE
+        )
+    )
+
+
+def _path_error_from_oserror(selected: Path, exc: OSError) -> PrivatePathError:
+    status = (
+        PrivatePathStatus.LINK_OR_NON_REGULAR
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}
+        else PrivatePathStatus.OPERATION_FAILED
+    )
+    return _failure(selected, status, type(exc).__name__)
+
+
+class _OptionalSQLiteGenerationChanged(Exception):
+    """Restart optional-sidecar validation against the current named inode."""
+
+
+_OPTIONAL_SIDECAR_REVALIDATION_ATTEMPTS = 4
+
+
+def _optional_sidecar_restart_or_absent(
+    parent_fd: int,
+    leaf: str,
+    selected: Path,
+) -> bool:
+    try:
+        current = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise _path_error_from_oserror(selected, exc) from None
+
+    rejected = private_paths._classify_private_file_stat(
+        current,
+        expected_uid=os.geteuid(),
+    )
+    if rejected is not None:
+        raise _failure(selected, rejected, "unsafe_sqlite_artifact")
+    raise _OptionalSQLiteGenerationChanged
+
+
+def _prepare_posix_artifact_generation(
+    selected: Path,
+    *,
+    writable: bool,
+    create_if_missing: bool,
+    optional: bool,
+    enforce_private_mode: bool,
+    _pin_job: _SQLiteSourcePinJob | None = None,
+) -> bool:
+    if _pin_job is None:
+        parent_fd, leaf = private_paths._open_verified_parent(
+            selected,
+            missing_leaf_allowed=create_if_missing,
+        )
+    else:
+        parent_fd, leaf = _pin_job.preflight_parent(selected, create_if_missing)
+    file_fd = -1
+    writable_fd = -1
+    try:
+        try:
+            entry_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            if optional:
+                return False
+            if not create_if_missing:
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "missing_sqlite_artifact",
+                ) from None
+            entry_stat = None
+        except OSError as exc:
+            raise _path_error_from_oserror(selected, exc) from None
+
+        if entry_stat is not None and not stat.S_ISREG(entry_stat.st_mode):
+            raise _failure(
+                selected,
+                PrivatePathStatus.LINK_OR_NON_REGULAR,
+                "non_regular_sqlite_artifact",
+            )
+        if (
+            optional
+            and entry_stat is not None
+            and entry_stat.st_nlink == 0
+            and entry_stat.st_uid == os.geteuid()
+        ):
+            return _optional_sidecar_restart_or_absent(
+                parent_fd,
+                leaf,
+                selected,
+            )
+        if entry_stat is not None:
+            entry_rejected = private_paths._classify_private_file_stat(
+                entry_stat,
+                expected_uid=os.geteuid(),
+            )
+            if entry_rejected is not None:
+                raise _failure(
+                    selected,
+                    entry_rejected,
+                    "unsafe_sqlite_artifact",
+                )
+
+        created = entry_stat is None
+        try:
+            file_fd = (
+                _open_artifact_fd if _pin_job is None else _pin_job.preflight_file
+            )(
+                parent_fd,
+                leaf,
+                writable=created,
+                create=created,
+            )
+        except FileNotFoundError:
+            if optional:
+                return _optional_sidecar_restart_or_absent(
+                    parent_fd,
+                    leaf,
+                    selected,
+                )
+            raise _failure(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "missing_sqlite_artifact",
+            ) from None
+        except OSError as exc:
+            raise _path_error_from_oserror(selected, exc) from None
+
+        opened_stat = os.fstat(file_fd)
+        if optional and opened_stat.st_nlink == 0:
+            if not stat.S_ISREG(opened_stat.st_mode):
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.LINK_OR_NON_REGULAR,
+                    "unsafe_sqlite_artifact",
+                )
+            if opened_stat.st_uid != os.geteuid():
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.WRONG_OWNER,
+                    "unsafe_sqlite_artifact",
+                )
+            return _optional_sidecar_restart_or_absent(
+                parent_fd,
+                leaf,
+                selected,
+            )
+        rejected = private_paths._classify_private_file_stat(
+            opened_stat,
+            expected_uid=os.geteuid(),
+        )
+        if rejected is not None:
+            raise _failure(selected, rejected, "unsafe_sqlite_artifact")
+        if entry_stat is not None and not private_paths._same_identity(
+            entry_stat,
+            opened_stat,
+        ):
+            if optional:
+                return _optional_sidecar_restart_or_absent(
+                    parent_fd,
+                    leaf,
+                    selected,
+                )
+            raise _failure(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "private_sqlite_identity_changed",
+            )
+
+        if (
+            enforce_private_mode
+            and stat.S_IMODE(opened_stat.st_mode) != _PRIVATE_FILE_MODE
+        ):
+            os.fchmod(file_fd, _PRIVATE_FILE_MODE)
+        try:
+            postcondition_holds = _artifact_postcondition_holds(
+                file_fd,
+                parent_fd,
+                leaf,
+                expected_identity=opened_stat,
+                selected=selected,
+                enforce_private_mode=enforce_private_mode,
+            )
+        except FileNotFoundError:
+            if optional:
+                return _optional_sidecar_restart_or_absent(
+                    parent_fd,
+                    leaf,
+                    selected,
+                )
+            raise _failure(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "private_sqlite_postcondition_failed",
+            ) from None
+        if not postcondition_holds:
+            if optional:
+                return _optional_sidecar_restart_or_absent(
+                    parent_fd,
+                    leaf,
+                    selected,
+                )
+            raise _failure(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "private_sqlite_postcondition_failed",
+            )
+
+        if writable and not created:
+            try:
+                writable_fd = (
+                    _open_artifact_fd if _pin_job is None else _pin_job.preflight_file
+                )(
+                    parent_fd,
+                    leaf,
+                    writable=True,
+                    create=False,
+                )
+            except FileNotFoundError:
+                if optional:
+                    return _optional_sidecar_restart_or_absent(
+                        parent_fd,
+                        leaf,
+                        selected,
+                    )
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "missing_sqlite_artifact",
+                ) from None
+            except OSError as exc:
+                raise _path_error_from_oserror(selected, exc) from None
+
+            writable_stat = os.fstat(writable_fd)
+            if optional and writable_stat.st_nlink == 0:
+                if not stat.S_ISREG(writable_stat.st_mode):
+                    raise _failure(
+                        selected,
+                        PrivatePathStatus.LINK_OR_NON_REGULAR,
+                        "unsafe_sqlite_artifact",
+                    )
+                if writable_stat.st_uid != os.geteuid():
+                    raise _failure(
+                        selected,
+                        PrivatePathStatus.WRONG_OWNER,
+                        "unsafe_sqlite_artifact",
+                    )
+                return _optional_sidecar_restart_or_absent(
+                    parent_fd,
+                    leaf,
+                    selected,
+                )
+            rejected = private_paths._classify_private_file_stat(
+                writable_stat,
+                expected_uid=os.geteuid(),
+            )
+            if rejected is not None:
+                raise _failure(selected, rejected, "unsafe_sqlite_artifact")
+            if not private_paths._same_identity(opened_stat, writable_stat):
+                if optional:
+                    return _optional_sidecar_restart_or_absent(
+                        parent_fd,
+                        leaf,
+                        selected,
+                    )
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "private_sqlite_identity_changed",
+                )
+            try:
+                writable_postcondition_holds = _artifact_postcondition_holds(
+                    writable_fd,
+                    parent_fd,
+                    leaf,
+                    expected_identity=opened_stat,
+                    selected=selected,
+                    enforce_private_mode=enforce_private_mode,
+                )
+            except FileNotFoundError:
+                if optional:
+                    return _optional_sidecar_restart_or_absent(
+                        parent_fd,
+                        leaf,
+                        selected,
+                    )
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "private_sqlite_postcondition_failed",
+                ) from None
+            if not writable_postcondition_holds:
+                if optional:
+                    return _optional_sidecar_restart_or_absent(
+                        parent_fd,
+                        leaf,
+                        selected,
+                    )
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "private_sqlite_postcondition_failed",
+                )
+        return True
+    except PrivatePathError as error:
+        if _pin_job is not None:
+            _pin_job.preflight_body_errors.append(error)
+        raise
+    except OSError as exc:
+        if _pin_job is not None:
+            _pin_job.preflight_body_errors.append(exc)
+        raise _path_error_from_oserror(selected, exc) from None
+    except BaseException as error:
+        if _pin_job is not None:
+            _pin_job.preflight_body_errors.append(error)
+        raise
+    finally:
+        if _pin_job is not None:
+            _pin_job.close_preflight((writable_fd, file_fd, parent_fd))
+        else:
+            if writable_fd >= 0:
+                os.close(writable_fd)
+            if file_fd >= 0:
+                os.close(file_fd)
+            os.close(parent_fd)
+
+
+def _prepare_posix_artifact(
+    selected: Path,
+    *,
+    writable: bool,
+    create_if_missing: bool,
+    optional: bool = False,
+    enforce_private_mode: bool = True,
+    _pin_job: _SQLiteSourcePinJob | None = None,
+) -> bool:
+    attempts = _OPTIONAL_SIDECAR_REVALIDATION_ATTEMPTS if optional else 1
+    for attempt in range(attempts):
+        try:
+            return _prepare_posix_artifact_generation(
+                selected,
+                writable=writable,
+                create_if_missing=create_if_missing,
+                optional=optional,
+                enforce_private_mode=enforce_private_mode,
+                _pin_job=_pin_job,
+            )
+        except _OptionalSQLiteGenerationChanged:
+            if attempt + 1 == attempts:
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "optional_sqlite_generation_churn",
+                ) from None
+    raise AssertionError("unreachable optional SQLite revalidation state")
+
+
+def _prepare_windows_artifact(
+    selected: Path,
+    *,
+    writable: bool,
+    create_if_missing: bool,
+    optional: bool = False,
+) -> bool:
+    del writable
+    try:
+        file_stat = os.stat(selected, follow_symlinks=False)
+    except FileNotFoundError:
+        if optional:
+            return False
+        if not create_if_missing:
+            raise _failure(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "missing_sqlite_artifact",
+            ) from None
+        file_fd = os.open(
+            selected,
+            os.O_RDWR | os.O_CREAT | os.O_EXCL,
+            _PRIVATE_FILE_MODE,
+        )
+        os.close(file_fd)
+        return True
+
+    if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+        raise _failure(
+            selected,
+            PrivatePathStatus.LINK_OR_NON_REGULAR,
+            "unsafe_sqlite_artifact",
+        )
+    return True
 
 
 def _prepare_artifact(
@@ -580,17 +1216,28 @@ def _prepare_artifact(
     create_if_missing: bool,
     optional: bool = False,
     enforce_private_mode: bool = True,
+    _pin_job: _SQLiteSourcePinJob | None = None,
 ) -> bool:
-    # Compatibility for explicitly closed artifact inspection only. Normal
-    # connections and online source pins must use the operation-owned helper.
-    return private_sqlite_files._prepare_artifact(
+    if private_paths._posix_guards_available():
+        return _prepare_posix_artifact(
+            selected,
+            writable=writable,
+            create_if_missing=create_if_missing,
+            optional=optional,
+            enforce_private_mode=enforce_private_mode,
+            _pin_job=_pin_job,
+        )
+    if private_paths._WINDOWS_PLATFORM:
+        return _prepare_windows_artifact(
+            selected,
+            writable=writable,
+            create_if_missing=create_if_missing,
+            optional=optional,
+        )
+    raise _failure(
         selected,
-        writable=writable,
-        create_if_missing=create_if_missing,
-        optional=optional,
-        enforce_private_mode=enforce_private_mode,
-        open_artifact_fd=_open_artifact_fd,
-        postcondition_holds=_artifact_postcondition_holds,
+        PrivatePathStatus.OPERATION_FAILED,
+        "required_posix_guards_unavailable",
     )
 
 
@@ -743,7 +1390,7 @@ def verify_expected_named_identity(
     """Keep the last stat-only check; SQLite's pathname-open race still exists."""
     if expected_identity is None:
         return
-    observed = selected.lstat()
+    observed = os.stat(selected, follow_symlinks=False)
     matches = (
         (observed.st_dev, observed.st_ino)
         == (expected_identity.dev, expected_identity.ino)
@@ -758,6 +1405,249 @@ def verify_expected_named_identity(
         )
 
 
+@dataclass(eq=False)
+class _SQLiteDescriptorOutcome:
+    """Per-call native evidence only; the supplied caller owns source admission."""
+
+    entered: bool = False
+    duplicate_pending: bool = False
+    duplicate: int | None = None
+    duplicate_close_attempted: bool = False
+    duplicate_closed: bool = False
+    connector_pending: bool = False
+    connection_pending: bool = False
+    connection: sqlite3.Connection | None = None
+    connection_close_attempted: bool = False
+    connection_closed: bool = False
+    errors: list[BaseException] = field(default_factory=list)
+
+
+@dataclass
+class _SQLiteAdmissionOutcome:
+    """Per-call proof of admission refusal before source/native preflight."""
+
+    admission_refused: bool = False
+
+
+def _with_storage_admission(function):
+    @functools.wraps(function)
+    def admitted(owner_id, database, **kwargs):
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+        outcome = kwargs.pop("_admission_outcome", None)
+        if outcome is not None and type(outcome) is not _SQLiteAdmissionOutcome:
+            raise TypeError("invalid_private_admission_outcome")
+        policy = _validated_owner_policy(owner_id)
+        if "uri" in kwargs:
+            raise ValueError("The SQLite uri option is owned by the private seam")
+        if kwargs.get("_verified_descriptor_fd") is None:
+            _classify_target(database, read_only=kwargs.get("read_only", False))
+        if (
+            owner_id in {
+                "recovery.validation", "recovery.credentials",
+                "recovery.rag_projection_validation",
+            }
+            or kwargs.get("_verified_descriptor_fd") is not None
+            or os.fspath(database) == ":memory:"
+            or (kwargs.get("read_only", False) and policy.foreign_read_only_source)
+        ):
+            return function(owner_id, database, **kwargs)
+        from tldw_chatbook.Backup_Recovery.storage_admission import (
+            _acquire_capture_storage,
+            _CaptureLease,
+        )
+
+        try:
+            lease = _acquire_capture_storage(
+                Path(database),
+                owner_id=owner_id,
+                read_only=kwargs.get("read_only", False),
+            )
+        except BaseException:
+            if outcome is not None:
+                outcome.admission_refused = True
+            raise
+        factory = kwargs.get("factory", sqlite3.Connection)
+        capture_lease = type(lease) is _CaptureLease
+        if lease is not None and factory is not sqlite3.Connection:
+            # Custom __new__/__init__ may retain a native handle then raise before
+            # the seam receives it. Capture qualifies only the native constructor;
+            # ordinary owner factory compatibility remains unchanged below.
+            lease.close()
+            raise RecoveryRequired("capture_factory_not_qualified")
+        if lease is None:
+            try:
+                lease = acquire_storage(Path(database))
+            except BaseException:
+                # The underlying resource/preflight function was never entered.
+                # Constructor/preflight/connector errors below remain unknown.
+                if outcome is not None:
+                    outcome.admission_refused = True
+                raise
+            lease._attach_sqlite(policy, Path(database))
+        allocation_started = False
+        constructing = True
+        try:
+            if not isinstance(factory, type) or not issubclass(
+                factory, sqlite3.Connection
+            ):
+                raise RecoveryRequired("connection_factory_not_qualified")
+
+            class AdmittedConnection(factory):
+                _admission_close_attempted = False
+
+                if capture_lease:
+
+                    def __init__(self, *args, **options):
+                        lease.resource_closed = False
+                        super().__init__(*args, **options)
+                        # Bind the actual native handle before connector-level
+                        # post-open validation can reject it.
+                        lease.attach(self)
+
+                def __new__(cls, *args, **options):
+                    nonlocal allocation_started
+                    # A custom __new__ can allocate/retain self before raising.
+                    allocation_started = True
+                    if factory.__new__ is sqlite3.Connection.__new__:
+                        return factory.__new__(cls)
+                    return factory.__new__(cls, *args, **options)
+
+                def close(self):
+                    if capture_lease and lease.resource_close_failed:
+                        raise RecoveryRequired("capture_resources_not_retired")
+                    self._admission_close_attempted = True
+                    try:
+                        super().close()
+                        # Pooling overrides may leave the native handle alive.
+                        sqlite3.Connection.close(self)
+                    except BaseException:
+                        if hasattr(lease, "resource_close_failed"):
+                            lease.resource_close_failed = True
+                        raise
+                    if capture_lease:
+                        lease.native_closed()
+                    if not constructing:
+                        lease.close()
+                        from tldw_chatbook.Backup_Recovery import (
+                            storage_admission as storage,
+                        )
+
+                        with storage._changed:
+                            _ordinary_connections.pop(self, None)
+                            participant = getattr(lease, "resource_participant", None)
+                            if participant is not None:
+                                from tldw_chatbook.Backup_Recovery.participants import (
+                                    _retired_core_connections,
+                                )
+
+                                _retired_core_connections.add(self)
+                                participant.connections.pop(self, None)
+                                lease.resource_participant = None
+                            storage._changed.notify_all()
+
+                def __del__(self):
+                    # Match sqlite's abandoned-connection retirement, including rollback.
+                    # If a custom close fails, retain the fence until process exit.
+                    try:
+                        if not self._admission_close_attempted:
+                            self.close()
+                    except BaseException:
+                        pass
+
+            kwargs["factory"] = AdmittedConnection
+            connection = function(owner_id, database, **kwargs)
+            constructing = False
+            if getattr(connection, "_admission_close_attempted", False):
+                connection._admission_close_attempted = False
+            if type(connection) is AdmittedConnection and hasattr(
+                lease, "resource_policy"
+            ):
+                from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+                with storage._lock:
+                    _ordinary_connections[connection] = lease
+            if hasattr(lease, "attach"):
+                lease.attach(connection)
+            return connection
+        except BaseException:
+            constructing = False
+            if capture_lease and lease.resource_closed:
+                lease.close()
+            elif allocation_started and hasattr(lease, "resource_close_failed"):
+                # No constructor-time close proves final retirement: a factory
+                # may subsequently reinitialize self, retain it and then raise.
+                # Ambiguous default-init errors also conservatively need restart.
+                lease.resource_close_failed = True
+            else:
+                lease.close()
+            raise
+
+    return admitted
+
+
+def _windows_descriptor_snapshot(descriptor: int, before: os.stat_result) -> bytearray:
+    """Copy a frozen main database from its held descriptor, never its pathname.
+
+    The existing profile-artifact ceiling also bounds this Windows-only reader.
+    Deserialization temporarily holds roughly two copies (up to 1152 MiB at the
+    576 MiB ceiling); larger sources fail before allocating. As with immutable
+    POSIX reads, the caller owns exclusion and validation of any WAL sidecars.
+    """
+    from tldw_chatbook.TTS.profile_migration_journal import (
+        MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
+    )
+
+    if not 100 <= before.st_size <= MAX_PROFILE_MIGRATION_ARTIFACT_BYTES:
+        raise ValueError("descriptor_snapshot_limit")
+    offset = os.lseek(descriptor, 0, os.SEEK_CUR)
+    data = bytearray()
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        while len(data) < before.st_size:
+            chunk = os.read(descriptor, min(1024 * 1024, before.st_size - len(data)))
+            if not chunk:
+                raise ValueError("descriptor_snapshot_changed")
+            data.extend(chunk)
+        after = os.fstat(descriptor)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, key) != getattr(after, key) for key in fields):
+            raise ValueError("descriptor_snapshot_changed")
+    finally:
+        os.lseek(descriptor, offset, os.SEEK_SET)
+    if data[:16] != b"SQLite format 3\x00":
+        raise ValueError("descriptor_snapshot_invalid")
+    # deserialize cannot open a WAL-mode image. This immutable main-file view
+    # deliberately ignores WAL, exactly like the existing immutable=1 route;
+    # change only the in-memory header, never the source or its sidecars.
+    if data[18:20] == b"\x02\x02":
+        data[18:20] = b"\x01\x01"
+    return data
+
+
+class _ReadonlyDescriptorMixin:
+    """Keep SQL query-only even when an installed validator adds an authorizer."""
+
+    def set_authorizer(self, callback):
+        def authorize(action, first, second, database, source):
+            if (
+                action == sqlite3.SQLITE_PRAGMA
+                and first.lower() == "query_only"
+                and second is not None
+                and second.lower() not in {"1", "on", "true", "yes"}
+            ):
+                return sqlite3.SQLITE_DENY
+            return (
+                sqlite3.SQLITE_OK
+                if callback is None
+                else callback(action, first, second, database, source)
+            )
+
+        super().set_authorizer(authorize)
+
+
+@_with_storage_admission
 def _connect_registered_sqlite(
     owner_id: str,
     database: str | os.PathLike[str],
@@ -767,6 +1657,8 @@ def _connect_registered_sqlite(
     immutable: bool = False,
     expected_identity: os.stat_result | FileIdentity | None = None,
     _verified_descriptor_fd: int | None = None,
+    _descriptor_outcome: _SQLiteDescriptorOutcome | None = None,
+
     operation_deadline: float | None = None,
     reservation: HelperReservation | None = None,
     **kwargs: Any,
@@ -794,11 +1686,58 @@ def _connect_registered_sqlite(
             or opened.st_nlink != 1
         ):
             raise ValueError("SQLite descriptor must be a regular file")
-        return _SQLITE_CONNECT(
+        if (
+            _descriptor_outcome is not None
+            and type(_descriptor_outcome) is not _SQLiteDescriptorOutcome
+        ):
+            raise TypeError("invalid_descriptor_outcome")
+        if os.name == "nt":
+            snapshot = _windows_descriptor_snapshot(_verified_descriptor_fd, opened)
+            factory = kwargs.get("factory", sqlite3.Connection)
+            if not isinstance(factory, type) or not issubclass(
+                factory, sqlite3.Connection
+            ):
+                raise ValueError("descriptor_snapshot_requires_connection_factory")
+
+            class WindowsDescriptorConnection(_ReadonlyDescriptorMixin, factory):
+                pass
+
+            if _descriptor_outcome is not None:
+                _descriptor_outcome.connection_pending = True
+            connection = _SQLITE_CONNECT(
+                ":memory:", **{**kwargs, "factory": WindowsDescriptorConnection}
+            )
+            if _descriptor_outcome is not None:
+                _descriptor_outcome.connection = connection
+                _descriptor_outcome.connection_pending = False
+            try:
+                connection.deserialize(snapshot)
+                connection.execute("PRAGMA query_only = ON")
+                connection.set_authorizer(None)
+                connection.execute("SELECT count(*) FROM sqlite_schema").fetchone()
+            except BaseException:
+                if _descriptor_outcome is not None:
+                    _descriptor_outcome.connection_close_attempted = True
+                connection.close()
+                # A factory override may return without closing native SQLite.
+                sqlite3.Connection.close(connection)
+                if _descriptor_outcome is not None:
+                    _descriptor_outcome.connection_closed = True
+                raise
+            return connection
+        if _descriptor_outcome is not None:
+            if type(_descriptor_outcome) is not _SQLiteDescriptorOutcome:
+                raise TypeError("invalid_descriptor_outcome")
+            _descriptor_outcome.connection_pending = True
+        connection = _SQLITE_CONNECT(
             f"file:/dev/fd/{_verified_descriptor_fd}?mode=ro&immutable=1",
             uri=True,
             **kwargs,
         )
+        if _descriptor_outcome is not None:
+            _descriptor_outcome.connection = connection
+            _descriptor_outcome.connection_pending = False
+        return connection
     raw, target_kind = _classify_target(database, read_only=read_only)
     if target_kind is SQLiteTargetKind.MEMORY and must_exist:
         raise ValueError("must_exist is only valid for file-backed SQLite")
@@ -811,12 +1750,33 @@ def _connect_registered_sqlite(
 
     connection_target = raw
     use_uri = False
+    capture_path = None
     if target_kind is not SQLiteTargetKind.MEMORY:
         selected = lexical_path(raw)
+        if read_only and policy.recovery_capture_allowed:
+            from tldw_chatbook.Backup_Recovery.storage_admission import (
+                _capture_sqlite_target,
+                _verify_capture_sqlite_target,
+            )
+
+            capture_target = _capture_sqlite_target(owner_id, selected)
+            if capture_target is not None:
+                verify_expected_named_identity(selected, expected_identity)
+                selected = capture_target
+                expected_identity = None
+            capture_path = selected
         directory_result = verify_trusted_directory(
             selected.parent,
             allow_shared_sticky=False,
         )
+        if read_only and policy.recovery_capture_allowed:
+            from tldw_chatbook.Backup_Recovery.storage_admission import (
+                _preview_sqlite_target,
+            )
+
+            preview_target = _preview_sqlite_target(selected)
+            if preview_target is not None:
+                selected = preview_target
         connection_target = os.fspath(selected)
         if read_only:
             connection_target = _build_read_only_uri(
@@ -844,17 +1804,45 @@ def _connect_registered_sqlite(
                 ),
             )
             if private_paths._WINDOWS_PLATFORM:
-                # Preserve the explicit unverified Windows policy. POSIX pipe
-                # readiness and lock-isolation guarantees do not apply there.
                 deadline.remaining(5.0)
-                private_sqlite_files.prepare_batch(request)
+                _prepare_artifact(
+                    selected, writable=request.writable,
+                    create_if_missing=request.create_if_missing,
+                    enforce_private_mode=not request.preserve_source_mode,
+                )
+                for suffix in _SIDECAR_SUFFIXES:
+                    _prepare_artifact(
+                        Path(f"{selected}{suffix}"), writable=request.writable,
+                        create_if_missing=False, optional=True,
+                        enforce_private_mode=not request.preserve_source_mode,
+                    )
             else:
                 prepare_in_helper(request, reservation=envelope, deadline=deadline)
             deadline.remaining(5.0)
             verify_expected_named_identity(selected, expected_identity)
-            return sqlite3.connect(connection_target, uri=use_uri, **kwargs)
+            if capture_path is not None:
+                _verify_capture_sqlite_target(capture_path)
+            connection = sqlite3.connect(connection_target, uri=use_uri, **kwargs)
+            try:
+                if capture_path is not None:
+                    _verify_capture_sqlite_target(capture_path)
+                return connection
+            except BaseException:
+                _close_owned_connections((("capture source", connection),))
+                raise
 
-    return sqlite3.connect(connection_target, uri=use_uri, **kwargs)
+    if capture_path is not None:
+        _verify_capture_sqlite_target(capture_path)
+    connection = sqlite3.connect(connection_target, uri=use_uri, **kwargs)
+    verified = False
+    try:
+        if capture_path is not None:
+            _verify_capture_sqlite_target(capture_path)
+        verified = True
+        return connection
+    finally:
+        if not verified:
+            _close_owned_connections((("capture source", connection),))
 
 
 def connect_private_sqlite(
@@ -891,13 +1879,63 @@ def connect_private_sqlite(
     )
 
 
+@contextlib.contextmanager
+def open_recovery_validation(
+    owner_id: str,
+    candidate: Path,
+    *,
+    writable: bool,
+    with_restrictions: bool = False,
+    cancel=None,
+) -> Iterator[sqlite3.Connection | tuple[sqlite3.Connection, Any]]:
+    """Open a disposable candidate with restrictions before any imported query.
+
+    The caller owns staging and must never pass a live destination. This authority
+    deliberately does not enroll the candidate as an ordinary profile resource.
+    Internal validators may request the original restriction budget alongside
+    the connection so catalog inspection and later checks share one deadline.
+    """
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+        _installed_owner,
+        _recovery_restriction_scope,
+        _restrict_connection,
+    )
+
+    _installed_owner(owner_id)
+    with contextlib.closing(
+        _connect_registered_sqlite(
+            "recovery.validation",
+            candidate,
+            read_only=not writable,
+            must_exist=True,
+            immutable=not writable,
+            isolation_level=None,
+            cached_statements=0,
+            timeout=0,
+        )
+    ) as connection:
+        restrictions = _restrict_connection(connection, cancel)
+        with _recovery_restriction_scope(connection, restrictions):
+            yield (connection, restrictions) if with_restrictions else connection
+
+
+_ORIGINAL_DESCRIPTOR_CONNECTOR = _connect_registered_sqlite
+
 def connect_private_sqlite_descriptor(
     owner_id: str,
     file_fd: int,
+    _native_outcome: _SQLiteDescriptorOutcome | None = None,
     **kwargs: Any,
 ) -> sqlite3.Connection:
     """Open an immutable SQLite view bound to an already verified descriptor."""
 
+    if _native_outcome is not None:
+        if (
+            type(_native_outcome) is not _SQLiteDescriptorOutcome
+            or _native_outcome.entered
+        ):
+            raise TypeError("invalid_descriptor_outcome")
+        _native_outcome.entered = True
     policy = _validated_owner_policy(owner_id)
     if SQLiteTargetKind.READ_ONLY_URI not in policy.allowed_target_kinds:
         raise ValueError("SQLite owner does not allow descriptor reads")
@@ -909,27 +1947,355 @@ def connect_private_sqlite_descriptor(
         or opened.st_nlink != 1
     ):
         raise ValueError("SQLite descriptor must be a regular file")
-    return _connect_registered_sqlite(
-        owner_id,
-        ":memory:",
-        read_only=True,
-        must_exist=True,
-        immutable=True,
-        _verified_descriptor_fd=file_fd,
-        **kwargs,
-    )
+    # Closing even a duplicate POSIX fd releases this process's SQLite locks.
+    # Borrow the owner's pin there; Windows retains its native duplicate outcome.
+    duplicate = file_fd
+    owns_duplicate = os.name == "nt"
+    if owns_duplicate:
+        duplicate_primitive = os.dup
+        if _native_outcome is not None:
+            _native_outcome.duplicate_pending = True
+        try:
+            duplicate = duplicate_primitive(file_fd)
+        except OSError:
+            if (
+                _native_outcome is not None
+                and duplicate_primitive is _ORIGINAL_DESCRIPTOR_DUP
+            ):
+                _native_outcome.duplicate_pending = False
+            raise
+        if _native_outcome is not None:
+            _native_outcome.duplicate = duplicate
+            _native_outcome.duplicate_pending = False
+    connector = _connect_registered_sqlite
+    if _native_outcome is not None:
+        _native_outcome.connector_pending = True
+    try:
+        connection = connector(
+            owner_id,
+            ":memory:",
+            read_only=True,
+            must_exist=True,
+            immutable=True,
+            _verified_descriptor_fd=duplicate,
+            _descriptor_outcome=_native_outcome,
+            **kwargs,
+        )
+        if _native_outcome is not None:
+            _native_outcome.connector_pending = False
+        return connection
+    except BaseException as error:
+        if _native_outcome is not None:
+            _native_outcome.errors.append(error)
+            if (
+                connector is _ORIGINAL_DESCRIPTOR_CONNECTOR
+                and not _native_outcome.connection_pending
+                and (
+                    _native_outcome.connection is None
+                    or _native_outcome.connection_closed
+                )
+            ):
+                _native_outcome.connector_pending = False
+        raise
+    finally:
+        if owns_duplicate:
+            if _native_outcome is not None:
+                _native_outcome.duplicate_close_attempted = True
+            try:
+                os.close(duplicate)
+            except BaseException as error:
+                if _native_outcome is not None:
+                    _native_outcome.errors.append(error)
+                raise
+            if _native_outcome is not None:
+                _native_outcome.duplicate_closed = True
 
 
 @dataclass(slots=True)
 class _PinnedSQLiteSource:
     selected: Path
-    identity: FileIdentity
-    enforce_private_mode: bool
-    lease: HelperLease | None
+    identity: os.stat_result | FileIdentity | None = None
+    parent_fd: int = -1
+    file_fd: int = -1
+    enforce_private_mode: bool = True
+    lease: HelperLease | None = None
+    attempted: set[str] = field(default_factory=set)
+    cleanup_errors: list[BaseException] = field(default_factory=list)
+    native_close: Callable[[int], None] | None = field(default=None, repr=False)
 
     def close(self) -> None:
         if self.lease is not None:
             self.lease.close()
+            self.lease = None
+        # Each returned descriptor is attempted once, even when its sibling fails.
+        # An error after close is still uncertainty: never retry a recycled number.
+        for role in ("file_fd", "parent_fd"):
+            descriptor = getattr(self, role)
+            if descriptor < 0 or role in self.attempted:
+                continue
+            self.attempted.add(role)
+            try:
+                (self.native_close or os.close)(descriptor)
+            except BaseException as error:
+                self.cleanup_errors.append(error)
+            else:
+                setattr(self, role, -1)
+        if self.cleanup_errors:
+            raise next(
+                (e for e in self.cleanup_errors if not isinstance(e, Exception)),
+                self.cleanup_errors[0],
+            )
+
+
+class _SQLiteSourcePinJob:
+    """Retain one checked source pin under existing ordinary/capture ownership."""
+
+    def __init__(self, owner_id: str, selected: Path, private_mode: bool) -> None:
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        self.storage = storage
+        self.owner_id = owner_id
+        self.source = _PinnedSQLiteSource(selected, enforce_private_mode=private_mode)
+        self.pid = os.getpid()
+        self.thread = storage.threading.current_thread()
+        self.leases = []
+        self.capture_lease = None
+        self.preflight_descriptors = []
+        self.preflight_body_errors = []
+        self.traversal_failures = {}
+        self.traversal_descriptors = []
+        self.allocation_pending = False
+        self.allocation_failures = []
+        self.body_error = None
+        self.cleanup_errors = []
+        self.active = True
+        self.source.native_close = self.close_final
+        with storage._changed:
+            storage._raw_operations.add(self)
+            storage._changed.notify_all()
+
+    def admit(self) -> None:
+        lease = self.storage._acquire_capture_storage(
+            self.source.selected, owner_id=self.owner_id, read_only=True
+        )
+        if lease is not None:
+            self.capture_lease = lease
+            # Failed job retirement must precede removal of its validating lease.
+            lease.scope.resources.insert(lease.scope.resources.index(lease), self)
+            return
+        for selected in (self.source.selected, self.source.selected.parent):
+            self.check()
+            self.leases.append(self.storage.acquire_storage(selected))
+            self.check()
+
+    def check(self) -> None:
+        if (
+            os.getpid() != self.pid
+            or self.storage.threading.current_thread() is not self.thread
+        ):
+            raise RuntimeError("sqlite_pin_execution_changed")
+        if self.capture_lease is not None:
+            self.capture_lease.scope.check()
+        else:
+            # An ordinary helper cannot borrow an inherited source callback grant.
+            with self.storage._lock:
+                if self.storage._pause is not None:
+                    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+                    raise RecoveryRequired("storage_locally_paused")
+
+    def open_traversal(self, *args, **kwargs) -> int:
+        self.check()
+        self.allocation_pending = True
+        outcome = private_paths._NativeOpenOutcome()
+        try:
+            descriptor = private_paths._native_open(*args, _outcome=outcome, **kwargs)
+        except BaseException as error:
+            if outcome.descriptor is not None:
+                self.traversal_descriptors.append([outcome.descriptor, None, False])
+                self.allocation_pending = False
+            elif outcome.rejected:
+                self.allocation_pending = False
+            else:
+                self.allocation_failures.append(error)
+            raise
+        self.traversal_descriptors.append([descriptor, None, False])
+        self.allocation_pending = False
+        return descriptor
+
+    def close_final(self, descriptor: int) -> None:
+        if any(r[0] == descriptor and not r[2] for r in self.traversal_descriptors):
+            self.close_traversal(descriptor)
+        else:
+            os.close(descriptor)
+
+    def close_traversal(self, descriptor: int) -> None:
+        # Preserve the helper's existing raw/visual attribution at this close edge.
+        if descriptor in self.traversal_failures:
+            raise self.traversal_failures[descriptor]
+        record = next(
+            (
+                r
+                for r in reversed(self.traversal_descriptors)
+                if r[0] == descriptor and not r[2]
+            ),
+            None,
+        )
+        if record is None:
+            record = [descriptor, None, False]
+            self.traversal_descriptors.append(record)
+        try:
+            info = os.fstat(descriptor)
+            record[1] = (info.st_dev, info.st_ino)
+        except BaseException as error:
+            self.cleanup_errors.append(error)
+        try:
+            private_paths._native_close(descriptor)
+        except BaseException as error:
+            self.traversal_failures[descriptor] = error
+            self.cleanup_errors.append(error)
+            raise
+        else:
+            record[2] = True
+
+    def preflight_parent(self, selected: Path, create: bool) -> tuple[int, str]:
+        self.check()
+        descriptor, leaf = private_paths._open_verified_parent(
+            selected,
+            missing_leaf_allowed=create,
+            _close=self.close_traversal,
+            _open=self.open_traversal,
+        )
+        self.preflight_descriptors.append([descriptor, selected.parent, False, False])
+        return descriptor, leaf
+
+    def preflight_file(self, parent_fd: int, leaf: str, **kwargs) -> int:
+        parent = next(
+            r[1]
+            for r in reversed(self.preflight_descriptors)
+            if r[0] == parent_fd and not r[3]
+        )
+        return self.open_file(parent_fd, leaf, parent / leaf, final=False, **kwargs)
+
+    def open_file(
+        self, parent_fd: int, leaf: str, selected: Path, *, final: bool, **kwargs
+    ) -> int:
+        self.check()
+        self.allocation_pending = True
+        outcome = private_paths._NativeOpenOutcome()
+        try:
+            descriptor = _open_artifact_fd(parent_fd, leaf, _outcome=outcome, **kwargs)
+        except BaseException as error:
+            if outcome.descriptor is not None:
+                self.record_file(outcome.descriptor, selected, final=final)
+                self.allocation_pending = False
+            elif outcome.rejected:
+                self.allocation_pending = False
+            else:
+                self.allocation_failures.append(error)
+            raise
+        self.record_file(descriptor, selected, final=final)
+        self.allocation_pending = False
+        return descriptor
+
+    def record_file(self, descriptor: int, selected: Path, *, final: bool) -> None:
+        if final:
+            self.source.file_fd = descriptor
+        else:
+            self.preflight_descriptors.append([descriptor, selected, False, False])
+
+    def close_preflight(self, descriptors: tuple[int, ...]) -> None:
+        failures = []
+        for descriptor in descriptors:
+            if descriptor < 0:
+                continue
+            record = next(
+                r
+                for r in reversed(self.preflight_descriptors)
+                if r[0] == descriptor and not r[3]
+            )
+            if record[2]:
+                continue
+            record[2] = True
+            try:
+                self.close_final(descriptor)
+            except BaseException as error:
+                self.cleanup_errors.append(error)
+                failures.append(error)
+            else:
+                record[3] = True
+        if failures:
+            raise next(
+                (e for e in failures if not isinstance(e, Exception)), failures[0]
+            )
+
+    def finish(self, body_error: BaseException | None) -> None:
+        self.body_error = (
+            self.preflight_body_errors[0] if self.preflight_body_errors else body_error
+        )
+        self.active = False
+        try:
+            self.close_preflight(
+                tuple(r[0] for r in self.preflight_descriptors if not r[2] and not r[3])
+            )
+        except BaseException as error:
+            if not any(error is retained for retained in self.cleanup_errors):
+                self.cleanup_errors.append(error)
+        try:
+            self.source.close()
+        except BaseException as error:
+            self.cleanup_errors.append(error)
+        for descriptor, _identity, retired in tuple(self.traversal_descriptors):
+            if not retired and descriptor not in self.traversal_failures:
+                try:
+                    self.close_traversal(descriptor)
+                except BaseException:
+                    pass  # Original native failure is retained by the observer.
+        if (
+            not self.allocation_pending
+            and not self.allocation_failures
+            and not self.cleanup_errors
+        ):
+            self.retire()
+        if self.cleanup_errors:
+            selected = next(
+                (e for e in self.cleanup_errors if not isinstance(e, Exception)),
+                self.cleanup_errors[0],
+            )
+            if body_error is not None and not isinstance(body_error, Exception):
+                raise body_error from selected
+            raise selected from body_error
+
+    def retire(self) -> None:
+        if (
+            self.active
+            or self.allocation_pending
+            or self.allocation_failures
+            or self.cleanup_errors
+            or self.source.lease is not None
+            or self.source.file_fd >= 0
+            or self.source.parent_fd >= 0
+            or any(not r[3] for r in self.preflight_descriptors)
+            or any(not r[2] for r in self.traversal_descriptors)
+        ):
+            from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+            raise RecoveryRequired("sqlite_pin_resources_not_retired")
+        for lease in tuple(self.leases):
+            try:
+                lease.close()
+            except BaseException as error:
+                self.cleanup_errors.append(error)
+                raise
+            self.leases.remove(lease)
+        if self.capture_lease is not None:
+            scope = self.capture_lease.scope
+            self.capture_lease.close()
+            if self in scope.resources:
+                scope.resources.remove(self)
+        with self.storage._changed:
+            self.storage._raw_operations.discard(self)
+            self.storage._changed.notify_all()
 
 
 def _validate_backup_owner(
@@ -966,27 +2332,99 @@ def _source_selection(
     return raw, lexical_path(raw)
 
 
-def _reverify_source(
-    source: _PinnedSQLiteSource, *, deadline: OperationDeadline
+def _prepare_source_artifacts(
+    owner_id: str,
+    selected: Path,
+    *,
+    enforce_private_mode: bool,
+    _pin_job: _SQLiteSourcePinJob | None = None,
 ) -> None:
-    if source.lease is None:
-        deadline.remaining(5.0)
-        named = source.selected.lstat()
-        if (
-            source.identity.same_inode(FileIdentity.from_stat(named))
-            and stat.S_ISREG(named.st_mode)
-            and named.st_nlink == 1
-        ):
-            return
-        raise _failure(
-            source.selected,
-            PrivatePathStatus.OPERATION_FAILED,
-            "private_sqlite_source_identity_changed",
-        )
-    result = _helper_result(
-        source.selected, source.lease.request("recheck_source", deadline=deadline)
+    directory_result = verify_trusted_directory(
+        selected.parent,
+        allow_shared_sticky=False,
+        **(
+            {"_close": _pin_job.close_traversal, "_open": _pin_job.open_traversal}
+            if _pin_job is not None
+            else {}
+        ),
     )
-    if not source.identity.same_inode(result.main_identity):
+    _prepare_artifact(
+        selected,
+        writable=False,
+        create_if_missing=False,
+        enforce_private_mode=enforce_private_mode,
+        _pin_job=_pin_job,
+    )
+    for suffix in _SIDECAR_SUFFIXES:
+        _prepare_artifact(
+            Path(f"{selected}{suffix}"),
+            writable=False,
+            create_if_missing=False,
+            optional=True,
+            enforce_private_mode=enforce_private_mode,
+            _pin_job=_pin_job,
+        )
+    if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+        _warn_unverified_platform(owner_id)
+
+
+def _source_postcondition_holds(source: _PinnedSQLiteSource) -> bool:
+    if source.file_fd < 0:
+        try:
+            named = os.stat(source.selected, follow_symlinks=False)
+        except OSError:
+            return False
+        if private_paths._WINDOWS_PLATFORM:
+            return (
+                private_paths._same_identity(named, source.identity)
+                and stat.S_ISREG(named.st_mode)
+                and named.st_nlink == 1
+            )
+        return (
+            private_paths._same_identity(named, source.identity)
+            and private_paths._classify_private_file_stat(
+                named,
+                expected_uid=os.geteuid(),
+            )
+            is None
+        )
+    try:
+        opened = os.fstat(source.file_fd)
+        named = os.stat(
+            source.selected.name,
+            dir_fd=source.parent_fd,
+            follow_symlinks=False,
+        )
+    except OSError:
+        return False
+    return (
+        private_paths._same_identity(opened, source.identity)
+        and private_paths._same_identity(named, source.identity)
+        and private_paths._classify_private_file_stat(
+            opened,
+            expected_uid=os.geteuid(),
+        )
+        is None
+        and private_paths._classify_private_file_stat(
+            named,
+            expected_uid=os.geteuid(),
+        )
+        is None
+        and (
+            not source.enforce_private_mode
+            or stat.S_IMODE(opened.st_mode) == _PRIVATE_FILE_MODE
+        )
+    )
+
+
+def _reverify_source(source: _PinnedSQLiteSource, *, deadline: OperationDeadline | None = None) -> None:
+    if source.lease is not None:
+        deadline = deadline or OperationDeadline(None)
+        result = _helper_result(source.selected, source.lease.request("recheck_source", deadline=deadline))
+        if not source.identity.same_inode(result.main_identity):
+            raise _failure(source.selected, PrivatePathStatus.OPERATION_FAILED, "private_sqlite_source_identity_changed")
+        return
+    if not _source_postcondition_holds(source):
         raise _failure(
             source.selected,
             PrivatePathStatus.OPERATION_FAILED,
@@ -1010,39 +2448,55 @@ def _pin_sqlite_source(
 
     policy = _validated_owner_policy(owner_id)
     enforce_private_mode = not policy.preserve_read_only_source_mode
-    directory_result = verify_trusted_directory(
-        selected.parent, allow_shared_sticky=False
-    )
-    if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
-        _warn_unverified_platform(owner_id)
-    if private_paths._WINDOWS_PLATFORM:
-        deadline.remaining(5.0)
-        result = private_sqlite_files.prepare_batch(
-            PrepareRequest(str(selected), False, False, not enforce_private_mode)
-        )
-        source = _PinnedSQLiteSource(
-            selected, result.main_identity, enforce_private_mode, None
-        )
-        _reverify_source(source, deadline=deadline)
-        yield source
-        return
-    with _owned_helper(
-        HelperLease.start(
-            PrepareRequest(str(selected), False, False, not enforce_private_mode),
-            operation="pin_source",
-            reservation=reservation,
-            deadline=deadline,
-        )
-    ) as lease:
-        result = _helper_result(selected, lease.initial_response)
-        source = _PinnedSQLiteSource(
-            selected=selected,
-            identity=result.main_identity,
+    job = _SQLiteSourcePinJob(owner_id, selected, enforce_private_mode)
+    source = job.source
+    body_error = None
+    try:
+        job.admit()
+        if not private_paths._WINDOWS_PLATFORM:
+            job.check()
+            source.lease = HelperLease.start(
+                PrepareRequest(str(selected), False, False, not enforce_private_mode),
+                operation="pin_source", reservation=reservation, deadline=deadline,
+            )
+            result = _helper_result(selected, source.lease.initial_response)
+            source.identity = result.main_identity
+            _reverify_source(source, deadline=deadline)
+            yield source
+            return
+        _prepare_source_artifacts(
+            owner_id,
+            selected,
             enforce_private_mode=enforce_private_mode,
-            lease=lease,
+            _pin_job=job,
         )
-        _reverify_source(source, deadline=deadline)
+        if private_paths._posix_guards_available():
+            job.check()
+            source.parent_fd, leaf = private_paths._open_verified_parent(
+                selected,
+                missing_leaf_allowed=False,
+                _close=job.close_traversal,
+                _open=job.open_traversal,
+            )
+            job.allocation_pending = False
+            job.open_file(
+                source.parent_fd,
+                leaf,
+                selected,
+                final=True,
+                writable=False,
+                create=False,
+            )
+            source.identity = os.fstat(source.file_fd)
+        else:
+            source.identity = os.stat(selected, follow_symlinks=False)
+        _reverify_source(source)
         yield source
+    except BaseException as error:
+        body_error = error
+        raise
+    finally:
+        job.finish(body_error)
 
 
 def _private_destination(database: str | os.PathLike[str]) -> Path:
@@ -1054,7 +2508,7 @@ def _private_destination(database: str | os.PathLike[str]) -> Path:
 
 def _existing_entry_stat(selected: Path) -> os.stat_result | None:
     try:
-        return selected.lstat()
+        return os.stat(selected, follow_symlinks=False)
     except FileNotFoundError:
         return None
     except OSError as exc:
@@ -1084,9 +2538,11 @@ def _reject_unsafe_or_aliased_destination(
     )
     if rejected is not None:
         raise _failure(destination, rejected, "unsafe_sqlite_backup_target")
-    if source is not None and source.identity.same_inode(
-        FileIdentity.from_stat(destination_stat)
-    ):
+    source_identity = (
+        source.identity if source is not None and isinstance(source.identity, FileIdentity)
+        else FileIdentity.from_stat(source.identity) if source is not None else None
+    )
+    if source_identity is not None and source_identity.same_inode(FileIdentity.from_stat(destination_stat)):
         raise ValueError("SQLite source and destination cannot be the same file")
 
 
@@ -1336,8 +2792,8 @@ def _verify_profile_migration_destination(
     )
     if parent_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
         raise SQLitePrivateDestinationError()
-    parent_stat = selected.parent.lstat()
-    file_stat = selected.lstat()
+    parent_stat = os.stat(selected.parent, follow_symlinks=False)
+    file_stat = os.stat(selected, follow_symlinks=False)
     if (
         not private_paths._same_identity(
             parent_stat,
@@ -1372,7 +2828,7 @@ def _verify_profile_migration_destination(
         raise SQLitePrivateDestinationError()
     opened_path = lexical_path(os.fsdecode(cast(str, main_row[2])))
     verify_trusted_directory(opened_path.parent, allow_shared_sticky=False)
-    if not private_paths._same_identity(opened_path.lstat(), file_stat):
+    if not private_paths._same_identity(os.stat(opened_path, follow_symlinks=False), file_stat):
         raise SQLitePrivateDestinationError()
     parent_fd, leaf = private_paths._open_verified_parent(
         selected,
@@ -1624,7 +3080,7 @@ def open_canonical_profile_migration_destination(
             raise ValueError
         parent_fd, file_fd, file_identity, authority = open_new_or_reused_private_file(
             selected,
-            parent_authority=ParentAuthority(selected.parent.lstat()),
+            parent_authority=ParentAuthority(os.stat(selected.parent, follow_symlinks=False)),
             tombstone_key=tombstone_key,
         )
         connection = _connect_registered_sqlite(
@@ -1703,7 +3159,7 @@ def open_profile_migration_boundary_destination(
         )
         if parent_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
             raise ValueError
-        parent_identity = selected.parent.lstat()
+        parent_identity = os.stat(selected.parent, follow_symlinks=False)
         parent_fd, leaf = private_paths._open_verified_parent(
             selected,
             missing_leaf_allowed=True,
@@ -1723,7 +3179,7 @@ def open_profile_migration_boundary_destination(
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        file_identity = selected.lstat()
+        file_identity = os.stat(selected, follow_symlinks=False)
         destination = ProfileMigrationBoundaryDestination(
             _PROFILE_DESTINATION_FACTORY_TOKEN,
             connection=connection,
@@ -2245,13 +3701,16 @@ def copy_private_sqlite(
         owner_id,
         required_kinds=_PRIVATE_AND_READ_ONLY,
     )
+    from tldw_chatbook.Backup_Recovery.storage_admission import _capture_sqlite_source
+
     destination_path = _private_destination(target_path)
     deadline = OperationDeadline(operation_deadline)
     with (
         _helper_operation(2, deadline) as reservation,
+        _capture_sqlite_source(owner_id, source_path, progress_guard) as copy_source,
         _pin_sqlite_source(
             owner_id,
-            source_path,
+            copy_source,
             allow_memory=False,
             reservation=reservation,
             deadline=deadline,
@@ -2292,6 +3751,24 @@ def copy_private_sqlite(
                     restore=False,
                     progress_guard=progress_guard,
                 )
+                # A native capture owns this new staged snapshot. Normalize its
+                # copied WAL header on the existing destination connection before
+                # read validators can create sidecars. Ordinary copies keep their
+                # historical mode; live/source journal modes are never changed.
+                from tldw_chatbook.Backup_Recovery.admission import _local
+                from tldw_chatbook.Backup_Recovery.storage_admission import (
+                    _CaptureScope,
+                )
+
+                scope = getattr(_local, "capture_scope", None)
+                if type(scope) is _CaptureScope:
+                    scope.check()
+                    if (
+                        not SQLITE_OWNER_REGISTRY[owner_id].recovery_capture_allowed
+                        or scope.staging not in destination_path.resolve().parents
+                    ):
+                        raise ValueError("capture_snapshot_scope_invalid")
+                    _restore_destination_mode(destination, "delete", restore=False)
                 _reverify_source(source_pin, deadline=deadline)
             finally:
                 _close_owned_connections((("copy destination", destination),))

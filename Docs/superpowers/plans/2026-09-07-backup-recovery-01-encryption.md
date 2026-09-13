@@ -1,5 +1,9 @@
 # Encryption helper delivery Implementation Plan
 
+2026-09-12 correction: this plan's Go implementation and delivery steps are
+historical. Follow the user-requested [Python encryption replacement](2026-09-12-python-backup-encryption.md)
+for the current backend; archive format and backup scope are unchanged.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** An independently qualified, packaged age helper with bounded secret transport.
@@ -127,7 +131,7 @@ def helper_capability() -> tuple[bool, str]: ...
 def _package_resource_root() -> Path: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_crypto.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_crypto.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -144,21 +148,21 @@ def test_encrypted_stream_round_trip(tmp_path, helper_resource_root, monkeypatch
     assert b"synthetic recovery bytes" not in encrypted.read_bytes()
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_crypto.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_crypto.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Pin filippo.io/age v1.3.2 for the qualification build and commit go.sum; verify the upstream tag/checksums and build-tool compatibility before accepting the pin. Record the actually tested Go toolchain, licenses, and module graph. Do not use main/latest during release builds.
+- [x] **Step 3:** Pin filippo.io/age v1.3.2 for the qualification build and commit go.sum; verify the upstream tag/checksums and build-tool compatibility before accepting the pin. Record the actually tested Go toolchain, licenses, and module graph. Do not use main/latest during release builds.
 
-- [ ] **Step 4:** Define _package_resource_root() -> Path in crypto.py and a helper_resource_root pytest fixture in Tests/Backup_Recovery/conftest.py. The fixture builds this task's real Go helper with subprocess.run(["go", "build", "-o", str(binary), "."], cwd=helper_source, check=True), writes its protocol/version/platform/digest manifest into a private temporary resource root, and returns that Path. It needs the qualification Go toolchain and does not skip missing required tools. Monkeypatch only resource resolution, never encryption. Production resolution remains package-owned and unavailable when unbuilt; the next task qualifies actual distribution delivery.
+- [x] **Step 4:** Define _package_resource_root() -> Path in crypto.py and a helper_resource_root pytest fixture in Tests/Backup_Recovery/conftest.py. The fixture builds this task's real Go helper with subprocess.run(["go", "build", "-o", str(binary), "."], cwd=helper_source, check=True), writes its protocol/version/platform/digest manifest into a private temporary resource root, and returns that Path. It needs the qualification Go toolchain and does not skip missing required tools. Monkeypatch only resource resolution, never encryption. Production resolution remains package-owned and unavailable when unbuilt; the next task qualifies actual distribution delivery.
 
-- [ ] **Step 5:** Define helper protocol v1: argv contains only encrypt/decrypt/info; stdin is a four-byte big-endian password length, 1–4096 password bytes, then streamed input. Password length is validated before allocation. stdout contains only transformed bytes; stderr contains bounded fixed error codes, never underlying error text or input. No files or executable paths supplied by an archive are opened by the helper.
+- [x] **Step 5:** Define helper protocol v1: argv contains only encrypt/decrypt/info; stdin is a four-byte big-endian password length, 1–4096 password bytes, then streamed input. Password length is validated before allocation. stdout contains only transformed bytes; stderr contains bounded fixed error codes, never underlying error text or input. No files or executable paths supplied by an archive are opened by the helper.
 
-- [ ] **Step 6:** Use age.NewScryptRecipient with SetWorkFactor(18), and NewScryptIdentity with SetMaxWorkFactor(18). A bounded 64 KiB header gate admits only a single scrypt stanza before age performs derivation. Drain the authenticated reader through EOF before success; close the encrypting writer and check its error. Serialize helper jobs so only one derivation runs.
+- [x] **Step 6:** Use age.NewScryptRecipient with SetWorkFactor(18), and NewScryptIdentity with SetMaxWorkFactor(18). A bounded 64 KiB header gate admits only a single scrypt stanza before age performs derivation. Drain the authenticated reader through EOF before success; close the encrypting writer and check its error. Serialize helper jobs so only one derivation runs.
 
-- [ ] **Step 7:** Implement concurrent stdin pumping and stdout draining with bounded buffers to avoid pipe deadlock; consume bounded stderr concurrently. On cancellation kill and reap the child, remove only operation-owned unpublished output, and return a sanitized cancellation result. Reject empty passwords and prohibit argv/environment/password-file fallbacks.
+- [x] **Step 7:** Implement concurrent stdin pumping and stdout draining with bounded buffers to avoid pipe deadlock; consume bounded stderr concurrently. On cancellation kill and reap the child, remove only operation-owned unpublished output, and return a sanitized cancellation result. Reject empty passwords and prohibit argv/environment/password-file fallbacks.
 
-- [ ] **Step 8:** Add wrong-password, truncated-final-chunk, excessive work factor, malformed/oversized header, multi-recipient, large-stream cancellation, child crash, and pipe-backpressure tests. Inspect argv/environment/error output for synthetic secret sentinels. Interoperate in both directions with a separately built official age command.
+- [x] **Step 8:** Add wrong-password, truncated-final-chunk, excessive work factor, malformed/oversized header, multi-recipient, large-stream cancellation, child crash, and pipe-backpressure tests. Inspect argv/environment/error output for synthetic secret sentinels. Interoperate in both directions with a separately built official age command.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -173,7 +177,7 @@ identity.SetMaxWorkFactor(18)
 // Map returned errors to fixed codes at main; never print err itself.
 ```
 
-- [ ] **Step 9:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 9:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -183,11 +187,11 @@ go -C Packaging/backup_age vet ./...
 gofmt -l Packaging/backup_age
 ```
 
-- [ ] **Step 10:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 10:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 11:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 11:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): qualify bounded age helper protocol`. Recheck task-ID collisions
   before merge and preserve unrelated work.
@@ -231,7 +235,7 @@ def build_helper(goos: str, goarch: str, destination: Path) -> Path: ...
 def helper_capability() -> tuple[bool, str]: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Packaging/test_backup_helper_distribution.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Packaging/test_backup_helper_distribution.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -243,19 +247,19 @@ def test_checkout_without_helper_is_unavailable(monkeypatch, tmp_path):
     assert reason == "helper_unavailable"
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Packaging/test_backup_helper_distribution.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Packaging/test_backup_helper_distribution.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Use the existing internal _package_resource_root() -> Path resolver from crypto.py; verify the installed resource path, expected digest, executable type, protocol version, and platform tuple before invocation. Never search PATH or download at runtime.
+- [x] **Step 3:** Use the existing internal _package_resource_root() -> Path resolver from crypto.py; verify the installed resource path, expected digest, executable type, protocol version, and platform tuple before invocation. Never search PATH or download at runtime.
 
-- [ ] **Step 4:** Build candidate tuples darwin/arm64, darwin/amd64, linux/amd64, linux/arm64, windows/amd64. These are qualification targets, not advertised support. Native runners must record OS minimum, filesystem, Python 3.11/3.12/3.13, pipe behavior, signature/package trust, and helper integrity results; unsupported tuples remain unavailable.
+- [x] **Step 4:** Build candidate tuples darwin/arm64, darwin/amd64, linux/amd64, linux/arm64, windows/amd64. These are qualification targets, not advertised support. Native runners must record OS minimum, filesystem, Python 3.11/3.12/3.13, pipe behavior, signature/package trust, and helper integrity results; unsupported tuples remain unavailable.
 
-- [ ] **Step 5:** Use platform-tagged wheels containing only the corresponding helper and its license/version/digest inventory; a native binary must not enter a py3-none-any wheel. Extend the existing setuptools build command and package-data inventory explicitly. Source distributions include helper source and pinned module files. Document explicit contributor Go build for editable/source checkouts; missing binaries do not trigger automatic compilation.
+- [x] **Step 5:** Use platform-tagged wheels containing only the corresponding helper and its license/version/digest inventory; a native binary must not enter a py3-none-any wheel. Extend the existing setuptools build command and package-data inventory explicitly. Source distributions include helper source and pinned module files. Document explicit contributor Go build for editable/source checkouts; missing binaries do not trigger automatic compilation.
 
-- [ ] **Step 6:** Build a wheel and install it into an isolated environment with Go absent, network disabled during runtime, and an empty PATH except Python requirements. Run the real helper round trip, malformed digest/version, missing helper, and upgrade interoperability cases. Test the sdist and documented editable workflow separately.
+- [x] **Step 6:** Build a wheel and install it into an isolated environment with Go absent, network disabled during runtime, and an empty PATH except Python requirements. Run the real helper round trip, malformed digest/version, missing helper, and upgrade interoperability cases. Test the sdist and documented editable workflow separately.
 
-- [ ] **Step 7:** Record reproducible build inputs and output digests in qualification.json, with packaging ownership in Packaging/backup_age/README.md. A failed platform gate stays unadvertised; an integration-wide failure requires an ADR amendment before encrypted replacement work proceeds.
+- [x] **Step 7:** Record reproducible build inputs and output digests in qualification.json, with packaging ownership in Packaging/backup_age/README.md. A failed platform gate stays unadvertised; an integration-wide failure requires an ADR amendment before encrypted replacement work proceeds.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -268,7 +272,7 @@ if sha256(executable.read_bytes()).hexdigest() != expected_digest:
 # Identity/permission/version/platform checks also precede execution.
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -276,11 +280,11 @@ python -m pytest Tests/Packaging/test_backup_helper_distribution.py -q
 git diff --check
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): package and qualify the backup encryption helper`. Recheck task-ID collisions
   before merge and preserve unrelated work.

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
+import time
 import uuid
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import wraps
 from typing import Any, Literal
 
 from .contracts import BufferAudioSource, TranscriptionFailureCode
@@ -192,6 +195,20 @@ class DictationCaptureHandle:
         return self._coordinator._take_retry(self._capture)
 
 
+def _settled_dispatch_call(function):
+    """Retain synchronous paths through their out-of-lock idle callbacks."""
+    @wraps(function)
+    def settled(self, *args, **kwargs):
+        with self._lock:
+            self._publications += 1
+        try:
+            return function(self, *args, **kwargs)
+        finally:
+            with self._lock:
+                self._publications -= 1
+    return settled
+
+
 class LocalSTTDispatchCoordinator:
     """Admit Library work and one dictation reservation in strict order."""
 
@@ -210,6 +227,39 @@ class LocalSTTDispatchCoordinator:
         self._pending: _Pending | None = None
         self._retry_owners: weakref.WeakSet[_Capture] = weakref.WeakSet()
         self._closed = False
+        self._maintenance_paused = False
+        self._publications = 0
+
+    def maintenance_close_admission(self) -> None:
+        """Fence new work while accepted capture segments keep their slot."""
+        with self._lock:
+            self._maintenance_paused = True
+
+    @property
+    def maintenance_ready(self) -> bool:
+        """Include held PCM and callback settlement, not only inference."""
+        with self._lock:
+            return not (
+                self._active_kind or self._reservation or self._pending
+                or self._retry_owners or self._publications
+            )
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Wait without stopping capture, cancelling inference or losing PCM."""
+        with self._lock:
+            if not self._maintenance_paused:
+                raise RuntimeError("stt_maintenance_not_paused")
+        while not self.maintenance_ready:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def maintenance_resume(self) -> None:
+        """Reopen ordinary dispatch admission."""
+        with self._lock:
+            self._maintenance_paused = False
 
     @property
     def dictation_reserved(self) -> bool:
@@ -218,6 +268,7 @@ class LocalSTTDispatchCoordinator:
         with self._lock:
             return self._reservation is not None
 
+    @_settled_dispatch_call
     def submit_library(self, **executor_kwargs: Any) -> int:
         """Submit one Library request immediately, without queueing it."""
 
@@ -234,6 +285,8 @@ class LocalSTTDispatchCoordinator:
         with self._lock:
             if self._closed:
                 raise ExecutorUnavailableError("Local STT dispatch is closed")
+            if self._maintenance_paused:
+                raise ExecutorBusyError("Local STT dispatch is paused for maintenance")
             if self._reservation is not None:
                 raise ExecutorBusyError("Local STT dictation has the next slot")
             if self._active_kind is not None:
@@ -322,6 +375,8 @@ class LocalSTTDispatchCoordinator:
         with self._lock:
             if self._closed:
                 raise RuntimeError("Local STT dispatch is closed")
+            if self._maintenance_paused:
+                raise ExecutorBusyError("Local STT dispatch is paused for maintenance")
             existing = self._reservation
             match = existing is not None and (
                 existing.generation,
@@ -382,6 +437,7 @@ class LocalSTTDispatchCoordinator:
         with self._lock:
             return self._reservation is capture and self._active_kind == "library"
 
+    @_settled_dispatch_call
     def _append(self, capture: _Capture, audio: bytes) -> DictationAppendStatus:
         if type(audio) is not bytes:
             raise TypeError("audio must be bytes")
@@ -432,6 +488,7 @@ class LocalSTTDispatchCoordinator:
             else DictationAppendStatus.ACCEPTED
         )
 
+    @_settled_dispatch_call
     def _finish(self, capture: _Capture) -> None:
         done = None
         notify = False
@@ -448,6 +505,7 @@ class LocalSTTDispatchCoordinator:
                 done = capture.done
         self._post(done, notify)
 
+    @_settled_dispatch_call
     def _cancel(self, capture: _Capture, force: bool) -> bool:
         done = None
         notify = False
@@ -596,7 +654,12 @@ class LocalSTTDispatchCoordinator:
                 ):
                     return
                 callbacks.generation = event.generation
-        self._deliver(callbacks.on_event, event)
+            self._publications += 1
+        try:
+            self._deliver(callbacks.on_event, event)
+        finally:
+            with self._lock:
+                self._publications -= 1
 
     def _terminal(
         self,
@@ -621,6 +684,7 @@ class LocalSTTDispatchCoordinator:
                 handoff.deferred = handoff.deferred or (callbacks, envelope)
                 return
             handoff.running = True
+            self._publications += 1
         threading.Thread(
             target=self._handoff,
             args=(handoff, callbacks, envelope),
@@ -634,14 +698,18 @@ class LocalSTTDispatchCoordinator:
         callbacks: _Callbacks,
         envelope: ExecutorResult | ExecutorFailure,
     ) -> None:
-        current = (callbacks, envelope)
-        while True:
-            self._transition(*current)
+        try:
+            current = (callbacks, envelope)
+            while True:
+                self._transition(*current)
+                with self._lock:
+                    if handoff.deferred is None:
+                        handoff.running = False
+                        return
+                    current, handoff.deferred = handoff.deferred, None
+        finally:
             with self._lock:
-                if handoff.deferred is None:
-                    handoff.running = False
-                    return
-                current, handoff.deferred = handoff.deferred, None
+                self._publications -= 1
 
     def _transition(
         self,

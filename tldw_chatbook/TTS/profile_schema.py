@@ -1,16 +1,14 @@
 """SQLite schema, validation, and persistence codecs for TTS profiles.
 
-Connections remain caller-owned.  The live opener configures and returns a
-connection; candidate validation owns and always closes every connection it
-opens against its disposable snapshot copy -- a brief read-write reopen to
-run the same in-place version upgrade the live opener uses, followed by the
-immutable read-only handle used for the rest of validation.
+Connections remain caller-owned. The live opener configures and returns a
+connection. Candidate validation owns its disposable snapshot connections and
+retains uncertain native cleanup: a brief read-write reopen upgrades only the
+copy, followed by an immutable read-only validation handle.
 """
 
 from __future__ import annotations
 
 import hashlib
-import os
 import sqlite3
 import stat
 import tempfile
@@ -19,12 +17,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
+from uuid import UUID
+
+if TYPE_CHECKING:
+    from tldw_chatbook.TTS.profile_repository import _BackupNativeState
 
 from tldw_chatbook.DB.private_sqlite import (
+    _SQLiteAdmissionOutcome,
+    connect_private_sqlite_descriptor,
+
     _connect_registered_sqlite,
     connect_private_sqlite,
 )
+from tldw_chatbook.DB.sql_validation import escape_identifier, validate_identifier
+from tldw_chatbook.Utils.platform_files import os
 from tldw_chatbook.DB.private_sqlite_process import (
     HELPER_ADMISSION,
     HelperLease,
@@ -149,6 +156,10 @@ class _ExactCurrentProfileConnection:
         self._sqlite_closed = False
         self._wal_acquired = False
         self._cohort_complete = identity["wal"] is not None
+        self._backup_lease = None
+        self._directory_fds = {parent_fd}
+        self._directory_pending = set()
+        self._directory_failed_closes = set()
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._connection, name)
@@ -203,10 +214,14 @@ class _ExactCurrentProfileConnection:
         return validate_tts_identity(response["identity"])
 
     def _verify_directory(self) -> None:
+        if self._directory_pending or self._directory_failed_closes:
+            raise ExactProfileStoreCleanupError(self)
         reopened = -1
         try:
             reopened, leaf = private_paths._open_verified_parent(
-                self.selected, missing_leaf_allowed=False
+                self.selected, missing_leaf_allowed=False,
+                _open=self._open_directory_component,
+                _close=self._close_directory_component,
             )
             expected = self._parent_identity
             for descriptor in (reopened, self._parent_fd):
@@ -235,7 +250,35 @@ class _ExactCurrentProfileConnection:
             raise ExactProfileStoreAuthorityError() from None
         finally:
             if reopened >= 0:
-                os.close(reopened)
+                self._close_directory(reopened, os.close)
+
+    def _open_directory_component(self, *args, **kwargs):
+        outcome = private_paths._NativeOpenOutcome()
+        attempt = object()
+        self._directory_pending.add(attempt)
+        try:
+            return private_paths._native_open(*args, _outcome=outcome, **kwargs)
+        finally:
+            if outcome.descriptor is not None:
+                self._directory_fds.add(outcome.descriptor)
+                self._directory_pending.discard(attempt)
+            elif outcome.rejected:
+                self._directory_pending.discard(attempt)
+
+    def _close_directory_component(self, descriptor):
+        self._close_directory(descriptor, private_paths._native_close)
+
+    def _close_directory(self, descriptor, close):
+        if descriptor in self._directory_failed_closes:
+            raise ExactProfileStoreCleanupError(self)
+        try:
+            close(descriptor)
+        except BaseException:
+            # An error can follow successful native close. Keep exclusion and
+            # never retry this descriptor number, which could already be reused.
+            self._directory_failed_closes.add(descriptor)
+            raise
+        self._directory_fds.discard(descriptor)
 
     def _revalidate(self, deadline: OperationDeadline) -> None:
         operation = (
@@ -269,6 +312,8 @@ class _ExactCurrentProfileConnection:
         return self._parent_fd
 
     def close(self) -> None:
+        if self._directory_pending or self._directory_failed_closes:
+            raise ExactProfileStoreCleanupError(self)
         # Keep the native flag enabled. Normal cleanup owns PASSIVE; restore
         # owns its stronger TRUNCATE and must not acquire a duplicate checkpoint.
         if not self._sqlite_closed:
@@ -277,8 +322,191 @@ class _ExactCurrentProfileConnection:
             self._sqlite_closed = True
         self._helper.close()
         if self._parent_fd >= 0:
-            os.close(self._parent_fd)
+            self._close_directory(self._parent_fd, os.close)
             self._parent_fd = -1
+        for descriptor in tuple(self._directory_fds):
+            self._close_directory(descriptor, os.close)
+        if self._backup_lease is not None:
+            self._backup_lease.close()
+            self._backup_lease = None
+
+
+class _NativeExactCurrentProfileConnection(_ExactCurrentProfileConnection):
+    """Live SQLite handle retaining the descriptor authority that admitted it."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection | None,
+        *,
+        evidence_connection: sqlite3.Connection | None,
+        selected: Path,
+        parent_fd: int,
+        file_fd: int,
+        parent_identity: os.stat_result | None,
+        file_identity: os.stat_result | None,
+        sidecar_fds: dict[str, int],
+        sidecar_identities: dict[str, os.stat_result],
+    ) -> None:
+        self._connection = connection
+        self._evidence_connection = evidence_connection
+        self.selected = selected
+        self.parent_fd = parent_fd
+        self.file_fd = file_fd
+        self.parent_identity = parent_identity
+        self.file_identity = file_identity
+        self.sidecar_fds = sidecar_fds
+        self.sidecar_identities = sidecar_identities
+        self._delete_mode_partial_cleanup = False
+        self._proof_lost = False
+        self._sqlite_closed = False
+
+        self.leases: list[Any] = []
+        self.native_descriptors: set[int] = set()
+        self.attempted_descriptors: set[int] = set()
+        self.attempted_connections: set[str] = set()
+        self.pending: set[object] = set()
+        self.uncertain = False
+        self.body_error: BaseException | None = None
+        self.cleanup_errors: list[BaseException] = []
+
+    def admit(self) -> None:
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        lease = storage.acquire_storage(self.selected)
+        # Existing strong native lease membership retains this concrete owner.
+        lease.native_owner = self
+        self.leases.append(lease)
+
+    def open_parent_descriptor(self, *args: Any, **kwargs: Any) -> int:
+        self.admit()
+        return self._observe_revalidation_parent_descriptor(*args, **kwargs)
+
+    def _observe_revalidation_parent_descriptor(self, *args: Any, **kwargs: Any) -> int:
+        """Observe the held owner's original bounded recheck without new admission."""
+        outcome = private_paths._NativeOpenOutcome()
+        attempt = object()
+        self.pending.add(attempt)
+        try:
+            descriptor = private_paths._native_open(*args, _outcome=outcome, **kwargs)
+        finally:
+            if outcome.descriptor is not None:
+                self.native_descriptors.add(outcome.descriptor)
+                self.pending.discard(attempt)
+            elif outcome.rejected:
+                self.pending.discard(attempt)
+        return descriptor
+
+    def open_descriptor(self, *args: Any, **kwargs: Any) -> int:
+        self.admit()
+        attempt = object()
+        self.pending.add(attempt)
+        open = os.open
+        try:
+            descriptor = open(*args, **kwargs)
+        except OSError:
+            if open is private_paths._ORIGINAL_NATIVE_OPEN:
+                self.pending.discard(attempt)
+            raise
+        self.native_descriptors.add(descriptor)
+        self.pending.discard(attempt)
+        return descriptor
+
+    def close_parent_descriptor(self, descriptor: int) -> None:
+        self.close_descriptor(descriptor, _parent_traversal=True)
+
+    def close_descriptor(
+        self, descriptor: int, *, _parent_traversal: bool = False
+    ) -> None:
+        if descriptor in self.attempted_descriptors:
+            raise ExactProfileStoreCleanupError(self)
+        self.attempted_descriptors.add(descriptor)
+        try:
+            if _parent_traversal:
+                private_paths._native_close(descriptor)
+            else:
+                os.close(descriptor)
+        except BaseException as error:
+            self.uncertain = True
+            self.cleanup_errors.append(error)
+            raise
+        self.native_descriptors.discard(descriptor)
+        self.attempted_descriptors.discard(descriptor)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._connection, name)
+
+    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
+        return self._connection.execute(sql, parameters)  # type: ignore[arg-type]
+
+    @property
+    def in_transaction(self) -> bool:
+        return self._connection.in_transaction
+
+    def commit(self) -> None:
+        self._connection.commit()
+
+    def rollback(self) -> None:
+        self._connection.rollback()
+
+    @property
+    def row_factory(self) -> object:
+        return self._connection.row_factory
+
+    @row_factory.setter
+    def row_factory(self, value: object) -> None:
+        self._connection.row_factory = value  # type: ignore[assignment]
+
+    def close(self) -> None:
+        if self.uncertain or self.pending:
+            self.uncertain = True
+            raise ExactProfileStoreCleanupError(self)
+        try:
+            for role in ("_connection", "_evidence_connection"):
+                native = getattr(self, role)
+                if native is not None and role not in self.attempted_connections:
+                    if role == "_connection":
+                        revalidate_exact_current_profile_store(
+                            cast(sqlite3.Connection, self),
+                            self.selected,
+                            _delete_mode_partial_cleanup=self._delete_mode_partial_cleanup,
+                        )
+                    self.attempted_connections.add(role)
+                    native.close()
+                    if role == "_connection":
+                        self._sqlite_closed = True
+            for suffix, descriptor in tuple(self.sidecar_fds.items()):
+                self.close_descriptor(descriptor)
+                del self.sidecar_fds[suffix]
+            if self.file_fd >= 0:
+                self.close_descriptor(self.file_fd)
+                self.file_fd = -1
+            if self.parent_fd >= 0:
+                self.close_descriptor(self.parent_fd)
+                self.parent_fd = -1
+            for descriptor in tuple(self.native_descriptors):
+                self.close_descriptor(descriptor)
+            while self.leases:
+                self.leases[-1].close()
+                self.leases.pop()
+        except BaseException as error:
+            self.uncertain = True
+            self.cleanup_errors.append(error)
+            raise
+
+    def export_restore_authority(self, *, deadline: OperationDeadline) -> TTSRestoreAuthority:
+        deadline.remaining(30.0)
+        revalidate_exact_current_profile_store(self, self.selected)
+        return TTSRestoreAuthority(
+            parent=FileIdentity.from_stat(os.fstat(self.parent_fd)),
+            main=FileIdentity.from_stat(os.fstat(self.file_fd)),
+            wal=FileIdentity.from_stat(os.fstat(self.sidecar_fds["-wal"])),
+            shm=FileIdentity.from_stat(os.fstat(self.sidecar_fds["-shm"])),
+        )
+
+    def verified_parent_fd(self, *, deadline: OperationDeadline) -> int:
+        deadline.remaining(30.0)
+        revalidate_exact_current_profile_store(self, self.selected)
+        return self.parent_fd
 
 
 class ExactProfileStoreCleanupError(ProfileRepositoryError):
@@ -382,13 +610,181 @@ def _exact_store_namespace_safe(
     return True
 
 
+def _open_exact_store_sidecars(
+    parent_fd: int,
+    leaf: str,
+    *,
+    _owner: _ExactCurrentProfileConnection | None = None,
+) -> tuple[dict[str, int], dict[str, os.stat_result]] | None:
+    open_fd = _owner.open_descriptor if _owner is not None else os.open
+    close_fd = _owner.close_descriptor if _owner is not None else os.close
+    descriptors: dict[str, int] = {}
+    identities: dict[str, os.stat_result] = {}
+    for suffix in ("-wal", "-shm"):
+        try:
+            descriptor = open_fd(
+                f"{leaf}{suffix}",
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_NOCTTY", 0),
+                dir_fd=parent_fd,
+            )
+        except FileNotFoundError:
+            descriptor = -1
+        except OSError:
+            descriptor = -2
+        if descriptor >= 0:
+            observed = os.fstat(descriptor)
+            try:
+                named = os.stat(
+                    f"{leaf}{suffix}",
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except OSError:
+                close_fd(descriptor)
+                descriptor = -2
+            else:
+                if (
+                    not private_paths._same_identity(observed, named)
+                    or private_paths._classify_private_file_stat(
+                        observed,
+                        expected_uid=os.geteuid(),
+                    )
+                    is not None
+                    or stat.S_IMODE(observed.st_mode) != 0o600
+                ):
+                    close_fd(descriptor)
+                    descriptor = -2
+                else:
+                    descriptors[suffix] = descriptor
+                    identities[suffix] = observed
+        if descriptor == -2:
+            for opened in descriptors.values():
+                close_fd(opened)
+            raise _repository_error("operation_failed")
+    if not descriptors:
+        return None
+    if set(descriptors) != {"-wal", "-shm"}:
+        for opened in descriptors.values():
+            close_fd(opened)
+        raise ExactProfileStoreNotCurrentError()
+    return descriptors, identities
+
+
+def _revalidate_native_exact_current_profile_store(
+    connection: sqlite3.Connection,
+    path: Path | None,
+    *,
+    _delete_mode_partial_cleanup: bool = False,
+) -> None:
+    """Recheck retained exact-current authority immediately before live use."""
+
+    if not isinstance(connection, _ExactCurrentProfileConnection):
+        return
+    if (
+        path is None
+        or connection.selected != path
+        or connection.file_fd < 0
+        or connection.parent_fd < 0
+    ):
+        raise ExactProfileStoreAuthorityError()
+    reopened_parent_fd = -1
+    try:
+        reopened_parent_fd, reopened_leaf = private_paths._open_verified_parent(
+            path,
+            missing_leaf_allowed=False,
+            _open=connection._observe_revalidation_parent_descriptor,
+            _close=connection.close_parent_descriptor,
+        )
+        reopened_parent = os.fstat(reopened_parent_fd)
+        opened_parent = os.fstat(connection.parent_fd)
+        opened_file = os.fstat(connection.file_fd)
+        named = os.stat(
+            path.name,
+            dir_fd=connection.parent_fd,
+            follow_symlinks=False,
+        )
+    except Exception:
+        raise ExactProfileStoreAuthorityError() from None
+    finally:
+        if reopened_parent_fd >= 0:
+            connection.close_descriptor(reopened_parent_fd)
+    sidecars_match = set(connection.sidecar_fds) == {"-wal", "-shm"}
+    if _delete_mode_partial_cleanup and connection._delete_mode_partial_cleanup:
+        sidecars_match = not connection.sidecar_fds
+        for suffix in ("-wal", "-shm"):
+            try:
+                os.stat(
+                    f"{path.name}{suffix}",
+                    dir_fd=connection.parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                continue
+            except OSError:
+                sidecars_match = False
+            else:
+                sidecars_match = False
+    elif sidecars_match:
+        for suffix, descriptor in connection.sidecar_fds.items():
+            try:
+                opened_sidecar = os.fstat(descriptor)
+                named_sidecar = os.stat(
+                    f"{path.name}{suffix}",
+                    dir_fd=connection.parent_fd,
+                    follow_symlinks=False,
+                )
+            except OSError:
+                sidecars_match = False
+                break
+            expected_sidecar = connection.sidecar_identities[suffix]
+            if (
+                not private_paths._same_identity(opened_sidecar, expected_sidecar)
+                or not private_paths._same_identity(named_sidecar, expected_sidecar)
+                or private_paths._classify_private_file_stat(
+                    named_sidecar,
+                    expected_uid=os.geteuid(),
+                )
+                is not None
+                or stat.S_IMODE(named_sidecar.st_mode) != 0o600
+            ):
+                sidecars_match = False
+                break
+    if (
+        reopened_leaf != path.name
+        or not _same_parent_authority(reopened_parent, connection.parent_identity)
+        or not _same_parent_authority(opened_parent, connection.parent_identity)
+        or not private_paths._same_identity(opened_file, connection.file_identity)
+        or not private_paths._same_identity(named, connection.file_identity)
+        or private_paths._classify_private_file_stat(
+            named,
+            expected_uid=os.geteuid(),
+        )
+        is not None
+        or stat.S_IMODE(named.st_mode) != 0o600
+        or not sidecars_match
+        or not _exact_store_namespace_safe(
+            connection.parent_fd,
+            path.name,
+        )
+    ):
+        raise ExactProfileStoreAuthorityError()
+
+
 def revalidate_exact_current_profile_store(
     connection: sqlite3.Connection,
     path: Path | None,
     *,
     deadline: OperationDeadline | None = None,
+    _delete_mode_partial_cleanup: bool = False,
 ) -> None:
     """Recheck the original remote proof and local directory before live use."""
+    if isinstance(connection, _NativeExactCurrentProfileConnection):
+        return _revalidate_native_exact_current_profile_store(
+            connection, path, _delete_mode_partial_cleanup=_delete_mode_partial_cleanup
+        )
     if not isinstance(connection, _ExactCurrentProfileConnection):
         return
     if path is None or connection.selected != path:
@@ -443,65 +839,79 @@ def _matches_post_init_authority(
 
 def capture_post_init_profile_store_authority(
     path: Path,
+    *,
+    _native=None,
 ) -> PostInitProfileStoreAuthority:
     """Pin one closed, sidecar-free store before releasing exclusive ownership."""
 
-    parent_fd = -1
-    file_fd = -1
-    try:
-        parent_fd, leaf = private_paths._open_verified_parent(
-            path,
-            missing_leaf_allowed=False,
-        )
-        parent = os.fstat(parent_fd)
-        if not _exact_store_namespace_safe(parent_fd, leaf):
-            raise _repository_error("operation_failed")
-        file_fd = os.open(
-            leaf,
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0)
-            | getattr(os, "O_NOCTTY", 0),
-            dir_fd=parent_fd,
-        )
-        opened = os.fstat(file_fd)
-        named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
-        provisional = PostInitProfileStoreAuthority(parent, opened)
-        if (
-            opened.st_size > MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
-            or not _matches_post_init_authority(parent, opened, provisional)
-            or not _matches_post_init_authority(parent, named, provisional)
-        ):
-            raise _repository_error("operation_failed")
-        os.fsync(file_fd)
-        os.fsync(parent_fd)
-        settled_parent = os.fstat(parent_fd)
-        settled_file = os.fstat(file_fd)
-        settled_named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
-        if (
-            not _matches_post_init_authority(
-                settled_parent,
-                settled_file,
-                provisional,
+    from .profile_migration_native import (
+        _migration_native,
+        _native_parent,
+        _native_open,
+        _native_close,
+    )
+
+    with _migration_native((path,), native=_native) as _native:
+        parent_fd = -1
+        file_fd = -1
+        try:
+            parent_fd, leaf = _native_parent(
+                _native,
+                private_paths,
+                path,
+                missing_leaf_allowed=False,
             )
-            or not _matches_post_init_authority(
-                settled_parent,
-                settled_named,
-                provisional,
+            parent = os.fstat(parent_fd)
+            if not _exact_store_namespace_safe(parent_fd, leaf):
+                raise _repository_error("operation_failed")
+            file_fd = _native_open(
+                _native,
+                os,
+                leaf,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_NOCTTY", 0),
+                dir_fd=parent_fd,
             )
-            or not _exact_store_namespace_safe(parent_fd, leaf)
-        ):
-            raise _repository_error("operation_failed")
-        return provisional
-    except ProfileRepositoryError:
-        raise
-    except Exception:
-        raise _repository_error("operation_failed") from None
-    finally:
-        if file_fd >= 0:
-            os.close(file_fd)
-        if parent_fd >= 0:
-            os.close(parent_fd)
+            opened = os.fstat(file_fd)
+            named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+            provisional = PostInitProfileStoreAuthority(parent, opened)
+            if (
+                opened.st_size > MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
+                or not _matches_post_init_authority(parent, opened, provisional)
+                or not _matches_post_init_authority(parent, named, provisional)
+            ):
+                raise _repository_error("operation_failed")
+            os.fsync(file_fd)
+            os.fsync(parent_fd)
+            settled_parent = os.fstat(parent_fd)
+            settled_file = os.fstat(file_fd)
+            settled_named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+            if (
+                not _matches_post_init_authority(
+                    settled_parent,
+                    settled_file,
+                    provisional,
+                )
+                or not _matches_post_init_authority(
+                    settled_parent,
+                    settled_named,
+                    provisional,
+                )
+                or not _exact_store_namespace_safe(parent_fd, leaf)
+            ):
+                raise _repository_error("operation_failed")
+            return provisional
+        except ProfileRepositoryError:
+            raise
+        except Exception:
+            raise _repository_error("operation_failed") from None
+        finally:
+            if file_fd >= 0:
+                _native_close(_native, os, file_fd)
+            if parent_fd >= 0:
+                _native_close(_native, os, parent_fd)
 
 
 def encode_options(options: JsonOptions) -> str:
@@ -871,7 +1281,214 @@ def peek_profile_store_schema_version(path: Path) -> int | None:
                 pass
 
 
-def open_exact_current_profile_store(
+def _open_native_exact_current_profile_store(
+    path: Path,
+    *,
+    expected_post_init_authority: PostInitProfileStoreAuthority | None = None,
+) -> sqlite3.Connection:
+    """Open exact current v4 without migration while retaining its proof pin."""
+
+    if not isinstance(path, Path) or not path.is_absolute():
+        raise _repository_error("operation_failed")
+    parent_fd = -1
+    file_fd = -1
+    sidecar_fds: dict[str, int] = {}
+    sidecar_identities: dict[str, os.stat_result] = {}
+    descriptor: sqlite3.Connection | None = None
+    live: sqlite3.Connection | None = None
+    owned = _NativeExactCurrentProfileConnection(
+        None,
+        evidence_connection=None,
+        selected=path,
+        parent_fd=-1,
+        file_fd=-1,
+        parent_identity=None,
+        file_identity=None,
+        sidecar_fds={},
+        sidecar_identities={},
+    )
+    owned.admit()
+    body_error: BaseException | None = None
+    try:
+        parent_fd, leaf = private_paths._open_verified_parent(
+            path,
+            missing_leaf_allowed=False,
+            _open=owned.open_parent_descriptor,
+            _close=owned.close_parent_descriptor,
+        )
+        owned.parent_fd = parent_fd
+        parent_identity = os.fstat(parent_fd)
+        owned.parent_identity = parent_identity
+        if expected_post_init_authority is not None and not _same_parent_authority(
+            parent_identity,
+            expected_post_init_authority.parent_identity,
+        ):
+            raise _repository_error("operation_failed")
+        if not _exact_store_namespace_safe(parent_fd, leaf):
+            raise ExactProfileStoreNotCurrentError()
+        file_fd = owned.open_descriptor(
+            leaf,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOCTTY", 0),
+            dir_fd=parent_fd,
+        )
+        owned.file_fd = file_fd
+        file_identity = os.fstat(file_fd)
+        owned.file_identity = file_identity
+        if (
+            file_identity.st_size > MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
+            or private_paths._classify_private_file_stat(
+                file_identity,
+                expected_uid=os.geteuid(),
+            )
+            is not None
+            or stat.S_IMODE(file_identity.st_mode) != 0o600
+        ):
+            raise ExactProfileStoreNotCurrentError()
+        named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        if not private_paths._same_identity(named, file_identity) or (
+            expected_post_init_authority is not None
+            and (
+                not _matches_post_init_authority(
+                    parent_identity,
+                    file_identity,
+                    expected_post_init_authority,
+                )
+                or not _matches_post_init_authority(
+                    parent_identity,
+                    named,
+                    expected_post_init_authority,
+                )
+            )
+        ):
+            raise _repository_error("operation_failed")
+        pinned_sidecars = _open_exact_store_sidecars(parent_fd, leaf, _owner=owned)
+        if pinned_sidecars is not None:
+            sidecar_fds, sidecar_identities = pinned_sidecars
+            owned.sidecar_fds = sidecar_fds
+            owned.sidecar_identities = sidecar_identities
+
+        owned.admit()
+        owned.pending.add("evidence")
+        admission_outcome = _SQLiteAdmissionOutcome()
+        try:
+            descriptor = connect_private_sqlite_descriptor(
+                "tts.profile_store_descriptor",
+                file_fd,
+                isolation_level=None,
+                _admission_outcome=admission_outcome,
+            )
+        finally:
+            if admission_outcome.admission_refused:
+                owned.pending.discard("evidence")
+        owned._evidence_connection = descriptor
+        owned.pending.discard("evidence")
+        _configure_connection(descriptor)
+        descriptor_version = descriptor.execute("PRAGMA user_version").fetchone()[0]
+        if descriptor_version != CURRENT_PROFILE_SCHEMA_VERSION:
+            raise ExactProfileStoreNotCurrentError()
+        _validate_schema(descriptor)
+        validate_profile_store_rows(descriptor)
+        _stream_exact_store_metadata_evidence(descriptor)
+
+        owned.admit()
+        owned.pending.add("live")
+        admission_outcome = _SQLiteAdmissionOutcome()
+        try:
+            live = connect_private_sqlite(
+                "tts.profile_store",
+                path,
+                must_exist=True,
+                expected_identity=file_identity,
+                isolation_level=None,
+                _admission_outcome=admission_outcome,
+            )
+        finally:
+            if admission_outcome.admission_refused:
+                owned.pending.discard("live")
+        owned._connection = live
+        owned.pending.discard("live")
+        live.execute("PRAGMA query_only = ON")
+        if live.execute("PRAGMA query_only").fetchone()[0] != 1:
+            raise _repository_error("schema_corrupt")
+        # Force SQLite to acquire its main database and WAL cohort before
+        # retaining exact sidecar descriptors.
+        live.execute("PRAGMA user_version").fetchone()
+        journal_mode = live.execute("PRAGMA journal_mode").fetchone()[0]
+        if journal_mode != "wal":
+            owned._delete_mode_partial_cleanup = (
+                journal_mode == "delete" and not sidecar_fds
+            )
+            raise ExactProfileStoreNotCurrentError()
+        if not sidecar_fds:
+            opened_sidecars = _open_exact_store_sidecars(parent_fd, leaf, _owner=owned)
+            if opened_sidecars is None:
+                raise _repository_error("operation_failed")
+            sidecar_fds, sidecar_identities = opened_sidecars
+        owned.sidecar_fds = sidecar_fds
+        owned.sidecar_identities = sidecar_identities
+        live = None
+        descriptor = None
+        parent_fd = -1
+        file_fd = -1
+        sidecar_fds = {}
+        sidecar_identities = {}
+        _configure_connection(cast(sqlite3.Connection, owned))
+        live_version = owned.execute("PRAGMA user_version").fetchone()[0]
+        if live_version != CURRENT_PROFILE_SCHEMA_VERSION:
+            raise _repository_error("schema_partial")
+        _validate_schema(cast(sqlite3.Connection, owned))
+        validate_profile_store_rows(cast(sqlite3.Connection, owned))
+        owned.execute("BEGIN")
+        _stream_exact_store_metadata_evidence(cast(sqlite3.Connection, owned))
+        revalidate_exact_current_profile_store(
+            cast(sqlite3.Connection, owned),
+            path,
+        )
+        if expected_post_init_authority is not None and (
+            not _matches_post_init_authority(
+                os.fstat(owned.parent_fd),
+                os.fstat(owned.file_fd),
+                expected_post_init_authority,
+            )
+        ):
+            raise _repository_error("operation_failed")
+        owned.rollback()
+        revalidate_exact_current_profile_store(
+            cast(sqlite3.Connection, owned),
+            path,
+        )
+        owned.execute("PRAGMA query_only = OFF")
+        if owned.execute("PRAGMA query_only").fetchone()[0] != 0:
+            raise _repository_error("schema_corrupt")
+        revalidate_exact_current_profile_store(
+            cast(sqlite3.Connection, owned),
+            path,
+        )
+    except FileNotFoundError:
+        body_error = ExactProfileStoreNotCurrentError()
+    except BaseException as error:
+        body_error = error
+
+    if body_error is None:
+        assert owned is not None
+        return cast(sqlite3.Connection, owned)
+
+    owned.body_error = body_error
+    try:
+        owned.close()
+    except BaseException:
+        raise ExactProfileStoreCleanupError(owned) from None
+    if not isinstance(body_error, Exception):
+        raise body_error
+    if isinstance(body_error, ProfileRepositoryError):
+        raise body_error
+    raise _repository_error("schema_corrupt") from None
+
+
+def _open_helper_exact_current_profile_store(
     path: Path,
     *,
     expected_post_init_authority: PostInitProfileStoreAuthority | None = None,
@@ -1022,11 +1639,47 @@ def open_exact_current_profile_store(
         raise
 
 
+def open_exact_current_profile_store(
+    path: Path,
+    *,
+    expected_post_init_authority: PostInitProfileStoreAuthority | None = None,
+    deadline: OperationDeadline | None = None,
+) -> sqlite3.Connection:
+    """Admit the complete proof owner before opening helper or native resources."""
+    if private_paths._WINDOWS_PLATFORM:
+        return _open_native_exact_current_profile_store(
+            path, expected_post_init_authority=expected_post_init_authority
+        )
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+    lease = acquire_storage(path)
+    try:
+        connection = _open_helper_exact_current_profile_store(
+            path, expected_post_init_authority=expected_post_init_authority,
+            deadline=deadline,
+        )
+    except BaseException as error:
+        cleanup = _exact_profile_store_cleanup_error(error)
+        retained = (
+            error.connection if isinstance(error, ExactProfileStoreProofLostError)
+            else cleanup.connection if cleanup is not None else None
+        )
+        if retained is not None:
+            retained._backup_lease = lease
+        else:
+            lease.close()
+        raise
+    connection._backup_lease = lease
+    return connection
+
+
 def open_profile_store(
     path: Path,
     *,
     must_exist: bool = False,
     check_deadline: Callable[[], None] | None = None,
+    _native=None,
+    _source_outcome=None,
 ) -> sqlite3.Connection:
     """Open/configure a live store, optionally refusing to create a missing file.
 
@@ -1042,6 +1695,13 @@ def open_profile_store(
     Raises:
         ProfileRepositoryError: If inputs or the store fail closed validation.
     """
+
+    from .profile_migration_native import (
+        _source_allocation,
+        _source_options,
+        _source_observed,
+        _source_close,
+    )
 
     connection: sqlite3.Connection | None = None
     body_error: BaseException | None = None
@@ -1072,12 +1732,17 @@ def open_profile_store(
                 raise _repository_error("missing")
         connect_error: BaseException | None = None
         try:
-            connection = connect_private_sqlite(
-                "tts.profile_store",
-                path,
-                must_exist=must_exist,
-                isolation_level=None,
-            )
+            with _source_allocation(
+                _native, path, _outcome=_source_outcome
+            ) as _source_call_outcome:
+                connection = connect_private_sqlite(
+                    "tts.profile_store",
+                    path,
+                    must_exist=must_exist,
+                    isolation_level=None,
+                    **_source_options(_source_call_outcome),
+                )
+                _source_observed(_source_call_outcome, connection)
         except BaseException as error:
             connect_error = error
         if connect_error is not None:
@@ -1155,7 +1820,7 @@ def open_profile_store(
 
     cleanup = _CleanupState(body_error)
     if connection is not None:
-        cleanup.attempt(connection.close)
+        cleanup.attempt(lambda: _source_close(_native, connection))
     cleanup.raise_control_flow()
     if isinstance(body_error, ProfileRepositoryError):
         raise body_error
@@ -1311,65 +1976,284 @@ def _apply_posix_snapshot_mode(snapshot_fd: int) -> bool:
     return True
 
 
-def _unlink_if_present(path: str) -> None:
-    try:
-        os.unlink(path)
-    except FileNotFoundError:
-        pass
+_CANDIDATE_DIR_FD_CALLS = frozenset((os.open, os.stat, os.unlink, os.rmdir))
 
 
-class _ProfileCandidateCleanupOwner:
-    """Own a disposable validation snapshot until every SQLite view settles."""
+class _CandidateValidationJob:
+    """Own one ordinary synchronous candidate call, never installed authority."""
 
-    def __init__(
-        self,
-        connections: tuple[sqlite3.Connection | None, ...],
-        descriptors: tuple[int | None, ...],
-        snapshot_path: str | None,
-        snapshot_directory: Path | None,
-    ) -> None:
-        self.connections = [
-            connection for connection in connections if connection is not None
-        ]
-        self.descriptors = [
-            descriptor for descriptor in descriptors if descriptor is not None
-        ]
-        self.snapshot_path = snapshot_path
-        self.snapshot_directory = snapshot_directory
+    def __init__(self, source: object) -> None:
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
-    def __repr__(self) -> str:
-        return "_ProfileCandidateCleanupOwner(<private>)"
+        self.storage = storage
+        self.parent_pins_available = (
+            os.name == "posix"
+            and bool(getattr(os, "O_DIRECTORY", 0))
+            and bool(getattr(os, "O_NOFOLLOW", 0))
+            and callable(getattr(os, "fchmod", None))
+            and _CANDIDATE_DIR_FD_CALLS.issubset(getattr(os, "supports_dir_fd", ()))
+        )
+        self.source = source
+        self.pid = os.getpid()
+        self.thread = storage.threading.current_thread()
+        self.resolved_source: Path | None = None
+        self.source_identity: tuple[int, ...] | None = None
+        self.attempt = None
+        self.leases = []
+        self.descriptors: dict[str, int] = {}
+        self.connections: dict[str, sqlite3.Connection] = {}
+        self.sqlite_close_failures: dict[str, BaseException] = {}
+        self.attempted: set[str] = set()
+        self.directory: Path | None = None
+        self.directory_identity: tuple[int, int] | None = None
+        self.directory_parent_identity: tuple[int, int] | None = None
+        self.snapshot: Path | None = None
+        self.snapshot_identity: tuple[int, int] | None = None
+        self.snapshot_parent_identity: tuple[int, int] | None = None
+        self.allocation_pending = False
+        self.uncertain = False
+        self.body_error: BaseException | None = None
+        self.cleanup_errors: list[BaseException] = []
+        with storage._changed:
+            storage._raw_operations.add(self)
+            storage._changed.notify_all()
+
+    def admit(self, path: Path | None) -> None:
+        # No token is installed or inherited as this job's authority. Even an
+        # outer admitted repository operation cannot grant it work after pause.
+        with self.storage._lock:
+            if self.storage._pause is not None:
+                from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+                raise RecoveryRequired("storage_locally_paused")
+        if self.attempt is None:
+            self.attempt = self.storage._Acquisition()
+        self.attempt.check(path)
+        lease = self.storage.acquire_storage(path)
+        self.leases.append(lease)
+        self.attempt.check(path)
+
+    def pin_parent(self, role: str, path: Path) -> tuple[int, int]:
+        self.admit(path)
+        if not self.parent_pins_available:
+            # Explicit ordinary-unqualified platform path; never a retry after
+            # pin/identity/IO failure and never installed/capture authority.
+            named = path.lstat()
+            if not stat.S_ISDIR(named.st_mode):
+                raise ValueError
+            return named.st_dev, named.st_ino
+        self.allocation_pending = True
+        self.descriptors[role] = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        self.allocation_pending = False
+        opened = os.fstat(self.descriptors[role])
+        named = path.lstat()
+        identity = (opened.st_dev, opened.st_ino)
+        if not stat.S_ISDIR(opened.st_mode) or identity != (named.st_dev, named.st_ino):
+            self.uncertain = True
+            raise ValueError
+        return identity
+
+    def check_directory(self) -> None:
+        assert self.directory is not None
+        named = self.directory.lstat()
+        pinned = (
+            os.fstat(self.descriptors["directory"])
+            if self.parent_pins_available
+            else named
+        )
+        if (named.st_dev, named.st_ino) != self.directory_identity or (
+            pinned.st_dev,
+            pinned.st_ino,
+        ) != self.directory_identity:
+            raise ValueError
+        parent = self.directory.parent.lstat()
+        pinned_parent = (
+            os.fstat(self.descriptors["directory_parent"])
+            if self.parent_pins_available
+            else parent
+        )
+        if (parent.st_dev, parent.st_ino) != self.directory_parent_identity or (
+            pinned_parent.st_dev,
+            pinned_parent.st_ino,
+        ) != self.directory_parent_identity:
+            raise ValueError
+
+    def check_snapshot(self) -> None:
+        assert self.snapshot is not None
+        named = self.snapshot.lstat()
+        parent = self.snapshot.parent.lstat()
+        pinned = (
+            os.fstat(self.descriptors["snapshot_parent"])
+            if self.parent_pins_available
+            else parent
+        )
+        if (
+            not stat.S_ISREG(named.st_mode)
+            or named.st_nlink != 1
+            or (named.st_dev, named.st_ino) != self.snapshot_identity
+            or (parent.st_dev, parent.st_ino) != self.snapshot_parent_identity
+            or (pinned.st_dev, pinned.st_ino) != self.snapshot_parent_identity
+            or not _sidecars_absent(self.snapshot)
+        ):
+            raise ValueError
+
+    def close_descriptor(self, role: str) -> None:
+        if role in self.attempted:
+            raise ValueError
+        self.attempted.add(role)
+        _close_candidate_fd(self.descriptors[role])
+        del self.descriptors[role]
 
     def close(self) -> None:
-        while self.connections:
-            error = None
-            try:
-                self.connections[0].close()
-            except BaseException as caught:  # noqa: BLE001 - native failure retains all remaining resources
-                error = caught
-            if error is not None:
-                _raise_migration_cleanup_failure(self, error)
-            self.connections.pop(0)
-        cleanup = _CleanupState(None)
-        while self.descriptors:
-            descriptor = self.descriptors.pop(0)
-            cleanup.attempt(
-                lambda descriptor=descriptor: _close_candidate_fd(descriptor)
-            )
-        if self.snapshot_path is not None:
-            cleanup.attempt(lambda: _unlink_if_present(self.snapshot_path))
-        if self.snapshot_directory is not None:
-            cleanup.attempt(self.snapshot_directory.rmdir)
-        cleanup.raise_control_flow()
-        if cleanup.ordinary_cleanup_failed:
+        """Retry only retained SQLite closes; uncertain fd numbers are never reused."""
+        retry_errors = tuple(self.sqlite_close_failures.values())
+        if self.allocation_pending or any(
+            all(error is not retry for retry in retry_errors)
+            for error in self.cleanup_errors
+        ):
             raise _repository_error("schema_corrupt")
-        self.snapshot_path = self.snapshot_directory = None
+        for role in self.sqlite_close_failures:
+            self.attempted.discard(role)
+        self.cleanup_errors.clear()
+        self.sqlite_close_failures.clear()
+        self.uncertain = False
+        cleanup = self.cleanup(None)
+        cleanup.raise_control_flow()
+        if self.connections:
+            _raise_migration_cleanup_failure(self, *self.cleanup_errors)
+        if cleanup.ordinary_cleanup_failed or self.uncertain:
+            raise _repository_error("schema_corrupt")
+
+    def cleanup(self, body_error: BaseException | None) -> _CleanupState:
+        if self.body_error is None:
+            self.body_error = body_error
+        cleanup = _CleanupState(body_error)
+
+        def attempt(action: Callable[[], object]) -> None:
+            def recorded() -> None:
+                try:
+                    action()
+                except BaseException as error:
+                    self.uncertain = True
+                    self.cleanup_errors.append(error)
+                    raise
+
+            cleanup.attempt(recorded)
+
+        for role in ("upgrade", "read"):
+            if role in self.connections:
+
+                def close_connection(role: str = role) -> None:
+                    self.check_snapshot()
+                    if role in self.attempted:
+                        raise ValueError
+                    self.attempted.add(role)
+                    try:
+                        self.connections[role].close()
+                    except BaseException as error:
+                        self.sqlite_close_failures[role] = error
+                        raise
+                    del self.connections[role]
+
+                attempt(close_connection)
+                if role in self.connections:
+                    return cleanup
+        if self.connections:
+            # Every file/directory pin remains owned while any SQLite view can
+            # still hold a native lock or escaped alias.
+            return cleanup
+        for role in ("snapshot", "source"):
+            if role in self.descriptors:
+                attempt(lambda role=role: self.close_descriptor(role))
+        if self.allocation_pending:
+            self.uncertain = True
+        if not self.uncertain and self.snapshot is not None:
+
+            def remove_snapshot() -> None:
+                self.check_snapshot()
+                if self.parent_pins_available:
+                    os.unlink(
+                        self.snapshot.name, dir_fd=self.descriptors["snapshot_parent"]
+                    )
+                else:
+                    os.unlink(self.snapshot)
+                self.snapshot = None
+
+            attempt(remove_snapshot)
+        if not self.uncertain and self.directory is not None:
+
+            def remove_directory() -> None:
+                self.check_directory()
+                if self.parent_pins_available:
+                    os.rmdir(
+                        self.directory.name, dir_fd=self.descriptors["directory_parent"]
+                    )
+                else:
+                    self.directory.rmdir()
+                self.directory = None
+
+            attempt(remove_directory)
+        if not self.uncertain:
+            for role in tuple(self.descriptors):
+                attempt(lambda role=role: self.close_descriptor(role))
+        if not self.uncertain:
+            for lease in self.leases:
+                attempt(lease.close)
+                if self.uncertain:
+                    break
+        if self.attempt is not None:
+            self.attempt.close()
+        if not self.uncertain:
+            with self.storage._changed:
+                self.storage._raw_operations.discard(self)
+                self.storage._changed.notify_all()
+        return cleanup
 
 
 def validate_profile_candidate(
     path: Path,
     *,
     check_deadline: Callable[[], None] | None = None,
+    _outer_job: _BackupNativeState | None = None,
+) -> None:
+    """Validate a disposable private copy, retaining uncertain native cleanup."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    job = _CandidateValidationJob(path)
+    if _outer_job is not None:
+        _outer_job.candidate_job = job
+    body_error: BaseException | None = None
+    try:
+        job.admit(path if isinstance(path, Path) else None)
+        _validate_profile_candidate(path, check_deadline=check_deadline, job=job)
+    except RecoveryRequired:
+        body_error = _repository_error("schema_corrupt")
+    except BaseException as error:
+        body_error = error
+    cleanup = job.cleanup(body_error)
+    if job.connections:
+        _raise_migration_cleanup_failure(
+            job, body_error, *job.cleanup_errors,
+            code=body_error.code if isinstance(body_error, ProfileRepositoryError) else "schema_corrupt",
+        )
+    cleanup.raise_control_flow()
+    if body_error is not None:
+        raise body_error
+    if cleanup.ordinary_cleanup_failed or job.uncertain:
+        raise _repository_error("schema_corrupt") from None
+
+
+def _validate_profile_candidate(
+    path: Path,
+    *,
+    check_deadline: Callable[[], None] | None = None,
+    job: _CandidateValidationJob,
 ) -> None:
     """Validate a point-in-time private snapshot of a standalone v1 backup.
 
@@ -1411,17 +2295,23 @@ def validate_profile_candidate(
     try:
         if check_deadline is not None:
             check_deadline()
+        job.resolved_source = resolved_path
         path_state = _source_identity(os.stat(resolved_path))
         if not stat.S_ISREG(path_state[2]):
             raise ValueError
 
+        job.admit(resolved_path)
+        job.allocation_pending = True
         source_fd = _open_candidate_source(
             resolved_path,
             _candidate_source_open_flags(),
         )
+        job.descriptors["source"] = source_fd
+        job.allocation_pending = False
         if check_deadline is not None:
             check_deadline()
         source_state = _source_identity(os.fstat(source_fd))
+        job.source_identity = source_state
         if source_state != path_state or not _source_is_unchanged(
             source_fd,
             resolved_path,
@@ -1429,17 +2319,40 @@ def validate_profile_candidate(
         ):
             raise ValueError
 
+        job.admit(Path(tempfile.gettempdir()).resolve(strict=True))
+        job.allocation_pending = True
         snapshot_directory = Path(
             tempfile.mkdtemp(
                 prefix="tldw-tts-profile-candidate-",
                 dir=Path(tempfile.gettempdir()).resolve(strict=True),
             )
         )
-        os.chmod(snapshot_directory, 0o700)
+        job.directory = snapshot_directory
+        job.allocation_pending = False
+        job.directory_parent_identity = job.pin_parent(
+            "directory_parent", snapshot_directory.parent
+        )
+        job.directory_identity = job.pin_parent("directory", snapshot_directory)
+        job.check_directory()
+        if job.parent_pins_available:
+            os.fchmod(job.descriptors["directory"], 0o700)
+        else:
+            os.chmod(snapshot_directory, 0o700)
+        job.admit(snapshot_directory)
+        job.check_directory()
+        job.allocation_pending = True
         snapshot_fd, snapshot_path = tempfile.mkstemp(
             prefix="snapshot-",
             suffix=".sqlite3",
             dir=snapshot_directory,
+        )
+        job.descriptors["snapshot"] = snapshot_fd
+        job.snapshot = Path(snapshot_path)
+        job.allocation_pending = False
+        info = os.fstat(snapshot_fd)
+        job.snapshot_identity = (info.st_dev, info.st_ino)
+        job.snapshot_parent_identity = job.pin_parent(
+            "snapshot_parent", job.snapshot.parent
         )
         posix_mode_enforced = _apply_posix_snapshot_mode(snapshot_fd)
         _copy_source_to_snapshot(
@@ -1467,12 +2380,17 @@ def validate_profile_candidate(
 
         if check_deadline is not None:
             check_deadline()
+        job.admit(Path(snapshot_path))
+        job.allocation_pending = True
         upgrade_connection = connect_private_sqlite(
             "tts.profile_candidate_upgrade",
             snapshot_path,
             must_exist=True,
             isolation_level=None,
         )
+        job.connections["upgrade"] = upgrade_connection
+        job.allocation_pending = False
+        job.check_snapshot()
         _configure_connection(upgrade_connection)
         # Force the disposable snapshot out of WAL mode before touching it:
         # switching away from WAL always checkpoints and removes any -wal/
@@ -1510,6 +2428,8 @@ def validate_profile_candidate(
 
         if check_deadline is not None:
             check_deadline()
+        job.admit(Path(snapshot_path))
+        job.allocation_pending = True
         connection = connect_private_sqlite(
             "tts.profile_candidate",
             snapshot_path,
@@ -1517,6 +2437,8 @@ def validate_profile_candidate(
             immutable=True,
             isolation_level=None,
         )
+        job.connections["read"] = connection
+        job.allocation_pending = False
         if not _snapshot_is_unchanged(
             snapshot_fd,
             snapshot_path,
@@ -1549,29 +2471,7 @@ def validate_profile_candidate(
             raise ValueError
     except BaseException as error:
         body_error = error
-
-    owner = _ProfileCandidateCleanupOwner(
-        (upgrade_connection, connection),
-        (snapshot_fd, source_fd),
-        snapshot_path,
-        snapshot_directory,
-    )
-    cleanup_error = None
-    try:
-        owner.close()
-    except BaseException as error:  # noqa: BLE001 - keep primary control flow and teardown authority
-        cleanup_error = error
-    if cleanup_error is not None:
-        _raise_migration_cleanup_failure(
-            owner,
-            body_error,
-            cleanup_error,
-            code=(
-                body_error.code
-                if isinstance(body_error, ProfileRepositoryError)
-                else "schema_corrupt"
-            ),
-        )
+        job.body_error = error
 
     if body_error is not None:
         if not isinstance(body_error, Exception) or isinstance(

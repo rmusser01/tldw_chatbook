@@ -526,10 +526,16 @@ class LocalResearchWorkspaceAdapter:
     ) -> None:
         """Resume a bounded receipt page without reading content from registry state."""
 
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        def list_receipts_in_worker(*args, **kwargs):
+            with operation_owned_connection(getattr(self._service, "db", None)):
+                return self._service.list_quick_note_receipts(*args, **kwargs)
+
         first_conflict: ResearchNoteConflictError | None = None
         for operation_kind in ("delete", "create"):
             receipts, _ = await asyncio.to_thread(
-                self._service.list_quick_note_receipts,
+                list_receipts_in_worker,
                 self._notes_user_id,
                 workspace_id=workspace_id,
                 operation_kind=operation_kind,
@@ -588,7 +594,7 @@ class LocalResearchWorkspaceAdapter:
                         continue
         if first_conflict is None:
             receipts, _ = await asyncio.to_thread(
-                self._service.list_quick_note_receipts,
+                list_receipts_in_worker,
                 self._notes_user_id,
                 workspace_id=workspace_id,
                 include_blocked=True,

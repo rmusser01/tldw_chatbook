@@ -11,6 +11,11 @@ from loguru import logger
 from .swarmui_client import SwarmUIClient
 from .generation_templates import get_template
 from ..Utils.paths import get_user_data_dir
+from ..Backup_Recovery.generated_media_lifetime import (
+    async_operation,
+    participant,
+    sync_operation,
+)
 
 
 @dataclass
@@ -37,6 +42,17 @@ class ImageGenerationService:
         self._generation_cache: Dict[str, GenerationResult] = {}
         logger.info("Image generation service initialized")
 
+    def _backup_sources(self, route, args, kwargs):
+        """Hold actual selected inputs as well as the installed output root."""
+        paths = [self.output_dir]
+        if route == "save_generation":
+            result = args[0] if args else kwargs["result"]
+            paths.extend(Path(path) for path in result.images)
+            name = args[1] if len(args) > 1 else kwargs.get("name")
+            if name:
+                paths.append((self.output_dir / "saved" / (name + ".png")).parent)
+        return tuple(paths)
+
     def _setup_output_directory(self) -> Path:
         """Setup directory for storing generated images.
 
@@ -45,11 +61,12 @@ class ImageGenerationService:
         """
         user_data = get_user_data_dir()
         output_dir = user_data / "generated_images"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        with participant.operation((output_dir,)):
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create subdirectories for organization
-        (output_dir / "temp").mkdir(exist_ok=True)
-        (output_dir / "saved").mkdir(exist_ok=True)
+            # Create subdirectories for organization
+            (output_dir / "temp").mkdir(exist_ok=True)
+            (output_dir / "saved").mkdir(exist_ok=True)
 
         logger.debug(f"Output directory setup at: {output_dir}")
         return output_dir
@@ -274,6 +291,7 @@ class ImageGenerationService:
 
         return await self.generate_custom(prompt, negative_prompt, **kwargs)
 
+    @async_operation
     async def generate_custom(
         self, prompt: str, negative_prompt: str = "", **kwargs
     ) -> GenerationResult:
@@ -362,6 +380,7 @@ class ImageGenerationService:
                 error=str(e),
             )
 
+    @async_operation
     async def save_generation(
         self, result: GenerationResult, name: Optional[str] = None
     ) -> List[str]:
@@ -403,6 +422,7 @@ class ImageGenerationService:
 
         return saved_paths
 
+    @sync_operation
     def cleanup_temp_images(self, older_than_hours: int = 24):
         """Clean up temporary images older than specified hours.
 

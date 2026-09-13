@@ -53,6 +53,12 @@ these in-process Library tools. The Console-only
 surface.
 """
 
+# ADR-126: fence and enroll before runtime imports, including direct workers.
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+
+admit_startup()
+
+
 import asyncio  # noqa: E402
 import ast  # noqa: E402
 import copy  # noqa: E402

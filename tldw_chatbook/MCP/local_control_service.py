@@ -8,6 +8,13 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
+from loguru import logger
+
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
+
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Library.library_tool_contract import (
@@ -15,6 +22,7 @@ from tldw_chatbook.Library.library_tool_contract import (
     LibraryToolDescriptor,
 )
 
+from .activation import batch_guard, guarded, request_guard
 from .client import MCPClient
 from .local_runtime_delegate import LocalMCPRuntimeDelegate
 from .local_store import (
@@ -149,6 +157,18 @@ class MCPGovernanceDenied(PermissionError):
 
 
 class LocalMCPControlService:
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for accepted calls without cancelling their native work."""
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self):
+        """Reopen only after accepted work and ordinary storage have settled."""
+        self._producer_lifetime.resume()
+
     def __init__(
         self,
         *,
@@ -158,6 +178,7 @@ class LocalMCPControlService:
         policy_enforcer: Any | None = None,
         runtime_delegate: LocalMCPRuntimeDelegate | None = None,
     ) -> None:
+        self._producer_lifetime = ProducerLifetime()
         self.store = store
         self.client = client
         self.manifest_provider = manifest_provider or _default_manifest_provider
@@ -170,6 +191,10 @@ class LocalMCPControlService:
             manifest_provider=self.manifest_provider,
             policy_enforcer=self.policy_enforcer,
         )
+        if isinstance(self.client, MCPClient):
+            self.client._definition_store = self.store
+        if isinstance(self.runtime_delegate, LocalMCPRuntimeDelegate):
+            self.runtime_delegate._definition_store = self.store
         self._runtime_activity_limit = 50
 
     def get_overview(self) -> dict[str, Any]:
@@ -253,6 +278,8 @@ class LocalMCPControlService:
         record = LocalExternalMCPProfile.from_input_dict(strict_input)
         return self.store.save_profile(record).to_dict()
 
+    @producer_call
+    @guarded
     async def connect_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.launch.local")
         profile = self.store.get_profile(profile_id)
@@ -279,11 +306,14 @@ class LocalMCPControlService:
         self.store.save_discovery_snapshot(profile.profile_id, snapshot)
         return snapshot
 
+    @producer_call
     async def disconnect_profile(self, profile_id: str) -> bool:
         self._require_allowed("mcp.external_profiles.launch.local")
         client = self._get_client()
         return await client.disconnect_from_server(profile_id)
 
+    @producer_call
+    @guarded
     async def test_external_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.trigger.local")
         snapshot = await self._describe_profile(profile_id, keep_connected=False)
@@ -295,6 +325,8 @@ class LocalMCPControlService:
             "prompts": len(snapshot.get("prompts", [])),
         }
 
+    @producer_call
+    @guarded
     async def execute_external_tool(
         self,
         profile_id: str,
@@ -332,6 +364,8 @@ class LocalMCPControlService:
             raise RuntimeError(payload["error"])
         return payload
 
+    @producer_call
+    @guarded
     async def refresh_external_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.observe.local")
         return await self._describe_profile(profile_id, keep_connected=True)
@@ -520,6 +554,8 @@ class LocalMCPControlService:
             "diagnostics": self.runtime_delegate.get_protocol_diagnostics(),
         }
 
+    @producer_call
+    @request_guard
     async def run_runtime_request(
         self, method: str, params: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -562,6 +598,8 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
+    @producer_call
+    @batch_guard
     async def run_runtime_batch(
         self, requests: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...]
     ) -> dict[str, Any]:
@@ -652,6 +690,8 @@ class LocalMCPControlService:
             "results": results,
         }
 
+    @producer_call
+    @guarded
     async def execute_tool(
         self, tool_name: str, arguments: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -693,6 +733,8 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
+    @producer_call
+    @guarded
     async def read_resource(self, resource_uri: str) -> dict[str, Any]:
         self._require_allowed("mcp.inventory.observe.local")
         normalized_resource_uri = str(resource_uri or "").strip()
@@ -729,6 +771,8 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
+    @producer_call
+    @guarded
     async def get_prompt(
         self, prompt_name: str, arguments: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -797,6 +841,7 @@ class LocalMCPControlService:
                     "could not wire MCP server-request handlers; "
                     "server-initiated requests will get method-not-found"
                 )
+            client._definition_store = self.store
             self.client = client
         return self.client
 
@@ -1041,6 +1086,15 @@ class LocalMCPControlService:
         blocked: bool = False,
         error: str | None = None,
     ) -> None:
+        from .activation import _INSPECTION, MCPActivationRequired
+        from .recovery_activation import require_store_write
+
+        if action_name == "runtime.request" and target in _INSPECTION:
+            try:
+                require_store_write(self.store, "mcp.local")
+            except MCPActivationRequired:
+                # Descriptor inspection stays passive until fresh owner setup.
+                return
         entry = {
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "action_name": str(action_name or "").strip(),

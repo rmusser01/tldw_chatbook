@@ -33,6 +33,10 @@ from typing import (
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import (
+    participant as projection_lifetime,
+)
+
 # Optional numpy import
 try:
     import numpy as np
@@ -65,6 +69,10 @@ from .vector_store import create_vector_store, SearchResult, SearchResultWithCit
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
+from ..generation import register_service, service_query
+from ..activation import async_guarded as activation_async_guarded
+from ..activation import guarded as activation_guarded
+from ..activation import native_worker, require_local_model_construction
 from ..fusion import (
     reciprocal_rank_fusion,
     resolve_hybrid_alpha,
@@ -716,6 +724,7 @@ class RAGService:
     - Citation generation for source attribution
     """
 
+    @activation_guarded
     def __init__(self, config: Optional[RAGConfig] = None):
         """
         Initialize RAG service with configuration.
@@ -724,6 +733,7 @@ class RAGService:
             config: RAG configuration (uses defaults if None)
         """
         self.config = config or RAGConfig()
+        require_local_model_construction(self.config)
 
         # Unrecognized `fts_match_construction` values already seen, so the
         # use-time resolver warns once per service rather than once per
@@ -766,6 +776,8 @@ class RAGService:
             device=self.config.device,
             cache_dir=cache_dir,
         )
+
+        self.embeddings._rag_activation_config = self.config
 
         # Initialize vector store
         logger.info(f"Initializing {self.config.vector_store_type} vector store")
@@ -828,6 +840,7 @@ class RAGService:
         self._last_index_time = None
         self._total_chunks_created = 0
         self._search_type_counts = {"semantic": 0, "keyword": 0, "hybrid": 0}
+        register_service(self)
 
         # Get and store embedding dimension
         self._embedding_dim = self._get_embedding_dimension()
@@ -849,6 +862,8 @@ class RAGService:
     # === Indexing Methods ===
 
     @timeit("rag_indexing_document")
+    @projection_lifetime.async_operation
+    @activation_async_guarded
     async def index_document(
         self,
         doc_id: str,
@@ -1029,6 +1044,8 @@ class RAGService:
         """Synchronous version of index_document."""
         return asyncio.run(self.index_document(doc_id, content, **kwargs))
 
+    @projection_lifetime.async_operation
+    @activation_async_guarded
     async def index_batch(
         self,
         documents: List[Dict[str, Any]],
@@ -1084,6 +1101,8 @@ class RAGService:
 
         return results
 
+    @projection_lifetime.async_operation
+    @activation_async_guarded
     async def index_batch_optimized(
         self,
         documents: List[Dict[str, Any]],
@@ -1172,6 +1191,9 @@ class RAGService:
     # === Search Methods ===
 
     @timeit("rag_search_operation")
+    @projection_lifetime.async_operation
+    @service_query
+    @activation_async_guarded
     async def search(
         self,
         query: str,
@@ -3045,6 +3067,8 @@ class RAGService:
 
         return chunks
 
+    @projection_lifetime.async_operation
+    @activation_async_guarded
     async def _store_chunks(
         self,
         ids: List[str],
@@ -3053,10 +3077,14 @@ class RAGService:
         metadata: List[dict],
     ) -> None:
         """Store chunks in vector database asynchronously."""
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None, self.vector_store.add, ids, embeddings, documents, metadata
+        # to_thread explicitly transfers this accepted operation context.
+        # The outer retained coroutine joins native completion before retirement.
+        await asyncio.to_thread(
+            native_worker(self, self.vector_store.add), ids, embeddings, documents, metadata
         )
+        from ..recovery import record_stored_chunks
+
+        await record_stored_chunks(self, ids, embeddings, documents, metadata)
 
     # === Management Methods ===
 
@@ -4280,6 +4308,7 @@ class RAGService:
         await self.cache.clear_async()
         logger.info("Cleared embeddings and search result caches")
 
+    @activation_guarded
     def clear_index(self):
         """Clear the vector store index."""
         self.vector_store.clear()

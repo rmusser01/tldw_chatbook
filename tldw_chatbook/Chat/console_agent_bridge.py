@@ -41,6 +41,11 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
+from tldw_chatbook.Agents.activation import guarded as agent_execution_guard
+from tldw_chatbook.Agents.activation import (
+    async_worker_guard as agent_async_worker_guard,
+)
+
 from tldw_chatbook.Agents.agent_models import (
     WorkOrigin,
     AGENT_KIND_PRIMARY,
@@ -3271,6 +3276,7 @@ class _StreamingModelAdapter:
             call_signals = aggregate_signals.new_usage_call()
             gateway_signals = call_signals
 
+        @agent_async_worker_guard(self)
         async def _consume() -> None:
             nonlocal any_streamed, terminal_metadata
             # Forwarding `tools=` only when it is non-None (rather than
@@ -5173,6 +5179,7 @@ class ConsoleAgentBridge:
 
     # -- run ------------------------------------------------------------
 
+    @agent_execution_guard
     @_retire_generation_attempt_after_reply
     def run_reply(
         self,

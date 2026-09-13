@@ -1169,10 +1169,13 @@ def test_sidecar_path_swap_during_descriptor_read_is_rejected(
     original_read = os.read
     swapped = False
 
+    selected_identity = (sidecar.stat().st_dev, sidecar.stat().st_ino)
+
     def swap_after_first_read(fd: int, size: int) -> bytes:
         nonlocal swapped
         raw = original_read(fd, size)
-        if not swapped:
+        info = os.fstat(fd)
+        if not swapped and (info.st_dev, info.st_ino) == selected_identity:
             swapped = True
             replacement.replace(sidecar)
         return raw

@@ -20,7 +20,11 @@ from tldw_chatbook.Tools.raw_cli_executor import (
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "agent_runs.db", client_id="test")
+    database = AgentRunsDB(tmp_path / "agent_runs.db", client_id="test")
+    try:
+        yield database
+    finally:
+        database.close()
 
 
 def test_create_and_get_run(db):
@@ -660,7 +664,7 @@ _LEGACY_V1_AGENT_RUNS_DDL = """
 """
 
 
-def test_opening_legacy_v1_db_migrates_column_and_create_run_works(tmp_path):
+def test_opening_legacy_v1_db_migrates_column_and_create_run_works(request, tmp_path):
     legacy_path = tmp_path / "legacy_agent_runs.db"
     conn = sqlite3.connect(str(legacy_path))
     try:
@@ -679,15 +683,17 @@ def test_opening_legacy_v1_db_migrates_column_and_create_run_works(tmp_path):
     assert "assistant_message_id" not in cols
 
     migrated = AgentRunsDB(legacy_path, client_id="test")
+    request.addfinalizer(migrated.close)
     run_id = migrated.create_run(
         conversation_id="c", agent_kind="primary", assistant_message_id="y"
     )
     assert migrated.get_run(run_id)["assistant_message_id"] == "y"
 
 
-def test_reopening_same_file_twice_is_idempotent(tmp_path):
+def test_reopening_same_file_twice_is_idempotent(request, tmp_path):
     path = tmp_path / "agent_runs.db"
     first = AgentRunsDB(path, client_id="test")
+    request.addfinalizer(first.close)
     first.create_run(
         conversation_id="c", agent_kind="primary", assistant_message_id="a"
     )
@@ -695,6 +701,7 @@ def test_reopening_same_file_twice_is_idempotent(tmp_path):
     # Re-opening must not raise (guarded ALTER is a no-op once the column
     # already exists) and the second instance must still work correctly.
     second = AgentRunsDB(path, client_id="test")
+    request.addfinalizer(second.close)
     run_id = second.create_run(
         conversation_id="c", agent_kind="primary", assistant_message_id="b"
     )
@@ -708,9 +715,10 @@ def test_reopening_same_file_twice_is_idempotent(tmp_path):
 # process) such rows are swept to 'error'. ---
 
 
-def test_orphaned_running_runs_reconciled_on_open(tmp_path):
+def test_orphaned_running_runs_reconciled_on_open(request, tmp_path):
     db_path = tmp_path / "agent_runs.db"
     db1 = AgentRunsDB(db_path)
+    request.addfinalizer(db1.close)
     r_run1 = db1.create_run(conversation_id="c1", agent_kind="primary")
     r_run2 = db1.create_run(conversation_id="c2", agent_kind="primary")
     r_done = db1.create_run(conversation_id="c3", agent_kind="primary")
@@ -723,6 +731,7 @@ def test_orphaned_running_runs_reconciled_on_open(tmp_path):
     # order-dependent test hazard).
     AgentRunsDB._swept_paths.discard(db1.db_path_str)
     db2 = AgentRunsDB(db_path)
+    request.addfinalizer(db2.close)
 
     run1 = db2.get_run(r_run1)
     run2 = db2.get_run(r_run2)
@@ -734,15 +743,17 @@ def test_orphaned_running_runs_reconciled_on_open(tmp_path):
     assert done["result"] == "the answer"
 
 
-def test_reconcile_preserves_existing_result(tmp_path):
+def test_reconcile_preserves_existing_result(request, tmp_path):
     db_path = tmp_path / "agent_runs.db"
     db1 = AgentRunsDB(db_path)
+    request.addfinalizer(db1.close)
     rid = db1.create_run(conversation_id="c", agent_kind="primary")
     db1.set_status(rid, "running", result="partial output")  # running WITH a result
     # Simulate a fresh process opening the same file (scoped to this
     # test's own path -- see the discard() comment above).
     AgentRunsDB._swept_paths.discard(db1.db_path_str)
     db2 = AgentRunsDB(db_path)
+    request.addfinalizer(db2.close)
     row = db2.get_run(rid)
     assert row["status"] == "error"
     assert row["result"] == "partial output"  # COALESCE keeps it
@@ -961,12 +972,15 @@ def test_reconcile_marks_preexisting_split_terminal_row_as_incomplete(tmp_path):
     reopened.close()
 
 
-def test_reconcile_idempotent_same_process(tmp_path):
+def test_reconcile_idempotent_same_process(request, tmp_path):
     db_path = tmp_path / "agent_runs.db"
     db1 = AgentRunsDB(db_path)
+    request.addfinalizer(db1.close)
     db1.create_run(conversation_id="c", agent_kind="primary")
     # second open in the SAME process (guard already set by db1) is a no-op
-    assert AgentRunsDB(db_path).reconcile_orphaned_runs() == 0
+    reopened = AgentRunsDB(db_path)
+    request.addfinalizer(reopened.close)
+    assert reopened.reconcile_orphaned_runs() == 0
 
 
 def test_reconcile_skips_memory_db():
@@ -976,9 +990,7 @@ def test_reconcile_skips_memory_db():
     assert ":memory:" not in AgentRunsDB._swept_paths
 
 
-def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
-    tmp_path, monkeypatch
-):
+def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(request, tmp_path, monkeypatch):
     """A transient failure (e.g. a locked DB) during the sweep must NOT
     register the path -- otherwise no later AgentRunsDB(path) construction
     in this process ever retries, silently defeating AC#2's crash-recovery
@@ -988,6 +1000,7 @@ def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
     # Seed a file with an orphaned 'running' row, as a prior process would
     # have left the table before crashing again.
     setup = AgentRunsDB(db_path)
+    request.addfinalizer(setup.close)
     rid = setup.create_run(conversation_id="c", agent_kind="primary")
     path_str = setup.db_path_str
     # Simulate a fresh process: this path hasn't been swept yet.
@@ -1010,6 +1023,7 @@ def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
     # but the failed sweep must leave the path unregistered and the row
     # untouched.
     db2 = AgentRunsDB(db_path)
+    request.addfinalizer(db2.close)
     assert path_str not in AgentRunsDB._swept_paths
     assert db2.get_run(rid)["status"] == "running"
 
@@ -1020,25 +1034,28 @@ def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
     assert path_str in AgentRunsDB._swept_paths
 
 
-def test_file_db_uses_wal_and_busy_timeout(tmp_path):
+def test_file_db_uses_wal_and_busy_timeout(request, tmp_path):
     db = AgentRunsDB(tmp_path / "agent_runs.db")
+    request.addfinalizer(db.close)
     with db.connection() as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 
-def test_memory_db_skips_wal():
+def test_memory_db_skips_wal(request, ):
     # :memory: cannot use WAL; must not raise and must stay 'memory'
     db = AgentRunsDB(":memory:")
+    request.addfinalizer(db.close)
     with db.connection() as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "memory"
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 
-def test_latest_primary_run_targets_newest_primary_only(tmp_path):
+def test_latest_primary_run_targets_newest_primary_only(request, tmp_path):
     """Qodo (PR #872): the Stop-path lookup must be a single bounded query,
     and interleaved newer SUBAGENT runs must not hide the newest primary."""
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    request.addfinalizer(db.close)
 
     old_primary = db.create_run(conversation_id="c1", agent_kind="primary", task="a")
     newer_primary = db.create_run(conversation_id="c1", agent_kind="primary", task="b")
@@ -1196,12 +1213,14 @@ def test_enabled_only_filter(db):
     assert len(db.list_agent_definitions()) == 2
 
 
-def test_definitions_survive_reopen_and_migration_is_idempotent(tmp_path):
+def test_definitions_survive_reopen_and_migration_is_idempotent(request, tmp_path):
     path = tmp_path / "agent_runs.db"
     first = AgentRunsDB(path, client_id="test")
+    request.addfinalizer(first.close)
     first.create_agent_definition(_defn())
     first.close()
     second = AgentRunsDB(path, client_id="test")  # re-runs _initialize_schema
+    request.addfinalizer(second.close)
     assert [r["name"] for r in second.list_agent_definitions()] == ["researcher"]
     with second.connection() as conn:
         versions = {
@@ -1235,7 +1254,7 @@ def test_create_run_definition_fields_default_none(db):
     assert run["definition_fingerprint"] is None
 
 
-def test_agent_runs_columns_backfilled_on_old_file(tmp_path):
+def test_agent_runs_columns_backfilled_on_old_file(request, tmp_path):
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
     # Simulate a pre-v5 file: the v4-era 12-column table, no new columns.
@@ -1250,6 +1269,7 @@ def test_agent_runs_columns_backfilled_on_old_file(tmp_path):
     conn.commit()
     conn.close()
     db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
+    request.addfinalizer(db.close)
     with db.connection() as conn:
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
@@ -1321,18 +1341,19 @@ _LEGACY_PRE_V11_DDL = """
 """
 
 
-def test_schema_version_constant_agrees_with_the_version_table(tmp_path):
+def test_schema_version_constant_agrees_with_the_version_table(request, tmp_path):
     """task-15669 AC#1/#3 (folded into v11 per coordinator ruling #3): the
     constant CLAUDE.md points every schema change at must agree with the
     highest version a freshly created database actually records -- and
     this test fails if the two ever diverge again."""
     db = AgentRunsDB(tmp_path / "fresh.db", client_id="test")
+    request.addfinalizer(db.close)
     with db.connection() as conn:
         recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION
 
 
-def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(tmp_path):
+def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(request, tmp_path):
     """Migration idempotency (plan red): a pre-v11 file gains the column
     via the guarded ALTER on first open, and a second open is a no-op."""
     path = tmp_path / "legacy_pre_v11.db"
@@ -1351,6 +1372,7 @@ def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(tmp_path):
     assert "resumed_from_run_id" not in cols
 
     first = AgentRunsDB(path, client_id="test")
+    request.addfinalizer(first.close)
     run_id = first.create_run(
         conversation_id="c",
         agent_kind="subagent",
@@ -1366,7 +1388,10 @@ def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(tmp_path):
 
     # Open TWICE (the plan's wording): the guarded ALTER must be a no-op.
     second = AgentRunsDB(path, client_id="test")
-    second_id = second.create_run(conversation_id="c", agent_kind="subagent", task="t2")
+    request.addfinalizer(second.close)
+    second_id = second.create_run(
+        conversation_id="c", agent_kind="subagent", task="t2"
+    )
     assert second.get_run(second_id)["resumed_from_run_id"] is None
     assert second.get_run(run_id)["resumed_from_run_id"] == "prior-run"
 

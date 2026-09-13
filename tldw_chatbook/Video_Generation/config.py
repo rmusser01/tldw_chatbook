@@ -180,6 +180,8 @@ def _resolve_secret(backend: str, sub: dict):
     cfg_val = sub.get(config_key)             # 2. config
     if cfg_val and cfg_val != "<API_KEY_HERE>":
         return field_name, cfg_val, "config"
+    if sub.get("auth_reference") == "recovery:setup_required":
+        return field_name, None, "missing"
     kr = _keyring_get(kr_id)                  # 3. keyring
     if kr:
         return field_name, kr, "keyring"

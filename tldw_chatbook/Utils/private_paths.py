@@ -8,14 +8,17 @@ from __future__ import annotations
 
 import contextlib
 import errno
-import os
+import functools
 import secrets
 import stat
+import sys
 import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import BinaryIO, Iterator, TextIO, TypeAlias
+from typing import BinaryIO, Callable, Iterator, TextIO, TypeAlias
+
+from tldw_chatbook.Utils.platform_files import os
 
 PathInput: TypeAlias = str | os.PathLike[str]
 
@@ -30,6 +33,7 @@ _WINDOWS_PLATFORM = os.name == "nt"
 # Matches the usual kernel ELOOP budget, so a symlink cycle terminates instead
 # of walking forever.
 _MAX_TRUSTED_SYMLINK_HOPS = 8
+_ORIGINAL_NATIVE_OPEN = os.open
 
 
 class PrivatePathStatus(StrEnum):
@@ -127,7 +131,7 @@ def _posix_guards_available() -> bool:
     # branch rather than raising TypeError out of the walk.
     required_dir_fd = {os.open, os.stat, os.mkdir, os.readlink}
     return (
-        os.name == "posix"
+        os.name in {"posix", "nt"}
         and _NOFOLLOW != 0
         and _NONBLOCK != 0
         and _NOCTTY != 0
@@ -166,8 +170,8 @@ def _trusted_directory_owner(directory_stat: os.stat_result, euid: int) -> bool:
     return directory_stat.st_uid in {0, euid}
 
 
-def _open_directory_component(parent_fd: int, component: str) -> int:
-    return os.open(
+def _open_directory_component(parent_fd: int, component: str, *, _open=None) -> int:
+    return (_open or _native_open)(
         component,
         _DIRECTORY_OPEN_FLAGS | _NOFOLLOW,
         dir_fd=parent_fd,
@@ -242,6 +246,8 @@ def _follow_trusted_symlink(
     hops: int,
     selected: Path,
     exc: OSError,
+    _close: Callable[[int], None] | None = None,
+    _open: Callable[..., int] | None = None,
 ) -> tuple[int, int]:
     """Splice a trusted symlink's target into the pending walk.
 
@@ -265,8 +271,10 @@ def _follow_trusted_symlink(
     pending[:0] = components
     if not absolute:
         return current_fd, hops + 1
-    root_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
-    os.close(current_fd)
+    root_fd = (_open or _native_open)(
+        selected.anchor, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW
+    )
+    (_close or _native_close)(current_fd)
     return root_fd, hops + 1
 
 
@@ -333,9 +341,12 @@ def _open_verified_parent(
     selected: Path,
     *,
     missing_leaf_allowed: bool,
+    _close: Callable[[int], None] | None = None,
+    _open: Callable[..., int] | None = None,
 ) -> tuple[int, str]:
+    close = _close or _native_close
     parts = selected.parts
-    if len(parts) < 2 or parts[0] != os.sep:
+    if len(parts) < 2 or parts[0] != selected.anchor:
         raise PrivatePathError(
             PrivatePathResult(
                 selected,
@@ -345,7 +356,9 @@ def _open_verified_parent(
         )
 
     euid = os.geteuid()
-    current_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    current_fd = (_open or _native_open)(
+        selected.anchor, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW
+    )
     try:
         current_stat = os.fstat(current_fd)
         pending = list(parts[1:-1])
@@ -372,7 +385,11 @@ def _open_verified_parent(
                     )
                 )
             try:
-                next_fd = _open_directory_component(current_fd, component)
+                next_fd = _open_directory_component(
+                    current_fd,
+                    component,
+                    **({"_open": _open} if _open is not None else {}),
+                )
             except FileNotFoundError:
                 raise PrivatePathError(
                     PrivatePathResult(
@@ -389,6 +406,8 @@ def _open_verified_parent(
                     hops=symlink_hops,
                     selected=selected,
                     exc=exc,
+                    _close=_close,
+                    _open=_open,
                 )
                 current_stat = os.fstat(current_fd)
                 continue
@@ -415,11 +434,11 @@ def _open_verified_parent(
                 old_fd = current_fd
                 current_fd = next_fd
                 transferred = True
-                os.close(old_fd)
+                close(old_fd)
                 current_stat = next_stat
             finally:
                 if not transferred:
-                    os.close(next_fd)
+                    close(next_fd)
 
         if not _trusted_directory_owner(current_stat, euid):
             raise PrivatePathError(
@@ -446,7 +465,7 @@ def _open_verified_parent(
             )
         return current_fd, parts[-1]
     except BaseException:
-        os.close(current_fd)
+        close(current_fd)
         raise
 
 
@@ -469,7 +488,7 @@ def _private_path_error_from_oserror(
 
 
 def _open_leaf_for_create(parent_fd: int, leaf: str) -> int:
-    return os.open(
+    return _native_open(
         leaf,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW,
         _PRIVATE_FILE_MODE,
@@ -477,6 +496,336 @@ def _open_leaf_for_create(parent_fd: int, leaf: str) -> int:
     )
 
 
+def _runtime_operation(path=None):
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+    return raw._runtime_operation(path) if raw is not None else None
+
+
+def _active_visual_source():
+    for name in ("persona_visual_participants", "visual_identity_participants"):
+        visual = sys.modules.get("tldw_chatbook.Backup_Recovery." + name)
+        # A concurrent cold import publishes the module before its thread-local
+        # state exists. No visual operation can be active at that point.
+        state = getattr(getattr(visual, "_local", None), "state", None)
+        if state is not None:
+            return visual, state
+    return None, None
+
+
+def _visual_native_scope():
+    visual, state = _active_visual_source()
+    return (
+        (visual, state)
+        if state is not None and state.helper is not None
+        else (None, None)
+    )
+
+
+def _voice_operation(*, native=False):
+    module = sys.modules.get("tldw_chatbook.TTS.loose_voice_lifetime")
+    return (
+        (module.native() if native else module.active()) if module is not None else None
+    )
+
+
+def _native_mkdir(*args, **kwargs):
+    visual, state = _visual_native_scope()
+    if state is not None:
+        return visual.mkdir(*args, **kwargs)
+    return os.mkdir(*args, **kwargs)
+
+
+@dataclass
+class _NativeOpenOutcome:
+    """Per-call native allocation result; no source or permission authority."""
+
+    descriptor: int | None = None
+    rejected: bool = False
+
+
+def _native_open(*args, _outcome: _NativeOpenOutcome | None = None, **kwargs):
+    visual, state = _visual_native_scope()
+    if state is not None:
+        fd = visual.native_open(*args, **kwargs)
+        if _outcome is not None:
+            _outcome.descriptor = fd
+        return fd
+    operation = _runtime_operation()
+    open = os.open  # Pin the exact callable used at this native edge.
+    try:
+        fd = open(*args, **kwargs)
+    except OSError:
+        # Only the original native primitive's actual rejection proves absence.
+        # A substituted provider can allocate and raise the same exception.
+        if _outcome is not None and open is _ORIGINAL_NATIVE_OPEN:
+            _outcome.rejected = True
+        raise
+    if _outcome is not None:
+        _outcome.descriptor = fd
+    voice = _voice_operation(native=True)
+    if voice is not None:
+        voice.opened(fd)
+    if operation is not None:
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        raw._states[operation].descriptors.add(fd)
+    return fd
+
+
+def _native_close(fd):
+    voice = _voice_operation(native=True)
+    if voice is not None:
+        return voice.close(fd)
+    visual, state = _visual_native_scope()
+    if state is not None:
+        return visual.native_close(fd)
+    operation = _runtime_operation()
+    if operation is None:
+        os.close(fd)
+    else:
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        raw._close_descriptor(raw._states[operation], fd)
+
+
+def _close_runtime_stream(operation, stream):
+    """Retire a source stream only after an explicitly successful close."""
+    raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+    state = raw._states[operation]
+    try:
+        stream.close()
+        if not stream.closed:
+            raise RuntimeError("raw_resources_not_retired")
+    except BaseException:
+        state.uncertain = True
+        raise
+    state.files.remove(stream)
+
+
+def _admitted_file(function):
+    @functools.wraps(function)
+    def admitted(path, *args, **kwargs):
+        voice = _voice_operation()
+        if voice is not None:
+            voice.check(path, external=True)
+            with voice.native_scope():
+                return function(path, *args, **kwargs)
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+        visual, visual_state = _active_visual_source()
+        if visual_state is not None:
+            if function.__name__ != "secure_private_directory":
+                raise RuntimeError("persona_visual_helper_not_supported")
+            state = visual.private_directory(path)
+            previous_helper = state.helper
+            state.helper = lexical_path(path)
+            try:
+                return function(path, *args, **kwargs)
+            finally:
+                state.helper = previous_helper
+        operation = _runtime_operation(lexical_path(path))
+        if operation is not None:
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            state = raw._check(operation)
+            config = sys.modules.get("tldw_chatbook.config")
+            if raw.mcp_sources.history_operation(state):
+                if not raw.mcp_sources.helper_allowed(state, function.__name__, path):
+                    raise RuntimeError("raw_source_helper_not_supported")
+                if function.__name__ == "atomic_private_write_bytes":
+                    raw.mcp_sources.check_destination(state, path)
+                result = function(path, *args, **kwargs)
+                if function.__name__ == "atomic_private_write_bytes":
+                    raw.mcp_sources.published(state, path)
+                return result
+            if config is not None and state.source is config:
+                selected = lexical_path(path)
+                allowed = (
+                    function.__name__ == "secure_private_directory"
+                    and selected in state.directories
+                    or function.__name__ == "create_private_text"
+                    and selected
+                    in (
+                        state.selected,
+                        state.selected.with_name(state.selected.name + ".lock"),
+                    )
+                    or function.__name__ == "atomic_private_write_bytes"
+                    and selected in state.temporaries
+                )
+                if not allowed:
+                    raise RuntimeError("raw_source_helper_not_supported")
+            else:
+                expected = (
+                    state.source.application_owned_directory
+                    if function.__name__ == "secure_private_directory"
+                    else state.selected
+                )
+                if (
+                    function.__name__
+                    not in {"atomic_private_write_bytes", "secure_private_directory"}
+                    or expected is None
+                    or lexical_path(path) != lexical_path(expected)
+                    or (
+                        function.__name__ == "atomic_private_write_bytes"
+                        and state.temporary is None
+                    )
+                ):
+                    raise RuntimeError("raw_source_helper_not_supported")
+            return function(path, *args, **kwargs)
+        with acquire_storage(lexical_path(path)):
+            return function(path, *args, **kwargs)
+
+    return admitted
+
+
+class _AdmittedStream:
+    def __init__(self, stream, lease):
+        self._stream = stream
+        self._lease = lease
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def close(self):
+        self._stream.close()
+        self._lease.close()
+
+    def __iter__(self):
+        return iter(self._stream)
+
+    def __del__(self):
+        try:
+            self.close()
+        except BaseException:
+            pass
+
+
+class _ConfigStream:
+    """A config lock stream whose native lifetime has no GC retirement path."""
+
+    def __init__(self, stream, operation):
+        self._stream = stream
+        self._operation = operation
+        self._fd = stream.fileno()
+        self._retired = False
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+    def close(self):
+        if self._retired:
+            return
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        raw._check(self._operation)
+        _close_runtime_stream(self._operation, self._stream)
+        _native_close(self._fd)
+        self._retired = True
+
+
+class _MCPAppendStream(_ConfigStream):
+    """The exact history append stream retains FD ownership through close."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def write(self, value):
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        state = raw._check(self._operation, writing=True)
+        state.mcp_effects = True
+        return self._stream.write(value)
+
+    def close(self):
+        if self._retired:
+            return
+        info = os.fstat(self._fd)
+        super().close()
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        state = raw._check(self._operation)
+        state.mcp_publications[state.selected] = (info.st_dev, info.st_ino)
+        raw.mcp_sources.published(state, state.selected)
+
+
+def _operation_temporary(operation, selected):
+    raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+    state = raw._check(operation, selected, writing=True)
+    return state.temporaries.get(selected, state.temporary)
+
+
+def _admitted_stream(function):
+    @functools.wraps(function)
+    def admitted(path, *args, **kwargs):
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+        operation = _runtime_operation()
+        if operation is not None:
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            state = raw._check(operation, lexical_path(path), writing=True)
+            config = sys.modules.get("tldw_chatbook.config")
+            if raw.mcp_sources.history_operation(state):
+                if not raw.mcp_sources.helper_allowed(state, function.__name__, path):
+                    raise RuntimeError("raw_source_helper_not_supported")
+                raw.mcp_sources.check_destination(state, path)
+                return _MCPAppendStream(function(path, *args, **kwargs), operation)
+            if state.source is not config or lexical_path(
+                path
+            ) != (
+                state.selected
+                if state.route == "config_data_lock"
+                else state.selected.with_name(state.selected.name + ".lock")
+            ):
+                raise RuntimeError("raw_source_helper_not_supported")
+            return _ConfigStream(function(path, *args, **kwargs), operation)
+        lease = acquire_storage(lexical_path(path))
+        try:
+            return _AdmittedStream(function(path, *args, **kwargs), lease)
+        except BaseException:
+            lease.close()
+            raise
+
+    return admitted
+
+
+def _admitted_reader(function):
+    @functools.wraps(function)
+    def admitted(path, *args, **kwargs):
+        voice = _voice_operation()
+        if voice is not None:
+            with voice.native_scope():
+                yield from function(path, *args, **kwargs)
+            return
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+        operation = _runtime_operation(lexical_path(path))
+        if operation is not None:
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            state = raw._check(operation)
+            config = sys.modules.get("tldw_chatbook.config")
+            if raw.mcp_sources.history_operation(state):
+                if not raw.mcp_sources.helper_allowed(state, function.__name__, path):
+                    raise RuntimeError("raw_source_helper_not_supported")
+                raw.mcp_sources.check_destination(state, path)
+                yield from function(path, *args, **kwargs)
+                return
+            allowed = (state.selected,)
+            if config is not None and state.source is config:
+                allowed += (config._advanced_backup_path(state.selected),)
+            if lexical_path(path) not in allowed:
+                raise RuntimeError("raw_source_helper_not_supported")
+            yield from function(path, *args, **kwargs)
+            return
+        with acquire_storage(lexical_path(path)):
+            yield from function(path, *args, **kwargs)
+
+    return admitted
+
+
+@_admitted_file
 def create_private_text(
     path: PathInput,
     text: str,
@@ -566,8 +915,8 @@ def create_private_text(
         ) from None
     finally:
         if file_fd >= 0:
-            os.close(file_fd)
-        os.close(parent_fd)
+            _native_close(file_fd)
+        _native_close(parent_fd)
 
 
 def _prepare_application_owned_parent(
@@ -586,6 +935,7 @@ def _prepare_application_owned_parent(
     )
 
 
+@_admitted_file
 def atomic_private_write_bytes(
     path: PathInput,
     payload: bytes,
@@ -596,6 +946,9 @@ def atomic_private_write_bytes(
     """Atomically replace a private file without following its target."""
 
     selected = lexical_path(path)
+    operation = _runtime_operation(selected)
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+
     if target_precondition is not None and not isinstance(
         target_precondition, PrivateFileWritePrecondition
     ):
@@ -613,23 +966,50 @@ def atomic_private_write_bytes(
             )
         if _WINDOWS_PLATFORM:
             try:
-                fd, temporary = tempfile.mkstemp(
-                    dir=selected.parent,
-                    prefix=f".{selected.name}.",
-                    suffix=".tmp",
-                )
+                if operation is None:
+                    fd, temporary = tempfile.mkstemp(
+                        dir=selected.parent,
+                        prefix=f".{selected.name}.",
+                        suffix=".tmp",
+                    )
+                else:
+                    temporary = _operation_temporary(operation, selected)
+                    fd = _native_open(
+                        temporary,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                        _PRIVATE_FILE_MODE,
+                    )
+                    info = os.fstat(fd)
+                    raw._check(operation).created_files[temporary] = (
+                        info.st_dev,
+                        info.st_ino,
+                    )
             except OSError as exc:
                 raise _private_path_error_from_oserror(selected, exc) from None
             try:
-                with os.fdopen(fd, "wb") as stream:
+                with os.fdopen(fd, "wb", closefd=operation is None) as stream:
+                    if operation is not None:
+                        raw._check(operation).files.append(stream)
                     stream.write(payload)
                     stream.flush()
-                os.replace(temporary, selected)
+                if operation is not None:
+                    raw._check(operation).files.remove(stream)
+                    _native_close(fd)
+                    raw._replace(operation, temporary, selected)
+                else:
+                    os.replace(temporary, selected)
             except BaseException:
-                try:
-                    os.unlink(temporary)
-                except FileNotFoundError:
-                    pass
+                if operation is not None:
+                    state = raw._states[operation]
+                    if state.files or fd in state.descriptors:
+                        state.uncertain = True
+                    if not state.uncertain:
+                        raw._remove_temporary(operation, temporary)
+                else:
+                    try:
+                        os.unlink(temporary)
+                    except FileNotFoundError:
+                        pass
                 raise
             return PrivatePathResult(
                 selected,
@@ -648,9 +1028,16 @@ def atomic_private_write_bytes(
         selected,
         missing_leaf_allowed=True,
     )
-    temporary_leaf = f".{leaf}.{secrets.token_hex(8)}.tmp"
+    operation = _runtime_operation(selected)
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+    temporary_leaf = (
+        _operation_temporary(operation, selected).name
+        if operation is not None
+        else f".{leaf}.{secrets.token_hex(8)}.tmp"
+    )
     temporary_fd = -1
     temporary_exists = False
+    published = False
     try:
         try:
             existing_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
@@ -693,7 +1080,7 @@ def atomic_private_write_bytes(
             if rejected is not None:
                 raise PrivatePathError(PrivatePathResult(selected, rejected))
             prior_mode = stat.S_IMODE(existing_stat.st_mode)
-            existing_fd = os.open(
+            existing_fd = _native_open(
                 leaf,
                 _PRIVATE_FILE_OPEN_FLAGS,
                 dir_fd=parent_fd,
@@ -711,11 +1098,16 @@ def atomic_private_write_bytes(
                 if prior_mode != _PRIVATE_FILE_MODE:
                     os.fchmod(existing_fd, _PRIVATE_FILE_MODE)
             finally:
-                os.close(existing_fd)
+                _native_close(existing_fd)
 
         temporary_fd = _open_leaf_for_create(parent_fd, temporary_leaf)
         temporary_exists = True
         temporary_stat = os.fstat(temporary_fd)
+        if operation is not None:
+            raw._check(operation).created_files[selected.parent / temporary_leaf] = (
+                temporary_stat.st_dev,
+                temporary_stat.st_ino,
+            )
         view = memoryview(payload)
         while view:
             written = os.write(temporary_fd, view)
@@ -753,13 +1145,33 @@ def atomic_private_write_bytes(
                 )
             )
 
-        os.rename(
-            temporary_leaf,
-            leaf,
-            src_dir_fd=parent_fd,
-            dst_dir_fd=parent_fd,
-        )
+        if operation is not None:
+            raw._check_temporary_identity(
+                raw._check(operation), selected.parent / temporary_leaf
+            )
+            state = raw._check(operation)
+            if raw.mcp_sources.history_operation(state):
+                raw.mcp_sources.check_destination(state, selected)
+        try:
+            os.replace(
+                temporary_leaf,
+                leaf,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+            )
+        except BaseException:
+            voice = _voice_operation()
+            if voice is not None:
+                voice.uncertain = True
+            if operation is not None:
+                raw._states[operation].uncertain = True
+            raise
+        if _voice_operation() is not None:
+            _voice_operation().changed += 1
         temporary_exists = False
+        published = True
+        if operation is not None:
+            raw._check(operation).created_files.pop(selected.parent / temporary_leaf)
         os.fsync(parent_fd)
         if not _private_file_postcondition_holds(
             temporary_fd,
@@ -774,6 +1186,13 @@ def atomic_private_write_bytes(
                     reason="private_file_postcondition_failed",
                 )
             )
+        if operation is not None and raw.mcp_sources.history_operation(
+            raw._check(operation)
+        ):
+            raw._states[operation].mcp_publications[selected] = (
+                temporary_stat.st_dev,
+                temporary_stat.st_ino,
+            )
         if existing_stat is None:
             status = PrivatePathStatus.CREATED_PRIVATE
         elif prior_mode != _PRIVATE_FILE_MODE:
@@ -781,21 +1200,38 @@ def atomic_private_write_bytes(
         else:
             status = PrivatePathStatus.ALREADY_PRIVATE
         return PrivatePathResult(selected, status)
-    except PrivatePathError:
+    except BaseException as exc:
+        if published and _voice_operation() is not None:
+            _voice_operation().uncertain = True
+        if operation is not None and published:
+            raw._states[operation].uncertain = True
+        if isinstance(exc, OSError) and not isinstance(exc, PrivatePathError):
+            raise _private_path_error_from_oserror(selected, exc) from None
         raise
-    except OSError as exc:
-        raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         if temporary_fd >= 0:
-            os.close(temporary_fd)
+            _native_close(temporary_fd)
         try:
             if temporary_exists:
                 try:
-                    os.unlink(temporary_leaf, dir_fd=parent_fd)
+                    if operation is not None:
+                        raw._remove_temporary(
+                            operation, selected.parent / temporary_leaf
+                        )
+                    else:
+                        os.unlink(temporary_leaf, dir_fd=parent_fd)
                 except FileNotFoundError:
                     pass
+                except BaseException:
+                    # The temporary was allocated by this voice publication.
+                    # Failed cleanup leaves its bytes/ownership unresolved even
+                    # when the write never reached rename and all fds close.
+                    voice = _voice_operation(native=True)
+                    if voice is not None:
+                        voice.uncertain = True
+                    raise
         finally:
-            os.close(parent_fd)
+            _native_close(parent_fd)
 
 
 def atomic_private_write_text(
@@ -838,6 +1274,7 @@ def open_private_text_append(
         os.fsync(stream.fileno())
 
 
+@_admitted_stream
 def open_private_text_append_stream(
     path: PathInput,
     *,
@@ -867,9 +1304,22 @@ def open_private_text_append_stream(
     if not _posix_guards_available():
         if _WINDOWS_PLATFORM:
             selected.parent.mkdir(parents=True, exist_ok=True)
-            return selected.open(
-                "a", encoding=encoding, errors=errors, newline="\n"
+            operation = _runtime_operation(selected)
+            if operation is None:
+                return selected.open("a", encoding=encoding, errors=errors, newline="\n")
+            fd = _native_open(
+                selected, os.O_WRONLY | os.O_APPEND | os.O_CREAT, _PRIVATE_FILE_MODE
             )
+            try:
+                stream = os.fdopen(
+                    fd, "a", encoding=encoding, errors=errors, newline="\n", closefd=False
+                )
+            except BaseException:
+                _native_close(fd)
+                raise
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            raw._check(operation).files.append(stream)
+            return stream
         raise PrivatePathError(
             PrivatePathResult(
                 selected,
@@ -896,7 +1346,7 @@ def open_private_text_append_stream(
             if rejected is not None:
                 raise PrivatePathError(PrivatePathResult(selected, rejected))
 
-        file_fd = os.open(
+        file_fd = _native_open(
             leaf,
             os.O_WRONLY | os.O_APPEND | os.O_CREAT | _NOFOLLOW | _NONBLOCK | _NOCTTY,
             _PRIVATE_FILE_MODE,
@@ -931,6 +1381,7 @@ def open_private_text_append_stream(
                     reason="private_file_postcondition_failed",
                 )
             )
+        operation = _runtime_operation(selected)
         stream = os.fdopen(
             file_fd,
             "a",
@@ -941,8 +1392,11 @@ def open_private_text_append_stream(
             # branches cannot drift apart on the one property callers of
             # this helper reason about in bytes.
             newline="\n",
-            closefd=True,
+            closefd=operation is None,
         )
+        if operation is not None:
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            raw._check(operation).files.append(stream)
         file_fd = -1
         return stream
     except PrivatePathError:
@@ -951,8 +1405,8 @@ def open_private_text_append_stream(
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         if file_fd >= 0:
-            os.close(file_fd)
-        os.close(parent_fd)
+            _native_close(file_fd)
+        _native_close(parent_fd)
 
 
 def unlink_private_file(
@@ -998,21 +1452,44 @@ def unlink_private_file(
 
 
 @contextlib.contextmanager
+@_admitted_reader
 def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
     """Open and harden an existing private file without following links."""
 
     selected = lexical_path(path)
     if not _posix_guards_available():
         if _WINDOWS_PLATFORM:
-            with selected.open("rb") as stream:
-                yield PrivateBinaryFile(
-                    stream=stream,
-                    result=PrivatePathResult(
-                        selected,
-                        PrivatePathStatus.UNVERIFIED_PLATFORM,
-                        reason="native_acl_not_verified",
-                    ),
-                )
+            operation = _runtime_operation(selected)
+            if operation is None:
+                with selected.open("rb") as stream:
+                    yield PrivateBinaryFile(
+                        stream=stream,
+                        result=PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.UNVERIFIED_PLATFORM,
+                            reason="native_acl_not_verified",
+                        ),
+                    )
+            else:
+                raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+                state = raw._check(operation)
+                fd = _native_open(selected, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+                try:
+                    stream = os.fdopen(fd, "rb", closefd=False)
+                    state.files.append(stream)
+                    try:
+                        yield PrivateBinaryFile(
+                            stream=stream,
+                            result=PrivatePathResult(
+                                selected,
+                                PrivatePathStatus.UNVERIFIED_PLATFORM,
+                                reason="native_acl_not_verified",
+                            ),
+                        )
+                    finally:
+                        _close_runtime_stream(operation, stream)
+                finally:
+                    _native_close(fd)
             return
         raise PrivatePathError(
             PrivatePathResult(
@@ -1044,7 +1521,7 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
             )
 
         try:
-            file_fd = os.open(
+            file_fd = _native_open(
                 leaf,
                 _PRIVATE_FILE_OPEN_FLAGS,
                 dir_fd=parent_fd,
@@ -1081,7 +1558,14 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
                         reason="private_file_postcondition_failed",
                     )
                 )
-            stream = os.fdopen(file_fd, "rb", closefd=True)
+            operation = _runtime_operation(selected)
+            stream = os.fdopen(
+                file_fd, "rb", closefd=operation is None and _voice_operation() is None
+            )
+            stream_fd = file_fd
+            if operation is not None:
+                raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+                raw._check(operation).files.append(stream)
             file_fd = -1
         except PrivatePathError:
             raise
@@ -1089,24 +1573,50 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
             raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         if file_fd >= 0:
-            os.close(file_fd)
-        os.close(parent_fd)
+            _native_close(file_fd)
+        _native_close(parent_fd)
 
-    with stream:
-        yield PrivateBinaryFile(
-            stream=stream,
-            result=PrivatePathResult(selected, status),
-        )
+    if _voice_operation() is not None:
+        try:
+            with stream:
+                yield PrivateBinaryFile(
+                    stream=stream, result=PrivatePathResult(selected, status)
+                )
+        finally:
+            _native_close(stream_fd)
+    elif operation is None:
+        with stream:
+            yield PrivateBinaryFile(
+                stream=stream,
+                result=PrivatePathResult(selected, status),
+            )
+    else:
+        try:
+            yield PrivateBinaryFile(
+                stream=stream,
+                result=PrivatePathResult(selected, status),
+            )
+        finally:
+            _close_runtime_stream(operation, stream)
+            _native_close(stream_fd)
 
 
+@_admitted_file
 def secure_private_directory(
     path: PathInput,
     *,
     create: bool,
     application_owned: bool,
+    _open: Callable[..., int] | None = None,
+    _close: Callable[[int], None] | None = None,
 ) -> PrivatePathResult:
     """Create or harden an application-owned directory."""
 
+    close = _close or _native_close
+    open_options = {} if _open is None else {"_open": _open}
+    observer_options = dict(open_options)
+    if _close is not None:
+        observer_options["_close"] = _close
     selected = lexical_path(path)
     if not application_owned:
         raise ValueError("Only application-owned directories may be changed")
@@ -1131,7 +1641,9 @@ def secure_private_directory(
 
     euid = os.geteuid()
     parts = selected.parts
-    current_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    current_fd = (_open or _native_open)(
+        selected.anchor, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW
+    )
     created_final = False
     hardened_final = False
     try:
@@ -1163,7 +1675,9 @@ def secure_private_directory(
 
             created_component = False
             try:
-                next_fd = _open_directory_component(current_fd, component)
+                next_fd = _open_directory_component(
+                    current_fd, component, **open_options
+                )
             except FileNotFoundError:
                 if not create:
                     raise
@@ -1176,7 +1690,7 @@ def secure_private_directory(
                         )
                     ) from None
                 try:
-                    os.mkdir(
+                    _native_mkdir(
                         component,
                         mode=_PRIVATE_DIRECTORY_MODE,
                         dir_fd=current_fd,
@@ -1187,7 +1701,7 @@ def secure_private_directory(
                     # open. Reopen without following links and apply the same
                     # owner/type/mode checks below; existence is not trust.
                     pass
-                next_fd = _open_directory_component(current_fd, component)
+                next_fd = _open_directory_component(current_fd, component, **open_options)
             except OSError as exc:
                 current_fd, symlink_hops = _follow_trusted_symlink(
                     current_fd=current_fd,
@@ -1196,6 +1710,7 @@ def secure_private_directory(
                     hops=symlink_hops,
                     selected=selected,
                     exc=exc,
+                    **observer_options,
                 )
                 current_stat = os.fstat(current_fd)
                 continue
@@ -1261,11 +1776,11 @@ def secure_private_directory(
                 old_fd = current_fd
                 current_fd = next_fd
                 transferred = True
-                os.close(old_fd)
+                close(old_fd)
                 current_stat = os.fstat(current_fd)
             finally:
                 if not transferred:
-                    os.close(next_fd)
+                    close(next_fd)
 
         status = (
             PrivatePathStatus.CREATED_PRIVATE
@@ -1282,13 +1797,15 @@ def secure_private_directory(
     except OSError as exc:
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
-        os.close(current_fd)
+        close(current_fd)
 
 
 def verify_trusted_directory(
     path: PathInput,
     *,
     allow_shared_sticky: bool,
+    _close: Callable[[int], None] | None = None,
+    _open: Callable[..., int] | None = None,
 ) -> PrivatePathResult:
     """Verify an existing lexical directory without creating or changing it.
 
@@ -1315,7 +1832,15 @@ def verify_trusted_directory(
     that may have changed since. `lexical_path` deliberately does not resolve.
     """
 
+    close = _close or _native_close
     selected = lexical_path(path)
+    operation = _runtime_operation()
+    if operation is not None:
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        state = raw._check(operation)
+        if selected != state.selected.parent and selected not in state.directories:
+            raise RuntimeError("raw_source_helper_not_supported")
+
     if not _posix_guards_available():
         if _WINDOWS_PLATFORM:
             if not selected.is_dir():
@@ -1340,7 +1865,7 @@ def verify_trusted_directory(
         )
 
     parts = selected.parts
-    if len(parts) < 2 or parts[0] != os.sep:
+    if len(parts) < 2 or parts[0] != selected.anchor:
         raise PrivatePathError(
             PrivatePathResult(
                 selected,
@@ -1350,7 +1875,9 @@ def verify_trusted_directory(
         )
 
     euid = os.geteuid()
-    current_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    current_fd = (_open or _native_open)(
+        selected.anchor, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW
+    )
     try:
         current_stat = os.fstat(current_fd)
         pending = list(parts[1:])
@@ -1379,7 +1906,11 @@ def verify_trusted_directory(
                 )
 
             try:
-                next_fd = _open_directory_component(current_fd, component)
+                next_fd = _open_directory_component(
+                    current_fd,
+                    component,
+                    **({"_open": _open} if _open is not None else {}),
+                )
             except FileNotFoundError:
                 raise PrivatePathError(
                     PrivatePathResult(
@@ -1396,6 +1927,8 @@ def verify_trusted_directory(
                     hops=symlink_hops,
                     selected=selected,
                     exc=exc,
+                    _close=_close,
+                    _open=_open,
                 )
                 current_stat = os.fstat(current_fd)
                 continue
@@ -1458,11 +1991,11 @@ def verify_trusted_directory(
                 old_fd = current_fd
                 current_fd = next_fd
                 transferred = True
-                os.close(old_fd)
+                close(old_fd)
                 current_stat = next_stat
             finally:
                 if not transferred:
-                    os.close(next_fd)
+                    close(next_fd)
 
         return PrivatePathResult(
             selected,
@@ -1474,4 +2007,4 @@ def verify_trusted_directory(
     except OSError as exc:
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
-        os.close(current_fd)
+        close(current_fd)

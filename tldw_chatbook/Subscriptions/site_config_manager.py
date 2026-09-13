@@ -25,6 +25,8 @@ from loguru import logger
 # Local Imports
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Subscriptions_DB import ensure_site_configs_schema
+from ..Backup_Recovery.participants import _core_operation
+from ..Backup_Recovery.profile_paths import lexical_path
 from ..Utils.config_encryption import ConfigEncryption
 from ..Metrics.metrics_logger import log_counter
 from ..config import (
@@ -265,10 +267,12 @@ class SiteConfigManager:
         # was passed. `ensure_site_configs_schema` shares its DDL with
         # `_initialize_schema`, so there is still exactly one definition, and
         # `CREATE TABLE IF NOT EXISTS` keeps it idempotent per construction.
-        ensure_site_configs_schema(db_path)
+        self.is_memory_db = str(db_path) == ":memory:"
+        self.db_path = ":memory:" if self.is_memory_db else lexical_path(db_path)
+        self._initialize_site_configs()
 
         self.db = CharactersRAGDB(
-            db_path,
+            self.db_path,
             CLI_APP_CLIENT_ID,
             console_library_migration_seed=load_console_library_migration_seed(),
         )
@@ -276,6 +280,11 @@ class SiteConfigManager:
         self.rate_limiter = RateLimiter()
         self._config_cache = {}
         self._cache_lock = threading.Lock()
+
+    def _initialize_site_configs(self) -> None:
+        """Own only this manager's initial table setup; core use is independent."""
+        with _core_operation(self):
+            ensure_site_configs_schema(self.db_path, _source=self)
 
     def get_config(self, url: str) -> SiteConfig:
         """

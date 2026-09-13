@@ -21,12 +21,16 @@ except ImportError:
 
 import json
 import time
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional, Protocol, Union
 
 import psutil
 from loguru import logger
+from ..activation import guarded as activation_guarded
+from ..activation import execution as activation_execution
+from contextlib import nullcontext
 
 from tldw_chatbook.Metrics.metrics_logger import (
     log_counter,
@@ -34,6 +38,11 @@ from tldw_chatbook.Metrics.metrics_logger import (
     log_gauge,
     timeit,
 )
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import (
+    participant as projection_lifetime, store_operation,
+)
+from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from ..generation import store_query
 from .citations import Citation, CitationType, SearchResultWithCitations
 from .config import validate_chroma_persist_directory
 
@@ -180,6 +189,8 @@ class ChromaVectorStore:
     Provides persistent vector storage with metadata support for citations.
     """
 
+    @projection_lifetime.sync_operation
+    @activation_guarded
     def __init__(
         self,
         persist_directory: Union[str, Path],
@@ -208,9 +219,11 @@ class ChromaVectorStore:
         self.collection_metadata = dict(collection_metadata or {})
         self._client = None
         self._collection = None
+        self._projection_lock = threading.RLock()
 
-        # Ensure persist directory exists
-        self.persist_directory.mkdir(parents=True, exist_ok=True)
+        # Admission precedes the constructor's first filesystem mutation.
+        with acquire_storage(self.persist_directory):
+            self.persist_directory.mkdir(parents=True, exist_ok=True)
 
         # Log initialization
         logger.info(
@@ -267,6 +280,7 @@ class ChromaVectorStore:
         return memory_mb
 
     @property
+    @store_operation
     def client(self):
         """Lazy load ChromaDB client."""
         if self._client is None:
@@ -275,9 +289,16 @@ class ChromaVectorStore:
                 from chromadb.config import Settings
 
                 settings = Settings(anonymized_telemetry=False, allow_reset=True)
-                self._client = chromadb.PersistentClient(
-                    path=str(self.persist_directory), settings=settings
+                creation = (
+                    activation_execution(self)
+                    if not (self.persist_directory / "chroma.sqlite3").exists()
+                    else nullcontext()
                 )
+                with creation, projection_lifetime.opening(self.persist_directory) as borrower:
+                    self._client = chromadb.PersistentClient(
+                        path=str(self.persist_directory), settings=settings
+                    )
+                    borrower.attach(self._client, self)
                 logger.info(
                     f"Initialized ChromaDB PersistentClient at {self.persist_directory}"
                 )
@@ -289,6 +310,7 @@ class ChromaVectorStore:
         return self._client
 
     @property
+    @store_operation
     def collection(self):
         """Get or create collection."""
         if self._collection is None:
@@ -299,19 +321,27 @@ class ChromaVectorStore:
                 "ip": "ip",  # inner product
             }
 
-            self._collection = self.client.get_or_create_collection(
-                name=self.collection_name,
-                metadata={
-                    **self.collection_metadata,
-                    # hnsw:space is index-determining — keep it LAST so a stray
-                    # collection_metadata key can never override the real metric.
-                    "hnsw:space": metric_map.get(self.distance_metric, "cosine"),
-                },
-            )
+            from chromadb.errors import NotFoundError
+
+            try:
+                self._collection = self.client.get_collection(self.collection_name)
+            except NotFoundError:
+                with activation_execution(self):
+                    self._collection = self.client.get_or_create_collection(
+                        name=self.collection_name,
+                        metadata={
+                            **self.collection_metadata,
+                            # hnsw:space is index-determining — keep it LAST so a stray
+                            # collection_metadata key can never override the real metric.
+                            "hnsw:space": metric_map.get(self.distance_metric, "cosine"),
+                        },
+                    )
             logger.info(f"Using collection: {self.collection_name}")
         return self._collection
 
     @timeit("vector_store_add_documents")
+    @store_operation
+    @activation_guarded
     def add(
         self,
         ids: List[str],
@@ -443,6 +473,8 @@ class ChromaVectorStore:
             raise
 
     @timeit("vector_store_search")
+    @store_operation
+    @store_query
     def search(
         self,
         query_embedding: Union[np.ndarray, List[float]],
@@ -539,6 +571,8 @@ class ChromaVectorStore:
             logger.opt(exception=True).error(f"Search failed: {e}")
             return []
 
+    @store_operation
+    @store_query
     def search_with_citations(
         self,
         query_embedding: Union[np.ndarray, List[float]],
@@ -644,6 +678,8 @@ class ChromaVectorStore:
 
         return citations
 
+    @store_operation
+    @activation_guarded
     def delete_collection(self, name: str) -> bool:
         """Delete a collection.
 
@@ -667,6 +703,8 @@ class ChromaVectorStore:
             logger.error(f"Failed to delete collection: {e}")
             return False
 
+    @store_operation
+    @activation_guarded
     def delete_document(self, doc_id: str) -> None:
         """Delete all chunks belonging to a document (no-op when absent).
 
@@ -682,6 +720,8 @@ class ChromaVectorStore:
             f"Deleted chunks for document {doc_id} from collection {self.collection_name}"
         )
 
+    @store_operation
+    @activation_guarded
     def clear(self) -> None:
         """Clear all data from the current collection."""
         try:
@@ -694,6 +734,7 @@ class ChromaVectorStore:
             logger.error(f"Failed to clear collection: {e}")
 
     @timeit("vector_store_get_stats")
+    @store_operation
     def get_collection_stats(self) -> dict:
         """Get collection statistics."""
         try:
@@ -751,6 +792,8 @@ class ChromaVectorStore:
             logger.error(f"Failed to get collection stats: {e}")
             return {"name": self.collection_name, "count": 0, "error": str(e)}
 
+    @store_operation
+    @activation_guarded
     def add_documents(
         self,
         collection_name: str,
@@ -789,6 +832,7 @@ class ChromaVectorStore:
             logger.error(f"Failed to add documents: {e}")
             return False
 
+    @store_operation
     def list_collections(self) -> List[str]:
         """List all collection names."""
         try:
@@ -799,21 +843,65 @@ class ChromaVectorStore:
             logger.error(f"Failed to list collections: {e}")
             return []
 
-    def close(self) -> None:
-        """Close the ChromaDB client and clean up resources."""
-        client = self._client
-        self._collection = None
-        self._client = None
-        if client is None:
-            return
+    @store_operation
+    def recovery_snapshot(self, *, written=None):
+        """Observe an existing qualified collection without creating or embedding."""
+        import chromadb
+        from chromadb.api.rust import RustBindingsAPI
 
-        try:
-            close = getattr(client, "close", None)
-            if callable(close):
-                close()
-            logger.info("ChromaVectorStore closed")
-        except Exception as e:
-            logger.error(f"Error closing ChromaVectorStore: {e}")
+        from ..recovery import _LIMIT, _rows, _written_rows
+
+        if chromadb.__version__ != "1.5.8" or not (
+            self.persist_directory / "chroma.sqlite3"
+        ).is_file():
+            raise ValueError("projection_native_format_unavailable")
+        client = self.client
+        if type(client._server) is not RustBindingsAPI:
+            raise ValueError("projection_native_format_unavailable")
+        collection = client.get_collection(
+            self.collection_name, embedding_function=None, data_loader=None
+        )
+        metric = collection._model.configuration_json.get("hnsw", {}).get("space")
+        count = collection.count()
+        if count > _LIMIT:
+            raise ValueError("projection_record_limit")
+        rows = {}
+        expected_count = count if written is None else len(written[0])
+        if expected_count > _LIMIT:
+            raise ValueError("projection_record_limit")
+        for offset in range(0, expected_count, 128):
+            if written is None:
+                batch = collection.get(
+                    limit=128, offset=offset,
+                    include=["documents", "metadatas", "embeddings"],
+                )
+                observed = _rows(
+                    batch["ids"], batch["documents"], batch["metadatas"], batch["embeddings"]
+                )
+            else:
+                part = tuple(values[offset:offset + 128] for values in written)
+                batch = collection.get(
+                    ids=part[0], include=["documents", "metadatas", "embeddings"]
+                )
+                observed = _written_rows(batch, *part, metric)
+            if set(rows) & set(observed):
+                raise ValueError("projection_membership_changed")
+            rows.update(observed)
+        if len(rows) != expected_count or collection.count() != count:
+            raise ValueError("projection_membership_changed")
+        info = self.persist_directory.stat()
+        return {
+            "root": (str(self.persist_directory), info.st_dev, info.st_ino),
+            "collection": str(collection.id), "rows": rows, "metric": metric,
+        }
+
+    def close(self) -> None:
+        """Close the native borrower, retaining failed retirement for maintenance."""
+        with self._projection_lock:
+            client = self._client
+            if client is not None and projection_lifetime.close_client(client):
+                self._collection = None
+                self._client = None
 
 
 class InMemoryVectorStore:
@@ -938,6 +1026,7 @@ class InMemoryVectorStore:
             else:
                 break
 
+    @activation_guarded
     def add(
         self,
         ids: List[str],
@@ -1328,6 +1417,7 @@ class InMemoryVectorStore:
 
         return results_with_citations
 
+    @activation_guarded
     def delete_collection(self, name: str) -> bool:
         """Delete a specific collection."""
         deleted = False
@@ -1345,6 +1435,7 @@ class InMemoryVectorStore:
 
         return deleted
 
+    @activation_guarded
     def delete_document(self, doc_id: str) -> None:
         """Delete all chunks belonging to a document (no-op when absent).
 
@@ -1375,6 +1466,7 @@ class InMemoryVectorStore:
             f"Deleted {len(removed_ids)} chunks for document {doc_id} from in-memory store"
         )
 
+    @activation_guarded
     def clear(self) -> None:
         """Clear all data."""
         self.ids.clear()
@@ -1437,6 +1529,7 @@ class InMemoryVectorStore:
 
         return stats
 
+    @activation_guarded
     def add_documents(
         self,
         collection_name: str,

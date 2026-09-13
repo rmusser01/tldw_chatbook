@@ -4,6 +4,8 @@
 # This library is used to perform 'Local' API calls to LLM endpoints.
 #
 ####
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+
 import json
 import os
 import time
@@ -104,6 +106,7 @@ def _extract_text_from_message_content(
 
 # Most local LLMs with OpenAI-compatible endpoints (like LM Studio, Jan.ai, many Ollama setups)
 # can use a generic handler.
+@_provider_recovery.unqualified
 def _chat_with_openai_compatible_local_server(
     api_base_url: str,
     model_name: Optional[str],
@@ -531,6 +534,7 @@ def _chat_with_openai_compatible_local_server(
         )
 
 
+@_provider_recovery.unqualified
 def chat_with_local_llm(
     input_data: List[Dict[str, Any]],
     temp: Optional[float] = None,
@@ -699,6 +703,7 @@ def chat_with_local_llm(
     )
 
 
+@_provider_recovery.unqualified
 def chat_with_llama(
     input_data: List[Dict[str, Any]],
     api_key: str | None = None,
@@ -917,6 +922,7 @@ def chat_with_llama(
 
 # System prompts not supported through API requests.
 # https://lite.koboldai.net/koboldcpp_api#/api%2Fv1/post_api_v1_generate
+@_provider_recovery.unqualified
 def chat_with_kobold(
     input_data: List[Dict[str, Any]],
     api_key: Optional[str] = None,
@@ -1229,6 +1235,7 @@ def chat_with_kobold(
 
 # https://github.com/oobabooga/text-generation-webui/wiki/12-%E2%80%90-OpenAI-API
 # Oobabooga with OpenAI extension
+@_provider_recovery.unqualified
 def chat_with_oobabooga(
     input_data: List[Dict[str, Any]],
     api_key: Optional[str] = None,  # from map
@@ -1348,6 +1355,7 @@ def chat_with_oobabooga(
 
 
 # TabbyAPI (seems OpenAI compatible)
+@_provider_recovery.unqualified
 def chat_with_tabbyapi(
     input_data: List[Dict[str, Any]],
     api_key: Optional[str] = None,  # from map
@@ -1441,6 +1449,7 @@ def chat_with_tabbyapi(
 
 
 # vLLM (OpenAI compatible)
+@_provider_recovery.unqualified
 def chat_with_vllm(
     input_data: List[Dict[str, Any]],
     api_key: str | None = None,
@@ -1627,6 +1636,7 @@ def chat_with_vllm(
 
 
 # Aphrodite (seems to be an OpenAI compatible engine)
+@_provider_recovery.unqualified
 def chat_with_aphrodite(
     input_data: List[Dict[str, Any]],
     api_key: Optional[str] = None,  # from map
@@ -1749,6 +1759,7 @@ def chat_with_aphrodite(
 
 
 # Ollama (with OpenAI compatible endpoint)
+@_provider_recovery.unqualified
 def chat_with_ollama(
     input_data: List[Dict[str, Any]],
     api_key: str | None = None,
@@ -1956,6 +1967,7 @@ def chat_with_ollama(
 
 
 # Custom OpenAI API 1
+@_provider_recovery.unqualified
 def chat_with_custom_openai(
     input_data: List[Dict[str, Any]],
     api_key: Optional[str] = None,
@@ -2146,6 +2158,7 @@ def chat_with_custom_openai(
 
 
 # Custom OpenAI API 2
+@_provider_recovery.unqualified
 def chat_with_custom_openai_2(
     input_data: List[Dict[str, Any]],
     api_key: Optional[str] = None,
@@ -2353,6 +2366,7 @@ def save_summary_to_file(summary: str, file_path: str):  # Type hinting
 #######################################################################################################################
 
 
+@_provider_recovery.unqualified
 def chat_with_mlx_lm(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,  # This will be the model_path for MLX-LM

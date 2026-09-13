@@ -19,6 +19,8 @@ from pathlib import Path
 from types import MappingProxyType
 from uuid import uuid4
 
+from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
+
 from tldw_chatbook.Notes.note_import_execution_models import (
     MAX_RECEIPT_LEDGER_ROWS,
     ApprovedNoteImportPlan,
@@ -442,8 +444,14 @@ class NoteImportReceiptRepository:
     """Own import receipts within the shared profile-local Notes state store."""
 
     def __init__(self, database_path: str | Path) -> None:
-        self._database_path = Path(database_path)
+        self.is_memory_db = str(database_path) == ":memory:"
+        self._database_path = Path(":memory:") if self.is_memory_db else lexical_path(database_path)
+
         self._store = NotesDeviceStateStore(self._database_path)
+
+    @property
+    def db_path(self) -> Path:
+        return self._database_path
 
     def __repr__(self) -> str:
         return "NoteImportReceiptRepository(<private>)"

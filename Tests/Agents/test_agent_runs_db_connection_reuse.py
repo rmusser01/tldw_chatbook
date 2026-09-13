@@ -32,8 +32,9 @@ def connection_spy(monkeypatch):
     return opened
 
 
-def test_repeated_reads_open_no_new_connections(tmp_path: Path, connection_spy):
+def test_repeated_reads_open_no_new_connections(request, tmp_path: Path, connection_spy):
     db = AgentRunsDB(tmp_path / "agent_runs.sqlite", client_id="client-1")
+    request.addfinalizer(db.close)
     db.create_run(conversation_id="conv-1", agent_kind="primary")  # warm-up
 
     baseline = len(connection_spy)
@@ -46,9 +47,11 @@ def test_repeated_reads_open_no_new_connections(tmp_path: Path, connection_spy):
 
 
 def test_failed_transaction_rolls_back_and_connection_stays_usable(
+    request,
     tmp_path: Path,
 ):
     db = AgentRunsDB(tmp_path / "agent_runs.sqlite", client_id="client-1")
+    request.addfinalizer(db.close)
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
 
     with pytest.raises(RuntimeError, match="boom"):
@@ -69,8 +72,9 @@ def test_failed_transaction_rolls_back_and_connection_stays_usable(
     }
 
 
-def test_each_thread_gets_its_own_connection(tmp_path: Path):
+def test_each_thread_gets_its_own_connection(request, tmp_path: Path):
     db = AgentRunsDB(tmp_path / "agent_runs.sqlite", client_id="client-1")
+    request.addfinalizer(db.close)
     db.create_run(conversation_id="conv-1", agent_kind="primary")
 
     seen: dict[str, object] = {}
@@ -83,6 +87,8 @@ def test_each_thread_gets_its_own_connection(tmp_path: Path):
                 seen[tag] = conn
         except BaseException as exc:  # noqa: BLE001 - surface to the test
             errors.append(exc)
+        finally:
+            db.close()
 
     threads = [threading.Thread(target=read, args=(f"t{i}",)) for i in range(2)]
     for t in threads:

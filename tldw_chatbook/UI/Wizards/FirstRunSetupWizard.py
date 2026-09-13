@@ -6916,6 +6916,14 @@ class WelcomeStep(SetupStep):
                 yield SetupRadioButton(
                     "Full setup — configure everything", id="setup-track-full"
                 )
+            yield Button("Restore a backup", id="setup-backup-restore")
+            yield Static("", classes="setup-step-error")
+
+    @on(Button.Pressed, "#setup-backup-restore")
+    def open_backup_restore(self, event: Button.Pressed) -> None:
+        """Keep setup choices intact while the app owns the recovery view."""
+        event.stop()
+        self.app.action_backup_restore()
 
     def get_step_data(self) -> Dict[str, Any]:
         return {"track": self.chosen_track()}

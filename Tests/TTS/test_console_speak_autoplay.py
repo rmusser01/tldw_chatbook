@@ -323,7 +323,7 @@ async def test_trusted_snapshot_rejection_reports_auto_speak_failure_once() -> N
         store.validate_tts_message_speech_snapshot,
         outcome_callback=outcomes.append,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler.app = _FakeApp()
 
     await handler.handle_tts_request(event)
@@ -347,7 +347,7 @@ async def test_auto_speak_outcome_callback_reaches_admitted_generation() -> None
         store.validate_tts_message_speech_snapshot,
         outcome_callback=outcomes.append,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._validate_message_speech_snapshot = AsyncMock(return_value="Ready.")
     handler._prepare_tts_text = AsyncMock(return_value="Ready.")
     handler._resolve_message_speech_request = AsyncMock(return_value=object())
@@ -379,7 +379,7 @@ async def test_automatic_request_rejects_destination_change_before_admission() -
         outcome_callback=outcomes.append,
         expected_destination_fingerprint=expected,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._validate_message_speech_snapshot = AsyncMock(return_value="Ready.")
     handler._prepare_tts_text = AsyncMock(return_value="Ready.")
     resolution = object()
@@ -404,7 +404,7 @@ async def test_automatic_request_rechecks_destination_immediately_before_synthes
     outcomes: list[bool] = []
     service = MagicMock()
     service.synthesize_default = AsyncMock()
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._tts_service = service
     handler._destination_for_resolution = AsyncMock(
         return_value=MagicMock(fingerprint=changed)
@@ -446,7 +446,7 @@ async def test_unexpected_trusted_request_failure_settles_once(failure_stage: st
         store.validate_tts_message_speech_snapshot,
         outcome_callback=outcomes.append,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._validate_message_speech_snapshot = AsyncMock(return_value="Ready.")
     handler._prepare_tts_text = AsyncMock(return_value="Ready.")
     handler._resolve_message_speech_request = AsyncMock(return_value=object())
@@ -478,7 +478,7 @@ async def test_trusted_prepare_rejection_settles_once() -> None:
         store.validate_tts_message_speech_snapshot,
         outcome_callback=outcomes.append,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._validate_message_speech_snapshot = AsyncMock(return_value="Ready.")
     handler._prepare_tts_text = AsyncMock(return_value=None)
 
@@ -503,7 +503,7 @@ async def test_trusted_request_cancellation_settles_once() -> None:
         store.validate_tts_message_speech_snapshot,
         outcome_callback=outcomes.append,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._validate_message_speech_snapshot = AsyncMock(
         side_effect=asyncio.CancelledError
     )
@@ -518,7 +518,7 @@ async def test_trusted_request_cancellation_settles_once() -> None:
 @pytest.mark.asyncio
 async def test_trusted_request_cooldown_settles_once() -> None:
     outcomes: list[bool] = []
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     now = asyncio.get_running_loop().time()
     handler._request_cooldown = {"message-1": now}
     handler._last_cooldown_cleanup = now
@@ -540,7 +540,7 @@ async def test_trusted_request_cooldown_settles_once() -> None:
 @pytest.mark.asyncio
 async def test_retry_failed_auto_bypasses_only_its_existing_message_cooldown() -> None:
     outcomes: list[bool] = []
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     now = asyncio.get_running_loop().time()
     handler._request_cooldown = {"message-1": now, "other-message": now}
     handler._last_cooldown_cleanup = now
@@ -564,7 +564,7 @@ async def test_retry_failed_auto_bypasses_only_its_existing_message_cooldown() -
 @pytest.mark.asyncio
 @pytest.mark.parametrize("post_result", [False, RuntimeError("queue closed")])
 async def test_post_tts_message_reports_queue_acceptance(post_result) -> None:
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     app = MagicMock()
     if isinstance(post_result, Exception):
         app.post_message.side_effect = post_result
@@ -2626,7 +2626,7 @@ async def test_adhoc_completion_autoplays_and_audio_is_cached_under_adhoc(tmp_pa
 
     # (b) handler-level: the "adhoc" cache key resolves in handle_tts_playback's
     # lookup table (the normalization upstream guarantees it was cached there).
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._audio_files = {"adhoc": audio_file}
     assert handler._audio_files.get(playback_events[0].message_id) == audio_file
 

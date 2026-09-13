@@ -80,12 +80,33 @@ class EvaluationOrchestrator:
 
         # Initialize active tasks tracking for cancellation
         self._active_tasks = {}
+        self._maintenance_paused = False
+        self._maintenance_runs: dict[asyncio.Task, int] = {}
 
         # Initialize database connection
         self.db = self._initialize_database(db_path, client_id)
 
         # Initialize task loader
         self.task_loader = TaskLoader()
+
+    def _maintenance_close_admission(self) -> None:
+        """Close new run intake without stopping accepted evaluations."""
+        self._maintenance_paused = True
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        """Wait for evaluation ownership to settle before storage capture."""
+        if not self._maintenance_paused:
+            raise RuntimeError("evaluations_maintenance_not_paused")
+        while self._maintenance_runs:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def _maintenance_resume(self) -> None:
+        """Reopen run intake after the storage owner resumes."""
+        self._maintenance_paused = False
 
     def _initialize_database(
         self,
@@ -384,6 +405,33 @@ class EvaluationOrchestrator:
         }
 
     async def run_evaluation(
+        self,
+        task_id: str,
+        model_id: str,
+        run_name: str | None = None,
+        max_samples: int | None = None,
+        config_overrides: dict[str, Any] | None = None,
+        progress_callback: Callable | None = None,
+        run_started_callback: Callable | None = None,
+    ) -> str:
+        """Admit one complete evaluation, including preparation and cleanup."""
+        if self._maintenance_paused:
+            raise RuntimeError("evaluations_paused_for_maintenance")
+        task = asyncio.current_task()
+        depth = self._maintenance_runs.get(task, 0)
+        self._maintenance_runs[task] = depth + 1
+        try:
+            return await self._run_admitted_evaluation(
+                task_id, model_id, run_name, max_samples, config_overrides,
+                progress_callback, run_started_callback,
+            )
+        finally:
+            if depth:
+                self._maintenance_runs[task] = depth
+            else:
+                self._maintenance_runs.pop(task, None)
+
+    async def _run_admitted_evaluation(
         self,
         task_id: str,
         model_id: str,

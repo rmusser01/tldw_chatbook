@@ -7,10 +7,18 @@ import contextvars
 import functools
 import inspect
 import threading
+import time
+from contextlib import nullcontext
+
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from enum import Enum
 from typing import Any
+
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
 
 from .server_writing_service import (
     REASON_DIRECT_MANUSCRIPT_SCENE,
@@ -79,17 +87,29 @@ def _backend_executor() -> ThreadPoolExecutor:
     return _BACKEND_EXECUTOR
 
 
-async def _run_on_backend_thread(call: Any) -> Any:
+async def _run_on_backend_thread(call: Any, *, lifetime=None, pending=None) -> Any:
     """Await ``call()`` on the shared single backend thread.
 
     Mirrors ``asyncio.to_thread``'s contextvar propagation, which
     ``run_in_executor`` does not do on its own.
     """
-    loop = asyncio.get_running_loop()
-    context = contextvars.copy_context()
-    return await loop.run_in_executor(
-        _backend_executor(), functools.partial(context.run, call)
-    )
+    operation = lifetime.operation() if lifetime is not None else nullcontext()
+    with operation:
+        loop = asyncio.get_running_loop()
+        context = contextvars.copy_context()
+        future = loop.run_in_executor(
+            _backend_executor(), functools.partial(context.run, call)
+        )
+        if pending is not None:
+            pending.add(future)
+
+            def finished(completed):
+                pending.discard(completed)
+                if not completed.cancelled():
+                    completed.exception()
+
+            future.add_done_callback(finished)
+        return await asyncio.shield(future)
 
 
 class _ThreadOffloadedBackend:
@@ -105,10 +125,12 @@ class _ThreadOffloadedBackend:
     backend never pays a thread hop.
     """
 
-    __slots__ = ("_backend",)
+    __slots__ = ("_backend", "_lifetime", "_pending")
 
-    def __init__(self, backend: Any) -> None:
+    def __init__(self, backend: Any, *, lifetime=None, pending=None) -> None:
         self._backend = backend
+        self._lifetime = lifetime
+        self._pending = pending
 
     def __getattr__(self, name: str) -> Any:
         attribute = getattr(self._backend, name)
@@ -117,7 +139,11 @@ class _ThreadOffloadedBackend:
 
         @functools.wraps(attribute)
         def _offloaded(*args: Any, **kwargs: Any) -> Any:
-            return _run_on_backend_thread(functools.partial(attribute, *args, **kwargs))
+            return _run_on_backend_thread(
+                functools.partial(attribute, *args, **kwargs),
+                lifetime=self._lifetime,
+                pending=self._pending,
+            )
 
         return _offloaded
 
@@ -128,9 +154,63 @@ class WritingScopeService:
     def __init__(
         self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None
     ):
+        self._producer_lifetime = ProducerLifetime()
+        self._pending_backend_work = set()
+        self._maintenance_close_task = None
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
+
+    def _maintenance_close_admission(self):
+        """Fence new scope calls before local persistence admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Settle accepted calls and retire the local cache on its executor."""
+        if not await self._producer_lifetime.drain(deadline):
+            return False
+        while self._pending_backend_work:
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(min(0.01, max(0, deadline - time.monotonic())))
+        if self.local_service is None:
+            return True
+        from .local_writing_service import LocalWritingService
+
+        if type(self.local_service) is not LocalWritingService:
+            raise RuntimeError("runtime_owner_unqualified")
+        from tldw_chatbook.Backup_Recovery.participants import (
+            _close_settled_core_cache,
+        )
+
+        if self._maintenance_close_task is None or (
+            self._maintenance_close_task.done()
+            and not self._maintenance_close_task.result()
+        ):
+            self._maintenance_close_task = asyncio.create_task(
+                _run_on_backend_thread(
+                    functools.partial(_close_settled_core_cache, self.local_service)
+                )
+            )
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(self._maintenance_close_task),
+                max(0, deadline - time.monotonic()),
+            )
+        except TimeoutError:
+            return False
+
+    def _maintenance_resume(self):
+        """Reopen the same service after its native work has settled."""
+        if self._pending_backend_work or (
+            self._maintenance_close_task is not None
+            and not self._maintenance_close_task.done()
+        ):
+            raise RuntimeError("runtime_work_not_settled")
+        if self._maintenance_close_task is not None:
+            self._maintenance_close_task.result()
+            self._maintenance_close_task = None
+        self._producer_lifetime.resume()
 
     def _normalize_mode(self, mode: WritingBackend | str | None) -> WritingBackend:
         if mode is None:
@@ -152,10 +232,16 @@ class WritingScopeService:
         if mode == WritingBackend.LOCAL:
             if self.local_service is None:
                 raise ValueError("Local writing backend is unavailable.")
-            return _ThreadOffloadedBackend(self.local_service)
+            return _ThreadOffloadedBackend(
+                self.local_service, lifetime=self._producer_lifetime,
+                pending=self._pending_backend_work,
+            )
         if self.server_service is None:
             raise ValueError("Server writing backend is unavailable.")
-        return _ThreadOffloadedBackend(self.server_service)
+        return _ThreadOffloadedBackend(
+            self.server_service, lifetime=self._producer_lifetime,
+            pending=self._pending_backend_work,
+        )
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -232,6 +318,7 @@ class WritingScopeService:
             f"{mode.value} writing backend does not implement {method_name}."
         )
 
+    @producer_call
     async def list_projects(
         self,
         *,
@@ -249,6 +336,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "project", result)
 
+    @producer_call
     async def create_project(
         self,
         *,
@@ -265,6 +353,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "project", result)
 
+    @producer_call
     async def get_project(
         self,
         *,
@@ -278,6 +367,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "project", result)
 
+    @producer_call
     async def get_structure(
         self,
         *,
@@ -291,6 +381,7 @@ class WritingScopeService:
         )
         return normalize_writing_structure(normalized_mode.value, result)
 
+    @producer_call
     async def update_project(
         self,
         *,
@@ -310,6 +401,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "project", result)
 
+    @producer_call
     async def delete_project(
         self,
         *,
@@ -328,6 +420,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def create_manuscript(
         self,
         *,
@@ -345,6 +438,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "manuscript", result)
 
+    @producer_call
     async def list_manuscripts(
         self,
         *,
@@ -358,6 +452,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "manuscript", result)
 
+    @producer_call
     async def get_manuscript(
         self,
         *,
@@ -371,6 +466,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "manuscript", result)
 
+    @producer_call
     async def update_manuscript(
         self,
         *,
@@ -390,6 +486,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "manuscript", result)
 
+    @producer_call
     async def delete_manuscript(
         self,
         *,
@@ -408,6 +505,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def create_chapter(
         self,
         *,
@@ -429,6 +527,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "chapter", result)
 
+    @producer_call
     async def list_chapters(
         self,
         *,
@@ -446,6 +545,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "chapter", result)
 
+    @producer_call
     async def get_chapter(
         self,
         *,
@@ -459,6 +559,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "chapter", result)
 
+    @producer_call
     async def update_chapter(
         self,
         *,
@@ -481,6 +582,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "chapter", result)
 
+    @producer_call
     async def delete_chapter(
         self,
         *,
@@ -499,6 +601,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def create_scene(
         self,
         *,
@@ -522,6 +625,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "scene", result)
 
+    @producer_call
     async def list_scenes(
         self,
         *,
@@ -539,6 +643,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "scene", result)
 
+    @producer_call
     async def get_scene(
         self,
         *,
@@ -552,6 +657,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "scene", result)
 
+    @producer_call
     async def update_scene(
         self,
         *,
@@ -571,6 +677,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "scene", result)
 
+    @producer_call
     async def delete_scene(
         self,
         *,
@@ -589,6 +696,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def create_character(
         self,
         *,
@@ -607,6 +715,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "character", result)
 
+    @producer_call
     async def list_characters(
         self,
         *,
@@ -627,6 +736,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "character", result)
 
+    @producer_call
     async def get_character(
         self,
         *,
@@ -643,6 +753,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "character", result)
 
+    @producer_call
     async def update_character(
         self,
         *,
@@ -663,6 +774,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "character", result)
 
+    @producer_call
     async def delete_character(
         self,
         *,
@@ -682,6 +794,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def create_relationship(
         self,
         *,
@@ -701,6 +814,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "relationship", result)
 
+    @producer_call
     async def list_relationships(
         self,
         *,
@@ -717,6 +831,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "relationship", result)
 
+    @producer_call
     async def delete_relationship(
         self,
         *,
@@ -738,6 +853,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def create_world_info(
         self,
         *,
@@ -760,6 +876,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "world_info", result)
 
+    @producer_call
     async def list_world_info(
         self,
         *,
@@ -777,6 +894,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "world_info", result)
 
+    @producer_call
     async def get_world_info(
         self,
         *,
@@ -791,6 +909,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "world_info", result)
 
+    @producer_call
     async def update_world_info(
         self,
         *,
@@ -811,6 +930,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "world_info", result)
 
+    @producer_call
     async def delete_world_info(
         self,
         *,
@@ -830,6 +950,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def create_plot_line(
         self,
         *,
@@ -848,6 +969,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "plot_line", result)
 
+    @producer_call
     async def list_plot_lines(
         self,
         *,
@@ -864,6 +986,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "plot_line", result)
 
+    @producer_call
     async def update_plot_line(
         self,
         *,
@@ -884,6 +1007,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "plot_line", result)
 
+    @producer_call
     async def delete_plot_line(
         self,
         *,
@@ -903,6 +1027,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def create_plot_event(
         self,
         *,
@@ -923,6 +1048,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "plot_event", result)
 
+    @producer_call
     async def list_plot_events(
         self,
         *,
@@ -939,6 +1065,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "plot_event", result)
 
+    @producer_call
     async def update_plot_event(
         self,
         *,
@@ -959,6 +1086,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "plot_event", result)
 
+    @producer_call
     async def delete_plot_event(
         self,
         *,
@@ -978,6 +1106,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def create_plot_hole(
         self,
         *,
@@ -996,6 +1125,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "plot_hole", result)
 
+    @producer_call
     async def list_plot_holes(
         self,
         *,
@@ -1013,6 +1143,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "plot_hole", result)
 
+    @producer_call
     async def update_plot_hole(
         self,
         *,
@@ -1033,6 +1164,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "plot_hole", result)
 
+    @producer_call
     async def delete_plot_hole(
         self,
         *,
@@ -1052,6 +1184,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def link_scene_character(
         self,
         *,
@@ -1074,6 +1207,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "scene_character_link", result)
 
+    @producer_call
     async def list_scene_characters(
         self,
         *,
@@ -1092,6 +1226,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "scene_character_link", result)
 
+    @producer_call
     async def unlink_scene_character(
         self,
         *,
@@ -1112,6 +1247,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def link_scene_world_info(
         self,
         *,
@@ -1132,6 +1268,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "scene_world_info_link", result)
 
+    @producer_call
     async def list_scene_world_info(
         self,
         *,
@@ -1150,6 +1287,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "scene_world_info_link", result)
 
+    @producer_call
     async def unlink_scene_world_info(
         self,
         *,
@@ -1170,6 +1308,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def create_citation(
         self,
         *,
@@ -1190,6 +1329,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "citation", result)
 
+    @producer_call
     async def list_citations(
         self,
         *,
@@ -1204,6 +1344,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "citation", result)
 
+    @producer_call
     async def delete_citation(
         self,
         *,
@@ -1223,6 +1364,7 @@ class WritingScopeService:
             )
         )
 
+    @producer_call
     async def research_scene(
         self,
         *,
@@ -1249,6 +1391,7 @@ class WritingScopeService:
             return payload
         return result
 
+    @producer_call
     async def analyze_scene(
         self,
         *,
@@ -1271,6 +1414,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "analysis", result)
 
+    @producer_call
     async def analyze_chapter(
         self,
         *,
@@ -1293,6 +1437,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "analysis", result)
 
+    @producer_call
     async def analyze_project_plot_holes(
         self,
         *,
@@ -1317,6 +1462,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "analysis", result)
 
+    @producer_call
     async def analyze_project_consistency(
         self,
         *,
@@ -1341,6 +1487,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "analysis", result)
 
+    @producer_call
     async def list_analyses(
         self,
         *,
@@ -1375,6 +1522,7 @@ class WritingScopeService:
             )
         }
 
+    @producer_call
     async def create_version(
         self,
         *,
@@ -1394,6 +1542,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "version", result)
 
+    @producer_call
     async def list_versions(
         self,
         *,
@@ -1410,6 +1559,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "version", result)
 
+    @producer_call
     async def get_version(
         self,
         *,
@@ -1429,6 +1579,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, "version", result)
 
+    @producer_call
     async def restore_version(
         self,
         *,
@@ -1450,6 +1601,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, entity_type, result)
 
+    @producer_call
     async def list_trash(
         self,
         *,
@@ -1465,6 +1617,7 @@ class WritingScopeService:
             return result
         return self._normalize_result(normalized_mode, entity_type, result)
 
+    @producer_call
     async def restore_trash(
         self,
         *,
@@ -1484,6 +1637,7 @@ class WritingScopeService:
         )
         return self._normalize_result(normalized_mode, entity_type, result)
 
+    @producer_call
     async def reorder_entities(
         self,
         *,

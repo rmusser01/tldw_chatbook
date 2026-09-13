@@ -6,8 +6,12 @@ that provides thread-safe caching, multiple providers, and async support.
 """
 
 from types import SimpleNamespace
+from ..activation import async_guarded as activation_async_guarded
+from ..activation import guarded as activation_guarded
+from ..activation import source_paths
 from typing import List, Optional, Dict, Any, Union
 from loguru import logger
+import asyncio
 import os
 import re
 import time
@@ -186,6 +190,7 @@ class EmbeddingsServiceWrapper:
         self._api_key = api_key
         self._base_url = base_url
         self._cache_dir = cache_dir
+        self._rag_activation_sources = source_paths(self)
         self._use_mock_backend = str(model_name).lower() in {
             "mock",
             "mock-embedding-model",
@@ -275,11 +280,37 @@ class EmbeddingsServiceWrapper:
 
         self._ensure_initialized()
 
+    @activation_guarded
     def _ensure_initialized(self):
         """Ensure the factory is initialized when first needed."""
+        recovered = None
+        if not self._use_mock_backend and not self.model_name.startswith("openai/"):
+            from tldw_chatbook.Embeddings.Embeddings_Lib import HFModelCfg
+
+            from ..model_recovery import require_local_embedding
+
+            recovered = require_local_embedding(
+                HFModelCfg(
+                    model_name_or_path=self.model_name,
+                    device=self.device,
+                    cache_dir=self._cache_dir,
+                    local_files_only=True,
+                )
+            )
         if self.factory is not None:
+            if recovered != getattr(self, "_local_model_binding", None):
+                from ..activation import RAGActivationRequired
+
+                raise RAGActivationRequired("local_model_review_changed")
             return
 
+        if self._config_dict is not None and recovered != getattr(
+            self, "_local_model_binding", None
+        ):
+            from ..activation import RAGActivationRequired
+
+            raise RAGActivationRequired("local_model_review_changed")
+        self._local_model_binding = recovered
         if self._use_mock_backend:
             self.factory = _DeterministicEmbeddingFactory()
             self._embedding_dimension = self.factory.dimension
@@ -302,6 +333,9 @@ class EmbeddingsServiceWrapper:
                 self._cache_dir,
             )
 
+        if recovered:
+            self._config_dict["models"]["default"]["local_files_only"] = True
+
         try:
             # Validate the configuration
             validated_config = EmbeddingConfigSchema(**self._config_dict)
@@ -311,8 +345,12 @@ class EmbeddingsServiceWrapper:
                 cfg=validated_config,
                 max_cached=self._cache_size,
                 idle_seconds=900,  # 15 minutes idle timeout
-                allow_dynamic_hf=True,  # Allow loading HF models not in config
+                allow_dynamic_hf=not bool(recovered),  # Recovery binds one reviewed model
             )
+            if recovered or os.path.isdir(os.path.expanduser(self.model_name)):
+                from ..model_recovery import participant
+
+                participant.register_wrapper(self)
             logger.info(
                 f"Initialized embeddings factory with model: {self.model_name}, device: {self.device}"
             )
@@ -433,6 +471,7 @@ class EmbeddingsServiceWrapper:
         return config
 
     @timeit("embeddings_create_operation")
+    @activation_guarded
     def create_embeddings(self, texts: List[str]) -> np.ndarray:
         """
         Create embeddings for texts using the configured model.
@@ -605,6 +644,7 @@ class EmbeddingsServiceWrapper:
             return 1536
         return 384
 
+    @activation_async_guarded
     async def create_embeddings_async(self, texts: List[str]) -> np.ndarray:
         """
         Async version of create_embeddings.
@@ -633,7 +673,7 @@ class EmbeddingsServiceWrapper:
             # Use the factory's async embed method with circuit breaker protection
             try:
                 embeddings = await self._circuit_breaker.call_async(
-                    self.factory.async_embed, texts, as_list=False
+                    self._async_factory_embed, texts
                 )
             except CircuitBreakerOpenError as e:
                 # Circuit is open, fail fast
@@ -672,6 +712,7 @@ class EmbeddingsServiceWrapper:
             )
             raise RuntimeError(f"Async embedding creation failed: {e}") from e
 
+    @activation_guarded
     def create_embedding(self, text: str) -> np.ndarray:
         """
         Create embedding for a single text.
@@ -692,12 +733,28 @@ class EmbeddingsServiceWrapper:
             logger.debug(f"After conversion: shape={result.shape}")
         return result
 
+    async def _async_factory_embed(self, texts):
+        from contextlib import nullcontext
+
+        from ..activation import native_worker
+        from ..model_recovery import participant
+
+        local = os.path.isdir(os.path.expanduser(self.model_name))
+        with participant.operation() if local else nullcontext():
+            function = (
+                participant.worker(self.factory.embed) if local else self.factory.embed
+            )
+            return await asyncio.to_thread(
+                native_worker(self, function), texts, as_list=False
+            )
+
+    @activation_async_guarded
     async def create_embedding_async(self, text: str) -> np.ndarray:
         """
         Async version of create_embedding for single text.
         """
         self._ensure_initialized()
-        result = await self.factory.async_embed_one(text, as_list=False)
+        result = (await self._async_factory_embed([text]))[0]
         if not isinstance(result, np.ndarray):
             result = np.array(result)
         return result
@@ -726,6 +783,7 @@ class EmbeddingsServiceWrapper:
             return None
 
     @timeit("embeddings_prefetch_models")
+    @activation_guarded
     def prefetch_model(self, model_ids: Optional[List[str]] = None):
         """
         Prefetch and cache models for faster first-use.

@@ -12,8 +12,12 @@ from typing import List, Optional, Dict, Any, Union, Literal
 from loguru import logger
 import time
 
+from ..generation import service_query
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant as projection_lifetime
 from .rag_service import RAGService, SearchResult, SearchResultWithCitations
 from .config import RAGConfig
+from ..activation import async_guarded as activation_async_guarded
+from ..activation import guarded as activation_guarded
 from .data_models import IndexingResult
 from ..enhanced_chunking_service import EnhancedChunkingService
 from .enhanced_indexing_helpers import (
@@ -35,6 +39,7 @@ class EnhancedRAGService(RAGService):
     - Improved search with automatic context expansion
     """
 
+    @activation_guarded
     def __init__(
         self, config: Optional[RAGConfig] = None, enable_parent_retrieval: bool = True
     ):
@@ -62,6 +67,7 @@ class EnhancedRAGService(RAGService):
         )
 
     @timeit("enhanced_rag_indexing_document")
+    @activation_async_guarded
     async def index_document_with_parents(
         self,
         doc_id: str,
@@ -242,6 +248,7 @@ class EnhancedRAGService(RAGService):
                 error=str(e),
             )
 
+    @activation_async_guarded
     async def index_batch_with_parents(
         self,
         documents: List[Dict[str, Any]],
@@ -349,6 +356,9 @@ class EnhancedRAGService(RAGService):
         return results
 
     @timeit("enhanced_rag_search_with_expansion")
+    @projection_lifetime.async_operation
+    @service_query
+    @activation_async_guarded
     async def search_with_context_expansion(
         self,
         query: str,

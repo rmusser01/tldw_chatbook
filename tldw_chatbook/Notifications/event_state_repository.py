@@ -14,6 +14,13 @@ from typing import Any, Iterator, Mapping
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.runtime_policy.server_parity_models import (
@@ -165,6 +172,7 @@ class EventStateRepository(BaseDB):
             self._initialize_schema()
             self._schema_ready = True
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
         self._ensure_schema()
         return self._open_connection()
@@ -205,25 +213,33 @@ class EventStateRepository(BaseDB):
         # are handed to ``close()`` on another thread; sqlite3's default
         # guard would refuse that and leave every worker-pool connection
         # open for the life of the process.
+        _core_access(self)
         conn = connect_private_sqlite(
             "notifications.event_state",
             self.db_path_str,
             check_same_thread=False,
         )
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit, acceptable for this local event/notification
-        # ledger) and avoids an fsync per commit (task-15465).
-        conn.execute("PRAGMA synchronous = NORMAL")
-        # TASK-21131: a HELD (long-lived) connection needs true autocommit.
-        # Python's legacy isolation mode auto-BEGINs a DEFERRED transaction
-        # on the first DML statement, which then makes the explicit
-        # ``BEGIN IMMEDIATE`` in `transaction()` raise "cannot start a
-        # transaction within a transaction", and silently rolls back bare
-        # DML on close.
-        conn.isolation_level = None
-        conn.execute("PRAGMA foreign_keys = ON")
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit, acceptable for this local event/notification
+            # ledger) and avoids an fsync per commit (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
+            # TASK-21131: a HELD (long-lived) connection needs true autocommit.
+            # Python's legacy isolation mode auto-BEGINs a DEFERRED transaction
+            # on the first DML statement, which then makes the explicit
+            # ``BEGIN IMMEDIATE`` in `transaction()` raise "cannot start a
+            # transaction within a transaction", and silently rolls back bare
+            # DML on close.
+            conn.isolation_level = None
+            conn.execute("PRAGMA foreign_keys = ON")
+            _core_access(self)
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     def _held_connection(self) -> sqlite3.Connection:
@@ -247,9 +263,13 @@ class EventStateRepository(BaseDB):
                 entry.last_used = time.monotonic()
                 return entry
 
+        _core_access(self)
         key = threading.get_ident()
         with self._held_lock:
             entry = self._held.get(key)
+            if entry is not None and _core_cached_connection(self, entry.conn) is None:
+                del self._held[key]
+                entry = None
         if entry is not None and (
             (time.monotonic() - entry.last_used) >= self._LIVENESS_PING_IDLE_SECONDS
         ):
@@ -269,6 +289,7 @@ class EventStateRepository(BaseDB):
         entry.last_used = time.monotonic()
         return entry
 
+    @_core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Yield this thread's held connection (no transaction opened).

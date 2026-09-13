@@ -9,6 +9,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Union
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
 from .base_db import BaseDB
 
 
@@ -487,8 +494,18 @@ class LibraryCollectionsDB(BaseDB):
         self._thread_local = threading.local()
         super().__init__(db_path, client_id)
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        from tldw_chatbook.Backup_Recovery.participants import _core_access
+
+        _core_access(self)
         conn = super()._get_connection()
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+        except BaseException:
+            conn.close()
+            raise
         conn.execute("PRAGMA foreign_keys = ON")
         if not self.is_memory_db:
             self._enable_wal(conn)
@@ -510,6 +527,11 @@ class LibraryCollectionsDB(BaseDB):
         # `transaction()`; schema initialization owns its explicit migration
         # transaction.
         conn.isolation_level = None
+        try:
+            _core_access(self)
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     def _enable_wal(self, conn: sqlite3.Connection) -> None:
@@ -524,6 +546,7 @@ class LibraryCollectionsDB(BaseDB):
                     raise
                 time.sleep(0.01)
 
+    @_core_getter
     def _held_connection(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening or reviving it.
 
@@ -531,7 +554,11 @@ class LibraryCollectionsDB(BaseDB):
         component closed (or that SQLite invalidated) is transparently
         replaced, mirroring `Workspace_DB._held_connection`.
         """
+        from tldw_chatbook.Backup_Recovery.participants import _core_access
+
+        _core_access(self)
         conn = getattr(self._thread_local, "conn", None)
+        conn = _core_cached_connection(self, conn)
         if conn is not None:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
@@ -542,17 +569,23 @@ class LibraryCollectionsDB(BaseDB):
                 try:
                     conn.execute("SELECT 1")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    # A failed ping does not prove a live native borrower can be
+                    # revoked. Only SQLite's closed-handle state permits revival.
                     try:
-                        conn.close()
-                    except Exception:  # noqa: BLE001 - already unusable
-                        pass
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        conn.close()  # Native already closed; failures retain refs.
+                    else:
+                        raise
                     conn = None
+
         if conn is None:
             conn = self._get_connection()
             self._thread_local.conn = conn
         self._thread_local.conn_last_used = time.monotonic()
         return conn
 
+    @_core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Yield the thread's held connection (row factory, foreign keys on).
@@ -563,6 +596,7 @@ class LibraryCollectionsDB(BaseDB):
         """
         yield self._held_connection()
 
+    @_core_transaction
     @contextmanager
     def read_transaction(self) -> Iterator[sqlite3.Connection]:
         """Yield the held connection inside a read-only snapshot.
@@ -612,6 +646,7 @@ class LibraryCollectionsDB(BaseDB):
                 "always rolled back. Use transaction() for writes."
             )
 
+    @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Yield the held connection inside a write transaction.
@@ -648,12 +683,15 @@ class LibraryCollectionsDB(BaseDB):
     def close(self) -> None:
         """Close the current thread's held connection, if any."""
         conn = getattr(self._thread_local, "conn", None)
-        self._thread_local.conn = None
         if conn is not None:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
+            with _core_closing(self, conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    conn.close()
+                    self._thread_local.conn = None
+                except Exception:  # noqa: BLE001 - best-effort teardown
+                    pass
 
     def _initialize_schema(self) -> None:
         """Atomically initialize or migrate the local Collections schema."""

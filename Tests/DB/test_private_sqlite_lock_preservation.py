@@ -426,7 +426,7 @@ def test_expired_deadline_refuses_before_precreation_and_is_not_sqlite_kwarg(
             isolation_level=None,
         )
     ) as connection:
-        assert type(connection) is CustomConnection
+        assert isinstance(connection, CustomConnection)
         assert connection.isolation_level is None
         assert connection.execute("PRAGMA busy_timeout").fetchone() == (123,)
 
@@ -564,22 +564,21 @@ def test_public_expected_stat_identity_checked_after_actual_helper(
 def test_reentrant_sqlite_factory_cannot_escape_operation_envelope(tmp_path):
     target = tmp_path.resolve() / "factory.sqlite"
     nested = tmp_path.resolve() / "nested.sqlite"
-    returned = object()
+    class ReentrantConnection(sqlite3.Connection):
+        def __init__(self, database, **kwargs):
+            assert Path(database) == target
+            with pytest.raises(process.HelperUnavailableError):
+                private_sqlite.connect_private_sqlite("db.chachanotes.primary", nested)
+            super().__init__(database, **kwargs)
 
-    def factory(database, **kwargs):
-        assert Path(database) == target
-        with pytest.raises(process.HelperUnavailableError):
-            private_sqlite.connect_private_sqlite("db.chachanotes.primary", nested)
-        return returned
-
-    assert (
+    with closing(
         private_sqlite.connect_private_sqlite(
             "db.chachanotes.primary",
             target,
-            factory=factory,
+            factory=ReentrantConnection,
         )
-        is returned
-    )
+    ) as connection:
+        assert isinstance(connection, ReentrantConnection)
     assert not nested.exists()
 
 

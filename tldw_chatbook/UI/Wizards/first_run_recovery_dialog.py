@@ -15,7 +15,7 @@ SetupRecoveryResult = Literal["resume", "start_over", "later"]
 
 
 class SetupRecoveryDialog(ModalScreen[SetupRecoveryResult]):
-    """Offer the three bounded recovery actions and nothing else."""
+    """Offer setup resumption and access to the app-owned backup recovery view."""
 
     BINDINGS = [Binding("escape", "later", "Later", show=False)]
 
@@ -78,12 +78,17 @@ class SetupRecoveryDialog(ModalScreen[SetupRecoveryResult]):
                 )
                 yield Button("Start over", id="setup-recovery-start_over")
                 yield Button("Later", id="setup-recovery-later")
+                yield Button("Restore a backup", id="setup-backup-restore")
 
     def on_mount(self) -> None:
         self.query_one("#setup-recovery-resume", Button).focus()
 
     @on(Button.Pressed)
     def handle_action(self, event: Button.Pressed) -> None:
+        if event.button.id == "setup-backup-restore":
+            event.stop()
+            self.app.action_backup_restore()
+            return
         action = (event.button.id or "").removeprefix("setup-recovery-")
         if action in {"resume", "start_over", "later"}:
             self.dismiss(action)

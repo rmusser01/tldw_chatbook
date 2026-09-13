@@ -25,6 +25,8 @@ from uuid import uuid4
 
 from loguru import logger
 
+from .activation import AgentActivationRequired, guarded, worker_guard
+
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
@@ -1806,6 +1808,7 @@ def _call_with_timeout(
     should_cancel: Callable[[], bool] = lambda: False,
     pauses_deadline: Callable[[], bool] = lambda: False,
     *,
+    execution_owner: AgentService | None = None,
     clamped_by_wall_budget: bool = False,
     owner: ExecutionOwner | None = None,
 ) -> ToolResult:
@@ -1865,6 +1868,10 @@ def _call_with_timeout(
         return ToolResult(ok=False, error=f"tool call refused: {exc}")
     box: dict = {}
 
+    @worker_guard(execution_owner)
+    def _admitted_call() -> ToolResult:
+        return fn()
+
     def _runner() -> None:
         try:
             with (
@@ -1872,7 +1879,7 @@ def _call_with_timeout(
             ):
                 if automatic_work is not None:
                     automatic_work.check()
-                box["result"] = fn()
+                box["result"] = _admitted_call()
         except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
             box["error"] = str(exc)
         finally:
@@ -3435,6 +3442,7 @@ class AgentService:
                         # decision is pending for THIS run, so an approval/
                         # confirm wait inside the invoke outlives the ceiling.
                         pauses_deadline=lambda: human_input_wait_active(run_id),
+                        execution_owner=self,
                         clamped_by_wall_budget=clamped_by_wall_budget,
                         owner=owner,
                     )
@@ -4564,6 +4572,7 @@ class AgentService:
                 if finish_root:
                     owner.finish_root()
 
+    @guarded
     def _run_one(
         self,
         *,
@@ -5165,6 +5174,11 @@ class AgentService:
                     ),
                 )
 
+        from tldw_chatbook.Backup_Recovery.participants import _core_operation
+
+        # Keep this exact parent repository operation admitted until the child
+        # owns its independent scope or the parent finishes refused-launch cleanup.
+        @_core_operation(self.db)
         def _launch_fleet_child(
             spawn_task: str,
             agent_name: "str | None",
@@ -5338,10 +5352,15 @@ class AgentService:
                     def child_should_cancel() -> bool:
                         return should_cancel() or child_cancel.is_set()
 
+                admission_decided = threading.Event()
+                admission_refused = False
+
                 def run_child(
                     handle: FleetHandle = handle,
                     child_kwargs: dict = child_kwargs,
                     child_should_cancel=child_should_cancel,
+                    *,
+                    admission_refused: bool = False,
                 ) -> None:
                     """Run one child to completion, then release its handle.
 
@@ -5358,6 +5377,11 @@ class AgentService:
                     needed here: the child stamps `(child_run_id, tool)` and
                     cannot reach the parent's keys at all.
                     """
+                    if not admission_refused:
+                        # The independent worker guard is now held; the parent
+                        # can release its launch operation without waiting for
+                        # the model, tools, or terminal callback.
+                        admission_decided.set()
                     status = RUN_ERROR
                     result_text = ""
                     error_text = ""
@@ -5376,6 +5400,16 @@ class AgentService:
                     # to retain, and retention honestly refuses None.
                     final_messages = None
                     try:
+                        if admission_refused:
+                            # The worker guard refused before _run_owned could
+                            # own/refund this reservation. Run only the shared
+                            # error teardown below; no child execution starts.
+                            if child_reservation is not None:
+                                self._automatic_work.ledger.release(
+                                    child_reservation,
+                                    owner_id=self._automatic_work.owner_id,
+                                )
+                            raise AgentActivationRequired()
                         # PR3a-1 Task 1: this child's own model-call lifeline,
                         # entered HERE -- on the child's thread, before its run
                         # starts -- and exited when the run ends, so it lives
@@ -5454,7 +5488,11 @@ class AgentService:
                         # here must not take down a turn that has already
                         # produced its answer.
                         try:
-                            self._retire_agent_worktree(child_kwargs.get("precreated_run_id"), handle.handle_id)
+                            self._retire_agent_worktree(
+                                child_kwargs.get("precreated_run_id"),
+                                handle.handle_id,
+                                discard=admission_refused,
+                            )
                         except Exception:
                             pass
                         current = fleet.get(handle.handle_id)
@@ -5485,11 +5523,23 @@ class AgentService:
                                     type(exc).__name__,
                                 )
 
+                admitted_child = worker_guard(self)(run_child)
+
                 def run_child_owned() -> None:
+                    nonlocal admission_refused
                     try:
-                        run_child()
+                        admitted_child()
+                    except AgentActivationRequired:
+                        # No child work began. Return teardown to the parent,
+                        # whose exact AgentRuns operation owns the reservation
+                        # and precreated row even if local storage just paused.
+                        admission_refused = True
                     finally:
-                        child_owner.finish_root()
+                        try:
+                            if not admission_refused:
+                                child_owner.finish_root()
+                        finally:
+                            admission_decided.set()
 
                 try:
                     thread = threading.Thread(
@@ -5533,6 +5583,12 @@ class AgentService:
                         ok=False,
                         error=f"could not start sub-agent: {exc}",
                     )
+                admission_decided.wait()
+                if admission_refused:
+                    try:
+                        run_child(admission_refused=True)
+                    finally:
+                        child_owner.finish_root()
                 launched = True
                 self._fleet_threads[handle.handle_id] = thread
                 return handle, None
@@ -7927,6 +7983,7 @@ class AgentService:
 
     # -- public ----------------------------------------------------------
 
+    @guarded
     def run_turn(
         self,
         *,

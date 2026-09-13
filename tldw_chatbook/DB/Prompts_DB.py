@@ -49,6 +49,13 @@ from loguru import logger as logging
 # Local Imports
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
@@ -390,6 +397,7 @@ class PromptsDatabase:
                 )
 
     # --- Connection Management ---
+    @_core_getter
     def _get_thread_connection(self) -> sqlite3.Connection:
         """Retrieve or create the current thread's SQLite connection.
 
@@ -407,7 +415,7 @@ class PromptsDatabase:
         task-261: the ``SELECT 1`` liveness ping is gated behind an idle
         threshold (``_LIVENESS_PING_IDLE_SECONDS``) instead of running on
         every call — connections are thread-local and long-lived, and
-        ``close_connection()`` always clears the thread-local reference, so
+        successful ``close_connection()`` clears the thread-local reference, so
         a recently-used connection is known-good without a ping. A
         connection idle past the threshold still gets the ping +
         transparent-reopen treatment.
@@ -418,7 +426,11 @@ class PromptsDatabase:
         Raises:
             DatabaseError: If connecting to the database fails.
         """
+        from tldw_chatbook.Backup_Recovery.participants import _core_access
+
+        _core_access(self)
         conn = getattr(self._local, "conn", None)
+        conn = _core_cached_connection(self, conn)
         is_closed = conn is None
         if conn:
             last_used = getattr(self._local, "conn_last_used", None)
@@ -429,14 +441,15 @@ class PromptsDatabase:
                 try:
                     conn.execute("SELECT 1")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    logging.warning(
-                        f"Thread-local connection to {self.db_path_str} was closed. Reopening."
-                    )
-                    is_closed = True
+                    # A failed ping does not prove a live native borrower can be
+                    # revoked. Only SQLite's closed-handle state permits revival.
                     try:
-                        conn.close()
-                    except Exception:
-                        pass
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        conn.close()  # Native already closed; failures retain refs.
+                    else:
+                        raise
+                    is_closed = True
                     self._local.conn = None
 
         if is_closed:
@@ -448,6 +461,13 @@ class PromptsDatabase:
                     check_same_thread=False,  # Required for threading.local
                     timeout=10,  # seconds
                 )
+                _register_core_connection(self, conn)
+                try:
+                    _core_access(self)
+                except BaseException:
+                    # Retire only this unpublished allocation; live borrowers stay.
+                    conn.close()
+                    raise
                 conn.row_factory = sqlite3.Row
                 if not self.is_memory_db:
                     conn.execute("PRAGMA journal_mode=WAL;")
@@ -460,6 +480,11 @@ class PromptsDatabase:
                 # (task-15465).
                 conn.execute("PRAGMA synchronous=NORMAL;")
                 conn.execute("PRAGMA foreign_keys = ON;")
+                try:
+                    _core_access(self)
+                except BaseException:
+                    conn.close()
+                    raise
                 self._local.conn = conn
                 logging.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} [Client: {self.client_id}, Thread: {threading.current_thread().name}]"
@@ -480,18 +505,18 @@ class PromptsDatabase:
 
     def close_connection(self):
         if hasattr(self._local, "conn") and self._local.conn is not None:
-            try:
-                conn = self._local.conn
-                self._local.conn = None
-                conn.close()
-                logging.debug(
-                    f"Closed connection for thread {threading.current_thread().name}."
-                )
-            except sqlite3.Error as e:
-                logging.warning(f"Error closing connection: {e}")
-            finally:
-                if hasattr(self._local, "conn"):
+            with _core_closing(self, self._local.conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    conn = self._local.conn
+                    conn.close()
                     self._local.conn = None
+                    logging.debug(
+                        f"Closed connection for thread {threading.current_thread().name}."
+                    )
+                except sqlite3.Error as e:
+                    logging.warning(f"Error closing connection: {e}")
 
     def backup_database(self, backup_file_path: str) -> bool:
         """
@@ -629,6 +654,7 @@ class PromptsDatabase:
             raise TypeError(f"Parameter list format error: {te}") from te
 
     # --- Transaction Context ---
+    @_core_transaction
     @contextmanager
     def transaction(self, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Run database work in a transaction.

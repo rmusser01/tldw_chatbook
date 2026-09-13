@@ -12,6 +12,8 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
+
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathError,
     atomic_private_write_bytes,
@@ -170,6 +172,7 @@ def build_record(
 class MCPExecutionLog:
     """Two-generation bounded JSONL store for ExecutionRecords."""
 
+    @mcp_sources.guarded
     def __init__(self, path: Path, *, max_records_per_file: int = 500) -> None:
         self.path = Path(path)
         if max_records_per_file < 1:
@@ -181,6 +184,7 @@ class MCPExecutionLog:
         #: ``_migrate_generation``.
         self._migrated: dict[str, tuple[tuple[int, ...], bytes]] = {}
 
+    @mcp_sources.guarded
     def append(self, record: ExecutionRecord) -> None:
         """Append one record, rotating generations at the size cap.
 
@@ -228,6 +232,7 @@ class MCPExecutionLog:
                 self.path, (active_payload or b"") + encoded_line
             )
 
+    @mcp_sources.guarded
     def read_recent(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return recent records, newest first, across both generations.
 
@@ -277,6 +282,7 @@ class MCPExecutionLog:
         rows.reverse()
         return rows[:limit]
 
+    @mcp_sources.guarded
     def _secure_parent(self) -> None:
         secure_private_directory(
             self.path.parent,
@@ -411,6 +417,7 @@ class MCPExecutionLog:
             return
         self._migrated[str(path)] = (identity, sanitized)
 
+    @mcp_sources.guarded
     def _migrate_generation(self, path: Path) -> bytes | None:
         """Scrub legacy payload rows and torn lines before further use.
 

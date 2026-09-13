@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import ctypes
 import errno
-import os
 import stat
 import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from tldw_chatbook.DB.private_sqlite_protocol import FileIdentity
+from tldw_chatbook.TTS.profile_migration_native import (
+    _migration_native,
+    _native_close,
+    _native_open,
+    _native_parent,
+)
 from tldw_chatbook.Utils import private_paths
+from tldw_chatbook.Utils.platform_files import os
+from tldw_chatbook.DB.private_sqlite_protocol import FileIdentity
 
 _LIBC = None if sys.platform == "win32" else ctypes.CDLL(None, use_errno=True)
 _RENAME_NOREPLACE = 1 if sys.platform.startswith("linux") else 0x00000004
@@ -138,6 +144,11 @@ def _rename_noreplace(
     source_leaf: str,
     destination_leaf: str,
 ) -> None:
+    if os.name == "nt":
+        from tldw_chatbook.Utils.windows_files import rename_noreplace
+
+        rename_noreplace(parent_fd, source_leaf, parent_fd, destination_leaf)
+        return
     source = os.fsencode(source_leaf)
     destination = os.fsencode(destination_leaf)
     if sys.platform == "darwin" and hasattr(_LIBC, "renameatx_np"):
@@ -173,13 +184,15 @@ def rename_noreplace_at(
     _rename_noreplace(parent_fd, source_leaf, destination_leaf)
 
 
-def _open_parent(path: Path, authority: ParentAuthority) -> int:
-    parent_fd, _leaf = private_paths._open_verified_parent(
+def _open_parent(path: Path, authority: ParentAuthority, *, _native=None) -> int:
+    parent_fd, _leaf = _native_parent(
+        _native,
+        private_paths,
         path,
         missing_leaf_allowed=True,
     )
     if not _same_parent(os.fstat(parent_fd), authority.identity):
-        os.close(parent_fd)
+        _native_close(_native, os, parent_fd)
         raise ValueError
     return parent_fd
 
@@ -205,15 +218,18 @@ def require_reusable_tombstone(
     *,
     parent_authority: ParentAuthority,
     tombstone_key: MigrationTombstoneKey,
+    _native=None,
 ) -> None:
     """Require an existing bounded tombstone to remain exact and unaliased."""
 
     holding = _holding_path(path, tombstone_key)
-    parent_fd = _open_parent(path, parent_authority)
+    parent_fd = _open_parent(path, parent_authority, _native=_native)
     descriptor = -1
     try:
         try:
-            descriptor = os.open(
+            descriptor = _native_open(
+                _native,
+                os,
                 holding.name,
                 os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
                 dir_fd=parent_fd,
@@ -231,8 +247,8 @@ def require_reusable_tombstone(
             raise ValueError
     finally:
         if descriptor >= 0:
-            os.close(descriptor)
-        os.close(parent_fd)
+            _native_close(_native, os, descriptor)
+        _native_close(_native, os, parent_fd)
 
 
 def admit_zero_reusable_tombstone(
@@ -240,14 +256,17 @@ def admit_zero_reusable_tombstone(
     *,
     parent_authority: ParentAuthority,
     tombstone_key: MigrationTombstoneKey,
+    _native=None,
 ) -> os.stat_result:
     """Admit one restart-surviving zero tombstone through retained descriptors."""
 
     holding = _holding_path(path, tombstone_key)
-    parent_fd = _open_parent(path, parent_authority)
+    parent_fd = _open_parent(path, parent_authority, _native=_native)
     descriptor = -1
     try:
-        descriptor = os.open(
+        descriptor = _native_open(
+            _native,
+            os,
             holding.name,
             os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
             dir_fd=parent_fd,
@@ -279,8 +298,8 @@ def admit_zero_reusable_tombstone(
         return settled
     finally:
         if descriptor >= 0:
-            os.close(descriptor)
-        os.close(parent_fd)
+            _native_close(_native, os, descriptor)
+        _native_close(_native, os, parent_fd)
 
 
 def prepare_reusable_tombstone(
@@ -290,15 +309,18 @@ def prepare_reusable_tombstone(
     file_identity: os.stat_result,
     source_key: MigrationTombstoneKey,
     destination_key: MigrationTombstoneKey,
+    _native=None,
 ) -> os.stat_result:
     """Move exact retained cleanup evidence into one zero reusable leaf."""
 
     source = _holding_path(path, source_key)
     destination = _holding_path(path, destination_key)
-    parent_fd = _open_parent(path, parent_authority)
+    parent_fd = _open_parent(path, parent_authority, _native=_native)
     descriptor = -1
     try:
-        descriptor = os.open(
+        descriptor = _native_open(
+            _native,
+            os,
             source.name,
             os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
             dir_fd=parent_fd,
@@ -343,8 +365,8 @@ def prepare_reusable_tombstone(
         return settled
     finally:
         if descriptor >= 0:
-            os.close(descriptor)
-        os.close(parent_fd)
+            _native_close(_native, os, descriptor)
+        _native_close(_native, os, parent_fd)
 
 
 def remove_zero_reusable_tombstone(
@@ -353,14 +375,17 @@ def remove_zero_reusable_tombstone(
     parent_authority: ParentAuthority,
     file_identity: os.stat_result,
     tombstone_key: MigrationTombstoneKey,
+    _native=None,
 ) -> None:
     """Remove exact zero cleanup evidence so its fixed slot can be refilled."""
 
     holding = _holding_path(path, tombstone_key)
-    parent_fd = _open_parent(path, parent_authority)
+    parent_fd = _open_parent(path, parent_authority, _native=_native)
     descriptor = -1
     try:
-        descriptor = os.open(
+        descriptor = _native_open(
+            _native,
+            os,
             holding.name,
             os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
             dir_fd=parent_fd,
@@ -380,8 +405,8 @@ def remove_zero_reusable_tombstone(
         os.fsync(parent_fd)
     finally:
         if descriptor >= 0:
-            os.close(descriptor)
-        os.close(parent_fd)
+            _native_close(_native, os, descriptor)
+        _native_close(_native, os, parent_fd)
 
 
 def move_exact_noreplace(
@@ -391,16 +416,19 @@ def move_exact_noreplace(
     parent_authority: ParentAuthority,
     file_identity: os.stat_result,
     allowed_links: frozenset[int] = frozenset({1}),
+    _native=None,
 ) -> os.stat_result:
     """Atomically move the exact source inode or restore a substituted leaf."""
 
     if source.parent != destination.parent or source.name == destination.name:
         raise ValueError
-    parent_fd = _open_parent(source, parent_authority)
+    parent_fd = _open_parent(source, parent_authority, _native=_native)
     file_fd = -1
     moved = False
     try:
-        file_fd = os.open(
+        file_fd = _native_open(
+            _native,
+            os,
             source.name,
             os.O_RDONLY
             | getattr(os, "O_NOFOLLOW", 0)
@@ -462,12 +490,12 @@ def move_exact_noreplace(
                 pass
             raise ValueError
         os.fsync(parent_fd)
-        reopened = _open_parent(source, parent_authority)
+        reopened = _open_parent(source, parent_authority, _native=_native)
         try:
             if not _same_parent(os.fstat(reopened), parent_authority.identity):
                 raise ValueError
         finally:
-            os.close(reopened)
+            _native_close(_native, os, reopened)
         if deferred is not None:
             raise deferred
         return current
@@ -481,8 +509,8 @@ def move_exact_noreplace(
         raise
     finally:
         if file_fd >= 0:
-            os.close(file_fd)
-        os.close(parent_fd)
+            _native_close(_native, os, file_fd)
+        _native_close(_native, os, parent_fd)
 
 
 def remove_exact(
@@ -492,6 +520,7 @@ def remove_exact(
     file_identity: os.stat_result,
     tombstone_key: MigrationTombstoneKey,
     allowed_links: frozenset[int] = frozenset({1}),
+    _native=None,
 ) -> None:
     """Atomically quarantine exact bytes in one bounded private tombstone."""
 
@@ -504,14 +533,17 @@ def remove_exact(
             parent_authority=parent_authority,
             file_identity=file_identity,
             allowed_links=allowed_links,
+            _native=_native,
         )
     except BaseException as error:
         if not isinstance(error, Exception):
             deferred = error
-    parent_fd = _open_parent(holding, parent_authority)
+    parent_fd = _open_parent(holding, parent_authority, _native=_native)
     file_fd = -1
     try:
-        file_fd = os.open(
+        file_fd = _native_open(
+            _native,
+            os,
             holding.name,
             os.O_RDWR
             | getattr(os, "O_NOFOLLOW", 0)
@@ -540,7 +572,7 @@ def remove_exact(
         ):
             raise ValueError
         os.fsync(parent_fd)
-        reopened = _open_parent(path, parent_authority)
+        reopened = _open_parent(path, parent_authority, _native=_native)
         try:
             try:
                 os.stat(path.name, dir_fd=reopened, follow_symlinks=False)
@@ -550,11 +582,11 @@ def remove_exact(
                 # A substitution at the disposed logical leaf is foreign.
                 raise ValueError
         finally:
-            os.close(reopened)
+            _native_close(_native, os, reopened)
     finally:
         if file_fd >= 0:
-            os.close(file_fd)
-        os.close(parent_fd)
+            _native_close(_native, os, file_fd)
+        _native_close(_native, os, parent_fd)
     if deferred is not None:
         raise deferred
     # The retained leaf is cleanup evidence only.  Nonzero content is never
@@ -566,16 +598,19 @@ def open_new_or_reused_private_file(
     *,
     parent_authority: ParentAuthority,
     tombstone_key: MigrationTombstoneKey,
+    _native=None,
 ) -> tuple[int, int, os.stat_result, ParentAuthority]:
     """Open a new private file, reusing only its exact zero tombstone."""
 
     holding = _holding_path(path, tombstone_key)
-    parent_fd = _open_parent(path, parent_authority)
+    parent_fd = _open_parent(path, parent_authority, _native=_native)
     file_fd = -1
     created = False
     try:
         try:
-            holding_fd = os.open(
+            holding_fd = _native_open(
+                _native,
+                os,
                 holding.name,
                 os.O_RDWR
                 | getattr(os, "O_NOFOLLOW", 0)
@@ -635,8 +670,8 @@ def open_new_or_reused_private_file(
                         pass
                     else:
                         raise ValueError
-                    reopened = _open_parent(path, parent_authority)
-                    os.close(reopened)
+                    reopened = _open_parent(path, parent_authority, _native=_native)
+                    _native_close(_native, os, reopened)
                     if (
                         restored.st_size != 0
                         or not private_paths._same_identity(restored, held)
@@ -649,9 +684,11 @@ def open_new_or_reused_private_file(
                 os.fsync(parent_fd)
             finally:
                 if holding_fd >= 0:
-                    os.close(holding_fd)
+                    _native_close(_native, os, holding_fd)
         else:
-            file_fd = os.open(
+            file_fd = _native_open(
+                _native,
+                os,
                 path.name,
                 os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
                 0o600,
@@ -669,7 +706,9 @@ def open_new_or_reused_private_file(
         ):
             raise ValueError
         current_parent = os.fstat(parent_fd)
-        reopened, _leaf = private_paths._open_verified_parent(
+        reopened, _leaf = _native_parent(
+            _native,
+            private_paths,
             path,
             missing_leaf_allowed=True,
         )
@@ -683,12 +722,12 @@ def open_new_or_reused_private_file(
             ) or not _same_parent(reopened_parent, current_parent):
                 raise ValueError
         finally:
-            os.close(reopened)
+            _native_close(_native, os, reopened)
         return parent_fd, file_fd, opened, ParentAuthority(current_parent)
     except BaseException:
         if file_fd >= 0:
-            os.close(file_fd)
-        os.close(parent_fd)
+            _native_close(_native, os, file_fd)
+        _native_close(_native, os, parent_fd)
         raise
 
 

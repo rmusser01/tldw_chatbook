@@ -1830,6 +1830,11 @@ class ConsoleMessageController:
             self._console_original_attempt_previews.clear()
             subtree_ids = store.subtree_message_ids(message_id)
             store.delete_message(message_id)
+            cleanup_warning = getattr(
+                store.persistence, "recovered_media_cleanup_warning", None
+            )
+            if cleanup_warning:
+                self.app_instance.notify(cleanup_warning, severity="warning")
             self._invalidate_console_fork_image_selections(subtree_ids)
             # TASK-251: a deleted message can change what the browser row
             # shows for this conversation (title/updated_at) -- invalidate

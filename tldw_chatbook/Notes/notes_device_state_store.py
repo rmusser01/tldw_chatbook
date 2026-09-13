@@ -17,6 +17,14 @@ from weakref import WeakValueDictionary
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
+from tldw_chatbook.Utils.private_paths import lexical_path
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Notes import notes_device_state_schema
 from tldw_chatbook.Notes.notes_sync_conflicts import linked_undo_operation_id
@@ -571,13 +579,21 @@ class NotesDeviceStateStore:
     """
 
     def __init__(self, database_path: str | Path) -> None:
-        self._database_path = Path(database_path)
+        self.is_memory_db = str(database_path) == ":memory:"
+        self._database_path = (
+            Path(":memory:") if self.is_memory_db else lexical_path(database_path)
+        )
         self._operation_locks: WeakValueDictionary[str, asyncio.Lock] = (
             WeakValueDictionary()
         )
         self._thread_local = threading.local()
         self._connections_guard = threading.Lock()
         self._connections: list[sqlite3.Connection] = []
+
+    @property
+    def db_path(self) -> Path:
+        """Expose the selected owner path for ordinary maintenance admission."""
+        return self._database_path
 
     def __repr__(self) -> str:
         return "NotesDeviceStateStore(<private>)"
@@ -592,6 +608,7 @@ class NotesDeviceStateStore:
             self._operation_locks[operation_id] = lock
         return lock
 
+    @_core_getter
     def _connect(
         self,
         *,
@@ -599,6 +616,7 @@ class NotesDeviceStateStore:
         must_exist: bool = False,
         **connection_options: object,
     ) -> sqlite3.Connection:
+        _core_access(self)
         connection = connect_private_sqlite(
             "notes.sync_state",
             self._database_path,
@@ -606,7 +624,14 @@ class NotesDeviceStateStore:
             must_exist=must_exist,
             **connection_options,
         )
-        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            _register_core_connection(self, connection)
+            _core_access(self)
+            connection.execute("PRAGMA foreign_keys = ON")
+            _core_access(self)
+        except BaseException:
+            connection.close()
+            raise
         return connection
 
     def _open_schema_ready_connection(self) -> sqlite3.Connection:
@@ -637,8 +662,16 @@ class NotesDeviceStateStore:
             raise
         return connection
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        _core_access(self)
         connection = getattr(self._thread_local, "connection", None)
+        if connection is not None and _core_cached_connection(self, connection) is None:
+            self._thread_local.connection = None
+            with self._connections_guard:
+                if connection in self._connections:
+                    self._connections.remove(connection)
+            connection = None
         if connection is not None:
             return connection
         connection = self._open_schema_ready_connection()
@@ -647,6 +680,7 @@ class NotesDeviceStateStore:
             self._connections.append(connection)
         return connection
 
+    @_core_transaction
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Yield this thread's schema-ready held connection in one transaction."""

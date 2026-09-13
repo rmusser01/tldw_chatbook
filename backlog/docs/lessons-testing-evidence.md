@@ -9,6 +9,116 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Windows test homes need USERPROFILE isolation (TASK-32562, 2026-09-13)
+
+**Incident.** Backup native-close run 34745966265 reported lease-lock error 33
+after all 18 child leases retired and their holder thread exited. The test helper
+changed HOME but inherited USERPROFILE, which Windows Path.home uses. Its child
+therefore shared the parent's bootstrap authority and contended with the parent's
+startup lease. A controlled native reproduction failed with shared authority and
+passed with an isolated home while the same parent lease remained alive.
+
+Select both HOME and USERPROFILE before importing a Windows test child, then
+verify its actual home and bootstrap scope. Empty child ownership alone does not
+prove that an external lock belongs to the child. Keep the held/released native
+probes; do not weaken production locking to accommodate a shared test profile.
+
+---
+
+## Private test parents must be private too (TASK-32560/TASK-32561, 2026-09-12)
+
+**Incident.** The Linux Python backup run failed all 116 cases during setup:
+the remote umask left the harness run root and timestamp parent at 0775, although
+case/temp directories were 0700. The application's parent-path guard correctly
+refused them. Explicitly creating the harness parents at 0700 made all 116 cases
+pass; application checks stayed intact. Both attempts are recorded in
+`Docs/Development/backup-python-verification-2026-09-12.md`.
+
+Check every harness-owned ancestor when diagnosing private-path refusal. Setting
+the leaf directory's mode does not make its parents private.
+
+---
+
+## Process-lived config bindings require coherent isolated imports (TASK-31993)
+
+**Incident.** Phase9 bound the actual installed config module to its selected profile.
+Three shared tests changed native support or profile selectors after a lazy import
+had already bound config; a later covering run passed228 but failed the theme/app
+case because actual RAG bootstrap consumed that old source. These were fixture
+lifetime violations, not reasons to demote a production binding. Selecting the
+profile and importing a fresh actual config module before the affected consumers
+made the12 shared correction cases and83 theme/private/runtime checks pass.
+
+Keep test-held config references and lazy app consumers consistent with the selected
+module. Apply fresh-module isolation only to affected fixtures; do not clear live
+participant registries or blanket-reload modules. If consumers already captured
+from-import references and cannot be kept coherent, use a fresh isolated process.
+
+## SQLite trace callbacks can hide a new admission refusal (TASK-31993)
+
+**Incident.** Core transaction enrollment made two existing Prompts WAL-race tests
+stop observing a version/snapshot conflict. Their trace callback synchronously
+writes through a second real Prompts instance. The first implementation treated
+that nested instance as an unauthorized descendant of the outer transaction;
+SQLite swallowed the callback exception, so the winning write never happened and
+the outer API appeared successful. The tests failed with DID NOT RAISE ConflictError,
+not with the actual admission refusal. Controller ruling55 preserves that ordinary
+behavior with independently admitted nested operations while gates are open; a
+pause still refuses a new different-participant scope.
+
+**What to do.** When a trace-callback-driven race disappears, inspect the callback's
+actual domain effects and exception boundary before blaming the outer transaction.
+Keep real competing-writer outcomes, nested failure restoration and paused-admission
+checks; an observer callback returning control does not prove its write succeeded.
+
+---
+
+## SQLite closed-handle evidence must run on the creating thread (TASK-31993)
+
+**Incident.** The first Event/Sync maintenance lifetime fixture checked a worker's
+retired SQLite connection from the coordinator thread. SQLite raised its thread
+identity error before checking whether the handle was closed, so the assertion
+incorrectly rejected successful native retirement. Moving the closed-database
+assertion into the same worker after transaction exit proved retirement; a separate
+coordinator assertion still proved that cross-thread access was refused.
+
+**What to do.** Observe native retirement on the owner thread. A thread-affinity
+error is evidence of confinement, not evidence that a native connection remains open
+or has closed. Retain independent native lease observations for exclusion claims.
+
+---
+
+## Reading a selector can change atime without changing its contents (TASK-31988)
+
+**Incident.** The first recovery binding fingerprint compared whole `fstat` results
+before and after reading a real temporary config. After the SQLite enrollment test
+waited for two connection retirements, a subsequent bind intermittently reported
+`selector_unverified`: the read itself had advanced access time. Comparing device,
+inode, size, mtime and ctime preserved the intended concurrent-change check while
+excluding this reader-owned side effect. The lifetime regression then passed.
+
+**What to do.** A read-stability predicate must name the content/identity fields it
+protects; whole-stat equality also measures access-time updates caused by the probe.
+
+---
+
+## Packaging build copies can become duplicate source owners (TASK-31985, 2026-09-07)
+
+**Incident.** The packaging baseline left an untracked `build/lib` tree inside the
+checkout. The architecture guard
+`test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners`
+recursively scanned Python files from the whole repository root and found the same
+tracked source again under `build/lib`. It therefore counted a second
+`DEFAULT_RUNTIME_POLICY_PATH` owner and failed, although the generated copy was
+byte-identical. Moving `build` outside the checkout made the sole failing guard pass.
+
+**What to do.** Build wheels, sdists, editable copies, and test source trees in a
+private directory outside the entire checkout. A hidden or ignored directory is not
+safe: whole-root guards can traverse `.superpowers` and any other nested scratch tree.
+Keep only final distribution artifacts in the checkout after validation.
+
+---
+
 ## Retaining a disclosure does not prove its streaming body stays mounted
 
 **TASK-32522, thinking flicker, 2026-09-12.** The existing same-widget test
@@ -4687,6 +4797,17 @@ must use events or instrumented locks to force both cancel-wins and commit-wins
 orders, including cancellation after commit but before metadata append; a sleep and
 an assertion that “nothing happened yet” are not evidence of ordering.
 
+**TASK-31993 phase7 supplement, 2026-09-08.** Shielding the awaiter was still
+insufficient when the executor's own asyncio wrapper future was independently
+cancelled while its actual PromptHistory callback was writing. A private subprocess
+regression released the real native gate after 0.1 seconds, but the shield loop kept
+observing an already-cancelled future and spun until the parent reaped the child at
+six seconds. A separate result signal from the actual worker completed the same
+case, with persisted bytes and cache delivered before cancellation. Queued work uses
+a synchronized transition that prevents all source entry; the worker never waits
+for an event-loop acknowledgement. Test caller cancellation, queued executor
+cancellation, and independently cancelled running executor wrappers separately.
+
 ## Returning from a Textual handler does not make its detached child cancellation-safe
 
 **TASK-3402, 2026-08-11.** An H3 image edit originally awaited its whole operation
@@ -6891,6 +7012,263 @@ small is exactly what makes a per-item check unreadable. Note the exit code
 alone was also insufficient here: the script printed `::error::` and still
 exited 0 under the shell pipeline used.
 
+## Pydantic strict mode does not make `Literal[1]` reject JSON `true`
+
+**TASK-31984, 2026-09-07.** The recovery helper's package metadata used
+`ConfigDict(strict=True, extra="forbid")` with `protocol: Literal[1]`.
+A real metadata mutation from integer `1` to JSON `true` still reported the
+helper available. The focused test failed on `(True, "available")` before
+switching the field to `int = Field(strict=True, ge=1, le=1)`.
+
+**What to do.** At serialized integer-version boundaries, test boolean values
+explicitly. Use a strict integer field with the allowed range/value constraint;
+Python's `True == 1` equality can defeat the expected literal-type distinction.
+
+## Idempotent registration can still block a disjoint storage owner (TASK-31989)
+
+**Incident.** The core recovery process probe held maintenance for one bound store
+and `bootstrap.unbound`, then asked a second process to write a different bound
+store through `connect_private_sqlite`. The write timed out even though direct
+Admission disjoint-namespace tests passed. `acquire_storage` called
+`admission_authority`, whose apparently idempotent `register` took an exclusive
+registry lock before noticing that the namespace already existed. Maintenance
+held that registry shared lock throughout capture. Opening established authority
+without creation and verifying its exact unbound marker/registry identity under a
+shared lock let the disjoint write complete during capture; the separate unbound
+same-source process still waited until release.
+
+**What to do.** Prove independence through the real owner-open route in another
+process. A low-level disjoint-lock test does not cover constructor/registration
+work preceding admission. Distinguish initial registration from read-only reuse;
+lost/corrupt/replaced authority must refuse rather than be reconstructed to make
+the fast path work.
+
+## SQLite operation contexts do not retire native file handles (TASK-31990)
+
+During domain-recovery qualification on 2026-09-08, the writing round-trip preserved
+all SQL records but intermittently changed the source main-file header between its
+pre-capture and post-capture byte checks (byte 27 changed from 1 to 2). Both local
+research and writing opened a fresh SQLite connection per operation and used
+`with connection:`. That context committed or rolled back without closing; their
+service `close()` retired only the persistent memory connection. Deferred garbage
+collection could therefore checkpoint an old file connection later.
+
+The fix gives file operations a context-exit that commits/rolls back and then
+closes the actual native handle, retaining normal private-SQLite admission and
+leaving memory lifetime unchanged. Focused tests prove escaped file connections
+are unusable after success and exceptions, and retained committed-WAL observers
+prove both source main/WAL bytes and main mtime survive recovery capture unchanged.
+When proving a storage drain, check native handle lifetime explicitly; a transaction
+context or a service method named `close` is not evidence by itself.
+
+## Fault injection must stay in the intended native owner (TASK-31990 review)
+
+On 2026-09-08, the affected private-path guards reproduced three failures at the
+unchanged Task 7 review base: tests injecting `private_paths.os.unlink`, `.write`
+and `.stat` also changed the shared Python `os` module used by ordinary admission.
+The zero-byte-write test timed out inside admission-record creation, while the
+postcondition/entry-stat tests refused admission before reaching their intended
+path operation. These were fault-target collisions, not evidence about the path
+cleanup under test.
+
+The three tests now replace only `private_paths.os` with a local namespace copy
+before applying their original injection. Actual ordinary admission runs normally;
+the original private-path assertions pass unchanged. Keep simulated native faults
+local to the owner being qualified, and verify the trace reaches that boundary
+before interpreting a failure as lifecycle evidence.
+
+## SQLite context-manager exit is not native connection retirement (TASK-31991)
+
+**Incident.** Task8 operational recovery initially preserved all SQLite rows but
+failed source-byte assertions for EventStateRepository and SyncStateRepository.
+Their file-backed `_get_connection` handles were used with SQLite context managers,
+which commit/rollback without closing; the native cycles later finalized during
+fixture authority setup, checkpointing WAL into the source main file. Explicit
+fixture `gc.collect()` before namespace enrollment made the source-byte comparison
+stable. This is fixture setup, not evidence of production maintenance drain: these
+owners' `.close()` only closes their retained memory connection. The coordinated
+runtime drain remains task10's responsibility.
+
+**What to do.** Prove actual native connection retirement before claiming that a
+writer has drained. A `with connection` block, a successful transaction, and delayed
+fixture garbage collection establish different properties. Keep writer exclusion
+and deliberately drained snapshot setup as separate behavioral tests.
+
+## A consumed fixed-name sidecar is not owned by the previous writer (TASK-31993)
+
+**Incident.** Raw service lifetime integration added finally-cleanup around the
+Feedback/Grammar fixed `.tmp` publication file. A real second process started a
+new service write immediately after the first rename, while the first call had
+not yet reached finally. The first cleanup unlinked the second process's open
+sidecar, so its later rename failed. The regression used both actual services and
+native files; a one-process path lock could not reproduce this ownership transfer.
+
+**What to do.** Record the inode of exclusively created temporary bytes and consume
+that ownership when publication succeeds. Cleanup may act only on an operation's
+still-owned inode. A successful rename permits the next process to create a new
+same-name file immediately; the filename alone is never cleanup authority.
+
+## Explicit native retention exposes fixture-owned SQLite leaks (TASK-31993)
+
+During phase5 operational lifetime qualification, 167 affected domain tests passed
+but Tests isolation reported 371 additional file descriptors. AgentRunsDB's shared
+fixture returned without close, direct Workspace/Agent/Notification constructors
+relied on GC, and connection-reuse worker tests left thread-affine caches alive.
+The new strong registry correctly retained those actual native handles; removing
+registry entries or closing them from a foreign thread would falsify maintenance
+evidence. Explicit owning-thread fixture finalizers and worker finally.close calls
+preserved the native assertions; the affected 97-case cleanup rerun passed without
+that threshold warning. This is not a zero-descriptor-growth measurement, and it
+does not qualify production worker-pool retirement. Keep source job lifecycle gaps
+separate from missing test-fixture cleanup, and retire actual handles in both.
+
+## Lexical scope indentation can change SQLite's exact stored schema (TASK-31993)
+
+**Incident.** Phase6 wrapped SubscriptionsDB schema/read operations in lexical
+maintenance scopes. CRUD tests passed, but four exact recovery checks failed:
+actual-constructor catalog equality, subscription history capture, SiteConfigManager
+hybrid capture and complete-audio dependency validation. Indenting Python triple
+quoted SQL had changed the literal bytes SQLite retained in sqlite_schema, despite
+unchanged SQL meaning. Restoring every affected original plain and joined-string
+payload made all four checks pass without changing a schema catalog or migration.
+
+**What to do.** For lexical scope edits around multiline SQL, compare actual string
+payloads and native schema bytes as well as whitespace-insensitive code diffs.
+An AST comparison that normalizes string whitespace cannot certify preservation
+of an exact schema contract; this incident also used exact payload/control-flow
+comparison and the original capture validators.
+
+## A closed flag after a failed close is not positive retirement (TASK-31993)
+
+Phase8's runtime reader originally checked `stream.closed` in a `finally` block
+after `with stream`. A fault wrapper closed the real Python stream and then raised;
+the flag was true, so the code retired its separately owned native descriptor and
+released maintenance exclusion despite the ambiguous close result. The paired
+before/after-close subprocess test exposed this (one passed, one failed). Explicit
+close-success tracking now retains stream/descriptor evidence on either exception,
+and an independent native maintainer remains blocked until the child exits. Test
+both outcomes; neither a closed flag nor a completed context manager body proves
+successful resource retirement.
+
+## Fault injection can change native capability identity (TASK-31993)
+
+**Incident.** Phase11's first eight MCP native-close fault cases patched
+`os.rename` to observe history publication. Raw qualification checks that the actual
+callable is a member of `os.supports_dir_fd`; replacing it made the installed
+source correctly refuse as `raw_source_selection_changed` before any close fault.
+The eight failures were fixture/provenance failures, not evidence of unsafe
+retirement. Hooking the actual private `_native_close`/source stream boundary
+instead kept the real platform callable identity; all eight before/after native
+cases then exercised their intended failures and independent maintenance exclusion.
+
+Inject at a source-owned boundary when capability checks identify native functions.
+Do not modify capability sets to make a fault wrapper look qualified. Confirm the
+stack reaches the intended real IO/close and distinguish an earlier safety refusal
+from the behavioral regression being tested.
+
+## Public callback composition can reveal a missed lock inversion (TASK-31993)
+
+**Incident.** Phase12's installed Persona Visual call-site search found only the
+UI publication guard. A supported ordinary public guard reading the actual bound
+Persona service nevertheless deadlocked against UI save: public publication held
+the new visual mutex and waited for Persona; UI held Persona and waited for visual.
+A bounded private-process schedule reached both barriers and timed out. Removing
+that new mutex only from authenticated immutable publication made the same actual
+schedule complete; concurrent publication still had one optimistic winner and an
+explicit loser with owned cleanup. Other visual source locks were preserved.
+
+When adding a lock around a public callback, test its supported source composition
+against actual competing callers. Searching installed callback sites alone cannot
+prove the public API preserves its previous lock ordering.
+
+## Anchor source-read fault injection to the actual descriptor (TASK-31993)
+
+**Incident.** Phase13 added native admission before Shared Visual asset reads.
+Two existing tests intercepted every `os.read`: their size counter and symlink
+swap then reacted to admission-control reads before reaching the image FD. Those
+failures described the fixture's changed trigger, not image bounds or confinement.
+Matching the intended image's captured device/inode before injecting the fault
+restored the original behavioral test without changing production safety checks.
+The final focused asset/publication checks retained the original failure categories.
+
+When a new owner introduces earlier native reads, prove the injected operation is
+the intended resource. Keep process-wide admission reads outside a resource-specific
+counter or mutation barrier; do not loosen native capability or confinement checks
+to make an accidentally triggered fixture pass.
+
+## Probe independent native admission after uncertain aggregate lease close (TASK-31993)
+
+**Incident.** Phase14e's outer backup retained its uncertain operation after a real
+allocation lease closed and its wrapper raised, but cleanup continued releasing the
+independent outer hold. The local pause correctly refused while an independent
+native maintainer entered. Stopping lease retirement at that first uncertainty kept
+the independent native hold and made the exact observer refuse. The controller then
+found the same loop shape in standalone candidate cleanup; its exact native probe
+also entered despite the retained uncertain job.
+
+A retained Python job and local pause refusal do not prove native exclusion. After
+an uncertain subordinate lease retirement, test an independent maintainer against
+the actual authority and scope. Retire only known private test startup fixtures to
+isolate that observation; never clear the uncertain owner to make a probe pass.
+
+## Optional native failure needs a distinct allocation attempt (TASK-31993 phase14f)
+
+A real current-profile WAL open allocated a native descriptor before its substituted
+provider raised FileNotFoundError. The optional-sidecar loop then opened SHM and
+cleared a shared `descriptor` pending flag. A separate maintainer entered after the
+repository retired, despite the leaked WAL descriptor. A unique pending token for
+each allocation keeps that unknown attempt after later success or ordinary absence.
+The regression failed at independent native admission, then passed after the token
+change; exception type and later native success were not evidence of prior absence.
+
+
+## Descriptor readers and migration observers need their actual native route (TASK-31993 phase14g, 2026-09-08)
+
+Four real historical TTS open/restore tests showed native maintenance entering after
+descriptor-reader close failure. The verified-descriptor SQLite route bypassed the
+ordinary path-backed admission decorator, contrary to the initial ownership assumption.
+Observe that route's actual duplicated FD and native SQLite return before wrapper or
+finally failures; a similarly named path reader is not evidence for descriptor ownership.
+
+During the same phase, a diagnostic `mode=ro` query of a paused publishing source
+created WAL/SHM entries and made recovery appear broken. Immutable reads of the already
+closed exact fixture preserved its namespace and exposed the real durable recovery
+behavior. Count reached native failures separately from fixture timestamp errors,
+observer-created sidecars, or broad monkeypatches that interrupt earlier optional opens.
+Historical fixtures must run real MIGRATIONS: a genuine v3 reference BLOB exposed a
+current-only restore validator that restamped current DDL would have hidden.
+
+## Shared native fault hooks need a selected-resource assertion (TASK-31993 phase14h)
+
+The first materializer preparation test patched the first global private-path
+close and observed lost native exclusion. Subsequent integration showed it had
+hit storage admission's bootstrap traversal before the intended runtime helper.
+Matching the close FD's device/inode to the precreated runtime directory, then
+disabling only that helper's observers, reached the intended failure; all17
+corrected traversal/allocation cases passed with observers restored. Assert the
+selected native resource at the fault seam; a reached shared callable alone does
+not identify which owner failed. Preserve the withdrawn result and corrected
+counterfactual provenance rather than relabeling either as a BASE test.
+
+## Pure source binding must not replay custom descriptors (TASK-31993 phase14i)
+
+The bundle source checks first captured a cached profile service's current
+`consumer_mutation_fence`. Two actual lazy app-factory fixtures then failed:
+a custom proxy property was evaluated again during binding, and an instance's
+custom fence was treated as a configured relationship before being rejected.
+This broke ordinary custom construction while calling a supposedly pure check.
+
+The correction stores original class/function references in the existing defining
+module, reads only the already-loaded module and static class/instance state, and
+compares the already-passed bound method. Custom routes remain unqualified without
+accessor replay. Eagerly importing that module from a shared source helper would
+have changed default materializer laziness; original lazy factory tests are part
+of the evidence. A source check's successful return is not proof that it was pure:
+count custom accessor calls and assert ordinary custom behavior explicitly.
+
+## A swallowed hook mismatch can imitate the intended rejection (TASK-31993 phase14j)
+
+The original sample-replacement test wrapped `_read_bounded_regular_file` without accepting keywords. Adding private native-outcome plumbing supplied `_native`; best-effort evidence swallowed the hook's TypeError and still produced the test's expected empty cache. That assertion alone no longer proved replacement-after-read protection. The targeted test now forwards the original keyword arguments and asserts one actual successful bounded read before replacing the selected file, then checks the original rejection. When a production API intentionally maps collaborator errors to an empty result, count the intended native/body edge before accepting a negative assertion.
 ## A contract whose enforcer list lives only in a docstring cannot notice a second implementation (TASK-19551, 2026-08-21)
 
 `Utils/sensitive_paths.py` is the denylist that keeps agent file tools out of

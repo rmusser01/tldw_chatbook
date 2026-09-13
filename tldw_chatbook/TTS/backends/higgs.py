@@ -1,3 +1,4 @@
+from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
 # higgs.py
 # Description: Higgs Audio V2 TTS backend implementation
 #
@@ -6,7 +7,6 @@ import asyncio
 import os
 import time
 import json
-import shutil
 from typing import AsyncGenerator, Optional, Dict, Any, List, Tuple
 from datetime import datetime
 from pathlib import Path
@@ -102,6 +102,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
     Based on: https://github.com/boson-ai/higgs-audio
     """
 
+    @voice_files.call
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
 
@@ -168,7 +169,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 ),
             )
         ).expanduser()
-        self.voice_samples_dir.mkdir(parents=True, exist_ok=True)
+        voice_files.mkdir(self, self.voice_samples_dir, parents=True, exist_ok=True)
 
         self.enable_voice_cloning = self.config.get("HIGGS_ENABLE_VOICE_CLONING", True)
         self.max_reference_duration = self.config.get(
@@ -185,7 +186,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
 
         # Create profiles directory for saved profiles
         self.profiles_dir = self.voice_samples_dir / "profiles"
-        self.profiles_dir.mkdir(parents=True, exist_ok=True)
+        voice_files.mkdir(self, self.profiles_dir, parents=True, exist_ok=True)
 
         # Create default voice profiles if none exist
         if not self.voice_profiles:
@@ -1000,6 +1001,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
 
         return generate(chat_ml_sample, **kwargs)
 
+    @voice_files.call
     async def _prepare_voice_config(self, voice_name: str) -> Dict[str, Any]:
         """Prepare voice configuration from voice name or profile"""
         original_voice_name = voice_name
@@ -1026,7 +1028,8 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             # Try to load profile from file
             if profile_path.exists():
                 try:
-                    profile_data = json.loads(profile_path.read_text())
+                    with voice_files.open_text(self, profile_path) as profile_file:
+                        profile_data = json.load(profile_file)
                     if (
                         "reference_audio" in profile_data
                         and Path(profile_data["reference_audio"]).exists()
@@ -1206,24 +1209,29 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
         # Use default
         return self.default_language
 
+    @voice_files.call
     def _load_voice_profiles(self) -> Dict[str, Dict[str, Any]]:
         """Load saved voice profiles"""
         if self.voice_profiles_file.exists():
             try:
-                with open(self.voice_profiles_file, "r") as f:
+                with voice_files.open_text(self, self.voice_profiles_file, "r") as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"Failed to load voice profiles: {e}")
         return {}
 
+    @voice_files.call
     def _save_voice_profiles(self):
         """Save voice profiles to disk"""
         try:
-            with open(self.voice_profiles_file, "w") as f:
+            with voice_files.open_text(self, self.voice_profiles_file, "w") as f:
                 json.dump(self.voice_profiles, f, indent=2)
+            return True
         except Exception as e:
             logger.error(f"Failed to save voice profiles: {e}")
+            return False
 
+    @voice_files.call
     def _create_default_profiles(self):
         """Create default voice profiles"""
         default_profiles = {
@@ -1293,6 +1301,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
         self._save_voice_profiles()
         logger.info(f"Created {len(default_profiles)} default voice profiles")
 
+    @voice_files.call
     async def create_voice_profile(
         self,
         profile_name: str,
@@ -1324,10 +1333,10 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
 
             # Copy reference audio to voice samples directory
             profile_audio_dir = self.voice_samples_dir / profile_name
-            profile_audio_dir.mkdir(exist_ok=True)
+            voice_files.mkdir(self, profile_audio_dir, exist_ok=True)
 
             dest_path = profile_audio_dir / f"reference{ref_path.suffix}"
-            shutil.copy2(ref_path, dest_path)
+            voice_files.copy(self, ref_path, dest_path)
 
             # Create profile
             profile = {
@@ -1359,7 +1368,8 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
 
             # Save profile
             self.voice_profiles[profile_name] = profile
-            self._save_voice_profiles()
+            if not self._save_voice_profiles():
+                return False
 
             logger.info(
                 f"Created voice profile '{profile_name}' from {reference_audio_path}"
@@ -1390,6 +1400,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             profiles.append(profile_info)
         return profiles
 
+    @voice_files.call
     def delete_voice_profile(self, profile_name: str) -> bool:
         """Delete a voice profile"""
         if profile_name in self.voice_profiles:
@@ -1402,13 +1413,14 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                         # Remove entire profile directory
                         profile_dir = ref_path.parent
                         if profile_dir.name == profile_name:
-                            shutil.rmtree(profile_dir)
+                            voice_files.remove_tree(self, profile_dir)
                 except Exception as e:
                     logger.warning(f"⚠️  Failed to remove reference audio: {e}")
 
             # Remove from profiles
             del self.voice_profiles[profile_name]
-            self._save_voice_profiles()
+            if not self._save_voice_profiles():
+                return False
 
             logger.info(f"Deleted voice profile '{profile_name}'")
             return True

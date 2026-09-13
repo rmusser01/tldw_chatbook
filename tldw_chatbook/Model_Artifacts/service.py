@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from . import leases as _leases
+from .maintenance import model_call
 from .gguf_admission import GGUFMetadata, inspect_gguf_structure, open_local_gguf
 from .leases import (
     ArtifactLeaseError,
@@ -1488,6 +1489,7 @@ def take_artifact_removal_cleanup_owner(
 class ModelArtifactService:
     """Own verified immutable artifacts beneath one resolved local root."""
 
+    @model_call
     def __init__(
         self,
         root: Path,
@@ -1606,6 +1608,7 @@ class ModelArtifactService:
         _validate_canonical_component("artifact_id", artifact_id)
         return self._active_path / f"{artifact_id}.json"
 
+    @model_call
     def delete(self, reference: ArtifactRef) -> None:
         """Delete one exact artifact after invalidating affected derived state."""
 
@@ -1621,6 +1624,7 @@ class ModelArtifactService:
         except OSError as error:
             raise ArtifactStateError("artifact deletion I/O failed") from error
 
+    @model_call
     def probe_removal_availability(
         self,
         reference: ArtifactRef,
@@ -1717,6 +1721,7 @@ class ModelArtifactService:
             else ArtifactRemovalAvailability.AVAILABLE
         )
 
+    @model_call
     def acquire_removal_authority(
         self,
         reference: ArtifactRef,
@@ -1885,6 +1890,7 @@ class ModelArtifactService:
             raise ArtifactStateError("installed artifact does not exist") from None
         raise ArtifactStateError("artifact removal authority failed") from None
 
+    @model_call
     def reconcile(self) -> ReconcileReport:
         """Verify installed roots and reconcile derived state explicitly."""
 
@@ -2706,6 +2712,7 @@ class ModelArtifactService:
             raise ArtifactPathError("failed to inspect derived state path") from error
         return True
 
+    @model_call(execution=True)
     def activate(self, root_reference: ArtifactRef) -> ArtifactRef:
         """Verify or reuse one exact dependency closure, then select its root."""
 
@@ -2783,6 +2790,7 @@ class ModelArtifactService:
         except OSError as error:
             raise ArtifactStateError("artifact activation I/O failed") from error
 
+    @model_call(execution=True)
     def acquire(self, root_reference: ArtifactRef) -> LeasedArtifactHandle:
         """Acquire shared leases for one unchanged strict readiness record."""
 
@@ -2837,6 +2845,7 @@ class ModelArtifactService:
                     error.add_note(note)
             raise
 
+    @model_call(execution=True)
     def acquire_installed_root(
         self,
         reference: ArtifactRef,
@@ -2890,6 +2899,7 @@ class ModelArtifactService:
                     error.add_note(note)
             raise
 
+    @model_call
     def acquire_dependencies(
         self,
         references: tuple[ArtifactRef, ...],
@@ -2934,6 +2944,7 @@ class ModelArtifactService:
                     error.add_note(note)
             raise
 
+    @model_call
     def list_installed(self) -> tuple[InstalledArtifact, ...]:
         """Return a deterministic manifest-only installed inventory."""
 
@@ -3061,6 +3072,7 @@ class ModelArtifactService:
             invalid(self._artifacts_path, f"cannot scan artifacts directory: {error}")
         return tuple(sorted(installed, key=lambda item: item.path.as_posix()))
 
+    @model_call
     def disk_usage(self) -> ArtifactDiskUsage:
         """Return logical managed regular-file bytes and current free space."""
 
@@ -3108,6 +3120,7 @@ class ModelArtifactService:
     # ``install()`` itself is unchanged and still used by local import,
     # whose copy/TOCTOU contract is different (see its own docstring).
 
+    @model_call
     def _download_stage_for(
         self,
         descriptor: ArtifactDescriptor,
@@ -3222,6 +3235,7 @@ class ModelArtifactService:
                 "failed to initialize download staging operation"
             ) from error
 
+    @model_call
     def _finalize_download_stage(
         self,
         descriptor: ArtifactDescriptor,
@@ -3907,6 +3921,7 @@ class ModelArtifactService:
                 self._assert_managed_path(destination)
                 return False
 
+    @model_call
     def import_local_gguf(
         self,
         source_file: Path,
@@ -4048,6 +4063,7 @@ class ModelArtifactService:
                             f"staging operation lease release failed: {release_error!r}"
                         )
 
+    @model_call(execution=True)
     def install(
         self,
         descriptor: ArtifactDescriptor,

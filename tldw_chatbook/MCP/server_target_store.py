@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any, Mapping, Sequence
 from uuid import UUID, uuid4
 
+from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from .unified_control_models import ConfiguredServerTarget, TargetStatusMetadata
 
@@ -46,6 +47,7 @@ def _default_server_targets_path() -> Path:
 class ConfiguredServerTargetStore:
     _mutation_lock = RLock()
 
+    @mcp_sources.guarded
     def __init__(self, path: str | Path | None = None) -> None:
         """Initialize the configured target store.
 
@@ -60,6 +62,7 @@ class ConfiguredServerTargetStore:
         selected_path = Path(path) if path else _default_server_targets_path()
         self.path = validate_path_simple(selected_path, require_exists=False)
 
+    @mcp_sources.guarded
     def load(self) -> list[ConfiguredServerTarget]:
         payload = self._read_payload()
         if not isinstance(payload, list):
@@ -72,9 +75,11 @@ class ConfiguredServerTargetStore:
             if isinstance(item, Mapping)
         ]
 
+    @mcp_sources.guarded
     def list_targets(self) -> list[ConfiguredServerTarget]:
         return self.load()
 
+    @mcp_sources.guarded
     def get_target(self, server_id: str) -> ConfiguredServerTarget | None:
         normalized_server_id = str(server_id or "").strip()
         if not normalized_server_id:
@@ -84,6 +89,7 @@ class ConfiguredServerTargetStore:
                 return target
         return None
 
+    @mcp_sources.guarded
     def resolve_active_target(
         self, server_id: str | None = None
     ) -> ConfiguredServerTarget | None:
@@ -103,6 +109,7 @@ class ConfiguredServerTargetStore:
 
         return targets[0]
 
+    @mcp_sources.guarded
     def set_default_target(self, server_id: str) -> ConfiguredServerTarget | None:
         normalized_server_id = str(server_id or "").strip()
         if not normalized_server_id:
@@ -126,6 +133,7 @@ class ConfiguredServerTargetStore:
             self.save_targets(updated_targets)
             return selected_target
 
+    @mcp_sources.guarded
     def update_target_status(
         self,
         server_id: str,
@@ -195,6 +203,7 @@ class ConfiguredServerTargetStore:
             self.save_targets(updated_targets)
             return updated_target
 
+    @mcp_sources.guarded
     def ensure_authority_scope_id(self, server_id: str) -> str:
         """Return a validated, durably persisted authority scope for a target.
 
@@ -267,23 +276,26 @@ class ConfiguredServerTargetStore:
             except Exception:
                 raise AuthorityScopeUnavailable() from None
 
+    @mcp_sources.guarded
     def save_targets(self, targets: Sequence[ConfiguredServerTarget]) -> None:
+        from .recovery_activation import require_store_write
+
+        require_store_write(self, "mcp.targets")
         with self._mutation_lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
             payload = {
                 "targets": [target.to_dict() for target in targets],
                 "updated_at": _datetime_to_iso(datetime.now(timezone.utc)),
             }
+            mcp_sources.write_json(self, payload)
 
-            with temp_path.open("w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2, sort_keys=True)
-
-            temp_path.replace(self.path)
-
+    @mcp_sources.guarded
     def bootstrap_from_legacy_config(
         self, app_config: Mapping[str, Any] | None
     ) -> bool:
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.targets"):
+            return False
         with self._mutation_lock:
             if self.list_targets():
                 return False
@@ -297,10 +309,15 @@ class ConfiguredServerTargetStore:
             self.save_targets([target])
             return True
 
+    @mcp_sources.guarded
     def upsert_legacy_config_target(
         self,
         app_config: Mapping[str, Any] | None,
     ) -> ConfiguredServerTarget | None:
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.targets"):
+            return None
         legacy_target = ConfiguredServerTarget.from_legacy_tldw_api_config(
             app_config or {}
         )
@@ -341,9 +358,10 @@ class ConfiguredServerTargetStore:
                 self.save_targets(updated_targets)
             return synced_target
 
+    @mcp_sources.guarded
     def _read_payload(self) -> Any:
         try:
-            with self.path.open("r", encoding="utf-8") as handle:
+            with mcp_sources.reader(self) as handle:
                 return json.load(handle)
         except FileNotFoundError:
             return []

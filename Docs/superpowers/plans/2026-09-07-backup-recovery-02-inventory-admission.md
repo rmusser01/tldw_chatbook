@@ -107,7 +107,7 @@ changes in another checkout are not part of this work.
 <a id="task-3"></a>
 ## Task 3: Declare recovery inventory and side-effect-free profile discovery
 
-**Backlog:** [TASK-31986](../../../backlog/tasks/task-31986%20-%20Declare-recovery-inventory-and-side-effect-free-profile-discovery.md) — To Do.
+**Backlog:** [TASK-31986](../../../backlog/tasks/task-31986%20-%20Declare-recovery-inventory-and-side-effect-free-profile-discovery.md) — Done.
 
 **Dependencies:** Approved design only.
 
@@ -162,7 +162,7 @@ def register(adapter: OwnerAdapter) -> None: ...
 def registered() -> tuple[OwnerAdapter, ...]: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_inventory.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_inventory.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -175,19 +175,19 @@ def test_unknown_durable_entry_blocks_completeness(tmp_path):
     assert "unsupported_owner" in result.issues
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_inventory.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_inventory.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Create a census from SQLITE_OWNER_REGISTRY, backlog/docs/sqlite-private-owner-inventory.md, configured storage resolvers, private file writers, and existing durable root contents. Record every producer, path resolver, class, dependencies, capture/validation/relocation/activation adapter, cohort, and targeted evidence; classify memory, cookies/external input, process artifacts, and server data explicitly. A raw connection census alone is insufficient.
+- [x] **Step 3:** Create a census from SQLITE_OWNER_REGISTRY, backlog/docs/sqlite-private-owner-inventory.md, configured storage resolvers, private file writers, and existing durable root contents. Record every producer, path resolver, class, dependencies, capture/validation/relocation/activation adapter, cohort, and targeted evidence; classify memory, cookies/external input, process artifacts, and server data explicitly. A raw connection census alone is insufficient.
 
-- [ ] **Step 4:** Extract pure path resolution from config.py without changing priority rules. discover reads explicitly selected TOML configs and canonical defaults without load_settings, directory creation, fallback profile creation, optional-engine imports, keyring reads, or database constructors. Return a parse failure for damaged source configs; archive inspection does not call discover.
+- [x] **Step 4:** Extract pure path resolution from config.py without changing priority rules. discover reads explicitly selected TOML configs and canonical defaults without load_settings, directory creation, fallback profile creation, optional-engine imports, keyring reads, or database constructors. Return a parse failure for damaged source configs; archive inspection does not call discover.
 
-- [ ] **Step 5:** Define frozen SchemaPolicy(owner, versions, schema_sql, migration_steps) and OwnerAdapter protocol here. discover(config: Mapping[str, object]) -> tuple[StorageItem, ...]; capture(item: StorageItem, destination: Path, cancel: Event) -> None; validate(candidate: Path) -> tuple[str, ...]; relocate(candidate: Path, mapping: Mapping[str, Path]) -> None; schema_policy() -> SchemaPolicy | None. Policies contain installed SQL only and exact supported schema metadata, never imported executable code.
+- [x] **Step 5:** Define frozen SchemaPolicy(owner, versions, schema_sql, migration_steps) and OwnerAdapter protocol here. discover(config: Mapping[str, object]) -> tuple[StorageItem, ...]; capture(item: StorageItem, destination: Path, cancel: Event) -> None; validate(candidate: Path) -> tuple[str, ...]; relocate(candidate: Path, mapping: Mapping[str, Path]) -> None; schema_policy() -> SchemaPolicy | None. Policies contain installed SQL only and exact supported schema metadata, never imported executable code.
 
-- [ ] **Step 6:** owner_registry.register(adapter: OwnerAdapter) -> None and registered() -> tuple[OwnerAdapter, ...] reject duplicate logical ownership unless verified physical identity maps it to an explicit shared group. Path aliases and nested owner roots cannot silently duplicate capture. Unknown durable entries block complete; unavailable required payloads do too, except validated intentional-deletion records.
+- [x] **Step 6:** owner_registry.register(adapter: OwnerAdapter) -> None and registered() -> tuple[OwnerAdapter, ...] reject duplicate logical ownership unless verified physical identity maps it to an explicit shared group. Path aliases and nested owner roots cannot silently duplicate capture. Unknown durable entries block complete; unavailable required payloads do too, except validated intentional-deletion records.
 
-- [ ] **Step 7:** Add a source census guard for new persistence producers and a documented explicit exclusion review. Fixtures cover inactive features, multiple profile configs, custom DB paths, aliasing, unknown files, required absence, external folders, and malformed config. Do not mark the implementation coverage complete until every census row has a supported adapter or approved exclusion.
+- [x] **Step 7:** Add a source census guard for new persistence producers and a documented explicit exclusion review. Fixtures cover inactive features, multiple profile configs, custom DB paths, aliasing, unknown files, required absence, external folders, and malformed config. Do not mark the implementation coverage complete until every census row has a supported adapter or approved exclusion.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -200,7 +200,7 @@ if any(item.owner == "unknown" for item in items):
     issues.append("unsupported_owner")
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -208,11 +208,11 @@ python -m pytest Tests/Backup_Recovery/test_inventory.py Tests/Architecture/test
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): declare recovery inventory and side-effect-free profile discovery`. Recheck task-ID collisions
   before merge and preserve unrelated work.
@@ -227,7 +227,7 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 <a id="task-4"></a>
 ## Task 4: Implement stable maintenance admission and native storage qualification
 
-**Backlog:** [TASK-31987](../../../backlog/tasks/task-31987%20-%20Implement-stable-maintenance-admission-and-native-storage-qualification.md) — To Do.
+**Backlog:** [TASK-31987](../../../backlog/tasks/task-31987%20-%20Implement-stable-maintenance-admission-and-native-storage-qualification.md) — Done.
 
 **Dependencies:** TASK-31986.
 
@@ -252,7 +252,7 @@ def qualified_for(operation: str, root: Path) -> tuple[bool, str]: ...
 def publish_new(staged: Path, destination: Path) -> None: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_admission.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_admission.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -267,19 +267,19 @@ def test_publication_never_overwrites_existing_file(tmp_path):
     assert destination.read_bytes() == b"previous backup"
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_admission.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_admission.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Implement namespace registration, alias identity, and native cross-process admission under a verified control root outside managed targets. Keep lock objects stable across rename and reserve old/new namespaces during remapping. Do not change advisory InstanceLockStatus into a claim that legacy processes are fenced.
+- [x] **Step 3:** Implement namespace registration, alias identity, and native cross-process admission under a verified control root outside managed targets. Keep lock objects stable across rename and reserve old/new namespaces during remapping. Do not change advisory InstanceLockStatus into a claim that legacy processes are fenced.
 
-- [ ] **Step 4:** Acquire ordered registry/owner admission without holding locks needed by a draining participant. Closing admission prevents new mutations, then drains established participants to a safe boundary before exclusive capture. Add timeout/cancellation results without forced transaction rollback or draft loss.
+- [x] **Step 4:** Acquire ordered registry/owner admission without holding locks needed by a draining participant. Closing admission prevents new mutations, then drains established participants to a safe boundary before exclusive capture. Add timeout/cancellation results without forced transaction rollback or draft loss.
 
-- [ ] **Step 5:** Provide owner-private directory/file creation and durable atomic no-replace publication using qualified native primitives. Handle same-volume hard-link publication only for verified regular operation-owned files on a qualified filesystem; support crash evidence for the temporary dual-name state. Never emulate no-replace with exists then replace.
+- [x] **Step 5:** Provide owner-private directory/file creation and durable atomic no-replace publication using qualified native primitives. Handle same-volume hard-link publication only for verified regular operation-owned files on a qualified filesystem; support crash evidence for the temporary dual-name state. Never emulate no-replace with exists then replace.
 
-- [ ] **Step 6:** Use independent child processes and synchronization pipes/events for lock tests, including changing the target inode, shared aliases, remapping, connection retirement, process death, stale registry evidence, and contention. Test native directory fsync/flush and refusal on unqualified storage; record evidence per operation, not merely per OS.
+- [x] **Step 6:** Use independent child processes and synchronization pipes/events for lock tests, including changing the target inode, shared aliases, remapping, connection retirement, process death, stale registry evidence, and contention. Test native directory fsync/flush and refusal on unqualified storage; record evidence per operation, not merely per OS.
 
-- [ ] **Step 7:** qualified_for returns unavailable until the corresponding native test evidence exists. Distinguish archive-output support, isolated publication, and replacement support. Known incompatible clients refuse maintenance; PID scanning is supplementary only.
+- [x] **Step 7:** qualified_for returns unavailable until the corresponding native test evidence exists. Distinguish archive-output support, isolated publication, and replacement support. Known incompatible clients refuse maintenance; PID scanning is supplementary only.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -292,7 +292,7 @@ if not allowed:
 # FileExistsError from that primitive is final, never retried with replace().
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -300,11 +300,11 @@ python -m pytest Tests/Backup_Recovery/test_admission.py Tests/Backup_Recovery/t
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): implement stable maintenance admission and native storage qualification`. Recheck task-ID collisions
   before merge and preserve unrelated work.
@@ -319,7 +319,7 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 <a id="task-5"></a>
 ## Task 5: Fence all supported startup routes before storage bootstrap
 
-**Backlog:** [TASK-31988](../../../backlog/tasks/task-31988%20-%20Fence-all-supported-startup-routes-before-storage-bootstrap.md) — To Do.
+**Backlog:** [TASK-31988](../../../backlog/tasks/task-31988%20-%20Fence-all-supported-startup-routes-before-storage-bootstrap.md) — Done.
 
 **Dependencies:** TASK-31986, TASK-31987.
 
@@ -348,7 +348,7 @@ def register_pending(bootstrap_root: Path, operation_id: str,
                      selectors: tuple[Path, ...]) -> None: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_bootstrap.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_bootstrap.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -363,19 +363,19 @@ def test_custom_root_pending_operation_blocks_startup(tmp_path):
     assert reason == "recovery_pending"
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_bootstrap.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_bootstrap.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Store versioned private admission associations in the fixed default bootstrap directory, with locally verified selectors/namespaces and custom control roots. Reject overlap with replacement targets; archives cannot supply these records. Register durably before publication.
+- [x] **Step 3:** Store versioned private admission associations in the fixed default bootstrap directory, with locally verified selectors/namespaces and custom control roots. Reject overlap with replacement targets; archives cannot supply these records. Register durably before publication.
 
-- [ ] **Step 4:** Move the minimal check ahead of app/config imports for console script and python -m, and ahead of config reads for direct app, web-server, MCP, and headless persistence launchers. Inventory actual supported routes with AST/import subprocess tests, including multiprocessing spawn behavior. Refuse uncertain scope rather than guessing disjointness.
+- [x] **Step 4:** Move the minimal check ahead of app/config imports for console script and python -m, and ahead of config reads for direct app, web-server, MCP, and headless persistence launchers. Inventory actual supported routes with AST/import subprocess tests, including multiprocessing spawn behavior. Refuse uncertain scope rather than guessing disjointness.
 
-- [ ] **Step 5:** Add the same admission contract at the registered private SQLite open seam and owned file entry boundaries so a missed high-level launcher cannot advertise full protection. Memory-only/foreign read-only sources retain their classified exemptions; ordinary admitted opens must be released on shutdown.
+- [x] **Step 5:** Add the same admission contract at the registered private SQLite open seam and owned file entry boundaries so a missed high-level launcher cannot advertise full protection. Memory-only/foreign read-only sources retain their classified exemptions; ordinary admitted opens must be released on shutdown.
 
-- [ ] **Step 6:** A pending or corrupt scope returns a recovery-required result without migrations, cleanup, default config creation, process spawning, or network activity. At this stage print a bounded recovery-required message; the recovery UI arrives in its own task. Plain unrelated profile startup is allowed only with positively verified disjoint mappings.
+- [x] **Step 6:** A pending or corrupt scope returns a recovery-required result without migrations, cleanup, default config creation, process spawning, or network activity. At this stage print a bounded recovery-required message; the recovery UI arrives in its own task. Plain unrelated profile startup is allowed only with positively verified disjoint mappings.
 
-- [ ] **Step 7:** Test custom-root disappearance, corrupt fixed records, catalog loss, interrupted registration, config replacement, and raw direct-app launch with import-time sentinels. Preserve unknown records. Clearing fences will be wired only through the later journal commit API.
+- [x] **Step 7:** Test custom-root disappearance, corrupt fixed records, catalog loss, interrupted registration, config replacement, and raw direct-app launch with import-time sentinels. Preserve unknown records. Clearing fences will be wired only through the later journal commit API.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -387,7 +387,7 @@ if not allowed:
 # Ordinary application loading follows only on the admitted branch.
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -397,11 +397,11 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 python -m pytest Tests/ProductionApp/test_service_composition_lifecycle.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): fence all supported startup routes before storage bootstrap`. Recheck task-ID collisions
   before merge and preserve unrelated work.
@@ -416,7 +416,7 @@ python -m pytest Tests/ProductionApp/test_service_composition_lifecycle.py -q
 <a id="task-6"></a>
 ## Task 6: Add recovery adapters for core conversation and library stores
 
-**Backlog:** [TASK-31989](../../../backlog/tasks/task-31989%20-%20Add-recovery-adapters-for-core-conversation-and-library-stores.md) — To Do.
+**Backlog:** [TASK-31989](../../../backlog/tasks/task-31989%20-%20Add-recovery-adapters-for-core-conversation-and-library-stores.md) — Done.
 
 **Dependencies:** TASK-31986, TASK-31987.
 
@@ -441,7 +441,7 @@ the following exact contracts. Factories return only installed owner declaration
 def core_adapters() -> tuple[OwnerAdapter, ...]: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_core_owners.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_core_owners.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -451,19 +451,19 @@ def test_core_owner_set_is_declared():
     assert {"db.chachanotes.primary", "db.media.primary", "db.prompts.primary"} <= names
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_core_owners.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_core_owners.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Declare core store resolvers and dependency groups for conversations/messages/characters/notes, prompts, media, collections, and ingestion history. Include soft-deleted rows and referenced attachments; do not export records through selective Chatbook serializers.
+- [x] **Step 3:** Declare core store resolvers and dependency groups for conversations/messages/characters/notes, prompts, media, collections, and ingestion history. Include soft-deleted rows and referenced attachments; do not export records through selective Chatbook serializers.
 
-- [ ] **Step 4:** Implement capture with registered backup_connection_to_private or copy_private_sqlite owners. Snapshot committed WAL through SQLite while maintenance is held; never independently copy sidecars. Register recovery-specific backup authority where current centralized-backup policy disallows it; keep ordinary selective export exclusions intact.
+- [x] **Step 4:** Implement capture with registered backup_connection_to_private or copy_private_sqlite owners. Snapshot committed WAL through SQLite while maintenance is held; never independently copy sidecars. Register recovery-specific backup authority where current centralized-backup policy disallows it; keep ordinary selective export exclusions intact.
 
-- [ ] **Step 5:** Describe exact supported schema/FTS/trigger definitions and installed migration steps through SchemaPolicy. Add relocation of managed paths and domain reference validation without normal constructors. Unsupported historical versions stay explicit rather than attempting best-effort upgrades.
+- [x] **Step 5:** Describe exact supported schema/FTS/trigger definitions and installed migration steps through SchemaPolicy. Add relocation of managed paths and domain reference validation without normal constructors. Unsupported historical versions stay explicit rather than attempting best-effort upgrades.
 
-- [ ] **Step 6:** Create real database fixtures through current domain APIs under Tests isolation, then compare primary keys, relationships, soft deletions, FTS content, BLOBs, and byte assets after adapter capture. Add per-store WAL and interrupted-capture cases; the declaration smoke test below is only the smallest red step, not completion evidence.
+- [x] **Step 6:** Create real database fixtures through current domain APIs under Tests isolation, then compare primary keys, relationships, soft deletions, FTS content, BLOBs, and byte assets after adapter capture. Add per-store WAL and interrupted-capture cases; the declaration smoke test below is only the smallest red step, not completion evidence.
 
-- [ ] **Step 7:** Update both owner inventories and run private SQLite census/interop guards alongside these focused round trips.
+- [x] **Step 7:** Update both owner inventories and run private SQLite census/interop guards alongside these focused round trips.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -476,7 +476,7 @@ copy_private_sqlite(self.backup_owner_id, item.path, destination,
                     progress_guard=check_cancelled)
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -485,11 +485,11 @@ python -m pytest Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_in
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): add recovery adapters for core conversation and library stores`. Recheck task-ID collisions
   before merge and preserve unrelated work.
@@ -504,7 +504,7 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 <a id="task-7"></a>
 ## Task 7: Add recovery adapters for local research writing study and evaluation data
 
-**Backlog:** [TASK-31990](../../../backlog/tasks/task-31990%20-%20Add-recovery-adapters-for-local-research-writing-study-and-evaluation-data.md) — To Do.
+**Backlog:** [TASK-31990](../../../backlog/tasks/task-31990%20-%20Add-recovery-adapters-for-local-research-writing-study-and-evaluation-data.md) — Done.
 
 **Dependencies:** TASK-31986, TASK-31987.
 
@@ -532,7 +532,7 @@ the following exact contracts. Factories return only installed owner declaration
 def recovery_adapters() -> tuple[OwnerAdapter, ...]: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_domain_owners.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_domain_owners.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -543,17 +543,17 @@ def test_optional_domain_discovery_does_not_require_engines():
     assert all(adapter.schema_policy() is not None for adapter in adapters)
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_domain_owners.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_domain_owners.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Implement OwnerAdapter for local research/writing/study/quizzes/evaluation stores from the verified census, including secondary benches, custom roots, and persisted outputs. Classify mirrors and server-owned data separately; local durable user data remains baseline even when its feature is disabled.
+- [x] **Step 3:** Implement OwnerAdapter for local research/writing/study/quizzes/evaluation stores from the verified census, including secondary benches, custom roots, and persisted outputs. Classify mirrors and server-owned data separately; local durable user data remains baseline even when its feature is disabled.
 
-- [ ] **Step 4:** Preserve history, attachments, identifiers, relationships, deleted/recovery records and schema metadata. Populate SchemaPolicy with supported installed versions and domain validation; relocate only managed locators. Register checked capture authority without broadening unrelated exports.
+- [x] **Step 4:** Preserve history, attachments, identifiers, relationships, deleted/recovery records and schema metadata. Populate SchemaPolicy with supported installed versions and domain validation; relocate only managed locators. Register checked capture authority without broadening unrelated exports.
 
-- [ ] **Step 5:** Keep discovery import-light: no cloud clients, evaluation runner/model imports, or database constructors that migrate. Capture under existing domain admission and emit explicit unavailable results for unreadable required stores.
+- [x] **Step 5:** Keep discovery import-light: no cloud clients, evaluation runner/model imports, or database constructors that migrate. Capture under existing domain admission and emit explicit unavailable results for unreadable required stores.
 
-- [ ] **Step 6:** Add a fixture for each census owner using the real domain persistence API, capture it, and compare complete domain records and referenced bytes. Include no optional engine installed, schema-too-new, old supported schema, missing asset, and custom path cases.
+- [x] **Step 6:** Add a fixture for each census owner using the real domain persistence API, capture it, and compare complete domain records and referenced bytes. Include no optional engine installed, schema-too-new, old supported schema, missing asset, and custom path cases.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -564,7 +564,7 @@ for adapter in recovery_adapters():
 # Factories return installed path/schema policies, not live service objects.
 ```
 
-- [ ] **Step 7:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 7:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -573,11 +573,11 @@ python -m pytest Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_in
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 8:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 8:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 9:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 9:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): add recovery adapters for local research writing study and evaluation data`. Recheck task-ID collisions
   before merge and preserve unrelated work.
@@ -592,7 +592,7 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 <a id="task-8"></a>
 ## Task 8: Add recovery adapters for workspace operational and device-local state
 
-**Backlog:** [TASK-31991](../../../backlog/tasks/task-31991%20-%20Add-recovery-adapters-for-workspace-operational-and-device-local-state.md) — To Do.
+**Backlog:** [TASK-31991](../../../backlog/tasks/task-31991%20-%20Add-recovery-adapters-for-workspace-operational-and-device-local-state.md) — Done.
 
 **Dependencies:** TASK-31986, TASK-31987.
 
@@ -619,7 +619,7 @@ the following exact contracts. Factories return only installed owner declaration
 def recovery_adapters() -> tuple[OwnerAdapter, ...]: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_operational_owners.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_operational_owners.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -630,19 +630,19 @@ def test_sync_capture_policy_keeps_runtime_authority_inactive():
     assert all(adapter.activation_required for adapter in adapters)
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_operational_owners.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_operational_owners.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Capture workspace registry/state, agent run history, subscriptions, notifications/cursors, scheduling definitions/history, local MCP/permission stores, File Notes recovery data, and device-local Notes sync journals according to each owner census row. Memory-only Sync keys remain uncaptured.
+- [x] **Step 3:** Capture workspace registry/state, agent run history, subscriptions, notifications/cursors, scheduling definitions/history, local MCP/permission stores, File Notes recovery data, and device-local Notes sync journals according to each owner census row. Memory-only Sync keys remain uncaptured.
 
-- [ ] **Step 4:** Add activation_required: bool to OwnerAdapter with False for passive content and True for execution/reconnection owners. Preserve imported operational bytes as quarantined evidence; relocate fresh identity/scope bindings separately from immutable historical references. Never replay pending filesystem intent during capture/inspection.
+- [x] **Step 4:** Add activation_required: bool to OwnerAdapter with False for passive content and True for execution/reconnection owners. Preserve imported operational bytes as quarantined evidence; relocate fresh identity/scope bindings separately from immutable historical references. Never replay pending filesystem intent during capture/inspection.
 
-- [ ] **Step 5:** Implement owner-safe record export for recovery and checked SQLite snapshots without changing ADR-059/060 selective bundle restrictions. Distinguish File Notes disk authority from database projections; external folder capture stays opt-in.
+- [x] **Step 5:** Implement owner-safe record export for recovery and checked SQLite snapshots without changing ADR-059/060 selective bundle restrictions. Distinguish File Notes disk authority from database projections; external folder capture stays opt-in.
 
-- [ ] **Step 6:** Test historical running/queued states, permissions, leases, device claims, file bindings, pending intents, and local recovery bytes survive capture but cannot authorize a write. Include shared config/keyring scopes, optional-disabled services, and no silent conversion of managed folder membership.
+- [x] **Step 6:** Test historical running/queued states, permissions, leases, device claims, file bindings, pending intents, and local recovery bytes survive capture but cannot authorize a write. Include shared config/keyring scopes, optional-disabled services, and no silent conversion of managed folder membership.
 
-- [ ] **Step 7:** Keep adapters near their actual owners; DB/recovery_operations.py aggregates only database policies. Add new census-discovered local operational owners to this cohort with explicit rows rather than scanning home or ignoring them.
+- [x] **Step 7:** Keep adapters near their actual owners; DB/recovery_operations.py aggregates only database policies. Add new census-discovered local operational owners to this cohort with explicit rows rather than scanning home or ignoring them.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -654,7 +654,7 @@ if imported_binding_is_authoritative:
     raise ValueError("imported_authority_not_admitted")
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -663,11 +663,11 @@ python -m pytest Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_in
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): add recovery adapters for workspace operational and device-local state`. Recheck task-ID collisions
   before merge and preserve unrelated work.
@@ -682,7 +682,7 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 <a id="task-9"></a>
 ## Task 9: Add recovery inventory for configuration durable files and optional content
 
-**Backlog:** [TASK-31992](../../../backlog/tasks/task-31992%20-%20Add-recovery-inventory-for-configuration-durable-files-and-optional-content.md) — To Do.
+**Backlog:** [TASK-31992](../../../backlog/tasks/task-31992%20-%20Add-recovery-inventory-for-configuration-durable-files-and-optional-content.md) — Done.
 
 **Dependencies:** TASK-31986, TASK-31987.
 
@@ -707,7 +707,7 @@ def config_adapter() -> OwnerAdapter: ...
 # TTS/Persona/Skills/Model_Artifacts recovery.py each exports recovery_adapters().
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_file_inventory.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_file_inventory.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -719,19 +719,19 @@ def test_empty_directory_is_an_inventory_item(tmp_path):
     assert any(item.path == empty and item.status == "included_directory" for item in items)
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_file_inventory.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_file_inventory.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Declare config/current history, templates, internal prompts, skill/local definitions, persona artwork, voice references and TTS profile store, durable generated/saved assets, and remaining private-file census owners. Keep diagnostic files, disposable caches, backup outputs, journals, and rollback directories explicitly classified.
+- [x] **Step 3:** Declare config/current history, templates, internal prompts, skill/local definitions, persona artwork, voice references and TTS profile store, durable generated/saved assets, and remaining private-file census owners. Keep diagnostic files, disposable caches, backup outputs, journals, and rollback directories explicitly classified.
 
-- [ ] **Step 4:** Represent regular files and empty directories with stable logical IDs and explicit parent relationships; detect file/directory collisions, aliases, links, nested mounts, unsupported metadata, and unknown durable entries. Use checked path helpers; no recursive symlink following.
+- [x] **Step 4:** Represent regular files and empty directories with stable logical IDs and explicit parent relationships; detect file/directory collisions, aliases, links, nested mounts, unsupported metadata, and unknown durable entries. Use checked path helpers; no recursive symlink following.
 
-- [ ] **Step 5:** Model external roots, model payloads, diagnostics, and current temporary media as separate opt-in selections. A configured app database outside the default directory remains baseline. Qualified model adapters may resolve only selected dependencies inside an identified store; do not follow generic links.
+- [x] **Step 5:** Model external roots, model payloads, diagnostics, and current temporary media as separate opt-in selections. A configured app database outside the default directory remains baseline. Qualified model adapters may resolve only selected dependencies inside an identified store; do not follow generic links.
 
-- [ ] **Step 6:** Config adapters expose known managed secret locations for the credential task and pure relocation rules. They do not sanitize arbitrary user prose or decrypt unknown secret blobs opportunistically.
+- [x] **Step 6:** Config adapters expose known managed secret locations for the credential task and pure relocation rules. They do not sanitize arbitrary user prose or decrypt unknown secret blobs opportunistically.
 
-- [ ] **Step 7:** Test nested empty trees, private permissions, custom assets, selected model dependency links, excluded output roots, and unavailable external roots. Reconcile every remaining file census row; unresolved rows must keep Complete unavailable.
+- [x] **Step 7:** Test nested empty trees, private permissions, custom assets, selected model dependency links, excluded output roots, and unavailable external roots. Reconcile every remaining file census row; unresolved rows must keep Complete unavailable.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -745,7 +745,7 @@ elif stat.S_ISDIR(entry_mode):
 # Persist even empty directories; checked owner paths still govern descent.
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -753,11 +753,11 @@ python -m pytest Tests/Backup_Recovery/test_file_inventory.py -q
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): add recovery inventory for configuration durable files and optional content`. Recheck task-ID collisions
   before merge and preserve unrelated work.

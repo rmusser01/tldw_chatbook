@@ -2889,6 +2889,11 @@ def test_screen_selection_builder_targets_session_without_switching_view():
     # `_build_console_provider_selection_uncached`; the wrapper under test
     # delegates to the latter through `self`, so the double borrows the real
     # uncached half exactly as the memo-less path binds it in production.
+    # The merged builder enters the real ephemeral derivation scope. Bind it
+    # on this namespace double just as the uncached builder is bound below.
+    fake_screen._console_derivation_scope = lambda: ChatScreen._console_derivation_scope(
+        fake_screen
+    )
     fake_screen._build_console_provider_selection_uncached = lambda session_id=None: (
         ChatScreen._build_console_provider_selection_uncached(fake_screen, session_id)
     )
@@ -2949,6 +2954,11 @@ def _identity_selection_screen(store, global_name="Rowan"):
         ),
         _normalize_llamacpp_base_url=lambda value: value,
         _global_chat_display_name=lambda: global_name,
+    )
+    # The merged builder enters the real ephemeral derivation scope. Bind it
+    # on this namespace double just as the uncached builder is bound below.
+    fake_screen._console_derivation_scope = lambda: ChatScreen._console_derivation_scope(
+        fake_screen
     )
     fake_screen._build_console_provider_selection_uncached = (
         lambda session_id=None: ChatScreen._build_console_provider_selection_uncached(
