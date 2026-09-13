@@ -45,7 +45,7 @@ def _sqlite_inventory_status(
         return "missing_required"
     if setting_name:
         row = next(row for row in DATABASE_PATHS if row[1] == setting_name)
-        legacy = str(Path("~/.local/share/tldw_cli") / row[3]) if row[3] else None
+        legacy = "~/.local/share/tldw_cli/" + row[3] if row[3] else None
         if (
             custom_database_input(setting(config, "database", setting_name), legacy)
             is not None

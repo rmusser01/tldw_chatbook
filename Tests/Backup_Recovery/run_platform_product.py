@@ -70,6 +70,7 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_loop_diagnostics.py",
     "Tests/Backup_Recovery/test_startup_readmission_continuity.py",
     "Tests/Backup_Recovery/test_recovery_restart_windows.py",
+    "Tests/Backup_Recovery/test_database_default_spelling.py",
     "Tests/Backup_Recovery/test_restart_observation.py",
 )
 _RESTORE_DIAGNOSTIC_TESTS = (

@@ -4,6 +4,18 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+The Windows inventory diagnostic at `8bf43d0630b80b5882ed278d0df320785aa56c7b`
+shows core databases missing at selected paths while their actual files appear
+as unknown children. Recovery constructed its default-setting sentinel with native
+`Path` separators; the normal app compares the saved forward-slash TOML literal.
+Thus saved defaults selected different locations on Windows after normal startup.
+Both recovery comparisons now use the exact shipped literal, preserving custom
+path handling. Eleven Windows-flavor regressions fail before the fix while eleven
+POSIX cases pass. Afterward, those22 plus actual runtime/default parity and the
+existing lazy-owner absence check pass24 cases in1.14 seconds. Independent review
+has no findings, production Bandit has none, and Ruff adds none to four existing
+findings. Native full verification of this correction is next.
+
 Diagnostic revision `7a83ac024fbb728942c3b8906bc77daea4e1ef03`, Windows
 [34728494889](https://github.com/rmusser01/tldw_chatbook/actions/runs/34728494889),
 passes native42 and fails the product case221.863 seconds; all16 artifact hashes

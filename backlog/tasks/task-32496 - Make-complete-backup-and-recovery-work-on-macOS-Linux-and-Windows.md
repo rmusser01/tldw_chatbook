@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 00:46
+updated_date: 2026-09-13 01:03
 ---
 
 ## Description
@@ -105,6 +105,8 @@ ae901 actualMaccombinedreplacement/laterrollback PASS192.22s (log/private/tmp/ta
 ae901 actualLinux combinedreplacement/laterrollback PASS282.21s (87readerchecks17.66s); alltargetedcurrentMacLinuxverificationdone. Windows34727849451 firstsupportgroupPASSnative42+product71 no skips;16artifacthashesverified,source9853files,installed2030. Sixapplicationgroupspending; no claimWindowscomplete.
 Native Windows full run34727849451 exact ae901141df253ba8705589b4bb85ec1d3790031d: native294/294; product75pass2fail, no skips;123artifact hashes verified. Restart works; both fresh children inspect archive but fail first restore preview with generic backup_operation_failed before replacement/rollback begins. Reusing existing bounded exception observer in fresh driver to identify original exception before production changes. Actual macOS combined passed192.22s; Linux readers87passed17.66s and combined passed282.21s.
 7a83 Windows diagnostic34728494889 native42pass/product1fail221.863s;16hashes verified. Original error is ValueError target_unverified at restore_plan:676: a target item has no path with blocking status. Inventory discovery intentionally catches underlying discovery errors. Next bounded test observer records exceptions reaching discover plus anonymous owner/status summary, without exception text, paths or local values.
+8bf native diagnostic identifies many core databases missing_required, corresponding unknown existing children, agents.history unavailable and persona dependent unsupported. Code confirms recovery default sentinel uses str(Path('~/.local/share/tldw_cli')/leaf), yielding backslashes on Windows, whereas normal app compares literal forward-slash defaults from CONFIG_TOML_CONTENT. Saved defaults thus select wrong recovery paths after normal app writes config. Correct only two sentinel comparisons in profile_paths.database_path and DB.recovery_operations optional-default classification; add cross-flavor regressions and native support parity test.
+Two exact-literal default sentinel corrections implemented. RED11Windowsflavor failures/11POSIXpasses; GREEN23 new spelling/runtime parity checks plus existing actual lazy-owner required-missing test =24passed1.14s. Independent native review no findings; production Bandit0, Ruff baseline3+1/current3+1/new0, tests/runner clean. Existing legacy resolver test still fails known raw_source_selection_changed fixture before comparisons; unchanged. Starting actual macOS combined; full nativeWindows and Linux exact revision next.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

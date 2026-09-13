@@ -159,7 +159,8 @@ def custom_database_input(
 
 def database_path(config: Mapping[str, object], setting_name: str) -> Path:
     row = next(row for row in DATABASE_PATHS if row[1] == setting_name)
-    legacy = str(Path("~/.local/share/tldw_cli") / row[3]) if row[3] else None
+    # The shipped TOML default is a literal selector, independent of OS spelling.
+    legacy = "~/.local/share/tldw_cli/" + row[3] if row[3] else None
     raw = setting(config, "database", setting_name)
     if raw is not None and not isinstance(raw, str):
         raise ValueError("invalid_config_path")
