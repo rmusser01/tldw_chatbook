@@ -93,6 +93,72 @@ def observe_threads(path: Path, *, interval: float = 60) -> Callable[[], None]:
     return stop
 
 
+def _error_metadata(error: BaseException) -> dict:
+    record = {"error_class": type(error).__name__[:80], "frames": []}
+    for key in ("errno", "winerror"):
+        value = getattr(error, key, None)
+        record[key] = value if type(value) is int else None
+    trace = error.__traceback__
+    while trace is not None and len(record["frames"]) < 64:
+        record["frames"].append(
+            {
+                "file": Path(trace.tb_frame.f_code.co_filename).name[:128],
+                "function": trace.tb_frame.f_code.co_name[:128],
+                "line": trace.tb_lineno,
+            }
+        )
+        trace = trace.tb_next
+    return record
+
+
+def observe_inventory_failures(path: Path) -> Callable[[], None]:
+    """Observe exceptions caught in discovery on only its calling worker thread."""
+    from tldw_chatbook.Backup_Recovery import inventory, recovery_service
+
+    service = recovery_service.RecoveryService
+    original = service.preview_backup
+    records, lock = [], threading.Lock()
+
+    def observed(self, *args, **kwargs):
+        errors = []
+
+        def trace(frame, event, argument):
+            if frame.f_code is not inventory.discover.__code__:
+                return None
+            if event == "exception":
+                errors.append(_error_metadata(argument[1]))
+                del errors[:-16]
+            return trace
+
+        previous = sys.gettrace()
+        sys.settrace(trace)
+        try:
+            result = original(self, *args, **kwargs)
+        finally:
+            sys.settrace(previous)
+        blocking = [
+            {
+                "owner": row.owner[:128],
+                "status": row.status,
+                "has_path": row.path is not None,
+            }
+            for row in result.items
+            if row.status in {"unsupported", "unavailable", "missing_required"}
+        ][:128]
+        with lock:
+            records.append({"errors": errors, "blocking": blocking})
+            del records[:-8]
+            _write(Path(path), records)
+        return result
+
+    service.preview_backup = observed
+
+    def stop():
+        service.preview_backup = original
+
+    return stop
+
+
 def observe_recovery_failures(path: Path) -> Callable[[], None]:
     """Record only bounded original error metadata, then use the real mapper."""
     from tldw_chatbook.Backup_Recovery import recovery_service
@@ -103,20 +169,7 @@ def observe_recovery_failures(path: Path) -> Callable[[], None]:
     records, lock = [], threading.Lock()
 
     def observed(error, *, kind=""):
-        record = {"error_class": type(error).__name__[:80], "frames": []}
-        for key in ("errno", "winerror"):
-            value = getattr(error, key, None)
-            record[key] = value if type(value) is int else None
-        trace = error.__traceback__
-        while trace is not None and len(record["frames"]) < 64:
-            record["frames"].append(
-                {
-                    "file": Path(trace.tb_frame.f_code.co_filename).name[:128],
-                    "function": trace.tb_frame.f_code.co_name[:128],
-                    "line": trace.tb_lineno,
-                }
-            )
-            trace = trace.tb_next
+        record = _error_metadata(error)
         with lock:
             records.append(record)
             del records[:-16]

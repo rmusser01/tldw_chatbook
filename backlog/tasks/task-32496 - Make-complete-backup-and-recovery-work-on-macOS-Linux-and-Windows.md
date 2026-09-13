@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 00:37
+updated_date: 2026-09-13 00:46
 ---
 
 ## Description
@@ -104,6 +104,7 @@ Pushedae901141df253ba8705589b4bb85ec1d3790031d; fullWindows7group34727849451 act
 ae901 actualMaccombinedreplacement/laterrollback PASS192.22s (log/private/tmp/task32496-windows-restart-macos-rollback.log). ActualLinuxreaders87PASS17.66s; combinedstillrunning. PublicLinuxsourceSHAae44214a6c9fb3ba4ab865f6f40733ab92320e6eea24db2648f876f475bda28f; artifact.../artifacts-platform-private-ae901141df253ba8705589b4bb85ec1d3790031d-20260912-172415. FullWindows34727849451 active; no newproductionchanges.
 ae901 actualLinux combinedreplacement/laterrollback PASS282.21s (87readerchecks17.66s); alltargetedcurrentMacLinuxverificationdone. Windows34727849451 firstsupportgroupPASSnative42+product71 no skips;16artifacthashesverified,source9853files,installed2030. Sixapplicationgroupspending; no claimWindowscomplete.
 Native Windows full run34727849451 exact ae901141df253ba8705589b4bb85ec1d3790031d: native294/294; product75pass2fail, no skips;123artifact hashes verified. Restart works; both fresh children inspect archive but fail first restore preview with generic backup_operation_failed before replacement/rollback begins. Reusing existing bounded exception observer in fresh driver to identify original exception before production changes. Actual macOS combined passed192.22s; Linux readers87passed17.66s and combined passed282.21s.
+7a83 Windows diagnostic34728494889 native42pass/product1fail221.863s;16hashes verified. Original error is ValueError target_unverified at restore_plan:676: a target item has no path with blocking status. Inventory discovery intentionally catches underlying discovery errors. Next bounded test observer records exceptions reaching discover plus anonymous owner/status summary, without exception text, paths or local values.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

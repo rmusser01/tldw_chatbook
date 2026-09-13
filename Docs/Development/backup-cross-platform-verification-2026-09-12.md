@@ -4,6 +4,16 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Diagnostic revision `7a83ac024fbb728942c3b8906bc77daea4e1ef03`, Windows
+[34728494889](https://github.com/rmusser01/tldw_chatbook/actions/runs/34728494889),
+passes native42 and fails the product case221.863 seconds; all16 artifact hashes
+verify. The original preview error is `ValueError` at `plan_restore:676`: a target
+inventory item has no path and a blocking status. The test now observes exceptions
+caught inside `discover` on its calling thread and records bounded owner/status
+metadata, never path values, exception text or locals. This distinguishes the
+underlying discovery failure without relaxing restore validation. The new observer
+regression and three existing diagnostic tests pass; Ruff and helper Bandit pass.
+
 Revision `ae901141df253ba8705589b4bb85ec1d3790031d` confirms the Windows
 restart correction in [34727849451](https://github.com/rmusser01/tldw_chatbook/actions/runs/34727849451).
 Native294/294 and product75/77 pass, with no skips. Support71, plain,

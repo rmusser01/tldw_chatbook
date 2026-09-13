@@ -140,8 +140,9 @@ assert 'tldw_chatbook.app' not in sys.modules
 assert 'tldw_chatbook.config' not in sys.modules
 print('FRESH_MINIMAL_ENTRY',flush=True)
 def headless(app,*args,**kwargs):
- from Tests.Backup_Recovery.thread_diagnostics import observe_recovery_failures
+ from Tests.Backup_Recovery.thread_diagnostics import observe_recovery_failures,observe_inventory_failures
  stop_failures=observe_recovery_failures(Path.home()/'fresh-recovery-failures.log')
+ stop_inventory=observe_inventory_failures(Path.home()/'fresh-inventory-failures.log')
  async def mounted():
   async with app.run_test(size=(120,42)) as pilot:
    screen=app.screen
@@ -236,7 +237,7 @@ def headless(app,*args,**kwargs):
    (Path.home()/'probe-result.json').write_text(json.dumps(result,default=str))
   assert not blocked_attempts(),blocked_attempts()
  try:asyncio.run(mounted())
- finally:stop_failures()
+ finally:stop_inventory();stop_failures()
 App.run=headless
 """
 
