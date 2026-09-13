@@ -415,3 +415,233 @@ async def test_sort_publication_preserves_highlight(tmp_path, picker, key):
         await wait_until(lambda: not nav._projection_running)
         assert nav.option_count == 2001
         assert nav.highlighted_option.location == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("picker", [FileOpen, EnhancedFileOpen])
+async def test_enter_during_parent_only_scan_does_not_leave_folder(
+    tmp_path, monkeypatch, picker
+):
+    folder = tmp_path / "listing"
+    folder.mkdir()
+    (folder / "first.txt").touch()
+    release, blocked = threading.Event(), threading.Event()
+    real_scandir = os.scandir
+
+    def scan(path):
+        if Path(path) == folder:
+            blocked.set()
+            release.wait(5)
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", scan)
+    host = App()
+    try:
+        async with host.run_test() as pilot:
+            await host.push_screen(picker(location=folder))
+            nav = host.screen.query_one(DirectoryNavigation)
+            await wait_until(blocked.is_set)
+            nav.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert nav.location == folder
+            assert nav.highlighted is None
+            release.set()
+            await wait_until(lambda: nav._scan_finished and not nav._projection_running)
+            assert nav.highlighted_option.location == folder / "first.txt"
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("picker", [FileOpen, EnhancedFileOpen])
+async def test_scan_permission_error_reaches_dialog_alert(
+    tmp_path, monkeypatch, picker
+):
+    folder = tmp_path / "denied"
+    folder.mkdir()
+    real_scandir = os.scandir
+
+    def scan(path):
+        if Path(path) == folder:
+            raise PermissionError("denied")
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", scan)
+    dialog = picker(location=folder)
+    errors = []
+    original = dialog._set_error
+
+    def capture(message=""):
+        errors.append(message)
+        original(message)
+
+    monkeypatch.setattr(dialog, "_set_error", capture)
+    host = App()
+    async with host.run_test() as pilot:
+        await host.push_screen(dialog)
+        nav = dialog.query_one(DirectoryNavigation)
+        await wait_until(lambda: nav._scan_finished)
+        await pilot.pause()
+        assert "Permission error" in errors
+        assert "Stopped" in nav.listing_status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_probe", ["is_dir", "is_file", "is_symlink"])
+async def test_permission_denied_entry_probe_keeps_file(
+    tmp_path, monkeypatch, failed_probe
+):
+    folder = tmp_path / "listing"
+    folder.mkdir()
+    (folder / "restricted.txt").touch()
+    real_scandir = os.scandir
+
+    class Entry:
+        name = "restricted.txt"
+
+        def __getattr__(self, method):
+            def probe():
+                if method == failed_probe:
+                    raise PermissionError("denied")
+                return method == "is_file"
+
+            return probe
+
+    class Scan:
+        def __enter__(self):
+            return iter([Entry()])
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        os,
+        "scandir",
+        lambda path: Scan() if Path(path) == folder else real_scandir(path),
+    )
+    host = App()
+    async with host.run_test():
+        await host.push_screen(FileOpen(location=folder))
+        nav = host.screen.query_one(DirectoryNavigation)
+        await wait_until(lambda: nav._scan_finished and not nav._projection_running)
+        assert names(nav) == ["restricted.txt"]
+
+
+@pytest.mark.asyncio
+async def test_order_preserving_metadata_sort_hydrates_existing_options(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Third_Party.textual_fspicker.parts import (
+        DirectoryNavigation as Progressive,
+    )
+
+    folder = tmp_path / "listing"
+    folder.mkdir()
+    for index in range(80):
+        (folder / f"file-{index:03}.txt").write_text("x")
+    # Isolate metadata produced by sorting from the independent viewport worker.
+    monkeypatch.setattr(Progressive, "_hydrate_visible", lambda *args: None)
+    host = App()
+    async with host.run_test():
+        await host.push_screen(FileOpen(location=folder))
+        nav = host.screen.query_one(DirectoryNavigation)
+        await wait_until(lambda: nav._scan_finished and not nav._projection_running)
+        nav.sort_key = "name"
+        await wait_until(lambda: not nav._projection_running)
+        before = names(nav)
+        nav.sort_key = "size"
+        await wait_until(lambda: not nav._projection_running)
+        assert names(nav) == before
+        assert all(option.record.metadata_loaded for option in nav.options[1:])
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "folder",
+        "../elsewhere",
+        "semi;colon",
+        "pipe|name",
+        "$(name)",
+        "`name`",
+        "\udcff",
+    ],
+)
+def test_browsing_path_validation_preserves_legal_spelling(tmp_path, suffix):
+    from tldw_chatbook.Utils.path_validation import validate_browsing_path
+
+    candidate = tmp_path / suffix
+    assert validate_browsing_path(candidate) == candidate
+    assert validate_browsing_path(str(candidate)) == candidate
+
+
+@pytest.mark.parametrize("value", [None, 123, [], "relative", "/bad\x00name"])
+def test_browsing_path_validation_rejects_malformed_values(value):
+    from tldw_chatbook.Utils.path_validation import validate_browsing_path
+
+    with pytest.raises(ValueError):
+        validate_browsing_path(value)
+
+
+@pytest.mark.asyncio
+async def test_invalid_sort_events_leave_controls_and_navigation_unchanged(tmp_path):
+    host = App()
+    async with host.run_test():
+        dialog = FileOpen(location=tmp_path)
+        await host.push_screen(dialog)
+        nav = dialog.query_one(DirectoryNavigation)
+        sort = dialog.query_one("#listing-sort", Select)
+        direction = dialog.query_one("#listing-direction", Select)
+        for invalid in [None, 123, [], Select.NULL, "unknown"]:
+            for control in (sort, direction):
+                dialog._change_listing_sort(Select.Changed(control, invalid))
+                assert nav.sort_key == "discovery"
+                assert nav.sort_descending is False
+                assert direction.disabled is True
+
+
+@pytest.mark.parametrize(
+    "key", ["discovery", "name", "modified", "accessed", "created", "size"]
+)
+def test_sort_key_validator_accepts_supported_options(key):
+    from tldw_chatbook.Utils.input_validation import validate_file_picker_sort_key
+
+    assert validate_file_picker_sort_key(key) == key
+
+
+@pytest.mark.parametrize("direction", ["ascending", "descending"])
+def test_sort_direction_validator_accepts_supported_options(direction):
+    from tldw_chatbook.Utils.input_validation import validate_file_picker_sort_direction
+
+    assert validate_file_picker_sort_direction(direction) == direction
+
+
+@pytest.mark.asyncio
+async def test_invalid_scan_path_is_rejected_before_filesystem_access(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Third_Party.textual_fspicker.parts import (
+        DirectoryNavigation as Progressive,
+    )
+
+    bad_path = tmp_path / "bad\x00name"
+    real_scandir = os.scandir
+    seen = []
+
+    def scan(path):
+        seen.append(path)
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", scan)
+
+    class Host(App):
+        def compose(self):
+            yield Progressive(bad_path)
+
+    host = Host()
+    async with host.run_test():
+        nav = host.query_one(DirectoryNavigation)
+        await wait_until(lambda: nav._scan_finished)
+        assert bad_path not in seen
+        assert "ValueError" in nav.listing_status

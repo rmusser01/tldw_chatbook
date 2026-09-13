@@ -29,6 +29,10 @@ from textual.widgets import Button, Label, Input, ListView, ListItem, Static, Se
 ##############################################################################
 # Local imports.
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
+from ...Utils.input_validation import (
+    validate_file_picker_sort_direction,
+    validate_file_picker_sort_key,
+)
 from .parts import DirectoryNavigation, DriveNavigation
 from .parts.progressive_directory_navigation import SORT_OPTIONS
 from .path_maker import MakePath
@@ -521,13 +525,18 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     def _change_listing_sort(self, event: Select.Changed) -> None:
         event.stop()
         navigation = self.query_one(DirectoryNavigation)
-        if event.select.id == "listing-sort":
-            navigation.sort_key = str(event.value)
-            self.query_one("#listing-direction", Select).disabled = (
-                event.value == "discovery"
-            )
-        else:
-            navigation.sort_descending = event.value == "descending"
+        try:
+            if event.select.id == "listing-sort":
+                value = validate_file_picker_sort_key(event.value)
+                navigation.sort_key = value
+                self.query_one("#listing-direction", Select).disabled = (
+                    value == "discovery"
+                )
+            elif event.select.id == "listing-direction":
+                value = validate_file_picker_sort_direction(event.value)
+                navigation.sort_descending = value == "descending"
+        except ValueError:
+            return
 
     @on(DirectoryNavigation.ListingChanged)
     def _listing_changed(self, event) -> None:
@@ -684,9 +693,10 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         self._set_error()
 
     @on(DirectoryNavigation.PermissionError)
-    def _show_permission_error(self) -> None:
+    def _show_permission_error(self, event: DirectoryNavigation.PermissionError) -> None:
         """Show any permission error bubbled up from the directory navigator."""
-        self._set_error(self.ERROR_PERMISSION_ERROR)
+        if event.path == event.control.location:
+            self._set_error(self.ERROR_PERMISSION_ERROR)
 
     def check_action(
         self, action: str, parameters: tuple[object, ...]

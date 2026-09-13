@@ -4,6 +4,9 @@ File and folder pickers show entries as the filesystem discovers them. You can
 start browsing before the scan finishes. The status line shows **Scanning…**
 and the number of entries found, then **Loaded** when the listing is ready.
 The count includes entries hidden by the current filters; it is not a percentage.
+Enter does nothing while only the parent row is available during scanning. The
+first discovered entry receives the initial highlight; you can still explicitly
+navigate to the parent folder.
 
 Use **Sort** during loading or afterward to choose discovery order, name,
 last modified, last accessed, created, or size. The adjacent control selects

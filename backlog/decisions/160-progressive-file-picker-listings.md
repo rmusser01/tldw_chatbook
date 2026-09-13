@@ -28,6 +28,13 @@ cancelled operations stop cooperatively and may never publish into a new view.
 Disk contents are read again only on navigation/refresh; cached records are
 ephemeral and do not introduce persistent state.
 
+Validate scan paths lexically in the worker: require an absolute local path
+without NUL, preserving parent segments, legal filenames, and symlink aliases.
+Interactive pickers intentionally permit arbitrary filesystem navigation;
+workspace confinement and canonicalization rules for automated tools do not
+apply. Validate sort selector events against exact supported values before
+changing navigation state.
+
 Keep the existing OptionList navigation/caller contracts. Rows have a known
 single-line height, avoiding eager Rich measurement of offscreen rows. Append
 and rebuild in short batches, yielding between them. User sorting can move

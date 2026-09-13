@@ -183,6 +183,7 @@ async def test_listing_headers_align_with_their_columns(tmp_path, file_count):
         nav = host.screen.query_one(DirectoryNavigation)
         # Discovery order no longer promises file_00 is initially visible.
         host.screen.query_one("#listing-sort", Select).value = "name"
+        positioned = False
         for _ in range(100):
             await pilot.pause(0.02)
             # Enumeration can finish before lazy viewport metadata arrives.
@@ -190,6 +191,12 @@ async def test_listing_headers_align_with_their_columns(tmp_path, file_count):
             loaded = "Loaded" in str(
                 host.screen.query_one("#listing-progress").render()
             )
+            if loaded and not positioned:
+                # Sorting preserves the discovered file's highlight, which
+                # may scroll file_00 offscreen. Explicitly show the first row.
+                nav.action_first()
+                positioned = True
+                continue
             painted = host.screen._compositor.render_strips()
             if loaded and any(
                 "file_00.txt" in row.text and "100 B" in row.text for row in painted

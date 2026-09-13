@@ -31,7 +31,11 @@ from ..Third_Party.textual_fspicker.base_dialog import (
 )
 from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
-from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryEntry
+from ..Third_Party.textual_fspicker.parts.directory_navigation import (
+    DirectoryEntry,
+    DirectoryEntryStyling,
+)
+from ..Third_Party.textual_fspicker.parts.progressive_directory_navigation import FileRecord
 from ..Third_Party.textual_fspicker.path_maker import MakePath
 from ..Third_Party.textual_fspicker.safe_tests import is_dir
 from ..Utils.path_validation import validate_path_simple
@@ -476,7 +480,13 @@ class FormattedDirectoryEntry(DirectoryEntry):
     show_selection_marker = False
     selected = False
 
-    def __init__(self, location, styles, *, record=None):
+    def __init__(
+        self,
+        location: Path,
+        styles: DirectoryEntryStyling,
+        *,
+        record: FileRecord | None = None,
+    ) -> None:
         self.record = record
         if record is None:
             super().__init__(location, styles)
@@ -609,7 +619,12 @@ class SelectableDirectoryEntry(FormattedDirectoryEntry):
     show_selection_marker = True
 
     def __init__(
-        self, location: Path, styles: Any, selected: bool = False, *, record=None
+        self,
+        location: Path,
+        styles: DirectoryEntryStyling,
+        selected: bool = False,
+        *,
+        record: FileRecord | None = None,
     ) -> None:
         self.selected = selected
         super().__init__(location, styles, record=record)

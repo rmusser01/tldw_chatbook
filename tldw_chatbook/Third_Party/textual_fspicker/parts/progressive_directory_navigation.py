@@ -26,6 +26,7 @@ from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
+from ....Utils.path_validation import validate_browsing_path
 from .directory_navigation import (
     DirectoryEntry,
     DirectoryEntryStyling,
@@ -83,7 +84,14 @@ class FileRecord:
 
 
 def read_metadata(record: FileRecord) -> FileRecord:
-    """Read metadata in a worker; missing/inaccessible entries remain usable."""
+    """Read metadata in a worker, retaining missing or inaccessible entries.
+
+    Args:
+        record: Snapshot to hydrate; an already loaded snapshot is reused.
+
+    Returns:
+        A snapshot marked loaded, with stat metadata or None after an OSError.
+    """
     if record.metadata_loaded:
         return record
     try:
@@ -103,7 +111,25 @@ def project_records(
     descending: bool,
     cancelled: Event,
 ) -> tuple[list[FileRecord], int]:
-    """Filter/sort a snapshot off-loop, preserving unknown timestamps last."""
+    """Filter and sort snapshots off-loop, preserving unknown timestamps last.
+
+    Args:
+        records: Discovered entries in filesystem order.
+        show_hidden: Whether dot-prefixed entries are visible.
+        query: Stripped, casefolded filename substring to match.
+        file_filter: Optional caller predicate, applied to non-directories.
+        sort_key: Discovery, name, modified, accessed, created, or size ordering.
+        descending: Whether known sort values are ordered descending.
+        cancelled: Cooperative cancellation signal checked between entries.
+
+    Returns:
+        Visible records and the count excluded by the file filter. Metadata
+        sorts hydrate matching records; unreadable metadata remains unknown.
+        Cancellation returns an empty projection which the owner must discard.
+
+    Raises:
+        Exception: A caller-supplied file filter failed; handled by the worker.
+    """
     visible = []
     hidden = 0
     for record in records:
@@ -291,6 +317,15 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
         if event.key in ("up", "down", "home", "end", "pageup", "pagedown"):
             self._interaction_serial += 1
 
+    def _settle_highlight(self) -> None:
+        if self.highlighted is not None:
+            return
+        first_entry = 0 if self.is_root else 1
+        if self.option_count > first_entry:
+            self.highlighted = first_entry
+        elif self._scan_finished and self.option_count:
+            self.highlighted = 0
+
     @property
     def listing_status(self) -> str:
         count = len(self._records)
@@ -358,19 +393,26 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
 
         batch = []
         last_publish = 0.0
-        error = ""
+        error = None
         try:
+            location = validate_browsing_path(location)
             with os.scandir(location) as entries:
                 for entry in entries:
                     if cancelled.is_set() or worker.is_cancelled:
                         return
                     try:
-                        directory = entry.is_dir()
-                        if directory or (show_files and entry.is_file()):
+                        try:
+                            directory = entry.is_dir()
+                            include = directory or (show_files and entry.is_file())
+                        except PermissionError:
+                            directory, include = False, show_files
+                        if include:
+                            try:
+                                symlink = entry.is_symlink()
+                            except PermissionError:
+                                symlink = False
                             batch.append(
-                                FileRecord(
-                                    location / entry.name, directory, entry.is_symlink()
-                                )
+                                FileRecord(location / entry.name, directory, symlink)
                             )
                     except OSError:
                         continue
@@ -379,12 +421,12 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
                         len(batch) >= self.BATCH_SIZE
                         or now - last_publish >= self.PUBLISH_INTERVAL
                     ):
-                        if not publish((batch, False, "")):
+                        if not publish((batch, False, None)):
                             return
                         batch = []
                         last_publish = now
-        except OSError as exc:
-            error = f"Cannot read folder ({type(exc).__name__})"
+        except (OSError, ValueError) as exc:
+            error = exc
         publish((batch, True, error))
 
     def _poll_listing(self):
@@ -398,7 +440,11 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
                 break
             self._records.extend(batch)
             self._scan_finished = done
-            self._listing_error = error
+            self._listing_error = (
+                f"Cannot read folder ({type(error).__name__})" if error else ""
+            )
+            if isinstance(error, PermissionError):
+                self.post_message(self.PermissionError(self, self.location))
             changed = True
             if done:
                 break
@@ -409,7 +455,7 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
             start = max(0, int(self.scroll_y) - 8)
             stop = min(self.option_count, int(self.scroll_y) + self.size.height + 8)
             records = [
-                self.options[i].record
+                self._metadata.get(self.options[i].location, self.options[i].record)
                 for i in range(start, stop)
                 if getattr(self.options[i], "record", None) is not None
                 and not self.options[i].record.metadata_loaded
@@ -447,6 +493,13 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
 
     def _make_entry(self, record):
         return SnapshotDirectoryEntry(record, self._entry_styles)
+
+    def _replace_record(self, index, record):
+        record = self._metadata.get(record.location, record)
+        option = self.options[index]
+        if option.record != record:
+            option.record = record
+            self.replace_option_prompt_at_index(index, self._make_entry(record).prompt)
 
     def _settle_projection_highlight(self, *, final=False):
         if self._apply_pending_highlight(
@@ -536,6 +589,14 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
                         self.add_option(
                             self._make_entry(FileRecord(self.location / "..", True))
                         )
+                else:
+                    parent_offset = 0 if self.is_root else 1
+                    for start in range(0, offset, self.BATCH_SIZE):
+                        batch = visible[start : min(start + self.BATCH_SIZE, offset)]
+                        for index, record in enumerate(batch, start + parent_offset):
+                            self._replace_record(index, record)
+                        self._display_records[start : start + len(batch)] = batch
+                        await asyncio.sleep(0)
                 for start in range(offset, len(visible), self.BATCH_SIZE):
                     if generation != self._generation or revision != self._revision:
                         break
@@ -574,9 +635,7 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
             for index, option in enumerate(self.options):
                 if option.location in replacements:
                     record = replacements[option.location]
-                    replacement = self._make_entry(record)
-                    option.record = record
-                    self.replace_option_prompt_at_index(index, replacement.prompt)
+                    self._replace_record(index, record)
         finally:
             if generation == self._generation:
                 self._metadata_running = False

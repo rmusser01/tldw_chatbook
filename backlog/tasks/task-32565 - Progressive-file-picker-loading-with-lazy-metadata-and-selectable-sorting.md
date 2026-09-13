@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-13 18:06'
-updated_date: '2026-09-13 19:17'
+updated_date: '2026-09-13 19:34'
 labels: []
 dependencies: []
 priority: high
@@ -70,4 +70,8 @@ Added six mounted 2,000-file regressions across plain/enhanced pickers: supersed
 Documented the real-key-dispatch testing incident in backlog/docs/lessons-testing-evidence.md. ADR-160 remains applicable; no change in architecture or user-facing scope. Task returned to Done after the final re-review and tests; changes remain uncommitted.
 
 PR preparation: ported the reviewed change onto origin/dev at 8a6ba98c0d in an isolated checkout, preserved newer testing lessons and rebuilt the CSS bundle from current sources. All 170 targeted picker/CSS tests passed in 75.52 seconds on this base. Backlog-ID and persistent-diagnostic inventory checks passed; new files pass Ruff lint/format. Fresh sweep of 219 local/remote refs and worktrees found no task/ADR ID collision.
+
+PR #2671 Qodo follow-up: verify and address all eight findings covering initial activation, permission reporting, indeterminate entries, metadata reuse, API contracts, and path/sort boundary validation. Existing ACs and ADR-160 apply; preserve unrestricted interactive filesystem navigation.
+
+Qodo review on PR #2671: addressed all eight inline findings. Added initial parent-only Enter safety; restored queue-owned permission alerts; retained entries with permission-denied type/symlink probes; installed hydrated metadata during append-compatible projections; added Google-style helper contracts and typed entry constructors; introduced lexical browsing-path validation and exact sort-event allowlists in shared validation modules. Arbitrary interactive paths, aliases, parent segments, and legal punctuation remain supported under amended ADR-160. Eight behavior regressions failed before fixes, then passed. Final 200 targeted picker/CSS tests passed in 66.96 seconds. New loader/tests pass Ruff lint/format; legacy changes add no Ruff diagnostics; diagnostic inventory and diff whitespace checks passed. Independent incremental review found no remaining issues. Fresh 10,000-file benchmark: first entries 36.1 ms, full listing 1,393.0 ms, maximum loading heartbeat gap 90.5 ms; metadata cache 92 after scrolling. All Qodo replies are prepared; updated-commit CI and merge are pending.
 <!-- SECTION:NOTES:END -->
