@@ -14,6 +14,7 @@ from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
+from tldw_chatbook.Constants import TAB_LLM
 from tldw_chatbook.Model_Artifacts.machine_memory import (
     AcceleratorMemoryObservation,
     AcceleratorSource,
@@ -27,6 +28,7 @@ from tldw_chatbook.Model_Artifacts.machine_memory import (
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import CSS_DIR
 
 _MODELS_MOUNT_POLL_ATTEMPTS = 200
 _MODELS_MOUNT_POLL_SECONDS = 0.01
@@ -65,6 +67,9 @@ async def _models_screen(pilot_app, *, populate_all: bool = True):
     """Mount Models with the legacy all-view fixture unless testing laziness."""
 
     screen = LLMScreen(pilot_app)
+    # Direct fixture pushes bypass production navigation's owned-CSS loading.
+    pilot_app._ensure_screen_owned_css(TAB_LLM)
+    assert pilot_app.stylesheet.has_source(str(CSS_DIR / "screen_feature_lab.tcss"), "")
     await pilot_app.push_screen(screen)
     if populate_all:
         for _ in range(_MODELS_MOUNT_POLL_ATTEMPTS):
@@ -385,6 +390,8 @@ async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose(
             machine_memory_wall_clock=lambda: observed_wall,
             machine_memory_monotonic_clock=lambda: observed_monotonic,
         )
+        app._ensure_screen_owned_css(TAB_LLM)
+        assert app.stylesheet.has_source(str(CSS_DIR / "screen_feature_lab.tcss"), "")
         await app.push_screen(screen)
         # A queried window may still be composing. Selecting before its target
         # pane exists cannot schedule that pane's first population.

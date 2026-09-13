@@ -249,3 +249,104 @@ refreshed summary timestamp. The existing size thread stays open; current local
 size ratchets remain 14 failed / 33 passed. Independent bounded deletion triage
 found no sufficient verified dead-code removal for the four named controllers;
 this does not establish that new architecture is necessary or authorize it.
+
+### Approved Lab CSS repair execution — 2026-09-13
+
+User approved the bounded CI proposal above. Starting head is
+`2a02db0d20b7734d1ea2e4606ec83b5a4da19f17`; remote still agrees. One implementation
+owner handles the split, route map and strictly necessary test stylesheet-source
+reconciliation; root handles task/docs, integrated qualification, and Git.
+The existing production harness authority already derives all split sheets from
+the builder, so reuse it rather than adding a second manifest. Independently
+review specification compliance and then correctness before publication.
+No further routine design approval is required inside this approved scope.
+
+Fresh CI inventory: PR Fast Lane and derived artifacts passed on 2a02db0d20;
+UI latency guardrails remains failed. Paginated review-thread inventory still
+contains the one unresolved Qodo size thread recorded above. These facts do
+not close the separate native Console, cleanup, size or final-head review gates.
+
+Implementation evidence: the conservative split moves 8,507 bytes / 13 selector
+tokens; all 12 literal consumer tokens are flagged by the impossible-owner
+negative control, and the remaining mode class is traced to LabScreen's dynamic
+composition. The Models loader uses `TAB_LLM` (`llm_management`) even though the
+screen route is `llm`; actual first/default-route tests caught the initial wrong
+key. No loader mechanism or source CSS rule changed. Shared mixed-owner rules
+remain bundled. Seven production-style test harness/text inputs now reuse the
+existing derived stylesheet authority; their behavior assertions are unchanged.
+
+Nine new RED cases precede implementation. Focused GREEN: 15 passed in 38.75s,
+including six original-module-versus-split geometry/computed-style comparisons.
+Textual layout values compare by instance identity, so the comparator normalizes
+only their layout name; every other computed rule and exact region is retained.
+Independent spec review approves the source scope but asks to extend the paired
+comparison beyond workbench/rail to the moved header/strip/status/section rules.
+That test-only extension waits for the frozen-source cohorts to terminate.
+
+Complete four-file Evals cohort: 264 passed in 159.40s; final native observation
+6 descriptors / zero SQLite-named handles / zero instance locks. Lab/CSS cohort
+310 cases remains running at this checkpoint. All 12 generated sheets reproduce;
+full Ruff passes on the builder and eight changed test files, fatal Ruff passes
+on those files plus app.py. Diagnostic inventory is unchanged (610 owners,
+12 sink files). Report directory: `/private/tmp/pr2427-lab-css.XMUM3m`.
+
+Integrated qualification exposed fixture coverage gaps; publication is on hold.
+The completed Lab/CSS cohort was **287 passed / 22 failed / 1 existing empty
+parameter skip** (989.59s), not green. Matched saved-head controls produced
+4 failures / 18 passes; current controls excluding the stale Watchlists shortcut
+produced 20 failures / 1 pass. These differences cannot be dismissed as baseline
+failures. Actual layout observations verified the distinct baseline/current
+import paths and show missing Lab header/rail/body computed rules in current
+direct-screen fixtures (header height 9 rather than 1 at 80 columns).
+
+Read-only diagnosis identified three direct `LLMScreen` pushes in the Models
+and vLLM fixture files that bypass `_ensure_screen_owned_css`, unlike actual
+first/default/re-entry routing. Controlled loader-before-push verification is
+in progress before any test-only fixture correction. No additional production
+change, cap relaxation, or geometry assertion weakening is authorized by this
+diagnosis. Original-module/split parity now covers the real LabFrame, every
+moved selector shape, three modes, two widths, focus and hover; six cases pass,
+but this alone is not evidence for every production-body state.
+
+Final complete CSS integrity file: **46 passed** (81.06s), including the
+Watchlists shortcut reconciliation (`ctrl+5`, not the now-Artifacts `ctrl+6`).
+Its final native observation retains 18 SQLite-named handles and one instance
+lock from initial Evals. An equivalent saved-head initial-Evals control passes
+while retaining 19 SQLite-named handles and one lock, establishing that resource
+closure was already incomplete; no forced collection or manual cleanup was used.
+The earlier full Lab cohort retained 34 SQLite-named handles / two locks.
+
+Complete five-file boot group: **21 passed**; boot CSS is **762,340 / 768,000
+bytes**, an 8,507-byte reduction with 5,660 bytes headroom. Complete latency
+group: 9 passed / 1 failed, with a Console left-rail timer querying the missing
+`#console-agent-progress` during seeded-Library teardown. Its unchanged isolated
+retry passes; record it as intermittent, not fixed. These results do not close
+the remaining Console, resource, controller-size, or final-head review gates.
+
+The missing-sheet diagnosis is now controlled: the exact compact Models and
+vLLM tests fail with the sheet absent, and both pass (8.82s) when only the
+existing route loader is called before direct fixture mounting. Three fixture
+sites in the two owning files now honor that contract and assert the sheet is
+parsed; all geometry and behavior assertions are preserved. Independent
+correctness re-review reports no actionable findings in this bounded correction.
+Complete-file qualification is still pending. No production change followed
+the original approved split. The incident is recorded beside TASK-24459's
+existing stylesheet-harness lesson.
+
+### Fresh dev integration preparation — 2026-09-13
+
+Remote PR remains `2a02db0d20b7734d1ea2e4606ec83b5a4da19f17`; fetched dev is
+now `1103b28f711073291fc073ed27592546fec53607`. Relative to the previously
+verified `78ef9928bd` base, 369 paths changed, including new Console/agent
+recovery, denial provenance, live usage, migration, Notes and endpoint work.
+Existing rebase procedure above remains binding. Finish frozen-source Lab
+qualification, record a local checkpoint and unique recovery ref, then replay
+onto the exact fetched head. No tests may run across source-changing replay.
+Inspect conflicts/range-diff, regenerate derived artifacts, and independently
+review integration before publishing with a freshly checked explicit lease.
+
+ADR required: no new ADR for integration.
+ADR paths: existing ADR-153 through ADR-159, with ADR-155's amended ordinary
+local-Git scope and ADR-158's actual schema19/20 migration order preserved.
+Reason: accept upstream contracts without designing a new execution, storage,
+or UI boundary. Any additional product-policy conflict stops for a decision.

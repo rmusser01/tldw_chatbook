@@ -12297,7 +12297,9 @@ class TldwCli(
     #: path; library/settings via their screens' ``CSS_PATH``).
     _SCREEN_OWNED_ROUTE_CSS: dict[str, tuple[str, ...]] = {
         TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
-        TAB_EVALS: ("screen_feature_evals.tcss",),
+        TAB_LLM: ("screen_feature_lab.tcss",),
+        TAB_STTS: ("screen_feature_lab.tcss",),
+        TAB_EVALS: ("screen_feature_evals.tcss", "screen_feature_lab.tcss"),
         TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",),
     }
 

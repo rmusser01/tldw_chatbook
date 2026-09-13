@@ -12144,6 +12144,19 @@ Rules, each half of the incident:
   were real — and the real three were invisible without the pristine-base
   arm run in the same mode.
 
+Recurrence, PR2427 (2026-09-13): a Lab split passed actual first/default/re-entry
+routing and full-stylesheet frame parity, but the complete Models/vLLM files
+exposed compact-layout failures. Matched saved-head controls and computed rules
+showed that direct `LLMScreen` fixture pushes never called the app-owned loader:
+the header occupied nine rows instead of one. Two observation-only controls
+failed with `has_source=False`; invoking the existing route loader before those
+same pushes made both pass with the sheet present. Real-app identity and an
+unchanged `TldwCli.CSS_PATH` do not prove production route initialization. A
+fixture that bypasses navigation must explicitly honor that existing setup
+contract, assert the owned sheet is parsed, and retain its geometry assertions.
+Do not move the sheet to `Screen.CSS_PATH` to compensate: that recreates the
+unstyled-tier bug above.
+
 Recurrence, PR2416 (2026-09-05): the rebased Chunking Lab route/ingest selection
 passed146 tests but failed both progress-detail color assertions. `_QueuePanelHost`
 still named only `tldw_cli_modular.tcss`, so Library-owned progress and row colors

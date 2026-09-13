@@ -14195,29 +14195,6 @@ SnapshotViewModal {
 }
 
 /* ===== MODULE: features/_lab.tcss ===== */
-/* Lab destination (Models | Speech | Evals).
- *
- * These rules MUST live app-tier, not in LabModeStrip.DEFAULT_CSS: the
- * bundle's global `.is-active` rule (border: round) outranks DEFAULT_CSS
- * regardless of specificity, so a widget-tier override silently loses and
- * the active chip's label is clipped by the one-row strip. Mirrors
- * `.personas-mode-chip.is-active` and `#mcp-mode-strip Button.mcp-mode-chip`.
- *
- * This copy is authoritative at runtime. `LabModeStrip.DEFAULT_CSS`
- * (tldw_chatbook/UI/Screens/lab_mode_strip.py) keeps a second, lower-
- * specificity copy of `.lab-mode-chip` rules purely as a fallback for
- * harness apps that mount the strip without loading this bundle. The two
- * have already diverged (that copy adds min-height; this one adds
- * background/color) -- keep them in lockstep when either changes.
- */
-
-#lab-mode-strip Button.lab-mode-chip {
-    width: auto;
-    min-width: 0;
-    height: 1;
-    padding: 0 1;
-    border: none;
-}
 
 #lab-mode-strip .lab-mode-chip.is-active {
     border: none;
@@ -14235,59 +14212,6 @@ SnapshotViewModal {
     text-style: bold underline;
 }
 
-/* A focused non-active chip must not impersonate the active one. The app's
- * global Button:focus grants bold underline, which is exactly the active
- * chip's signature -- so a keyboard user tabbing the strip would see two
- * chips read as active. Underline stays exclusive to .is-active. Mirrors
- * the same guard MCP applies to its mode chips. */
-#lab-mode-strip .lab-mode-chip:focus,
-#lab-mode-strip .lab-mode-chip:hover:focus {
-    text-style: bold;
-    outline: none;
-}
-
-/* --- Lab workbench ------------------------------------------------------
- *
- * Region widths are declared here rather than inline so the layout contract
- * is inspectable in one place.
- *
- * The rail is fractional, not fixed. It was `width/min-width/max-width: 26`,
- * which measured 26 cells at 80, 120 and 200 columns alike -- 32.5% of an
- * 80-column terminal for a list whose longest label is 14 characters, while
- * every sibling rail in the app is fractional (`#mcp-hub-rail` is
- * `3fr` with `min-width: 24`). The bounds keep the labels intact at 80
- * columns without letting the rail sprawl at 200.
- *
- * The 24 floor fits the exact surviving longest label, "Speech Recognition",
- * including padding, border, and the active accent. The rendered oracle in
- * `Tests/UI/test_lab_workbench.py` pins it.
- */
-
-.lab-workbench {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
-}
-
-#lab-rail {
-    width: 1fr;
-    min-width: 24;
-    max-width: 32;
-    height: 100%;
-    min-height: 0;
-    padding: 0;
-    background: $ds-surface-panel;
-    border-right: solid $ds-column-line;
-}
-
-#lab-body {
-    width: 4fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
-    padding: 0 1;
-}
-
 /* The app-tier global Select rule claims 100% width and a bottom margin.
  * Keep Remote's local variant toolbar balanced; widget-tier BUNDLED_CSS
  * cannot override app-tier geometry in Textual's cascade. */
@@ -14303,53 +14227,6 @@ RemoteView.-narrow #remote-variant-sort {
     min-width: 0;
     margin-left: 0;
     margin-bottom: 0;
-}
-
-/* TASK-1076: was a hard `30` at every terminal width -- the exact anti-
- * pattern `#lab-rail` documents above (measured 30 cells at 80, 120, 160
- * and 200 columns alike). At 200 columns that left the inspector's usable
- * content ~28 cells wide (`.ds-inspector`'s own padding takes 2), so a
- * plain sentence like "K requested 20 * K returned 20 * canary degenerate"
- * wrapped mid-phrase with 170+ unused columns beside it. Fractional now,
- * like the rail, so it actually grows on a wide terminal. `2fr` (a
- * heavier weight than the rail's own `1fr`, since a FIXED pane was
- * previously eating this whole width and `1fr` alone only grew it to 34
- * cells at 200 columns, measured) -- `#lab-body` stays `4fr`, still the
- * largest of the three regions, so the grid is not starved for it.
- */
-#lab-inspector {
-    width: 2fr;
-    min-width: 30;
-    max-width: 50;
-    height: 100%;
-    min-height: 0;
-}
-
-/* Rail rows.
- *
- * The `border: none` is REQUIRED, not cosmetic. The bundle declares an
- * unscoped `.is-active { border: round $ds-action-focus; }` earlier in this
- * sheet, and app-tier CSS beats widget DEFAULT_CSS regardless of
- * specificity. A height-1 row that picks up that border renders two rows
- * tall -- a half-bordered artifact that displaces every row below it.
- * `#mcp-hub-rail Button.mcp-rail-row.is-active` carries the same override
- * for the same reason.
- */
-.lab-rail Button.lab-rail-row {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1 0 2;
-    border: none;
-    /* `text-align` alone does NOT left-align a one-line Button label --
-       `content-align` positions the label box itself and defaults to
-       centered, so without this the nine provider rows each sat at a
-       different indent and the list had no shared left edge to scan down.
-       Same pairing as `Button.mcp-rail-row`, `Button.mcp-inspector-action`
-       and `Button.mcp-callout`, which each hit this and fixed it the same
-       way. */
-    text-align: left;
-    content-align: left middle;
 }
 
 /* The active row is a solid fill plus an accent bar; a merely focused row
@@ -14384,77 +14261,6 @@ RemoteView.-narrow #remote-variant-sort {
     text-style: bold;
 }
 
-.lab-rail .lab-rail-row:focus,
-.lab-rail .lab-rail-row:hover:focus {
-    outline: none;
-    background: $ds-surface-raised;
-    text-style: underline;
-}
-
-/* Section headings carry the accent so the rail has a scannable hierarchy;
- * unstyled they forced the list to be read line by line to find where
- * "Local servers" ended and "Models" began. `margin-top` opens the gap
- * between groups -- the second heading otherwise butts against the last row
- * of the first group. */
-.lab-rail-section {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    margin-top: 1;
-    color: $accent;
-    text-style: bold;
-}
-
-/* --- Header row ---------------------------------------------------------
- *
- * One row carrying title, subtitle, this mode's status chips, and the
- * readiness badge -- the same shape Console collapses its own
- * DestinationHeader into (`#console-workbench-header.console-header-inline`,
- * height 1, border none).
- *
- * Lab previously rendered the stacked `.workbench-header` block instead: a
- * bordered 5 rows, plus a conditional chip row beneath it. That is the only
- * 5-row destination header in the app -- the other eleven destinations size
- * their title with `$ds-destination-header-height` (= 1). The eight rows it
- * cost were the eight that pushed Models' `Start Server` button past the
- * bottom of a 40-row terminal.
- *
- * `.lab-header-inline` is a class, not an id, so all three Lab modes can
- * carry it -- Speech and Evals compose their own DestinationHeader rather
- * than going through this frame, and if only Models were collapsed the mode
- * strip would sit at y=4 on Models and y=8 on the other two, jumping four
- * rows on every switch (measured). It ties `.workbench-header` on
- * specificity (0,1,0) and wins on source order: features/_lab.tcss is
- * emitted after components/ in CSS_MODULES. The descendant rules below are
- * (0,2,0), which beats the density rule that hides the subtitle in compact
- * mode -- the row is one line at any density, so hiding the subtitle would
- * only waste horizontal space.
- */
-#lab-header-row {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    background: $ds-surface-panel;
-}
-
-.lab-header-inline {
-    layout: horizontal;
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0;
-    border: none;
-    background: $ds-surface-panel;
-}
-
-/* Inside the frame's header row the padding is already supplied by
-   `#lab-header-row`; doubling it would indent Models' title two cells
-   further than Speech's. */
-#lab-header-row .lab-header-inline {
-    padding: 0;
-}
-
 .lab-header-inline .workbench-header-title {
     width: auto;
     height: 1;
@@ -14476,42 +14282,9 @@ RemoteView.-narrow #remote-variant-sort {
     margin-left: 2;
 }
 
-/* The chip shares the header's single row with the title, subtitle and
- * readiness badge. `width: auto` means a mode with long chip copy claims
- * whatever it wants and starves the 1fr header beside it -- Speech's
- * capability chip once rendered the full recovery sentence here and
- * collapsed `#lab-destination-header` to ONE cell, truncating the title to
- * "S". Chip copy stays short and the cap makes that structural rather than
- * a convention each mode has to remember. */
-.lab-status-chip {
-    width: auto;
-    max-width: 40%;
-    height: 1;
-    padding: 0 1;
-    color: $ds-text-muted;
-    text-overflow: ellipsis;
-}
-
 /* The title must survive whatever the chip does. */
 .lab-header-inline .workbench-header-title {
     min-width: 6;
-}
-
-/* Rail width is per-mode, because label length is per-mode. Speech's rows carry
- * double-width emoji -- "🔤 Speech Recognition" measures 21 cells, and at the
- * shared floor Textual dropped the overflowing word entirely, rendering
- * "🔤 Speech" and a bare "📚". Measured, not estimated. */
-.lab-mode-stts #lab-rail {
-    min-width: 28;
-    max-width: 34;
-}
-
-/* Evals' rail is a library, not a menu: section headings carry counts and
- * their empty states put two buttons side by side ("+ New dataset" /
- * "Import…"). At the shared floor those wrapped instead. */
-.lab-mode-evals #lab-rail {
-    min-width: 30;
-    max-width: 38;
 }
 
 /* --- Evals panes inside the frame's regions -----------------------------

@@ -17,17 +17,15 @@ from __future__ import annotations
 
 import math
 import time
-from pathlib import Path
 
 import pytest
 from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.widgets import DataTable, Select, Static
 
-import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.word_bench import analysis
 from tldw_chatbook.Evals.word_bench.models import (
@@ -51,11 +49,6 @@ from tldw_chatbook.UI.Evals.results_grid import (
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
-_BUNDLED_CSS_PATH = str(
-    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
-)
-
-
 class _FakeOrchestrator:
     def __init__(self, db: EvalsDB) -> None:
         self.db = db
@@ -71,7 +64,7 @@ class _FakeAppInstance:
 
 
 class EvalsHarness(ConsolidatedCSSApp):
-    CSS_PATH = _BUNDLED_CSS_PATH
+    CSS_PATH = list(APP_STYLESHEETS)
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()

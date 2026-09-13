@@ -20,7 +20,7 @@ from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.app import App
 from textual.widgets import Button
 
@@ -329,10 +329,6 @@ async def test_lab_route_and_mode_strip_navigate_the_real_shell(
             assert app.screen.query_one("#nav-lab", Button).has_class("is-active")
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
-
-
 class _BundledStripHarness(ConsolidatedCSSApp):
     """Mount the strip with the production stylesheet.
 
@@ -341,7 +337,7 @@ class _BundledStripHarness(ConsolidatedCSSApp):
     without CSS_PATH passes vacuously.
     """
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
+    CSS_PATH = list(APP_STYLESHEETS)
 
     def __init__(self, active_route: str) -> None:
         super().__init__()

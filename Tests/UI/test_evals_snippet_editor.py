@@ -38,7 +38,7 @@ from pathlib import Path
 import pytest
 from textual.app import App
 
-import tldw_chatbook
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evaluations_Interop.evaluation_normalizers import (
     RESERVED_LOCAL_DATASET_SAMPLES_KEY,
@@ -59,11 +59,6 @@ from tldw_chatbook.UI.Evals.snippet_editor import (
 )
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
-_BUNDLED_CSS_PATH = str(
-    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
-)
-
-
 class _FakeOrchestrator:
     def __init__(self, db: EvalsDB) -> None:
         self.db = db
@@ -79,7 +74,7 @@ class _FakeAppInstance:
 
 
 class EvalsHarness(App):
-    CSS_PATH = _BUNDLED_CSS_PATH
+    CSS_PATH = list(APP_STYLESHEETS)
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()

@@ -14,8 +14,10 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, Label, Select
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import CSS_DIR
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
+from tldw_chatbook.Constants import TAB_LLM
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
 )
@@ -192,6 +194,9 @@ async def _mounted_vllm_view(app, pilot) -> tuple[LLMScreen, VllmSetupView]:
     # Geometry states are projected explicitly below. Keep asynchronous profile
     # storage recovery from focusing/scrolling a different row mid-measurement.
     screen._vllm_profiles_loaded = True
+    # Match production's route-owned CSS before directly pushing the fixture.
+    app._ensure_screen_owned_css(TAB_LLM)
+    assert app.stylesheet.has_source(str(CSS_DIR / "screen_feature_lab.tcss"), "")
     await app.push_screen(screen)
     for _ in range(40):
         await pilot.pause()

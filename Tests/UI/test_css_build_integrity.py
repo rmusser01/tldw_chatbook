@@ -8,6 +8,7 @@ import re
 import pytest
 
 from tldw_chatbook.css import build_css as css_builder
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -23,15 +24,7 @@ _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 # a split sheet is exactly as live as one in the bundle (agentic sheets
 # load via the owning screens' CSS_PATH / the boot path; the feature
 # sheets load via TldwCli._SCREEN_OWNED_ROUTE_CSS on first navigation).
-_GENERATED_SHEETS = (
-    _BUNDLED_STYLESHEET,
-    _CSS_ROOT / "screen_agentic_console.tcss",
-    _CSS_ROOT / "screen_agentic_library.tcss",
-    _CSS_ROOT / "screen_agentic_settings.tcss",
-    _CSS_ROOT / "screen_feature_evals.tcss",
-    _CSS_ROOT / "screen_feature_scheduling.tcss",
-    _CSS_ROOT / "screen_feature_watchlists.tcss",
-)
+_GENERATED_SHEETS = APP_STYLESHEETS
 
 
 def _generated_css_text() -> str:
@@ -817,7 +810,12 @@ def _split_spec(module: str) -> "css_builder.ScreenOwnedSplit":
 
 @pytest.mark.parametrize(
     "module",
-    ["features/_evals.tcss", "features/_scheduling.tcss", "features/_watchlists.tcss"],
+    [
+        "features/_evals.tcss",
+        "features/_scheduling.tcss",
+        "features/_watchlists.tcss",
+        "features/_lab.tcss",
+    ],
 )
 def test_screen_owned_module_is_exactly_partitioned(module: str) -> None:
     """Every byte of a screen-owned module reaches exactly one output.
@@ -875,6 +873,161 @@ def test_screen_owned_splitter_multi_prefix_and_keep_shapes() -> None:
         "block to the bundle"
     )
     assert ".pane-hidden { display: none; }" in remainder
+
+
+def test_lab_split_retains_shared_selectors_and_every_source_byte() -> None:
+    """Lab-only blocks move losslessly; mixed selectors keep their tier."""
+    spec = _split_spec("features/_lab.tcss")
+    source = (_CSS_ROOT / spec.module).read_text(encoding="utf-8")
+    remainder, moved = css_builder.split_owned_module(source, spec, css_dir=_CSS_ROOT)
+    units = css_builder._split_top_level_units(source)
+    # Consume each output in source order, including comments and whitespace.
+    pending = [remainder, moved["lab"]]
+    for unit in units:
+        destinations = [i for i, text in enumerate(pending) if text.startswith(unit)]
+        assert len(destinations) == 1
+        index = destinations[0]
+        pending[index] = pending[index][len(unit) :]
+    assert pending == ["", ""]
+    assert "#lab-rail {" in moved["lab"]
+    for selector in (
+        "#lab-mode-strip .lab-mode-chip.is-active",
+        ".lab-rail .lab-rail-row.is-active",
+        ".lab-header-inline .workbench-header-title",
+        "#lab-rail #evals-library-pane",
+        ".speech-pane",
+    ):
+        assert selector in remainder
+
+
+def test_lab_production_harnesses_include_the_owned_sheet() -> None:
+    """Production CSS derives from the builder, including the Lab split."""
+    assert _CSS_ROOT / "screen_feature_lab.tcss" in APP_STYLESHEETS
+
+
+@pytest.mark.parametrize("columns", [100, 235])
+@pytest.mark.parametrize("mode", ["llm", "stts", "evals"])
+@pytest.mark.asyncio
+async def test_lab_split_preserves_computed_workbench_styles(
+    tmp_path: Path, columns: int, mode: str
+) -> None:
+    """Compare real geometry/styles with the original unsplit Lab module.
+
+    Different selectors can tie at equal specificity. Comparing computed
+    rules catches those inversions beyond the splitter's exact-overlap guard.
+    """
+    from textual.app import ComposeResult
+    from textual.widgets import Button, Static
+
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
+    from Tests.UI.test_lab_frame import _ProbeLabScreen
+    from tldw_chatbook.UI.Lab_Modules.lab_rail_layout import LabRailLayout
+    from tldw_chatbook.UI.Screens.lab_frame import LabStatusChip
+    from tldw_chatbook.UI.Screens.lab_mode_strip import LAB_MODE_CHIPS
+
+    class StyledLabScreen(_ProbeLabScreen):
+        """Reuse the real frame with representative section and row content."""
+
+        def compose_lab_rail(self) -> ComposeResult:
+            yield Static("Local servers", id="lab-section", classes="lab-rail-section")
+            for index, label in enumerate(
+                ("Llama.cpp", "Ollama", "Speech Recognition")
+            ):
+                yield Button(
+                    label,
+                    id=f"lab-row-{index}",
+                    classes="lab-rail-row is-active" if index == 0 else "lab-rail-row",
+                )
+
+    module = "features/_lab.tcss"
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    original_bundle = tmp_path / "original_bundle.tcss"
+    original_bundle.write_text(
+        bundle.replace(
+            _bundled_module(bundle, module),
+            (_CSS_ROOT / module).read_text(encoding="utf-8").strip(),
+            1,
+        ),
+        encoding="utf-8",
+    )
+    original_sheets = [
+        original_bundle if path == _BUNDLED_STYLESHEET else path
+        for path in APP_STYLESHEETS
+        if path.name != "screen_feature_lab.tcss"
+    ]
+    _, moved = css_builder.split_owned_module(
+        (_CSS_ROOT / module).read_text(encoding="utf-8"),
+        _split_spec(module),
+        css_dir=_CSS_ROOT,
+    )
+    selectors = {
+        selector
+        for unit in css_builder._split_top_level_units(moved["lab"])
+        for selector in css_builder._unit_selector_set(unit)
+        if not any(
+            f".lab-mode-{other} " in selector
+            for other in ("stts", "evals")
+            if other != mode
+        )
+    }
+    snapshots = []
+    for sheets in (original_sheets, APP_STYLESHEETS):
+        app = ConsolidatedCSSApp(css_path=list(sheets))
+        async with app.run_test(size=(columns, 40)) as pilot:
+            screen = StyledLabScreen(
+                app, chips=(LabStatusChip("servers", "Servers: 2 running"),)
+            )
+            screen.screen_name = screen.nav_bar_active = mode
+            screen.rail_layout = LabRailLayout()
+            await app.push_screen(screen)
+            await pilot.pause()
+            assert screen.query_one("#probe-body").is_mounted
+            matched = set()
+            states = []
+
+            def record_state() -> None:
+                """Record all frame rules/geometry and exercised selector shapes."""
+                matched.update(
+                    selector for selector in selectors if screen.query(selector)
+                )
+                states.append(
+                    [
+                        (
+                            type(widget).__name__,
+                            widget.id,
+                            widget.region,
+                            {
+                                # Layout instances compare by identity, not semantics.
+                                name: value.name if name == "layout" else value
+                                for name, value in widget.styles.get_rules().items()
+                            },
+                        )
+                        for widget in screen.query(
+                            "#lab-header-row, #lab-header-row *, "
+                            "#lab-mode-strip, #lab-mode-strip *, "
+                            "#lab-workbench, #lab-workbench *"
+                        )
+                    ]
+                )
+
+            record_state()
+            for target in (
+                *(f"#lab-mode-{chip_id}" for chip_id, *_ in LAB_MODE_CHIPS),
+                "#lab-row-0",
+                "#lab-row-1",
+            ):
+                await pilot.hover("#lab-header-row")
+                screen.query_one(target, Button).focus()
+                await pilot.pause()
+                record_state()
+                await pilot.hover(target)
+                await pilot.pause()
+                record_state()
+            assert matched == selectors, (
+                f"unexercised moved selectors: {selectors - matched}"
+            )
+            snapshots.append(states)
+    assert snapshots[0] == snapshots[1]
 
 
 def test_cross_split_selector_overlap_refuses_to_build(
@@ -987,6 +1140,8 @@ def test_screens_do_not_take_owned_sheets_onto_css_path() -> None:
             "WorkbenchHostScreen",
         ),
         ("tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
+        ("tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"),
+        ("tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"),
         (
             "tldw_chatbook.UI.Screens.watchlists_collections_screen",
             "WatchlistsCollectionsScreen",
@@ -1012,27 +1167,36 @@ _FEATURE_ROUTE_CASES = (
         "watchlists_collections",
         "WatchlistsCollectionsScreen",
         "screen_feature_watchlists.tcss",
-        "ctrl+6",
+        "ctrl+5",
     ),
+    ("llm", "LLMScreen", "screen_feature_lab.tcss", None),
+    ("stts", "STTSScreen", "screen_feature_lab.tcss", None),
+    ("evals", "EvalsScreen", "screen_feature_lab.tcss", None),
 )
 
 
-def _observe_watchlists_sheet_at_mount(monkeypatch, route, sheet):
-    """Observe the real Watchlists mount before it can paint unstyled."""
+def _observe_owned_sheet_at_mount(monkeypatch, route, sheet):
+    """Observe the real owner mount before it can paint unstyled."""
     observed = []
-    if route != "watchlists_collections":
-        return observed
-    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
-        WatchlistsCollectionsScreen,
-    )
+    if route in {"llm", "stts", "evals"}:
+        from tldw_chatbook.UI.Screens.lab_frame import LabScreen
 
-    original_mount = WatchlistsCollectionsScreen.on_mount
+        owner = LabScreen
+    elif route == "watchlists_collections":
+        from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+            WatchlistsCollectionsScreen,
+        )
+
+        owner = WatchlistsCollectionsScreen
+    else:
+        return observed
+    original_mount = owner.on_mount
 
     def on_mount(screen):
         observed.append(screen.app.stylesheet.has_source(sheet, ""))
         return original_mount(screen)
 
-    monkeypatch.setattr(WatchlistsCollectionsScreen, "on_mount", on_mount)
+    monkeypatch.setattr(owner, "on_mount", on_mount)
     return observed
 
 
@@ -1047,7 +1211,7 @@ async def test_schedules_visit_loads_the_screen_owned_sheet(
     route: str,
     screen_name: str,
     sheet_name: str,
-    shortcut: str,
+    shortcut: str | None,
 ) -> None:
     """First navigation parses the route's split sheet; boot does not.
 
@@ -1076,7 +1240,7 @@ async def test_schedules_visit_loads_the_screen_owned_sheet(
     from tldw_chatbook.app import TldwCli
 
     sheet = str(_CSS_ROOT / sheet_name)
-    mounted_with_sheet = _observe_watchlists_sheet_at_mount(monkeypatch, route, sheet)
+    mounted_with_sheet = _observe_owned_sheet_at_mount(monkeypatch, route, sheet)
     app = TldwCli()
     async with app.run_test(size=(170, 48)) as pilot:
         while not getattr(app, "_ui_ready", False):
@@ -1096,7 +1260,12 @@ async def test_schedules_visit_loads_the_screen_owned_sheet(
             return original_read(path, *args, **kwargs)
 
         monkeypatch.setattr(app.stylesheet, "read", tracked_read)
-        await pilot.press(shortcut)
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+        if shortcut:
+            await pilot.press(shortcut)
+        else:
+            app.post_message(NavigateToScreen(route))
         deadline = asyncio.get_running_loop().time() + 30.0
         while asyncio.get_running_loop().time() < deadline:
             await pilot.pause()
@@ -1106,12 +1275,15 @@ async def test_schedules_visit_loads_the_screen_owned_sheet(
         assert app.stylesheet.has_source(sheet, ""), (
             f"arriving at {route} must load the split sheet"
         )
-        if route == "watchlists_collections":
+        if route != "schedules":
             assert mounted_with_sheet == [True]
 
         # Exercise real leave/re-entry, not only direct repeated loader calls.
         for key, destination in (("ctrl+1", "HomeScreen"), (shortcut, screen_name)):
-            await pilot.press(key)
+            if key:
+                await pilot.press(key)
+            else:
+                app.post_message(NavigateToScreen(route))
             deadline = asyncio.get_running_loop().time() + 30.0
             while asyncio.get_running_loop().time() < deadline:
                 await pilot.pause()
@@ -1133,7 +1305,7 @@ async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
     route: str,
     screen_name: str,
     sheet_name: str,
-    shortcut: str,
+    shortcut: str | None,
 ) -> None:
     """A configured initial route boots with its owned sheet loaded.
 
@@ -1164,7 +1336,7 @@ async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
     from tldw_chatbook.app import TldwCli
 
     sheet = str(_CSS_ROOT / sheet_name)
-    mounted_with_sheet = _observe_watchlists_sheet_at_mount(monkeypatch, route, sheet)
+    mounted_with_sheet = _observe_owned_sheet_at_mount(monkeypatch, route, sheet)
     app = TldwCli()
     async with app.run_test(size=(170, 48)) as pilot:
         while not getattr(app, "_ui_ready", False):
@@ -1178,7 +1350,7 @@ async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
         assert app.stylesheet.has_source(sheet, ""), (
             f"booting into {route} must load the sheet through _push_initial_screen"
         )
-        if route == "watchlists_collections":
+        if route != "schedules":
             assert mounted_with_sheet == [True]
 
 
