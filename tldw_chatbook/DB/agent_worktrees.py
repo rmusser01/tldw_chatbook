@@ -75,12 +75,18 @@ def _branch(value: object) -> str:
     value = _identifier("branch", value)
     components = value.split("/")
     if (
-        value.startswith((".", "/"))
-        or value.endswith((".", "/"))
+        value.startswith(("-", "/"))
+        or value.endswith("/")
+        or value == "@"
         or ".." in value
         or "@{" in value
         or any(character in _INVALID_BRANCH_CHARS for character in value)
-        or any(not component or component.endswith(".lock") for component in components)
+        or any(
+            not component
+            or component.startswith(".")
+            or component.endswith((".", ".lock"))
+            for component in components
+        )
     ):
         raise ValueError("branch must be a valid bounded Git branch name")
     return value

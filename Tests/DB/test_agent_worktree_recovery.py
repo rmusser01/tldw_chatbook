@@ -46,7 +46,7 @@ def _terminal_run(db, conversation_id, run_id):
     db.set_status(run_id, status="done", result="done")
 
 
-def test_v19_upgrade_preserves_definition_cap_and_structural_record_on_reopen(tmp_path):
+def test_structural_record_and_definition_cap_survive_reopen(tmp_path):
     path = tmp_path / "runs.db"
     db = AgentRunsDB(path, client_id="seed")
     definition_id = db.create_agent_definition(
@@ -112,6 +112,19 @@ def test_unknown_duplicate_and_invalid_records_do_not_overwrite_ownership(tmp_pa
         repository.get_for_conversation("run-1", "conversation-1")["workspace_id"]
         == "workspace-1"
     )
+    db.close()
+
+
+@pytest.mark.parametrize("branch", ["agent/.hidden", "-agent", "@"])
+def test_invalid_git_branch_shapes_are_rejected_without_inserting(tmp_path, branch):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="branch-validation")
+    _terminal_run(db, "conversation-1", "run-1")
+    repository = AgentWorktreeRepository(db)
+
+    with pytest.raises(ValueError, match="branch"):
+        _record(repository, "run-1", tmp_path, branch=branch)
+
+    assert repository.get_for_conversation("run-1", "conversation-1") is None
     db.close()
 
 
@@ -331,3 +344,42 @@ def test_reference_migration_upgrades_real_v19_shape(tmp_path):
         ).fetchone() == (7.25,)
     finally:
         connection.close()
+
+
+def test_runtime_reopen_migrates_v19_and_preserves_definition_cap(tmp_path):
+    path = tmp_path / "runs.db"
+    current = AgentRunsDB(path, client_id="build-v19")
+    definition_id = current.create_agent_definition(
+        AgentDefinition(
+            name="runtime-migration-cap",
+            instructions="work",
+            max_wall_seconds=9.5,
+        )
+    )
+    current.close()
+
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("DROP TABLE agent_worktrees")
+        connection.execute("DELETE FROM schema_version WHERE version = 20")
+        connection.commit()
+        assert connection.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone() == (19,)
+    finally:
+        connection.close()
+
+    migrated = AgentRunsDB(path, client_id="migrate-v19")
+    try:
+        assert migrated.get_agent_definition(definition_id)["max_wall_seconds"] == 9.5
+        with migrated.connection() as connection:
+            assert tuple(
+                connection.execute("SELECT MAX(version) FROM schema_version").fetchone()
+            ) == (20,)
+            assert tuple(
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE name='agent_worktrees'"
+                ).fetchone()
+            ) == ("agent_worktrees",)
+    finally:
+        migrated.close()
