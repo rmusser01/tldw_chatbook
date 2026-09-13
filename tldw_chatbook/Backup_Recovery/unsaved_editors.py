@@ -259,6 +259,7 @@ def _library_snapshot(state) -> None:
     """Library.save_state carries applied browse state, never note editor text."""
     from tldw_chatbook.Library.library_media_state import MediaBrowseScope
     from tldw_chatbook.Library.library_prompts_state import PromptBrowseScope
+    from tldw_chatbook.Library.library_skills_state import SkillBrowseScope
 
     strings = {
         "library_selected_row_id",
@@ -290,13 +291,39 @@ def _library_snapshot(state) -> None:
         "selected_prompt_id",
         "library_conversation_page",
         "library_export_last_at",
+        "library_continue_receipt",
+        "library_skills_scope",
+        "library_collections_page",
+        "conversation_archive_scope",
+        "library_export_last_items",
+        "library_export_last_bytes",
     }
     if set(state) - strings - special or any(
         type(state[key]) is not str for key in strings & state.keys()
     ):
         raise TypeError("unknown retained Library fields")
     for key, value in state.items():
-        if key == "library_rag_scope_deselected":
+        if key == "library_continue_receipt":
+            from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+            if (
+                value is not None
+                and LibraryScreen._restore_library_continue_receipt(value) != value
+            ):
+                raise TypeError("unknown retained Library continuation")
+        elif key == "conversation_archive_scope":
+            from tldw_chatbook.Utils.input_validation import (
+                validate_conversation_archive_scope,
+            )
+
+            try:
+                validate_conversation_archive_scope(value)
+            except ValueError:
+                raise TypeError("unknown retained conversation scope") from None
+        elif key in {"library_export_last_items", "library_export_last_bytes"}:
+            if value is not None and (type(value) is not int or value <= 0):
+                raise TypeError("unknown retained export counts")
+        elif key == "library_rag_scope_deselected":
             if type(value) is not set or any(type(item) is not str for item in value):
                 raise TypeError("unknown retained retrieval selection")
         elif key == "library_rag_results":
@@ -316,10 +343,16 @@ def _library_snapshot(state) -> None:
             )
             if value is not None and not _exact(value, module, name):
                 raise TypeError("unknown retained retrieval outcome")
-        elif key in {"library_media_scope", "library_prompts_scope"}:
-            cls = (
-                MediaBrowseScope if key == "library_media_scope" else PromptBrowseScope
-            )
+        elif key in {
+            "library_media_scope",
+            "library_prompts_scope",
+            "library_skills_scope",
+        }:
+            cls = {
+                "library_media_scope": MediaBrowseScope,
+                "library_prompts_scope": PromptBrowseScope,
+                "library_skills_scope": SkillBrowseScope,
+            }[key]
             if type(value) is not dict or set(value) != set(cls.__dataclass_fields__):
                 raise TypeError("unknown retained browse scope")
             try:
@@ -330,7 +363,7 @@ def _library_snapshot(state) -> None:
             key == "selected_prompt_id" and value is not None and type(value) is not int
         ):
             raise TypeError("unknown retained prompt selection")
-        elif key == "library_conversation_page" and (
+        elif key in {"library_conversation_page", "library_collections_page"} and (
             type(value) is not int or value < 1
         ):
             raise TypeError("unknown retained conversation page")

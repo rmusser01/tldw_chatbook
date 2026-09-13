@@ -42,7 +42,14 @@ async def main():
     while app._boot_worker_gate is None or not app._boot_worker_gate.is_drained:await asyncio.sleep(.05)
    await asyncio.sleep(3)
    before=app.chachanotes_db.add_note('Mounted backup','Saved before mounted capture')
-   if sys.argv[1]=='settings':
+   if sys.argv[1]=='library':
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    app.post_message(NavigateToScreen('library', {'mode':'notes'}))
+    async with asyncio.timeout(90):
+     while not isinstance(app.screen,LibraryScreen) or not app.screen._library_loaded:await asyncio.sleep(.05)
+    print('MOUNTED_LIBRARY_LOADED',flush=True)
+   if sys.argv[1] in {'settings','library'}:
     print('MOUNTED_BEFORE_SETTINGS',flush=True)
     await pilot.press('f4')
     print('MOUNTED_AFTER_SETTINGS',flush=True)
@@ -84,7 +91,7 @@ print('retired and reopened')
 '''
 
 
-@pytest.mark.parametrize("screen", ["console", "settings"])
+@pytest.mark.parametrize("screen", ["console", "settings", "library"])
 def test_mounted_console_complete_capture_and_resumed_writes(tmp_path, native_package, screen):
     _run(tmp_path, screen, "mounted", script=_SCRIPT,
          timeout=420 if sys.platform == "win32" else 180,

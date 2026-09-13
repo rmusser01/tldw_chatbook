@@ -12530,10 +12530,12 @@ class LibraryScreen(BaseAppScreen):
                 )
             return result
 
-        if isolate_in_worker:
-            return await asyncio.to_thread(invoke_service_in_worker)
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 
-        result = await asyncio.to_thread(lambda: callable_obj(*args, **kwargs))
+        if isolate_in_worker:
+            return await asyncio.to_thread(run_finite_local_worker, invoke_service_in_worker)
+
+        result = await asyncio.to_thread(run_finite_local_worker, callable_obj, *args, **kwargs)
         if inspect.isawaitable(result):
             return await result
         return result

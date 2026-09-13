@@ -10,7 +10,7 @@ Reason: Correct observed defects within the approved backup design and existing 
 **Goal:** Capture the normal running application, including a profile created by onboarding.
 **Success Criteria:** The known configuration lock is classified safely; an actual running app can finish a Complete backup and resume ordinary writes.
 **Tests:** Reproduce the UAT failure with test-only diagnostics; add regression tests for the demonstrated cause and exact lock classification; rerun live installed capture.
-**Status:** Complete — native mounted capture and independent scoped review passed; persona acceptance remains Stage 5.
+**Status:** Complete — native mounted Console, Settings and Library capture and independent scoped review passed. Actual Library follow-up corrected its installed retained-state contract and released newly acquired native caches at measured finite worker boundaries. Persona acceptance remains Stage 5.
 
 ## Stage 2: Valid, understandable restore destinations
 **Goal:** Let users select a new local location per profile and explicit locations for independent external content; derive required shared/owner paths from installed policy.

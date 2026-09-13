@@ -8,7 +8,6 @@ import asyncio
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from enum import Enum
-from functools import partial
 from typing import Any, NoReturn, Optional
 
 from loguru import logger
@@ -487,7 +486,9 @@ class NotesScopeService:
     @staticmethod
     async def _run_folder_repository(method: Any, *args: Any, **kwargs: Any) -> Any:
         """Run one synchronous local folder repository operation off-loop."""
-        return await asyncio.to_thread(partial(method, *args, **kwargs))
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        return await asyncio.to_thread(run_finite_local_worker, method, *args, **kwargs)
 
     def _raise_folder_capability_error(
         self,
@@ -1989,7 +1990,10 @@ class NotesScopeService:
             raise ValueError(
                 "Deleted notes are only listed for local notes."
             )
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
         return await asyncio.to_thread(
+            run_finite_local_worker,
             self.local_notes_service.list_deleted_notes,
             self._require_user_id(user_id),
             limit,

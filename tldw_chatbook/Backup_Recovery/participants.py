@@ -39,6 +39,70 @@ def require_participant_coverage(
 _installed_repositories = weakref.WeakSet()
 
 
+def run_finite_local_worker(function, /, *args, **kwargs):
+    """Retire only installed file-backed caches acquired by this finite worker.
+
+    The caller owns the entire synchronous operation, including any private
+    worker event loop. Existing, foreign-thread, custom and in-memory handles
+    remain caller-owned. Cancellation of the awaiting UI task does not shorten
+    this worker's lifetime or close a connection while its work is running.
+    """
+    from . import storage_admission as storage
+
+    current = threading.current_thread()
+    if current is threading.main_thread():
+        return function(*args, **kwargs)
+    with storage._lock:
+        before = {
+            lease
+            for participant in tuple(_installed_repositories)
+            for lease in participant.connections.values()
+            if lease.resource_thread is current
+        }
+    try:
+        return function(*args, **kwargs)
+    finally:
+        types = _repository_types()
+        closers = {
+            "db.chachanotes.primary": "close_connection",
+            "db.media.primary": "close_connection",
+            "db.prompts.primary": "close_connection",
+            "db.library_collections": "close",
+        }
+        with storage._lock:
+            participants = tuple(_installed_repositories)
+        for participant in participants:
+            repository = participant.repository()
+            with storage._lock:
+                connections = [
+                    (connection, lease)
+                    for connection, lease in participant.connections.items()
+                    if lease.resource_thread is current
+                ]
+                if (
+                    repository is None
+                    or type(repository) not in types
+                    or types[type(repository)] != participant.owner_id
+                    or participant.owner_id not in closers
+                    or repository.is_memory_db
+                    or repository.db_path != participant.path
+                    or repository._maintenance_participant is not participant
+                    or not connections
+                    or any(lease in before for _, lease in connections)
+                    or any(
+                        operation.participant is participant
+                        and operation.thread is current
+                        for operation in storage._operations
+                    )
+                ):
+                    continue
+            # A raw transaction can outlive the callback. Preserve it even
+            # outside maintenance, when the ordinary close API permits close.
+            if any(connection.in_transaction for connection, _ in connections):
+                continue
+            getattr(type(repository), closers[participant.owner_id])(repository)
+
+
 def _retire_current_thread_caches(pause) -> None:
     """Retire installed local caches after producer settlement and local fencing.
 

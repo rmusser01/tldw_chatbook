@@ -505,6 +505,64 @@ def test_retained_navigation_snapshots_are_clean_without_losing_drafts(route, ch
     assert store._entries[route] is envelope
 
 
+@pytest.mark.parametrize("loaded_notes", [False, True])
+def test_actual_library_navigation_snapshot_is_clean(loaded_notes):
+    from copy import deepcopy
+
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Navigation.screen_state_store import (
+        RuntimeIdentity,
+        ScreenStateStore,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    screen = LibraryScreen(
+        SimpleNamespace(app_config={}, file_notes_session_owner=None)
+    )
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    screen._library_loaded = loaded_notes
+    snapshot = screen.save_state()
+    before = deepcopy(snapshot)
+    store = ScreenStateStore()
+    store.save("library", snapshot, RuntimeIdentity("local"))
+    assert probe_unsaved_editors(screen_state_store=store) == ()
+    assert snapshot == before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("unrecognized_draft", "unsaved"),
+        ("library_continue_receipt", {"version": 1, "draft": "unsaved"}),
+        ("library_skills_scope", {"draft": "unsaved"}),
+        ("library_collections_page", True),
+        ("conversation_archive_scope", "unknown"),
+        ("library_export_last_items", -1),
+        ("library_export_last_bytes", "unsaved"),
+    ],
+)
+def test_actual_library_navigation_unknown_state_refuses(field, value):
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
+    from tldw_chatbook.UI.Navigation.screen_state_store import (
+        RuntimeIdentity,
+        ScreenStateStore,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    snapshot = LibraryScreen(
+        SimpleNamespace(app_config={}, file_notes_session_owner=None)
+    ).save_state()
+    snapshot[field] = value
+    store = ScreenStateStore()
+    store.save("library", snapshot, RuntimeIdentity("local"))
+    assert (
+        probe_unsaved_editors(screen_state_store=store)[0].reason
+        == "unknown-editor-state"
+    )
+    assert snapshot[field] is value
+
+
 @pytest.mark.parametrize("changed", [False, True])
 def test_speech_profile_modal_reads_actual_input_baselines(changed):
     from textual.screen import Screen
