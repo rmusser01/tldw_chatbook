@@ -4622,11 +4622,21 @@ class ConsoleSettingsModal(
         provider_select = self.query_one("#console-settings-provider", Select)
         # The creation modal mirrored the persisted entry into the shared
         # app_config mapping, so the rebuilt options include the new id.
-        # The rebuild itself is mechanical: suppress its selection-reset
-        # Changed(NULL) (CE-001) so the blank value never enters the switch
-        # path -- only the explicit assignment below fires Select.Changed,
-        # which runs the same switch path a manual selection uses and
-        # consumes the pending entry discovery above.
+        # Refresh BOTH adapters before the selection lands: the visible
+        # picker snapshots its options at compose time, so without the
+        # refresh the new entry id is unknown to it and the switch renders
+        # a blank field with no entry row in the dropdown (CE-006). The
+        # rebuilds themselves are mechanical: suppress the Select's
+        # selection-reset Changed(NULL) (CE-001) so the blank value never
+        # enters the switch path -- only the explicit assignment below
+        # fires Select.Changed, which runs the same switch path a manual
+        # selection uses and consumes the pending entry discovery above.
+        try:
+            self.query_one(
+                "#console-settings-provider-picker", ConsoleProviderPicker
+            ).set_options(self._provider_picker_options())
+        except (NoMatches, QueryError):
+            pass
         with provider_select.prevent(Select.Changed):
             provider_select.set_options(self._provider_select_options())
         provider_select.value = provider_id

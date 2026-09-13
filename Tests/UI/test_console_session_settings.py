@@ -6534,6 +6534,80 @@ async def test_endpoint_created_message_switches_selection_without_crash() -> No
 
 
 @pytest.mark.asyncio
+async def test_endpoint_created_switch_renders_entry_in_provider_picker() -> None:
+    """CE-006 regression: the post-Create switch must render the entry.
+
+    The visible provider control is the ConsoleProviderPicker, whose option
+    snapshot is taken at compose time; the create flow persists the entry
+    only after that. Unless the switch chain refreshes the picker's options
+    before the selection lands, ``set_provider`` drops the unknown entry id
+    (blank field, "Choose a provider.") and the dropdown never lists the
+    entry until the modal is reopened (UAT captures 04b-06b).
+    """
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    app, modal = _registry_rebase_harness(
+        connection_tester=_unreachable_connection_tester
+    )
+    # Mount BEFORE the entry exists: the real create flow persists the
+    # entry (and mirrors it into the shared app_config mapping) only when
+    # the template modal commits, so the mounted picker's option snapshot
+    # predates the entry.
+    created = app.app_config["custom_endpoints"].pop("gpu-box")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        app.app_config["custom_endpoints"]["gpu-box"] = created
+        modal.post_message(
+            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
+        )
+        await pilot.pause()
+
+        provider_select = modal.query_one("#console-settings-provider", Select)
+        assert provider_select.value == "custom-ep:gpu-box"
+        assert modal._active_provider == "custom-ep:gpu-box"
+
+        picker = modal.query_one(
+            "#console-settings-provider-picker", ConsoleProviderPicker
+        )
+        assert picker.value == "custom-ep:gpu-box"
+        picker_input = picker.query_one(
+            "#console-settings-provider-picker-input", Input
+        )
+        assert picker_input.value == "GPU box"
+        status = picker.query_one(
+            "#console-settings-provider-picker-status", Static
+        )
+        status_text = str(getattr(status.renderable, "plain", status.renderable))
+        assert "Selected: GPU box" in status_text
+
+        # The dropdown lists all providers including the new entry without
+        # reopening the modal. Re-entering the field (the create flow had a
+        # modal screen on top, so the input lost focus) opens the grouped
+        # results for the refreshed option list.
+        app.set_focus(None)
+        await pilot.pause()
+        picker.focus_input()
+        await pilot.pause()
+        visible = picker.visible_provider_ids()
+        assert "custom-ep:gpu-box" in visible
+        assert "llama_cpp" in visible
+
+        # Entry -> built-in -> entry switching inside one modal session.
+        modal.post_message(ConsoleProviderPicker.ProviderSelected("llama_cpp"))
+        await pilot.pause()
+        assert picker.value == "llama_cpp"
+        modal.post_message(ConsoleProviderPicker.ProviderSelected("custom-ep:gpu-box"))
+        await pilot.pause()
+        assert picker.value == "custom-ep:gpu-box"
+        assert picker_input.value == "GPU box"
+
+
+@pytest.mark.asyncio
 async def test_provider_picker_selection_message_switches_entry_without_crash() -> None:
     """CE-001 regression (explicit selection): picking a registry entry from
     the provider picker must rebase and re-project the dashed id, not crash
