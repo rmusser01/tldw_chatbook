@@ -30,6 +30,7 @@ selector=Path(os.environ['TLDW_CONFIG_PATH'])
 database=get_tts_profiles_db_path()
 lock=database.with_name(database.name+'.lock')
 diagnostic_errors=[]
+inventory_errors=[]
 def observe_mapper(original):
  def observed(*errors):
   for error in errors:
@@ -60,7 +61,15 @@ async def main():
   assert database==selector.parent/'custom'/'selected.sqlite'
   other=database.parent/'not-selected.sqlite.lock';other.write_bytes(b'')
  before=lock.lstat() if mode!='absent' else None
- inventory=preview_capture((selector,),options={'staging_parent':selector.parent.parent})
+ def trace_inventory(frame,event,arg):
+  if event=='exception' and frame.f_code.co_name=='walk' and Path(frame.f_code.co_filename).name=='file_inventory.py':
+   error=arg[1]
+   if not isinstance(error,FileNotFoundError):
+    inventory_errors.append(_error_metadata(error));del inventory_errors[:-16]
+  return trace_inventory
+ previous_trace=sys.gettrace();sys.settrace(trace_inventory)
+ try:inventory=preview_capture((selector,),options={'staging_parent':selector.parent.parent})
+ finally:sys.settrace(previous_trace)
  rows=[item for item in inventory.items if item.path==lock]
  assert len(rows)==1,[(item.owner,item.logical_id,item.status,str(item.path)) for item in rows]
  row=rows[0]
@@ -83,6 +92,7 @@ async def main():
 try:asyncio.run(main())
 except BaseException:
  print('TTS_REPOSITORY_FAILURE_METADATA',json.dumps(diagnostic_errors),flush=True)
+ print('TTS_INVENTORY_FAILURE_METADATA',json.dumps(inventory_errors),flush=True)
  raise
 """
 

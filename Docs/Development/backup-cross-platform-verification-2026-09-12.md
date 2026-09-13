@@ -61,6 +61,25 @@ sets `PYTHONIOENCODING=utf-8`, preserving strict decoding and subprocess checks.
 A forced CP1252 child reproduces the decoding failure before and passes after;
 the caller's environment remains unchanged. Independent review has no findings.
 
+Revision `471e9715db6d202bfae2097c4f0ee1de893a1a32` passes all nine local
+TTS inventory/reference roundtrip cases in73.31 seconds and the same cases on
+the supplied Linux host in30.57 seconds, with no failures or skips. Linux source
+archive SHA256
+`d3f605c4b7e9325f1b204fd51baf908a9983577ba980fe2f7bbc87c81660ac05`.
+The Windows support verification is
+[34733401709](https://github.com/rmusser01/tldw_chatbook/actions/runs/34733401709).
+That run passes42/42 native and112/113 support cases, including all four canonical
+TTS reference stages: seed, capture, restore and fresh native read. All31 artifact
+hashes verify. Its sole failure is an unsafe symlink preclassified unavailable by
+the shared file inventory before the later TTS-specific stat. The initial
+no-follow leaf stat now maps explicit `ELOOP` to an unsupported leaf while ancestor
+pinning and all other I/O failures retain whole-root refusal. Root/nested refusal
+regressions first produce2 failures and2 passes, then all4 pass. Together with
+existing unsafe-object and TTS inventory cases,16 pass in6.77 seconds. Review has
+no findings; production Bandit is clean and eight existing test-file Ruff findings
+remain unchanged. A bounded test-only inventory exception trace is retained for
+native failure diagnostics. No assertion, traversal restriction or timeout is relaxed.
+
 Revision `892e11484b6436f0d554ad1a2b591ed6de69632e` passes actual Windows
 replacement, including21 displayed credential omissions, untouched abort,
 explicit acknowledgement and `restoration_validated`. Full

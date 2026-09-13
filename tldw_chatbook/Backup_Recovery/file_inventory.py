@@ -1,5 +1,6 @@
 """Bounded metadata enumeration of an exact root, without capture authority."""
 
+import errno
 import hashlib
 import stat
 import sys
@@ -151,6 +152,13 @@ def _inventory_tree(
                     "unused" if not relative and not external else "unavailable",
                     dependencies,
                 )
+            )
+            return
+        except OSError as error:
+            if error.errno != errno.ELOOP:
+                raise
+            items.append(
+                StorageItem(owner, logical_id, path, "unsupported", dependencies)
             )
             return
         if root_device is None:

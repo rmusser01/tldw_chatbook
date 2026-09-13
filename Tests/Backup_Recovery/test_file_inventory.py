@@ -95,6 +95,34 @@ def test_nested_empty_tree_metadata_composes_and_scope_ignores_times_modes(tmp_p
     assert classify_entries(inventory()).scope_digest == before.scope_digest
 
 
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("refused_link", [False, True])
+def test_native_leaf_refusal_keeps_explicit_classification(
+    tmp_path, monkeypatch, nested, refused_link
+):
+    import errno
+
+    from tldw_chatbook.Backup_Recovery import file_inventory
+
+    unsafe = tmp_path / "unsafe"
+    unsafe.write_bytes(b"unchanged")
+    root = tmp_path if nested else unsafe
+    original_stat = file_inventory.os.stat
+
+    def refused_stat(path, *args, **kwargs):
+        if path == unsafe.name and kwargs.get("dir_fd") is not None:
+            raise OSError(errno.ELOOP if refused_link else errno.EACCES, "refused")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(file_inventory.os, "stat", refused_stat)
+    entries = inventory_tree(root, owner="test.files", external=False)
+    if refused_link:
+        assert next(item for item in entries if item.path == unsafe).status == "unsupported"
+    else:
+        assert [(item.path, item.status) for item in entries] == [(root, "unavailable")]
+    assert unsafe.read_bytes() == b"unchanged"
+
+
 @pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo", "privilege"])
 def test_unsupported_objects_are_not_included(tmp_path, kind):
     target = tmp_path / "target"

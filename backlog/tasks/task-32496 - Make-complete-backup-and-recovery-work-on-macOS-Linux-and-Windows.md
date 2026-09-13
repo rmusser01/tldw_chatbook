@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 02:34
+updated_date: 2026-09-13 02:50
 ---
 
 ## Description
@@ -128,6 +128,9 @@ Native TTS correction changes only three os imports to platform_files.os; no new
 Actual supplied Linux host b17ece821669d72b062db0462c62c47b866f07fd reader/reference suite130/130PASS55.89s, zero failures/errors/skips. Includes canonical TTS reference archive/restore using native getters. Source SHA2565bd5e6870c6393084ceab4ea85563ccca5bce9b0d9fdc127e37ef6f515cfabb0; artifact directory /home/ml-user/Working/chatbook-backup-linux-20260912/artifacts-platform-private-b17ece821669d72b062db0462c62c47b866f07fd-20260912-192222. PR2642 body updated with actual Windows full rollback success, current targeted TTS verification, baseline limitations and existing merge requirements.
 b17 Windows34732838084:42nativePASS,111/113supportPASS,28artifact hashes verified. All prior unsupported-stat startup failures fixed. Remaining symlink lock is fail-closed unavailable instead of unsupported because native no-reparse stat raises errno.ELOOP; map only that explicit refusal to unsupported, preserve other unavailable errors. Canonical blob seed returned0, but test parent cannot decode its Windows CP1252 smart quote as UTF-8. Set a fixed UTF-8 child stdout contract in _run_profile_child; do not relax decoding or status assertions. Native source archive a6b48875dcb13a9a9a126af97531659620ecee086b35304fa483b8c67077ea6d.
 Final refusal/output corrections reviewed with no findings. Explicit ELOOP is unsupported; all other OSError remains unavailable, no no-follow or capture acceptance relaxation. Helper copies environment and fixes Python stdout UTF8; forcedcp1252 child RED/GREEN verifies readback and unchanged caller env.9 local inventory/reference testsPASS73.31s. TTS recovery Bandit0; Ruff adds0 (only pre-existing complete_roundtrip FLY002), diffcheck clean. Publish and rerun Windows support113.
+Final471e9715db6d202bfae2097c4f0ee1de893a1a32 supplied Linux TTS suite9/9PASS30.57s,0failures/errors/skips. Exact source archiveSHA256d3f605c4b7e9325f1b204fd51baf908a9983577ba980fe2f7bbc87c81660ac05; artifacts /home/ml-user/Working/chatbook-backup-linux-20260912/artifacts-platform-private-471e9715db6d202bfae2097c4f0ee1de893a1a32-20260912-193600. Windows support113 currently34733401709. No test budget increases or relaxed assertions.
+471e Windows34733401709:42native and112/113supportPASS; canonical TTS reference seed/capture/restore/fresh-read allPASS.31artifact hashes verified, clean9854-file source/archive9e1994abd1caa681f3f26d863138ee44e91c98c328f8c4a46a4bff6951dc2d84. Sole remaining symlink row is preclassified unavailable by file_inventory._inventory_tree walk: its no-follow stat only catches FileNotFoundError, so ELOOP reaches outer whole-root unavailable catch before TTS-specific code. Correct explicit leaf ELOOP classification at that shared inventory boundary; preserve missing/permission/ancestor refusals. Add native-refusal contract regression root/nested vs access denial before implementation.
+Shared no-follow leaf ELOOP correction reviewed nofindings. Root/nested xELOOP/EACCES regression RED2fail2pass, GREEN4pass. Existing unsafe-object+TTSlock cases16PASS6.77s; final trace-instrumented TTSlock+regression12PASS6.28s; ancestor and missing-external refusals2PASS0.52s. Production Bandit0; no new Ruff (8 existing file-inventory test findings). Windows support gains4 contract cases, now117. Retains bounded inventory exception metadata only if the TTS child fails.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
