@@ -404,6 +404,16 @@ def recover_agent_worktree(
             _refuse(
                 "nothing_to_merge", "The child has no changes beyond its original base."
             )
+        if action == "merge" and not run_git(child, "status", "--porcelain=v1", "-z"):
+            child_head = run_git(child, "rev-parse", "HEAD").strip()
+            if (
+                run_git(root, "merge-base", child_head.decode(), "HEAD").strip()
+                == child_head
+            ):
+                _refuse(
+                    "already_merged",
+                    "The destination already includes this child commit; no merge was performed.",
+                )
         operation_id = uuid.uuid4().hex
         if not repository.claim(
             run_id, conversation_id, operation_id=operation_id, action=action
@@ -486,6 +496,15 @@ def recover_agent_worktree(
                         "Destination changed before merge; source capture is retained.",
                     )
                 previous = run_git(root, "rev-parse", "HEAD")
+                if (
+                    run_git(root, "merge-base", head, previous.decode().strip()).strip()
+                    == head.encode()
+                ):
+                    _refuse(
+                        "already_merged",
+                        "The destination already includes this child commit; no merge was performed.",
+                    )
+                _authority(record, authority)
                 destination_effect = True
                 try:
                     run_git(
@@ -515,6 +534,20 @@ def recover_agent_worktree(
                             destination_effect = False
                     raise
                 commit_sha = run_git(root, "rev-parse", "HEAD").decode().strip()
+                parents = (
+                    run_git(root, "rev-list", "--parents", "-n", "1", commit_sha)
+                    .decode()
+                    .split()
+                )
+                if commit_sha == previous.decode().strip() or parents != [
+                    commit_sha,
+                    previous.decode().strip(),
+                    head,
+                ]:
+                    _refuse(
+                        "merge_verification_failed",
+                        "Git did not produce the expected new two-parent merge commit; completion is uncertain.",
+                    )
                 result_state = "merged"
                 message = "Merged agent work with an explicit merge commit; source checkout retained."
         _authority(record, authority)
@@ -542,6 +575,7 @@ def recover_agent_worktree(
                     "git_failed",
                     "output_limit",
                     "destination_busy",
+                    "already_merged",
                     "source_authority_revoked",
                     "identity_changed",
                 )

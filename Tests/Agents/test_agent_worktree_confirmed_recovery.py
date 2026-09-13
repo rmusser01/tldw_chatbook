@@ -462,3 +462,87 @@ def test_generated_mutations_disable_repository_hooks(work, action):
         "applied" if action == "apply" else "merged"
     ), result
     assert not sentinel.exists()
+
+
+@pytest.mark.parametrize("advance_parent", [False, True])
+def test_already_incorporated_child_refuses_without_merge_receipt(work, advance_parent):
+    root, child = work[1].root, work[2].worktree_path
+    (child / "a.txt").write_text("child commit\n")
+    git(child, "add", "-A")
+    git(child, "commit", "-m", "child")
+    git(root, "merge", "--ff-only", work[2].branch)
+    if advance_parent:
+        (root / "later").write_text("parent advancement\n")
+        git(root, "add", "-A")
+        git(root, "commit", "-m", "later parent")
+    previous = git(root, "rev-parse", "HEAD")
+    child_head = git(child, "rev-parse", "HEAD")
+
+    result = recover(work, "merge")
+
+    assert isinstance(result, WorktreeRefusal), result
+    assert result.reason_code == "already_merged"
+    assert git(root, "rev-parse", "HEAD") == previous
+    assert git(child, "rev-parse", "HEAD") == child_head
+    assert state(work) == "unresolved"
+
+
+@pytest.mark.parametrize("interference", ["no_commit", "wrong_parents", "unreadable"])
+def test_unverified_merge_receipt_preserves_uncertainty(
+    work, monkeypatch, interference
+):
+    module = importlib.import_module("tldw_chatbook.Agents.agent_worktree_recovery")
+    from tldw_chatbook.Agents.agent_worktree_git import OperationError
+
+    root, child = work[1].root, work[2].worktree_path
+    (child / "a.txt").write_text("child change\n")
+    previous = git(root, "rev-parse", "HEAD")
+    real_run = module.run_git
+    merged = False
+
+    def altered_merge(path, *args, **kwargs):
+        nonlocal merged
+        if args[:1] == ("merge",) and "--no-ff" in args:
+            if interference == "no_commit":
+                merged = True
+                return b"Already up to date.\n"
+            result = real_run(path, *args, **kwargs)
+            merged = True
+            if interference == "wrong_parents":
+                git(root, "commit", "--allow-empty", "-m", "external advancement")
+            return result
+        if merged and interference == "unreadable" and args[:1] == ("rev-list",):
+            raise OperationError("git_failed", "commit verification unavailable")
+        return real_run(path, *args, **kwargs)
+
+    monkeypatch.setattr(module, "run_git", altered_merge)
+    result = recover(work, "merge")
+
+    assert merged
+    assert isinstance(result, WorktreeRefusal), result
+    assert state(work) == "uncertain"
+    assert (git(root, "rev-parse", "HEAD") == previous) is (interference == "no_commit")
+    work[0].close()
+    assert isinstance(recover(work, "merge"), WorktreeRefusal)
+    assert state(work) == "uncertain"
+
+
+def test_incorporated_child_with_new_dirty_work_still_merges(work):
+    root, child = work[1].root, work[2].worktree_path
+    (child / "a.txt").write_text("first child commit\n")
+    git(child, "add", "-A")
+    git(child, "commit", "-m", "first child")
+    git(root, "merge", "--ff-only", work[2].branch)
+    previous = git(root, "rev-parse", "HEAD").decode().strip()
+    (child / "a.txt").write_text("additional child work\n")
+
+    result = recover(work, "merge")
+
+    assert getattr(result, "state", None) == "merged", result
+    child_head = git(child, "rev-parse", "HEAD").decode().strip()
+    assert git(root, "rev-list", "--parents", "-n", "1", "HEAD").decode().split() == [
+        result.commit_sha,
+        previous,
+        child_head,
+    ]
+    assert (root / "a.txt").read_text() == "additional child work\n"
