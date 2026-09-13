@@ -1,6 +1,6 @@
 from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.Agents.agent_routing import (
-    AgentsRoutingConfig, RoutingError, allowlist_matches,
+    AgentsRoutingConfig, RoutingError, _strict_bool, allowlist_matches,
     load_agents_routing_config, resolve_child_params, resolve_spawn_target,
 )
 
@@ -244,3 +244,33 @@ def test_default_readiness_keyed_builtin_without_key_blocks(monkeypatch):
         assert False
     except RoutingError as e:
         assert e.code == "provider_not_ready" and e.level == "preset"
+
+def test_strict_bool_passes_real_booleans_through():
+    assert _strict_bool(True, key="k") is True
+    assert _strict_bool(False, key="k") is False
+
+def test_strict_bool_parses_recognized_strings_case_insensitively():
+    for s in ("true", "1", "yes", "on", "TRUE", " On "):
+        assert _strict_bool(s, key="k") is True
+    for s in ("false", "0", "no", "off", "", "NO"):
+        assert _strict_bool(s, key="k") is False
+
+def test_strict_bool_rejects_garbage_loudly():
+    # bool("false") == True is the silent-gate-open bug this prevents.
+    for bad in (1, 0, "maybe", None, ["true"]):
+        try:
+            _strict_bool(bad, key="spawn_override_enabled")
+            assert False, bad
+        except ValueError as e:
+            assert "must be a boolean" in str(e)
+
+def test_load_config_garbage_bool_raises(monkeypatch):
+    from tldw_chatbook.Agents import run_log
+    monkeypatch.setattr(run_log, "_setting",
+        lambda key, default=None:
+            "maybe" if key == "spawn_override_enabled" else default)
+    try:
+        load_agents_routing_config()
+        assert False
+    except ValueError as e:
+        assert "spawn_override_enabled" in str(e)

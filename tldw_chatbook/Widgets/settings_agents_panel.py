@@ -140,11 +140,11 @@ class AgentsSettingsPanel(Vertical):
 
     def __init__(
         self,
-        app_instance,
+        app_instance: Any | None,
         runs_db: AgentRunsDB | None = None,
         *,
         routing_readiness: Callable[[Mapping[str, Any], str], str | None] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         """Initialize the panel.
 

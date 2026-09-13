@@ -62,6 +62,15 @@ from tldw_chatbook.Chat.sampling_params import (
     optional_int_setting_from_sources as _optional_int_setting_from_sources,
     optional_string_setting_from_sources as _optional_string_setting_from_sources,
 )
+# The enum sets canonicalize in sampling_params.py (ADR-147's shared leaf)
+# so presets, registry entries, and Console settings validate against ONE
+# contract; the underscore aliases keep this module's call sites unchanged.
+from tldw_chatbook.Chat.sampling_params import (
+    REASONING_EFFORT_VALUES as _REASONING_EFFORT_VALUES,
+    REASONING_SUMMARY_VALUES as _REASONING_SUMMARY_VALUES,
+    THINKING_EFFORT_VALUES as _THINKING_EFFORT_VALUES,
+    VERBOSITY_VALUES as _VERBOSITY_VALUES,
+)
 from tldw_chatbook.config import (
     ProviderSettingsError,
     provider_settings_for_key,
@@ -294,12 +303,6 @@ CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS = {
     "openai": 8001,
     "mistral": 32000,
 }
-_REASONING_EFFORT_VALUES = frozenset(
-    {"none", "minimal", "low", "medium", "high", "xhigh"}
-)
-_REASONING_SUMMARY_VALUES = frozenset({"auto", "concise", "detailed", "none"})
-_VERBOSITY_VALUES = frozenset({"low", "medium", "high"})
-_THINKING_EFFORT_VALUES = frozenset({"off", "low", "medium", "high", "xhigh", "max"})
 _LEGACY_CHAT_PROVIDER_ALIASES = {
     "openai_compatible": "openai",
 }

@@ -130,7 +130,12 @@ The winner is validated through the existing seams:
 for display/readiness/execution keys (custom-ep aware), then readiness
 (`get_provider_readiness`, `Chat/provider_readiness.py:476` — missing
 credential / no reachable endpoint → `RoutingError`), producing a full
-`ConsoleProviderSelection` for the child. Tool shaping needs no change:
+`ConsoleProviderSelection` for the child. (Readiness gates only NEW
+targets: plain inherit — and any override/preset/default that resolves
+back to the parent's own provider — skips the gate, because the parent's
+send path already owns that provider's readiness; re-checking would also
+refuse every spawn in embedded/headless runs that never configure a
+credential.) Tool shaping needs no change:
 `provider_supports_native_tools` is already evaluated per run inside
 `_make_call_model` (`agent_service.py:1314,1565`). Unknown local models fall
 back to default token-window handling, same as any unlisted model today.

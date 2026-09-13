@@ -29,15 +29,69 @@ DEFAULT_SPAWN_OVERRIDE_ALLOWLIST: tuple[str, ...] = ()
 
 @dataclass(frozen=True)
 class AgentsRoutingConfig:
+    """The ``[agents]`` routing keys, loaded once per run.
+
+    Args:
+        subagent_default_provider: Provider id (or ``custom-ep:<slug>``)
+            children run on when neither the spawn call nor the preset
+            names one; empty falls through to inheriting the parent.
+        subagent_default_model: Model fill for the default level; empty
+            lets the resolver use the provider's configured model.
+        spawn_override_enabled: Master gate for ad-hoc provider/model args
+            on the spawn tool itself; ``False`` refuses them with
+            ``override_disabled`` before any other check.
+        spawn_override_allowlist: ``provider`` or ``provider/glob`` entries
+            every ad-hoc override target must match (bare provider allows
+            any model; the glob fnmatches the model case-insensitively).
+    """
+
     subagent_default_provider: str = DEFAULT_SUBAGENT_DEFAULT_PROVIDER
     subagent_default_model: str = DEFAULT_SUBAGENT_DEFAULT_MODEL
     spawn_override_enabled: bool = DEFAULT_SPAWN_OVERRIDE_ENABLED
     spawn_override_allowlist: tuple[str, ...] = DEFAULT_SPAWN_OVERRIDE_ALLOWLIST
 
 
+def _strict_bool(value: object, *, key: str) -> bool:
+    """Parse a config boolean strictly (qodo PR-2651 Medium).
+
+    ``bool("false")`` is ``True`` — Python truthiness on a quoted TOML/env
+    value silently OPENS an override gate the operator meant to close.
+
+    Args:
+        value: The raw config value (real bool from TOML, string from the
+            env tier).
+        key: Setting name, used in the error message.
+
+    Returns:
+        The parsed boolean. Real bools pass through; strings accept
+        true/1/yes/on and false/0/no/off (case-insensitive); empty string
+        reads as ``False``.
+
+    Raises:
+        ValueError: For any other type or unrecognized string — a loud
+            configuration error instead of a silently wrong gate.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+    raise ValueError(
+        f"[agents] {key} must be a boolean (true/false), got {value!r}"
+    )
+
+
 def load_agents_routing_config() -> AgentsRoutingConfig:
     """Read the [agents] routing keys via the same _setting accessor the
-    other agent keys use (Agents/run_log.py)."""
+    other agent keys use (Agents/run_log.py).
+
+    Raises:
+        ValueError: When ``spawn_override_enabled`` is neither a real
+            boolean nor a recognized boolean string.
+    """
     from tldw_chatbook.Agents.run_log import _setting
 
     raw = _setting("spawn_override_allowlist", DEFAULT_SPAWN_OVERRIDE_ALLOWLIST) or ()
@@ -48,7 +102,10 @@ def load_agents_routing_config() -> AgentsRoutingConfig:
             _setting("subagent_default_provider", "") or "").strip(),
         subagent_default_model=str(
             _setting("subagent_default_model", "") or "").strip(),
-        spawn_override_enabled=bool(_setting("spawn_override_enabled", False)),
+        spawn_override_enabled=_strict_bool(
+            _setting("spawn_override_enabled", False),
+            key="spawn_override_enabled",
+        ),
         spawn_override_allowlist=tuple(
             str(entry).strip() for entry in raw if str(entry).strip()),
     )
@@ -66,6 +123,25 @@ class RoutingError(Exception):
 
 @dataclass(frozen=True)
 class SpawnTarget:
+    """Where one spawned child runs, fully resolved (ADR-147).
+
+    Args:
+        provider: Provider id or ``custom-ep:<slug>`` the child sends
+            under — also its per-call ``api_endpoint`` and the snapshot's
+            ``resolved_provider``.
+        model: Resolved model (inherit fills the parent's model; routed
+            levels fill the provider's configured model or refuse).
+        base_url: Registry endpoint URL for a ``custom-ep:`` target,
+            ``None`` for built-in providers.
+        params: Canonical ``(key, value)`` sampling pairs from the
+            six-layer stack — NEVER inherited from the parent.
+        source: The resolution level that supplied the provider:
+            ``"override"`` | ``"preset"`` | ``"default"`` | ``"inherit"``.
+            ``RoutingError.level`` uses the same vocabulary, and an
+            ``"inherit"`` result is what lets the spawn path skip the
+            readiness gate (the parent's send path already owns it).
+    """
+
     provider: str
     model: str
     base_url: str | None
