@@ -127,6 +127,8 @@ if sys.platform=='win32':
  pending.replace(receipt)
 saved=json.loads((Path.home()/'probe-mapping.json').read_text())
 sys.path.append(saved['test_root'])
+from Tests.Backup_Recovery.thread_diagnostics import observe_threads
+stop_stacks=observe_threads(Path.home()/'fresh-stacks.log',interval=30)
 from Tests.network_guard import install,blocked_attempts
 install()
 import keyring
@@ -140,10 +142,16 @@ assert 'tldw_chatbook.app' not in sys.modules
 assert 'tldw_chatbook.config' not in sys.modules
 print('FRESH_MINIMAL_ENTRY',flush=True)
 def headless(app,*args,**kwargs):
+ print('FRESH_HEADLESS_ENTERED',flush=True)
  from Tests.Backup_Recovery.thread_diagnostics import observe_recovery_failures,observe_inventory_failures
+ from Tests.Backup_Recovery.loop_diagnostics import observe_loop_profile
  stop_failures=observe_recovery_failures(Path.home()/'fresh-recovery-failures.log')
  stop_inventory=observe_inventory_failures(Path.home()/'fresh-inventory-failures.log')
+ stop_loop=None
  async def mounted():
+  nonlocal stop_loop
+  stop_loop=observe_loop_profile(Path.home()/'fresh-loop-profile.log')
+  print('FRESH_MOUNT_BEGIN',flush=True)
   async with app.run_test(size=(120,42)) as pilot:
    screen=app.screen
    assert screen._inspection_id is None and screen._restore_plan is None
@@ -253,7 +261,9 @@ def headless(app,*args,**kwargs):
    (Path.home()/'probe-result.json').write_text(json.dumps(result,default=str))
   assert not blocked_attempts(),blocked_attempts()
  try:asyncio.run(mounted())
- finally:stop_inventory();stop_failures()
+ finally:
+  if stop_loop is not None:stop_loop()
+  stop_inventory();stop_failures();stop_stacks()
 App.run=headless
 """
 

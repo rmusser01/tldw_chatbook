@@ -305,7 +305,6 @@ def _environment(root: Path) -> dict[str, str]:
             for key, leaf in (
                 ("chachanotes_db_path", "notes.db"),
                 ("media_db_path", "media.db"),
-                ("research_db_path", "research.db"),
                 ("prompts_db_path", "prompts.db"),
             )
         ),

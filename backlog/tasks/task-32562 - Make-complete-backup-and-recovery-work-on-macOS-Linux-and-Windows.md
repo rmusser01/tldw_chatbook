@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 20:52
+updated_date: 2026-09-13 20:56
 ---
 
 ## Description
@@ -181,6 +181,7 @@ Live-capture corrections approved by independent reviewer:129 scoped regressions
 Destination/guidance remediation independently approved after correcting all review findings. New profile layout derives installed owner paths and shared aliases; replacement Files needing setup uses one explicit private parent outside profile/control storage; actual parent guards run at preview; malformed IDs/TOML tables fail safely; failed operations display bounded corrective guidance; extraction labels show nonempty file counts/examples. Final agent59passes, independent37passes, native installed replacement1pass149.85sec (includes untouchedabort andcredentialreview); installed plain/encrypted/encrypted-credential isolatedrestore+open3passes204.62sec. 1,800-file record-limit/publication regressions approved; laterrollback rerun active. No new backup modes/dependencies/Go. PR update and repeat keyboard UAT/platform evidence still pending.
 UAT remediation final combined review approved (126 independent tests). Final destination correction preserves absent/blank/default optional stores instead of inventing required paths, and accepts authenticated empty generated-image roots. Controller destination suite44passed; Ruff/Bandit zero findings in latest correction; native installed macOS replacement passed121.59s. Linux53e3 capture110passed, installed plain/encrypted/credential controls3passed, replacement1passed; destination public-permission fixture corrected for umask077. Current later rollback and Windows/persona verification remain in progress, no acceptance completion claimed.
 Latest installed macOS later-rollback acceptance passed: 2tests,246.22s, /private/tmp/uat-later-rollback-corrected.log. Actual later rollback restoration_validated; original/new verified recovery copies remain and new encrypted safety copy inspected. Independent final code review approved and controller44destination tests plus Ruff/Bandit pass. Windows53e3 replacement/rollback artifacts stop during fresh RecoveryApp mount before inspection (restart_process_timeout); test-only diagnostics under investigation, not claimed fixed by optional-selector correction.
+Follow-up harness corrections reviewed: removed unused custom research DB selector from saved-generation fixture (native34.29s passed after reproducing capture refusal). Added bounded existing thread/loop observers and fresh-mount checkpoints to Windows replacement/laterrollback test driver for measured early RecoveryApp startup timeout; no production behavior/deadlines/assertions changed. Observer9tests passed; installed macOS F9 with diagnostics1passed130.81s. Product commit c5c05181d8 built immutably for final persona UAT and Linux native repeats.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
