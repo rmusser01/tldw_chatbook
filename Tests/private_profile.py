@@ -1,6 +1,7 @@
 """Opt-in full-app tests whose selected profile owns one interpreter lifetime."""
 
 import asyncio
+import inspect
 import os
 import sys
 
@@ -24,12 +25,13 @@ def is_private_profile_child(request: pytest.FixtureRequest) -> bool:
 
 
 def private_profile_test(function):
-    """Run the original async case under pytest after selecting a fresh profile."""
+    """Run the original case under pytest after selecting a fresh profile."""
     @wraps(function)
     async def wrapped(*args, **kwargs):
         request = kwargs["request"]
         if is_private_profile_child(request):
-            return await function(*args, **kwargs)
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
         if _CHILD_NODE in os.environ:
             pytest.fail("private profile child node changed")
         work = request.getfixturevalue("tmp_path") / "private-profile-process"
@@ -84,8 +86,11 @@ def private_profile_test(function):
         cases = list(ET.parse(report).iter("testcase"))  # nosec B314
         if len(cases) != 1 or cases[0].get("name") != request.node.name:
             pytest.fail(f"private profile child did not execute its exact case: {report}")
-        if any(cases[0].find(kind) is not None for kind in ("skipped", "failure", "error")):
+        if any(cases[0].find(kind) is not None for kind in ("failure", "error")):
             pytest.fail(f"private profile child did not pass its original case: {report}")
+        skipped = cases[0].find("skipped")
+        if skipped is not None:
+            pytest.skip(skipped.get("message", "original private-profile case skipped"))
 
     wrapped._private_profile_test = True
     return wrapped

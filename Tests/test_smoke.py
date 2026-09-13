@@ -4,10 +4,13 @@ These tests cover critical paths to ensure basic functionality works.
 Run with: pytest Tests/test_smoke.py -v
 """
 
-import pytest
-import tempfile
 import os
+import tempfile
 from unittest.mock import patch
+
+import pytest
+
+from Tests.private_profile import private_profile_test
 
 # Test markers for organization
 pytestmark = pytest.mark.smoke
@@ -36,7 +39,8 @@ class TestDatabaseSmoke:
 
             db.close()
 
-    def test_media_database_initialization(self):
+    @private_profile_test
+    def test_media_database_initialization(self, request):
         """Test that the media database can be initialized."""
         from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as ClientMediaDB
 
@@ -158,7 +162,8 @@ class TestUIComponents:
     """Smoke tests for UI components."""
 
     @pytest.mark.asyncio
-    async def test_app_initialization(self):
+    @private_profile_test
+    async def test_app_initialization(self, request):
         """Test that the main app can be initialized."""
         from tldw_chatbook.app import TldwCli
 
@@ -173,7 +178,8 @@ class TestUIComponents:
 class TestConfiguration:
     """Smoke tests for configuration."""
 
-    def test_config_loading(self):
+    @private_profile_test
+    def test_config_loading(self, request):
         """Test that configuration can be loaded."""
         from tldw_chatbook.config import get_cli_setting, settings
 
@@ -185,7 +191,8 @@ class TestConfiguration:
         # Theme might not be configured, just check it's a string if it exists
         assert isinstance(theme, (str, type(None)))
 
-    def test_paths_exist(self):
+    @private_profile_test
+    def test_paths_exist(self, request):
         """Test that required paths are set up."""
         from tldw_chatbook.config import (
             get_chachanotes_db_path,
@@ -240,13 +247,14 @@ class TestSecurity:
 class TestRAGFunctionality:
     """Smoke tests for RAG functionality."""
 
-    def test_rag_service_initialization(self):
+    @private_profile_test
+    def test_rag_service_initialization(self, request):
         """Test that RAG service can be initialized."""
         try:
-            from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
             from tldw_chatbook.RAG_Search.simplified.config import (
                 create_config_for_testing,
             )
+            from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
 
             # Use the supported deterministic backend: a smoke test must not
             # download the production model merely because extras are installed.
@@ -257,7 +265,8 @@ class TestRAGFunctionality:
         except ImportError:
             pytest.skip("RAG dependencies not installed")
 
-    def test_chunking_service(self):
+    @private_profile_test
+    def test_chunking_service(self, request):
         """Test text chunking functionality."""
         from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
 

@@ -910,6 +910,7 @@ class MCPWorkbench(Container):
 
     async def on_unmount(self) -> None:
         """Invalidate preview work and revoke the visible nonce best effort."""
+        self._mcp_recovery_token = None
         self._tool_test_generation += 1
         nonce = self._tool_test_preview_nonce
         self._tool_test_preview_nonce = None
@@ -3086,9 +3087,6 @@ class MCPWorkbench(Container):
             f"global default: {global_word} · {len(override_rows)} {override_word} "
             f"across {len(override_servers)} {server_word}"
         )
-
-    def on_unmount(self) -> None:
-        self._mcp_recovery_token = None
 
     def _mcp_recovery_view(self):
         from tldw_chatbook.Backup_Recovery.bootstrap import effective_config_path

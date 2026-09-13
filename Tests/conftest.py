@@ -1031,21 +1031,30 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
 
     from Tests.private_profile import is_private_profile_child
 
-    # Opted-in full-app children selected their private source before collection.
-    # Keep that exact selection through the existing fixture/owner teardown.
-    private_child = is_private_profile_child(request)
-    test_data_dir = _BOOTSTRAP_CONFIG_ROOT if private_child else tmp_path / "test_data"
+    # Source-bound consumers retain the private profile selected at collection.
+    # These MCP widget modules also use imported real config getters; their
+    # per-case config fakes and database cleanup remain in the existing fixtures.
+    keep_bootstrap_profile = (
+        is_private_profile_child(request)
+        or request.node.path.name in {
+            "test_mcp_workbench.py", "test_mcp_tools_mode.py",
+        }
+    )
+    test_data_dir = (
+        _BOOTSTRAP_CONFIG_ROOT if keep_bootstrap_profile else tmp_path / "test_data"
+    )
     test_data_dir.mkdir(exist_ok=True)
 
     # Common paths that need isolation
     monkeypatch.setenv(
-        "XDG_DATA_HOME", str(_BOOTSTRAP_DATA_HOME if private_child else test_data_dir)
+        "XDG_DATA_HOME",
+        str(_BOOTSTRAP_DATA_HOME if keep_bootstrap_profile else test_data_dir),
     )
     test_config_dir = test_data_dir / "config"
     test_config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(test_config_dir))
     test_home_dir = test_data_dir / "home"
-    test_home_dir.mkdir(mode=0o700, exist_ok=private_child)
+    test_home_dir.mkdir(mode=0o700, exist_ok=keep_bootstrap_profile)
     monkeypatch.setenv("HOME", str(test_home_dir))
     monkeypatch.setenv(
         "TLDW_CONFIG_PATH",

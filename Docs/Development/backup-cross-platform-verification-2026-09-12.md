@@ -8,6 +8,16 @@ not been merged. Backup task IDs that collided with upstream voice tasks were
 renumbered to TASK-32560, TASK-32561 and TASK-32562; the voice records and
 historical receipt paths remain unchanged.
 
+Final [Windows support run 34746306846](https://github.com/rmusser01/tldw_chatbook/actions/runs/34746306846)
+at `bc2c2d001a5e6cd5a76ac1bba6af5253938e6692` passes **133/133 support tests
+and 42/42 native tests**, with zero failures, errors or skips. All four native
+TTS close cases pass, including successful release and all uncertain-close
+retention cases. The 32 artifact hashes, clean 16,026-file source and 2,838
+installed source-file matches verify. Support takes 753.010s. This closes the
+remaining Windows backup support failure described below; no production lock
+change was necessary. Receipts are retained under
+`/private/tmp/backup-final-bc2c-windows-34746306846`.
+
 The last production correction is `7666ebf6b9fbe234e7bb220e9e09fd1f06e4a539`.
 [Windows run 34743946448](https://github.com/rmusser01/tldw_chatbook/actions/runs/34743946448)
 passes all six actual installed workflows: plaintext 331.630s, encrypted 326.884s,
@@ -38,8 +48,8 @@ all child leases retire; an isolated child enters while the same parent hold
 remains alive. On Windows the test helper changed HOME but inherited USERPROFILE,
 so Path.home retained the parent's recovery authority. The correction aligns
 USERPROFILE in this four-case test and asserts the selected home/control scope.
-Production locking remains unchanged. Native Windows verification of that
-test-isolation correction is pending.
+Production locking remains unchanged. The final Windows support run above
+verifies this test-isolation correction.
 
 The supplied Linux host passes the final committed correction group 22/22,
 all three F9 modes 3/3, and combined replacement/later rollback 1/1 at
@@ -62,7 +72,19 @@ changed their selected profile after importing the app. Their original assertion
 now pass locally under an opt-in private interpreter/profile lifetime: 35 GGUF
 cases and 10 latency cases. Nine controlled process checks also verify failure
 propagation, cancellation/timeout kill and reap, and existing timeout precedence.
-The four-file test correction adds no Bandit/Ruff findings; native CI remains pending.
+The four-file test correction adds no Bandit/Ruff findings. Native GGUF CI
+subsequently exceeded the outer nested-pytest timer before exposing the child
+result; its four full-app cases now run directly with their private profile
+selected before import and the original 60-second timeout. The exact 35-node
+set is preserved; direct native macOS verification passes. The latency job
+reaches its actual assertions (9 pass, one Console switch measures 10.8s against
+the unchanged 10s threshold). Six smoke cases reproduce the same import/profile
+lifetime violation and pass under explicit private-interpreter isolation;
+all 16 smoke cases pass. Existing optional-import skips and failures propagate
+as their original outcomes. Two execution-capacity tests now wait for actual
+tool entry before joining the thread; the original 20ms cancellation/timeout
+and capacity assertions remain, and all 19 capacity cases pass. Broader fast-lane
+widget profile-lifetime verification is in progress.
 The separate binary Windows checkout failure names long upstream task paths
 introduced after the merged dev revision; it occurs before packaging and remains
 outside this backup correction. No full-repository test pass is claimed.
