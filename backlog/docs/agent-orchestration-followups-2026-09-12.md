@@ -40,28 +40,27 @@ supersedes its pending-integration and remaining-work labels.
   targeted gates from the earlier continuation integration failures and
   historical test-isolation qualifications. The partial parent reconciliation
   and combined branch review are now complete; parent closure remains open.
-- **Execution design unresolved:** TASK-31210/31211 confirmed worktree actions
-  and prior-turn recovery. A real temporary-repository race demonstrated that
-  Git running from a pinned linked child can advance a replacement parent
-  repository through its administrative links. Nested root pins alone do not
-  meet the accepted authority contract. No new mutation path is enabled. The
-  test-harness prerequisite is fixed and independently reviewed in `32557b80f2`
-  (four affected subprocess tests passed). Interim safeguards are also reviewed
-  (`93ee16a144`, `534ad2c890`): all agent worktree creation/merge/discard refuses,
-  preview/live disclosure agrees, and automatic checkout deletion is disabled.
-  Ordinary agents remain available; existing work is retained. The final affected
-  Console/service selection passed 25 tests with no new skips. Functional
-  recovery itself remains incomplete.
+- **Worktree restoration in progress:** The user approved correcting the blanket
+  restriction in `93ee16a144`/`534ad2c890`. ADR-155 now selects ordinary local Git
+  with exact selected writable repository authority and fresh identity checks.
+  The copied-metadata replacement experiment remains evidence of a concurrent
+  replacement limit; no external backend is missing. Creation restoration is
+  being implemented under
+  [the current plan](../../Docs/superpowers/plans/2026-09-12-agent-worktree-creation-restoration.md).
+  Automatic deletion remains disabled. Confirmed merge/discard and durable
+  recovery remain unfinished; they are the next implementation slices.
 - **Final integration review complete:** all four identified integration defects
   are fixed and independently re-reviewed in `7852cf47ba`, including replacement
   of obsolete worktree-positive continuation tests and the required diagnostic
   inventory refresh. No new Critical/Important finding remains in that correction.
   The [complete review, evidence and 50-ruling record](../../Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md)
   preserves historical failures, decisions and process qualifications.
-- **Remaining functional work:** TASK-31210 and TASK-31211 need a qualified
-  worktree execution backend before their confirmation/recovery features can be
-  enabled. Parent TASK-13154 remains In Progress with acceptance unchecked.
-  Changes are committed locally; no new PR, push or merge was performed.
+- **Remaining functional work:** Restore selected-authority creation; persist
+  worktree ownership/base and positive writer completion; wire the Console
+  confirmation card and prior-turn recovery list. TASK-31210, TASK-31211 and
+  parent TASK-13154 remain In Progress. Earlier work is committed locally;
+  this restoration is ongoing. No new PR, push or merge was performed.
+
 
 
 
