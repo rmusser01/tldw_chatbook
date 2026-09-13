@@ -54,9 +54,11 @@ def _read(parent: int, name: str, *, max_bytes: int = MAX_RECORD) -> dict:
             raise ValueError("unsafe_record")
         if info.st_size > max_bytes:
             raise ValueError("oversized_record")
-        data = os.read(fd, max_bytes + 1)
-        if len(data) > max_bytes:
-            raise ValueError("oversized_record")
+        data = bytearray()
+        while chunk := os.read(fd, min(64 * 1024, max_bytes - len(data) + 1)):
+            data.extend(chunk)
+            if len(data) > max_bytes:
+                raise ValueError("oversized_record")
 
         def unique(pairs):
             result = {}

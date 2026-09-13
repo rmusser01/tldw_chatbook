@@ -13,6 +13,73 @@ from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 from tldw_chatbook.Backup_Recovery.staging import stage_restore
 
 
+def test_small_recovery_record_does_not_allocate_the_maximum_read_buffer(tmp_path, monkeypatch):
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery.limits import RECOVERY_RECORD_BYTES
+    from tldw_chatbook.Backup_Recovery.native_files import (
+        create_private_file,
+        pinned_directory,
+    )
+
+    data = b'{"version":1}'
+    with create_private_file(tmp_path / "record.json") as fd:
+        bootstrap.os.write(fd, data)
+    original = bootstrap.os.read
+    requested = []
+
+    def read(fd, count):
+        requested.append(count)
+        return original(fd, count)
+
+    monkeypatch.setattr(bootstrap.os, "read", read)
+    with pinned_directory(tmp_path) as parent:
+        assert bootstrap._read(parent, "record.json", max_bytes=RECOVERY_RECORD_BYTES) == {"version": 1}
+    assert max(requested) <= 64 * 1024
+
+
+def test_private_record_read_handles_short_reads_and_checks_exact_eof(tmp_path, monkeypatch):
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery.native_files import (
+        create_private_file,
+        pinned_directory,
+    )
+
+    data = b'{"version":1}'
+    with create_private_file(tmp_path / "record.json") as fd:
+        bootstrap.os.write(fd, data)
+    original = bootstrap.os.read
+    monkeypatch.setattr(bootstrap.os, "read", lambda fd, count: original(fd, min(count, 3)))
+    with pinned_directory(tmp_path) as parent:
+        assert bootstrap._read(parent, "record.json", max_bytes=len(data)) == {"version": 1}
+
+
+def test_private_record_growth_beyond_limit_is_refused(tmp_path, monkeypatch):
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery.native_files import (
+        create_private_file,
+        pinned_directory,
+    )
+
+    data = b'{"version":1}'
+    path = tmp_path / "record.json"
+    with create_private_file(path) as fd:
+        bootstrap.os.write(fd, data)
+    original = bootstrap.os.read
+    grew = False
+
+    def read(fd, count):
+        nonlocal grew
+        if not grew:
+            with path.open("ab") as output:
+                output.write(b" ")
+            grew = True
+        return original(fd, count)
+
+    monkeypatch.setattr(bootstrap.os, "read", read)
+    with pinned_directory(tmp_path) as parent, pytest.raises(ValueError, match="oversized_record"):
+        bootstrap._read(parent, "record.json", max_bytes=len(data))
+
+
 def test_collection_descriptor_and_journal_survive_reopening(tmp_path):
     def many_files(doc):
         template = doc["files"][0]

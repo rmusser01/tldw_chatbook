@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 20:56
+updated_date: 2026-09-13 22:08
 ---
 
 ## Description
@@ -182,6 +182,7 @@ Destination/guidance remediation independently approved after correcting all rev
 UAT remediation final combined review approved (126 independent tests). Final destination correction preserves absent/blank/default optional stores instead of inventing required paths, and accepts authenticated empty generated-image roots. Controller destination suite44passed; Ruff/Bandit zero findings in latest correction; native installed macOS replacement passed121.59s. Linux53e3 capture110passed, installed plain/encrypted/credential controls3passed, replacement1passed; destination public-permission fixture corrected for umask077. Current later rollback and Windows/persona verification remain in progress, no acceptance completion claimed.
 Latest installed macOS later-rollback acceptance passed: 2tests,246.22s, /private/tmp/uat-later-rollback-corrected.log. Actual later rollback restoration_validated; original/new verified recovery copies remain and new encrypted safety copy inspected. Independent final code review approved and controller44destination tests plus Ruff/Bandit pass. Windows53e3 replacement/rollback artifacts stop during fresh RecoveryApp mount before inspection (restart_process_timeout); test-only diagnostics under investigation, not claimed fixed by optional-selector correction.
 Follow-up harness corrections reviewed: removed unused custom research DB selector from saved-generation fixture (native34.29s passed after reproducing capture refusal). Added bounded existing thread/loop observers and fresh-mount checkpoints to Windows replacement/laterrollback test driver for measured early RecoveryApp startup timeout; no production behavior/deadlines/assertions changed. Observer9tests passed; installed macOS F9 with diagnostics1passed130.81s. Product commit c5c05181d8 built immutably for final persona UAT and Linux native repeats.
+Windows490742 native diagnostics show continuing publication/final validation at timeout, not recovery startup hang. Corrected recovery record reads to ≤64KiB chunks while preserving total64MiB cap, short-read handling/exact EOF, file safety checks and JSON validation. RED proves former64MiB per tiny-read allocation and truncated short reads; GREEN39tests includes actual1800filepublication. Peak allocation100tinyreads:67,113,445→79,383bytes. Independent review approved; controller3boundarytests/Ruff/Bandit pass. Windows runtime effect still to verify. Linux c5c fullcapture110,destinations54,controls3,replacement1passed; laterrollback first UIreview measured15.13s versus15s harnesswait; test-onlyLinux45sreviewbudget repeat running, production unchanged.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
