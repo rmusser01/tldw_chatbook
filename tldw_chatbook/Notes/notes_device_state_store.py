@@ -441,6 +441,24 @@ class NotesSyncResolutionHistoryRecord:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncCompletedOperation:
+    """One completed journal row, as the Manage sync folders receipts read it.
+
+    task-32534 AC#3: every write lasting sync performs must leave a visible
+    receipt. Metadata only -- the label (path, note title) is resolved from
+    the binding by the runtime, never stored here.
+    """
+
+    operation_id: str
+    binding_id: str | None
+    kind: str
+    completed_at: int
+
+    def __repr__(self) -> str:
+        return "NotesSyncCompletedOperation(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class NotesSyncLegacyMigrationRecord:
     """Bounded record for one later legacy-migration review."""
 
@@ -1759,6 +1777,35 @@ class NotesDeviceStateStore:
             for row in rows
         )
 
+    def list_completed_operations(
+        self, root_id: str, *, limit: int = 20
+    ) -> tuple[NotesSyncCompletedOperation, ...]:
+        """Return one root's newest completed journal rows, newest first."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100.")
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT operation_id, binding_id, kind, updated_at
+                FROM notes_sync_operations
+                WHERE root_id = ? AND state = 'completed'
+                ORDER BY updated_at DESC, operation_id DESC
+                LIMIT ?
+                """,
+                (root_id, limit),
+            ).fetchall()
+        return tuple(
+            NotesSyncCompletedOperation(
+                operation_id=row[0],
+                binding_id=row[1],
+                kind=row[2],
+                completed_at=row[3],
+            )
+            for row in rows
+        )
+
     def list_resolution_history(
         self,
         root_id: str,
@@ -2681,6 +2728,7 @@ __all__ = [
     "NotesDeviceStateStore",
     "NotesSyncBindingRecord",
     "NotesSyncBindingSummary",
+    "NotesSyncCompletedOperation",
     "NotesSyncLegacyMigrationRecord",
     "NotesSyncOperationRecord",
     "NotesSyncRecoveryRecord",
