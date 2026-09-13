@@ -1,5 +1,7 @@
 # Confirmed agent worktree recovery implementation
 
+Historical execution plan. Its qualification prerequisite is superseded by ADR-155's current decision and [the restoration design](../specs/2026-09-12-agent-worktree-restoration-design.md). Start with [creation restoration](2026-09-12-agent-worktree-creation-restoration.md); durable ownership, confirmation and recovery remain required under the current ordinary-Git scope.
+
 > **For agentic workers:** Use subagent-driven-development; implement and independently review each task sequentially.
 
 **Goal:** Complete TASK-31210 and TASK-31211 with exact visible confirmation and durable recovery under current filesystem authority.

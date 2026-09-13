@@ -8,6 +8,8 @@ Supersedes: ADR-157 migration sequencing only; its definition policy is incorpor
 
 ## Decision
 
+Current sequencing note: definition caps are implemented at schema19. The user subsequently approved ordinary local Git restoration under ADR-155's amended decision. Recovery storage therefore proceeds at19→20 after checking the actual schema; the earlier execution-qualification blocker below is historical and does not gate this migration. No already-shipped migration is renumbered.
+
 Implement per-definition child wall-time caps independently of worktree recovery. AgentRuns currently has schema18. The cap column uses the next migration,18→19. Worktree persistence is planned after that migration,19→20, and must recheck the actual schema when its execution design is qualified. Do not ship a placeholder recovery migration or reserve an unused version merely to preserve the original task order.
 
 The complete definition policy in ADR-157 remains binding: optional finite positive caps, unchanged uncapped identity/defaults, frozen roster admission, minimum intersection after legacy floors, retained capped-lineage ceiling on continuation, and existing cooperative cancellation/physical-owner semantics. This decision changes migration ordering, not those behaviors. Canonical Settings ownership and preset work still precede its cap field integration.
