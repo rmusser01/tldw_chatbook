@@ -76,6 +76,26 @@ def test_service_preserves_exact_nonsecret_capture_review_for_retry(tmp_path):
         service.close()
 
 
+def test_service_explains_pause_timeout_without_exposing_internal_text(tmp_path):
+    from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
+
+    service = RecoveryService(tmp_path / "control")
+
+    def pause_timeout(operation, cancel):
+        raise AdmissionTimeout("private worker details must not appear")
+
+    try:
+        operation = service._start("backup", pause_timeout)
+        state = service.wait(operation, timeout=15)
+        assert state["state"] == "failed"
+        assert state["issues"] == ("admission_timeout",)
+        visible = recovery_service.issue_message(state["issues"][0])
+        assert "background work" in visible
+        assert "private worker details" not in repr(state) + visible
+    finally:
+        service.close()
+
+
 def test_app_close_keeps_real_ciphertext_held_until_inspection_worker_returns(
     tmp_path, monkeypatch, helper_resource_root
 ):

@@ -109,6 +109,7 @@ def owner_label(owner: str) -> str:
 
 
 _ISSUE_MESSAGES = {
+    "admission_timeout": "The application could not pause background work in time. Review the recovery status, let active work finish, then retry.",
     "restore_setup_parent_required": "Choose an existing private Files needing setup directory outside profile and recovery storage. Restored files will remain inactive there.",
     "isolated_destination_parent_overlaps_control": "Choose a folder beneath a separate private restore directory, outside recovery control storage.",
     "private_destination_parent_required": "Choose a restore folder beneath a private directory owned by your user, with access limited to you.",
@@ -144,9 +145,12 @@ def issue_message(code: str) -> str:
 
 def issue_code(error: Exception, *, kind: str = "") -> str:
     """Only fixed local codes cross into a view; arbitrary exception text stays out."""
+    from .admission import AdmissionTimeout
     from .capture import CaptureReviewRequired
     from .crypto import CryptoError
 
+    if isinstance(error, AdmissionTimeout):
+        return "admission_timeout"
     if isinstance(error, InterruptedError):
         return "cancelled"
     if isinstance(error, CaptureReviewRequired):
