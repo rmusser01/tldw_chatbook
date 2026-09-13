@@ -2,6 +2,64 @@
 
 ## Current verification status
 
+Latest production revision `9cdba197eb0a5d21f0c8ea69cf656fa56a05d7c1`
+passes **33 native Linux cases** on the supplied SSH host: 29 correction checks,
+all three installed F9 modes, and installed replacement/later rollback. There
+are no failures, errors or skips. The groups take 30.30s, 200.02s and 342.71s.
+All 16,027 source files match the immutable archive (SHA256
+`44b8c588814f7760cd949147ff92ebb1dc5c8c6876980221dc90cdbc067b20b0`).
+Each installation retains 2,849 non-cache files; 2,843 wheel payload files and
+2,838 source files per installation independently match. The fixture's own
+complete installed-file immutability assertion also passes. Evidence:
+`/private/tmp/backup-related-linux-verified.json`.
+
+[Windows run 34763393568](https://github.com/rmusser01/tldw_chatbook/actions/runs/34763393568)
+at the same production revision passes plaintext, encrypted-with-credentials,
+two-profile restore, replacement, later rollback, all 140 support cases and all
+294 native cases. **The encrypted-without-credentials case fails** with the
+scheduler worker raising `RecoveryRequired('storage_locally_paused')` after
+isolated restore. All 144 artifact
+hashes, clean 16,027-file source, and 2,838 installed source-file matches per
+group verify, including the failed group's receipts. Evidence:
+`/private/tmp/backup-related-windows-34763393568`.
+Test-only revision `421ad93e32` retains the original `WorkerFailed.error`
+traceback in private Windows receipts. Its fixed encrypted diagnostic
+[34764576403](https://github.com/rmusser01/tldw_chatbook/actions/runs/34764576403)
+passes the installed flow and all 42 native checks. All 20 hashes and exact
+source/installed comparisons verify. This test-only rerun does not reproduce
+the intermittent failure and therefore supplies no original worker traceback.
+
+A separate deterministic real-native reproduction identifies a scheduler
+defect: native maintenance intent can refuse the config lookup for the default
+emergency-stop path before local scheduler settlement. That lookup was outside
+the existing fail-safe handler, so `SchedulerLoop.run` died. The correction
+moves only this lookup inside that handler: unknown stop state holds dispatch
+before consuming queued work. A native regression fails before and passes after;
+the independent unchanged real-loop probe stays alive, preserves a due reminder
+during intent, then dispatches it exactly once and persists `completed` after
+release. This is a proven defect matching the Windows symptom, not a claim to
+have recovered the missing Windows traceback. Targeted stop/heartbeat checks
+retain the same 13 passes and seven failures on a clean `421ad93e32` archive;
+the correction introduces no new Ruff or Bandit findings. The new native
+regression is included in Windows support. Published platform verification of
+the scheduler correction remains pending.
+
+The config admission correction passes all ten native Linux latency checks.
+The subsequent boot checks expose profile-lifetime fixture errors and the
+required native admission thread missing from the reviewed allowlist. Those
+test corrections preserve the original limits. Module-budget overages remain:
+665 app-import modules against the strict 660 cap and 1,018 UI-ready modules
+against the 973 cap. The four Windows GGUF full-app cases also still exceed
+their original 60-second deadlines. No broader import refactor or budget
+increase is included. The targeted PR fast-lane job passes at `72abf54b93`;
+its downstream derived-artifact job fails on stale/missing path-inventory rules
+and three existing keyword indexes absent from the index census. Inventory
+updates await explicit requester approval after automatic approval review
+rejected changes to the persistent path allowlist. Earlier revision evidence
+below is retained as history, not qualification of the current encrypted flow.
+
+## Earlier verification and conflict-resolution history
+
 The conflict resolution includes dev `5fd502dba`; GitHub reports PR 2642
 mergeable. The requester's Change summary is preserved verbatim. The PR has
 not been merged. Backup task IDs that collided with upstream voice tasks were

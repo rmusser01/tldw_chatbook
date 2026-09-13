@@ -592,10 +592,13 @@ class SchedulerLoop:
             is_emergency_stopped,
         )
 
-        path = getattr(self, "_emergency_stop_path", None) or (
-            default_emergency_stop_path()
-        )
         try:
+            # Config can refuse this lookup when native backup intent arrives
+            # before local scheduler settlement. An unknown stop state holds
+            # dispatch just like an unreadable sentinel; the next tick retries.
+            path = getattr(self, "_emergency_stop_path", None) or (
+                default_emergency_stop_path()
+            )
             return await self._offload(is_emergency_stopped, path)
         except Exception:  # noqa: BLE001 -- doubt holds work (AC#4 of 26004)
             return True

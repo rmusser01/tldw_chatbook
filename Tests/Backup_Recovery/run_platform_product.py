@@ -82,6 +82,7 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_runtime_owner_capture.py::test_default_run_log_container_has_declared_topology",
     "Tests/Backup_Recovery/test_skills_chatbooks_capture.py::test_exact_script_output_topology_and_unsupported_config",
     "Tests/Backup_Recovery/test_related_path_admission.py",
+    "Tests/Backup_Recovery/test_scheduler_native_pause_intent.py",
 )
 _RESTORE_DIAGNOSTIC_TESTS = (
     (
