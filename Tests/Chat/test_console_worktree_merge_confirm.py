@@ -316,14 +316,14 @@ def _console_plan(*, worktree_merge_enabled: bool | None = None, fleet_max_live=
     return build_console_first_request_plan(**kwargs)
 
 
-def test_console_plan_omits_worktree_mutation_schemas_when_confirm_enabled():
+def test_console_plan_offers_worktree_mutation_schemas_when_confirm_enabled():
     plan = _console_plan(worktree_merge_enabled=True, fleet_max_live=2)
     names = [schema.name for schema in plan.schemas.runtime_schemas]
     assert {"spawn_subagent", "wait_agents", "check_agents", "send_to_agent"} <= set(
         names
     )
-    assert "merge_agent_worktree" not in names
-    assert "discard_agent_worktree" not in names
+    assert "merge_agent_worktree" in names
+    assert "discard_agent_worktree" in names
 
 
 def test_console_plan_omits_worktree_merge_schemas_when_flag_is_omitted():

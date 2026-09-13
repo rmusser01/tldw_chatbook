@@ -304,6 +304,7 @@ class AgentWorktreeRepository:
         return cursor.rowcount == 1
 
     def finish_operation(self, run_id: str, operation_id: str, *, state: str) -> bool:
+        """Complete an exact claim; unresolved requires caller-proven no destination effect."""
         run_id = _identifier("run_id", run_id)
         operation_id = _identifier("operation_id", operation_id)
         expected = next(
@@ -314,7 +315,7 @@ class AgentWorktreeRepository:
             ),
             None,
         )
-        if state == "uncertain":
+        if state in ("uncertain", "unresolved"):
             inflight = tuple(_COMPLETIONS)
         elif expected is not None:
             inflight = (expected,)

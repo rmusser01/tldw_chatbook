@@ -704,9 +704,7 @@ def build_first_request_schema_plan(
         run_log_active: Whether run-log tools may be enabled for this run.
         agent_definitions: Named sub-agent definitions available to spawning.
         fleet_active: Whether the primary may coordinate a live agent fleet.
-        worktree_merge_enabled: Retained for caller compatibility. Automatic
-            merge/discard schemas remain unavailable while the execution
-            boundary is unsupported.
+        worktree_merge_enabled: A real per-call worktree confirmation surface is available.
         fleet_max_live: Maximum live agents recorded in the frozen plan.
         agent_kind: Primary or sub-agent disclosure policy selector.
         direct_system_prompt: Prompt used when all allowed schemas fit directly.
@@ -741,6 +739,13 @@ def build_first_request_schema_plan(
             runtime.extend(
                 (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
             )
+            if worktree_merge_enabled:
+                from .tool_catalog import (
+                    DISCARD_AGENT_WORKTREE_SCHEMA,
+                    MERGE_AGENT_WORKTREE_SCHEMA,
+                )
+
+                runtime.extend((MERGE_AGENT_WORKTREE_SCHEMA, DISCARD_AGENT_WORKTREE_SCHEMA))
         if progress_available and agent_kind == AGENT_KIND_PRIMARY:
             from .fleet_message_tools import READ_AGENT_MESSAGES_SCHEMA, READ_INSTRUCTIONS
 
@@ -4769,7 +4774,7 @@ class AgentService:
                     and self._fleet is not None
                     and config.budget.max_subagents > 0
                 ),
-                worktree_merge_enabled=request_worktree_merge_confirm is not None,
+                worktree_merge_enabled=callable(request_worktree_merge_confirm),
                 fleet_max_live=(
                     self._fleet.max_live
                     if agent_kind == AGENT_KIND_PRIMARY and self._fleet is not None
@@ -4815,6 +4820,11 @@ class AgentService:
         # fleet, since without one `spawn` still runs children inline and
         # there is never anything live to wait on or check.
         fleet_active = fleet is not None and config.budget.max_subagents > 0
+        worktree_tools_active = (
+            fleet_active
+            and agent_kind == AGENT_KIND_PRIMARY
+            and callable(request_worktree_merge_confirm)
+        )
         progress_inbox = None
         if agent_kind == AGENT_KIND_PRIMARY:
             progress_inbox = self._message_inbox or (
@@ -6154,27 +6164,56 @@ class AgentService:
                 lines.extend(_line(handle) for handle in others)
             return ToolResult(ok=True, content="\n".join(lines) + progress_note)
 
-        def merge_agent_worktree_tool(handle_id: str, mode: str = "apply") -> ToolResult:
-            from tldw_chatbook.Agents.agent_worktree import (
-                unsupported_execution_boundary,
-            )
+        def recover_current_worktree(handle_id: str, action: str) -> ToolResult:
+            from .agent_worktree import WorktreeRefusal
+            from .agent_worktree_recovery import recover_agent_worktree
 
-            del handle_id, mode
-            refusal = unsupported_execution_boundary()
-            return ToolResult(
-                ok=False, error=f"[{refusal.reason_code}] {refusal.message}"
+            authority = self._worktree_repo_authority
+            if authority is None:
+                return ToolResult(
+                    ok=False,
+                    error="[source_authority_unavailable] Select a writable named repository binding.",
+                )
+            created = self._agent_worktrees.get(handle_id)
+            handle = fleet.get(handle_id) if fleet is not None else None
+            if (
+                handle_id not in my_handle_ids
+                or created is None
+                or handle is None
+                or handle.run_id != created.run_id
+            ):
+                return ToolResult(
+                    ok=False,
+                    error="[worktree_unavailable] This turn does not own that isolated child handle.",
+                )
+
+            def confirm(payload):
+                return request_worktree_merge_confirm(
+                    {**payload, "handle_id": handle_id}
+                )
+
+            result = recover_agent_worktree(
+                self.db,
+                authority=authority,
+                conversation_id=conversation_id,
+                run_id=created.run_id,
+                action=action,
+                request_confirmation=confirm,
+                should_cancel=should_cancel,
             )
+            if isinstance(result, WorktreeRefusal):
+                return ToolResult(
+                    ok=False, error=f"[{result.reason_code}] {result.message}"
+                )
+            return ToolResult(ok=True, content=result.message)
+
+        def merge_agent_worktree_tool(
+            handle_id: str, mode: str = "apply"
+        ) -> ToolResult:
+            return recover_current_worktree(handle_id, mode)
 
         def discard_agent_worktree_tool(handle_id: str) -> ToolResult:
-            from tldw_chatbook.Agents.agent_worktree import (
-                unsupported_execution_boundary,
-            )
-
-            del handle_id
-            refusal = unsupported_execution_boundary()
-            return ToolResult(
-                ok=False, error=f"[{refusal.reason_code}] {refusal.message}"
-            )
+            return recover_current_worktree(handle_id, "discard")
 
         def _resume_retained_child(
             retained, steer_text: str, spawn_step_index: int | None
@@ -7586,8 +7625,10 @@ class AgentService:
                 run_id,
             ),
             is_tool_call_preauthorized=(
-                lambda call: self.registry.is_canvas_reversible_conversation_local_mutation(
-                    call.name
+                lambda call: (
+                    self.registry.is_canvas_reversible_conversation_local_mutation(
+                        call.name
+                    )
                 )
             ),
             before_tool_dispatch=self.before_tool_dispatch,
@@ -7638,8 +7679,12 @@ class AgentService:
             # TASK-28238 phase 2 Task 5: merge/discard for a worktree-
             # isolated child, wired under the identical predicate -- a
             # worktree only ever exists for a fleet-launched child.
-            merge_agent_worktree=merge_agent_worktree_tool if fleet_active else None,
-            discard_agent_worktree=discard_agent_worktree_tool if fleet_active else None,
+            merge_agent_worktree=merge_agent_worktree_tool
+            if worktree_tools_active
+            else None,
+            discard_agent_worktree=discard_agent_worktree_tool
+            if worktree_tools_active
+            else None,
             # PR3b Task 2: the steering producer, under the same predicate.
             send_to_agent=send_to_agent if fleet_active else None,
             send_to_agent_at_step=(
@@ -7660,9 +7705,7 @@ class AgentService:
                 drain_mailbox
                 if drain_mailbox is not None
                 else (
-                    primary_steering_drain
-                    if agent_kind == AGENT_KIND_PRIMARY
-                    else None
+                    primary_steering_drain if agent_kind == AGENT_KIND_PRIMARY else None
                 )
             ),
             drain_mailbox_with_causes=(
@@ -7678,8 +7721,8 @@ class AgentService:
             else None,
             on_record=on_record,
             project_tool_record=self.registry.project_tool_record,
-            has_tool_record_projection=lambda call: self.registry.has_tool_record_projection(
-                call.name
+            has_tool_record_projection=lambda call: (
+                self.registry.has_tool_record_projection(call.name)
             ),
             continuation_context=ContinuationEventContext(
                 owner_message_id=continuation_owner_message_id,

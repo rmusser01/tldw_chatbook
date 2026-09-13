@@ -283,14 +283,14 @@ MERGE_AGENT_WORKTREE_SCHEMA = ToolSchema(
     id="runtime:merge_agent_worktree",
     name=MERGE_AGENT_WORKTREE_TOOL_NAME,
     description=(
-        "Land a FINISHED isolation=\"worktree\" sub-agent's changes into "
+        'Land a FINISHED isolation="worktree" sub-agent\'s changes into '
         "the shared workspace. Both modes require the user's explicit "
         "confirmation: 'apply' lands the changes as UNCOMMITTED edits for "
         "the user to review and commit themselves; 'merge' creates a real "
         "merge commit on the shared branch. The child must have finished "
         "(check with check_agents or wait_agents first). Only handles "
-        "from THIS turn's spawns are available -- merge or discard before "
-        "the turn ends, or the worktree is left on disk for manual cleanup."
+        "from THIS turn's spawns are available. Older recorded work is available "
+        "through Console Recover agent work. The source checkout is retained."
     ),
     parameters={
         "type": "object",
@@ -316,12 +316,11 @@ DISCARD_AGENT_WORKTREE_SCHEMA = ToolSchema(
     id="runtime:discard_agent_worktree",
     name=DISCARD_AGENT_WORKTREE_TOOL_NAME,
     description=(
-        "Permanently discard a FINISHED isolation=\"worktree\" sub-agent's "
-        "changes -- deletes its worktree and branch. Its work is not "
-        "recoverable afterward. Requires the user's explicit confirmation. "
-        "Only handles from THIS turn's spawns are available -- merge or "
-        "discard before the turn ends, or the worktree is left on disk "
-        "for manual cleanup."
+        'Permanently discard a FINISHED isolation="worktree" sub-agent\'s '
+        "changes and exact branch, retaining a detached baseline checkout. "
+        "Requires the user's explicit confirmation and positive writer drain. "
+        "Only handles from THIS turn's spawns are available. Older recorded "
+        "work is available through Console Recover agent work."
     ),
     parameters={
         "type": "object",
