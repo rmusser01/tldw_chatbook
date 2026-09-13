@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 07:44
+updated_date: 2026-09-13 07:50
 ---
 
 ## Description
@@ -153,6 +153,7 @@ Observer-free controlled Linux diagnostic at immutablea565 PASS:1 test349.07s, n
 Windows7666 nowpasses plaintext/encrypted/credentialinclusive F9, replacement andtwo-profile roundtrip. Support132/133pass; solefailure newnativeTTSsuccess test finalcrossprocess150msprobe expectedentered. ActualTTSclose/closednativeconnections/emptyownerleases/descriptors assertspass; all8TTSinventory+canonicalTTSroundtrip+pendingrace2pass. Probe deadline starts before Windows nativeACL/path traversal, so timeoutalone cannot demonstrate lockcontention. Bounded test-local probe will explicitly observe actual nativecontention and requireheld→released positivecontrol; no productchange. Final071Linux correction22PASS23.56s, allF9modes3PASS215.24s; committedrollbackrunning. Windowsrollbackstillrunning.
 TASK32562 is the backup record after resolving merged ID collisions (formerly32496); voice32496 preserved. Native final071Linux26/26 pass; Windows7666all6productflows and294nativecases pass,152artifacthashes verified. e930Windows support still132/133pass; the new2s TTSsuccess probe observesBlockingIOError after localownerclosure. NativeWindows32/33/158 are coalesced, so bounded rawcode/lockkind plushold/lease metadata will identify source before any productionfix. Actual8TTSinventory+canonicalreference roundtrip continuepassing. Seven GGUF/UIlatency appcases fail because testfixtures retargetprofile aftercollection imports; opt-in freshinterpreter fixtures are being validated withoutweakeningguards orassertions. Upstream Windowsbinary checkoutlongpaths are unrelatedtoourchanges.
 Windows e930 support run34744933254 confirms132/133pass; final TTS close success case still reports native contention after all close-state assertions pass. Added test-only bounded hold/lease/retiring-state and raw WinError/lock-kind diagnostics, preserving all assertions and budgets, plus fixed four-case native-close-diagnostic workflow selection. Local4pass10.76s, compile/Ruff/Bandit clean. No production correction inferred without native evidence. Report /private/tmp/backup-native-tts-residual-contention-diagnostic-report.md. PR currently MERGEABLE; human Change summary preserved.
+Narrow conflict/CI integration: seven full-app GGUF/UI latency cases changed their selected source after importing the app, reproducing raw_source_selection_changed (4/35 GGUF and3/10 latency failures). Test-only opt-in private-profile interpreter lifetime fixes those exact cases without modifying production guard, assertions or latency thresholds. Final exact CI selectors35/35 and10/10pass; nine controlled native process probes verify failure propagation, cancellation/timeout kill+reap and original effective timeout precedence. Scoped Bandit has no new findings; new helper zero; compile/Ruff clean. Root reviewed the four Tests files. No GGUF functionality or UI performance changes.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
