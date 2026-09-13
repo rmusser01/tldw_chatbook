@@ -3080,11 +3080,14 @@ def run_agent_loop(
                 return _outcome(RUN_STUCK)
         if deps.should_cancel():
             return _outcome(RUN_CANCELLED)
-        coherent_len = len(messages)
         if (
             budget.denial_circuit_breaker_limit
             and consecutive_denials >= budget.denial_circuit_breaker_limit
         ):
+            # Denial termination is the exceptional post-batch capture point:
+            # every settled reply must survive. Ordinary budget/cancellation
+            # stops retain the established loop-top drain boundary instead.
+            coherent_len = len(messages)
             summary = (
                 f"Agent stopped: {consecutive_denials} consecutive tool calls "
                 "were denied. Review the denial reasons or rephrase, then retry."

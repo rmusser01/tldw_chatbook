@@ -3405,6 +3405,7 @@ class _StreamingModelAdapter:
         native_calls: list[dict] = []
         terminal_metadata: ProviderTurnMetadata | None = None
         call_signals: ConsoleProviderCallSignals | None = None
+        live_provider_usage_enabled = True
         gateway_signals: (
             ConsoleProviderStreamSignals | ConsoleProviderCallSignals | None
         ) = self._provider_stream_signals
@@ -3416,7 +3417,7 @@ class _StreamingModelAdapter:
             gateway_signals = call_signals
 
         async def _consume() -> None:
-            nonlocal any_streamed, terminal_metadata
+            nonlocal any_streamed, terminal_metadata, live_provider_usage_enabled
             # Forwarding `tools=` only when it is non-None (rather than
             # always passing the keyword, even as None) keeps every
             # pre-Task-5 gateway fake elsewhere in the test suite — whose
@@ -3622,19 +3623,30 @@ class _StreamingModelAdapter:
                             text=chunk,
                         )
                     )
-                if call_signals is not None and attributed is not None:
-                    partial_usage = call_signals.usage_snapshot()
-                    partial_count = self._provider_output_count(partial_usage)
-                    if partial_count is not None:
-                        self._emit_live_usage(
-                            AgentLiveUsageEvent(
-                                "provider_usage",
-                                usage_run_id,
-                                usage_agent_kind,
-                                usage_sequence,
-                                time.monotonic(),
-                                provider_output_tokens=partial_count,
+                if (
+                    live_provider_usage_enabled
+                    and call_signals is not None
+                    and attributed is not None
+                ):
+                    try:
+                        partial_usage = call_signals.usage_snapshot()
+                        partial_count = self._provider_output_count(partial_usage)
+                        if partial_count is not None:
+                            self._emit_live_usage(
+                                AgentLiveUsageEvent(
+                                    "provider_usage",
+                                    usage_run_id,
+                                    usage_agent_kind,
+                                    usage_sequence,
+                                    time.monotonic(),
+                                    provider_output_tokens=partial_count,
+                                )
                             )
+                    except Exception:  # noqa: BLE001 — optional observation only
+                        live_provider_usage_enabled = False
+                        logger.warning(
+                            "live provider usage observation failed; "
+                            "telemetry disabled for call"
                         )
                 if visible and not is_subagent:
                     self._thinking_capture.observe_answer(visible)
