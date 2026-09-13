@@ -120,7 +120,11 @@ had fallen behind the folder tree.
   Couldn't load notes · Retry" with no rows at all (AC#7, AC#8).
 - `StaticLibraryNotesListScopeService` implemented `list_notes` ALONE, which
   cannot page a tree (AC#9, "Both note rows never mounted"). It now inherits
-  the full fake.
+  the full fake -- but withholds `count_notes` (landing: the inherited
+  callable turned the rail's capped-sample label "Notes (100+)" into an exact
+  "(105)", RED `test_library_destination_labels_plain_list_notes_as_sample_
+  snapshot` on the branch alone, `land-isolation-branch.out`; GREEN with
+  `count_notes = None`, `land-snapshot-green.txt`).
 
 NOT DONE, handed off:
 - AC#3 (a saved note's row keeps its stale age) -> task-32503. Cause proven:

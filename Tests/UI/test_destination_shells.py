@@ -439,8 +439,14 @@ class StaticLibraryNotesListScopeService(StaticLibraryNotesScopeService):
     without them mounts no rows at all -- ``test_library_notes_list_focuses_
     first_row_and_arrow_keys_move_it`` timed out on "Both note rows never
     mounted". Inheriting the full fake supplies those seams; the plain-list
-    ``list_notes`` below is kept because callers assert on its shape.
+    ``list_notes`` below is kept because callers assert on its shape, and
+    ``count_notes`` is withheld: a plain-list service has no exact count, so
+    the rail must label its rows as a capped sample ("Notes (100+)") --
+    ``test_library_destination_labels_plain_list_notes_as_sample_snapshot``
+    pins that, and the inherited callable handed it "(105)" instead.
     """
+
+    count_notes = None
 
     async def list_notes(self, **kwargs):
         self.calls.append(kwargs)
