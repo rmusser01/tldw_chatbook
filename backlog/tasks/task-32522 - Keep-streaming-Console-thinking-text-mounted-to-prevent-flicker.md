@@ -50,6 +50,7 @@ Verification: original renderer fails the three new/strengthened regressions (pr
 Native UAT: real TldwCli at 140x45 with temporary SQLite profile and local llama.cpp/Gemma 4; two actual composer/Enter sends completed, 215 observed live thinking frames with zero blanking or body replacement. Automatic collapse, full trace reopen, and manual collapse/reopen during live streaming passed. A prior longer prompt had 458 clean frames but ended in provider HTTP 502; not counted as a successful end-to-end run. Evidence and screenshots: qa/thinking-flicker-32515/report.md.
 
 ADR: backlog/decisions/090-console-thinking-block-ownership-and-replay.md applies unchanged; no new ADR required. Updated lessons-testing-evidence.md with the observed wrapper-versus-body verification trap. Production change: console_transcript.py; tests: test_console_thinking_disclosures.py and test_console_assistant_turn.py; QA artifacts under qa/thinking-flicker-32515.
+Qodo follow-up: documented both streaming-test parameters in a Google-style Args section. Rebase against fetched origin/dev a3142cb356 was already current. All 74 targeted tests passed again; Ruff, formatting, and whitespace checks passed for the reviewed change.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

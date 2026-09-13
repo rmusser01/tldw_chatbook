@@ -155,7 +155,12 @@ async def test_first_live_evidence_expands_and_delta_updates_same_widgets() -> N
 async def test_streaming_thinking_never_paints_an_empty_body(
     width: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Removing the live body between deltas must not emit a blank frame."""
+    """Removing the live body between deltas must not emit a blank frame.
+
+    Args:
+        width: Terminal width in columns for the streaming paint check.
+        monkeypatch: Fixture that temporarily observes display frames.
+    """
     app = StyledThinkingTranscriptHarness()
     initial = _assistant(blocks=(_displayable("Reasoning marker: examine each case."),))
 
