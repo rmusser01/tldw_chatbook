@@ -1,5 +1,5 @@
 ---
-id: TASK-32500
+id: TASK-32532
 title: 'ProjectInstructionSetupModal Disable strands composer send-blocked while readiness says Ready'
 status: To Do
 assignee: []
