@@ -728,6 +728,7 @@ async def test_manual_runtime_custody_reaches_the_existing_agent_bridge_once(tmp
     assert bridge_calls[0]["workspace_ephemeral"] is True
     assert bridge_calls[0]["workspace_read_binding_ids"] == ("binding-a",)
     assert bridge_calls[0]["workspace_write_binding_ids"] == ()
+    assert bridge_calls[0]["worktree_repo_authority"] is None
     assert bridge_calls[0]["run_budget"].max_steps == 11
     assert bridge_calls[0]["run_budget"].max_wall_seconds == 12.0
     assert bridge_calls[0]["run_budget"].max_subagents == 1

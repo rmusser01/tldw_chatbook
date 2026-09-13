@@ -25390,6 +25390,31 @@ class ConsoleChatController:
                 project_selection=project_selection,
                 project_authority_guard=project_authority_guard,
             )
+            worktree_repo_authority = None
+            if (
+                project_selection is not None
+                and project_selection.allow_write
+                and len(run_admitted_roots) == 1
+            ):
+                selected_authority = run_admitted_roots[0]
+                kill_switch_reader = self._console_tool_kill_switch_reader()
+
+                def worktree_authority_guard(
+                    write: bool,
+                    authority=selected_authority,
+                    kill_switch=kill_switch_reader,
+                ) -> bool:
+                    if kill_switch is None:
+                        return False
+                    try:
+                        return not kill_switch() and bool(authority.guard(write))
+                    except Exception:  # noqa: BLE001 - mutation gate fails closed
+                        return False
+
+                worktree_repo_authority = replace(
+                    selected_authority,
+                    guard=worktree_authority_guard,
+                )
             (
                 mcp_provider,
                 builtin_gate,
@@ -25710,6 +25735,7 @@ class ConsoleChatController:
                     )
                 ),
                 change_roots=change_roots,
+                worktree_repo_authority=worktree_repo_authority,
                 change_root_aliases=turn_context.change_review_root_aliases,
                 change_review_skipped_roots=(turn_context.change_review_skipped_roots),
                 turn_skill_bindings=skill_bindings,

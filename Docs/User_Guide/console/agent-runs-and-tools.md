@@ -767,16 +767,19 @@ file the list shows as changed, or colour-code it into unreadability.
 
 ### Parallel sub-agents (the fleet)
 
-Agent worktree isolation is temporarily unavailable while its safe execution
-boundary is being completed. A request for `isolation="worktree"` is refused
-before the child runs; Console does not silently run that child in the shared
-workspace. Automatic merge, discard, and stale-worktree cleanup are also
-disabled. Existing checkout contents, branches, and records are retained for
-manual review and are not reported as merged, discarded, or recovered.
+An agent can request `isolation="worktree"` in fleet mode when the run has an
+explicitly selected writable repository binding in a named Workspace. Its
+checkout starts from the repository commit captured at creation; uncommitted
+changes in your working folder stay there. The child uses its own local file
+tools and checkout. Missing or revoked authority refuses the request without
+running the child in the shared folder.
 
-Ordinary non-isolated sub-agents remain available. Users may still operate Git
-directly when they explicitly choose to do so; Console does not instruct an
-agent to perform those operations as a workaround.
+Console merge/discard confirmation and recovery across turns are still being
+completed. Checkouts and branches survive normal completion and failed starts;
+automatic cleanup is disabled. Existing work remains available for manual
+review. Repository identity checks detect changes at application boundaries;
+ordinary Git does not guarantee protection against another process replacing
+repository metadata during a command.
 
 Sub-agents the supervisor spawns within a **single reply** no longer run one
 at a time — up to a configured number can be live together, each working its

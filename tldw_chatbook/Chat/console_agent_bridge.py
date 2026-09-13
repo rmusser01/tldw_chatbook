@@ -30,6 +30,7 @@ from typing import Generic, TypeVar
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
     from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
@@ -5433,6 +5434,7 @@ class ConsoleAgentBridge:
         # /redirect's hook, exactly like on_steer_ready is /steer's.
         on_redirect_ready: Callable[[Callable[[str], str | None]], None] | None = None,
         change_roots: Sequence[Path] | None = None,
+        worktree_repo_authority: RunAdmittedWorkspaceRoot | None = None,
         change_root_aliases: Sequence[str] = (),
         change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
         turn_skill_bindings: tuple[str, ...] = (),
@@ -6757,6 +6759,7 @@ class ConsoleAgentBridge:
             runtime_capacity=self.runtime_capacity,
             work_origin=work_origin,
             work_chain_id=work_chain_id,
+            worktree_repo_authority=worktree_repo_authority,
             clock=self._clock,
             on_step=on_step,
             # TASK-25903: hands the controller a steer(text) bound to THIS

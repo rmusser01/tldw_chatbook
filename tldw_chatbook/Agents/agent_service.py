@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from .agent_worktree import AgentWorktree
     from .fleet_messages import MessageInbox, MessageReader, MessageSender
     from .run_log import RunLogWriter
+    from .local_tool_provider import RunAdmittedWorkspaceRoot
 
 from tldw_chatbook.Chat.console_history_budget import (
     StaleImageSettings,
@@ -1988,6 +1989,7 @@ class AgentService:
         runtime_capacity: RuntimeCapacity | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
+        worktree_repo_authority: RunAdmittedWorkspaceRoot | None = None,
     ) -> None:
         from .execution_capacity import RuntimeCapacity
         from .automatic_work_runtime import current_automatic_work
@@ -2008,6 +2010,7 @@ class AgentService:
         self._owner_seq_allocators: dict[str, _OwnerSeqAllocator] = {}
         self._owner_seq_allocators_lock = threading.Lock()
         self.registry = registry
+        self._worktree_repo_authority = worktree_repo_authority
         self.chat_call = chat_call or _default_chat_call()
         self.clock = clock
         self.wall_clock = wall_clock
@@ -4128,12 +4131,94 @@ class AgentService:
         return False
 
     def _admit_agent_worktree(self, handle: "FleetHandle", child_run_id: str) -> str | None:
-        """Refuse automatic worktree admission before filesystem access."""
-        del handle, child_run_id
-        from tldw_chatbook.Agents.agent_worktree import unsupported_execution_boundary
+        """Create and route an isolated checkout under captured source authority."""
+        from tldw_chatbook.Agents import agent_worktree
+        from tldw_chatbook.Agents.local_tool_provider import (
+            LocalToolProvider,
+            RunAdmittedWorkspaceRoot,
+        )
+        from tldw_chatbook.Tools.workspace_tool_executor import (
+            WorkspaceToolExecutionError,
+            WorkspaceToolExecutor,
+        )
 
-        refusal = unsupported_execution_boundary()
-        return f"worktree isolation refused [{refusal.reason_code}]: {refusal.message}"
+        owner = self.registry.resolve_owner_for_name("fs_read")
+        provider = owner[1] if owner is not None else None
+        if not isinstance(provider, LocalToolProvider):
+            return (
+                "worktree isolation refused [no_local_provider]: no local "
+                "filesystem provider is reachable for this run"
+            )
+        source = self._worktree_repo_authority
+        if source is None:
+            return (
+                "worktree isolation refused [source_authority_unavailable]: "
+                "select a writable named repository binding for this run"
+            )
+
+        def source_is_current(write: bool) -> bool:
+            try:
+                return (
+                    (not write or source.allow_write)
+                    and bool(source.guard(write))
+                    and agent_worktree._worktree_root_identity(source.root)
+                    == source.root_identity
+                )
+            except (OSError, RuntimeError, ValueError):
+                return False
+
+        source_current = source_is_current(True)
+        if not source_current:
+            return (
+                "worktree isolation refused [source_authority_revoked]: the selected "
+                "repository binding is no longer writable and current"
+            )
+
+        created = agent_worktree.create_agent_worktree(source.root, child_run_id)
+        if isinstance(created, agent_worktree.WorktreeRefusal):
+            return (
+                f"worktree isolation refused [{created.reason_code}]: {created.message}"
+            )
+        # Retain the known checkout even when every later admission step fails.
+        self._agent_worktrees[handle.handle_id] = created
+        try:
+            if not source_is_current(True):
+                return (
+                    "worktree isolation refused [source_authority_revoked]: the selected "
+                    "repository binding changed during worktree creation"
+                )
+            child_identity = agent_worktree._worktree_root_identity(
+                created.worktree_path
+            )
+
+            def child_guard(write: bool) -> bool:
+                try:
+                    return (
+                        source_is_current(write)
+                        and agent_worktree._worktree_root_identity(
+                            created.worktree_path
+                        )
+                        == child_identity
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    return False
+
+            alias = f"agent-{child_run_id}"
+            authority = RunAdmittedWorkspaceRoot(
+                workspace_id=source.workspace_id,
+                binding_id=source.binding_id,
+                alias=alias,
+                root=created.worktree_path,
+                locator_fingerprint=source.locator_fingerprint,
+                root_identity=child_identity,
+                allow_write=True,
+                guard=child_guard,
+                workspace_executor=WorkspaceToolExecutor(created.worktree_path),
+            )
+            provider.admit_run_workspace_root(child_run_id, authority)
+        except (WorkspaceToolExecutionError, ValueError, OSError) as exc:
+            return f"worktree isolation refused [admit_failed]: {exc}"
+        return None
 
     def _retire_agent_worktree(
         self, run_id: str, handle_id: str, *, discard: bool = False
