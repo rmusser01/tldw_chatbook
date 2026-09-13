@@ -43,7 +43,6 @@ def restore_isolated(
     from .control_records import (
         UNBOUND_NAMESPACE,
         admission_authority,
-        register_pending,
     )
     from .journal import Journal, observe_artifact
     from .native_files import create_private_directory, pinned_directory
@@ -154,8 +153,10 @@ def restore_isolated(
     names = ("isolated." + operation_id,)
     authority.register(names[0], tuple(ancestors))
     selectors = tuple(Path(row["config"]) for row in profiles)
-    register_pending(root, operation_id, names, control_root, selectors)
-    _finish_isolated(candidate, plan, journal, names, operation_id, cancel)
+    _finish_isolated(
+        candidate, plan, journal, names, operation_id, cancel,
+        initial_selectors=selectors,
+    )
     return profiles[0]["profile_id"]
 
 
@@ -166,6 +167,8 @@ def _finish_isolated(
     names: tuple[str, ...],
     generation: str,
     cancel: Event,
+    *,
+    initial_selectors: tuple[Path, ...] | None = None,
 ) -> None:
     """Finish/retry only this explicit journal under freshly held native authority."""
     from . import bootstrap
@@ -174,6 +177,7 @@ def _finish_isolated(
         UNBOUND_NAMESPACE,
         _existing_admission_authority,
         _recover_activation_pairs,
+        register_pending,
     )
     from .journal import _Prepared
     from .publication import _plan_digest, finalize_candidate, publish_candidate
@@ -184,6 +188,12 @@ def _finish_isolated(
     with authority.maintenance(
         tuple(names) + (UNBOUND_NAMESPACE,), 30, cancel=cancel
     ) as session:
+        # Settle live unbound producers before the durable global fence becomes
+        # visible, while still fencing every subsequent publication mutation.
+        if initial_selectors is not None:
+            register_pending(
+                root, generation, names, journal.root.parent, initial_selectors
+            )
         with journal._locked(exclusive=False) as parent:
             records = journal._records(parent)
         if not any(row.event == "prepared" for row in records):

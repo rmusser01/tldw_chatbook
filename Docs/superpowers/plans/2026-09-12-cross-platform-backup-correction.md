@@ -87,3 +87,13 @@ retention; 39 SQLite and 8 cleanup regressions pass with independent reviews and
 no new static findings. The canonical TTS reference fixture initializes its exact
 configured lazy Research store; its full archive/restore/readback passes. Final
 corrected Windows qualification remains in progress.
+
+Windows `a5657079` passes encrypted backup/restore and two-profile restore, all
+294 native checks, and 118/127 support cases. Remaining failures are bounded to
+optional-store fixture assumptions, a missing native TTS closed-state field, and
+isolated restore registering pending recovery before pausing live admission.
+The latter interval reproduces against the actual mounted application: source
+writes and scheduler access are refused before the maintenance gate is held.
+The correction will register pending recovery under the existing gate, before
+publication. Linux final rollback remains under measured timing investigation;
+ongoing publication at the test cutoff is not recorded as a passing run.

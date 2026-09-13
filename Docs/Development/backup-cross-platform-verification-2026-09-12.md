@@ -1,5 +1,39 @@
 # Cross-platform backup verification — 2026-09-12
 
+## Current merged revision
+
+[Windows run 34742763471](https://github.com/rmusser01/tldw_chatbook/actions/runs/34742763471)
+tests `a5657079cd28983247a670102eab8cd087f9eeef`. Encrypted backup/restore and
+two-profile restore pass. All 294 native checks pass; support passes 118 of 127
+cases. All 137 artifact hashes verify, with clean 16,024-file source and 2,838
+installed source-file matches. The remaining failures occur later than the
+previous copy-identity failure: two fixture assumptions about optional stores,
+a scheduler worker during isolated restore, and native TTS cleanup after
+successful open/create. These failures are being corrected; this revision is
+not fully qualified on Windows.
+
+Follow-up corrections preserve existing behavior and ownership rules. The native
+TTS owner records successful SQLite closure before retiring resources; ambiguous
+close failures still retain exclusion (12 focused tests pass). Isolated restore
+now settles its existing maintenance gate before registering pending recovery,
+while retaining the fence before journal preparation or public mutation. The
+actual-app race reproduces before this change; 39 pending-readmission, isolated
+restore, interrupted-recovery and admission tests pass afterward. Both production
+changes have independent review and no new Bandit/Ruff findings. Fixture-only
+corrections accept the already-supported AgentRuns root and select all optional
+persona safety members actually present. The latter passes macOS replacement
+with both persona owners and 127 selected members, plus two safety UI checks.
+
+On the supplied Linux host, this revision passes 16 correction checks and all
+130 reader/reference checks. The combined rollback test exceeded its 300-second
+pytest envelope; a private rerun with a 480-second envelope then reached the
+later subprocess's 180-second limit. Its journal records continuing publication
+and installed-state validation near that limit, without a completed restoration
+receipt. Neither run is counted as passing. Product operation deadlines have
+not been changed.
+
+## Conflict resolution and earlier verification
+
 Conflict resolution is published as `0ad0019114ceb763a49e089a3675939cb4e7796d`,
 including dev `5fd502dba`; GitHub reports the PR mergeable. Exact installed macOS
 F9 plaintext, encrypted and credential-inclusive backup/restore pass in 61.48s,

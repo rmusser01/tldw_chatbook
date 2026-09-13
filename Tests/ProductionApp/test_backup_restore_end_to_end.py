@@ -274,7 +274,7 @@ async def main():
   assert not screen.query_one('#backup-inspect-password',Input).value
   roots={row.logical_id:row for row in doc.directories if row.parent_id is None}
   producers={row.logical_id:row for row in doc.producer_inventory}
-  ordinary={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local','db.prompts.primary','chatbooks.registry','db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local'}
+  ordinary={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local','db.prompts.primary','chatbooks.registry','db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','db.agent_runs','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local'}
   trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles','persona.assets':'persona_visual'}
   assert not any(tuple(slot.get('owners',()))==('recovery.credentials',) for slot in screen._inspection_summary['destination_slots'])
   for index,slot in enumerate(screen._inspection_summary['destination_slots']):

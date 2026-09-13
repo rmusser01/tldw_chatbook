@@ -358,6 +358,7 @@ class _NativeExactCurrentProfileConnection(_ExactCurrentProfileConnection):
         self.sidecar_identities = sidecar_identities
         self._delete_mode_partial_cleanup = False
         self._proof_lost = False
+        self._sqlite_closed = False
 
         self.leases: list[Any] = []
         self.native_descriptors: set[int] = set()
@@ -471,6 +472,8 @@ class _NativeExactCurrentProfileConnection(_ExactCurrentProfileConnection):
                         )
                     self.attempted_connections.add(role)
                     native.close()
+                    if role == "_connection":
+                        self._sqlite_closed = True
             for suffix, descriptor in tuple(self.sidecar_fds.items()):
                 self.close_descriptor(descriptor)
                 del self.sidecar_fds[suffix]

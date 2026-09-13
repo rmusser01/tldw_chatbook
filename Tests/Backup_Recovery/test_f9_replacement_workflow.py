@@ -170,14 +170,14 @@ def headless(app,*args,**kwargs):
      await asyncio.sleep(.03)
    current_plan=screen._restore_plan
    safety_keys={item.logical_id for item in current_plan.target.items if item.owner in {'persona.assets','persona.visual_identity_builtin'} and item.status in {'included','included_directory'} and (item.logical_id,item.path) in current_plan.preserve}
-   assert {'persona.assets','persona.visual_identity_builtin'} <= {key.split(':')[2] for key in safety_keys}
+   print('CURRENT_PERSONA_SAFETY',sorted({(item.owner,item.status,(item.logical_id,item.path) in current_plan.preserve) for item in current_plan.target.items if item.owner in {'persona.assets','persona.visual_identity_builtin'}}),flush=True)
    boxes=list(screen.query('.backup-safety-member'))
    by_key={box.name:box for box in boxes}
    assert safety_keys <= by_key.keys(),safety_keys-by_key.keys()
    assert not any(box.value for box in boxes)
    for key in safety_keys:by_key[key].value=True
    await pilot.pause()
-   assert screen.query_one('#backup-start-restore',Button).disabled
+   if safety_keys:assert screen.query_one('#backup-start-restore',Button).disabled
    print('EXPLICIT_PERSONA_SAFETY_SELECTION',len(safety_keys),flush=True)
    screen.query_one('#backup-review-restore',Button).focus();await pilot.press('enter')
    async with asyncio.timeout(180 if sys.platform=='win32' else 25):
