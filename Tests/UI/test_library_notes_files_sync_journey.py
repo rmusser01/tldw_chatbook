@@ -577,6 +577,76 @@ async def test_applying_a_reviewed_conflict_refreshes_the_notes_list_once(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ("apply", "activate"))
+async def test_notes_refresh_follows_the_durable_write_not_the_review_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """task-32518 fix round 1: Back during an in-flight apply/activate still refreshes.
+
+    The runtime write is durable before the controller checks its lifecycle;
+    ``return_to_roots()`` while the call is in flight moves the epoch, and
+    the refresh used to sit behind that early return -- the stale-list
+    symptom again, only narrower.
+    """
+
+    refreshes: list[str] = []
+    notes_path, state_path, _sync_root = _seed_real_conflict_authority(tmp_path)
+    owner, database, interop, controller = await _start_real_conflict_stack(
+        notes_path, state_path, refresh_notes=lambda: refreshes.append("refresh")
+    )
+    gate = asyncio.Event()
+    try:
+        if operation == "apply":
+            await controller.check_root("root-1")
+            reviewed = controller.snapshot.review
+            controller.stage_attention_choice(
+                "root-1", reviewed.observation_token, "binding-1", "Keep file"
+            )
+            real_apply = owner.apply_reviewed
+
+            async def gated_apply(*args: object, **kwargs: object) -> object:
+                await gate.wait()
+                return await real_apply(*args, **kwargs)
+
+            monkeypatch.setattr(owner, "apply_reviewed", gated_apply)
+            in_flight = asyncio.create_task(
+                controller.apply_reviewed("root-1", reviewed.observation_token)
+            )
+        else:
+            second = tmp_path / "second"
+            second.mkdir()
+            (second / "fresh.md").write_text("fresh", encoding="utf-8")
+            controller.set_setup("display_name", "Second root")
+            controller.set_setup("folder", str(second.resolve()))
+            await controller.check_setup()
+            reviewed = controller.snapshot.review
+            assert reviewed.activation, controller.snapshot.status_line
+            real_activate = owner.activate_root
+
+            async def gated_activate(*args: object, **kwargs: object) -> object:
+                await gate.wait()
+                return await real_activate(*args, **kwargs)
+
+            monkeypatch.setattr(owner, "activate_root", gated_activate)
+            in_flight = asyncio.create_task(
+                controller.activate_root(reviewed.root_id, reviewed.observation_token)
+            )
+        await asyncio.sleep(0)
+        assert refreshes == []
+
+        controller.return_to_roots()
+        gate.set()
+        await in_flight
+
+        assert database.count_notes() == (1 if operation == "apply" else 2)
+        assert refreshes == ["refresh"]
+    finally:
+        await _close_real_conflict_stack(owner, database, interop)
+
+
+@pytest.mark.asyncio
 async def test_real_runtime_applies_admitted_safe_action_beside_blocked_move(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

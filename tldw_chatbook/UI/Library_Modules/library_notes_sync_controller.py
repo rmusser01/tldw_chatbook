@@ -1048,6 +1048,11 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
+        # task-32518: the write is durable by now, so the Notes list refreshes
+        # before any lifecycle return -- Back during the apply would otherwise
+        # skip it and re-create the stale list.
+        if result.safe_completed + result.conflicts_resolved > 0:
+            self._notes_changed()
         if not self._lifecycle_is_current(root_id, epoch):
             return
         receipt_generation = self._start_receipt_request(root_id)
@@ -1063,8 +1068,6 @@ class LibraryNotesSyncController:
             receipts = self._state.receipts
             receipts_unavailable = self._state.receipts_unavailable
         applied = result.safe_completed + result.conflicts_resolved
-        if applied > 0:
-            self._notes_changed()
         receipt_suffix = " · receipts unavailable" if receipts_unavailable else ""
         if result.partial or result.needs_recovery or result.fresh_plan is None:
             self._selections.clear()
@@ -1882,6 +1885,10 @@ class LibraryNotesSyncController:
                 )
                 self._publish()
                 return False
+            # task-32518: same as apply -- the activation wrote the notes and
+            # their folder; refresh before the lifecycle check can return.
+            if type(result) is NotesSyncControlResult and result.accepted:
+                self._notes_changed()
             if not self._lifecycle_is_current(root_id, epoch):
                 return False
             if type(result) is not NotesSyncControlResult:
@@ -1915,8 +1922,6 @@ class LibraryNotesSyncController:
                     else ""
                 ),
             )
-            if accepted:
-                self._notes_changed()
             self.refresh_roots()
             return accepted
         finally:
