@@ -3171,3 +3171,84 @@ async def test_unclassified_check_failure_keeps_the_generic_line_and_logs_a_type
     assert "ZeroDivisionError" in joined
     assert "/zqleakcanary/secret/path" not in joined
     assert "Check failed" in controller.snapshot.status_line
+
+
+async def test_a_failed_manual_check_flips_the_row_and_logs_the_category() -> None:
+    """task-32534 AC#1/#2: a failed Check names its cause on the row and in the log."""
+    from loguru import logger
+
+    runtime = _Runtime()
+
+    async def fail(_root_id: str):
+        raise RuntimeError("sync_recovery_unresolved")
+
+    runtime.request_sync_now = fail
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        await controller.sync_now("root-1")
+    finally:
+        logger.remove(sink_id)
+
+    row = controller.snapshot.roots[0]
+    assert (row.status_label, row.failure, row.next_action_label) == (
+        "⚠ Needs attention",
+        "Check failed — recovery still open",
+        "Resolve recovery",
+    )
+    assert row.status == "needs_attention"
+    assert controller.snapshot.phase == "roots"
+    assert controller.snapshot.status_line.startswith("Check failed — ")
+    assert "Up to date" not in controller.snapshot.status_line
+    assert "Review root status" not in controller.snapshot.status_line
+    joined = "\n".join(messages)
+    assert "error_type=RuntimeError" in joined
+    assert "sync_recovery_unresolved" in joined
+    assert "/" not in joined.replace("notes sync", "")
+
+    # The next successful check clears the overlay.
+    runtime.request_sync_now = _Runtime.request_sync_now.__get__(runtime)
+    await controller.sync_now("root-1")
+    assert controller.snapshot.roots[0].failure == ""
+
+
+async def test_every_note_to_file_write_leaves_a_receipt_row() -> None:
+    """task-32534 AC#3: completed writes project as receipt rows under the roots."""
+    from tldw_chatbook.Notes.notes_sync_runtime import RuntimeWriteReceipt
+
+    runtime = _Runtime()
+    completed_at = 1_757_780_000_000_000_000  # 2025-09-13 local, fixed
+
+    async def write_receipts(root_id: str, *, limit: int = 20):
+        assert root_id == "root-1"
+        return (
+            RuntimeWriteReceipt(
+                "operation-1", "update_file", completed_at, "People/Sam.md", "Sam"
+            ),
+        )
+
+    runtime.write_receipts = write_receipts
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.refresh_receipts()
+
+    receipt = controller.snapshot.write_receipts[0]
+    assert (receipt.effect, receipt.relative_path, receipt.note_title) == (
+        "Wrote note to file",
+        "People/Sam.md",
+        "Sam",
+    )
+    from datetime import datetime
+
+    assert receipt.when == datetime.fromtimestamp(completed_at / 1e9).strftime(
+        "%Y-%m-%d %H:%M"
+    )

@@ -4,9 +4,11 @@ title: >-
   Library Notes: Manage sync folders disables Retarget/Disconnect with a bare ○,
   renders its buttons identically focused or not, and the sync copy is
   engineering-facing throughout
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-13 06:47'
+updated_date: '2026-09-13 15:15'
 labels:
   - library
   - notes
@@ -32,3 +34,12 @@ Critique #3 (dev 5fd502dbac), assessor A (B recorded the strings), personas Sam 
 - [ ] #3 "durable receipt recorded", "managed placements", "cutover", "Review root status" and "… content is scrollable" are replaced by user-facing copy stating what happened and what to do next, reviewed against the Import once receipt grammar
 - [ ] #4 notes.md's lasting-sync chapter and its stamp are updated to the new copy
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live: Manage sync folders at 235x52 and 100x30 (Retarget/Disconnect bare circle; focus cue; footer 'enter run action').
+2. RED pin file Tests/UI/test_library_notes_w4_sync_roots.py: disabled labels state their reason in the server-row grammar; focused roots buttons carry the shape cue and the footer names them; rendered sync copy contains no engineering terms.
+3. Fix: _disabled_action_label for Retarget/Disconnect (+ the shared disabled-reason line), _LIBRARY_SYNC_ROOTS_ENTER_LABELS consumed by _library_focus_enter_label so the lasting_roots footer tier appends the focused control's label, and the copy replacements (applied line, skip/managed line, scroll cue, cutover line, Review root status lines).
+4. Guide notes.md Manage sync folders paragraph + stamp; landing comparison vs dev.
+<!-- SECTION:PLAN:END -->
