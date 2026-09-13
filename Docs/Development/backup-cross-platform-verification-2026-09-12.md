@@ -32,9 +32,14 @@ Replacement, later rollback and other complete-flow results at the preceding
 revision remain below. The latest UI latency job passes all ten latency cases;
 its boot step passes 16 cases with two optional skips and only the two unchanged
 module caps failing. The four Windows GGUF app cases still exceed 60 seconds.
-No limits are raised or broader startup refactor included. The path-inventory
-and legacy-index census edits remain unapplied while requester approval is
-pending following automatic approval review's allowlist rejection. The PR is
+No limits are raised or broader startup refactor included. The requester approved
+the two path-inventory corrections and three legacy-index census entries on
+2026-09-13. Those metadata updates are applied: the path census matches all 52
+occurrences with 50 exact exceptions, and all 302 index names have census rows
+(84 plan-pinned). The 40 existing checker tests pass in 61.19s, and all seven
+derived-artifact preflight checks pass. Compilation passes and scoped Ruff/Bandit
+checks introduce no findings. Application behavior and
+checker enforcement are unchanged. The PR is
 conflict-free against `dev`, retains the requester's summary verbatim, and is
 not merged. No full-repository or all-CI-green claim is made.
 
@@ -91,9 +96,10 @@ against the 973 cap. The four Windows GGUF full-app cases also still exceed
 their original 60-second deadlines. No broader import refactor or budget
 increase is included. The targeted PR fast-lane job passes at `72abf54b93`;
 its downstream derived-artifact job fails on stale/missing path-inventory rules
-and three existing keyword indexes absent from the index census. Inventory
-updates await explicit requester approval after automatic approval review
-rejected changes to the persistent path allowlist. Earlier revision evidence
+and three existing keyword indexes absent from the index census. Automatic
+approval review initially rejected changes to the persistent path allowlist;
+the requester subsequently approved the exact metadata updates, now applied and
+verified as recorded above. Earlier revision evidence
 below is retained as history, not qualification of the current encrypted flow.
 
 ## Earlier verification and conflict-resolution history

@@ -438,7 +438,7 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
     ExceptionRule(
         "tldw_chatbook/Backup_Recovery/profile_paths.py",
         "function:database_path",
-        "literal:~/.local/share/tldw_cli",
+        "literal:~/.local/share/tldw_cli/",
         1,
         Disposition.PERSISTED_DEFAULT,
         "legacy shipped database sentinel comparison, shared with canonical config selectors",
@@ -458,6 +458,14 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         1,
         Disposition.RESOLVER_SEED,
         "resolver seed for the default config path",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/DB/recovery_operations.py",
+        "function:_sqlite_inventory_status",
+        "literal:~/.local/share/tldw_cli/",
+        1,
+        Disposition.PERSISTED_DEFAULT,
+        "compare the shipped database sentinel before classifying an absent optional default; never open this literal path",
     ),
     ExceptionRule(
         "tldw_chatbook/Evals/eval_orchestrator.py",
