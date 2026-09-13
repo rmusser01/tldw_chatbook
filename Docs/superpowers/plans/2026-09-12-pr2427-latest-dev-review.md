@@ -350,3 +350,41 @@ ADR paths: existing ADR-153 through ADR-159, with ADR-155's amended ordinary
 local-Git scope and ADR-158's actual schema19/20 migration order preserved.
 Reason: accept upstream contracts without designing a new execution, storage,
 or UI boundary. Any additional product-policy conflict stops for a decision.
+
+Local Lab checkpoint: `0d7865cdda588deb473fbce8402a5081a27fc659`.
+Recovery ref: `codex/pr2427-pre-1103b28f71-lab-css-20260913`.
+Final exact fixture cohort: 19 passed / zero failures (83.23s), with unchanged
+original executable assertions verified structurally. Complete two-file cohort
+has 215 cases and remains in progress; source-changing replay waits for its exit.
+
+Read-only merge preview and Console preflight identify these integration duties:
+
+- Preserve existing extracted owners, including exact handoff claim/release and
+  settings transfer/unwind guards. Port the incoming persona handoff branch to
+  `session.py`, per-send identity expansion and dashed endpoint identity to
+  `provider_selection.py`, and endpoint command registration to `commands.py`.
+- Carry the pushed-modal sink into the existing settings-navigation owner and
+  keep exact modal layering/identity checks. Preserve incoming chat-creation and
+  worktree confirmation/recovery hooks without restoring retired screen facades.
+- Upstream contains duplicate button/sidebar definitions. The effective final
+  button handler and ten sidebar methods are AST-identical to this PR's current
+  copies; preserve one effective copy and retain genuinely new surrounding hooks.
+- Combine Notes late-backlink mount guards and upstream presentation updates
+  with existing in-place bulk state, callback invalidation and focus ownership.
+  Preserve real database teardown in fixtures while incorporating new runtime
+  callback inputs, chrome/meta assertions and stronger upstream scope evidence.
+
+Existing ADR-146 `146-console-custom-endpoint-registry.md` and ADR-149
+`149-console-persona-session-identity.md` govern these ports. The preview is
+not a completed rebase or verification. Review exact replay conflicts and final
+range-diff; never use the preview's conflict-marker tree as product source.
+
+Frozen-source qualification is terminal: complete
+`test_llm_screen_lab_adoption.py` and `test_vllm_lab_geometry.py` pass
+**215 / 215** in 721.82s, exit0. Log:
+`/private/tmp/pr2427-lab-fixture-complete.iajmRb/complete.log`.
+All worker test processes exited before rebase. Together with the complete
+46-case CSS integrity, 264-case Evals and 21-case boot cohorts, this qualifies
+the bounded Lab patch on its saved base, not the incoming dev integration or
+the separate previously recorded failures. Full Ruff and changed-range format
+checks pass for the two corrected fixture files.

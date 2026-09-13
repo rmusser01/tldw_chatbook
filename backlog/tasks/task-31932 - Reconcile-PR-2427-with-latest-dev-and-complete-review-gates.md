@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 17:14'
-updated_date: '2026-09-13 16:38'
+updated_date: '2026-09-13 16:48'
 labels: []
 dependencies: []
 ---
@@ -454,6 +454,8 @@ User approved the bounded Lab-only CSS deferral on 2026-09-13. Execute the exist
 2026-09-13 Lab CSS qualification: boot group 21 passed at 762340/768000 bytes; Evals four-file cohort 264 passed with zero final SQLite/locks. Lab cohort 287 passed / 22 failed / 1 existing skip. Saved-head controls 4 failed / 18 passed versus current controls 20 failed / 1 passed (excluding stale Watchlists shortcut, now corrected). Publication held pending direct-screen fixture diagnosis: three LLMScreen pushes bypass existing route CSS loader, and actual styles show missing deferred header/rail/body rules. Final CSS integrity 46 passed, but native initial-Evals retains 18 SQLite handles/1 lock; saved-head control retains19/1, so cleanup predates this split and remains open. Complete latency group 9 passed / 1 timer-teardown failure, unchanged isolated retry passes. Full details/logs in 2026-09-12 latest-dev review plan. No additional production mechanism, cap relaxation, merge, or task closure.
 
 Lab missing-sheet cause confirmed by two observation-only RED tests (sheet absent), two existing-loader GREEN controls, then 19 unchanged compact/custom-memory cases passing after three fixture setup corrections. Independent bounded review approves; complete Models/vLLM 215-case qualification remains running. Dev fetched at1103b28f711073291fc073ed27592546fec53607 (369 incoming paths); save recoverable local checkpoint, then follow recorded exact-head rebase and review procedure. Task remains In Progress; no merge readiness claim.
+
+Frozen Lab qualification terminal: complete Models and vLLM files215/215 passed721.82s, exit0; log /private/tmp/pr2427-lab-fixture-complete.iajmRb/complete.log. All test processes exited before replay. Approved Lab patch saved0d7865cdda with recoveryref codex/pr2427-pre-1103b28f71-lab-css-20260913. Rebase1103 integration not yet verified; native cleanup, separate Console failures and controller-size review remain open.
 <!-- SECTION:NOTES:END -->
 
 145. Complete folder-navigation/rename/scoped-sync/canvas-defect qualification finishes 149 passed/3 failed, with 24 retained SQLite handles attributed to two uniquely owned temporary databases in the folder-navigator file. Restore the filter-clear fake's existing settled-focus collaborator without replacing production behavior or weakening its trusted-range assertions. Prove the mounted topology Back scroll failure is a settlement-readiness issue using the existing queued-restoration boundary before adding a bounded exact-scroll wait; retain the exact receipt offset, selection, ranges and focus oracles. For the two attributed database owners, protect setup/body failure paths from allocation onward and use the existing bounded same-file quiescence barrier after worker/app settlement, with zero-registry assertions and no global cleanup. Require RED owner evidence, exact-finalizer setup/body/foreign-path controls as appropriate, complete owning-file native GREEN, and independent review. Do not modify production or any source imported by the still-running shell/reader/residency cohort. ADR required: no. ADR path: existing Notes return/settlement and database ownership contracts. Reason: current-collaborator/readiness fixture reconciliation and disposal of exact test-owned resources, not a new runtime policy.
