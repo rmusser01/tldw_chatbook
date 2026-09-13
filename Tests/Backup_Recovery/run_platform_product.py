@@ -87,8 +87,12 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_bootstrap_registry_reader.py",
     "Tests/Backup_Recovery/test_finite_library_workers.py",
     "Tests/Backup_Recovery/test_home_open_task_retirement.py",
+    "Tests/Backup_Recovery/test_home_notification_retirement.py",
+    "Tests/Backup_Recovery/test_first_note_backup.py",
     "Tests/Backup_Recovery/test_first_run_restore.py",
     "Tests/Backup_Recovery/test_profile_open.py",
+    "Tests/Backup_Recovery/test_default_service_container.py",
+    "Tests/Backup_Recovery/test_first_binding_unused_scaffolds.py",
     "Tests/Backup_Recovery/test_large_recovery_records.py::test_large_collection_completes_actual_isolated_publication",
     "Tests/Backup_Recovery/test_restore_destinations.py",
     "Tests/UI/test_backup_restore_destinations.py",
@@ -100,13 +104,19 @@ _RESTORE_DIAGNOSTIC_TESTS = (
     ),
 )
 _PRODUCT_SELECTIONS = {
-    "full": _PRODUCT_TESTS,
+    "full": (
+        *_PRODUCT_TESTS,
+        "Tests/Backup_Recovery/test_default_service_replacement.py",
+    ),
     "restore-diagnostic": _RESTORE_DIAGNOSTIC_TESTS,
     "plain": _RESTORE_DIAGNOSTIC_TESTS,
     "encrypted": (_PRODUCT_TESTS[1] + "[encrypted]",),
     "encrypted-credentials": (_PRODUCT_TESTS[1] + "[encrypted_credentials]",),
     "roundtrip": _PRODUCT_TESTS[2:3],
-    "replacement": _PRODUCT_TESTS[3:4],
+    "replacement": (
+        *_PRODUCT_TESTS[3:4],
+        "Tests/Backup_Recovery/test_default_service_replacement.py",
+    ),
     "rollback": _PRODUCT_TESTS[4:5],
     "support": (_PRODUCT_TESTS[0], *_PRODUCT_TESTS[5:]),
     "native-close-diagnostic": (

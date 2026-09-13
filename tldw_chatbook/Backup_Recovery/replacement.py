@@ -754,11 +754,21 @@ def _first_config_container(
         )
 
     configs = [item for item in inventory.items if item.owner == "config"]
+    # Capture holds these installed empty scaffolds for maintained discovery.
+    # Observe their exact rows without granting coverage to other descendants.
+    unused_scaffolds = {
+        item.path
+        for item in inventory.items
+        if item.path is not None
+        and item.status == "unused"
+        and item.owner in {"research.paste_staging", "collections.archives"}
+        and item.metadata is not None
+    }
     actual = {
         item.path
         for item in inventory.items
         if item.path is not None and item.status in {"included", "included_directory"}
-    }
+    } | unused_scaffolds
     if (
         len(configs) != 1
         or configs[0].path != selector
@@ -792,7 +802,7 @@ def _first_config_container(
         for item in inventory.items
         if item.path is not None
         and item.status in {"included", "included_directory", "intentionally_excluded"}
-    }
+    } | unused_scaffolds
     directories = {
         item.path for item in inventory.items if item.status == "included_directory"
     }
