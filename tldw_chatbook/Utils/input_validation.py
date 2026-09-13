@@ -266,6 +266,26 @@ def validate_vllm_draft_input(control_id: object, value: object) -> str:
         raise ValueError("vLLM setup value is invalid") from None
 
 
+class WorktreeRecoveryActionInput(BaseModel):
+    """A recovery operation selected by a tool or the Console picker."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    action: Literal["apply", "merge", "discard"]
+
+
+class WorktreeRecoveryConfirmationInput(BaseModel):
+    """Exact boolean consent from the host's current confirmation round.
+
+    Additional host metadata is ignored; it never contributes authority.
+    Numeric and string lookalikes cannot become an affirmative decision.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+
+    allow: bool
+
+
 class ToolArgumentsInput(BaseModel):
     """Strict shared boundary for an externally supplied tool argument object."""
 

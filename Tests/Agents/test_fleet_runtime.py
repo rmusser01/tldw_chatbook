@@ -4393,6 +4393,9 @@ def test_failed_record_insertion_retains_checkout_and_never_routes(
     refusal = service._admit_agent_worktree(handle, run_id, owner)
     created = service._agent_worktrees[handle.handle_id]
     assert refusal is not None and "admit_failed" in refusal
+    assert "checkout is retained" in refusal
+    assert "manual review" in refusal
+    assert str(created.worktree_path) not in refusal
     assert created.worktree_path.is_dir()
     assert run_id not in provider._agent_roots
     assert AgentWorktreeRepository(db).get_for_conversation(run_id, "c") is None
@@ -4612,6 +4615,9 @@ def test_post_create_authority_drift_retains_created_checkout(db, git_repo):
 
     assert refusal is not None and "source_authority_revoked" in refusal
     created = service._agent_worktrees[handle.handle_id]
+    assert "checkout is retained" in refusal
+    assert "manual review" in refusal
+    assert str(created.worktree_path) not in refusal
     try:
         assert created.worktree_path.is_dir()
         assert _git(git_repo, "branch", "--list", created.branch).strip()
@@ -4998,3 +5004,44 @@ def test_confirmed_current_turn_worktree_uses_real_drained_child(
     )
     assert created.worktree_path.is_dir()
     assert (git_repo / 'child.txt').exists() is (action == 'apply')
+
+
+@pytest.mark.parametrize("run_id", [None, "", "../outside", "a" * 129])
+def test_worktree_service_propagates_malformed_run_id_without_creation(
+    db, git_repo, monkeypatch, run_id
+):
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="a" * 64,
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda _write: True,
+    )
+    provider = _fs_local_provider(git_repo)
+    service, _chat, coordinator = make_fleet_service(
+        db, [], providers=(provider,), worktree_repo_authority=authority
+    )
+    service._agent_worktrees = {}
+    handle = coordinator.reserve(task="invalid ID", agent=None, isolation="worktree")
+    assert handle is not None
+    owner = service.runtime_capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="c", child=True
+    )
+    assert owner is not None
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("invalid ID reached Git creation")
+
+    monkeypatch.setattr(agent_worktree, "_detect", forbidden)
+    try:
+        refusal = service._admit_agent_worktree(handle, run_id, owner)
+        assert "invalid_run_id" in refusal
+        assert service._agent_worktrees == {}
+        assert not provider._agent_roots
+    finally:
+        owner.finish_root()

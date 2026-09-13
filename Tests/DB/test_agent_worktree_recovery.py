@@ -174,6 +174,94 @@ def test_conversation_scope_bounded_listing_and_foreign_ids_leave_rows_unchanged
     db.close()
 
 
+@pytest.mark.parametrize("after_index", [None, 9])
+def test_recovery_listing_uses_scoped_keyset_index_without_statistics(
+    tmp_path, after_index
+):
+    db = AgentRunsDB(tmp_path / "listing-plan.db", client_id="listing-plan")
+    repository = AgentWorktreeRepository(db)
+    try:
+        _terminal_run(db, "seed", "seed")
+        _record(repository, "seed", tmp_path)
+        # 960 records: four workspaces, two bindings each, three conversations
+        # per binding, and 40 runs each. Bulk-copy a valid structural record;
+        # this fixture exercises the read plan, not write-path validation.
+        corpus = [
+            (
+                f"run-{scope}-{conversation}-{index:04d}",
+                f"conversation-{conversation}",
+                f"workspace-{scope // 2}",
+                f"binding-{scope % 2}",
+            )
+            for scope in range(8)
+            for conversation in range(3)
+            for index in range(40)
+        ]
+        with db.transaction() as connection:
+            connection.executemany(
+                """INSERT INTO agent_runs
+                   (id, conversation_id, agent_kind, status, created_at, updated_at)
+                   VALUES (?, ?, 'subagent', 'done', '2026-09-13', '2026-09-13')""",
+                [(run_id, conversation) for run_id, conversation, _, _ in corpus],
+            )
+            connection.executemany(
+                """INSERT INTO agent_worktrees
+                   (run_id, workspace_id, binding_id, locator_fingerprint,
+                    repo_root, repo_identity, git_common_dir, git_common_identity,
+                    child_path, child_identity, branch, base_sha, execution_id,
+                    writer_state, mutation_state, created_at, updated_at)
+                   SELECT ?, ?, ?, locator_fingerprint, repo_root, repo_identity,
+                          git_common_dir, git_common_identity, child_path,
+                          child_identity, branch, base_sha, execution_id,
+                          'drained', 'unresolved', created_at, updated_at
+                   FROM agent_worktrees WHERE run_id='seed'""",
+                [
+                    (run_id, workspace, binding)
+                    for run_id, _, workspace, binding in corpus
+                ],
+            )
+        with db.connection() as connection:
+            assert (
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'"
+                ).fetchone()
+                is None
+            )
+            statements = []
+            connection.set_trace_callback(statements.append)
+            try:
+                rows = repository.list_for_conversation(
+                    "conversation-1",
+                    workspace_id="workspace-2",
+                    binding_id="binding-0",
+                    limit=7,
+                    after_run_id=(
+                        f"run-4-1-{after_index:04d}"
+                        if after_index is not None
+                        else None
+                    ),
+                )
+            finally:
+                connection.set_trace_callback(None)
+            start = 0 if after_index is None else 10
+            assert [row["run_id"] for row in rows] == [
+                f"run-4-1-{index:04d}" for index in range(start, start + 7)
+            ]
+            selects = [
+                sql for sql in statements if sql.lstrip().upper().startswith("SELECT")
+            ]
+            assert len(selects) == 1
+            plan = " | ".join(
+                row["detail"]
+                for row in connection.execute("EXPLAIN QUERY PLAN " + selects[0])
+            )
+            assert "idx_agent_worktrees_scope" in plan, plan
+            assert "workspace_id=? AND binding_id=? AND run_id>?" in plan, plan
+            assert "TEMP B-TREE" not in plan, plan
+    finally:
+        db.close()
+
+
 def test_competing_claims_and_stale_completion_are_transactional(tmp_path):
     path = tmp_path / "runs.db"
     seed = AgentRunsDB(path, client_id="seed")

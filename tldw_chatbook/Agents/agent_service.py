@@ -4243,11 +4243,15 @@ class AgentService:
             )
         # Retain the known checkout even when every later admission step fails.
         self._agent_worktrees[handle.handle_id] = created
+        retention_message = (
+            ". The created checkout is retained without automatic cleanup; "
+            "manual review may be needed."
+        )
         try:
             if not source_is_current(True):
                 return (
                     "worktree isolation refused [source_authority_revoked]: the selected "
-                    "repository binding changed during worktree creation"
+                    "repository binding changed during worktree creation" + retention_message
                 )
             child_identity = agent_worktree._worktree_root_identity(
                 created.worktree_path
@@ -4258,7 +4262,7 @@ class AgentService:
             if not source_is_current(True):
                 return (
                     "worktree isolation refused [source_authority_revoked]: the selected "
-                    "repository binding changed during ownership capture"
+                    "repository binding changed during ownership capture" + retention_message
                 )
             child_common_dir, child_common_identity = (
                 agent_worktree._git_common_directory_identity(created.worktree_path)
@@ -4272,7 +4276,7 @@ class AgentService:
             ):
                 return (
                     "worktree isolation refused [ownership_capture_failed]: the created "
-                    "checkout no longer matches its admitted repository"
+                    "checkout no longer matches its admitted repository" + retention_message
                 )
 
             repository = AgentWorktreeRepository(self.db)
@@ -4366,7 +4370,7 @@ class AgentService:
             )
             return (
                 "worktree isolation refused [admit_failed]: ownership could not be "
-                "recorded or routed"
+                "recorded or routed" + retention_message
             )
         return None
 

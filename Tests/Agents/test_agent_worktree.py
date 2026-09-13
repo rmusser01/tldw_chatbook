@@ -410,3 +410,131 @@ def test_preview_diffstat_never_raises_on_missing_worktree(repo):
     wt = create_agent_worktree(repo, "run-preview3")
     discard_agent_worktree(repo, wt)  # worktree_path no longer exists
     assert preview_agent_worktree_diffstat(repo, wt) == ""
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        None,
+        True,
+        1,
+        [],
+        {},
+        "",
+        "../outside",
+        "a/b",
+        "a\\b",
+        "-option",
+        "white space",
+        "a\n",
+        "a" * 129,
+    ],
+)
+def test_malformed_run_id_refuses_without_git_or_filesystem_creation(
+    tmp_path, monkeypatch, run_id
+):
+    from tldw_chatbook.Agents import agent_worktree
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("malformed run ID reached Git or filesystem creation")
+
+    monkeypatch.setattr(agent_worktree, "_detect", forbidden)
+    monkeypatch.setattr(agent_worktree, "_git", forbidden)
+    monkeypatch.setattr(agent_worktree, "_worktrees_base", forbidden)
+    candidate = tmp_path / "uncreated"
+    assert not candidate.exists()
+    result = create_agent_worktree(candidate, run_id)
+    assert isinstance(result, WorktreeRefusal)
+    assert result.reason_code == "invalid_run_id"
+    assert not candidate.exists()
+
+
+def test_checkout_created_under_symlinked_temp_base_can_be_recovered(
+    repo, tmp_path, monkeypatch
+):
+    """Owned temp aliases must not strand newly recorded work at recovery."""
+    from tldw_chatbook.Agents import agent_worktree
+    from tldw_chatbook.Agents.agent_worktree_recovery import (
+        WorktreeRecoveryOutcome,
+        recover_agent_worktree,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+    from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    physical_temp = tmp_path / "physical-temp"
+    physical_temp.mkdir()
+    temp_alias = tmp_path / "temp-alias"
+    temp_alias.symlink_to(physical_temp, target_is_directory=True)
+    monkeypatch.setattr(
+        agent_worktree, "_worktrees_base", lambda: temp_alias / "children"
+    )
+    created = create_agent_worktree(repo, "run-temp-alias")
+    assert isinstance(created, AgentWorktree), created
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="temp-alias-test")
+    try:
+        (created.worktree_path / "a.txt").write_text("recoverable child work\n")
+        db.create_run(
+            conversation_id="chat", agent_kind="subagent", run_id=created.run_id
+        )
+        db.set_status(created.run_id, status="done", result="done")
+        authority = RunAdmittedWorkspaceRoot(
+            workspace_id="workspace",
+            binding_id="binding",
+            alias="repo",
+            root=repo,
+            locator_fingerprint="f" * 64,
+            root_identity=agent_worktree._worktree_root_identity(repo),
+            allow_write=True,
+            guard=lambda _write: True,
+        )
+        common, common_identity = agent_worktree._git_common_directory_identity(repo)
+        records = AgentWorktreeRepository(db)
+        records.record_created(
+            run_id=created.run_id,
+            workspace_id=authority.workspace_id,
+            binding_id=authority.binding_id,
+            locator_fingerprint=authority.locator_fingerprint,
+            repo_root=str(repo),
+            repo_identity=authority.root_identity,
+            git_common_dir=str(common),
+            git_common_identity=common_identity,
+            child_path=str(created.worktree_path),
+            child_identity=agent_worktree._worktree_root_identity(
+                created.worktree_path
+            ),
+            branch=created.branch,
+            base_sha=created.base_sha,
+            execution_id="execution",
+        )
+        assert records.mark_writer_finished(
+            created.run_id, "execution", cleanup_proven=True
+        )
+        confirmations = []
+
+        def confirm(payload):
+            confirmations.append(payload)
+            return {"allow": True}
+
+        result = recover_agent_worktree(
+            db,
+            authority=authority,
+            conversation_id="chat",
+            run_id=created.run_id,
+            action="apply",
+            request_confirmation=confirm,
+            should_cancel=lambda: False,
+        )
+        assert isinstance(result, WorktreeRecoveryOutcome), result
+        assert result.state == "applied"
+        assert len(confirmations) == 1
+        assert (repo / "a.txt").read_text() == "recoverable child work\n"
+        assert created.worktree_path.parent == physical_temp / "children"
+        assert created.worktree_path.is_dir()
+        assert (
+            records.get_for_conversation(created.run_id, "chat")["mutation_state"]
+            == "applied"
+        )
+    finally:
+        db.close()
+        discard_agent_worktree(repo, created)

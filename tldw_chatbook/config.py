@@ -3836,6 +3836,7 @@ openai_cache_key = false
 # Stop one run after a fully settled batch leaves this many consecutive
 # authoritative tool denials. The default is 3; 0 disables the breaker.
 # denial_circuit_breaker_limit = 3  # Consecutive denied calls; 0 disables.
+# TLDW_AGENTS_DENIAL_CIRCUIT_BREAKER_LIMIT overrides this value for Console runs.
 #
 # TASK-25911: deterministic stale tool-result pruning on the agent send
 # payload -- big old tool outputs shrink to a bounded head plus a note,

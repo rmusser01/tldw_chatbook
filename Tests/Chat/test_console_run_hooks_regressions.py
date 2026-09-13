@@ -1,8 +1,10 @@
 """Lifecycle hooks must preserve Console send custody and turn ownership."""
 
 import asyncio
+import json
 import threading
 import tracemalloc
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -284,7 +286,9 @@ async def test_durable_postcommit_retry_keeps_hook_context_and_single_audit():
     )
 
 
-@pytest.mark.parametrize("kind", ["approval", "skill_install", "skill_script"])
+@pytest.mark.parametrize(
+    "kind", ["approval", "skill_install", "skill_script", "worktree_merge"]
+)
 @pytest.mark.parametrize(
     "visible,background", [(True, False), (False, False), (True, True)]
 )
@@ -305,6 +309,7 @@ def test_all_permission_rounds_notify_once_with_truthful_view_state(
     controller.set_pending_approval = lambda _payload: None
     controller.set_pending_skill_install = lambda _payload: None
     controller.set_pending_skill_script = lambda _payload: None
+    controller.set_pending_worktree_merge = lambda _payload: None
     host = controller._interrupt_host
     host.view_visible = visible
     state = {
@@ -345,6 +350,85 @@ def test_all_permission_rounds_notify_once_with_truthful_view_state(
     assert envelope["run_id"] == "run-1"
     assert envelope["data"]["session_active"] is (visible and not background)
     assert envelope["data"]["calls"][0]["args_summary"]
+
+
+@pytest.mark.parametrize(
+    "action,tool_name",
+    [
+        ("apply", "merge_agent_worktree"),
+        ("merge", "merge_agent_worktree"),
+        ("discard", "discard_agent_worktree"),
+    ],
+)
+@pytest.mark.parametrize(
+    "visible,background,requesting_run_id",
+    [
+        (True, False, "requesting-primary"),
+        (True, True, "requesting-primary"),
+        (False, False, "requesting-primary"),
+        (True, False, ""),
+    ],
+)
+def test_worktree_confirmation_notifies_requesting_run_and_recovery_action(
+    action, tool_name, visible, background, requesting_run_id
+):
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    hooks = Hooks()
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    if background:
+        session = store.create_session(activate=False)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=object(),
+        ensure_run_hooks=lambda: hooks,
+    )
+    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    controller.set_pending_worktree_merge = lambda _payload: None
+    controller._interrupt_host.view_visible = visible
+    armed = threading.Event()
+    controller.on_pending_rounds_changed = lambda total, kind, raised: (
+        armed.set() if raised else None
+    )
+    payload = {
+        "handle_id": "child-handle",
+        "run_id": "recovered-child",
+        "action": action,
+        "branch": "agent/child",
+        "source": "/tmp/child",
+        "destination": "/tmp/parent",
+    }
+
+    def request_confirmation():
+        with use_run_id(requesting_run_id):
+            return controller.request_worktree_merge_confirm(
+                payload, session_id=session.id
+            )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(request_confirmation)
+        try:
+            assert armed.wait(3), "worktree confirmation did not arm"
+            assert len(hooks.notifications) == 1
+            event, envelope = hooks.notifications[0]
+            assert event == "ApprovalRequested"
+            assert envelope["session_id"] == session.id
+            assert envelope["run_id"] == (requesting_run_id or None)
+            assert envelope["data"]["session_active"] is (visible and not background)
+            call = envelope["data"]["calls"][0]
+            assert call["name"] == tool_name
+            assert json.loads(call["args_summary"]) == payload
+
+            controller._remount_parked_worktree_merge(session.id)
+            controller._remount_parked_worktree_merge(session.id)
+            assert len(hooks.notifications) == 1
+            controller.resolve_pending_worktree_merge(
+                False, request_id=controller.pending_worktree_merge_ids()[0]
+            )
+            assert pending.result(timeout=3) == {"allow": False}
+        finally:
+            controller.begin_shutdown()
 
 
 @pytest.mark.parametrize("failure_site", ["accessor", "notify"])
@@ -425,8 +509,6 @@ async def test_durable_acceptance_emits_stop_after_failed_audit(monkeypatch, rec
 
 @pytest.mark.parametrize("kind", ["skill_install", "skill_script"])
 def test_production_skill_approvals_keep_run_and_target_identity(kind):
-    import json
-
     from tldw_chatbook.Agents.run_context import use_run_id
 
     hooks = Hooks()

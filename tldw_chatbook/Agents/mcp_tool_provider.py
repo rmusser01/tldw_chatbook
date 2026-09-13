@@ -48,20 +48,12 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-# NOTE (boot budget, ADR-097): `persona_policy` is imported lazily -- the
-# `PersonaToolPolicy` reference is annotation-only (future annotations
-# above) and `persona_floor_state` is used at the invoke-time gate below --
-# so the module stays off the UI-ready census path.
-if TYPE_CHECKING:
-    from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
-
 from tldw_chatbook.Agents.approval_provenance import (
     ApprovalStamp,
     approval_key_unanswered,
     approval_stamp,
 )
 from tldw_chatbook.Agents.builtin_tool_gate import DENIAL_POLICY
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.MCP.execution_log import (
     APPROVED_SESSION_DECISION,
@@ -81,11 +73,21 @@ from tldw_chatbook.MCP.permission_store import (
 )
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.MCP.tool_naming import dedupe_names, llm_tool_name
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+    TOOL_DESCRIPTION_CAPTURE_CAP,
+)
 
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .run_context import current_run_id
 from .tool_catalog import ToolExecutionPolicy
 from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
+
+# NOTE (boot budget, ADR-097): `persona_policy` is imported lazily -- the
+# `PersonaToolPolicy` reference is annotation-only (future annotations
+# above) and `persona_floor_state` is used at the invoke-time gate below --
+# so the module stays off the UI-ready census path.
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
 
 SOURCE = "mcp"
 

@@ -124,6 +124,9 @@ def create_agent_worktree(repo_root: Path, run_id: str) -> AgentWorktree | Workt
     )
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
+        # Canonicalize only this app-owned allocation, never loaded ownership
+        # or selected authority. Host temp directories may have symlink aliases.
+        dest = dest.parent.resolve(strict=True) / dest.name
     except OSError as exc:
         return WorktreeRefusal(
             "worktree_create_failed", f"cannot create worktree base: {exc}"

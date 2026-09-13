@@ -4090,11 +4090,11 @@ ChatScreen.-focus #console-workbench-header {
     min-width: 8;
 }
 
-/* Switch chrome is three rows high; its owning row must expose the middle
-   content line so the current on/off state remains visible. */
-.agents-enabled-row {
-    height: 3;
-    min-height: 3;
+/* Switch chrome needs a full control row. Scope this rule to the form so the
+   later-loaded Settings sheet's compact input row cannot clip its content. */
+#agents-form .agents-enabled-row {
+    height: $ds-control-height;
+    min-height: $ds-control-height;
 }
 
 .settings-input-label {

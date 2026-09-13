@@ -11629,6 +11629,14 @@ AND the owning screen's split sheet (`screen_agentic_console|library|settings.tc
 in the app's order. When a bundle grep says a Settings/Console/Library class has no
 rule, grep the split sheets before concluding the state is unstyled.
 
+**PR2665 integration, 2026-09-13:** the real multi-sheet harness exposed a
+second trap: splitting moved the generic `.settings-input-row` rule after the
+bundle while leaving `.agents-enabled-row` in it. Their equal specificity let
+the generic one-row height clip the three-row Switch. Both production-width
+checks failed before scoping the specialized rule to `#agents-form`, then
+passed with unchanged paint, focus, content-bounds and Space-toggle assertions.
+Source-module order alone does not prove precedence after stylesheet splitting.
+
 ---
 
 ## Textual's `Color.hsl` hue is 0-1, not degrees
@@ -13747,3 +13755,29 @@ A second gap survived direct helper-to-confirmation tests and native visual insp
 **TASK-31210/31211 final integration, 2026-09-12, e135a085f2.** Git reader threads were started before the process cleanup finally block; manual recovery allocated a capacity owner before submitting its worker but released it only inside that worker. Eleven focused failures reproduced live gated processes after reader-start failure, false positive drain after denied retirement, and lost or leaked ownership around submission. A fixture using a real executor also queued work and then raised at the submission boundary, showing why an exception alone is not proof that no worker can run.
 
 The correction protects resources immediately after creation and uses a standard Future to arbitrate worker entry versus revoked admission. Tests assert process retirement and absence of later Git effects before fallback test cleanup. For ambiguous submission they release queued work after revocation and prove no engine/DB entry; an already-entered worker remains owned even after its waiter is cancelled. Include these pre-entry cases alongside ordinary running-worker cancellation tests. A worker's finally block cannot clean up an allocation if that worker never starts.
+
+
+## Cancelled DNS waiters do not prove native resolver retirement
+
+**PR2665 review, 2026-09-13.** A full webhook deadline fixed queue progress,
+but real executor-backed DNS remained alive after cancellation. With only a
+worker-count cap, eight timed-out arrivals still admitted eight native jobs.
+A cancellation-before-entry test exposed the same problem when the queued
+native Future could be cancelled and release its slot early. Bound admission
+until the actual native Future settles, and test it with releasable gates.
+
+A second regression refused only the event loop's shutdown-helper thread start.
+Runner cleanup then exited while the held DNS thread still ran. Join the retained
+executor on the existing delivery thread before publishing retirement; if
+settlement cannot be confirmed, retain the nonaccepting owner. Assert refusal
+and ownership before releasing the gate, then join every exact owned thread.
+A coroutine timeout alone proves neither physical cleanup nor prompt process exit.
+
+## Test newly allocated paths through their strict recovery consumer
+
+**PR2665 review, 2026-09-13.** Canonical recovery fixtures hid macOS's normal
+`/var` to `/private/var` temporary-directory alias. A real Git checkout created
+through a symlinked temp base, stored in SQLite, then passed to recovery failed
+with `invalid_path`. Canonicalizing the new allocation parent before Git creation
+made that roundtrip pass. Keep loaded ownership paths strict: resolving an
+application-owned new allocation does not justify normalizing a stored authority.

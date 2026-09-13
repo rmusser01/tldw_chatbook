@@ -27,7 +27,16 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class RecoveryIntent:
-    """Pure owning-session values; no transcript, callbacks or runtime locks."""
+    """Captured session selection, with no transcript, callbacks or runtime locks.
+
+    Attributes:
+        id: Owning Console session identifier.
+        workspace_id: Session's selected workspace identifier.
+        persisted_conversation_id: Durable conversation identifier, if saved.
+        ephemeral: Whether the session is temporary and cannot be recovered.
+        project_instruction_state: Captured project-instruction selection;
+            ``validate_intent`` resolves and rechecks its named folder binding.
+    """
 
     id: str
     workspace_id: str
@@ -37,7 +46,17 @@ class RecoveryIntent:
 
 
 def capture_intent(controller: Any, session_id: str) -> RecoveryIntent | None:
-    """UI thread: copy only the owning session's identity and selection state."""
+    """Copy the owning session's identity and selection state on the UI thread.
+
+    Args:
+        controller: Console controller owning the session store and app runtime.
+        session_id: Exact session to capture, independent of the active view.
+
+    Returns:
+        Pure session values for later worker validation, or ``None`` if the
+        session is missing, the runtime is disposed, or the session is fenced.
+        A captured intent alone grants no repository authority.
+    """
     runtime = getattr(getattr(controller, "app", None), "console_runtime", None)
     if runtime is not None:
         try:
@@ -59,7 +78,19 @@ def capture_intent(controller: Any, session_id: str) -> RecoveryIntent | None:
 def validate_intent(
     controller: Any, session_id: str, intent: RecoveryIntent | None
 ) -> RunAdmittedWorkspaceRoot | None:
-    """Worker: resolve exactly the captured named writable binding and fresh gates."""
+    """Resolve the captured writable binding and fresh gates on a worker thread.
+
+    Args:
+        controller: Owning Console controller, including its workspace registry,
+            kill-switch reader and UI-thread dispatch through the app.
+        session_id: Session whose current selection must still match the intent.
+        intent: Captured selection to validate, or ``None`` for no selection.
+
+    Returns:
+        The single admitted named root with a guard that rechecks the session,
+        binding and kill switch, or ``None`` for temporary, missing, stale,
+        nonwritable or unavailable authority. Resolution failures fail closed.
+    """
     from .console_chat_controller import (
         capture_run_admitted_workspace_roots,
         project_instruction_authority_snapshot_is_current,
@@ -107,6 +138,19 @@ def validate_intent(
 
 @dataclass(frozen=True)
 class RecoveryPage:
+    """Disposable projection of recorded work for one authorized conversation.
+
+    Attributes:
+        rows: Up to 50 durable ownership rows, ordered by ascending run ID.
+        conversation_id: Persisted conversation ID, empty when authority fails.
+        repository: Current selected root path for display, not stored authority;
+            empty when authority fails.
+        next_run_id: Last displayed run ID to pass as ``after_run_id`` when more
+            rows exist, otherwise ``None``.
+        message: Latest retained operation receipt or an authority refusal;
+            empty when neither is available.
+    """
+
     rows: tuple[dict[str, Any], ...] = ()
     conversation_id: str = ""
     repository: str = ""
@@ -116,14 +160,33 @@ class RecoveryPage:
 
 @dataclass
 class RecoveryOperation:
+    """Runtime-retained recovery task and its independent cancellation signal.
+
+    Attributes:
+        cancel: Cooperative stop request, separate from primary-turn or view
+            cancellation; setting it does not prove physical completion.
+        task: Retained worker-submission task, shielded from view waiters and
+            awaited on shutdown until admitted physical work has finished.
+    """
+
     cancel: threading.Event
     task: asyncio.Task
 
 
 class ConsoleWorktreeRecovery:
-    """Independent manual Events, physical owners and bounded owner receipts."""
+    """Retain manual recovery across view changes until physical work finishes.
+
+    Each session can own one operation. Completed results are retained for up
+    to 32 persisted conversations; these receipts are process-local UI state.
+    """
 
     def __init__(self, controller: Any, bridge: Any) -> None:
+        """Bind recovery to its runtime's controller and agent resources.
+
+        Args:
+            controller: Owner of session capture and human confirmation.
+            bridge: Owner of the runs database path and runtime capacity ledger.
+        """
         self.controller = controller
         self.bridge = bridge
         self.operations: dict[str, RecoveryOperation] = {}
@@ -133,6 +196,23 @@ class ConsoleWorktreeRecovery:
     async def list_work(
         self, session_id: str, after_run_id: str | None = None
     ) -> RecoveryPage:
+        """Read a page for the session's current authorized repository.
+
+        Authority validation and database reads run on a worker with its own
+        database handle. Database errors propagate to the calling view.
+
+        Args:
+            session_id: Owning Console session to capture on the UI thread.
+            after_run_id: Exclusive ascending run-ID cursor from the preceding
+                page, or ``None`` for the first page.
+
+        Returns:
+            Up to 50 recorded rows with a continuation cursor and any retained
+            receipt, or an empty page explaining missing or changed authority.
+
+        Raises:
+            ValueError: A supplied database identifier is invalid.
+        """
         intent = self.controller.capture_worktree_recovery_intent(session_id)
         receipt = (
             self.receipts.get(intent.persisted_conversation_id)
@@ -174,6 +254,29 @@ class ConsoleWorktreeRecovery:
     async def start(
         self, session_id: str, run_id: str, action: str
     ) -> WorktreeRecoveryOutcome | WorktreeRefusal:
+        """Start one confirmed recovery and await its retained worker result.
+
+        The operation owns a manual execution lease and cancellation event.
+        Cancelling this caller leaves the shielded task registered until its
+        physical worker finishes; use ``cancel_session`` to request a stop.
+        Unexpected submission or database failures propagate to the caller and
+        leave a failure receipt when the retained task settles.
+
+        Args:
+            session_id: Owning Console session to capture on the UI thread.
+            run_id: Durable child-run identifier selected for recovery.
+            action: Requested ``apply``, ``merge`` or ``discard`` operation;
+                the recovery engine validates it and requests human confirmation.
+
+        Returns:
+            The engine's outcome or refusal. Closed admission, an already busy
+            session, a missing session or unavailable authority also refuses.
+
+        Raises:
+            CapacityRefused: The shared runtime capacity ledger is closed.
+            asyncio.CancelledError: This caller is cancelled while awaiting the
+                result; the retained operation is not cancelled with it.
+        """
         if self.closed or session_id in self.operations:
             return WorktreeRefusal(
                 "recovery_busy",
@@ -262,16 +365,33 @@ class ConsoleWorktreeRecovery:
         return await asyncio.shield(task)
 
     def cancel_session(self, session_id: str) -> None:
+        """Request a cooperative stop without cancelling or awaiting the task.
+
+        Args:
+            session_id: Owning session; a session with no operation is a no-op.
+        """
         if operation := self.operations.get(session_id):
             operation.cancel.set()
 
     def begin_close(self) -> None:
-        """Fence admission synchronously before awaiting physical workers."""
+        """Permanently fence admission and request stops without waiting.
+
+        Repeated calls are safe. Existing operations retain their execution
+        ownership until physical completion; ``close`` awaits that completion.
+        """
         self.closed = True
         for operation in self.operations.values():
             operation.cancel.set()
 
     async def close(self) -> None:
+        """Fence admission, request stops and await all retained operations.
+
+        Worker failures are collected without being re-raised. Cancellation of
+        this waiter leaves the shielded operations running and admission closed.
+
+        Raises:
+            asyncio.CancelledError: The shutdown waiter itself is cancelled.
+        """
         self.begin_close()
         await asyncio.gather(
             *(asyncio.shield(op.task) for op in tuple(self.operations.values())),

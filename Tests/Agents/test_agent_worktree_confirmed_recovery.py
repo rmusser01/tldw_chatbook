@@ -138,6 +138,7 @@ def test_merge_creates_explicit_two_parent_commit(work):
     assert (
         len(git(work[1].root, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3
     )
+    assert git(work[1].root, "show", "-s", "--format=%an|%ae|%cn|%ce", "HEAD").strip() == b"test|test@example.invalid|test|test@example.invalid"
 
 
 @pytest.mark.parametrize("action", ["apply", "merge"])
@@ -689,3 +690,83 @@ def test_git_partial_reader_startup_retires_gated_mutation(
             os.close(fd)
         owner.finish_root()
         capacity.close()
+
+
+@pytest.mark.parametrize("missing", ["user.name", "user.email"])
+@pytest.mark.parametrize("during_confirmation", [False, True])
+def test_missing_merge_identity_refuses_before_capture(
+    work, missing, during_confirmation
+):
+    root, child = work[1].root, work[2].worktree_path
+    git(root, "config", "user.useConfigOnly", "true")
+    before = git(root, "rev-parse", "HEAD")
+    (child / "a.txt").write_text("unsaved child work\n")
+    child_before = git(child, "rev-parse", "HEAD")
+    confirmed = []
+
+    def remove_identity():
+        git(root, "config", "--local", "--unset", missing)
+
+    def confirm(payload):
+        confirmed.append(payload)
+        if during_confirmation:
+            remove_identity()
+        return {"allow": True}
+
+    if not during_confirmation:
+        remove_identity()
+    result = recover(work, "merge", confirm=confirm)
+    assert isinstance(result, WorktreeRefusal)
+    assert result.reason_code == "merge_identity_unavailable"
+    assert "user.name" in result.message and "user.email" in result.message
+    assert len(confirmed) == int(during_confirmation)
+    assert git(root, "rev-parse", "HEAD") == before
+    assert git(child, "rev-parse", "HEAD") == child_before
+    assert git(child, "diff", "--cached") == b""
+    assert (child / "a.txt").read_text() == "unsaved child work\n"
+    assert state(work) == "unresolved"
+
+
+@pytest.mark.parametrize("field", ["child_path", "git_common_dir"])
+def test_persisted_noncanonical_directory_refuses_before_git(work, monkeypatch, field):
+    from tldw_chatbook.Agents import agent_worktree_recovery as module
+
+    record = work[3].get_for_conversation(work[2].run_id, "chat")
+    with work[0].transaction() as connection:
+        # The column name is test-owned and restricted to the parameter list above.
+        connection.execute(
+            f"UPDATE agent_worktrees SET {field}=? WHERE run_id=?",
+            (record[field] + "/", work[2].run_id),
+        )
+    monkeypatch.setattr(
+        module,
+        "run_git",
+        lambda *_args, **_kwargs: pytest.fail("invalid recorded path reached Git"),
+    )
+    result = recover(work, confirm=lambda _: pytest.fail("invalid path asked consent"))
+    assert isinstance(result, WorktreeRefusal)
+    assert result.reason_code == "invalid_path"
+    assert state(work) == "unresolved"
+
+
+@pytest.mark.parametrize("allow", [None, 0, 1, "true", "false", [], {}])
+def test_confirmation_never_coerces_truthy_values(work, allow):
+    child = work[2].worktree_path
+    (child / "a.txt").write_text("retained\n")
+    result = recover(work, confirm=lambda _: {"allow": allow})
+    assert isinstance(result, WorktreeRefusal)
+    assert result.reason_code == "confirmation_denied"
+    assert (child / "a.txt").read_text() == "retained\n"
+    assert state(work) == "unresolved"
+
+
+@pytest.mark.parametrize(
+    "action", [None, True, 0, ["apply"], {"action": "apply"}, "Apply", "apply "]
+)
+def test_invalid_recovery_action_never_requests_consent(work, action):
+    result = recover(
+        work, action, confirm=lambda _: pytest.fail("invalid action reached consent")
+    )
+    assert isinstance(result, WorktreeRefusal)
+    assert result.reason_code == "invalid_action"
+    assert state(work) == "unresolved"

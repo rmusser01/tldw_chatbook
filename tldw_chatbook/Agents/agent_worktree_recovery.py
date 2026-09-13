@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..DB.agent_worktrees import AgentWorktreeRepository
+from ..Utils.input_validation import (
+    WorktreeRecoveryActionInput,
+    WorktreeRecoveryConfirmationInput,
+)
+from ..Utils.path_validation import validate_canonical_directory
 from .agent_models import TERMINAL_RUN_STATUSES
 from .agent_worktree import WorktreeRefusal, _worktree_root_identity
 from .agent_worktree_git import MAX_OUTPUT, OperationError, run_git
@@ -56,11 +61,18 @@ def _authority(record, authority):
             _refuse(
                 "ownership_mismatch", "The selected repository does not own this work."
             )
-    for path, key in (
-        (authority.root, "repo_identity"),
-        (Path(record["child_path"]), "child_identity"),
-        (Path(record["git_common_dir"]), "git_common_identity"),
+    for raw_path, key in (
+        (str(authority.root), "repo_identity"),
+        (record["child_path"], "child_identity"),
+        (record["git_common_dir"], "git_common_identity"),
     ):
+        try:
+            path = validate_canonical_directory(raw_path)
+        except ValueError:
+            _refuse(
+                "invalid_path",
+                "Recorded directories must remain canonical; work is retained.",
+            )
         if _worktree_root_identity(path) != record[key]:
             _refuse(
                 "identity_changed",
@@ -133,6 +145,7 @@ def _primitives():
 
 def _tree_digest(root: Path, *, cleanup=False, selected=None, inventory_only=False):
     """Hash every non-administrative entry through no-follow directory handles."""
+    root = validate_canonical_directory(root)
     if not (_primitives() if cleanup else _read_primitives()):
         _refuse(
             "unsupported_primitives",
@@ -296,6 +309,21 @@ def _operation_in_progress(root):
     return False
 
 
+def _require_merge_identity(root: Path) -> None:
+    """Refuse an unusable destination identity before capturing child work."""
+    try:
+        for identity in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+            run_git(root, "var", identity)
+    except OperationError as exc:
+        if exc.code != "git_failed":
+            raise
+        _refuse(
+            "merge_identity_unavailable",
+            "Configure Git user.name and user.email for the selected repository "
+            "before merging agent work. No changes were captured or merged.",
+        )
+
+
 def recover_agent_worktree(
     db: AgentRunsDB,
     *,
@@ -312,7 +340,11 @@ def recover_agent_worktree(
     destination_effect = False
     source_effect = False
     try:
-        if action not in ("apply", "merge", "discard"):
+        try:
+            action = WorktreeRecoveryActionInput.model_validate(
+                {"action": action}
+            ).action
+        except ValueError:
             _refuse(
                 "invalid_action", "Recovery action must be apply, merge or discard."
             )
@@ -356,6 +388,8 @@ def recover_agent_worktree(
                 "destination_busy",
                 "Merge requires a clean destination with no operation in progress.",
             )
+        if action == "merge":
+            _require_merge_identity(root)
         payload = {
             "run_id": run_id,
             "action": action,
@@ -376,7 +410,14 @@ def recover_agent_worktree(
             _refuse(
                 "confirmation_failed", "Confirmation failed; source work is unchanged."
             )
-        if not isinstance(decision, dict) or decision.get("allow") is not True:
+        try:
+            allowed = (
+                isinstance(decision, dict)
+                and WorktreeRecoveryConfirmationInput.model_validate(decision).allow
+            )
+        except ValueError:
+            allowed = False
+        if not allowed:
             _refuse(
                 "confirmation_denied",
                 "Recovery was not allowed; source work is unchanged.",
@@ -388,6 +429,8 @@ def recover_agent_worktree(
                 "preview_changed",
                 "Work changed during confirmation; request a fresh preview.",
             )
+        if action == "merge":
+            _require_merge_identity(root)
         if (
             action != "discard"
             and not run_git(

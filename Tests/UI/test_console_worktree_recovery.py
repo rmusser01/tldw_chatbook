@@ -560,8 +560,13 @@ async def test_controller_bridge_turn_child_write_visible_confirmation(
 @pytest.mark.parametrize("surface", [True, False])
 @pytest.mark.parametrize("inbox_state", ["unopened", "empty", "queued"])
 @pytest.mark.parametrize("fleet_size", [1, 3])
+@pytest.mark.parametrize(
+    "chat_create_hooks",
+    [(False, False), (True, False), (False, True), (True, True)],
+    ids=["chat-off", "chat-view-only", "chat-complete-only", "chat-ready"],
+)
 async def test_controller_previews_match_live_worktree_schemas(
-    work, monkeypatch, surface, inbox_state, fleet_size
+    work, monkeypatch, surface, inbox_state, fleet_size, chat_create_hooks
 ):
     import asyncio
     from types import SimpleNamespace
@@ -731,6 +736,24 @@ async def test_controller_previews_match_live_worktree_schemas(
             runtime.finish_view_reconciliation(app, generation)
             if not surface:
                 controller.set_pending_worktree_merge = None
+            controller.set_pending_chat_create = (
+                (
+                    lambda value: pytest.fail(
+                        "schema planning must not request chat creation"
+                    )
+                )
+                if chat_create_hooks[0]
+                else None
+            )
+            controller.complete_agent_chat_create = (
+                (
+                    lambda *args, **kwargs: pytest.fail(
+                        "schema planning must not create chats"
+                    )
+                )
+                if chat_create_hooks[1]
+                else None
+            )
             # A generic retained decision target never substitutes for this hook.
             monkeypatch.setattr(
                 controller._interrupt_host,
@@ -775,6 +798,8 @@ async def test_controller_previews_match_live_worktree_schemas(
             assert ("shell_exec" in names) is (inbox_state == "queued")
             assert "virtual_cli" in names
             assert "spawn_subagent" in names
+            assert ("fork_chat" in names) is all(chat_create_hooks)
+            assert ("new_chat" in names) is all(chat_create_hooks)
             assert ("merge_agent_worktree" in names) is (surface and fleet_size > 1)
             assert ("discard_agent_worktree" in names) is (surface and fleet_size > 1)
     finally:

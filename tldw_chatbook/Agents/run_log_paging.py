@@ -15,6 +15,16 @@ _SEGMENT = re.compile(r"logs\.([0-9]+)\.txt\Z")
 
 @dataclass(frozen=True)
 class RunLogPageCursor:
+    """Resume position in numerically ordered run-log segments.
+
+    Attributes:
+        segment_index: Nonnegative number in ``logs.<number>.txt``; missing
+            segments are skipped to the next available number.
+        record_offset: Zero-based byte offset of the next header to scan.
+        content_offset: Zero-based byte offset within that record's stored
+            UTF-8 body; zero starts a record, including after a segment change.
+    """
+
     segment_index: int
     record_offset: int
     content_offset: int = 0
@@ -22,6 +32,18 @@ class RunLogPageCursor:
 
 @dataclass(frozen=True)
 class RunLogRecordSlice:
+    """Record metadata with one complete UTF-8 fragment of its stored body.
+
+    Attributes:
+        record: Decoded header fields with only this fragment in ``content``;
+            metadata-only reads leave ``content`` empty.
+        content_offset: Starting byte offset within the stored body.
+        stored_content_bytes: Total stored body size, excluding framing bytes;
+            this may be smaller than the writer's original, truncated content.
+        slice_complete: Whether this slice reaches the stored body's end;
+            metadata-only reads mark the inspected record complete.
+    """
+
     record: RunLogRecord
     content_offset: int
     stored_content_bytes: int
@@ -30,6 +52,19 @@ class RunLogRecordSlice:
 
 @dataclass(frozen=True)
 class RunLogPage:
+    """Bounded record fragments and the cursors needed to reload or continue.
+
+    Attributes:
+        slices: Matching record fragments in segment and file order.
+        start_cursor: Supplied cursor, or the default start of segment zero;
+            reloading it can reveal newly completed append-tail records.
+        next_cursor: Resume position when a budget stops scanning, or ``None``
+            when the currently available segments are exhausted.
+        scanned_bytes: Bytes actually read, including framing and rereads.
+        diagnostics: Sorted, unique codes for malformed or incomplete records
+            encountered while scanning; valid later records may still appear.
+    """
+
     slices: tuple[RunLogRecordSlice, ...]
     start_cursor: RunLogPageCursor
     next_cursor: RunLogPageCursor | None
@@ -69,6 +104,25 @@ def load_record_page(
     This fixed allowance guarantees progress even with tiny scan budgets.
     Content budgets below four bytes cannot hold every Unicode code point
     and are rejected. I/O errors propagate for the authority-owning caller.
+
+    Args:
+        log_dir: Authorized directory containing ``logs.<number>.txt`` files.
+        cursor: Prior resume position, or ``None`` to scan from segment zero.
+        run_id: Exact run identifier to include, or ``None`` for every run.
+        max_records: Positive maximum number of returned record fragments.
+        max_content_bytes: Maximum retained UTF-8 body bytes, at least four.
+        max_scan_bytes: Positive scan budget, subject to the fixed allowance
+            above; headers of nonmatching records also consume this budget.
+
+    Returns:
+        A page that may be empty even with a continuation cursor. Large bodies
+        span pages at UTF-8 boundaries. Only fully framed records yield slices;
+        malformed or unfinished records produce diagnostics instead.
+
+    Raises:
+        ValueError: A cursor or budget is invalid, or a cursor's content offset
+            exceeds the stored record size.
+        OSError: The directory or a selected segment cannot be read.
     """
     return _load_page(
         log_dir, cursor, run_id, max_records, max_content_bytes, max_scan_bytes

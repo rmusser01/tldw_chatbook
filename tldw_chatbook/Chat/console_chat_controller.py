@@ -13021,9 +13021,6 @@ class ConsoleChatController:
     ) -> ConsoleChatSession | None:
         """Delete a session only after its runtime-owned work was drained."""
 
-        # ADR-150: session-scoped chat-create remember grants die with the session.
-        self._chat_create_session_grants.pop(session_id, None)
-
         state = self._session_close_states.pop(ticket.close_id, None)
         if state is None or state[0] != ticket:
             raise RuntimeError("Console session close ticket is stale.")
@@ -13031,6 +13028,8 @@ class ConsoleChatController:
             raise RuntimeError("Console session close generation changed.")
         _stored_ticket, owns_active_stream, repair_session, previous_active_id = state
         session_id = ticket.session_id
+        # ADR-150: session-scoped chat-create remember grants die with the session.
+        self._chat_create_session_grants.pop(session_id, None)
         closed = self.store.close_session(session_id)
         self.prompt_queue_coordinator.remove_session(session_id)
         self._clear_project_instruction_delivery(session_id)
@@ -17599,6 +17598,8 @@ class ConsoleChatController:
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
+            # The payload's run_id is the recovered child, not the requester.
+            "run_id": owning_run_id or None,
             "cancel_event": round_cancel_event,
             "visit_event": visit_cancel_event,
         }
@@ -20259,6 +20260,14 @@ class ConsoleChatController:
                 turn_skill_bindings=turn_skill_bindings,
                 turn_bundle_block=turn_bundle_block,
                 worktree_merge_enabled=self.worktree_confirmation_enabled,
+                fork_chat_enabled=(
+                    self.set_pending_chat_create is not None
+                    and self.complete_agent_chat_create is not None
+                ),
+                new_chat_enabled=(
+                    self.set_pending_chat_create is not None
+                    and self.complete_agent_chat_create is not None
+                ),
                 request_skill_install_enabled=True,
                 request_skill_script_enabled=(
                     self.set_pending_skill_script is not None
@@ -20435,6 +20444,14 @@ class ConsoleChatController:
                 turn_skill_bindings=turn_skill_bindings,
                 turn_bundle_block=turn_bundle_block,
                 worktree_merge_enabled=self.worktree_confirmation_enabled,
+                fork_chat_enabled=(
+                    self.set_pending_chat_create is not None
+                    and self.complete_agent_chat_create is not None
+                ),
+                new_chat_enabled=(
+                    self.set_pending_chat_create is not None
+                    and self.complete_agent_chat_create is not None
+                ),
                 request_skill_install_enabled=True,
                 request_skill_script_enabled=(
                     self.set_pending_skill_script is not None
@@ -22376,13 +22393,46 @@ class ConsoleChatController:
         from tldw_chatbook.Agents.run_hooks import summarize_hook_arguments
 
         session_id = payload.get("session_id") or state.get("session_id")
+        run_id = (
+            state.get("run_id")
+            if kind == "worktree_merge"
+            else payload.get("run_id") or state.get("run_id")
+        )
         if kind == "approval":
             calls = [
                 {
                     "name": row.get("llm_name") or row.get("tool_name") or "",
-                    "args_summary": summarize_hook_arguments(row.get("arguments") or {}),
+                    "args_summary": summarize_hook_arguments(
+                        row.get("arguments") or {}
+                    ),
                 }
                 for row in payload.get("calls", ())
+            ]
+        elif kind == "worktree_merge":
+            action = payload.get("action") or payload.get("mode")
+            arguments = {
+                key: payload[key]
+                for key in (
+                    "handle_id",
+                    "run_id",
+                    "action",
+                    "mode",
+                    "branch",
+                    "worktree",
+                    "source",
+                    "destination",
+                )
+                if key in payload
+            }
+            calls = [
+                {
+                    "name": (
+                        "discard_agent_worktree"
+                        if action == "discard"
+                        else "merge_agent_worktree"
+                    ),
+                    "args_summary": summarize_hook_arguments(arguments),
+                }
             ]
         else:
             arguments = (
@@ -22400,7 +22450,7 @@ class ConsoleChatController:
             }]
         engine.notify(
             "ApprovalRequested", session_id=session_id,
-            run_id=payload.get("run_id") or state.get("run_id"),
+            run_id=run_id,
             data={
                 "calls": calls,
                 "session_active": bool(

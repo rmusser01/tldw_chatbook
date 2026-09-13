@@ -5,8 +5,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
+import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 
 from tldw_chatbook.Agents.run_webhooks import (
     WEBHOOK_SIGNATURE_HEADER,
@@ -20,13 +25,20 @@ from tldw_chatbook.Agents.run_webhooks import (
 )
 
 
-def _delivery(run_id: str, *, extra_ids=None) -> _WebhookDelivery:
+def _delivery(
+    run_id: str,
+    *,
+    extra_ids=None,
+    url="https://hook.example/x",
+    timeout_seconds=5.0,
+) -> _WebhookDelivery:
     return _WebhookDelivery(
         config=WebhookConfig(
             enabled=True,
-            url="https://hook.example/x",
+            url=url,
             secret="secret",
             events=("completed",),
+            timeout_seconds=timeout_seconds,
         ),
         event="completed",
         run_id=run_id,
@@ -49,6 +61,522 @@ def _join_owned_thread(thread: threading.Thread, timeout: float = 2.0) -> None:
 
 
 # --- bounded reusable delivery worker (TASK-31511) ---
+
+
+@pytest.mark.parametrize("stalled_stage", ("egress", "post"))
+def test_delivery_deadline_advances_fifo_before_stalled_stage_is_released(
+    monkeypatch, stalled_stage
+):
+    """A transport-only timeout leaves the next notification behind a lookup."""
+    from tldw_chatbook.Agents import run_webhooks
+    from tldw_chatbook.Utils import egress
+
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+    second_posted = threading.Event()
+    posts = []
+    contexts = []
+    warnings = []
+    metrics = []
+
+    async def stall():
+        entered.set()
+        try:
+            while not release.is_set():
+                await asyncio.sleep(0.005)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async def resolve(host):
+        contexts.append((threading.current_thread(), asyncio.get_running_loop()))
+        if stalled_stage == "egress" and host == "secret.example":
+            await stall()
+        return ["93.184.216.34"]
+
+    async def post(url, body, headers, timeout):
+        run_id = json.loads(body)["run_id"]
+        if stalled_stage == "post" and run_id == "run-sensitive":
+            await stall()
+        posts.append(run_id)
+        if run_id == "second":
+            second_posted.set()
+
+    monkeypatch.setattr(egress, "_resolve_async", resolve)
+    monkeypatch.setattr(
+        egress, "get_cli_setting", lambda section, key, default: default
+    )
+    monkeypatch.setattr(run_webhooks, "_default_post", post)
+    monkeypatch.setattr(
+        run_webhooks.logger,
+        "warning",
+        lambda message, *args: warnings.append(message.format(*args)),
+    )
+    monkeypatch.setattr(
+        run_webhooks,
+        "log_counter",
+        lambda name, **kwargs: metrics.append((name, kwargs)),
+    )
+    worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.02)
+    owned_thread = None
+    try:
+        assert worker.submit(
+            _delivery(
+                "run-sensitive",
+                url="https://secret.example/token",
+                timeout_seconds=0.1,
+            )
+        )
+        owned_thread = _owned_worker_thread(worker)
+        assert entered.wait(1.0)
+        assert worker.submit(_delivery("second", timeout_seconds=0.1))
+        assert second_posted.wait(1.0), "next webhook remained behind stalled delivery"
+        assert not release.is_set()
+        assert cancelled.is_set()
+        assert posts == ["second"]
+        assert contexts[0] == contexts[1]
+        assert contexts[0][0] is owned_thread
+        assert (
+            metrics.count(("run_webhook_failed", {"labels": {"event": "completed"}}))
+            == 1
+        )
+        assert "TimeoutError" in repr(warnings)
+        assert all(
+            canary not in repr((warnings, metrics))
+            for canary in ("secret.example", "token", "secret", "run-sensitive")
+        )
+    finally:
+        release.set()
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
+    assert worker._queue.unfinished_tasks == 0
+
+
+@pytest.mark.parametrize(
+    ("raw_timeout", "expected_timeout"),
+    (
+        (None, 5.0),
+        ("invalid", 5.0),
+        (float("nan"), 5.0),
+        (float("inf"), 5.0),
+        (-5, 0.1),
+        (1e12, 120.0),
+        ("0.2", 0.2),
+    ),
+)
+def test_admission_normalizes_direct_config_timeout_before_transport(
+    monkeypatch, raw_timeout, expected_timeout
+):
+    """Direct dataclass callers must not bypass the finite delivery timeout."""
+    from tldw_chatbook.Agents import run_webhooks
+
+    entered = threading.Event()
+    release = threading.Event()
+    observed = []
+
+    async def post(url, body, headers, timeout):
+        observed.append(timeout)
+        entered.set()
+        while not release.is_set():
+            await asyncio.sleep(0.005)
+
+    monkeypatch.setattr(run_webhooks, "_default_post", post)
+    worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.02)
+    owned_thread = None
+    try:
+        assert worker.submit(
+            _delivery(
+                "normalized", url="https://93.184.216.34/x", timeout_seconds=raw_timeout
+            )
+        )
+        owned_thread = _owned_worker_thread(worker)
+        assert entered.wait(1.0)
+        assert observed == [expected_timeout]
+    finally:
+        release.set()
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
+
+
+def test_timed_out_dns_keeps_retiring_generation_owned_until_resolver_finishes(
+    monkeypatch,
+):
+    """Runner's finite executor join must not retire still-running DNS owners."""
+    from asyncio import constants
+
+    from tldw_chatbook.Agents import run_webhooks
+    from tldw_chatbook.Utils import egress
+
+    entered = threading.Event()
+    release = threading.Event()
+    draining = threading.Event()
+    second_posted = threading.Event()
+    posts = []
+    resolver_threads = []
+    auxiliary_threads = []
+    worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.02)
+    real_start = threading.Thread.start
+    real_shutdown = asyncio.BaseEventLoop.shutdown_default_executor
+    runner_join_timeout = constants.THREAD_JOIN_TIMEOUT
+
+    def record_owned_start(thread):
+        # Track only children started by this exact delivery generation,
+        # including the executor's real shutdown helper, before they start.
+        if threading.current_thread() is worker._thread:
+            auxiliary_threads.append(thread)
+        return real_start(thread)
+
+    def resolve(host, port, family=0, type=0, proto=0, flags=0):
+        resolver_threads.append(threading.current_thread())
+        if host == "stalled.example":
+            entered.set()
+            release.wait()
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 0),
+            )
+        ]
+
+    async def observe_shutdown(loop, timeout=None):
+        if threading.current_thread() is worker._thread:
+            draining.set()
+        await real_shutdown(loop, timeout=timeout)
+
+    async def post(url, body, headers, timeout):
+        posts.append(json.loads(body)["run_id"])
+        second_posted.set()
+
+    monkeypatch.setattr(threading.Thread, "start", record_owned_start)
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(
+        egress, "get_cli_setting", lambda section, key, default: default
+    )
+    monkeypatch.setattr(run_webhooks, "_default_post", post)
+    monkeypatch.setattr(
+        asyncio.BaseEventLoop, "shutdown_default_executor", observe_shutdown
+    )
+    # Accelerate only Runner's existing abandonment budget; the product must
+    # retain its generation beyond it while the real executor is gated.
+    monkeypatch.setattr(constants, "THREAD_JOIN_TIMEOUT", 0.02)
+    owned_thread = None
+    try:
+        assert worker.submit(
+            _delivery("stalled", url="https://stalled.example/x", timeout_seconds=0.1)
+        )
+        owned_thread = _owned_worker_thread(worker)
+        assert entered.wait(1.0)
+        assert worker.submit(_delivery("second", timeout_seconds=0.1))
+        assert second_posted.wait(1.0), "real DNS await still blocked the FIFO"
+        assert posts == ["second"]
+        assert not release.is_set()
+        assert resolver_threads[0].is_alive()
+        assert draining.wait(1.0)
+        owned_thread.join(0.2)
+        assert owned_thread.is_alive(), (
+            "generation retired while its resolver still ran"
+        )
+        assert _owned_worker_thread(worker) is owned_thread
+        started = time.monotonic()
+        assert worker.submit(_delivery("during-drain")) is False
+        assert time.monotonic() - started < 0.1
+        assert worker._generation == 1
+    finally:
+        # Restore the ordinary Runner budget before its healthy final close.
+        monkeypatch.setattr(constants, "THREAD_JOIN_TIMEOUT", runner_join_timeout)
+        release.set()
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
+        for thread in auxiliary_threads:
+            _join_owned_thread(thread)
+    assert worker._queue.unfinished_tasks == 0
+    assert worker._thread is None
+    assert all(not thread.is_alive() for thread in resolver_threads)
+
+
+@pytest.mark.parametrize("fail_direct_join", (False, True))
+def test_shutdown_helper_start_failure_keeps_native_resolver_owned(
+    monkeypatch, fail_direct_join
+):
+    """Failure to start the drain helper must not release a live generation."""
+    from tldw_chatbook.Agents import run_webhooks
+    from tldw_chatbook.Utils import egress
+
+    entered = threading.Event()
+    release = threading.Event()
+    draining = threading.Event()
+    rejected = threading.Event()
+    allow_helpers = threading.Event()
+    auxiliary_threads = []
+    warnings = []
+    worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.02)
+    real_start = threading.Thread.start
+    real_shutdown = asyncio.BaseEventLoop.shutdown_default_executor
+    real_executor_shutdown = run_webhooks._WebhookResolverExecutor.shutdown
+
+    def shutdown(executor, wait=True, *, cancel_futures=False):
+        if fail_direct_join and wait and threading.current_thread() is worker._thread:
+            raise RuntimeError("direct-join signing-secret canary")
+        return real_executor_shutdown(executor, wait, cancel_futures=cancel_futures)
+
+    def start(thread):
+        if threading.current_thread() is worker._thread:
+            if draining.is_set() and not allow_helpers.is_set():
+                rejected.set()
+                raise RuntimeError("shutdown-helper signing-secret canary")
+            auxiliary_threads.append(thread)
+        return real_start(thread)
+
+    def resolve(host, port, family=0, type=0, proto=0, flags=0):
+        entered.set()
+        release.wait()
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 0),
+            )
+        ]
+
+    async def observe_shutdown(loop, timeout=None):
+        if threading.current_thread() is worker._thread:
+            draining.set()
+        await real_shutdown(loop, timeout=timeout)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(run_webhooks._WebhookResolverExecutor, "shutdown", shutdown)
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(
+        egress, "get_cli_setting", lambda section, key, default: default
+    )
+    monkeypatch.setattr(
+        asyncio.BaseEventLoop, "shutdown_default_executor", observe_shutdown
+    )
+    monkeypatch.setattr(
+        run_webhooks.logger,
+        "warning",
+        lambda message, *args: warnings.append(message.format(*args)),
+    )
+    owned_thread = None
+    try:
+        assert worker.submit(_delivery("held", timeout_seconds=0.1))
+        owned_thread = _owned_worker_thread(worker)
+        assert entered.wait(1.0)
+        assert rejected.wait(1.0)
+        owned_thread.join(0.2)
+        assert owned_thread.is_alive() is not fail_direct_join
+        assert _owned_worker_thread(worker) is owned_thread
+        assert worker.submit(_delivery("during-failed-drain")) is False
+        assert not release.is_set()
+        assert auxiliary_threads[0].is_alive()
+    finally:
+        allow_helpers.set()
+        release.set()
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
+        for thread in auxiliary_threads:
+            _join_owned_thread(thread)
+    assert worker._thread is (owned_thread if fail_direct_join else None)
+    assert worker._queue.unfinished_tasks == 0
+    assert "signing-secret" not in repr(warnings)
+
+
+@pytest.mark.parametrize("stall_at", ("resolver", "worker_entry"))
+def test_stalled_native_lookups_bound_repeated_arrivals_and_recover_after_completion(
+    monkeypatch, stall_at
+):
+    """Cancelled DNS waiters must not enqueue unbounded native resolver work."""
+    from tldw_chatbook.Agents import run_webhooks
+    from tldw_chatbook.Utils import egress
+
+    release = threading.Event()
+    settled = [threading.Event(), threading.Event()]
+    outcomes_changed = threading.Condition()
+    outcomes = []
+    calls = []
+    posts = []
+    native_futures = []
+    auxiliary_threads = []
+    worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.5)
+    real_submit = ThreadPoolExecutor.submit
+    real_start = threading.Thread.start
+
+    def record_owned_start(thread):
+        if threading.current_thread() is worker._thread:
+            if stall_at == "worker_entry" and len(auxiliary_threads) < 2:
+                original_run = thread.run
+
+                def enter_after_release():
+                    release.wait()
+                    original_run()
+
+                thread.run = enter_after_release
+            auxiliary_threads.append(thread)
+        return real_start(thread)
+
+    def capture_native_future(executor, fn, /, *args, **kwargs):
+        future = real_submit(executor, fn, *args, **kwargs)
+        native_futures.append(future)
+        return future
+
+    def resolve(host, port, family=0, type=0, proto=0, flags=0):
+        calls.append((host, threading.current_thread()))
+        if host != "healthy.example":
+            release.wait()
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 0),
+            )
+        ]
+
+    async def post(url, body, headers, timeout):
+        posts.append(json.loads(body)["run_id"])
+
+    def record_outcome(name, **kwargs):
+        if name in (
+            "run_webhook_failed",
+            "run_webhook_blocked",
+            "run_webhook_delivered",
+        ):
+            with outcomes_changed:
+                outcomes.append(name)
+                outcomes_changed.notify_all()
+
+    monkeypatch.setattr(threading.Thread, "start", record_owned_start)
+    monkeypatch.setattr(ThreadPoolExecutor, "submit", capture_native_future)
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(
+        egress, "get_cli_setting", lambda section, key, default: default
+    )
+    monkeypatch.setattr(run_webhooks, "_default_post", post)
+    monkeypatch.setattr(run_webhooks, "log_counter", record_outcome)
+    owned_thread = None
+    try:
+        for index in range(8):
+            assert worker.submit(_delivery(f"held-{index}", timeout_seconds=0.1))
+            if owned_thread is None:
+                owned_thread = _owned_worker_thread(worker)
+            with outcomes_changed:
+                assert outcomes_changed.wait_for(
+                    lambda index=index: len(outcomes) > index, 1.0
+                )
+        assert len(native_futures) == 2, "timed-out waiters kept submitting native jobs"
+        assert all(not future.done() for future in native_futures)
+        assert len(calls) == (2 if stall_at == "resolver" else 0)
+        assert len(auxiliary_threads) == 2
+        assert all(thread.is_alive() for thread in auxiliary_threads)
+        assert posts == []
+        assert not release.is_set()
+
+        # Register after the timeouts, hence after the executor's ownership
+        # callback. These events prove physical completion and released slots.
+        for future, done in zip(native_futures, settled, strict=True):
+            future.add_done_callback(lambda _future, done=done: done.set())
+        release.set()
+        assert all(done.wait(1.0) for done in settled)
+        assert worker.submit(
+            _delivery("healthy", url="https://healthy.example/x", timeout_seconds=1.0)
+        )
+        with outcomes_changed:
+            assert outcomes_changed.wait_for(lambda: len(outcomes) == 9, 1.0)
+        assert posts == ["healthy"]
+        assert _owned_worker_thread(worker) is owned_thread
+    finally:
+        release.set()
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
+        for thread in auxiliary_threads:
+            _join_owned_thread(thread)
+    assert worker._queue.unfinished_tasks == 0
+
+
+def test_failed_native_thread_start_does_not_release_ambiguous_queued_slots(
+    monkeypatch,
+):
+    """A submit exception may follow enqueueing; queued jobs must stay bounded."""
+    from tldw_chatbook.Agents import run_webhooks
+    from tldw_chatbook.Utils import egress
+
+    allow_start = threading.Event()
+    outcomes_changed = threading.Condition()
+    outcomes = []
+    calls = []
+    auxiliary_threads = []
+    worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.5)
+    real_start = threading.Thread.start
+
+    def start(thread):
+        if threading.current_thread() is worker._thread:
+            if not allow_start.is_set():
+                raise RuntimeError("native resolver thread refused to start")
+            auxiliary_threads.append(thread)
+        return real_start(thread)
+
+    def resolve(host, port, family=0, type=0, proto=0, flags=0):
+        calls.append(host)
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 0),
+            )
+        ]
+
+    async def post(url, body, headers, timeout):
+        return None
+
+    def record_outcome(name, **kwargs):
+        if name in (
+            "run_webhook_failed",
+            "run_webhook_blocked",
+            "run_webhook_delivered",
+        ):
+            with outcomes_changed:
+                outcomes.append(name)
+                outcomes_changed.notify_all()
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(
+        egress, "get_cli_setting", lambda section, key, default: default
+    )
+    monkeypatch.setattr(run_webhooks, "_default_post", post)
+    monkeypatch.setattr(run_webhooks, "log_counter", record_outcome)
+    owned_thread = None
+    try:
+        for index in range(2):
+            assert worker.submit(_delivery(f"failed-{index}", timeout_seconds=0.1))
+            if owned_thread is None:
+                owned_thread = _owned_worker_thread(worker)
+            with outcomes_changed:
+                assert outcomes_changed.wait_for(
+                    lambda index=index: len(outcomes) > index, 1.0
+                )
+        allow_start.set()
+        assert worker.submit(_delivery("third", timeout_seconds=0.1))
+        with outcomes_changed:
+            assert outcomes_changed.wait_for(lambda: len(outcomes) == 3, 1.0)
+        assert calls == [], "failed submissions released slots for queued native jobs"
+    finally:
+        allow_start.set()
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
+        for thread in auxiliary_threads:
+            _join_owned_thread(thread)
+    assert calls == []
+    assert worker._thread is None
 
 
 def test_worker_reuses_one_thread_and_event_loop_without_blocking_submit(monkeypatch):
@@ -205,6 +733,9 @@ def test_submission_during_runner_close_is_refused_then_restart_succeeds(monkeyp
 
         def run(self, coro):
             return self._runner.run(coro)
+
+        def get_loop(self):
+            return self._runner.get_loop()
 
         def __exit__(self, *args):
             closing.set()

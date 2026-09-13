@@ -124,6 +124,27 @@ just says "No approval is pending.").
 
 ## Features & controls
 
+### Recovering saved agent work
+
+Confirmed Merge uses your Git user identity. If Git cannot resolve an author or
+committer, configure `user.name` and `user.email` for the selected repository
+and retry; Chatbook checks this before capturing or merging child work. Apply
+continues to leave unstaged changes without creating a parent merge commit.
+
+If worktree creation succeeds but authority changes or its ownership record
+cannot be saved, the failed run explains that the checkout is retained for
+manual review. It may be absent from the recovery picker when no ownership row
+was saved. Chatbook does not delete or adopt an unrecorded checkout automatically.
+
+
+### Consecutive tool denials
+
+Console agent runs stop after three consecutive authoritative tool denials by
+default. Set `[agents] denial_circuit_breaker_limit` to another nonnegative
+integer; zero disables this breaker. A nonempty
+`TLDW_AGENTS_DENIAL_CIRCUIT_BREAKER_LIMIT` takes precedence over TOML. Invalid
+values use the conservative default of three; blank environment values use TOML.
+
 ### Run lifecycle webhooks are bounded and best effort
 
 When `[webhooks]` is enabled, Chatbook can admit signed notifications for
@@ -134,6 +155,12 @@ up to 32 wait in FIFO order. A newer notification is dropped immediately when
 that queue is full, so webhook traffic never blocks run finalization. Delivery
 remains best effort: notifications have no retry or durable outbox and may also
 be lost when the process exits.
+
+The configured timeout covers both destination lookup and delivery. At most two
+native resolver jobs are admitted, so repeated timeouts cannot build an
+unbounded resolver backlog. A stuck OS lookup cannot be forcibly cancelled: it
+may delay worker retirement and normal process exit. New notifications are
+refused while that worker is retiring.
 
 ### Approvals — tools ask before they run
 
@@ -492,7 +519,6 @@ is no project-scoped hook file; and only the two blocking events can
 change what happens — the other four are observe-and-notify, with their
 output logged and dropped.
 
->>>>>>> 31da72f8a5 (feat: agent chat fork & spawn tools (fork_chat / new_chat) — rebased onto dev)
 ### Interrupted provider tool runs — Resume, Take over, or Discard
 
 For a provider integration that has opted into exact tool continuation, Console
@@ -1343,7 +1369,6 @@ in a conversation you were not watching, that session's tab shows the
 finished-and-unvisited `✓` instead. Both mean "there is something here
 you haven't seen"; viewing the conversation clears either.
 
-<<<<<<< HEAD
 ### Local file authority
 
 Every live Console Chat owns an independent private temporary scratch space.
@@ -1549,7 +1574,6 @@ is currently unavailable and fails closed—Chatbook ships no `pywinpty`, legacy
 winpty, or ordinary-pipe fallback. A future Windows implementation requires a
 new or superseding ADR and passing native qualification.
 
-=======
 ### Project instructions before tools run
 
 When project instructions are enabled for a session, Chatbook treats the

@@ -568,6 +568,7 @@ def console_run_budget() -> RunBudget:
     """
     try:
         from tldw_chatbook.Agents.agent_models import (
+            DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT,
             coerce_denial_circuit_breaker_limit,
         )
         from tldw_chatbook.config import (
@@ -622,10 +623,17 @@ def console_run_budget() -> RunBudget:
         return resolved
 
     def _denial_limit() -> int:
+        raw = os.environ.get("TLDW_AGENTS_DENIAL_CIRCUIT_BREAKER_LIMIT", "").strip()
+        if raw:
+            return coerce_denial_circuit_breaker_limit(raw)
         try:
-            raw = get_cli_setting("agents", "denial_circuit_breaker_limit", 3)
+            raw = get_cli_setting(
+                "agents",
+                "denial_circuit_breaker_limit",
+                DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT,
+            )
         except Exception:  # noqa: BLE001
-            raw = 3
+            raw = DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT
         return coerce_denial_circuit_breaker_limit(raw)
 
     return RunBudget(
@@ -2093,6 +2101,18 @@ LiveUsageSource = Literal["provider", "local"]
 
 @dataclass(frozen=True, slots=True)
 class AgentLiveTurnUsage:
+    """Published live output count for one active model call, not final billing.
+
+    Attributes:
+        output_tokens: Latest published provider count or local approximation.
+        source: ``provider`` for an explicit nonnegative output count, including
+            zero; otherwise ``local`` for cumulative streamed UTF-8 bytes / 4,
+            rounded up. Provider counts take precedence once observed.
+        started_at: Call-start time in ``time.monotonic()`` seconds.
+        sequence: Adapter-issued increasing call identifier, shared by all
+            events for this call; distinguishes successive calls in one run.
+    """
+
     output_tokens: int
     source: LiveUsageSource
     started_at: float
@@ -2101,6 +2121,24 @@ class AgentLiveTurnUsage:
 
 @dataclass(frozen=True, slots=True)
 class AgentLiveUsageEvent:
+    """Transient adapter observation attributed to an exact run and model call.
+
+    Attributes:
+        kind: ``started`` opens call state, ``text`` adds streamed text,
+            ``provider_usage`` supplies a cumulative count, and ``finished``
+            removes call state. Consumers reject events for stale sequences.
+        run_id: Owning primary or child run identifier from the run scope.
+        agent_kind: Primary or subagent attribution captured with ``run_id``.
+        sequence: Increasing identifier allocated once per adapter model call,
+            not once per event; every event in that call uses the same value.
+        observed_at: Observation time in ``time.monotonic()`` seconds, used for
+            call start and publication throttling, not a wall-clock timestamp.
+        text: Delta for ``text`` events, including visible thinking when emitted;
+            empty for other kinds. The bridge counts bytes without retaining it.
+        provider_output_tokens: Cumulative output count for ``provider_usage``
+            events, otherwise ``None``; only nonnegative integers are accepted.
+    """
+
     kind: Literal["started", "text", "provider_usage", "finished"]
     run_id: str
     agent_kind: str
@@ -5237,6 +5275,8 @@ class ConsoleAgentBridge:
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         worktree_merge_enabled: bool = False,
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         profile_provider: Any | None = None,
@@ -5301,8 +5341,8 @@ class ConsoleAgentBridge:
                 self._skills_service is not None and request_skill_install_enabled
             ),
             run_skill_script_enabled=script_tool_enabled,
-            fork_chat_enabled=bool(fork_chat_tool is not None),
-            new_chat_enabled=bool(new_chat_tool is not None),
+            fork_chat_enabled=fork_chat_enabled,
+            new_chat_enabled=new_chat_enabled,
             worktree_merge_enabled=worktree_merge_enabled,
             agent_messages=agent_messages,
             agent_definitions=runtime_definitions,
@@ -5371,6 +5411,8 @@ class ConsoleAgentBridge:
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         worktree_merge_enabled: bool = False,
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         profile_context_service: Any | None = None,
     ) -> ProfileContextSnapshot:
         """Build the exact reserved profile snapshot for disposable Next Send."""
@@ -5420,6 +5462,8 @@ class ConsoleAgentBridge:
                 self._skills_service is not None and request_skill_install_enabled
             ),
             run_skill_script_enabled=script_tool_enabled,
+            fork_chat_enabled=fork_chat_enabled,
+            new_chat_enabled=new_chat_enabled,
             worktree_merge_enabled=worktree_merge_enabled,
             agent_messages=agent_messages,
             agent_definitions=runtime_definitions,

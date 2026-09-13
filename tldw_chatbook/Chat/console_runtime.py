@@ -160,6 +160,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Agents.run_hooks import RunHooksEngine
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_worktree_recovery import ConsoleWorktreeRecovery
 
 #: The app attribute this module's helpers read and write. Named once so a
 #: test can assert on the protocol rather than on a string literal.
@@ -3813,7 +3814,7 @@ class ConsoleRuntime:
                 )
 
     @property
-    def worktree_recovery(self):
+    def worktree_recovery(self) -> ConsoleWorktreeRecovery:
         """Retain manual recovery independently of disposable Console views."""
         if self._worktree_recovery is None:
             if (

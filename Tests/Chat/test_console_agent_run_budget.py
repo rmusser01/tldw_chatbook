@@ -371,3 +371,42 @@ def test_a_broken_config_read_still_yields_a_usable_budget(monkeypatch):
 
     monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", boom)
     assert console_run_budget() == DEFAULT_CONSOLE_RUN_BUDGET
+
+
+@pytest.mark.parametrize(
+    "environment,expected",
+    [
+        ("0", 0),
+        ("7", 7),
+        (" 4 ", 4),
+        ("", 9),
+        ("   ", 9),
+        ("bad", 3),
+        ("-1", 3),
+        ("1.5", 3),
+    ],
+)
+def test_denial_environment_precedes_toml(monkeypatch, environment, expected):
+    monkeypatch.setenv("TLDW_AGENTS_DENIAL_CIRCUIT_BREAKER_LIMIT", environment)
+
+    def configured(section, key, default=None):
+        return (
+            9
+            if (section, key) == ("agents", "denial_circuit_breaker_limit")
+            else default
+        )
+
+    monkeypatch.setattr(config_module, "get_cli_setting", configured)
+    assert console_run_budget().denial_circuit_breaker_limit == expected
+
+
+def test_denial_environment_survives_toml_read_failure(monkeypatch):
+    monkeypatch.setenv("TLDW_AGENTS_DENIAL_CIRCUIT_BREAKER_LIMIT", "5")
+
+    def configured(section, key, default=None):
+        if section == "agents":
+            raise RuntimeError("configuration unavailable")
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", configured)
+    assert console_run_budget().denial_circuit_breaker_limit == 5
