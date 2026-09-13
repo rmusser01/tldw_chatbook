@@ -37,6 +37,12 @@ class RecoveryIntent:
 
 def capture_intent(controller: Any, session_id: str) -> RecoveryIntent | None:
     """UI thread: copy only the owning session's identity and selection state."""
+    runtime = getattr(getattr(controller, "app", None), "console_runtime", None)
+    if runtime is not None:
+        try:
+            runtime._raise_if_disposed_or_session_fenced(session_id)
+        except RuntimeError:
+            return None
     session = next((s for s in controller.store.sessions() if s.id == session_id), None)
     if session is None:
         return None

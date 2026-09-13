@@ -226,63 +226,6 @@ from Tests.Agents.test_agent_worktree_confirmed_recovery import work as _work
 work = _work
 
 
-@pytest.mark.asyncio
-async def test_runtime_session_close_cancels_only_its_manual_worker(
-    tmp_path, monkeypatch
-):
-    import tldw_chatbook.Chat.console_worktree_recovery as module
-    from tldw_chatbook.Agents.agent_worktree_recovery import WorktreeRecoveryOutcome
-    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-    from tldw_chatbook.Chat.console_worktree_recovery import ConsoleWorktreeRecovery
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-    entered = {sid: threading.Event() for sid in ("a", "b")}
-    release = threading.Event()
-    capacity = RuntimeCapacity()
-    db = AgentRunsDB(tmp_path / "runs.db")
-    controller = SimpleNamespace(
-        capture_worktree_recovery_intent=lambda sid: SimpleNamespace(
-            persisted_conversation_id=sid
-        ),
-        request_worktree_merge_confirm=lambda *a, **kw: {"allow": True},
-    )
-    helper = ConsoleWorktreeRecovery(
-        controller, SimpleNamespace(runs_db=db, runtime_capacity=capacity)
-    )
-    signals = {}
-
-    def run(*args, **kwargs):
-        sid = kwargs["conversation_id"]
-        signals[sid] = kwargs["should_cancel"]
-        entered[sid].set()
-        release.wait(5)
-        return WorktreeRecoveryOutcome("apply", sid, "unresolved")
-
-    monkeypatch.setattr(module, "validate_intent", lambda *a: object())
-    monkeypatch.setattr(module, "recover_agent_worktree", run)
-    runtime = ConsoleRuntime(app=None)
-    runtime._worktree_recovery = helper
-
-    async def drain(*args, **kwargs):
-        return None
-
-    runtime._close_session_after_voice_drain = drain
-    tasks = [asyncio.create_task(helper.start(sid, sid, "apply")) for sid in ("a", "b")]
-    try:
-        for event in entered.values():
-            assert await asyncio.to_thread(event.wait, 3)
-        await runtime.close_session("a", expected_revision=0)
-        assert signals["a"]() and not signals["b"]()
-        assert len(capacity.snapshot().executions) == 2
-    finally:
-        release.set()
-        await asyncio.gather(*tasks)
-        await helper.close()
-        capacity.close()
-        db.close()
-    assert helper.receipts["a"].message == "a"
-    assert helper.receipts["b"].message == "b"
-
 
 def test_worktree_remount_failure_does_not_abort_other_projection():
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
@@ -312,3 +255,111 @@ def test_begin_dispose_fences_manual_recovery_before_async_drain():
     runtime._worktree_recovery = helper
     runtime.begin_dispose()
     assert helper.closed
+
+
+@pytest.mark.asyncio
+async def test_accepted_close_fences_late_manual_start_during_actual_drain(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.Chat.console_worktree_recovery as module
+    from Tests.Chat.test_console_runtime_shutdown import _runtime_with_fleet
+    from tldw_chatbook.Agents.agent_worktree_recovery import WorktreeRecoveryOutcome
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    runtime, controller, bridge, store, session = _runtime_with_fleet()
+    other = store.create_session(ephemeral=True)
+    controller.app = SimpleNamespace(console_runtime=runtime)
+    bridge.runs_db = AgentRunsDB(tmp_path / "runs.db")
+    bridge.runtime_capacity = RuntimeCapacity()
+    helper = runtime.worktree_recovery
+    signal = threading.Event()
+    previous = asyncio.create_task(asyncio.sleep(0))
+    helper.operations[session.id] = module.RecoveryOperation(signal, previous)
+    calls = []
+    monkeypatch.setattr(module, "validate_intent", lambda *args: object())
+
+    def recover(*args, **kwargs):
+        calls.append(kwargs["run_id"])
+        return WorktreeRecoveryOutcome("apply", "finished", "unresolved")
+
+    monkeypatch.setattr(module, "recover_agent_worktree", recover)
+    close = asyncio.create_task(
+        runtime.close_session(
+            session.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=session.id
+            ).revision,
+        )
+    )
+    try:
+        await asyncio.wait_for(bridge.await_started.wait(), 3)
+        assert signal.is_set()
+        await previous
+        helper.operations.pop(session.id)
+        assert session.id in {item.id for item in store.sessions()}
+        outcome = await helper.start(session.id, "late", "apply")
+        assert outcome.reason_code == "missing_session"
+        assert calls == []
+        assert not controller.pending_worktree_merge_ids()
+        assert controller.capture_worktree_recovery_intent(session.id) is None
+        assert (await helper.start(other.id, "other", "apply")).message == "finished"
+        assert calls == ["other"]
+    finally:
+        bridge.release.set()
+        await close
+        await runtime.dispose()
+        bridge.runtime_capacity.close()
+        bridge.runs_db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["stale", "refused", "provisional"])
+async def test_unaccepted_close_preserves_manual_cancel_signal(refusal, monkeypatch):
+    from Tests.Chat.test_console_runtime_shutdown import _runtime_with_fleet
+    from tldw_chatbook.Chat.console_worktree_recovery import (
+        ConsoleWorktreeRecovery,
+        RecoveryOperation,
+    )
+
+    runtime, controller, bridge, _store, session = _runtime_with_fleet()
+    helper = ConsoleWorktreeRecovery(controller, bridge)
+    runtime._worktree_recovery = helper
+    signal = threading.Event()
+    task = asyncio.create_task(asyncio.sleep(0))
+    helper.operations[session.id] = RecoveryOperation(signal, task)
+    revision = controller.lifecycle_impact(session_id=session.id).revision
+    if refusal == "stale":
+        controller._advance_lifecycle_revision(session.id)
+    elif refusal == "refused":
+
+        def refuse(*args, **kwargs):
+            raise RuntimeError("refused")
+
+        monkeypatch.setattr(controller, "begin_session_close", refuse)
+    else:
+
+        async def provisional(*args):
+            return False
+
+        runtime._voice_promotion_owner = SimpleNamespace(
+            begin_session_close=lambda sid: object(),
+            wait_for_session=provisional,
+            abort_session_close=lambda token: None,
+        )
+    try:
+        if refusal == "provisional":
+            assert (
+                await runtime.close_session(session.id, expected_revision=revision)
+                is None
+            )
+        else:
+            with pytest.raises(RuntimeError):
+                await runtime.close_session(session.id, expected_revision=revision)
+        assert not signal.is_set()
+        runtime._raise_if_disposed_or_session_fenced(session.id)
+    finally:
+        await task
+        helper.operations.clear()
+        runtime._voice_promotion_owner = None
+        bridge.release.set()
+        await runtime.dispose()

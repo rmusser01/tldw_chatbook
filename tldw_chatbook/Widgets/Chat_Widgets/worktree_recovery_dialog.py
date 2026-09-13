@@ -38,7 +38,7 @@ class _RecoveryButton(Button):
     def __init__(self, run_id, action, *, disabled):
         super().__init__(action.title(), disabled=disabled)
         self.run_id = run_id
-        self.action = action
+        self.recovery_action = action
 
 
 class WorktreeRecoveryDialog(ModalScreen):
@@ -111,7 +111,7 @@ class WorktreeRecoveryDialog(ModalScreen):
         if event.button.disabled:
             return
         if isinstance(event.button, _RecoveryButton):
-            self.dismiss((event.button.run_id, event.button.action))
+            self.dismiss((event.button.run_id, event.button.recovery_action))
         elif event.button.id == "worktree-next":
             self.dismiss((self.page.next_run_id, "next"))
         else:
