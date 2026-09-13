@@ -355,6 +355,10 @@ class LibraryNotesOperationState:
         region: Notes surface that owns and displays this status.
         completion_next_action: Optional recovery step after committed success.
         failure_next_action: Recovery instruction rendered after failure.
+        failure_line: task-32536 AC#2 -- a complete failure sentence that
+            names the blocker and its remedy ("Can't use this note in
+            Console — {blocker}. Next: {remedy}."). Rendered verbatim in
+            place of the generic "{action} failed — …" line when set.
     """
 
     kind: Literal["import", "export", "copy", "console"]
@@ -363,6 +367,7 @@ class LibraryNotesOperationState:
     region: Literal["navigator", "editor", "context"]
     completion_next_action: str = ""
     failure_next_action: str = "try again"
+    failure_line: str = ""
 
     @property
     def running(self) -> bool:
@@ -380,6 +385,8 @@ class LibraryNotesOperationState:
                 next_action = self.completion_next_action.rstrip(". ")
                 return f"{action} complete — {next_action}."
             return f"{action} complete."
+        if self.failure_line:
+            return self.failure_line
         next_action = self.failure_next_action.rstrip(". ")
         return f"{action} failed — {next_action}."
 

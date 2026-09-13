@@ -7622,14 +7622,18 @@ ChatScreen.-focus #console-workbench-header {
     color: $ds-text-muted;
 }
 
+/* task-32555 AC#1: the card's actions are buttons, not text lines -- a
+   round edge at rest, and focus changes the SHAPE (heavy side rails), not
+   just the text style. The card's own height:auto absorbs the two border
+   rows each button gained when it stopped being compact. */
 .console-setup-modal-action {
     width: auto;
     min-width: 12;
-    height: 1;
-    min-height: 1;
+    height: 3;
+    min-height: 3;
     margin: 1 0 0 0;
     padding: 0 1;
-    border: none;
+    border: round $ds-grid-line;
     background: $ds-focus-bg;
     color: $ds-text-primary;
     content-align: left middle;
@@ -7638,7 +7642,10 @@ ChatScreen.-focus #console-workbench-header {
 .console-setup-modal-action:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
-    text-style: bold underline;
+    border: round $ds-focus-accent;
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
+    text-style: bold;
 }
 
 #console-chat-tabs {

@@ -4758,8 +4758,8 @@ class LibraryScreen(BaseAppScreen):
     def _begin_library_notes_operation(self, kind: Literal['import', 'export', 'copy', 'console']) -> LibraryNotesOperationState | None:
         return self._notes_controller._begin_library_notes_operation(kind)
 
-    def _finish_library_notes_operation(self, operation: LibraryNotesOperationState, *, success: bool, completion_next_action: str='', failure_next_action: str='try again') -> bool:
-        return self._notes_controller._finish_library_notes_operation(operation, success=success, completion_next_action=completion_next_action, failure_next_action=failure_next_action)
+    def _finish_library_notes_operation(self, operation: LibraryNotesOperationState, *, success: bool, completion_next_action: str='', failure_next_action: str='try again', failure_line: str='') -> bool:
+        return self._notes_controller._finish_library_notes_operation(operation, success=success, completion_next_action=completion_next_action, failure_next_action=failure_next_action, failure_line=failure_line)
 
     def _apply_library_note_presentation_state(self) -> None:
         return self._notes_controller._apply_library_note_presentation_state()
@@ -16521,6 +16521,11 @@ class LibraryScreen(BaseAppScreen):
             else self._local_source_records.get("notes", ())
         )
         operation = self._library_notes_operation_for_active_region()
+        if operation is not None and operation.region != "navigator":
+            # task-32536 AC#3: this state paints the list pane, which sits
+            # beside the editor at wide widths -- an editor-region operation
+            # (a failed hand-off) is the editor's to show, not the list's.
+            operation = None
         state = build_library_notes_list_state(
             sort_notes_records(source_records, self._notes_state.sort),
             filter_note=self._notes_state.filter,
@@ -20798,9 +20803,6 @@ class LibraryScreen(BaseAppScreen):
             self._library_onboarding_all_empty = False
             self._library_onboarding_status = LibraryEvidenceStatus.PARTIAL_FAILURE
         self._sync_library_onboarding_status_copy()
-        # Before the presentation legs below: they paint the announcement
-        # carrier, so the decision has to be made first.
-        self._apply_graduation_notice(previous_lifecycle)
         current_back_admitted = (
             self._library_lifecycle is LibraryLifecycle.EXPANDED
             and self._library_onboarding_all_empty
@@ -20812,39 +20814,6 @@ class LibraryScreen(BaseAppScreen):
             self._sync_library_rail_lifecycle_presentation()
         elif self.is_mounted and self._library_onboarding_status is not previous_status:
             self._sync_library_landing_lifecycle_presentation()
-
-    def _apply_graduation_notice(self, previous_lifecycle: LibraryLifecycle) -> None:
-        """Announce graduation only when the compact rail actually gave way.
-
-        task-32063: this fired on ANY transition into GRADUATED, including the
-        first source read of a returning, already-populated profile (which
-        settles to EXPANDED and graduates immediately). Nothing became
-        available there, so the toast was noise. EXPANDED already shows every
-        tool; STARTER and UNKNOWN are the two lifecycles the rail paints
-        COMPACT (``LibraryRail._compose_rows``), so those are the two whose
-        tools were genuinely hidden a moment earlier.
-
-        UNKNOWN is not merely transient (review of PR #2531): task-32059
-        stamps it at profile creation, and evidence that finds content goes
-        straight from UNKNOWN to GRADUATED without passing through STARTER --
-        exactly the new user whose tools just appeared.
-
-        The toast is the ONLY surface: an in-canvas line for the same event
-        was two surfaces for one thing, and (task-32062) its arrival
-        repainted the canvas the reader was typing into.
-        """
-        if (
-            previous_lifecycle
-            not in (LibraryLifecycle.STARTER, LibraryLifecycle.UNKNOWN)
-            or self._library_lifecycle is not LibraryLifecycle.GRADUATED
-        ):
-            return
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify(
-                "Library tools are now available.",
-                severity="information",
-            )
 
     def _mirror_library_lifecycle(self, lifecycle: LibraryLifecycle) -> None:
         app_config = self.app_instance.app_config

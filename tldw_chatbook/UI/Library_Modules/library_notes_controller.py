@@ -1601,6 +1601,7 @@ class LibraryNotesController:
         success: bool,
         completion_next_action: str = "",
         failure_next_action: str = "try again",
+        failure_line: str = "",
     ) -> bool:
         """Terminalize the current token and render only in its active region."""
         current = self._library_notes_operation
@@ -1616,6 +1617,7 @@ class LibraryNotesController:
             phase="complete" if success else "failed",
             completion_next_action=completion_next_action,
             failure_next_action=failure_next_action,
+            failure_line=failure_line,
         )
         if current.region != active_region:
             # The side effect belongs to the matching token, but its former
@@ -3368,6 +3370,7 @@ class LibraryNotesController:
         """Reset presentation, invalidate old work, and start one editor load."""
         navigation_generation = self._supersede_library_notes_navigation()
         self._library_note_session.close_session()
+        self._clear_finished_library_notes_operation()
         self._selected_note_id = note_id
         self._library_notes_view = "editor"
         self._library_note_load_state = "loading"
@@ -3524,7 +3527,26 @@ class LibraryNotesController:
         # (P0) A full editor reset ends the session the pristine-title
         # marker belonged to; the next note starts untouched again.
         self._library_note_title_user_edited = False
+        self._clear_finished_library_notes_operation()
         self._invalidate_library_note_autosave()
+    def _clear_finished_library_notes_operation(self) -> bool:
+        """Drop a terminal operation status (task-32536 AC#3).
+
+        A note change ends the last action's message -- the next note must
+        not open under the previous one's failure. Both note-change paths
+        need it: the full editor reset AND ``_begin_library_note_load``,
+        which switches notes without resetting (that gap is what carried
+        "Use in Console failed" onto the next note in critique #3). A
+        RUNNING token (an import in the navigator) keeps its claim.
+
+        Returns:
+            Whether an operation was dropped.
+        """
+        operation = self._library_notes_operation
+        if operation is None or operation.running:
+            return False
+        self._library_notes_operation = None
+        return True
     def _invalidate_library_note_autosave(self) -> None:
         """Cancel the debounce and fence off any autosave already queued."""
         self._library_note_autosave_generation += 1
@@ -3711,6 +3733,14 @@ class LibraryNotesController:
             return
         if outcome.kind is NoteSaveOutcomeKind.SAVED:
             self._patch_library_note_list_from_session()
+            # task-32536 AC#3: a successful save ends a failed operation's
+            # message -- "Saved" and "Can't use this note…" cannot both be
+            # the truth of one status line.
+            operation = self._library_notes_operation
+            if operation is not None and operation.phase == "failed":
+                self._library_notes_operation = None
+                if self.is_mounted:
+                    self._apply_library_note_presentation_state()
         is_current_clean_revision = (
             not snapshot.dirty
             and outcome.revision is not None
@@ -4214,42 +4244,104 @@ class LibraryNotesController:
                 "keywords": keywords,
             },
         )
-    def _open_selected_library_note_handoff(self) -> bool:
+    def _link_open_note_to_active_workspace(self) -> str:
+        """Link the open note into the active workspace (task-32536 AC#1).
+
+        The remedy the refusal used to name without offering -- the
+        conversation reader's "Use as source" precedent (task-32107), minus
+        the receipt: the hand-off's own status line reports the link.
+
+        Returns:
+            The active workspace's display name, or ``""`` when nothing was
+            linked (no registry, no active workspace, no open note, or the
+            write failed) -- the hand-off stages nothing on ``""``.
+        """
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        note_id = str(self._selected_note_id or "").strip()
+        if registry is None or not note_id:
+            return ""
+        try:
+            active = registry.get_active_workspace()
+            if active is None:
+                return ""
+            # ``link_membership`` is INSERT OR IGNORE; read first so a stale
+            # cached gate never writes a membership that is already there.
+            already_linked = any(
+                membership.workspace_id == active.workspace_id
+                for membership in registry.get_item_memberships(
+                    item_type="note", item_id=note_id
+                )
+            )
+            if not already_linked:
+                snapshot = self._library_note_session.snapshot
+                title = (snapshot.title if snapshot is not None else "").strip()
+                registry.link_membership(
+                    active.workspace_id,
+                    item_type="note",
+                    item_id=note_id,
+                    title=title or "Untitled Note",
+                )
+        except Exception as error:
+            logger.warning(
+                "Library note could not be linked to the active workspace",
+                error_type=type(error).__name__,
+            )
+            return ""
+        self._invalidate_library_workspace_depth_state()
+        return self._library_workspace_depth_state().workspace_name
+
+    def _open_selected_library_note_handoff(self) -> tuple[str, str]:
         """Stage the note open in the editor into Console via the shared handoff.
 
-        Mirrors ``_open_selected_media_handoff``: builds the payload, then
-        guards on having an open note, the workspace context-handoff gate,
-        and the app exposing ``open_chat_with_handoff`` at all.
+        Mirrors ``_open_selected_media_handoff`` for the payload and the app
+        seam. task-32536 AC#1: the blocker on a fresh profile is the
+        workspace gate (PROVEN: every new note is ``not_in_active_workspace``),
+        not Console readiness -- so a note the gate refuses is linked to the
+        active workspace first, and only a failed link refuses.
+
+        Returns:
+            ``(blocker, linked_workspace)``. ``blocker`` is ``""`` on success,
+            else one sentence naming what stopped the hand-off and its
+            remedy -- the operation's only message (AC#2), never a toast.
+            ``linked_workspace`` is the workspace display name when this
+            call made the link, else ``""``.
         """
-        workspace_state = self._library_workspace_depth_state()
         payload = self._selected_library_note_handoff_payload()
-        notify = getattr(self.app_instance, "notify", None)
         if payload is None:
-            if callable(notify):
-                notify("Open a note before using it in Console.", severity="warning")
-            return False
-        if not workspace_state.context_handoff_enabled:
-            if callable(notify):
-                notify(workspace_state.context_handoff_tooltip, severity="warning")
-            return False
+            return "no note is open. Next: open a note, then try again", ""
+        linked = ""
+        if not self._library_workspace_depth_state().context_handoff_enabled:
+            linked = self._link_open_note_to_active_workspace()
+            if not linked:
+                registry = getattr(
+                    self.app_instance, "workspace_registry_service", None
+                )
+                if registry is None:
+                    return (
+                        "the workspace registry is unavailable. "
+                        "Next: restart Chatbook, then try again"
+                    ), ""
+                return (
+                    "the note could not be linked to the active workspace. "
+                    "Next: try again"
+                ), ""
         open_chat_with_handoff = getattr(
             self.app_instance, "open_chat_with_handoff", None
         )
         if not callable(open_chat_with_handoff):
-            if callable(notify):
-                notify(
-                    "Console handoff is unavailable for Library Notes.",
-                    severity="warning",
-                )
-            return False
+            return (
+                "Console handoff is unavailable. "
+                "Next: restart Chatbook, then try again"
+            ), ""
         try:
             open_chat_with_handoff(payload, action_label="Use in Console")
-        except Exception:
-            logger.opt(exception=True).warning("Library note Console handoff failed.")
-            if callable(notify):
-                notify("Could not use this note in Console.", severity="warning")
-            return False
-        return True
+        except Exception as error:
+            logger.warning(
+                "Library note Console handoff failed",
+                error_type=type(error).__name__,
+            )
+            return "Console could not take it. Next: try again", ""
+        return "", linked
     @on(Button.Pressed, "#library-note-context-use-in-console")
     @on(Button.Pressed, "#library-note-use-in-console")
     def handle_library_note_use_in_console(self, event: Button.Pressed) -> None:
@@ -4263,11 +4355,16 @@ class LibraryNotesController:
         operation = self._begin_library_notes_operation("console")
         if operation is None:
             return
-        handed_off = self._open_selected_library_note_handoff()
+        blocker, linked = self._open_selected_library_note_handoff()
         self._finish_library_notes_operation(
             operation,
-            success=handed_off,
-            failure_next_action="check Console readiness and try again",
+            success=not blocker,
+            completion_next_action=(
+                f"Linked to {linked} · staged in Console" if linked else ""
+            ),
+            failure_line=(
+                f"Can't use this note in Console — {blocker}." if blocker else ""
+            ),
         )
     @on(Button.Pressed, "#library-notes-source-files")
     async def _show_library_file_notes(self, event: Button.Pressed) -> None:

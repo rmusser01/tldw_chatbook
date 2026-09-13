@@ -157,11 +157,24 @@ async def test_a_previous_hand_off_failure_clears_on_note_change_and_on_save():
         await pilot.pause()
         await pilot.pause()
         assert _transfer_status(screen) == REGISTRY_MISSING_LINE
+        # The task's title is two DISAGREEING messages. The editor header
+        # folds the transfer row into its own line by design
+        # (``_authority_copy``), so the sentence may echo there -- but every
+        # surface that carries a hand-off message carries the SAME one.
+        carriers = [
+            str(static.renderable)
+            for static in screen.query(Static)
+            if "Can't use this note" in str(static.renderable)
+        ]
+        assert carriers, "the failure reached no surface at all"
+        for text in carriers:
+            assert REGISTRY_MISSING_LINE in text, text
+            assert "check Console readiness" not in text, text
         # The list pane beside the editor is the navigator's surface, not
         # the editor's: the critique saw the editor's failure painted there.
-        assert _painted(screen).count("Can't use this note") == 1
         for status in screen.query("#library-notes-status"):
             assert "Can't use" not in str(status.renderable)
+        app.notify.assert_not_called()
 
         # Note change: open the second note from the list.
         row = await _wait_for_note_row(screen, pilot, "n-2")
