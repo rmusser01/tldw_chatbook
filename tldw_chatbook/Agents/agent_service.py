@@ -4130,15 +4130,20 @@ class AgentService:
                 )
         return False
 
-    def _admit_agent_worktree(self, handle: "FleetHandle", child_run_id: str) -> str | None:
+    def _admit_agent_worktree(
+        self,
+        handle: "FleetHandle",
+        child_run_id: str,
+        execution_owner: ExecutionOwner,
+    ) -> str | None:
         """Create and route an isolated checkout under captured source authority."""
         from tldw_chatbook.Agents import agent_worktree
         from tldw_chatbook.Agents.local_tool_provider import (
             LocalToolProvider,
             RunAdmittedWorkspaceRoot,
         )
+        from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
         from tldw_chatbook.Tools.workspace_tool_executor import (
-            WorkspaceToolExecutionError,
             WorkspaceToolExecutor,
         )
 
@@ -4155,6 +4160,8 @@ class AgentService:
                 "worktree isolation refused [source_authority_unavailable]: "
                 "select a writable named repository binding for this run"
             )
+
+        execution_owner.bind_run(child_run_id)
 
         def source_is_current(write: bool) -> bool:
             try:
@@ -4190,6 +4197,86 @@ class AgentService:
             child_identity = agent_worktree._worktree_root_identity(
                 created.worktree_path
             )
+            source_common_dir, source_common_identity = (
+                agent_worktree._git_common_directory_identity(source.root)
+            )
+            if not source_is_current(True):
+                return (
+                    "worktree isolation refused [source_authority_revoked]: the selected "
+                    "repository binding changed during ownership capture"
+                )
+            child_common_dir, child_common_identity = (
+                agent_worktree._git_common_directory_identity(created.worktree_path)
+            )
+            if (
+                not source_is_current(True)
+                or agent_worktree._worktree_root_identity(created.worktree_path)
+                != child_identity
+                or child_common_dir != source_common_dir
+                or child_common_identity != source_common_identity
+            ):
+                return (
+                    "worktree isolation refused [ownership_capture_failed]: the created "
+                    "checkout no longer matches its admitted repository"
+                )
+
+            repository = AgentWorktreeRepository(self.db)
+            repository.record_created(
+                run_id=child_run_id,
+                workspace_id=source.workspace_id,
+                binding_id=source.binding_id,
+                locator_fingerprint=source.locator_fingerprint,
+                repo_root=str(source.root),
+                repo_identity=source.root_identity,
+                git_common_dir=str(source_common_dir),
+                git_common_identity=source_common_identity,
+                child_path=str(created.worktree_path),
+                child_identity=child_identity,
+                branch=created.branch,
+                base_sha=created.base_sha,
+                execution_id=execution_owner.execution_id,
+            )
+
+            @contextlib.contextmanager
+            def callback_connection():
+                local = self.db._thread_local
+                borrowed = getattr(local, "conn", None) is not None
+                try:
+                    yield
+                finally:
+                    if not borrowed and getattr(local, "conn", None) is not None:
+                        self.db.close()
+
+            def persist_actual_drain(cleanup_proven: bool) -> None:
+                try:
+                    with callback_connection():
+                        repository.mark_writer_finished(
+                            child_run_id,
+                            execution_owner.execution_id,
+                            cleanup_proven=cleanup_proven,
+                        )
+                except Exception as exc:  # noqa: BLE001 - ownership stays conservative
+                    logger.warning(
+                        "could not persist agent worktree drain error_type={}",
+                        _safe_exception_type(exc),
+                    )
+
+            execution_owner.on_drained(persist_actual_drain)
+
+            def cleanup_unproven() -> None:
+                execution_owner.mark_cleanup_unproven()
+                try:
+                    with callback_connection():
+                        repository.mark_writer_finished(
+                            child_run_id,
+                            execution_owner.execution_id,
+                            cleanup_proven=False,
+                        )
+                except Exception as exc:  # noqa: BLE001 - owner latch remains sticky
+                    logger.warning(
+                        "could not persist uncertain agent worktree cleanup error_type={}",
+                        _safe_exception_type(exc),
+                    )
 
             def child_guard(write: bool) -> bool:
                 try:
@@ -4214,10 +4301,18 @@ class AgentService:
                 allow_write=True,
                 guard=child_guard,
                 workspace_executor=WorkspaceToolExecutor(created.worktree_path),
+                on_cleanup_unproven=cleanup_unproven,
             )
             provider.admit_run_workspace_root(child_run_id, authority)
-        except (WorkspaceToolExecutionError, ValueError, OSError) as exc:
-            return f"worktree isolation refused [admit_failed]: {exc}"
+        except Exception as exc:  # noqa: BLE001 - fail closed after Git creation
+            logger.warning(
+                "could not record or route agent worktree error_type={}",
+                _safe_exception_type(exc),
+            )
+            return (
+                "worktree isolation refused [admit_failed]: ownership could not be "
+                "recorded or routed"
+            )
         return None
 
     def _retire_agent_worktree(
@@ -5164,7 +5259,9 @@ class AgentService:
                     )
                 child_kwargs["precreated_run_id"] = child_run_id
                 if isolation == "worktree":
-                    refusal = self._admit_agent_worktree(handle, child_run_id)
+                    refusal = self._admit_agent_worktree(
+                        handle, child_run_id, child_owner
+                    )
                     if refusal is not None:
                         # I1 (TASK-28238 P2 T7 final fix wave): `db.create_run`
                         # above already wrote this row as "running" --
