@@ -7,13 +7,15 @@ finish, including workers abandoned by a timeout and detached model cleanup.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from threading import Lock
 from typing import Literal
 from uuid import uuid4
+
+from loguru import logger
 
 from .agent_models import WorkOrigin as WorkOrigin
 
@@ -214,6 +216,9 @@ class ExecutionOwner:
         self._run_id: str | None = None
         self._root_finished = False
         self._operations: set[OwnedOperation] = set()
+        self._drain_callbacks: list[Callable[[bool], None]] = []
+        self._cleanup_unproven = False
+        self._drain_outcome: bool | None = None
 
     @contextmanager
     def activate(self) -> Iterator[None]:
@@ -272,11 +277,52 @@ class ExecutionOwner:
     def finish_root(self) -> None:
         with self.capacity._lock:
             self._root_finished = True
-            self._prune_if_finished()
+            callbacks, outcome = self._prune_if_finished()
+        self._invoke_callbacks(callbacks, outcome)
 
-    def _prune_if_finished(self) -> None:
+    def on_drained(self, callback: Callable[[bool], None]) -> None:
+        """Invoke callback once physical ownership drains, outside the lock."""
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        with self.capacity._lock:
+            if self._drain_outcome is None:
+                self._drain_callbacks.append(callback)
+                return
+            outcome = self._drain_outcome
+        self._invoke_callbacks((callback,), outcome)
+
+    def mark_cleanup_unproven(self) -> None:
+        """Make the eventual drain outcome uncertain without releasing capacity."""
+        with self.capacity._lock:
+            if self._drain_outcome is None:
+                self._cleanup_unproven = True
+
+    @staticmethod
+    def _invoke_callbacks(
+        callbacks: tuple[Callable[[bool], None], ...], outcome: bool | None
+    ) -> None:
+        if outcome is None:
+            return
+        for callback in callbacks:
+            try:
+                callback(outcome)
+            except Exception as exc:  # noqa: BLE001 - callbacks are isolated
+                logger.warning(
+                    "Execution drain callback failed (exception_type={})",
+                    type(exc).__name__,
+                )
+
+    def _prune_if_finished(
+        self,
+    ) -> tuple[tuple[Callable[[bool], None], ...], bool | None]:
         if self._root_finished and not self._operations:
             self.capacity._owners.pop(self.execution_id, None)
+            if self._drain_outcome is None:
+                self._drain_outcome = not self._cleanup_unproven
+                callbacks = tuple(self._drain_callbacks)
+                self._drain_callbacks.clear()
+                return callbacks, self._drain_outcome
+        return (), None
 
 
 class OwnedOperation:
@@ -294,4 +340,5 @@ class OwnedOperation:
     def finish(self) -> None:
         with self.owner.capacity._lock:
             self.owner._operations.discard(self)
-            self.owner._prune_if_finished()
+            callbacks, outcome = self.owner._prune_if_finished()
+        self.owner._invoke_callbacks(callbacks, outcome)
