@@ -177,6 +177,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     expand_character_template,
     normalize_chat_display_name,
     resolve_console_message_presentation,
+    session_assistant_display_name,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
@@ -1039,7 +1040,8 @@ class ConsoleChatPersistence(Protocol):
         conversation_id: str,
         user_name_override: str | None,
         character_system_template: str | None,
-        character_name_snapshot: str | None,
+        character_name_snapshot: str | None = None,
+        persona_system_template: str | None = None,
     ) -> bool:
         """Persist Console-owned roleplay identity context for a conversation.
 
@@ -1048,6 +1050,7 @@ class ConsoleChatPersistence(Protocol):
             user_name_override: Optional saved user display-name override.
             character_system_template: Optional saved character prompt template.
             character_name_snapshot: Optional historical character display name.
+            persona_system_template: Optional saved persona prompt template.
 
         Returns:
             True when the roleplay context was persisted.
@@ -1469,10 +1472,19 @@ class ConsoleChatSession:
     #: IDs remain opaque in ``assistant_id`` and never populate this field.
     character_id: int | None = None
     character_name: str | None = None
+    #: Persona-kind assistant display name (ADR-149). Set only when
+    #: ``assistant_kind == "persona"``; mutually exclusive with
+    #: ``character_name``. Never persisted on the conversation row --
+    #: re-resolved from ``assistant_id`` at resume.
+    assistant_name: str | None = None
     #: Per-chat human label, independently persisted in conversation metadata.
     user_display_name_override: str | None = None
     #: Trusted character system source; materialized into ``settings.system_prompt``.
     character_system_template: str | None = None
+    #: Trusted persona system-prompt source (ADR-149); materialized into
+    #: ``settings.system_prompt`` via the identity-template expander and
+    #: persisted as an optional key in the version-1 roleplay envelope.
+    persona_system_template: str | None = None
     speech_preferences: ConsoleSpeechPreferences = field(
         default_factory=ConsoleSpeechPreferences
     )
@@ -2134,6 +2146,8 @@ class ConsoleChatStore:
         assistant_default_notice: str = "",
         character_id: int | None = None,
         character_name: str | None = None,
+        assistant_name: str | None = None,
+        persona_system_template: str | None = None,
         ephemeral: bool = False,
         activate: bool = True,
         project_instruction_state: ProjectInstructionControlState | None = None,
@@ -2222,6 +2236,8 @@ class ConsoleChatStore:
             assistant_default_notice=assistant_default_notice,
             character_id=character_id,
             character_name=character_name,
+            assistant_name=assistant_name,
+            persona_system_template=persona_system_template,
             ephemeral=ephemeral,
             project_instruction_state=(
                 project_instruction_state
@@ -2561,38 +2577,59 @@ class ConsoleChatStore:
         assistant_id: str,
         assistant_authority_id: str | None,
         character_id: int | None,
-        character_name: str,
+        character_name: str | None,
+        assistant_name: str | None = None,
     ) -> ConsoleChatSession:
         """Atomically replace an untouched initial tab with roleplay identity."""
         if not isinstance(canonical_settings, ConsoleSessionSettings):
             raise TypeError("canonical_settings must be ConsoleSessionSettings.")
         if not isinstance(settings, ConsoleSessionSettings):
             raise TypeError("settings must be ConsoleSessionSettings.")
-        if type(trusted_system_prompt) is not str or not trusted_system_prompt.strip():
-            raise ValueError("Trusted roleplay system prompt must be non-empty text.")
+        if type(trusted_system_prompt) is not str:
+            raise TypeError("Trusted roleplay system prompt must be text.")
         if runtime_backend not in {"local", "server"}:
             raise ValueError("Roleplay runtime backend must be local or server.")
-        if assistant_kind != "character":
-            raise ValueError("Repurposed sessions require character identity.")
+        if assistant_kind not in {"character", "persona"}:
+            raise ValueError("Repurposed sessions require named identity.")
         if type(assistant_id) is not str or not assistant_id:
             raise ValueError("Roleplay assistant id must be non-empty text.")
         if assistant_authority_id is not None and (
             type(assistant_authority_id) is not str or not assistant_authority_id
         ):
             raise ValueError("Roleplay authority id must be non-empty text or None.")
-        if type(character_name) is not str or not character_name.strip():
-            raise ValueError("Roleplay character name must be non-empty text.")
-        if title != f"Chat with {character_name}":
-            raise ValueError("Roleplay title does not match the character identity.")
-        expected_roleplay_settings = replace(
-            canonical_settings,
-            system_prompt=trusted_system_prompt,
-            character_label=character_name,
-        )
+        if assistant_kind == "character":
+            if not trusted_system_prompt.strip():
+                raise ValueError("Trusted roleplay system prompt must be non-empty text.")
+            if type(character_name) is not str or not character_name.strip():
+                raise ValueError("Roleplay character name must be non-empty text.")
+            if title != f"Chat with {character_name}":
+                raise ValueError("Roleplay title does not match the character identity.")
+            expected_roleplay_settings = replace(
+                canonical_settings,
+                system_prompt=trusted_system_prompt,
+                character_label=character_name,
+            )
+        else:
+            # Persona sessions remain authority-free (ADR-037) and never
+            # carry character identity. A blank template keeps the canonical
+            # default prompt (``None``), matching the persona seed contract.
+            if assistant_authority_id is not None:
+                raise ValueError("Persona sessions remain authority-free (ADR-037).")
+            if character_id is not None or character_name is not None:
+                raise ValueError("Persona sessions cannot carry character identity.")
+            if type(assistant_name) is not str or not assistant_name.strip():
+                raise ValueError("Persona name must be non-empty text.")
+            if title != f"Chat with {assistant_name}":
+                raise ValueError("Persona title does not match the persona identity.")
+            expected_roleplay_settings = replace(
+                canonical_settings,
+                system_prompt=trusted_system_prompt or None,
+                character_label="",
+            )
         if settings != expected_roleplay_settings:
             raise ValueError("Roleplay settings contain noncanonical changes.")
         if runtime_backend == "local":
-            if (
+            if assistant_kind == "character" and (
                 type(character_id) is not int
                 or character_id < 1
                 or assistant_id != str(character_id)
@@ -2633,6 +2670,7 @@ class ConsoleChatStore:
         session.assistant_authority_id = assistant_authority_id
         session.character_id = character_id
         session.character_name = character_name
+        session.assistant_name = assistant_name if assistant_kind == "persona" else None
         session.updated_at = proposed_updated_at
         session.identity_revision = proposed_identity_revision
         session.generation_settings_revision = proposed_generation_revision
@@ -12413,6 +12451,7 @@ class ConsoleChatStore:
             ),
             assistant_kind=session.assistant_kind,
             character_name=session.character_name,
+            assistant_name=session.assistant_name,
             revision=session.identity_revision,
         )
 
@@ -12651,6 +12690,35 @@ class ConsoleChatStore:
             source_changed=source_changed,
         )
 
+    def seed_persona_roleplay(
+        self,
+        session_id: str,
+        *,
+        system_template: str,
+        global_default: object,
+    ) -> None:
+        """Seed the trusted persona system source into a fresh session.
+
+        Persona profiles have no greeting field, so unlike
+        ``seed_character_roleplay`` this never appends a message.
+        """
+        session = self._session_or_raise(session_id)
+        source = (
+            system_template
+            if isinstance(system_template, str) and system_template.strip()
+            else None
+        )
+        source_changed = session.persona_system_template != source
+        session.persona_system_template = source
+        if source_changed:
+            self._bump_identity_revision(session_id)
+        context_persisted = self._persist_roleplay_context(session)
+        self._materialize_roleplay_projections(
+            session_id, global_default=global_default
+        )
+        if not context_persisted:
+            logger.warning("Failed to persist seeded Console persona context.")
+
     def swap_session_character_roleplay(
         self,
         session_id: str,
@@ -12710,10 +12778,16 @@ class ConsoleChatStore:
         identity_changed = (
             session.character_name != new_name
             or session.character_system_template != source
+            or session.assistant_name is not None
+            or session.persona_system_template is not None
         )
         source_changed = session.character_system_template != source
         session.character_name = new_name
         session.character_system_template = source
+        # One-name-set invariant (ADR-149): a character swap retires any
+        # persona identity bound to this session.
+        session.assistant_name = None
+        session.persona_system_template = None
         if identity_changed:
             self._bump_identity_revision(session_id)
 
@@ -12813,6 +12887,32 @@ class ConsoleChatStore:
         )
         return session, persisted
 
+    def set_session_assistant_name(
+        self,
+        session_id: str,
+        assistant_name: str | None,
+        *,
+        global_default: object,
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Set persona identity through the projection revision seam.
+
+        Setting a non-blank persona name clears any character name, keeping
+        the one-name-set invariant (ADR-149).
+        """
+        session = self._session_or_raise(session_id)
+        normalized = assistant_name.strip() if isinstance(assistant_name, str) else ""
+        new_name = normalized or None
+        if session.assistant_name == new_name:
+            return session, True
+        session.assistant_name = new_name
+        if new_name is not None:
+            session.character_name = None
+        self._bump_identity_revision(session_id)
+        persisted = self._materialize_roleplay_projections(
+            session_id, global_default=global_default
+        )
+        return session, persisted
+
     def _bump_identity_revision(self, session_id: str) -> None:
         session = self._session_or_raise(session_id)
         session.identity_revision += 1
@@ -12842,19 +12942,45 @@ class ConsoleChatStore:
             and bool(session.character_name.strip())
         )
 
+    @staticmethod
+    def _is_named_persona_session(session: ConsoleChatSession) -> bool:
+        return (
+            session.assistant_kind == "persona"
+            and isinstance(session.assistant_name, str)
+            and bool(session.assistant_name.strip())
+        )
+
+    @classmethod
+    def _is_named_identity_session(cls, session: ConsoleChatSession) -> bool:
+        return cls._is_named_character_session(
+            session
+        ) or cls._is_named_persona_session(session)
+
+    @staticmethod
+    def _identity_system_template(session: ConsoleChatSession) -> str | None:
+        """Return the trusted template for the session's bound kind."""
+        if session.assistant_kind == "persona":
+            return session.persona_system_template
+        return session.character_system_template
+
+    @staticmethod
+    def _identity_display_name(session: ConsoleChatSession) -> str:
+        """Return the session's bound assistant display name, or ""."""
+        return (session_assistant_display_name(session) or "").strip()
+
     def _roleplay_projection_is_stale(
         self, session: ConsoleChatSession, global_default: object
     ) -> bool:
-        if not self._is_named_character_session(session):
+        if not self._is_named_identity_session(session):
             return False
         context = self.presentation_context(session.id, global_default)
-        character_name = (session.character_name or "").strip()
-        template = session.character_system_template
+        identity_name = self._identity_display_name(session)
+        template = self._identity_system_template(session)
         if template and session.settings is not None:
             if session.settings.system_prompt != expand_character_template(
                 template,
                 user_name=context.user_name,
-                character_name=character_name,
+                character_name=identity_name,
             ):
                 return True
         for message in self._nodes_by_session.get(session.id, {}).values():
@@ -12867,7 +12993,7 @@ class ConsoleChatStore:
                 != expand_character_template(
                     metadata.template_source,
                     user_name=context.user_name,
-                    character_name=character_name,
+                    character_name=identity_name,
                 )
             ):
                 return True
@@ -12896,17 +13022,18 @@ class ConsoleChatStore:
     ) -> ConsoleRoleplayProjectionPersistencePlan | None:
         """Update owner-thread state and return frozen durable call arguments."""
         session = self._session_or_raise(session_id)
-        if not self._is_named_character_session(session):
+        if not self._is_named_identity_session(session):
             return None
         context = self.presentation_context(session_id, global_default)
-        character_name = (session.character_name or "").strip()
+        identity_name = self._identity_display_name(session)
+        template = self._identity_system_template(session)
         system_prompt_write: _RoleplaySystemPromptWrite | None = None
         message_writes: list[_RoleplayMessageProjectionWrite] = []
-        if session.character_system_template and session.settings is not None:
+        if template and session.settings is not None:
             projected_system = expand_character_template(
-                session.character_system_template,
+                template,
                 user_name=context.user_name,
-                character_name=character_name,
+                character_name=identity_name,
             )
             if session.settings.system_prompt != projected_system:
                 prior_system_prompt = session.settings.system_prompt
@@ -12936,7 +13063,7 @@ class ConsoleChatStore:
             projected = expand_character_template(
                 metadata.template_source,
                 user_name=context.user_name,
-                character_name=character_name,
+                character_name=identity_name,
             )
             if message.content == projected and not force_persistence:
                 continue
@@ -13523,19 +13650,22 @@ class ConsoleChatStore:
         writer = getattr(self.persistence, "update_conversation_roleplay_context", None)
         if not callable(writer):
             return False
+        context_kwargs: dict[str, Any] = {
+            "conversation_id": session.persisted_conversation_id,
+            "user_name_override": session.user_display_name_override,
+            "character_system_template": session.character_system_template,
+            "character_name_snapshot": (
+                session.character_name
+                if session.assistant_kind == "character"
+                else None
+            ),
+        }
+        # Declare-to-receive: narrow persistence fakes written before this
+        # kwarg existed keep the original three-keyword call shape.
+        if self._persistence_accepts_kwarg(writer, "persona_system_template"):
+            context_kwargs["persona_system_template"] = session.persona_system_template
         try:
-            return bool(
-                writer(
-                    conversation_id=session.persisted_conversation_id,
-                    user_name_override=session.user_display_name_override,
-                    character_system_template=session.character_system_template,
-                    character_name_snapshot=(
-                        session.character_name
-                        if session.assistant_kind == "character"
-                        else None
-                    ),
-                )
-            )
+            return bool(writer(**context_kwargs))
         except Exception as exc:
             logger.warning(
                 "Failed to persist Console roleplay identity context (error_type={}).",
@@ -18285,6 +18415,7 @@ class ConsoleChatStore:
             session.user_display_name_override is not None
             or session.character_system_template is not None
             or session.assistant_kind == "character"
+            or session.persona_system_template is not None
         ) and not self._persist_roleplay_context(session):
             logger.warning("Failed to flush Console roleplay context on first persist.")
             if strict_roleplay_context:
