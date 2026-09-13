@@ -13,6 +13,7 @@ on:
       - 'tldw_chatbook/UI/LLM_Management_Window.py'
       - 'tldw_chatbook/UI/Screens/llm_screen.py'
       - 'Tests/conftest.py'
+      - 'Tests/private_profile.py'
       - 'Tests/LLM_Management/**'
       - 'Tests/Model_Artifacts/**'
       - 'Tests/UI/app_factory.py'
@@ -69,10 +70,20 @@ jobs:
             Tests/LLM_Management/test_gguf_server_sources.py::test_source_command_matrix_uses_only_active_authority \
             Tests/LLM_Management/test_gguf_server_sources.py::test_gguf_nonzero_exit_presents_sanitized_runtime_compatibility_copy \
             Tests/LLM_Management/test_gguf_server_sources.py::test_real_managed_contention_delivers_busy_recovery_without_spawning \
-            Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection \
-            Tests/UI/test_llm_gguf_source_modes.py::test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable \
-            Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions \
             Tests/LLM_Management/test_vllm_setup.py::test_vllm_command_snapshot_is_unchanged \
             Tests/LLM_Management/test_gguf_server_sources.py::test_mlx_command_snapshot_is_unchanged \
             --timeout=60 \
             -q
+
+      - name: Run each full-app GGUF case with its profile selected before imports
+        run: |
+          failed=0
+          for node in \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection" \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable" \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]" \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]"
+          do
+            TLDW_TEST_PRIVATE_PROFILE_NODE="$node" python -m pytest "$node" --timeout=60 -v || failed=1
+          done
+          exit "$failed"

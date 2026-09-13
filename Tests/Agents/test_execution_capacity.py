@@ -45,10 +45,12 @@ def test_abandoned_worker_keeps_slot_and_blocks_its_run_until_real_completion(ca
     owner = capacity.begin_execution(origin=WorkOrigin.AUTOMATIC, conversation_id="c")
     owner.bind_run("r")
     gate = threading.Event()
+    started = threading.Event()
     workers = []
 
     def tool():
         workers.append(threading.current_thread())
+        started.set()
         assert gate.wait(5)
         return ToolResult(ok=True, content="late")
 
@@ -56,6 +58,8 @@ def test_abandoned_worker_keeps_slot_and_blocks_its_run_until_real_completion(ca
         result = _call_with_timeout(tool, 0.02, "slow", lambda: cancel, owner=owner)
         assert not result.ok
         assert ("cancelled" if cancel else "timed out") in result.error
+        # Admission may outlast the timeout before the tool body starts.
+        assert started.wait(5)
         snapshot = capacity.snapshot()
         assert snapshot.tool_workers == snapshot.stopping_tool_workers == 1
         assert snapshot.executions[0].run_id == "r"
@@ -68,6 +72,7 @@ def test_abandoned_worker_keeps_slot_and_blocks_its_run_until_real_completion(ca
         gate.set()
         for worker in workers:
             worker.join(5)
+            assert not worker.is_alive()
     assert capacity.snapshot().executions == ()
 
 
