@@ -4,6 +4,28 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Current correction replaces startup readmission's 10ms timer polling with a
+completion future posted by the same native worker after all cleanup. Its owning
+task shields that future through cancellation, then performs the original pause,
+lease and retirement checks before reopening producers. Two real held-gate tests
+fail with the old polling wait and pass with notification; startup/cancellation
+scope passes 16 tests (29.92 seconds). Actual macOS installed seed passes (16.41
+seconds). Independent review found no issues; production Bandit reports none and
+Ruff adds none to its existing findings. The seed's count-based release observer
+now uses its intended elapsed-time budget (60 seconds Windows, five elsewhere).
+
+This follows Windows [34726369956](https://github.com/rmusser01/tldw_chatbook/actions/runs/34726369956),
+which passes native42 and reaches archive packaging but fails the count-based
+readmission observer (one product failure, 197.42 seconds). All13 artifact hashes
+and the installed receipt verify. The valid main-thread profile records 8,949
+event-loop iterations and 17,548 sleep calls in 5.006 seconds, despite requested
+10ms waits. Main-thread CPU is 2.781 seconds including diagnostic overhead;
+29,913 calls exceed the bounded aggregation. Exact reproduction of the timing
+mechanism remains Windows-specific: emulating coarse clock/resolution alone on
+macOS does not spin. The observed excessive polling is removed directly.
+The same corrected diagnostic revision passes77 Linux checks (16.40 seconds),
+public source SHA256 `1c53b2f499ab86009809509f468c9c6759384dbcc7b43028aa19d5423ab3cc83`.
+
 Windows [34724659597](https://github.com/rmusser01/tldw_chatbook/actions/runs/34724659597)
 at `3b4a348889c808d821b9a183bc60ea9725ddc56d` passes native 294/294,
 all three F9 modes, installed two-profile and support 53. Replacement and rollback

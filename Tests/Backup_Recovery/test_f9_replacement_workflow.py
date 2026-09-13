@@ -77,9 +77,9 @@ async def main():
     assert service.status(operation)['state']=='running',dict(service.status(operation))
     await asyncio.sleep(.01)
   assert service.status(operation)['phase']=='packaging' and not destination.exists()
-  for _ in range(6000 if sys.platform=='win32' else 500):
-   if storage_admission._pause is None and app._backup_runtime_maintenance is None:break
-   await asyncio.sleep(.01)
+  async with asyncio.timeout(60 if sys.platform=='win32' else 5):
+   while storage_admission._pause is not None or app._backup_runtime_maintenance is not None:
+    await asyncio.sleep(.01)
   assert storage_admission._pause is None
   after=app.chachanotes_db.add_note('After capture','Ordinary writer resumed.')
   release.set()

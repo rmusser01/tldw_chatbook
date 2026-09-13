@@ -345,9 +345,19 @@ class _LocalPause:
         if not getattr(self, "_startup_retired", False):
             return
         if self._startup_thread is None:
+            loop = asyncio.get_running_loop()
+            completion = self._startup_completion = loop.create_future()
+
+            def reacquire():
+                try:
+                    _reacquire_paused_startup(self)
+                except BaseException as error:  # noqa: BLE001 - relay native cleanup failure.
+                    self._startup_error = error
+                finally:
+                    loop.call_soon_threadsafe(completion.set_result, None)
+
             self._startup_thread = threading.Thread(
-                target=_reacquire_paused_startup,
-                args=(self,),
+                target=reacquire,
                 name="chatbook-startup-readmission",
                 daemon=True,
             )
@@ -355,9 +365,9 @@ class _LocalPause:
         # The caller owns this attempt through completion. Cancellation of an
         # outer UI waiter must not abandon native re-enrollment or open the gate.
         cancellation = None
-        while self._startup_thread.is_alive():
+        while not self._startup_completion.done():
             try:
-                await asyncio.sleep(0.01)
+                await asyncio.shield(self._startup_completion)
             except asyncio.CancelledError as error:
                 cancellation = cancellation or error
         _LocalPause._check(self)

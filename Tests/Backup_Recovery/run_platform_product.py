@@ -68,6 +68,7 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_capture_root_order.py",
     "Tests/Backup_Recovery/test_admission_diagnostics.py",
     "Tests/Backup_Recovery/test_loop_diagnostics.py",
+    "Tests/Backup_Recovery/test_startup_readmission_continuity.py",
 )
 _RESTORE_DIAGNOSTIC_TESTS = (
     (
