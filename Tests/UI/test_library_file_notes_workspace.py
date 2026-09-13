@@ -2974,7 +2974,10 @@ async def test_folder_files_authority_merges_save_and_git_in_either_update_order
         assert _static_text(workspace, "#file-notes-save-detail") == (
             f"Content detail: {save_detail}"
         )
-        assert "Git · 1 change" in expected
+        # task-32543: no Git service is attached here, so nothing confirmed
+        # a repository -- the count is this session's edits, never "Git".
+        assert "1 session change" in expected
+        assert "Git" not in expected
         assert "Next:" in content
 
         workspace._navigator_mode = "git"
@@ -3029,6 +3032,64 @@ async def test_file_notes_authority_copy_is_complete_and_bounded(
         assert workspace.query_one("#file-notes-body").region.height >= 8
 
     replica.close()
+
+
+def test_header_never_says_git_for_a_non_repository_with_changes() -> None:
+    """task-32543 AC#2/#3: session edits in a plain folder are not "Git".
+
+    Critique #3 (A 57; B 40, 50): a fresh vault with no ``.git`` read
+    "Folder files · Folder: vault · Git · 1 change" after one edit, because
+    the resolver built the suffix from the session change count alone.
+    """
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        resolve_file_note_status_channels,
+    )
+
+    channels = resolve_file_note_status_channels(
+        root="/notes/vault",
+        git_changes=1,
+        repository_confirmed=False,
+    )
+
+    assert channels.authority_git == (
+        "Folder files · Folder: vault · 1 session change"
+    )
+    assert "Git" not in channels.authority_git
+    plural = resolve_file_note_status_channels(
+        root="/notes/vault",
+        git_changes=3,
+        repository_confirmed=False,
+    )
+    assert plural.authority_git.endswith("· 3 session changes")
+    assert "Git" not in plural.authority_git
+
+
+def test_header_says_git_only_after_a_confirmed_repository() -> None:
+    """task-32543 AC#1: the "Git · …" suffix needs a confirmed repository."""
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        resolve_file_note_status_channels,
+    )
+
+    confirmed = resolve_file_note_status_channels(
+        root="/notes/vault",
+        git_changes=1,
+        repository_confirmed=True,
+    )
+    assert confirmed.authority_git == "Folder files · Folder: vault · Git · 1 change"
+
+    # Git activity words (a running or failed operation) can only come from
+    # a Git operation, which presupposes the repository -- they stay.
+    failed = resolve_file_note_status_channels(
+        root="/notes/vault",
+        git_changes=1,
+        git_failure="Commit failed",
+        repository_confirmed=True,
+    )
+    assert failed.authority_git.endswith("· Git · Commit failed")
+
+    # The gate is opt-in for callers that do not know: absent, no "Git".
+    unknown = resolve_file_note_status_channels(root="/notes/vault", git_changes=1)
+    assert "Git" not in unknown.authority_git
 
 
 def test_configured_root_authority_state_table_is_two_line_and_bounded(
@@ -3828,9 +3889,10 @@ async def test_saved_authority_with_session_git_paints_at_60x20(
         assert "Saved" in _static_text(workspace, "#file-notes-save-status")
         if push_copy:
             assert push_copy in painted
-            assert "1 change" not in painted
+            assert "1 session change" not in painted
         else:
-            assert "1 change" in painted
+            assert "1 session change" in painted
+            assert "Git" not in painted
 
     replica.close()
 
@@ -6877,7 +6939,8 @@ async def test_file_notes_merged_recovery_authority_paints_at_60x20_shell(
         assert "Folder: Resear" in painted
         assert "name" in painted
         assert state_copy in content_words
-        assert "Git · 1 change" in painted
+        assert "1 session change" in painted
+        assert "Git" not in painted
         assert next_copy in content_words
         assert detail not in _static_text(workspace, "#file-notes-authority")
         assert detail not in _static_text(workspace, "#file-notes-save-status")

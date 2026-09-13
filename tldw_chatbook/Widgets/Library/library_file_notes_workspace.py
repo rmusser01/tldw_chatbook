@@ -159,6 +159,7 @@ def resolve_file_note_status_channels(
     authority_failure: str = "",
     authority_uncertain: str = "",
     authority_running: str = "",
+    repository_confirmed: bool = False,
 ) -> NotesStatusChannels:
     """Resolve Folder content and Git status without cross-channel masking.
 
@@ -178,6 +179,11 @@ def resolve_file_note_status_channels(
         authority_failure: Bounded detail for a failed authority operation.
         authority_uncertain: Bounded detail for an uncertain authority operation.
         authority_running: Bounded detail for the active authority operation.
+        repository_confirmed: Whether a repository check (``git rev-parse``)
+            has succeeded for this root. task-32543: without it the change
+            count is this session's edit count, never "Git" -- a plain
+            folder read "Git · 1 change" after one edit (critique #3, A 57;
+            B 40, 50), which the solo operator took as "version-controlled".
 
     Returns:
         The independent content, authority, and safe-action status channels.
@@ -229,7 +235,11 @@ def resolve_file_note_status_channels(
         )
     if not status_copy and git_changes:
         change_word = "change" if git_changes == 1 else "changes"
-        status_copy = f"Git · {git_changes} {change_word}"
+        status_copy = (
+            f"Git · {git_changes} {change_word}"
+            if repository_confirmed
+            else f"{git_changes} session {change_word}"
+        )
     if cell_len(status_copy) > 34:
         status_copy = _middle_elide_cells(status_copy, 34)
 
@@ -1177,6 +1187,12 @@ class LibraryFileNotesWorkspace(Vertical):
         self._save_task: asyncio.Task[bool] | None = None
         self._git_status_worker: Worker[Any] | None = None
         self._git_action_worker: Worker[Any] | None = None
+        # task-32543: the "repository confirmed" fact behind the header's
+        # "Git · N change(s)" suffix -- one ``git rev-parse`` discovery per
+        # session binding, or process trust already granted for it.
+        self._repository_probe_binding: SessionBinding | None = None
+        self._repository_confirmed = False
+        self._repository_probe_worker: Worker[Any] | None = None
         self._git_status_task: asyncio.Task[SessionGitStatus] | None = None
         self._git_status_task_binding: SessionBinding | None = None
         self._git_status_failure = ""
@@ -2044,8 +2060,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self, session_git_count: int | None = None
     ) -> NotesStatusChannels:
         """Project current async inputs through the pure status resolver."""
+        binding = self._session_binding
         if session_git_count is None:
-            binding = self._session_binding
             changes = (
                 () if binding is None else self._session_owner.snapshot(binding).changes
             )
@@ -2101,6 +2117,7 @@ class LibraryFileNotesWorkspace(Vertical):
             authority_running = "Checking folder…"
         return resolve_file_note_status_channels(
             root=self._root,
+            repository_confirmed=self._repository_confirmed_for(binding),
             conflict=self._save_state == "conflict",
             unavailable=self._root is None or self._root_offline is True,
             read_only=opened is not None and not opened.editable,
@@ -2117,10 +2134,51 @@ class LibraryFileNotesWorkspace(Vertical):
             authority_running=authority_running,
         )
 
+    def _repository_confirmed_for(self, binding: SessionBinding | None) -> bool:
+        """Return whether a repository check has succeeded for ``binding``."""
+        if binding is None:
+            return False
+        if self._session_owner.snapshot(binding).trusted_repository is not None:
+            return True
+        return self._repository_probe_binding == binding and self._repository_confirmed
+
+    def _ensure_repository_probe(self) -> None:
+        """Run the one ``git rev-parse`` discovery this binding has not had."""
+        binding = self._session_binding
+        service = self._session_git_service()
+        if (
+            binding is None
+            or service is None
+            or self._repository_probe_binding == binding
+        ):
+            return
+        self._repository_probe_binding = binding
+        self._repository_confirmed = False
+        self._repository_probe_worker = self.run_worker(
+            self._probe_repository(binding, service),
+            name="file-notes-repository-probe",
+            group="file-notes-repository-probe",
+            exclusive=True,
+        )
+
+    async def _probe_repository(
+        self,
+        binding: SessionBinding,
+        service: _SessionGitService,
+    ) -> None:
+        discovery = await service.discover(binding)
+        if self._repository_probe_binding != binding:
+            return
+        confirmed = discovery.state == "ready"
+        if confirmed != self._repository_confirmed:
+            self._repository_confirmed = confirmed
+            self._render_status_channels()
+
     def _render_status_channels(self, session_git_count: int | None = None) -> None:
         """Render both header channels from one deterministic projection."""
         if not self._active or not self.is_mounted:
             return
+        self._ensure_repository_probe()
         channels = self._status_channels(session_git_count)
         content = channels.content_recovery
         if channels.safe_next_action:

@@ -3,9 +3,11 @@ id: TASK-32543
 title: >-
   Library Notes: Folder files header claims "Git · N change(s)" on a folder that
   is not a git repository
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-13 06:46'
+updated_date: '2026-09-13 15:13'
 labels:
   - library
   - notes
@@ -30,3 +32,9 @@ Critique #3 (dev 5fd502dbac), both assessors saw the string, persona solo operat
 - [ ] #2 A non-repository folder with session changes reads "N session change(s)" (or nothing), never "Git"
 - [ ] #3 A test renders the header for a non-repository folder with one change and asserts "Git" is absent; file-notes.md documents the suffix
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live on a non-git vault (fn-00): header says Git · 1 change after one edit\n2. RED: resolver test with repository_confirmed=False, git_changes=1 asserts no Git; second test asserts Git only when confirmed\n3. Fix: thread repository_confirmed into resolve_file_note_status_channels; the workspace derives it from a rev-parse discovery per session binding (git -C root rev-parse), or trust\n4. Update the pins that asserted the old suffix without a repository; add a real-git pin for the confirmed side\n5. GREEN, live captures on vault-plain and vault-git, guide header paragraph + stamp
+<!-- SECTION:PLAN:END -->
