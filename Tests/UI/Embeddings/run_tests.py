@@ -32,10 +32,8 @@ def main():
             "all",
             "unit",
             "widgets",
-            "windows",
             "toast",
             "progress",
-            "templates",
             "activity",
             "coverage",
         ],
@@ -81,19 +79,10 @@ def main():
                 str(test_dir / "test_activity_log.py"),
             ]
         )
-    elif args.suite == "windows":
-        # Run window tests
-        cmd.extend(
-            [
-                str(test_dir / "test_embedding_templates.py"),
-            ]
-        )
     elif args.suite == "toast":
         cmd.append(str(test_dir / "test_toast_notifications.py"))
     elif args.suite == "progress":
         cmd.append(str(test_dir / "test_detailed_progress.py"))
-    elif args.suite == "templates":
-        cmd.append(str(test_dir / "test_embedding_templates.py"))
     elif args.suite == "activity":
         cmd.append(str(test_dir / "test_activity_log.py"))
     elif args.suite == "coverage":
@@ -102,7 +91,6 @@ def main():
             [
                 "--cov=tldw_chatbook.UI",
                 "--cov=tldw_chatbook.Widgets",
-                "--cov=tldw_chatbook.Utils.embedding_templates",
                 "--cov-report=html",
                 "--cov-report=term-missing",
                 str(test_dir),

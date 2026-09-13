@@ -311,6 +311,13 @@ class LibraryToolDescriptor:
     route: str  # service route, e.g. "media.list" -- unique per descriptor
     description: str
     input_schema: dict
+    #: Whether this tool WRITES local Library data (task-32278, Qodo #1).
+    #: Set from the same ``writing`` flag that picks the description tail,
+    #: so the machine-readable fact and the sentence shown to the model
+    #: cannot drift. Read by the approval card's effect derivation
+    #: (``Agents/mcp_tool_provider.approval_effects_for_tool``), which has
+    #: no other source: the local MCP manifest carries no risk metadata.
+    mutates: bool = False
 
 
 def _descriptor(
@@ -331,6 +338,7 @@ def _descriptor(
             _WRITING_DESCRIPTION_TAIL if writing else _DESCRIPTION_TAIL
         ),
         input_schema=input_schema,
+        mutates=writing,
     )
 
 

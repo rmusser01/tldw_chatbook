@@ -11,6 +11,7 @@ from markdown_it import MarkdownIt
 
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
@@ -171,6 +172,22 @@ class ConsoleHeaderSpeechPresentation:
 
 def _speech_visible(message: ConsoleChatMessage) -> bool:
     """Return whether a message may expose trusted Manual Speak."""
+    return (
+        message.role is ConsoleMessageRole.ASSISTANT
+        and message.status == "complete"
+        and bool(message.content.strip())
+    )
+
+
+def _capturable_assistant_answer(message: ConsoleChatMessage) -> bool:
+    """Whether this row is a finished assistant answer worth capturing.
+
+    task-32146: a completed ASSISTANT row with text. Spelled out here rather
+    than borrowed from ``_speech_visible`` (fix round 1, review finding 6)
+    so a future trust or TTS-availability condition on speech never gates
+    capture by accident. A pending/streaming row has no final answer to
+    file, and a USER row is the question, not the answer.
+    """
     return (
         message.role is ConsoleMessageRole.ASSISTANT
         and message.status == "complete"
@@ -359,6 +376,13 @@ class ConsoleMessageActionService:
         ("continue", "--->"),
         ("feedback", "Feedback"),
         ("delete", "🗑"),
+        # task-32146: capture THIS answer (narrowest scope) ahead of the two
+        # span actions below. Same overflow-only, routed-before-``dispatch()``
+        # shape as they have. The label is 15 characters because the More
+        # menu is a fixed 24 cells wide and silently truncates past that --
+        # live check showed "Save answer as note" rendering as "Save answer
+        # as", the same cut the two labels below already take.
+        ("capture-note", "Capture as note"),
         # TASK-31759: More-menu note actions over the active-path span up
         # to and including the selected message. Overflow-only (never in
         # ``_PRIMARY_ACTION_IDS``) and dispatched by the UI router before
@@ -619,6 +643,12 @@ class ConsoleMessageActionService:
                 for action_id, label in completed_actions
                 if action_id != "fork"
             ]
+        if not _capturable_assistant_answer(message):
+            completed_actions = [
+                (action_id, label)
+                for action_id, label in completed_actions
+                if action_id != "capture-note"
+            ]
         if not self._speak_visible(message):
             completed_actions = [
                 (action_id, label)
@@ -631,6 +661,19 @@ class ConsoleMessageActionService:
                 if action_id == "speak"
                 else (action_id, label)
                 for action_id, label in completed_actions
+            ]
+        presentation = message.activity_presentation
+        if (
+            isinstance(presentation, ConsoleActivityPresentation)
+            and presentation.kind == "thinking"
+            and presentation.status == "unavailable"
+        ):
+            # TASK-32312: content-free proprietary evidence has no editable
+            # text; only displayable thinking blocks offer the edit action.
+            completed_actions = [
+                (action_id, label)
+                for action_id, label in completed_actions
+                if action_id != "edit"
             ]
         if message.status == "failed" and self._is_assistant_message(message):
             # Retry regenerates a failed ASSISTANT response. A failed USER row —
@@ -815,7 +858,11 @@ class ConsoleMessageActionService:
                 )
             elif action.action_id.startswith("canvas-open"):
                 overflow.append(action)
-            elif action.action_id in {"summarize-note", "save-transcript-note"}:
+            elif action.action_id in {
+                "capture-note",
+                "summarize-note",
+                "save-transcript-note",
+            }:
                 overflow.append(action)
         return tuple(overflow)
 
@@ -1196,8 +1243,8 @@ class ConsoleMessageActionService:
             )
         if action_id in {"feedback", "feedback-up", "feedback-down"}:
             return not message.generation_projection_quarantined
-        if action_id == "save-image":
-            return blocked_reason("save-image", ephemeral=ephemeral) is None
+        if action_id in {"save-image", "capture-note"}:
+            return blocked_reason(action_id, ephemeral=ephemeral) is None
         if action_id in {"video-play", "video-save-copy"}:
             return video_file_available
         return ConsoleMessageActionService._variant_action_enabled(
@@ -1233,8 +1280,8 @@ class ConsoleMessageActionService:
             and message.generation_projection_quarantined
         ):
             return ConsoleMessageActionService._QUARANTINED_FEEDBACK_REASON
-        if action_id == "save-image":
-            return blocked_reason("save-image", ephemeral=ephemeral) or ""
+        if action_id in {"save-image", "capture-note"}:
+            return blocked_reason(action_id, ephemeral=ephemeral) or ""
         if action_id in {"video-play", "video-save-copy"} and not video_file_available:
             return ConsoleMessageActionService._VIDEO_FILE_MISSING_REASON
         if action_id in {

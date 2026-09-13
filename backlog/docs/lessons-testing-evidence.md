@@ -9,6 +9,59 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A shared counter's value does not name which side moved it
+
+**TASK-32302, Library Conversations entry focus, 2026-09-11.** The task's
+diagnosis was "the arm generation reaches 2 on every run, so a second arm fires
+during route entry and invalidates the first scheduled attempt", and the fix was
+scoped to re-arming. But `_disarm_library_list_entry_focus` bumps the SAME
+counter as `_arm_library_list_entry_focus`, so "generation 2" is equally one arm
+plus one disarm. Instrumenting the real route entry (arm, disarm and each focus
+attempt logged with a stack) showed ONE arm and one silently wasted attempt: the
+recovery hop repaints the rows disabled, a disabled widget is not `focusable`,
+`set_focus` on it is a no-op, and `_focus_library_list_entry` returned as if the
+landing had happened. The fix landed one branch away from where the task pointed.
+
+**What to do.** Before building on a counter reading, check every writer of that
+counter. A measurement that only pins the counter's VALUE cannot distinguish the
+paths that move it; log the transitions instead, with which call site produced
+each one.
+
+## A custom Rich renderable is not measured by Textual 8's visual protocol
+
+**TASK-32306, Library Details rail rows, 2026-09-11.** A hanging indent for the
+rail's wrapped rows was first built as a small object with `__rich_console__`
+doing the wrap at render time; printed through a Rich `Console` at 34 cells it
+produced exactly the intended four lines. Mounted, the row painted its first
+line and nothing else: Textual 8 measures a `Static`'s auto height through
+`visualize()`, which reported ONE line for the unrecognised object, so the
+remaining lines were painted into a one-line box and clipped. `get_content_height
+(..., width=32)` returned 1 for a 41-cell text. Handing Textual a plain `Text`
+with real newlines (re-wrapped on resize) measures correctly.
+
+The same change then broke two unrelated pins a second way: this repo's
+compatibility shim (`tldw_chatbook/__init__.py`) exposes `Static.renderable` as
+`self.content`, so storing the RE-WRAPPED text as content changed what every
+`.renderable.plain` assertion in the suite sees.
+
+**What to do.** For anything that changes how a widget's content is laid out,
+capture the compositor strips (`screen._compositor.render_strips()`) over the
+widget's region -- a `.renderable` probe passes on a renderable that is measured
+at one line and clipped. And when a widget re-derives what it paints, keep
+`content`/`renderable` reporting what the caller passed, or every pin that reads
+it becomes a second consumer of your paint format.
+
+## Fail-closed assertions need a successful control on the real scheduler path
+
+During PR #2645 review, a disposal test called synchronous `RunHooksEngine.fire`
+inside an async test and asserted that a guard was blocked. It passed because
+the nested event-loop error failed closed, even when runtime disposal did not
+close the engine. The test also assumed `/bin/true` existed on macOS. Using
+`sys.executable`, awaiting `fire_async`, and first proving that the same hook
+succeeds before disposal exposed the missing cleanup. For fail-closed behavior,
+establish a successful control and exercise the production sync/async entry;
+an unrelated exception can otherwise satisfy the failure assertion.
+
 ## Cancellation waiters cannot own terminal acknowledgements
 
 **TASK-32115, Buddy/TTS integration, 2026-09-09.** Replacing a Buddy utterance
@@ -2321,6 +2374,23 @@ never what the screen shows; the composited screen is the only authority (third
 recorded instance of this lesson class). When a live report contradicts a green suite,
 suspect the harness before the reporter.
 
+**Fourth instance, inverted direction (TASK-32330, 2026-09-11).** The
+arc's per-suite runs were all green for a staged-row status class whose
+CSS line referenced `$ds-status-muted` — a variable that does not exist
+anywhere in the tree. Nothing caught it because the light harnesses
+never load the console split sheets, so the rule (and its broken
+variable) simply never applied. The consolidated run — which mounts
+screens through harnesses that DO load the full stylesheet — failed 102
+tests at compose with `UnresolvedVariableError: reference to undefined
+variable '$ds-status-muted'`. Same root cause, opposite symptom: the
+harness gap hid a stylesheet defect instead of a geometry one. **What to
+do:** any change that TOUCHES a tcss file must run at least one suite
+that loads the real stylesheet bundle (e.g. the environment-wiring or
+workbench-contract harnesses) — per-suite green on widget-level harnesses
+says nothing about whether the sheet itself parses. Grepping the variable
+name against the theme sheets costs one second and catches the
+typo-class outright.
+
 **Fourth instance (2026-08-07, task-2859 item 10, padding not clipping this time).** A
 `.library-rag-result-snippet { padding: 0 1; }` bundle rule (fixing a snippet sitting
 flush against its card border) tested green with `snippet.region.x ==
@@ -3479,7 +3549,7 @@ or Textual will reject the duplicate even when the route signature matches.
 
 ## Adding a resource of a GUARDED KIND obliges you to run that kind's inventory suite, not just your feature's tests
 
-**Follow-up incident (TASK-31758 / PR #2437, 2026-09-05).** Forty-five
+**Follow-up incident (TASK-31978 / PR #2437, 2026-09-05).** Forty-five
 pixel-migu seed, resource, and installed-distribution checks passed after a
 rebase, but the required generated-artifact job still failed: two new startup
 diagnostics in `app.py` and `config.py` were absent from the production
@@ -13240,6 +13310,22 @@ correcting the mock contract then made that assertion pass. Batch tests must
 assert the specific item's persisted outcome or write payload, not only an
 aggregate count that unrelated items can satisfy.
 
+
+## Render helpers must distinguish widget content, borders, and layout slots
+
+**Incident (TASK-32506, 2026-09-10).** Release verification found five Library
+assertion failures, all reproduced on pristine pre-release dev. The focus helper
+required underline on the newly added solid border; a width helper measured the
+32-cell canvas while its test expected the 36-cell padded pane; and a grid test
+treated the intentional two-cell danger-action margin as column drift.
+
+Inspect the exact geometry a helper measures before changing the application.
+Keep underline assertions on painted content, distinguish canvas and pane widths,
+and compare grid origins with independently pinned expected margins. Subtracting
+whatever margin is currently present would hide the accidental indentation the
+original regression was intended to catch. The repaired five cases and four
+shared focus-helper caller cases passed without changing application behavior.
+
 ### Rebased cold-session fixtures must cross activation boundaries (2026-09-10)
 
 PR #2504's final integration initially failed 31 closed-history cases before the
@@ -13280,3 +13366,246 @@ lost output, and it is not on by default in the shells these commands run in.
 The same trap sits behind `./scripts/preflight.sh | tail` — a known previous
 incident in this repo, and the reason preflight is always run bare.
 
+## Plan-embedded code rots against the installed library; only implementer-run RED catches it (TASK-31758, 2026-09-05)
+## Plan-embedded code rots against the installed library; only implementer-run RED catches it (TASK-31978, 2026-09-05)
+
+The artifact-share SDD plan embedded near-verbatim implementation and test
+code authored against pinned-at-plan-time versions, and both sides rotted
+before implementation. Task 3: the plan's aiohttp middleware block appended
+bare `(request, handler)` methods to `app.middlewares`; under the installed
+aiohttp 3.14.3 every route 500'd because 3.14 discriminates middleware by
+the `__middleware_version__ == 1` marker the plan omitted — caught only when
+the implementer's RED run failed with 500s across the suite. Task 5: the
+plan's test snippet called `SelectionList.select(0)` as if it took an index;
+Textual 8.2.8's `select()` takes a *value* and does not validate existence,
+so with string option values the selection stayed empty and two tests could
+never pass — again caught only at implementer-run RED, and the failure first
+looked like a dialog bug rather than a wrong test call.
+
+**What to do.** Treat code embedded in plan docs as a sketch, never as
+verified: pin the library-version assumptions at the top of the plan, and
+never skip the implementer-run RED step — it is the only checkpoint that
+reveals whether the plan's code or its tests encode the wrong API. When a
+RED failure contradicts the plan, check the *test-side* API usage for
+version rot before hunting a bug in code that follows the plan.
+
+## A new schema artifact maintained ON WRITE breaks every historical-bootstrap fixture at once (TASK-32186, 2026-09-11)
+
+**What happened.** v73 added `note_links` and made every note writer maintain
+it. `Tests/ChaChaNotesDB/historical_bootstrap.py` builds a genuinely old
+database by patching `_CURRENT_SCHEMA_VERSION` — but fixtures then seed it
+through TODAY's `add_note`, which now wrote to a table a v35/v57/v58 schema
+does not have. Four unrelated migration test files would have gone red with
+`sqlite3.OperationalError: no such table: note_links` raised from deep inside
+`add_note` — an opaque failure with no connection to the fixture's subject.
+Production is never in that state (migration runs in `CharactersRAGDB.__init__`,
+before any write), so the gap belongs to the bootstrap alone.
+
+**What to do.** When a migration adds an artifact that a WRITE path maintains
+(not just one a read path queries), check `historical_bootstrap` in the same
+commit: add it to `_add_forward_write_dependencies` so older fixtures keep
+seeding, and make the test that PINS your migration drop it first — otherwise
+that test asserts against the scaffold and would pass with the migration's DDL
+deleted. The tell that you need this: your new code writes to the table from a
+method a fixture calls, not only from the migration.
+
+## `cursor.execute()` returns the cursor, so a follow-up write rewrites the `rowcount` you were about to check (TASK-32186, 2026-09-11)
+
+**What happened.** Adding note-link maintenance to
+`LocalNoteImportTarget._update_note` turned
+
+    result = cursor.execute("UPDATE notes SET …")
+    return result.rowcount == 1
+
+into the same lines with `replace_note_links(cursor, …)` — a DELETE plus an
+executemany — inserted between them. `sqlite3.Cursor.execute` returns the
+cursor **itself**, so `result is cursor`: the return value stopped reporting
+the note update and started reporting the link writes. Every optimistic-update
+path in the importer began reading as a conflict — 18 tests in
+`Tests/Notes/test_note_import_executor.py`. A targeted run of the one test I
+had added for the new behaviour was green; only the whole FILE showed it.
+
+**What to do.** Bind the count to a local the moment the statement returns
+(`updated = result.rowcount == 1`) before any other statement touches that
+cursor. And when a change adds a write inside an existing method, run that
+method's whole test FILE, not just your new test: the tests that catch a
+clobbered out-parameter are the ones you did not write.
+
+## A refusal path needs its own test, or it will lose both its name and its cleanup (task-32243, 2026-09-11)
+
+Library ▸ Notes lasting sync shipped on 2026-08-21 with a working happy path and
+a refusal path no test ever entered. `grep root_lease_unavailable Tests/` and
+`grep root_discovery_incomplete Tests/` both returned zero hits for three weeks.
+Two independent defects lived there the whole time, and both are the same shape:
+
+- `_ensure_lease` published a status to the store *before* returning the falsy
+  value its caller turned into `RuntimeError("root_lease_unavailable")`. For a
+  setup review the root is not in the store yet, so the publish raised
+  `NotesDeviceStateError: The requested sync root does not exist` and the honest,
+  named refusal was destroyed by a secondary crash on its way out.
+- `review_setup` popped its `_root_paths` entry only on the branch where
+  `_ensure_lease` *returned* falsy. A raise skipped the pop, so the leaked entry
+  made the coordinator refuse the same folder as `lasting_root_overlap` on every
+  later attempt — for the rest of the session, invisibly, even after the user
+  fixed the real cause. Only a restart cleared it.
+
+Both are invisible to a happy-path suite, and both are the kind of thing a
+reviewer reads straight past: the publish looks like ordinary status reporting,
+and the pop looks like it is on the failure path. The generalisation:
+
+**On any path that refuses, write the test that refuses.** Not a test that the
+error type is raised — a test that (a) the error carries the reason the code
+went to the trouble of computing, and (b) the second attempt reaches the same
+decision a fresh process would. (b) is the one that catches leaked state, and
+nothing else does: one call in isolation passes either way.
+
+Two corollaries worth keeping:
+
+- **Anything you write before you raise can raise first.** A guard that reports,
+  persists, or publishes before it fails has two exits, and the one you did not
+  write the test for is the one users will hit.
+- **Cleanup belongs on one path, not on each failure branch.** The fix here was
+  not a second pop next to the raise — it was moving the lease check inside the
+  `except` block that already released the setup authority for the *other*
+  failure. Two half-cleanups is the bug; one release for every failure is the
+  fix, and it is the smaller diff.
+
+### Canvas CSS must survive browser parsing as well as compilation (2026-09-10)
+
+During TASK-32459, both new HTML guide examples passed the Canvas compiler but
+Chromium refused their plans with `invalid-plan`. Inspecting CSSOM declarations
+showed that `background` expanded into unallowlisted `background-position-x/y`,
+and `border` expanded into unallowlisted `border-image-*` properties. Replacing
+those shorthands with `background-color`, `border-width`, `border-style`, and
+`border-color` made the exact packaged examples execute without changing pinned
+runtime assets. Compiler acceptance alone does not qualify authoring examples;
+run their exact source through the actual renderer and exercise the controls.
+
+## Reconstructing a PR must verify a fresh checkout's test prerequisites
+
+During the agent-orchestration preservation PR (2026-09-11), two mounted progress
+checks reached their screenshot capture and failed because the parent SDD evidence
+directory existed only in the original working checkout. The test used
+`mkdir(exist_ok=True)` for a nested path. Creating parents makes the capture work
+in a fresh checkout. The same pass found two survivor tests whose separately built
+app missed another module's autouse database fixture: recovery correctly reported
+`history_unavailable`, so the intended elapsed-row assertions could not run.
+Attaching the existing real-database helper before mount restored both exact
+checks without changing production behavior or weakening their assertions.
+
+A helper imported from another test module does not bring that module's autouse
+fixtures with it. Verify local artifact directories and explicit application
+prerequisites when reconstructing reviewed work outside its original checkout.
+
+## Isolated subprocess tests need the isolated checkout's import binding
+
+During PR 2631 integration, the shared virtual environment imported the rebased checkout for ordinary pytest calls, but its Python -I helper subprocesses loaded the original shared checkout through that environment's installed package. Newer parent/helper protocols then disagreed. A separate verification environment bound the exact worktree ahead of the existing dependency directory; checking `python -I -c "import tldw_chatbook; print(tldw_chatbook.__file__)"` proved the binding, and all 431 feature and 575 upstream Agent cases passed, including real subprocess/worktree checks. Verify child-process package provenance as well as pytest cwd; do not change a shared editable installation to repair another checkout's tests.
+
+## A leaked TTS artifact deletes itself during interpreter shutdown, when builtins are gone
+
+**TASK-32013, 2026-09-11.** New `TTSEventHandler` tests that monkeypatched
+`_play_utterance_legacy_artifact` to a no-op started logging
+`Error securely deleting file /tmp/tts_audio_*.mp3: name 'open' is not
+defined` -- only under pytest, only for those tests, and the function
+worked fine when called directly in the same session. The no-op'd play
+path is also the path that schedules artifact cleanup, so every test
+leaked its written artifact; the global temp manager's `__del__` then ran
+`secure_delete_file` during interpreter teardown, where `open` is already
+cleared from builtins. The NameError was caught, logged, and the file
+left in /tmp -- a log line that looks like a code bug but is a test
+hygiene artifact.
+
+**What to do.** Any test that fakes the TTS play path must still run the
+handler's own teardown (`await handler.cleanup_tts_resources()` at test
+end) so artifacts are deleted inline while the interpreter is alive.
+When you see "name 'open' is not defined" from secure deletion, look for
+leaked temp artifacts deleted at shutdown, not a bug in the deleting
+code.
+
+## Preinitialized backend fixtures do not establish startup ownership
+
+During Linux CUDA qualification (TASK-32505, 2026-09-12), a Chatterbox preflight incorrectly assumed that awaiting `initialize()` awaited readiness. The API intentionally schedules initialization. Closing immediately afterward exposed a separate defect: queued startup could launch a child after close, an in-flight spawn could publish a late child, and a readiness waiter could restore initialized state after cleanup. Bounded fake-IPC reproductions established those races independently of the preflight's shutdown hang. The 30 existing audio-delivery tests used preinitialized models and did not cover startup ownership; nine focused lifecycle tests now cover queued/in-flight startup, readiness, native fallback, generation waiting for initialization, and repeated or cancelled close.
+
+Preserve a provider's nonblocking startup contract, but test ownership from admission through close. Waiting for a ready fixture before testing cancellation skips the startup boundary that can leak work. A cancelled native-loader await is not evidence that its thread stopped; retain and join that work before claiming closure.
+
+### A Library canvas swallows a harness press while it is hidden — it looks like "the feature never ran" (2026-09-11)
+
+Wave-3 group `layout` (task-32249) added six `LibraryHarness` tests that open a
+seeded note. Exactly one of them failed per run, a different one each time,
+always with `#library-note-body never mounted within 30.0s`. A parametrised
+probe that did nothing but open the note six times in one process reproduced it
+at iteration 3 and printed the state: `view=list`, no selected note, **no
+worker**, and none of the `library_notes_tree_locator_failed` warning the open
+path always logs. The press had not been handled at all.
+
+The cause is `LibraryNotesCanvas.on_button_pressed`, which opens with
+`if not self.display: event.stop(); event.prevent_default(); return`. A harness
+press issued on the frame the row mounts can land in that window. Nothing
+reports it: the guard is deliberate, the event is consumed, and the only symptom
+is a selector that never appears — so it reads as a broken fix, not a lost
+press.
+
+`_wait_for_selector(".library-notes-tree-note-row")` is NOT enough; it answers
+"the row exists", not "the canvas will accept a press". Press until the state
+actually changes:
+
+```python
+for _ in range(20):
+    rows = screen.query(".library-notes-tree-note-row")
+    if rows:
+        rows.first(Button).press()
+    for _ in range(10):
+        await pilot.pause()
+        if screen.query("#library-note-body"):
+            return
+```
+
+Re-pressing is safe precisely because the loop only runs while the view has not
+changed. The file went from 1 failure in every run (43 s) to 12/12 on three
+consecutive runs (15 s). The same guard exists on `LibraryMediaCanvas`, so the
+same flake is available on any harness test that presses a Library row.
+
+### A NameError in the reader-layout derivation presents as "the note never opens" (2026-09-11)
+
+While fixing task-32259 I referenced `LIBRARY_NOTES_FULL_CANVAS_VIEWS` in
+`_library_notes_work_first_preferences` before defining it. Every note-open
+test then failed with the same `#library-note-body never mounted` message as the
+flake above — and with **no traceback anywhere in the pytest output**. The bad
+name sits on the layout-preference path the open sequence runs through, and the
+failure surfaced only as a UI no-op.
+
+The distinguishing evidence is cheap: run one known-good test from a file the
+change did not touch (`test_library_crit9_notes.py::test_the_note_preview_takes_
+the_same_height_the_body_does`) against the same worktree. It passed on
+`origin/dev` and failed on the branch, which located the regression in seconds —
+whereas "the note never opens" is indistinguishable from the harness flake if
+you only look at your own new tests.
+
+### Two pins in one wave contradicted each other, and both landing passes were green (tasks 32250/32259, 2026-09-12)
+
+Wave 3 of Library ▸ Notes landed task-32250 (PR #2612: the import review owns
+the work pane) and task-32259 (PR #2618: a full-canvas task closes the items
+pane) from different groups. Each PR was green at its head. On dev at
+87f6edb4c1, `test_library_notes_wave_import_ux.py::test_the_review_takes_the_
+pane_while_it_is_the_task_in_hand` failed: its second assertion pinned "choosing
+a source leaves the list open" (task-32250's corollary), while task-32259 AC#2
+and its own pin in `test_library_notes_w3_layout.py` assert the opposite for the
+same `import`/`select` state. No ordering of the two rules in
+`_library_notes_work_first_preferences` could satisfy both — the code on dev
+was byte-identical to #2618's head, and the layout group's report that "each
+keeps its shipped behaviour" was true of the review state and false of the
+corollary.
+
+It surfaced only on dev because each group's landing test set excluded the
+other's interaction file: the import-review group ran its `wave_import_ux`
+file, the layout group ran its `w3_layout` file, and the second was written
+against the real `_import_review_owns_the_pane` precisely to prove the
+ordering — which it did, without ever exercising the sibling's negative pin.
+A green landing pass over your own pins says nothing about a pin that asserts
+the negation of your AC.
+
+Rule: when a change touches a shared decision point (here the reader-layout
+derivation), the landing pass runs the pin files of every sibling group that
+also touched it in the same wave — `git log -S'<function>' --oneline` on the
+wave's branches names them — not only your own. A contradiction between two
+pins is a product ruling to record in both task files, not a merge fix.

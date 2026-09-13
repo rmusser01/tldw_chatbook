@@ -7099,7 +7099,7 @@ async def test_console_empty_transcript_teaches_setup_and_start_paths():
         assert "Get started" in console_text
         assert "Connect a provider (API key or local server)" in console_text
         assert "Send your first message" in console_text
-        assert "Attach context" in console_text
+        assert "Context rail" in console_text
         assert "Search Library" in console_text
 
 
@@ -8899,6 +8899,70 @@ async def test_console_selected_message_save_as_action_opens_modal():
         await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
 
     assert console._last_console_action.action_id == "save-as"
+
+
+@pytest.mark.asyncio
+async def test_capture_note_action_saves_the_answer_and_its_receipt_opens_it():
+    """task-32146: More… ▸ Capture as note writes the note with its
+    provenance, and the receipt's Open note deep-links Library ▸ Notes at
+    that exact note (the same nav-context contract Home's resume uses)."""
+    from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_LIBRARY
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    app = _build_test_app()
+    app.notes_user_id = "notes-owner-1"
+    save_note = AsyncMock(return_value={"id": "note-1", "version": 1})
+    app.notes_scope_service = SimpleNamespace(save_note=save_note)
+    app.post_message = Mock()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        session.persisted_conversation_id = "conv-7"
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Run workers for slow work.\n\nThen stream the result.",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-more-{message.id}"
+        )
+
+        await _choose_message_more_action(console, pilot, message.id, "capture-note")
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#confirmation-dialog")
+
+        assert save_note.await_count == 1
+        call = save_note.await_args.kwargs
+        assert call["title"] == "Run workers for slow work."
+        assert call["content"] == (
+            "Run workers for slow work.\n\nThen stream the result."
+        )
+        assert call["keywords"] == [
+            "console",
+            "conversation:conv-7",
+            f"message:{message.id}",
+        ]
+        assert call["user_id"] == "notes-owner-1"
+
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+
+    navigations = [
+        call.args[0]
+        for call in app.post_message.call_args_list
+        if call.args and isinstance(call.args[0], NavigateToScreen)
+    ]
+    assert len(navigations) == 1
+    assert navigations[0].screen_name == TAB_LIBRARY
+    assert navigations[0].screen_context == {LIBRARY_NAV_CONTEXT_NOTE_ID: "note-1"}
 
 
 def _install_console_save_service_fakes(app) -> None:

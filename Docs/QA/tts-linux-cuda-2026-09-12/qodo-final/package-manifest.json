@@ -1,0 +1,134 @@
+[
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-cuda-03/content-medium.json",
+    "packaged_path": "qodo-final/runs/kokoro-cuda-03/content-medium.json",
+    "bytes": 7828,
+    "sha256": "486d871b7ee83afc6c6774ecf9ae6a27ee1ff91f9c76882f55028881ef27a51d"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-cuda-03/evidence.json",
+    "packaged_path": "qodo-final/runs/kokoro-cuda-03/evidence.json",
+    "bytes": 541599,
+    "sha256": "5831a4c61452c777d39f2846b20bbde48814cde6f272d752e8234758aa592461"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-kokoro-cuda-03.sh",
+    "packaged_path": "qodo-final/recipes/run-kokoro-cuda-03.sh.txt",
+    "bytes": 707,
+    "sha256": "5ef8938c18c357e71b27fec4ff8d4b1ba612297bd16f2601d7f414f0c6dda82f"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-onnx-03/content-medium.json",
+    "packaged_path": "qodo-final/runs/kokoro-onnx-03/content-medium.json",
+    "bytes": 7804,
+    "sha256": "af5a5b828e9917f4be28b554ad4d6fb127c99ffe3cfd5ad05ab71b4c7dd19515"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-onnx-03/evidence.json",
+    "packaged_path": "qodo-final/runs/kokoro-onnx-03/evidence.json",
+    "bytes": 538365,
+    "sha256": "4e4cf77f4147d67cd850500ea16e384b07f69956076398c64ae1016489319172"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-kokoro-onnx-03.sh",
+    "packaged_path": "qodo-final/recipes/run-kokoro-onnx-03.sh.txt",
+    "bytes": 706,
+    "sha256": "698e141870f34f3b86adfaf4af77a850f44936e30291dbc4cb46a8cd8d2417cd"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-05/child-00.json",
+    "packaged_path": "qodo-final/runs/chatterbox-cuda-05/child-00.json",
+    "bytes": 28430,
+    "sha256": "dcf7c7d0f32cd2a41dbc28d577a72e46653af6f91c21b8259fd942af16cfade1"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-05/content-medium.json",
+    "packaged_path": "qodo-final/runs/chatterbox-cuda-05/content-medium.json",
+    "bytes": 8813,
+    "sha256": "46dcbe94315781c5965cfb08edb73e533e256e6735c2b9c8e72a2ec321ffd334"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-05/evidence.json",
+    "packaged_path": "qodo-final/runs/chatterbox-cuda-05/evidence.json",
+    "bytes": 648144,
+    "sha256": "11dfa8810274de9522214d35e6e74f3c91d3558da691f53d6b9c2cd981351753"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-05/child-01.json",
+    "packaged_path": "qodo-final/runs/chatterbox-cuda-05/child-01.json",
+    "bytes": 37552,
+    "sha256": "8fd4680dcb15907d66dd1cef524e066dfab5df1269ba0c1df00508515767beae"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-05/content-small.json",
+    "packaged_path": "qodo-final/runs/chatterbox-cuda-05/content-small.json",
+    "bytes": 8872,
+    "sha256": "a79562aaa1be0ec15b2584081d3361be22d693bd57eb5fe83f1dee6f7562d690"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-chatterbox-cuda-05.sh",
+    "packaged_path": "qodo-final/recipes/run-chatterbox-cuda-05.sh.txt",
+    "bytes": 749,
+    "sha256": "902e8647fa9b3018ab4537c73a3ee46dc95b71a711f56210159c55eb42d3a91a"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/qodo-final-wheel-identity.json",
+    "packaged_path": "qodo-final/provenance/qodo-final-wheel-identity.json",
+    "bytes": 293519,
+    "sha256": "2f98ab5e005fece074e89feb6919515430ec97f230556241b7bfa710decda5a7"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/qodo-final-summary.json",
+    "packaged_path": "qodo-final/provenance/qodo-final-summary.json",
+    "bytes": 7514,
+    "sha256": "523f5268c314158ee1f93019b7be68f1c58bdf4adaa0a22fffc9c96035223bb5"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/qodo-final-qualification.exit",
+    "packaged_path": "qodo-final/provenance/qodo-final-qualification.exit",
+    "bytes": 2,
+    "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-05-small-asr.log.exit",
+    "packaged_path": "qodo-final/provenance/chatterbox-cuda-05-small-asr.log.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/qodo-final-qualification.log",
+    "packaged_path": "qodo-final/provenance/qodo-final-qualification.log.txt",
+    "bytes": 318,
+    "sha256": "fb06bee2014a743121eae69c7a6f5bd2989b95322f63dd7f84a9115b698f5ffd"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/qualify-qodo-final.py",
+    "packaged_path": "qodo-final/recipes/qualify-qodo-final.py.txt",
+    "bytes": 3629,
+    "sha256": "9eb257b9f8ebebc2534f15a669b4f0edf5fa03c32c01b4b612748fa3ecae6779"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/qualify-qodo.py",
+    "packaged_path": "qodo-final/recipes/attempt1-qualify-qodo.py.txt",
+    "bytes": 3886,
+    "sha256": "e8e6cb5fe5790de0175448267ec474e2cd25beb4eddb77efd90db8a652c60f10"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/qodo-source-delta.json",
+    "packaged_path": "qodo-final/provenance/attempt1-qodo-source-delta.json.txt",
+    "bytes": 292294,
+    "sha256": "55a091290c5c6d4c654d24409a32966f61311b48e8043d16ffccace924ad5781"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/qodo-qualification.log",
+    "packaged_path": "qodo-final/provenance/attempt1-qodo-qualification.log.txt",
+    "bytes": 506,
+    "sha256": "ec16abbd6abceae606e60671e6ba32b56a03e8219059814a4b95f40df805da9f"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/qodo-qualification.exit",
+    "packaged_path": "qodo-final/provenance/attempt1-qodo-qualification.exit.txt",
+    "bytes": 2,
+    "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  }
+]

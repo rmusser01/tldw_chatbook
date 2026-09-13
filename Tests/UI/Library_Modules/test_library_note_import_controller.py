@@ -328,6 +328,10 @@ async def test_large_review_diff_bounds_inputs_and_marks_truncated_preview(
                     ImportAction.CREATE_NEW,
                     ImportAction.UPDATE_EXISTING,
                 ),
+                # task-32262: the diff is shown on the row it describes --
+                # the one replacing an existing note's content.
+                selected_action=ImportAction.UPDATE_EXISTING,
+                replace_content=True,
             ),
         ),
     )
@@ -649,7 +653,9 @@ async def test_review_mutation_preserves_the_current_bounded_page(
             item_id=f"item-{number:06d}",
             source=replace(
                 base.items[0].source,
-                display_path=f"note-{number:02d}.md",
+                # A folder each: a run of interchangeable rows collapses to
+                # one summary row and would fit on one page (task-32250).
+                display_path=f"folder-{number:02d}/note.md",
             ),
         )
         for number in range(1, 27)
@@ -741,7 +747,11 @@ async def test_cancel_sets_the_executor_event_and_waits_for_partial_receipt(
 
 
 def _grouped_plan(source: Path) -> NoteImportPlan:
-    """One plan of 30 NEW items, so page 1 holds 25 of them and page 2 five."""
+    """One plan of 30 NEW items, so page 1 holds 25 of them and page 2 five.
+
+    A folder each: interchangeable rows in one folder collapse to a single
+    summary row and would then all fit on one page (task-32250).
+    """
     base = _plan(source)
     items = tuple(
         replace(
@@ -749,7 +759,7 @@ def _grouped_plan(source: Path) -> NoteImportPlan:
             item_id=f"item-{number:06d}",
             source=replace(
                 base.items[0].source,
-                display_path=f"note-{number:02d}.md",
+                display_path=f"folder-{number:02d}/note.md",
             ),
         )
         for number in range(1, 31)
@@ -908,3 +918,169 @@ def test_change_selection_keeps_the_old_source_until_a_path_returns(
 
     assert controller.snapshot.selected_paths == (second,)
     assert controller.snapshot.selection_is_folder is True
+
+
+# --- task-32262 (collision panel default) ---------------------------------
+
+
+def _directory_plan(root: str = "Inbox") -> NoteImportPlan:
+    item = ImportPreviewItem(
+        item_id="item-000001",
+        source=ImportSource(
+            kind=ImportSourceKind.DIRECTORY_MEMBER,
+            display_path=f"{root}/one.md",
+            source_path=Path("/private/import") / root / "one.md",
+        ),
+        payloads=(ParsedNotePayload(title="One", content="Body"),),
+        memberships=(
+            ProposedFolderMembership(payload_index=0, folder_segments=(root,)),
+        ),
+        classification=ImportClassification.NEW,
+        reason="New source",
+        default_action=ImportAction.CREATE_NEW,
+        selected_action=ImportAction.CREATE_NEW,
+        allowed_actions=(ImportAction.SKIP, ImportAction.CREATE_NEW),
+        match=None,
+        replace_content=False,
+        add_membership=True,
+    )
+    return NoteImportPlan(
+        bounds=BOUNDS,
+        items=(item,),
+        proposed_folder_paths=((root,),),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_detected_collision_opens_with_the_safe_default_selected(
+    tmp_path: Path,
+) -> None:
+    """task-32262 AC#3: no error against an untouched field, a default chosen.
+
+    The real planner analyses and resolves here -- a stub would not prove the
+    default the review actually opens with.
+    """
+    from tldw_chatbook.Notes.note_import_planner import (
+        analyze_root_collision,
+        resolve_root_collision,
+    )
+
+    controller = _controller(
+        plan=_directory_plan(), calls=[], repository=_FolderRepository()
+    )
+    controller._analyze_collision = analyze_root_collision
+    controller._resolve_collision = resolve_root_collision
+    controller.begin_selection()
+    controller.accept_selected_path(tmp_path, is_folder=True)
+
+    await controller.check()
+
+    projected = controller.presentation_snapshot
+    assert projected.collision_kind == "root"
+    assert projected.collision_choice == "unique_sibling"
+    assert projected.collision_rename_input == ""
+    assert projected.collision_rename_error == ""
+    assert "Inbox (2)" in projected.collision_reason
+    assert projected.can_import is True
+
+
+# --- task-32262 AC#2, second clause: one comparison basis ------------------
+
+
+def _linked_update_plan(source: Path) -> NoteImportPlan:
+    """One UPDATE_EXISTING + replace_content row whose source carries links."""
+    base = _plan(source)
+    item = replace(
+        base.items[0],
+        payloads=(
+            ParsedNotePayload(
+                title="Index",
+                content=(
+                    "See [[Meeting notes]] and [[Meeting notes|the minutes]] "
+                    "and `[[Meeting notes]]`.\n"
+                ),
+                wikilinks=("Meeting notes",),
+            ),
+        ),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT, note_id="note-1", note_version=7
+        ),
+        classification=ImportClassification.CHANGED_REPEAT,
+        allowed_actions=(
+            ImportAction.SKIP,
+            ImportAction.CREATE_NEW,
+            ImportAction.UPDATE_EXISTING,
+        ),
+        selected_action=ImportAction.UPDATE_EXISTING,
+        replace_content=True,
+    )
+    return replace(base, items=(item,))
+
+
+def _stored_body(extra: str = "") -> str:
+    """The same note as this importer stores it: links already rewritten."""
+    return (
+        "See [[Meeting notes|2026 Q3 Meeting notes]](note://1111) and "
+        "[[Meeting notes|the minutes]](note://1111) and `[[Meeting notes]]`.\n"
+        f"{extra}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_source_shows_no_diff_against_its_stored_note(
+    tmp_path: Path,
+) -> None:
+    """The two sides of the diff must speak one spelling (task-32262 AC#2).
+
+    `before` is the stored note, whose links this importer rewrote; `after` is
+    the raw file, which still says `[[target]]`. Every line carrying a link
+    therefore read as changed when nothing had changed at all.
+    """
+    source = tmp_path / "one.md"
+    source.write_text("# One\nBody", encoding="utf-8")
+    controller = _controller(
+        plan=_linked_update_plan(source),
+        calls=[],
+        repository=_FolderRepository(),
+        review_note_reader=lambda note_id: SimpleNamespace(
+            title="Index", content=_stored_body(), version=7
+        ),
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+
+    await controller.check()
+
+    assert controller.presentation_snapshot.preview_items[0].content_diff == ""
+
+
+@pytest.mark.asyncio
+async def test_a_changed_source_still_shows_only_its_real_change(
+    tmp_path: Path,
+) -> None:
+    """Normalising the link spelling must not hide a genuine edit."""
+    source = tmp_path / "one.md"
+    source.write_text("# One\nBody", encoding="utf-8")
+    controller = _controller(
+        plan=_linked_update_plan(source),
+        calls=[],
+        repository=_FolderRepository(),
+        review_note_reader=lambda note_id: SimpleNamespace(
+            title="Index",
+            content=_stored_body("A line only the stored note has.\n"),
+            version=7,
+        ),
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+
+    await controller.check()
+
+    diff = controller.presentation_snapshot.preview_items[0].content_diff
+    assert "-A line only the stored note has." in diff
+    # The rewritten links are the same note on both sides, so no line that
+    # merely carries one is reported.
+    assert "[[Meeting notes|the minutes]]" not in diff
+    assert "note://" not in diff

@@ -12,6 +12,7 @@ import math
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
@@ -22,6 +23,14 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
     ProviderContinuationCheckpoint,
 )
+
+
+class WorkOrigin(Enum):
+    """Trusted admission origin shared by runtime owners."""
+
+    MANUAL = "manual"
+    AUTOMATIC = "automatic"
+
 
 RUN_RUNNING = "running"
 RUN_DONE = "done"
@@ -173,6 +182,25 @@ SEND_TO_AGENT_TOOL_NAME = "send_to_agent"
 # per-call daemon-thread timeout wrapper.
 MERGE_AGENT_WORKTREE_TOOL_NAME = "merge_agent_worktree"
 DISCARD_AGENT_WORKTREE_TOOL_NAME = "discard_agent_worktree"
+REPORT_TO_SUPERVISOR_TOOL_NAME = "report_to_supervisor"
+READ_AGENT_MESSAGES_TOOL_NAME = "read_agent_messages"
+MESSAGE_TOOL_NAMES = frozenset(
+    {REPORT_TO_SUPERVISOR_TOOL_NAME, READ_AGENT_MESSAGES_TOOL_NAME}
+)
+# Chat fork/spawn (2026-09-11 spec, ADR-150): the two primary-agent tools
+# for handing a parallel workstream to the user -- fork_chat copies this
+# chat's active history into a new chat, new_chat starts an empty one. Each
+# call lands on a user-confirmation card and the new chat opens in the
+# background; schemas live in tool_catalog.py beside the other runtime tools.
+FORK_CHAT_TOOL_NAME = "fork_chat"
+NEW_CHAT_TOOL_NAME = "new_chat"
+
+#: Agent-supplied title cap (chars) for a fork_chat/new_chat conversation
+#: (ADR-150). Shared by the bridge closures and the controller executor so
+#: confirmation and execution can never drift apart.
+CHAT_CREATE_TITLE_MAX = 120
+#: Per-field cap (chars) for opening_prompt / instructions payloads.
+CHAT_CREATE_PAYLOAD_MAX = 20_000
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -190,6 +218,10 @@ RUNTIME_TOOL_NAMES = frozenset(
         SEND_TO_AGENT_TOOL_NAME,
         MERGE_AGENT_WORKTREE_TOOL_NAME,
         DISCARD_AGENT_WORKTREE_TOOL_NAME,
+        REPORT_TO_SUPERVISOR_TOOL_NAME,
+        READ_AGENT_MESSAGES_TOOL_NAME,
+        FORK_CHAT_TOOL_NAME,
+        NEW_CHAT_TOOL_NAME,
     }
 )
 
@@ -443,6 +475,10 @@ def failed_tool_record_projection(
         ok=result.ok if result is not None else False,
         error_category=category,
     )
+
+
+class SpawnAdmissionRefusal(ToolResult):
+    """A spawn refused before child execution; it consumes no spawn allowance."""
 
 
 @dataclass(frozen=True)

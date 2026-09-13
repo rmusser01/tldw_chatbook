@@ -1,0 +1,10 @@
+{
+  "observed_utc": "2026-09-12T16:00:14.507350+00:00",
+  "user_config_exists": true,
+  "user_config_sha256": "a2adc30fd269e9e7a521f672801ee954332d009abf52800757857d4df8575e18",
+  "default_sink": "alsa_output.pci-0000_15_00.6.iec958-stereo",
+  "free_disk": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme0n1p2  1.8T  1.5T  248G  86% /",
+  "human_listening": "pending",
+  "config_unchanged": true,
+  "default_sink_unchanged": true
+}

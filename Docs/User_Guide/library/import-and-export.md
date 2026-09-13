@@ -288,7 +288,7 @@ destination, or leaving the Import canvas cancels pending consent.
 | "quality: original" | Opens on "original" (full fidelity, task-32353). Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
 | "Bundle: N media items · text only · about X KB before compression" | What pressing Export will actually write: how many items go in, what the archive holds for each (stored text and details — never the original media file, whatever the quality chooser says), and how much content that is. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. The count is the items still exportable, so a selection whose item was trashed underneath reports what will really be written. Absent for an empty scope. Appears once counting finishes. |
 | The contents list | The titles of the items going into the bundle, up to 20, then "+ N more". Absent when the scope's items cannot be enumerated before the run. |
-| "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
+| "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). A destination that cannot be written is refused right there, with the reason on the line under the button and nothing accepted — "Can't save there: The folder \<path\> does not exist.", "… \<name\> is a file, not a folder.", "… That name is a folder." |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, the reason is printed on the line directly below the button AND repeated in its tooltip (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
 | "Cancel" | Visible only while an export is running; stops it. The quiet line above keeps reporting progress throughout ("Exporting (N items)…" at first, then the phase it's on — "Collecting notes…  3/12", "Packaging archive…  5/9 files"), and once the write has run for about three seconds that same line gains " · still working · Cancel" pointing at this button. Pressing it leaves "Cancelling…" until the run reports back. |
 | "✓ exported · N items · X KB · path" | Appears after the first successful export this session; the count and size are read back from the written archive's own manifest, so they report what actually landed rather than what was selected. Stays until the next successful export replaces it. (A receipt restored from an earlier session, before those facts were recorded, still shows as "Last export: <path> · <relative time>".) |
@@ -376,7 +376,7 @@ the Parakeet install dialog. Global keys live in the
 | Key | What it remembers |
 |---|---|
 | `ingest.backend` | Whether imports target this machine or the server. |
-| `ingest.last_directory` | The folder "Browse…" opens in next time. |
+| `ingest.last_directory` | The folder "Browse…" opens in next time. A value that is relative, traversing, or names a folder that no longer exists is ignored; the browser falls back to `[notes] sync_directory`, then to your home directory. Two picks made in quick succession settle on the later one. |
 | `ingest_options.<group>.<field>` | Every per-type option, saved when you start an import (e.g. `ingest_options.generic.chunk_size`). |
 | `ingest_directory_scan_limit` | Folder scan cap (default 1000). |
 
@@ -996,3 +996,19 @@ itself obeys.)*
 transition that does not recompose the canvas — previously only a changed
 type-group set re-registered it, so opening the gate any other way left the
 footer naming the previous step's action.)*
+
+*Verified against fix/library-notes-w3-pickers-git — 2026-09-11 (task-32251:
+"Choose destination…" judges the destination when you pick it. The form used
+to accept anything the save dialog returned — including the concatenated
+`.../Library export.zip/private/tmp/.../notes-bundle.zip` a pre-filled path
+field produced — and failed at write time with `[Errno 2] No such file or
+directory: '...notes-bundle.zip.partial'`. A write that still fails now names
+the destination you chose instead of an internal `.partial` file. Verified
+live at 235x52.)*
+
+*Verified against fix/library-notes-w3-pickers-git — 2026-09-11 (task-32242:
+the ingest "Browse…" browser reads `[library.ingest] last_directory` through
+the same validation the three Notes pickers use — a relative or traversing
+value is no longer resolved against the process working directory — and its
+write is ordered, so two picks made inside one config write settle on the
+later one.)*

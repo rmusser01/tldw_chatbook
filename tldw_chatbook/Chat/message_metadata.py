@@ -60,6 +60,13 @@ TEMPLATE_KINDS: frozenset[str] = frozenset({"", "character_greeting"})
 #: the row's visible copy.
 MESSAGE_ORIGIN_AGENT_WAKE = "agent_wake"
 
+#: ``MessageMetadata.origin`` value for a row written by the run-hooks
+#: layer (spec 2026-09-11, Task 7): the SYSTEM-class transcript row a
+#: ``UserPromptSubmit`` hook's block reason or injected stdout context is
+#: recorded in. Same rule as the wake origin: machine consumers read THIS,
+#: not the row's visible copy, and a row carrying it is never user input.
+MESSAGE_ORIGIN_HOOK = "hook"
+
 #: Closed vocabulary for ``MessageMetadata.origin``.
 #:
 #: - ``""``           -- an ordinary row (typed, streamed, or otherwise not
@@ -67,6 +74,9 @@ MESSAGE_ORIGIN_AGENT_WAKE = "agent_wake"
 #: - ``agent_wake``   -- a machine-injected auto-wake notice
 #:   (:data:`MESSAGE_ORIGIN_AGENT_WAKE`). Never user input; a row carrying
 #:   it must never be read as the user having said anything.
+#: - ``hook``         -- a run-hooks row (:data:`MESSAGE_ORIGIN_HOOK`): a
+#:   ``UserPromptSubmit`` hook's block reason or injected context, written
+#:   by the submit path as its own SYSTEM row.
 #:
 #: Compatibility note (deliberate, local-only): ``from_json`` on an OLDER
 #: build drops unknown keys, so a wake notice's origin marking is invisible
@@ -74,7 +84,9 @@ MESSAGE_ORIGIN_AGENT_WAKE = "agent_wake"
 #: local-only column that never enters sync payloads, so the degradation is
 #: confined to the device that downgraded; accepted rather than gated on a
 #: schema bump.
-MESSAGE_ORIGINS: frozenset[str] = frozenset({"", MESSAGE_ORIGIN_AGENT_WAKE})
+MESSAGE_ORIGINS: frozenset[str] = frozenset(
+    {"", MESSAGE_ORIGIN_AGENT_WAKE, MESSAGE_ORIGIN_HOOK}
+)
 
 
 CHARACTER_EMOTE_FALLBACK_REASONS: frozenset[str] = frozenset(
@@ -290,7 +302,9 @@ class MessageMetadata:
         template_kind: The closed kind of a trusted template source.
         template_source: The source text used by ``template_kind``.
         origin: One of :data:`MESSAGE_ORIGINS` -- ``"agent_wake"`` for a
-            machine-injected auto-wake notice row, ``""`` otherwise.
+            machine-injected auto-wake notice row, ``"hook"`` for a
+            run-hooks row (block reason / injected context), ``""``
+            otherwise.
 
     Raises:
         ValueError: If ``transcript_status`` or ``origin`` is outside its

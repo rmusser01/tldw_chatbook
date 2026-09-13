@@ -7,7 +7,7 @@ import math
 import re
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping
 from uuid import uuid4
 
 from tldw_chatbook.Chat.console_endpoint_provenance import (
@@ -285,7 +285,16 @@ ConsoleActivityKind = Literal[
     "activity",
 ]
 ConsoleActivityStatus = Literal[
-    "success", "blocked", "failed", "done", "live", "stopped", "unavailable"
+    "success",
+    "blocked",
+    "denied",
+    "blocked_off",
+    "blocked_kill_switch",
+    "failed",
+    "done",
+    "live",
+    "stopped",
+    "unavailable",
 ]
 
 PROPRIETARY_THINKING_NOTICE = "Proprietary thinking obfuscated - not available"
@@ -314,9 +323,124 @@ _CONSOLE_ACTIVITY_KINDS = frozenset(
         "activity",
     }
 )
-_CONSOLE_ACTIVITY_STATUSES = frozenset(
-    {"success", "blocked", "failed", "done", "live", "stopped", "unavailable"}
+CONSOLE_ACTIVITY_STATUSES = frozenset(
+    {
+        "success",
+        "blocked",
+        "denied",
+        "blocked_off",
+        "blocked_kill_switch",
+        "failed",
+        "done",
+        "live",
+        "stopped",
+        "unavailable",
+    }
 )
+
+#: task-32279: statuses whose marker body is the refusal text sent to the
+#: MODEL rather than anything a tool produced. ``blocked`` is the generic
+#: member (an approval timeout, an unresolved decision); the three beside it
+#: name WHO refused, which a single "blocked" word could not.
+CONSOLE_ACTIVITY_REFUSAL_STATUSES = frozenset(
+    {"blocked", "denied", "blocked_off", "blocked_kill_switch"}
+)
+
+#: task-32279: the one on-screen vocabulary for an activity status, shared by
+#: the marker row and the plain-text transcript. Live evidence on dev: a call
+#: the user had just denied by hand rendered `... · blocked` -- the same word
+#: an Off entry and the kill switch produce -- so the transcript contradicted
+#: the card the user had answered a second earlier. Only statuses whose
+#: identifier is not already the right word need an entry here.
+_CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
+    "denied": "denied by you",
+    "blocked_off": "blocked (Off)",
+    "blocked_kill_switch": "blocked (kill switch)",
+}
+
+
+#: Qodo #4 (task-32345): what the run chip and the turn-activity line say
+#: while an interrupt round is waiting on the user, by round KIND
+#: (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys). Only the two kinds
+#: whose ask is NOT a confirmation need an entry; every other kind
+#: (skill-install, skill-script, worktree-merge, and any kind added later)
+#: falls through to `CONSOLE_PENDING_ROUND_DEFAULT_COPY`, which is true of
+#: all of them and cannot go stale when a sixth kind appears.
+#:
+#: Sentence-less on purpose: the run chip appends its own full stop, the
+#: activity line appends " · <elapsed>".
+CONSOLE_PENDING_ROUND_COPY: Mapping[str, str] = {
+    "approval": "Waiting for your approval",
+    "question": "Waiting for your answer",
+}
+CONSOLE_PENDING_ROUND_DEFAULT_COPY = "Waiting for your confirmation"
+
+
+def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
+    """Return the waiting copy for a session's outstanding round kinds.
+
+    Precedence, when more than one kind is outstanding at once: an approval
+    wins. That is the one kind the Inspector counts
+    (``ConsoleInspectorState.pending_approval_count`` counts mounted APPROVAL
+    cards), so it is the only choice that keeps the chip and the Inspector
+    telling the same story -- and an approval is the heavier decision of the
+    two. Otherwise a lone question asks for an answer, and anything else --
+    including a mix of non-approval kinds -- asks for a confirmation.
+
+    Args:
+        kinds: The outstanding round kinds, from
+            ``ConsoleChatController.pending_round_kinds``. Empty (a caller
+            that cannot resolve kinds -- a partial controller double, an
+            older seam) yields the approval copy, which is what every
+            surface said before kinds existed.
+
+    Returns:
+        The waiting sentence, without trailing punctuation.
+    """
+    resolved = {str(kind) for kind in kinds}
+    if not resolved or "approval" in resolved:
+        return CONSOLE_PENDING_ROUND_COPY["approval"]
+    if resolved == {"question"}:
+        return CONSOLE_PENDING_ROUND_COPY["question"]
+    return CONSOLE_PENDING_ROUND_DEFAULT_COPY
+
+
+def console_pending_round_copy_for(controller: Any, session_id: str) -> str:
+    """Resolve one session's waiting copy from a possibly-partial controller.
+
+    The three surfaces that render this (the run chip, the mode bar's run
+    status, the turn-activity line) all reach the controller late-bound and
+    are driven in tests by doubles that implement only part of it, so the
+    kind lookup is optional by construction: a controller without
+    ``pending_round_kinds`` -- or one that raises -- falls back to the
+    approval copy, which is what all three said before kinds existed.
+
+    Args:
+        controller: The ``ConsoleChatController`` (or a double).
+        session_id: The viewed session.
+
+    Returns:
+        The waiting sentence, without trailing punctuation.
+    """
+    read = getattr(controller, "pending_round_kinds", None)
+    if not callable(read):
+        return console_pending_round_copy(())
+    try:
+        return console_pending_round_copy(read(session_id or ""))
+    except Exception:  # noqa: BLE001 -- copy must never break a render
+        return console_pending_round_copy(())
+
+
+def console_activity_status_word(status: str) -> str:
+    """Return the word one activity status shows the user.
+
+    Args:
+        status: A ``ConsoleActivityStatus`` value.
+
+    Returns:
+        The user-facing word; the status itself when it already is one.
+    """
+    return _CONSOLE_ACTIVITY_STATUS_WORDS.get(status, status)
 
 
 CONSOLE_DISPATCH_UNRECONSTRUCTABLE_REASON = (
@@ -596,7 +720,7 @@ class ConsoleActivityPresentation:
             raise ValueError(
                 "activity label must be a non-empty single line <= 200 chars"
             )
-        if self.status not in _CONSOLE_ACTIVITY_STATUSES:
+        if self.status not in CONSOLE_ACTIVITY_STATUSES:
             raise ValueError("activity status is invalid")
 
 

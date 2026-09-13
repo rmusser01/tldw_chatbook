@@ -274,6 +274,46 @@ def test_notes_list_narrows_again_once_a_note_is_open() -> None:
     assert shell.applied.items_width >= 60
 
 
+#: The critique's narrow geometry (task-32389). Below the 64-column
+#: single-stage floor there is no rail on screen, so an empty work pane
+#: holding cells back from the list leaves nothing to select from.
+NARROW_WIDTH = 60
+
+
+def test_notes_list_takes_the_narrow_stage_when_nothing_is_open() -> None:
+    """task-32389 AC#1: 60 columns, no note open -- the list is the stage.
+
+    The list view asks for ``priority="items"`` unconditionally, and that
+    request used to reach the width-starved branch, which kept the list at
+    its 32-cell floor and handed the other 18 to a work pane painting only
+    "Select a note to edit it here.".
+    """
+    fake, shell = _layout_screen_fake(width=NARROW_WIDTH, view="list")
+
+    LibraryScreen._sync_library_notes_reader_layout_from_shell(fake)
+
+    assert shell.applied is not None
+    assert shell.applied.items_open is True
+    assert shell.applied.reader_width == 0, (
+        f"{shell.applied.reader_width} columns are still held by an empty "
+        f"work pane while the list is cut to {shell.applied.items_width}."
+    )
+    assert shell.applied.items_width == NARROW_WIDTH - 2 * (
+        LIBRARY_NOTES_READER_PROFILE.grip_width
+    )
+
+
+def test_notes_reading_split_returns_at_the_narrow_width_once_a_note_opens() -> None:
+    """task-32389 AC#2: opening a note hands the stage straight back."""
+    fake, shell = _layout_screen_fake(width=NARROW_WIDTH, view="editor")
+
+    LibraryScreen._sync_library_notes_reader_layout_from_shell(fake)
+
+    assert shell.applied is not None
+    assert shell.applied.reader_width >= LIBRARY_NOTES_READER_PROFILE.work_min_width - 2
+    assert shell.applied.items_open is False
+
+
 def _folder_selected_projection() -> LibraryNotesTreeProjection:
     return LibraryNotesTreeProjection(
         rows=(
@@ -541,10 +581,13 @@ class _RestoreService(_BranchService):
         )
 
 
-@pytest.mark.parametrize("parent", [None, "ideas"])
+@pytest.mark.parametrize(
+    ("parent", "start_expanded"),
+    [(None, False), ("ideas", True), ("ideas", False)],
+)
 @pytest.mark.asyncio
 async def test_undo_delete_returns_the_row_to_the_tree_projection(
-    monkeypatch, parent: str | None
+    monkeypatch, parent: str | None, start_expanded: bool
 ) -> None:
     """task-32124 AC#1/#2: Undo restores the row itself, not only the count.
 
@@ -552,10 +595,14 @@ async def test_undo_delete_returns_the_row_to_the_tree_projection(
     not asserted here: this fake stubs `_restore_library_notes_focus_identity`
     (there is no DOM), so the pin is the SELECTION the restore lands on, and
     focus is evidenced live (caps/05-undo-row-returns.txt).
+
+    task-32255 AC#3: the ``("ideas", False)`` case starts with the target
+    folder COLLAPSED -- the state the critique saw a restore land in, where
+    a row that returns to a shut branch is a receipt the user cannot check.
     """
     service = _RestoreService(parent)
     fake = _branch_screen_fake(service)
-    if parent is not None:
+    if parent is not None and start_expanded:
         fake._notes_state.tree_expanded_ids = {parent}
     fake._notes_state.delete_receipt = None
     fake._local_source_records = {"notes": ()}
@@ -624,6 +671,109 @@ async def test_undo_delete_returns_the_row_to_the_tree_projection(
     )
     assert restored[0].placement_id == expected
     assert fake._notes_state.tree_selected_placement_id == expected
+    if parent is not None:
+        # task-32255 AC#1: a row restored into a shut folder is invisible,
+        # so the restore opens it -- from either starting state.
+        assert parent in fake._notes_state.tree_expanded_ids
+
+
+class _FailingReloadRestoreService(_RestoreService):
+    """Restore succeeds; the branch the row returns to fails to re-page.
+
+    The shape the critique hit: the note comes back and the count moves,
+    but the slice reload behind it does not answer.
+    """
+
+    async def page_note_placements(self, **kwargs):
+        if self.restored and kwargs["parent_id"] == self.parent:
+            raise RuntimeError("placements offline")
+        return await super().page_note_placements(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_undo_opens_the_restored_folder_even_when_its_reload_fails(
+    monkeypatch,
+) -> None:
+    """task-32255 AC#1: the reveal is not all-or-nothing on the locator.
+
+    The locator resolves the folder path first and the placement second,
+    but banked every expansion until BOTH had answered -- so a branch
+    reload that failed after the restore committed left the folder shut
+    and the pane silent: the note was back, and nothing on screen said so.
+    """
+    service = _FailingReloadRestoreService("ideas")
+    fake = _branch_screen_fake(service)
+    fake._notes_state.delete_receipt = None
+    fake._local_source_records = {"notes": ()}
+    fake._local_source_counts = {"notes": 0}
+    fake._library_notes_mutation_in_flight = True
+    fake._library_note_delete_receipt = None
+    fake._selected_note_id = ""
+    fake._restore_library_notes_focus_identity = lambda *_a, **_k: None
+    fake._focus_library_note_control = lambda *_a, **_k: None
+    fake._library_notes_restore_guard_is_current = lambda *_a, **_k: True
+    fake._refresh_library_notes_trash = lambda: None
+    fake._source_record_id = LibraryScreen._source_record_id
+    fake._append_library_note_source_record = MethodType(
+        LibraryNotesController._append_library_note_source_record, fake
+    )
+    fake._run_library_service_call = _passthrough_service_call
+    fake._locate_library_notes_tree_target = MethodType(
+        LibraryScreen._locate_library_notes_tree_target, fake
+    )
+    fake._reconcile_library_notes_tree_mutation = MethodType(
+        LibraryScreen._reconcile_library_notes_tree_mutation, fake
+    )
+    fake._notes_state.tree_pending_target_placement_id = ""
+    fake._notes_state.mutation_in_flight = False
+    fake._notes_state.notice = ""
+    fake._load_library_notes_tree_slice = MethodType(
+        LibraryScreen._load_library_notes_tree_slice, fake
+    )
+    fake._build_library_notes_tree_projection = MethodType(
+        LibraryScreen._build_library_notes_tree_projection, fake
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Library_Modules.library_notes_controller._sync_library_canvas",
+        lambda *_a, **kwargs: (
+            kwargs["then"]() if kwargs.get("then") is not None else None
+        ),
+    )
+
+    for key in (
+        NotesBranchKey(None, "folders"),
+        NotesBranchKey(None, "placements"),
+        NotesBranchKey("ideas", "placements"),
+    ):
+        await LibraryScreen._load_library_notes_tree_slice(
+            fake, key, direction="replace", offset=0
+        )
+
+    await LibraryNotesController._undo_library_note_delete(
+        fake, LibraryNoteDeleteReceipt(note_id="n1", title="n1", expected_version=2)
+    )
+
+    assert "ideas" in fake._notes_state.tree_expanded_ids, (
+        "the restored note's folder stayed shut, so the row it holds is "
+        "invisible and the failed reload says nothing"
+    )
+    # ...and "says nothing" is the half that needs pinning: an open folder
+    # is only an improvement if what it opens onto names the failure and
+    # offers the retry. The guide promises this row by name. Proved to have
+    # teeth by letting the reload succeed, which drops the row and fails
+    # this assertion.
+    projection = LibraryScreen._build_library_notes_tree_projection(fake)
+    retries = [
+        row
+        for row in projection.rows
+        if row.kind == "pager"
+        and row.paging_action == "retry"
+        and row.parent_folder_id == "ideas"
+    ]
+    assert retries, (
+        "the folder opened onto silence: no retry row for the branch whose "
+        f"reload failed ({[(row.kind, row.label) for row in projection.rows]})"
+    )
 
 
 async def _passthrough_service_call(call, *, isolate_in_worker=False, **kwargs):
@@ -901,6 +1051,31 @@ def test_tree_rows_carry_a_relative_age() -> None:
     assert note_rows and note_rows[0].age_label == "2h"
 
 
+def _duplicate_row(note_id: str, age_label: str, clock_label: str = ""):
+    return LibraryNotesTreeRow(
+        placement_id=FolderPlacementId.unfiled(note_id),
+        kind="note",
+        label="Reading list",
+        depth=0,
+        note_id=note_id,
+        breadcrumb="Unfiled / Reading list",
+        age_label=age_label,
+        clock_label=clock_label,
+    )
+
+
+async def _rendered_tree_labels(projection) -> list[str]:
+    app = _CanvasApp(
+        pane_width=100, list_state=_list_state(), tree_projection=projection
+    )
+    async with app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        return [
+            str(button.label).strip()
+            for button in app.query(".library-notes-tree-note-row")
+        ]
+
+
 @pytest.mark.asyncio
 async def test_duplicate_titles_render_folder_and_age_suffixes() -> None:
     """task-32137 AC#2: two "Reading list" rows are told apart at render time."""
@@ -940,6 +1115,100 @@ async def test_duplicate_titles_render_folder_and_age_suffixes() -> None:
         "Reading list · Unfiled · 2h",
         "Reading list · Unfiled · 5d",
     ]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_titles_of_the_same_age_get_a_third_key() -> None:
+    """task-32254 AC#2: folder and age tie, so the time of day breaks it.
+
+    The case task-32137's discriminator could not reach, and the one it
+    was needed for most: two notes titled "Reading list", both unfiled,
+    both minutes old, rendered as the same string.
+    """
+    labels = await _rendered_tree_labels(
+        LibraryNotesTreeProjection(
+            rows=(
+                _duplicate_row("n1", "2m", clock_label="09:14"),
+                _duplicate_row("n2", "2m", clock_label="09:16"),
+            )
+        )
+    )
+
+    assert labels == [
+        "Reading list · Unfiled · 2m · 09:14",
+        "Reading list · Unfiled · 2m · 09:16",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_duplicates_from_the_same_minute_fall_back_to_a_short_id() -> None:
+    """task-32254 AC#2: a shared minute is not an identity; the id is.
+
+    Two notes written in the same minute (a seeding script, a double
+    press) share the clock too, so the group falls back to a stable short
+    id rather than to a third identical string.
+    """
+    labels = await _rendered_tree_labels(
+        LibraryNotesTreeProjection(
+            rows=(
+                _duplicate_row("0f3a-one", "2m", clock_label="09:14"),
+                _duplicate_row("b71c-two", "2m", clock_label="09:14"),
+            )
+        )
+    )
+
+    assert labels == [
+        "Reading list · Unfiled · 2m · #0f3a",
+        "Reading list · Unfiled · 2m · #b71c",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_title_that_does_not_repeat_keeps_its_plain_row() -> None:
+    """task-32254: the third key is spent only where rows actually tie."""
+    labels = await _rendered_tree_labels(
+        LibraryNotesTreeProjection(
+            rows=(
+                _duplicate_row("n1", "2m", clock_label="09:14"),
+                LibraryNotesTreeRow(
+                    placement_id=FolderPlacementId.unfiled("n2"),
+                    kind="note",
+                    label="Groceries",
+                    depth=0,
+                    note_id="n2",
+                    breadcrumb="Unfiled / Groceries",
+                    age_label="2m",
+                    clock_label="09:14",
+                ),
+            )
+        )
+    )
+
+    assert labels == ["Reading list · 2m", "Groceries · 2m"]
+
+
+def test_tree_rows_carry_the_local_time_of_day() -> None:
+    """task-32254 AC#2: the third key comes off the note's own timestamp."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Library.library_notes_tree_paging import empty_notes_slice
+
+    now = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+    modified = now - timedelta(minutes=2)
+    key = NotesBranchKey(None, "placements")
+    state = replace(
+        empty_notes_slice(key),
+        items=(_placement("n1", "Reading list", None, modified.isoformat()),),
+        item_ids=(FolderPlacementId.unfiled("n1"),),
+        total=1,
+    )
+
+    projection = build_paged_library_notes_tree(
+        branch_states={key: state}, expanded_folder_ids=set(), now=now
+    )
+
+    note_rows = [row for row in projection.rows if row.kind == "note"]
+    assert note_rows[0].clock_label == modified.astimezone().strftime("%H:%M")
 
 
 @pytest.mark.asyncio

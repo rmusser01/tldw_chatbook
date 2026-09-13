@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
 from tldw_chatbook.Notes.file_notes_git_commit import (
+    session_note_count,
     CommitContractError,
     CommitIncludedNote,
     CommitOutcome,
@@ -6542,7 +6543,9 @@ class FileNotesGitService:
         short_oid = head.object_id[:12]
         return CommitOutcome(
             "succeeded",
-            f"Committed {count} session notes as {short_oid}; "
+            # task-32265: this string IS the receipt the panel shows, so
+            # "Committed 1 session notes" was the user-visible copy.
+            f"Committed {session_note_count(count)} as {short_oid}; "
             "unrelated changes untouched.",
             qualification=(
                 "No unrelated staged content was committed; "

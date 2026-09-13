@@ -37,6 +37,23 @@ For MPS, use the same command with `--device mps` and a different output
 directory. The report records the actual model device and Fourier module;
 the production MPS implementation may place Fourier operations on CPU.
 
+For CUDA, use `--engine pytorch --device cuda` with a CUDA-enabled PyTorch
+installation and a new output directory. The worker explicitly rejects
+unavailable CUDA before model loading. `pytorch_device` records the concrete
+selected device (for example `cuda:0`), GPU name, total memory, compute
+capability, PyTorch version and its CUDA build version. Each native call checks
+the actual `model.device` against that selected device; CPU fallback or a
+different GPU fails qualification. Device ordinals follow `CUDA_VISIBLE_DEVICES`.
+Retain the host's NVIDIA driver version and physical GPU identity separately
+with your environment manifest; the CUDA build version is not the driver version.
+ONNX validation remains CPU-only.
+
+Device families also pass the shared input validator before output creation,
+including programmatic admission that bypasses argparse. PyTorch is loaded
+through the optional-dependency helper after private worker profile setup;
+a missing runtime reports the `local_tts` install extra. Help and module import
+remain inert and never load that runtime.
+
 For ONNX:
 
 ```sh
@@ -95,6 +112,17 @@ their original arguments/results unchanged. Cancellation means the request
 stops while a call is active and joins its native work; it does not claim hard
 preemption of that native computation.
 
+CUDA observations synchronize the selected device before native entry and
+after the original forward call returns or raises. `host_returned_at` records
+the Python return boundary; `exit_at` is recorded only after the completion
+barrier succeeds, alongside `cuda_synchronized: true`. A failed barrier leaves
+the call incomplete and records `synchronization_exception`, so cleanup cannot
+pass with an unverified GPU completion. Barriers run without the observation
+ledger lock, allowing Stop to be recorded while completion is pending. They
+cover all streams on the selected device and add observation overhead; these
+intervals establish native-call overlap and completion, not kernel-level
+profiling or proof that a GPU kernel occupied every instant in the interval.
+
 ## Read the evidence
 
 Each run owns a private profile, data/cache directories, original/decoded
@@ -127,6 +155,16 @@ retains no run-wide list of waveform arrays. Read warmup and subsequent
 settled samples as bounded retention observations. They are not a universal
 memory-leak threshold or a long-duration soak. The harness does not force
 garbage collection or empty GPU caches to improve those numbers.
+
+CUDA runs also synchronize before the pre-model, per-request settlement and
+post-cleanup memory snapshots. Each includes `cuda_device`,
+`cuda_allocated_bytes`, `cuda_reserved_bytes`, `cuda_peak_allocated_bytes` and
+`cuda_peak_reserved_bytes`, with `cuda_synchronized: true`. Peaks are cumulative
+allocator peaks for this worker; they are not reset between phases. Allocated
+memory measures live tensors, while reserved memory includes the caching
+allocator's retained blocks. These counters omit allocations outside PyTorch's
+allocator and do not establish total GPU process memory. CPU/MPS and ONNX runs
+do not initialize CUDA just to collect these counters.
 
 ## Verify full content separately
 
@@ -177,6 +215,11 @@ inert imports/help, asset/opt-in admission, inference interval and cleanup
 negative controls, full-duration playback, complete WAV decoding, hash binding,
 and multilingual content coverage. No live model, audio device, ASR, download,
 or server is needed by these tests.
+
+CUDA controls use a fake runtime and bounded thread gates to check admission,
+fallback rejection, synchronization ordering on normal/error exits and
+settled allocator samples. They validate the observation tooling; a real
+NVIDIA host is still required to qualify CUDA inference and playback.
 
 The harness follows ADR-023 (TTS operation ownership), ADR-039 (Global/Studio
 settings ownership), and ADR-040 (Speech Lab audition). It is a test-only tool;

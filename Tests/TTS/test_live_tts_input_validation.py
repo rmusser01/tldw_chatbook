@@ -256,3 +256,29 @@ def test_optional_dependency_lookup_uses_and_removes_a_private_profile(
     assert observed and not observed[0].parent.exists()
     assert os.environ["TLDW_CONFIG_PATH"] == str(protected)
     assert not protected.exists()
+
+
+@pytest.mark.parametrize("device", ["cuda:9", "CUDA", "", None, 3, ["cuda"]])
+def test_live_runner_rejects_unadmitted_device_before_output(tmp_path, device):
+    runner, args = live_args(tmp_path, device=device)
+    with pytest.raises(ValueError, match="device"):
+        runner.validate_args(args)
+    assert not args.output.exists()
+
+
+def test_missing_optional_pytorch_has_project_install_guidance(monkeypatch):
+    from tldw_chatbook.Utils import optional_deps
+
+    runner = script("validate_live_tts")
+    # Simulate only package absence; exercise the real dependency error policy.
+    monkeypatch.setattr(optional_deps, "check_dependency", lambda *args: False)
+    with pytest.raises(ImportError, match=r"pip install tldw_chatbook\[local_tts\]"):
+        runner.load_pytorch_runtime()
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps", "cuda"])
+def test_live_runner_admits_supported_device_without_starting_output(tmp_path, device):
+    runner, args = live_args(tmp_path, device=device)
+    runner.validate_args(args)
+    assert args.device == device
+    assert not args.output.exists()

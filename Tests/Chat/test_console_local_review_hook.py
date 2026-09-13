@@ -5,7 +5,10 @@ stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 """
 
 import asyncio
+import contextlib
 import json
+import threading
+import time
 import weakref
 from types import SimpleNamespace
 
@@ -411,6 +414,93 @@ def test_combined_hook_runs_remaining_hooks_after_a_raise(tmp_path):
         hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
     assert p1._stamps == {}  # cleared at entry, round trip raised
     assert p2._stamps == {(RUN, "fs_list"): "deny"}  # fresh THIS-turn decision
+
+
+def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(tmp_path):
+    """task-32280 fix round (Critical review finding).
+
+    Mirrors `test_mcp_tool_provider.py::
+    test_hook_level_card_deny_lands_in_the_execution_log_exactly_once`: a
+    hook-level deny is turned straight into the call's result by
+    `run_agent_loop`, which skips dispatch entirely, so
+    `LocalToolProvider.invoke_detailed()` -- the only thing that otherwise
+    records a local refusal -- never runs for it. Drives the REAL provider
+    through the REAL `build_local_review_hook` so a fake cannot paper over
+    the gap; the split `denied`/`denied-policy`/`denied-unresolved` tokens
+    added to `invoke_detailed()` are dead code for this path otherwise.
+    """
+    recorded: list[tuple[str, str]] = []
+    p = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: ASK,
+        record_decision=lambda hub, decision: recorded.append((hub.name, decision)),
+    )
+    hook = build_local_review_hook(p, lambda pending: {"fs_list": "deny"})
+
+    verdicts = hook(
+        [ToolCall(name="fs_list", args={"path": "."}, call_id="c-1")], RUN
+    )
+
+    assert verdicts.get("c-1", "proceed") != "proceed", (
+        f"precondition: the denied call must not be dispatched: {verdicts}"
+    )
+    assert recorded == [("fs_list", "denied")], (
+        "the user's Deny left no row in the execution log: " f"{recorded}"
+    )
+
+
+def test_stop_mid_approval_records_only_the_unresolved_row(tmp_path):
+    """R23, local half: mirrors `test_mcp_tool_provider.py::
+    test_stop_mid_approval_records_only_the_unresolved_row`. A Stop while
+    the card is up already writes the honest `denied-unresolved` row from
+    the controller; the hook must not add a "Denied by you" one on top."""
+    from tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION
+
+    recorded: list[tuple[str, str]] = []
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: ASK,
+        record_decision=lambda hub, decision: recorded.append((hub.name, decision)),
+    )
+    cancel_rows: list[tuple] = []
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
+        unified_mcp_service=SimpleNamespace(
+            record_tool_decision=lambda server_key, tool_name, **kw: cancel_rows.append(
+                (server_key, tool_name, kw.get("decision"))
+            )
+        ),
+    )
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def _stop_soon() -> None:
+        time.sleep(0.05)
+        # begin_shutdown() runs its owner-thread queue teardown inline when
+        # no owner loop is bound (none is, in this synchronous test), which
+        # trips the queue's cross-thread guard -- it still denies the
+        # unresolved approval first (in begin_shutdown's `finally`), so the
+        # assertions below hold; only the thread-local exception is noise.
+        with contextlib.suppress(Exception):
+            controller.begin_shutdown()
+
+    stopper = threading.Thread(target=_stop_soon)
+    stopper.start()
+    hook = build_local_review_hook(provider, controller.request_mcp_approvals)
+    with use_run_id(RUN):
+        verdicts = hook(
+            [ToolCall(name="fs_list", args={"path": "."}, call_id="c-1")], RUN
+        )
+    stopper.join()
+
+    assert verdicts.get("c-1", "proceed") != "proceed"
+    assert recorded == [], (
+        f"a Stop mid-approval recorded a user denial it never received: {recorded}"
+    )
+    assert [row[2] for row in cancel_rows] == [UNRESOLVED_DENIED_DECISION]
 
 
 # -- _compose_local_provider -------------------------------------------------
@@ -1269,8 +1359,11 @@ def test_compose_local_provider_records_deny_via_service(monkeypatch, tmp_path):
     r = local_provider.invoke("local:fs_list", {"path": "."})
 
     assert not r.ok
+    # task-32280 fix round: a tool configured Off is not a person saying no.
+    # Through the REAL wiring (the controller's `record_decision` seam into
+    # the service), not just the provider's own unit test.
     assert service.recorded_decisions == [
-        ("local:__local__", "fs_list", "denied", "agent", None)
+        ("local:__local__", "fs_list", "denied-policy", "agent", None)
     ]
 
 
@@ -1454,3 +1547,406 @@ def test_hook_passes_rationale_onto_local_pending_rows(tmp_path):
     )
     assert seen[0][0].rationale == "Listing the workspace to find the config"
     assert seen[0][1].rationale == ""
+
+
+def test_a_no_app_headless_round_is_not_recorded_as_a_local_user_denial(tmp_path):
+    """task-32280 (Qodo #2597 #8): `request_mcp_approvals` fails CLOSED when
+    no app is wired -- no card is ever shown, so no user decides anything.
+    It returned a bare `{key: "deny"}` dict, which `approval_was_unanswered`
+    reads as "answered", so THIS hook wrote `record_user_denial()` and the
+    local audit trail claimed a person pressed Deny.
+
+    Driven through the REAL `request_mcp_approvals` (not a stub returning
+    the same shape), because the bug lived in what that method returns.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    assert controller.app is None  # the branch under test
+
+    p = provider(ASK, tmp_path)
+    denials: list[str] = []
+    p.record_user_denial = denials.append
+
+    seen: list[dict] = []
+
+    def _headless_round(pending):
+        decisions = controller.request_mcp_approvals(pending)
+        seen.append(decisions)
+        return decisions
+
+    hook = build_local_review_hook(p, _headless_round)
+    verdicts = hook(
+        [ToolCall(name="fs_list", args={"path": "."}, call_id="call-1")], RUN
+    )
+
+    # Fails closed, exactly as before.
+    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="fs_list")
+    assert isinstance(seen[0], ApprovalDecisions)
+    assert seen[0].unresolved_keys == frozenset({"call-1"})
+    assert denials == [], "a headless fail-closed deny was audited as the user's"
+
+
+# -- PreToolUse hooks around the review chain (console run hooks Task 6) --------
+
+
+def _deny_fs_tools_engine(tmp_path):
+    """A RunHooksEngine with one exit-2 PreToolUse hook matching ``fs_*``.
+
+    The stub command is deliberately a real ``sys.executable`` process (spec
+    §5's protocol is subprocess-based; no in-process fakes here), and the
+    exit code is the spec's deny shorthand (exit 2, no JSON stdout).
+    """
+    import sys as _sys
+
+    from tldw_chatbook.Agents.run_hooks import HookSpec, RunHooksConfig, RunHooksEngine
+
+    return RunHooksEngine(
+        lambda: RunHooksConfig(
+            enabled=True,
+            hooks=(
+                HookSpec(
+                    "PreToolUse",
+                    (_sys.executable, "-c", "raise SystemExit(2)"),
+                    matcher="fs_*",
+                ),
+            ),
+        ),
+        lambda: str(tmp_path),
+    )
+
+
+def test_pretooluse_hook_denies_before_permission_store(tmp_path):
+    """A configured exit-2 PreToolUse hook denies the matched call and the
+    approval round never carries it (deny-only, spec §5).
+
+    Composition-level: the engine's wrap_review layers the real controller
+    review hook (build_local_review_hook) exactly the way the bridge does --
+    the matched ``fs_*`` call comes back as a namespaced ``hook: `` refusal
+    without ever entering the request_approvals round, while the
+    non-matching tool runs the normal ask -> approve -> proceed chain.
+    """
+    engine = _deny_fs_tools_engine(tmp_path)
+    p = provider(ASK, tmp_path)
+    rounds = []
+
+    def approvals(pending):
+        rounds.append([call.tool_name for call in pending])
+        return {call.tool_name: "approve_once" for call in pending}
+
+    wrapped = engine.wrap_review(
+        build_local_review_hook(p, approvals), session_id="session-1"
+    )
+    verdicts = wrapped(
+        [
+            ToolCall(name="fs_list", args={"path": "."}),
+            ToolCall(name="git_status", args={"path": "."}),
+        ],
+        RUN,
+    )
+    assert verdicts["fs_list"] != "proceed"
+    assert verdicts["fs_list"].startswith("hook: ")
+    assert verdicts["git_status"] == "proceed"
+    # ONE approval round trip, carrying only the non-matching call: the
+    # hook-denied call never reaches the permission store.
+    assert rounds == [["git_status"]]
+
+
+def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
+    """Task 6 bridge wiring: run_reply must wrap the caller's review chain
+    with the engine's PreToolUse layer when the bridge was built with an
+    ``ensure_run_hooks`` accessor.
+
+    Verified end-to-end through a real ``run_reply`` (scripted gateway, real
+    LocalToolProvider + real build_local_review_hook as the caller-supplied
+    chain): the matched ``fs_read`` call is refused with a namespaced
+    ``hook: `` verdict and the approval round only ever carries the
+    non-matching ``git_status`` call. Without the wrap, the batch arrives at
+    the review chain whole and no ``hook: `` refusal exists.
+    """
+    import json as _json
+
+    from tldw_chatbook.Agents.agent_models import STEP_TOOL_RESULT
+    from tldw_chatbook.Agents.local_tool_provider import _default_specs
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderResolution,
+        ProviderToolCalls,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    engine = _deny_fs_tools_engine(tmp_path)
+
+    class _ScriptedGateway:
+        """Streams one scripted chunk-list per model call (fakes only)."""
+
+        def __init__(self, scripts):
+            self._scripts = list(scripts)
+            self.calls = 0
+
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            chunks = self._scripts[self.calls]
+            self.calls += 1
+            for chunk in chunks:
+                yield chunk
+
+    def _native_batch(*pairs):
+        return ProviderToolCalls(
+            tool_calls=tuple(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": _json.dumps(args)},
+                }
+                for name, args, call_id in pairs
+            )
+        )
+
+    gateway = _ScriptedGateway(
+        [
+            [
+                _native_batch(
+                    ("fs_read", {"path": "."}, "read-1"),
+                    ("git_status", {"path": "."}, "git-1"),
+                )
+            ],
+            ["done."],
+        ]
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    dispatched = []
+
+    def execute(operation, arguments, *, intent):
+        dispatched.append(operation)
+        return "clean working tree"
+
+    local = LocalToolProvider(
+        workspace_root=tmp_path,
+        specs=[
+            spec
+            for spec in _default_specs(
+                tmp_path, workspace_executor=SimpleNamespace(execute=execute)
+            )
+            if spec.name in {"fs_read", "git_status"}
+        ],
+        resolve_state=lambda _hub: ASK,
+    )
+    rounds = []
+
+    def approvals(pending):
+        rounds.append([call.tool_name for call in pending])
+        return {call.tool_name: "approve_once" for call in pending}
+
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+        ensure_run_hooks=lambda: engine,
+    )
+    _run_id, outcome = bridge.run_reply(
+        conversation_id="conv-1",
+        session_id=session.id,
+        resolution=ConsoleProviderResolution(
+            provider="Groq", execution_key="groq", base_url="", model=None, ready=True
+        ),
+        assistant_message_id=assistant.id,
+        model="test-model",
+        session_system_prompt="",
+        agent_messages=[{"role": "user", "content": "hi"}],
+        should_cancel=lambda: False,
+        local_provider=local,
+        review_tool_calls=build_local_review_hook(local, approvals),
+    )
+
+    assert outcome.status == "done", outcome.steps
+    # The hook denied fs_read BEFORE the review chain: the one approval
+    # round carried only the non-matching call.
+    assert rounds == [["git_status"]]
+    results = {
+        step.tool_name: step.result
+        for step in outcome.steps
+        if step.kind == STEP_TOOL_RESULT
+    }
+    assert results["fs_read"].startswith("hook: ")
+    assert "git_status" in results  # ran the normal chain and dispatched
+    assert dispatched == ["git_status"]
+
+
+# -- ApprovalRequested at the approval-round registration (run hooks Task 8) --
+
+
+class _RecordingHooksEngine:
+    """Test double for the run-hooks engine: records every ``notify`` fire.
+
+    The Task 8 events (ApprovalRequested / Stop / SubagentStop) are all
+    non-blocking ``notify`` fires -- a recorder is the whole contract the
+    fire sites consume. Runs nothing, unlike the real engine.
+    """
+
+    def __init__(self):
+        self.notifications: list[tuple[str, dict]] = []
+
+    def notify(self, event, **kwargs):
+        self.notifications.append((event, kwargs))
+
+
+class _InlineCallFromThreadApp:
+    """``call_from_thread`` stand-in: run the marshalled callback inline."""
+
+    def call_from_thread(self, fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+
+def test_approval_requested_fires_with_round_payload():
+    """One ask-state call through ``request_mcp_approvals`` fires
+    ApprovalRequested exactly once, the moment the round is registered --
+    before any bridge slot (mount/park) is consulted -- carrying the
+    call's name and ``session_active=True`` for the viewed session."""
+    import threading
+    import time
+
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    engine = _RecordingHooksEngine()
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=object(),
+        ensure_run_hooks=lambda: engine,
+    )
+    mounted: list[dict | None] = []
+    controller.app = _InlineCallFromThreadApp()
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    pending = MCPPendingCall(
+        llm_name="local:__local__:fs_write",
+        server_key="local:__local__",
+        tool_name="fs_write",
+        server_label="Local tools",
+        arguments={"path": "notes.txt"},
+        reason="ask",
+    )
+
+    def _resolve_soon() -> None:
+        time.sleep(0.05)
+        assert mounted and mounted[-1] is not None
+        controller.resolve_pending_approval(
+            {"local:__local__:fs_write": "approve_once"},
+            round_id=mounted[-1]["round_id"],
+        )
+
+    threading.Thread(target=_resolve_soon).start()
+    decisions = controller.request_mcp_approvals([pending], session_id=session.id)
+
+    assert decisions == {"local:__local__:fs_write": "approve_once"}
+    # Exactly ONE notify for the round: the event name, the round's owning
+    # session, the call's name, and the active-session flag.
+    assert [event for event, _ in engine.notifications] == ["ApprovalRequested"]
+    _event, kwargs = engine.notifications[0]
+    assert kwargs["session_id"] == session.id
+    # Review fix R29: spec §4 promised an args summary per call -- a stable
+    # small args dict serializes to exactly its JSON string.
+    assert kwargs["data"] == {
+        "calls": [
+            {
+                "name": "local:__local__:fs_write",
+                "args_summary": '{"path": "notes.txt"}',
+            }
+        ],
+        "session_active": True,
+    }
+
+
+def test_approval_requested_fires_for_view_detached_round():
+    """A parked round armed with NO Console view anywhere (both bridge
+    seams unwired) still fires ApprovalRequested exactly once, with
+    ``session_active=False`` -- no view exists, so the round's owning
+    session is not the viewed one. Review finding R25: the detached
+    branch announced a toast but fired no event, while the ``elif
+    is_parked:`` branch below it fired -- a detached background round is
+    the notification hook's most valuable case and it got nothing."""
+    import threading
+    import time
+
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    engine = _RecordingHooksEngine()
+    store = ConsoleChatStore()
+    store.ensure_session()  # the active/viewed session
+    background = store.create_session(title="fleet", activate=False)
+    # Detachment is the constructor's own default: neither bridge seam
+    # (`set_pending_approval` / `park_pending_approval`) is wired, so
+    # `_approval_view_is_detached()` is True -- the announce toast is the
+    # only surfacing this round could ever get (the app double below has
+    # no `notify`, so the best-effort announce silently skips).
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=object(),
+        ensure_run_hooks=lambda: engine,
+    )
+    controller.app = _InlineCallFromThreadApp()
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    pending = MCPPendingCall(
+        llm_name="local:__local__:fs_write",
+        server_key="local:__local__",
+        tool_name="fs_write",
+        server_label="Local tools",
+        arguments={"path": "notes.txt"},
+        reason="ask",
+    )
+
+    def _resolve_soon() -> None:
+        # No card mounts and nothing parks (detachment), so the round id
+        # is read from the registered-rounds map itself -- under the same
+        # lock the controller documents for exactly this cross-thread
+        # read (the F2b guard comment on `_approval_state_lock`).
+        round_id = None
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            with controller._approval_state_lock:
+                registered = list(controller._pending_approval_rounds)
+            if registered:
+                round_id = registered[0]
+                break
+            time.sleep(0.01)
+        assert round_id is not None, "round never registered"
+        controller.resolve_pending_approval(
+            {"local:__local__:fs_write": "approve_once"}, round_id=round_id
+        )
+
+    threading.Thread(target=_resolve_soon).start()
+    decisions = controller.request_mcp_approvals(
+        [pending], session_id=background.id
+    )
+
+    assert decisions == {"local:__local__:fs_write": "approve_once"}
+    # Exactly ONE notify for the round even though the detached branch
+    # also runs: the registration-time fire is skipped (`is_parked`), so
+    # the detached branch's fire is the round's only one.
+    assert [event for event, _ in engine.notifications] == ["ApprovalRequested"]
+    _event, kwargs = engine.notifications[0]
+    assert kwargs["session_id"] == background.id
+    # Review fix R29: args summary present on the detached path too -- the
+    # detached branch builds the same per-call entry as the registration fire.
+    assert kwargs["data"] == {
+        "calls": [
+            {
+                "name": "local:__local__:fs_write",
+                "args_summary": '{"path": "notes.txt"}',
+            }
+        ],
+        "session_active": False,
+    }

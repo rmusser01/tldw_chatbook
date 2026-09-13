@@ -73,6 +73,7 @@ Classifications have these meanings:
 | C54 | tldw_chatbook/DB/Chunking_Lab_DB | CheckpointStore._connection | db.chunking_lab | private_file | profile-local experiment recovery | Migrated via `connect_private_sqlite`. One lazily opened worker-owned connection publishes checkpoint/blob references with WAL and synchronous FULL, epoch/generation CAS, and current/previous/undo retention. Clear commits a content-free tombstone; private storage and deletion are not encryption or secure erasure. Excluded from centralized backup. |
 | C55 | tldw_chatbook/Chat/console_trace_maintenance | PhysicalTraceCompactor._open_maintenance_connection | chat.trace_maintenance | private_file | same-file maintenance write | Migrated via `connect_private_sqlite`. Registered under its actual module owner. Reopens the existing conversation database with `must_exist=True` for leased physical maintenance, preserving path hardening, connection options and PRAGMAs. Memory compaction remains deferred; no centralized backup permission. |
 | C56 | tldw_chatbook/Library/collections_legacy_recovery | LegacyCollectionsRecovery._read_transaction | library.legacy_recovery | read_only_uri | schema-independent legacy recovery read | Migrated via `connect_private_sqlite`. Existing-file, read-only access without schema initialization or mode changes; namespace checks fail closed. No centralized backup authority. SQLite may maintain WAL/SHM sidecars while reading committed WAL frames. |
+| C57 | tldw_chatbook/Chat/console_launch_wake | pending_conversations_at_launch | chat.launch_wake | read_only_uri | native fleet launch discovery | Migrated via `connect_private_sqlite`. TASK-32037 / ADR-135 reads identities from an existing private sibling runs database without creating, migrating, or reconciling it. Claimed results remain discoverable without attention badges; the native runtime separately owns recovery. The read-only WAL view includes committed frames and retains the normal private file and sidecar policy. |
 
 ## SQLite backup and restore inventory
 
@@ -237,7 +238,7 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The migrated boundary retains 54 classified connection sites and fourteen
+The migrated boundary retains 55 classified connection sites and fourteen
 classified backup/restore operations. The centralized filesystem seam owns
 three raw `sqlite3.connect` calls inside `DB/private_sqlite.py`. One separate
 raw call in `TTS/profile_sqlite_policy.require_native_close_policy_support` is

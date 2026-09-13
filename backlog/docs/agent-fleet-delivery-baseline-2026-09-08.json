@@ -1,0 +1,38 @@
+{
+  "date": "2026-09-08",
+  "tasks": [
+    "TASK-32020",
+    "TASK-32021"
+  ],
+  "command": ".venv/bin/python -m pytest Tests/Chat/fleet_delivery_probe.py -q -s",
+  "scope": "Design baseline before ADR-135 runtime implementation; deterministic local bridges/controllers and real SQLite, scripted provider and MCP transport, no live provider.",
+  "limitations": [
+    "Holding a gate for 350 ms measures only a latency lower bound; an unreleased sibling or approval can hold the current barrier indefinitely.",
+    "The failed-stamp probe exercises durable-state reconstruction through seed_from_marks in the same process; it is not a killed-process or power-loss test.",
+    "Two provider calls demonstrate replayed automatic work, not a measured duplicate external tool side effect.",
+    "These opt-in probes report behavior; they do not pin the old policy as a desired regression contract."
+  ],
+  "results": [
+    {
+      "scenario": "slow_sibling",
+      "observed_hold_seconds": 0.353,
+      "wake_calls_while_sibling_held": 0,
+      "drain_events_while_sibling_held": 0,
+      "wake_calls_after_release": 1
+    },
+    {
+      "scenario": "blocked_approval",
+      "observed_hold_seconds": 0.35,
+      "second_conversation_rows_while_approval_held": 0,
+      "approval_undecided_until_explicit_resolution": true,
+      "second_conversation_rows_after_release": 2
+    },
+    {
+      "scenario": "failed_stamp",
+      "calls_before_claim": 1,
+      "unstamped_after_finished_turn": true,
+      "seeded_conversations": 1,
+      "calls_after_claim": 2
+    }
+  ]
+}

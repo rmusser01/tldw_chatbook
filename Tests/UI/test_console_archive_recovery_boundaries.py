@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from tldw_chatbook.Chat import conversation_archive_actions
 from tldw_chatbook.UI.Console_Modules import archive
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleConversationResumeIntent,
@@ -56,7 +57,9 @@ async def confirm_recovery(app):
 async def test_confirmation_revalidates_before_restoring_workspace(monkeypatch, change):
     app, row, workspace = recovery_app()
     restore = AsyncMock(return_value={"changed": {"chat-a": 5}, "failures": {}})
-    monkeypatch.setattr(archive, "change_conversation_archive", restore)
+    monkeypatch.setattr(
+        conversation_archive_actions, "change_conversation_archive", restore
+    )
     await archive.request_conversation_resume(app, "chat-a")
     if change == "version":
         row["version"] = 5
@@ -86,7 +89,9 @@ async def test_workspace_restore_partial_failure_is_explicit_and_retryable(
         side_effect=RuntimeError("write failed") if storage_failure else None,
         return_value={"changed": {}, "failures": {"chat-a": "stale_version"}},
     )
-    monkeypatch.setattr(archive, "change_conversation_archive", restore)
+    monkeypatch.setattr(
+        conversation_archive_actions, "change_conversation_archive", restore
+    )
     await archive.request_conversation_resume(app, "chat-a")
     await confirm_recovery(app)
     assert not workspace.archived
@@ -329,7 +334,9 @@ async def test_recovery_error_logs_bind_only_identity_context(monkeypatch, phase
                         RuntimeError("undo failed"),
                     ]
                 )
-                monkeypatch.setattr(archive, "change_conversation_archive", change)
+                monkeypatch.setattr(
+                    conversation_archive_actions, "change_conversation_archive", change
+                )
             await archive.archive_current_conversation(screen)
             if phase == "undo":
                 await callbacks[0]("undo")
@@ -383,11 +390,14 @@ async def test_initially_active_resume_revalidates_before_staging():
     workspace.archived = False
     row["archived"] = False
     app.local_chat_conversation_service.get_conversation_metadata.side_effect = [
-        dict(row), {**row, "archived": True, "version": 5},
+        dict(row),
+        {**row, "archived": True, "version": 5},
     ]
     await archive.request_conversation_resume(app, "chat-a")
     app.post_message.assert_not_called()
-    assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_CONVERSATION_RESUME) is None
+    assert (
+        app.pending_handoffs.claim(HandoffChannel.CONSOLE_CONVERSATION_RESUME) is None
+    )
     assert "changed" in app.notify.call_args.args[0]
 
 
@@ -426,7 +436,9 @@ async def test_older_restore_confirmation_cannot_replace_newer_resume(
     )
     screen._session = SimpleNamespace(_activate_native_console_session=AsyncMock())
     change = AsyncMock(return_value={"changed": {"chat-a": 5}, "failures": {}})
-    monkeypatch.setattr(archive, "change_conversation_archive", change)
+    monkeypatch.setattr(
+        conversation_archive_actions, "change_conversation_archive", change
+    )
     channel = HandoffChannel.CONSOLE_CONVERSATION_RESUME
     app.pending_handoffs.stage(channel, ConsoleConversationResumeIntent("chat-a"))
     await archive.consume_conversation_resume(screen)

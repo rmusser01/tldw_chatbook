@@ -10210,6 +10210,10 @@ class TldwCli(
         self.local_chatbook_service = LocalChatbookService(
             self._build_chatbook_db_paths()
         )
+        # ArtifactShareController is created lazily on first share use via
+        # _get_artifact_share_controller(): importing its module chain at boot
+        # breaches the UI-ready module census ratchet (ADR-097 — the budget
+        # never rises; new imports must be deferred).
         self.server_chatbook_service = (
             ServerChatbookService.from_server_context_provider(
                 self.server_context_provider,
@@ -17045,22 +17049,12 @@ class TldwCli(
             )
 
     def _schedule_launch_wake(self) -> None:
-        """Deliver a supervisor wake this install already owed at launch.
+        """Discover saved child results in existing history and audit before waking.
 
-        task-15860 Task 6. A background sub-agent that finished while the
-        app was closed -- or one whose delivery the user quit out from
-        under -- used to wait for the next Console visit. It no longer
-        does, under the owner's mark-gated ruling: only a conversation
-        that already carries a durable ``FLEET_UNSEEN`` mark AND an owed
-        ``agent_runs`` row is delivered, behind the existing ``[agents]
-        autowake_enabled`` (there is no separate launch switch).
-
-        **The common path costs one indexed read and constructs nothing.**
-        With no marks -- every install that has never run a background
-        sub-agent, and every one whose results have all been seen -- this
-        returns before touching the Console store, provider gateway, agent
-        bridge (so ``agent_runs.db`` is not even opened) or controller.
-        That is pinned in ``Tests/UI/test_console_launch_wake.py``.
+        ADR-135 makes durable attempts and causal lineage the authority. Unseen
+        badges are only a projection. An absent or empty runs database does not
+        construct the Console runtime; the existing autowake switch still gates
+        automatic launch work.
         """
         try:
             from tldw_chatbook.Chat.console_launch_wake import (
@@ -18266,6 +18260,40 @@ class TldwCli(
             pass
         super()._handle_exception(error)
 
+    def _get_artifact_share_controller(self):
+        """Return the app-owned share controller, creating it on first use.
+
+        Creation (and the stale-share startup sweep) is deferred to the first
+        share interaction so the Web_Server import chain stays off the boot
+        path and inside the UI-ready module census budget (ADR-097).
+        """
+        controller = getattr(self, "artifact_share_controller", None)
+        if controller is None:
+            from .Web_Server.artifact_share import ArtifactShareController
+
+            controller = ArtifactShareController()
+            self.artifact_share_controller = controller
+            try:
+                controller.startup_sweep()
+            except Exception as exc:
+                logger.warning(f"Artifact share startup sweep failed: {exc}")
+        return controller
+
+    def _shutdown_artifact_share(self) -> None:
+        """Stop any running artifact share; safe to call repeatedly."""
+        controller = getattr(self, "artifact_share_controller", None)
+        if controller is None:
+            return
+        try:
+            controller.stop_share()
+        except Exception as exc:
+            logger.warning(f"Artifact share shutdown failed: {exc}")
+        finally:
+            # Drop the reference so a second call (or a late on_unmount
+            # re-entry) never re-issues stop_share -- shutdown is strictly
+            # once per controller.
+            self.artifact_share_controller = None
+
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
@@ -18426,6 +18454,14 @@ class TldwCli(
                 self.loguru_logger.error(
                     f"Error disconnecting local MCP client sessions: {e}"
                 )
+
+            # Stop any running artifact share (child web server) before the
+            # process goes away; idempotent and failure-tolerant.
+            try:
+                self._shutdown_artifact_share()
+                self.loguru_logger.info("Artifact share stopped (if running)")
+            except Exception as e:
+                self.loguru_logger.error(f"Error stopping artifact share: {e}")
 
             # Cancel any pending workers and wait for them, bounded.
             await self._cancel_and_settle_workers("unmount")

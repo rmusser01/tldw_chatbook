@@ -14,7 +14,7 @@ guarantee for other models or releases. See the
 
 ## Before launching
 
-Enable snapshots in canonical **F9 Settings → LLM and Providers**, using the
+Enable snapshots in canonical **F4 Settings → LLM and Providers**, using the
 category Save/Revert workflow, or in Models → **Details & preferences** using
 Apply. Enable/disable changes apply to the **next launch**. Keep-count changes
 apply to later Save operations on an already-running enabled launch.
@@ -67,11 +67,11 @@ starting again. Working files stay retained until server and local file work
 are settled. Catalog browsing and confirmed deletion remain available. Corrupt
 or missing saved files are rejected before a Restore request is sent.
 
-If persisted snapshot preferences are malformed, Models and F9 remain usable but
+If persisted snapshot preferences are malformed, Models and F4 remain usable but
 affected mutation/preference controls are disabled. Correct
 `[llamacpp_snapshots] enabled` (boolean) and `keep_count` (integer 1–1000) in
-Advanced Config, then Models Reload or F9 Revert. No silent default is accepted.
-F9 detects changes saved by another surface and asks you to reload rather than
+Advanced Config, then Models Reload or F4 Revert. No silent default is accepted.
+F4 detects changes saved by another surface and asks you to reload rather than
 overwriting a stale draft.
 
 ## Opt-in local verification

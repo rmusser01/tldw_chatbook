@@ -29,7 +29,7 @@ Where this page's controls live:
   tabs (**Costs**, **Exchange**, **Next Send**), opened from the token/cost
   chip, **Ctrl+Shift+P**, or the command palette. The screenshot above
   shows its **Next Send** tab, carried over from the former standalone
-  "Chat Context" viewer this modal replaced.
+  "Chat Context" viewer this modal replaced (the viewer is now the Conversation Inspector's Current tab).
 - **The Inspector rail** (right edge), top to bottom — the Project
   Instructions status row, then the pinned "What happens if I send now?"
   summary (these two never scroll; on a short terminal the summary shrinks
@@ -46,6 +46,14 @@ Where this page's controls live:
   to open the rail and put the caret on the send summary; press it again to
   close. That shortcut works at every terminal width, including narrow ones
   where the rail's edge handle is hidden.
+
+  The **Environment**, **Tasks**, and **Agents** sections each collapse by
+  their own header (Enter on the header, or click it) and remember their
+  open/closed state per workspace. The blocks between them are bounded
+  instead: the Sources tray scrolls inside its own frame, the run groups
+  fold behind the run block's **More** disclosure, and the remaining rows
+  are one line each — so a deep Environment expansion never pushes the
+  Scope row off the rail.
 
   In "Live work sources", the status word tells you what kind of claim it
   is. **Connected** means a runtime connection was actually probed (ACP,
@@ -199,7 +207,7 @@ the composer draft. A row with none of these is inert — Enter does nothing.
 
 | Row | Shows | Enter expands to | Actions |
 | --- | --- | --- | --- |
-| **Changes ▸** | `+adds −dels` for the working tree vs `HEAD` | one row per changed file with its own ± counts (long lists end with "… N more — Review opens all") | **Review in Change Review…** |
+| **Changes ▸** | `+adds −dels` for the working tree vs `HEAD` | one row per changed file with its own ± counts (long lists end with "… N more — Review opens all" — selecting that row opens Review) | **Review in Change Review…** |
 | **Local ▸** | the execution target for this instance | `Local instance ✓` and a greyed `Remote tldw_server — not configured` (both inert) | none — remote execution is a placeholder, not a feature |
 | **branch ▸** | the branch name, plus `↑n ↓n` divergence and a `wt:<name>` marker inside a linked worktree | the full branch name and `upstream <ref> (↑↓ vs last fetch)`, plus the worktree name and its path (inert) | none |
 | **Review & commit… · N files** | shown when the tree is dirty; `Push ↑n…` when it is only ahead — **absent when the tree is clean and in sync** | — | opens Change Review directly on its working-tree mode |
@@ -340,7 +348,7 @@ them with a distorted image.
 Click the status row's cost chip, press **Ctrl+Shift+P**, or run
 **Console: View chat context** from the command palette to open the
 **Conversation Inspector** — one modal, three tabs, replacing the older
-separate cost breakdown and "Chat Context" viewer. The chip opens on
+separate cost breakdown and Current Context viewer. The chip opens on
 **Costs**; Ctrl+Shift+P and the palette entry open on **Next Send**; once
 open you can switch tabs freely. `Escape` closes it from any tab.
 
@@ -388,14 +396,15 @@ before capture existed, capture disabled, or capture failed)."
 
 #### Next Send
 
-The former Ctrl+Shift+P "Chat Context" viewer, carried over intact: a
+The former Ctrl+Shift+P viewer (now the Conversation Inspector's
+**Current** tab, titled "Current Context"): a
 read-only snapshot of what the model has seen and is about to see. Two
 sub-tabs:
 
 - **Current** — one collapsed section per transcript message, titled with
-  its role and status; expand any to read the exact stored text. Empty
-  state: "No conversation context." (The role currently displays in its
-  internal form, e.g. "[ConsoleMessageRole.USER] complete" — task-2704.)
+  its role and status (e.g. "[User] complete"); expand any to read the
+  exact stored text. Empty state: "No conversation context."
+
 - **Next Send** — the payload the next send will carry, as collapsible
   folds: **Model**, **System**, **Messages** (one collapsed `Message N`
   per entry), **Response Prefill** (only while armed, noting "The reply
@@ -598,8 +607,10 @@ forcing a format ("Here is the JSON:") or an opening tone.
   `Prefill (pinned): '…'`, or "No prefill armed."
 
 Prefill text is capped at 4,000 characters. While armed it shows in the
-Inspector rows **Prefill (next send only)** / **Prefill (pinned)** and in
-the Chat Context viewer's **Response Prefill** fold.
+Inspector rows **Prefill (next send only)** / **Prefill (pinned)** — each
+row's value ends with "— tools skipped this send" as a standing reminder of
+that side effect — and in the Current Context viewer's **Response Prefill**
+fold.
 
 ### RAG scope
 
@@ -657,20 +668,26 @@ see whether retrieved content will stay local or leave the device.
 ### Staged sources & Library search
 
 The Inspector's **Sources** tray lists context staged for the run, one
-row per source with a status word (ready / running / blocked / muted);
-empty state: "No sources attached. Stage sources from Library." The
-control-bar **Attach context** action opens the "Console context" rail;
-the staging itself is done from the Library screen.
+row per source with a status word (Ready / Blocked; the tray header shows
+the staged count, "none" when empty). Empty state: "No sources attached.
+Stage sources from Library." — and the tray's continuation is directly
+beneath it: the **Ask Library sources** search card mounted under the
+tray stages what it finds. To attach a file to the draft instead, use the
+composer menu's **Attach file**. The control-bar **Context rail**
+action opens the "Console context" rail; Library staging itself happens
+from the Library surfaces named above.
 
 Media, notes, and conversation handoffs now actually reach the model on
 send — they used to display as staged while delivering nothing. Notes
 send a real excerpt of the note body; media and conversation handoffs
 currently send only a short generic label naming the item (e.g. "Media
 staged: \<title\>"), not an excerpt of the content itself — upgrading
-that to a real excerpt is still open (task-2376). A few other handoff
-kinds (skills, watchlists/collections snapshots, quizzes, personas) can
-still show as staged while the model receives nothing at all for them —
-that gap is also still open (task-2375).
+that to a real excerpt is still open (task-2376). Other handoff kinds
+(skills, watchlists/collections snapshots, quizzes, personas) cannot
+reach the model at all yet: their Sources rows render **Listed — not
+sent** (expanding a row says so explicitly) instead of Ready, because
+the send-side capture only accepts notes, media, and conversation
+sources (task-2375 tracks teaching capture the rest).
 
 To gather evidence *before* sending, use the Inspector's **Live work
 sources** card: type a question into "Ask Library sources before sending"
@@ -681,8 +698,9 @@ Which *kinds* of sources it searches is shown on that card's **Sources:**
 line — by default "Sources: Notes, Media, Conversations (Prompts off)" —
 and is editable: **Search Library** with nothing typed opens the manual
 **Library search** modal, which carries
-the query box plus a toggle per source kind (**✓ Notes**, **○ Media**,
-**✓ Conversations**, **○ Prompts**). Running keeps the edited query/source-kind
+the query box plus a toggle per source kind (**☑ Notes**, **☐ Media**,
+**☑ Conversations**, **☐ Prompts** — the same checkbox pair Library uses for a
+selection). Running keeps the edited query/source-kind
 selection (it also survives leaving and returning to Console); **Cancel**
 discards it. The separate **Library** status chip opens the per-conversation
 access modal described above. Run stays disabled until there is both a query and at least
@@ -841,7 +859,7 @@ does not rewrite history.
 
 Press **c** in the Conversation Inspector or a live Trace to set Capture and
 optional PII masking for **Next send**, **This conversation**, or the **Global
-default**. F9 **Settings > Console Behavior** owns the same global controls.
+default**. F4 **Settings > Console Behavior** owns the same global controls.
 The viewer is read-only: edits, regeneration, retries, and compaction append
 new call or replacement records, while forks share their immutable inherited
 prefix. Imported/shared and historical traces cannot be edited.
@@ -932,7 +950,7 @@ the composer and the staged-evidence strip above the status chips).*
 Inspector programme): the token/cost chip, Ctrl+Shift+P, and the palette's
 "Console: View chat context" entry now all open one Conversation Inspector
 modal (Costs / Exchange / Next Send tabs) in place of the former separate
-cost breakdown and "Chat Context" viewer; the retired viewer's content
+cost breakdown and Current Context viewer; the retired viewer's content
 lives on unchanged as the Next Send tab. Docs pass against shipped
 code/tests (`console_conversation_inspector.py`, `console_exchange_
 capture.py`, the design spec's UI and Risks sections); live verification of
@@ -1053,3 +1071,9 @@ Code-level pass (compositor contrast sweep at 80x24 and 200x50, pure
 projection, widget, controller and screen-wiring suites) plus a live
 `tmux` capture at 235x52 for the background diagnosis; not re-driven live
 for the rest.*
+
+*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
+(task-32303, user decision: this modal adopts the Library glyph legend, so the
+Library search modal's source toggles paint ☑/☐ from the shared constants
+instead of the ✓/○ pair. The per-conversation Library access modal's radio
+buttons still use ●/○ — a separate decision, task-32464.)*

@@ -108,13 +108,19 @@ class FakeSeamsFull(FakeSeams):
         super().__init__()
         self.cancelled = False
         self.badges: list[tuple[str, str, str]] = []
+        self.added_kinds: list[str] = []
         self.park_pending_approval = None
 
     def _is_session_cancelled(self, session_id, *, cancel_event=None, visit_event=None):
         return self.cancelled
 
-    def add_pending_round(self, session_id, round_id):
+    def add_pending_round(self, session_id, round_id, kind="approval"):
+        # Qodo #4: the real controller takes the round's KIND now; the host
+        # passes it by keyword and falls back to the two-argument form for
+        # older seams. This double follows the real signature so the
+        # keyword path is the one these tests exercise.
         self.badges.append(("add", session_id, round_id))
+        self.added_kinds.append(kind)
 
     def discard_pending_round(self, session_id, round_id):
         self.badges.append(("discard", session_id, round_id))
@@ -358,3 +364,33 @@ def test_a_state_revoked_before_host_entry_is_never_resurrected():
     assert result == "revoked" and outcomes == ["revoked"]
     assert host.registries["approval"] == {} and host.payloads["approval"] == {}
     assert seams.mounted["approval"] == [] and seams.badges == []
+
+
+@pytest.mark.parametrize("check_revoked", [True, False])
+@pytest.mark.parametrize("kind", ["approval", "skill_script", "question"])
+def test_late_host_registration_respects_per_kind_tombstones(kind, check_revoked):
+    seams = FakeSeamsFull()
+    host = InterruptRoundHost(seams)
+    assert host.revoke_for_run("gone", {kind: lambda state: None}) == {kind: []}
+    state = {"event": threading.Event(), "run_id": "gone", "session_id": "sess-A"}
+    state["event"].set()
+    # A legacy preregistration must also be removed when refused.
+    host.registries[kind]["late"] = state
+    result = host.run_round(
+        kind,
+        "late",
+        _payload("late"),
+        state,
+        session_id="sess-A",
+        owning_session_id="sess-A",
+        deadline=None,
+        is_parked=False,
+        check_revoked=check_revoked,
+    )
+    assert result == ("revoked" if check_revoked else "decided")
+    assert host.registries[kind] == {} and host.payloads[kind] == {}
+    if check_revoked:
+        assert state["revoked"] is True
+        assert seams.mounted[kind] == [] and seams.badges == []
+    else:
+        assert any(seams.mounted[kind])

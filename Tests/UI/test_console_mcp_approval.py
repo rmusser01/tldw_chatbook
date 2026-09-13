@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from loguru import logger
 from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -35,10 +36,14 @@ from tldw_chatbook.Agents.run_context import current_run_id, use_run_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_display_state import CONSOLE_INSPECTOR_NO_APPROVAL_REASON
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_WORKBENCH_SHORTCUTS, ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+    NEEDS_DECISION_PREFIX,
+    ChatApprovalCard,
+)
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
 from Tests.UI.app_factory import _build_test_app
@@ -315,6 +320,31 @@ async def test_raw_shell_row_shows_complete_command_and_danger_context():
 
 
 @pytest.mark.asyncio
+async def test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does():
+    """Final-review fix: `.approval-row-raw-scope` ("Session scope: ...") is the
+    raw-shell row's own, WIDER statement of what "All shell · session"
+    covers -- the generic per-decision `.approval-row-scope` line
+    (`DECISION_SCOPE_COPY`) would duplicate and undercut it, so a
+    raw-shell row must not also mount that Static. An ordinary MCP row
+    carries no `.approval-row-raw-scope` and must keep its
+    `.approval-row-scope` line exactly as before.
+    """
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(
+            [_sample_calls()[0], _raw_shell_call("printf ok")],
+            timeout_seconds=45.0,
+        )
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        assert list(mcp_row.query(".approval-row-scope"))
+        assert not list(raw_row.query(".approval-row-scope"))
+        assert list(raw_row.query(".approval-row-raw-scope"))
+
+
+@pytest.mark.asyncio
 async def test_raw_shell_row_defaults_to_deny_and_enter_does_not_submit():
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
@@ -347,11 +377,13 @@ def test_raw_shell_command_view_has_bounded_scrollable_geometry():
 
 
 @pytest.mark.asyncio
-async def test_risk_floored_row_header_carries_a_why_affordance_tooltip():
+async def test_reason_badges_carry_a_visible_why_line_not_a_tooltip():
     """Fleet-UX expert review F5/F7 (task-1234, item g): "(high risk)" on a
-    plain read reads as alarmist with no explanation -- the row header
-    Static now carries a tooltip naming why. `config_changed` rows (no
-    risk badge) get no tooltip at all; this is scoped to `risk_floored`."""
+    plain read reads as alarmist with no explanation. That explanation was a
+    header TOOLTIP, which on a terminal nobody sees; task-32278 made it a
+    visible `.approval-row-reason` line and gave `config_changed` one too.
+    The header must carry no tooltip at all now -- a hover-only duplicate of
+    a line already on the card is how the unreadable version came back."""
     app = _CardHarnessApp()
     calls = [
         {
@@ -381,12 +413,15 @@ async def test_risk_floored_row_header_carries_a_why_affordance_tooltip():
         changed_header = rows[1].query_one(".approval-row-header", Static)
 
         assert "(high risk)" in _text(risk_header)
-        assert risk_header.tooltip == (
-            "Reads can exfiltrate file contents; built-in file tools "
-            "always ask before running."
+        assert not risk_header.tooltip
+        assert _text(rows[0].query_one(".approval-row-reason", Static)) == (
+            "High risk: this tool reads local data and always asks first."
         )
         assert "(definition changed)" in _text(changed_header)
         assert not changed_header.tooltip
+        assert _text(rows[1].query_one(".approval-row-reason", Static)) == (
+            "Definition changed since you last allowed it; review the arguments."
+        )
 
 
 @pytest.mark.asyncio
@@ -627,6 +662,106 @@ async def test_approve_all_and_deny_all_bulk_set_every_row():
         app.query_one("#approval-approve-all", Button).press()
         await pilot.pause()
         assert all(select.value == "approve_once" for select in card._batch_selects)
+
+
+@pytest.mark.asyncio
+async def test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision():
+    """task-32282: "Approve all" must never move a raw-shell row off its
+    deliberate Deny default. The row's narrowed options legally include
+    ``approve_once`` (a real, explicit per-call choice), so the pre-fix
+    ``_set_all_batch_decisions`` -- which only checked legality, not row
+    identity -- bulk-set it right along with every ordinary MCP row. It
+    must be skipped, and the skip must be visible in TEXT (TASK-1845:
+    colour is never the only carrier of state), not just the CSS class.
+    """
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        assert raw_select.value == "deny"
+        assert not raw_row.has_class("needs-decision")
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+
+        mcp_select = mcp_row.query_one(".approval-row-decision", Select)
+        assert mcp_select.value == "approve_once"
+        assert raw_select.value == "deny"  # never moved off the deny default
+        assert raw_row.has_class("needs-decision")
+        header_text = _text(raw_row.query_one(".approval-row-header", Static))
+        assert header_text.startswith(NEEDS_DECISION_PREFIX), header_text
+        # An untouched row (here, the MCP row Approve all DID apply to)
+        # must never pick up the prefix.
+        mcp_header_text = _text(mcp_row.query_one(".approval-row-header", Static))
+        assert not mcp_header_text.startswith(NEEDS_DECISION_PREFIX)
+
+
+@pytest.mark.asyncio
+async def test_changing_raw_shell_select_after_approve_all_clears_needs_decision_prefix():
+    """task-32282: once the user gives the flagged raw-shell row its own
+    explicit decision, both the CSS flag and the header text prefix must
+    clear -- exactly as an ordinary narrowed row already does (see
+    ``test_changing_a_flagged_rows_select_clears_needs_decision``)."""
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        raw_row = list(app.query(".approval-row"))[1]
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        header = raw_row.query_one(".approval-row-header", Static)
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert raw_row.has_class("needs-decision")
+        assert _text(header).startswith(NEEDS_DECISION_PREFIX)
+
+        raw_select.post_message(Select.Changed(raw_select, "approve_once"))
+        await pilot.pause()
+
+        assert not raw_row.has_class("needs-decision")
+        assert not _text(header).startswith(NEEDS_DECISION_PREFIX)
+
+
+@pytest.mark.asyncio
+async def test_deny_all_sets_raw_shell_row_to_deny_and_clears_needs_decision_prefix():
+    """task-32282 (c): "Deny all" is legal for a raw-shell row (``deny`` is
+    always one of its options), so it must apply normally -- setting the
+    Select and clearing any stale needs-decision state left by an earlier
+    "Approve all" press."""
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        header = raw_row.query_one(".approval-row-header", Static)
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert raw_row.has_class("needs-decision")
+
+        app.query_one("#approval-deny-all", Button).press()
+        await pilot.pause()
+
+        assert raw_select.value == "deny"
+        assert not raw_row.has_class("needs-decision")
+        assert not _text(header).startswith(NEEDS_DECISION_PREFIX)
+        mcp_select = mcp_row.query_one(".approval-row-decision", Select)
+        assert mcp_select.value == "deny"
 
 
 @pytest.mark.asyncio
@@ -1676,6 +1811,137 @@ async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
             assert app.focused is card
 
 
+# ---------------------------------------------------------------------------
+# task-32277: Alt+A keyboard route to the approval card.
+# ---------------------------------------------------------------------------
+
+
+def test_console_binds_alt_a_to_review_pending_approval():
+    """The binding exists, is advertised, and its action is implemented.
+
+    Mirrors the equivalent binding-registration check for the trajectory
+    launch key, `test_console_binds_single_letter_trajectory_launch`
+    (`Tests/UI/test_trajectory_live.py`).
+    """
+    bindings = {binding.key: binding for binding in ChatScreen.BINDINGS}
+    binding = bindings.get("alt+a")
+    assert binding is not None
+    assert binding.action == "review_pending_approval"
+    assert binding.show is True
+    assert hasattr(ChatScreen, "action_review_pending_approval")
+    # TASK-24604's precedent: the footer legend is the only place an
+    # accelerator with no menu/button equivalent is discoverable at all.
+    assert ("Alt+A", "approval") in CONSOLE_WORKBENCH_SHORTCUTS
+
+
+@pytest.mark.asyncio
+async def test_alt_a_focuses_the_pending_approval_decision_select():
+    """With a batch pending, Alt+A lands focus on the row's decision
+    Select -- never Submit (`ChatApprovalCard.focus_first_decision`'s own
+    contract)."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _single_call(),
+                        "timeout_seconds": 45.0,
+                        "round_id": "round-alt-a-focus",
+                    }
+                )
+            )
+            await pilot.pause()
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert isinstance(app.focused, Select)
+            assert "approval-row-decision" in app.focused.classes
+
+
+@pytest.mark.asyncio
+async def test_alt_a_notifies_when_nothing_is_pending():
+    """With nothing pending, Alt+A notifies rather than focusing anything --
+    same fallback message as the inspector's Review approval button
+    (`CONSOLE_INSPECTOR_NO_APPROVAL_REASON`)."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications
+
+
+@pytest.mark.asyncio
+async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
+    """AC#3: the route works at 80 columns with the inspector closed."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(80, 24)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            # TASK-24604's own docstring: the Inspect rail ships CLOSED.
+            # Same accessor `action_toggle_console_inspector_rail` itself
+            # checks -- a hidden ancestor doesn't necessarily flip a
+            # descendant's own `.display` attribute.
+            assert not screen._is_console_widget_displayed("console-right-rail")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _single_call(),
+                        "timeout_seconds": 45.0,
+                        "round_id": "round-alt-a-80col",
+                    }
+                )
+            )
+            await pilot.pause()
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert isinstance(app.focused, Select)
+            assert "approval-row-decision" in app.focused.classes
+
+
 @pytest.mark.asyncio
 async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
     """Without an explicit width, `_conversations.tcss`'s bare `Select {
@@ -1724,8 +1990,12 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
                     f"decision Select width {select.size.width} claimed the "
                     f"entire row width {row.size.width} under bundled CSS"
                 )
-                assert select.size.width == 26, (
-                    f"decision Select width {select.size.width} != pinned 26"
+                # task-32278: 27 = the 19-cell longest label ("Always · these
+                # args") + 8 cells of Textual Select chrome. The closed Select
+                # does not ellipsize -- it WRAPS and grows -- so this number
+                # and `_DECISION_OPTIONS` move together.
+                assert select.size.width == 27, (
+                    f"decision Select width {select.size.width} != pinned 27"
                 )
                 # TASK-1846: the row is three stacked lines now -- header,
                 # arguments, then `.approval-row-controls` -- so neither text
@@ -1763,7 +2033,11 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
                 # arguments moved to their own, and a collapsed `xN` row may
                 # legitimately render several argument sets. A row that has
                 # lost `height: auto` balloons to 15, so this still catches it.
-                assert row.size.height <= 6, (
+                # task-32278: 6 -> 8. Every row gained the scope line under
+                # its controls, and the `config_changed` row in
+                # `_sample_calls` gained the reason line that used to be a
+                # header tooltip.
+                assert row.size.height <= 8, (
                     f"approval row ballooned to height {row.size.height} under "
                     "bundled CSS -- height: auto; min-height: 1; is not winning"
                 )
@@ -1774,13 +2048,15 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
             # #approval-batch-actions bar far down. Empirically measured before
             # this fix: container ballooning to height 19, actions pushed to y=20.
             batch_rows = card.query_one("#approval-batch-rows")
-            # TASK-1846: per-row budget 3 -> 6 (a row is two lines now and a
-            # collapsed row may carry several argument sets). Still catches a
-            # balloon: the container is capped at 15, so two ballooned rows
-            # clamp to 15 and blow this bound.
-            assert batch_rows.size.height <= len(rows) * 6 + 2, (
+            # task-32278: this was a per-row CONSTANT (3, then 6), which had
+            # to be re-bumped every time a row gained a line -- and each bump
+            # loosened it. Bounded by the rows' ACTUAL heights instead: the
+            # bug it guards is the container claiming space its rows do not
+            # need, which this states directly and needs no future bumping.
+            assert batch_rows.size.height <= sum(r.size.height for r in rows) + 2, (
                 f"approval-batch-rows container ballooned to height "
-                f"{batch_rows.size.height} (with {len(rows)} rows) under bundled CSS "
+                f"{batch_rows.size.height} over {len(rows)} rows totalling "
+                f"{sum(r.size.height for r in rows)} under bundled CSS "
                 "-- height: auto; min-height: 0; is not winning"
             )
 
@@ -1847,8 +2123,9 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
 
             # Compact row (same discipline as the sibling test). TASK-1846
             # made it two lines -- headline + full-width arguments -- so the
-            # bound moves 4 -> 6; a row that lost `height: auto` is 15.
-            assert row.size.height <= 6, (
+            # bound moves 4 -> 6; task-32278's scope line makes it 7. A row
+            # that lost `height: auto` is 15.
+            assert row.size.height <= 7, (
                 f"single-row approval row ballooned to height {row.size.height} "
                 "under bundled CSS"
             )
@@ -1864,7 +2141,7 @@ def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bun
     Defect-1 Select-width lesson as `#mcp-tools-filter-server-slot Select`
     / `#mcp-audit-filter-decision` above, applied to the approval card."""
     _assert_rule_pinned_in_bundle_source_and_bundle(
-        ".approval-row-decision {", ("width: 26;",)
+        ".approval-row-decision {", ("width: 27;",)
     )
 
 
@@ -2323,7 +2600,12 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     assert records, "the stop-mid-approval path left no audit record at all"
     assert records[0]["server_key"] == "local:docs"
     assert records[0]["tool_name"] == "search"
-    assert records[0]["decision"] == "denied"
+    # task-32280 fix round: the turn was stopped WHILE the card was up, so
+    # nobody answered it. The bare "denied" Audit now renders as "Denied by
+    # you" claimed a decision the user never got to make; the category the
+    # row already carried (`approval_cancelled`) is unchanged, so the
+    # precise mechanism survives the retarget.
+    assert records[0]["decision"] == "denied-unresolved"
     assert records[0]["ok"] is False
     assert records[0]["error_category"] == "approval_cancelled"
     assert "error" not in records[0]
@@ -3433,6 +3715,68 @@ async def test_armed_deadline_is_visible_on_the_mounted_card():
         assert not app.query_one("#approval-deadline", Static).display
 
 
+@pytest.mark.asyncio
+async def test_the_deadline_countdown_ticks_and_stops_on_clear_or_timeout():
+    """TASK-32288: with a finite timeout the countdown actually TICKS.
+
+    Before this fix `set_batch` rendered `format_approval_deadline` once and
+    never again -- with `[mcp] approval_timeout_seconds` configured the card
+    showed a frozen "Auto-denies in 2:00" for the whole window, silently
+    lying to the user about how much time was left. The controller arms the
+    real auto-deny clock; this card only displays it, computed from a LOCAL
+    `time.monotonic()` deadline captured in `set_batch` (never read back
+    from the controller).
+    """
+    import re
+
+    def _remaining_seconds(text: str) -> int:
+        match = re.fullmatch(r"Auto-denies in (\d+):(\d{2})", text)
+        assert match, text
+        return int(match.group(1)) * 60 + int(match.group(2))
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=90.0, round_id="round-a")
+        await pilot.pause()
+
+        deadline = app.query_one("#approval-deadline", Static)
+        assert _text(deadline) == "Auto-denies in 1:30"
+        assert card._deadline_timer is not None
+
+        await pilot.pause(1.1)
+        ticked_text = _text(deadline)
+        assert ticked_text != "Auto-denies in 1:30"
+        # Ticked down, never back up, never frozen -- allow a little
+        # scheduler slack rather than pinning an exact second.
+        assert 85 <= _remaining_seconds(ticked_text) <= 89, ticked_text
+
+        # A re-sync of the SAME round/phase/calls (the unchanged-round guard
+        # near the top of `set_batch`) must not reset the deadline clock.
+        card.set_batch(_sample_calls(), timeout_seconds=90.0, round_id="round-a")
+        await pilot.pause()
+        assert _text(deadline) != "Auto-denies in 1:30"
+        assert _remaining_seconds(_text(deadline)) <= _remaining_seconds(ticked_text)
+
+        # Clearing the batch stops the timer -- no leaked interval.
+        card.set_batch([], timeout_seconds=90.0)
+        await pilot.pause()
+        assert card._deadline_timer is None
+
+        # timeout_seconds=0/None: nothing shown, no timer armed.
+        card.set_batch(_sample_calls(), timeout_seconds=0, round_id="round-b")
+        await pilot.pause()
+        assert _text(deadline) == ""
+        assert not deadline.display
+        assert card._deadline_timer is None
+
+        # A NEW batch (different round) re-arms the countdown from scratch.
+        card.set_batch(_sample_calls(), timeout_seconds=60.0, round_id="round-new")
+        await pilot.pause()
+        assert _text(deadline) == "Auto-denies in 1:00"
+        assert card._deadline_timer is not None
+
+
 @pytest.mark.unit
 def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     """A per-call REFUSAL must reach the runtime, not be flattened away.
@@ -3848,13 +4192,13 @@ def test_revoking_an_unknown_run_is_a_zero_return_noop():
     results: dict[str, dict[str, str]] = {}
     worker = _arm_round(
         controller,
-        run_id=RUN_A,
+        run_id=RUN_B,
         session_id=session_id,
         llm_name="mcp__srv__tool",
         results=results,
     )
     time.sleep(0.15)
-    round_a = _round_id_for(controller, RUN_A)
+    round_a = _round_id_for(controller, RUN_B)
 
     assert controller.revoke_approval_rounds_for_run("run-nobody") == 0
     # An empty/absent run id must never match the rounds armed outside any
@@ -3869,7 +4213,7 @@ def test_revoking_an_unknown_run_is_a_zero_return_noop():
         {"mcp__srv__tool": "approve_once"}, round_id=round_a
     )
     worker.join(timeout=3.0)
-    assert results[RUN_A] == {"mcp__srv__tool": "approve_once"}
+    assert results[RUN_B] == {"mcp__srv__tool": "approve_once"}
 
 
 def test_a_decision_landing_after_a_revoke_cannot_reopen_the_round():
@@ -4330,3 +4674,550 @@ def test_human_prompt_defaults_pin_no_deadline():
     assert cc_module._DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS == 0.0
     assert cc_module._DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS == 0.0
     assert cc_module._DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS == 0.0
+
+
+# --- task-32280 (Qodo #2597 #8): a no-UI round is not a user's decision ----
+
+
+def test_a_no_app_round_reports_every_key_as_unanswered():
+    """`request_mcp_approvals` fails CLOSED with no app wired -- no card can
+    be shown, so nothing runs. But it returned a BARE dict, which
+    `approval_was_unanswered()` reads as "the user answered": both review
+    hooks then wrote `record_user_denial()`, so MCP and local audit rows
+    claimed a person pressed Deny on a card that was never displayed.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ApprovalDecisions,
+        approval_was_unanswered,
+    )
+
+    controller, _ = _build_controller()
+    assert controller.app is None  # the branch under test
+
+    rows = [_pending(call_id="call-1"), _pending(llm_name="mcp__srv__other")]
+    decisions = controller.request_mcp_approvals(rows)
+
+    # Still fails closed -- the verdicts themselves are unchanged.
+    assert decisions == {"call-1": "deny", "mcp__srv__other": "deny"}
+    assert isinstance(decisions, ApprovalDecisions)
+    assert decisions.unresolved_keys == frozenset({"call-1", "mcp__srv__other"})
+    assert all(approval_was_unanswered(row, decisions) for row in rows)
+
+
+def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
+    """The MCP review hook's end of the same bug: an unanswered round must
+    not reach `MCPToolProvider.record_user_denial`."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import (
+        USER_DENIED_REFUSAL,
+        build_tool_review_hook,
+    )
+
+    controller, _ = _build_controller()
+    assert controller.app is None  # the branch under test
+
+    denials: list[str] = []
+
+    class _McpProvider:
+        def apply_batch_decisions(self, run_id, stamps):
+            pass
+
+        def pending_gate_for(self, name, args, call_id="", *, rationale=""):
+            return _pending(llm_name=name, call_id=call_id)
+
+        def record_user_denial(self, llm_name):
+            denials.append(llm_name)
+
+    class _BuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+        def stamp(self, run_id, name, decision):
+            pass
+
+    class _BuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    hook = build_tool_review_hook(
+        _BuiltinGate(),
+        _BuiltinProvider(),
+        _McpProvider(),
+        controller.request_mcp_approvals,
+        workspace_id=None,
+    )
+    verdicts = hook(
+        [ToolCall(name="mcp__srv__tool", args={"a": 1}, call_id="call-1")], RUN
+    )
+
+    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
+    assert denials == [], "a headless fail-closed deny was audited as the user's"
+@pytest.mark.asyncio
+async def test_the_approval_route_reaches_a_pending_skill_install_card():
+    """Qodo #5: the ◆ marker and the Alt+A / Review-approval route cover ALL
+    FIVE interrupt kinds, not just approvals and questions.
+
+    A pending skill-install (or skill-script) confirm registers in the same
+    round registry and marks the tab, but the route knew only approval and
+    question cards -- so clicking that tab, or pressing Alt+A, reached the
+    "No approval is pending." warning while its decision card sat mounted on
+    screen. What this pins is the routing decision: the route finds that card
+    and declines to warn. Where focus lands inside a card is the card's own
+    contract (`test_alt_a_focuses_the_pending_approval_decision_select`).
+
+    Synced WITHOUT an intervening pause on purpose: with no real round armed,
+    the controller's next projection tick clears the pending payload again.
+    """
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_skill_install={
+                        "url": "https://example.invalid/skill.zip",
+                        "request_id": "req-skill-focus",
+                    }
+                )
+            )
+            assert (
+                screen._first_displayed_console_decision_card(
+                    "#chat-skill-install-card"
+                )
+                is not None
+            )
+            # No approval batch exists, so this is exactly the state that used
+            # to fall through to the warning.
+            assert screen._console_pending_approval_count() == 0
+
+            assert screen._route_console_pending_approval_focus() is True
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") not in notifications
+
+
+@pytest.mark.asyncio
+async def test_a_route_with_nothing_pending_can_decline_to_warn():
+    """Qodo #5: a ◆ tab whose card is already gone must fall back to the
+    ordinary tab press, not warn -- so the shared route takes
+    `notify_missing=False` and reports whether it focused anything."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            assert screen._route_console_pending_approval_focus(
+                notify_missing=False
+            ) is False
+            assert notifications == []
+
+            # The default still warns -- the inspector button and Alt+A rely
+            # on it.
+            assert screen._route_console_pending_approval_focus() is False
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications
+
+
+# TASK-13215: delayed fallback admission and atomic verdict commitment.
+class _RevocationApp:
+    def call_from_thread(self, callback, *args, **kwargs):
+        return callback(*args, **kwargs)
+
+    def notify(self, *_args, **_kwargs):
+        pass
+
+
+def _revocation_controller():
+    store = ConsoleChatStore()
+    ctrl = ConsoleChatController(store=store, provider_gateway=object())
+    ctrl.app = _RevocationApp()
+    ctrl._maybe_fire_permission_summary = lambda _payload: None
+    ctrl.mcp_approval_timeout_seconds = lambda: 0
+    ctrl.skill_script_confirm_timeout_seconds = lambda: 0
+    sid = store.create_session(title="Probe").id
+    store.switch_session(sid)
+    return ctrl, sid
+
+
+def _revocation_pending():
+    return MCPPendingCall(
+        llm_name="mcp__probe__tool",
+        server_key="probe:probe",
+        tool_name="tool",
+        server_label="Probe",
+        arguments={},
+        reason="ask",
+    )
+
+
+def _revocation_auto_answer(ctrl, kind, answer=True):
+    mounted = []
+
+    def setter(payload):
+        if payload is None:
+            return
+        mounted.append(payload)
+        if kind == "approval":
+            ctrl.resolve_pending_approval(
+                {
+                    row.get("call_id") or row["llm_name"]: "approve_once"
+                    if answer
+                    else "deny"
+                    for row in payload["calls"]
+                },
+                round_id=payload["round_id"],
+            )
+        else:
+            ctrl.resolve_pending_skill_script(
+                answer, answer, request_id=payload["request_id"]
+            )
+
+    setattr(
+        ctrl,
+        "set_pending_approval" if kind == "approval" else "set_pending_skill_script",
+        setter,
+    )
+    return mounted
+
+
+def _revocation_request(ctrl, sid, kind):
+    if kind == "approval":
+        return ctrl.request_mcp_approvals([_revocation_pending()], session_id=sid)
+    return ctrl.request_skill_script_confirm(
+        {"skill_name": "demo", "script_path": "demo.py"}, session_id=sid
+    )
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+def test_post_revoke_arm_denies_without_mounting(kind):
+    ctrl, sid = _revocation_controller()
+    mounted = _revocation_auto_answer(ctrl, kind)
+    assert ctrl.revoke_approval_rounds_for_run("already-revoked") == 0
+    with use_run_id("already-revoked"):
+        result = _revocation_request(ctrl, sid, kind)
+    assert mounted == []
+    assert not ctrl._interrupt_host.registries[kind]
+    assert not ctrl._interrupt_host.payloads[kind]
+    assert not ctrl._pending_approvals
+    assert result == (
+        {"mcp__probe__tool": "deny"}
+        if kind == "approval"
+        else {"allow": False, "remember": False}
+    )
+    if kind == "approval":
+        assert result.unresolved_keys == frozenset({"mcp__probe__tool"})
+    with use_run_id("unrelated-sibling"):
+        sibling = _revocation_request(ctrl, sid, kind)
+    assert mounted
+    assert sibling == (
+        {"mcp__probe__tool": "approve_once"}
+        if kind == "approval"
+        else {"allow": True, "remember": True}
+    )
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+def test_empty_run_owner_warns_once_without_payload_content(kind):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, kind)
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        with use_run_id(""):
+            result = _revocation_request(ctrl, sid, kind)
+    finally:
+        logger.remove(sink)
+    assert len(messages) == 1, messages
+    assert "without a run owner" in messages[0]
+    assert "demo" not in messages[0] and "probe" not in messages[0]
+
+    assert result == (
+        {"mcp__probe__tool": "approve_once"}
+        if kind == "approval"
+        else {"allow": True, "remember": True}
+    )
+
+
+def test_revoke_after_result_snapshot_but_before_unregister_returns_cached_allow(
+    monkeypatch,
+):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, "approval")
+    original = ctrl._interrupt_host.run_round
+    observed = {}
+
+    def wrapped(*args, **kwargs):
+        on_outcome = kwargs["on_outcome"]
+
+        def after_snapshot(outcome):
+            on_outcome(outcome)
+            observed["count"] = ctrl.revoke_approval_rounds_for_run("run-return-gap")
+            observed["state_decisions"] = dict(args[3]["decisions"])
+
+        kwargs["on_outcome"] = after_snapshot
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ctrl._interrupt_host, "run_round", wrapped)
+    with use_run_id("run-return-gap"):
+        result = _revocation_request(ctrl, sid, "approval")
+    assert (
+        observed["count"] == 1
+    )  # Still registered, but the result snapshot already won.
+    assert observed["state_decisions"] == {"mcp__probe__tool": "deny"}
+    assert result == {"mcp__probe__tool": "approve_once"}
+
+
+def test_revoke_before_result_snapshot_returns_deny(monkeypatch):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, "approval")
+    original = ctrl._interrupt_host.run_round
+    observed = {}
+
+    def wrapped(*args, **kwargs):
+        on_outcome = kwargs["on_outcome"]
+
+        def before_snapshot(outcome):
+            observed["count"] = ctrl.revoke_approval_rounds_for_run("run-read-gap")
+            on_outcome(outcome)
+
+        kwargs["on_outcome"] = before_snapshot
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ctrl._interrupt_host, "run_round", wrapped)
+    with use_run_id("run-read-gap"):
+        result = _revocation_request(ctrl, sid, "approval")
+    assert observed["count"] == 1
+    assert result == {"mcp__probe__tool": "deny"}
+    assert result.unresolved_keys == frozenset({"mcp__probe__tool"})
+
+
+def test_local_provider_refuses_write_after_revoke_then_arm(tmp_path):
+    ctrl, sid = _revocation_controller()
+    mounted = _revocation_auto_answer(ctrl, "approval")
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        allow_write=True,
+        resolve_state=lambda _hub: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+        approval_callback=lambda rows: ctrl.request_mcp_approvals(rows, session_id=sid),
+    )
+    assert ctrl.revoke_approval_rounds_for_run("revoked-local-writer") == 0
+    with use_run_id("revoked-local-writer"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "probe.txt", "content": "late write"}
+        )
+    assert mounted == []
+    assert not result.ok, result
+    assert not (tmp_path / "probe.txt").exists()
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+def test_revoked_arm_is_refused_before_configuration_read(kind):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, kind)
+    assert ctrl.revoke_approval_rounds_for_run("late-config") == 0
+    observed = []
+
+    def configuration():
+        observed.append(dict(ctrl._interrupt_host.registries[kind]))
+        return 0
+
+    if kind == "approval":
+        ctrl.mcp_approval_timeout_seconds = configuration
+    else:
+        ctrl.skill_script_confirm_timeout_seconds = configuration
+    with use_run_id("late-config"):
+        _revocation_request(ctrl, sid, kind)
+    assert observed == []
+
+
+def test_revocation_cannot_split_a_batch_snapshot(monkeypatch):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, "approval")
+    host = ctrl._interrupt_host
+    disposition = threading.Event()
+    finished = threading.Event()
+    observed = {}
+    original_lock = host.lock
+
+    class ContentionLock:
+        def __enter__(self):
+            if threading.current_thread().name == "snapshot-revoker":
+                acquired = original_lock.acquire(blocking=False)
+                observed["blocked"] = not acquired
+                disposition.set()
+                if not acquired:
+                    original_lock.acquire()
+            else:
+                original_lock.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            original_lock.release()
+
+    lock = ContentionLock()
+    monkeypatch.setattr(host, "lock", lock)
+    monkeypatch.setattr(ctrl, "_approval_state_lock", lock)
+
+    def revoke():
+        observed["count"] = ctrl.revoke_approval_rounds_for_run("batch-read-gap")
+        finished.set()
+
+    revoker = threading.Thread(target=revoke, name="snapshot-revoker", daemon=True)
+
+    class ReadGap(dict):
+        fired = False
+
+        def get(self, key, default=None):
+            value = super().get(key, default)
+            if key == "first" and not self.fired:
+                self.fired = True
+                revoker.start()
+                assert disposition.wait(3), "revoker never attempted the shared lock"
+                if not observed["blocked"]:
+                    assert finished.wait(3), "unlocked revocation failed to finish"
+            return value
+
+    original = host.run_round
+
+    def wrapped(*args, **kwargs):
+        callback = kwargs["on_outcome"]
+        cells = dict(zip(callback.__code__.co_freevars, callback.__closure__))
+        shared = ReadGap(cells["decisions"].cell_contents)
+        cells["decisions"].cell_contents = shared
+        args[3]["decisions"] = shared
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(host, "run_round", wrapped)
+    calls = [
+        MCPPendingCall(
+            llm_name=name,
+            server_key="probe:probe",
+            tool_name=name,
+            server_label="Probe",
+            arguments={},
+            reason="ask",
+        )
+        for name in ("first", "second")
+    ]
+    try:
+        with use_run_id("batch-read-gap"):
+            result = ctrl.request_mcp_approvals(calls, session_id=sid)
+    finally:
+        if revoker.ident is not None:
+            revoker.join(3)
+    assert not revoker.is_alive()
+    assert finished.is_set()
+    assert result == {"first": "approve_once", "second": "approve_once"}
+    assert not result.unresolved_keys
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+@pytest.mark.parametrize("ending", ["revoke", "teardown"])
+def test_sibling_payload_remounts_after_round_ends(kind, ending, monkeypatch):
+    ctrl, sid = _revocation_controller()
+    host = ctrl._interrupt_host
+    mounted = []
+    setattr(
+        ctrl,
+        "set_pending_approval" if kind == "approval" else "set_pending_skill_script",
+        mounted.append,
+    )
+    ready = {run: threading.Event() for run in ("first-run", "sibling-run")}
+    results = {}
+    original = host.run_round
+
+    def wrapped(*args, **kwargs):
+        before_wait = kwargs.get("before_wait")
+
+        def entered():
+            if before_wait is not None:
+                before_wait()
+            ready[args[3]["run_id"]].set()
+
+        kwargs["before_wait"] = entered
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(host, "run_round", wrapped)
+
+    def request(run):
+        with use_run_id(run):
+            results[run] = _revocation_request(ctrl, sid, kind)
+
+    workers = []
+    try:
+        for run, entered in ready.items():
+            worker = threading.Thread(target=request, args=(run,), daemon=True)
+            workers.append(worker)
+            worker.start()
+            assert entered.wait(3)
+        ids = {state["run_id"]: rid for rid, state in host.registries[kind].items()}
+        sibling_id = ids["sibling-run"]
+        sibling_payload = host.payloads[kind][sibling_id]
+        if ending == "revoke":
+            assert ctrl.revoke_approval_rounds_for_run("first-run") == 1
+        elif kind == "approval":
+            ctrl.resolve_pending_approval(
+                {"mcp__probe__tool": "deny"}, round_id=ids["first-run"]
+            )
+        else:
+            ctrl.resolve_pending_skill_script(False, False, request_id=ids["first-run"])
+        workers[0].join(3)
+        assert not workers[0].is_alive()
+        assert host.payloads[kind][sibling_id] is sibling_payload
+        assert ctrl._pending_approvals[sid] == {sibling_id}
+        other = ctrl.store.create_session(title="Away").id
+        ctrl.switch_session(other)
+        assert mounted[-1] is None
+        ctrl.switch_session(sid)
+        id_key = "round_id" if kind == "approval" else "request_id"
+        assert mounted[-1][id_key] == sibling_id
+        if kind == "approval":
+            ctrl.resolve_pending_approval(
+                {"mcp__probe__tool": "approve_once"}, round_id=mounted[-1][id_key]
+            )
+        else:
+            ctrl.resolve_pending_skill_script(
+                True, False, request_id=mounted[-1][id_key]
+            )
+        workers[1].join(3)
+        assert not workers[1].is_alive()
+        assert results["sibling-run"] == (
+            {"mcp__probe__tool": "approve_once"}
+            if kind == "approval"
+            else {"allow": True, "remember": False}
+        )
+        assert not host.registries[kind] and not host.payloads[kind]
+        assert not ctrl._pending_approvals
+    finally:
+        for run in ready:
+            ctrl.revoke_approval_rounds_for_run(run)
+        for worker in workers:
+            worker.join(3)

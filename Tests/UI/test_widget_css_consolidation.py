@@ -711,7 +711,7 @@ async def test_full_destination_tour_stays_under_the_parse_cache_cliff():
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         await asyncio.sleep(2)
-        for key in [f"ctrl+{digit}" for digit in "1234567890"] + ["f7", "f8", "f9"]:
+        for key in [f"ctrl+{digit}" for digit in "1234567890"] + ["f2", "f3", "f4", "f5", "f7"]:
             await pilot.press(key)
             await pilot.pause()
             await asyncio.sleep(0.75)
@@ -1127,7 +1127,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
     ("Widgets/Chat_Widgets/chat_message_enhanced.py", "ChatMessageEnhanced", "DEFAULT_CSS"),
     ("Widgets/Chat_Widgets/chat_message.py", "ChatMessage", "DEFAULT_CSS"),
     ("Widgets/Chat_Widgets/chat_shell_bar.py", "ChatShellBar", "DEFAULT_CSS"),
-    ("Widgets/chunk_preview_modal.py", "ChunkPreviewModal", "DEFAULT_CSS"),
     ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeNode", "DEFAULT_CSS"),
     ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeView", "DEFAULT_CSS"),
     ("Widgets/confirmation_dialog.py", "ConfirmationDialog", "DEFAULT_CSS"),

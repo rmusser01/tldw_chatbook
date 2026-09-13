@@ -43,6 +43,24 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionRow,
 )
 
+
+@pytest.fixture(autouse=True)
+def _real_fleet_recovery_database(monkeypatch, tmp_path, request):
+    """Mount with the real recovery owner; a DB-less mount correctly pauses."""
+    from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+    from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
+
+    build = request.module._build_test_app
+
+    def build_with_db(*args, **kwargs):
+        app = build(*args, **kwargs)
+        _attach_real_dbs(app, tmp_path)
+        _configure_native_ready_console(app)
+        return app
+
+    monkeypatch.setattr(request.module, "_build_test_app", build_with_db)
+
+
 _AGENT_SECTION_SIZE = (180, 48)
 
 #: The fleet mini-section's own `section_id` (`CONSOLE_AGENT_FLEET_SECTION_
@@ -84,12 +102,6 @@ class _FleetBridge:
             return []
         return list(self._handles)
 
-    def subagent_counts(self, conversation_ids):
-        return {
-            conversation_id: len(self._handles)
-            for conversation_id in conversation_ids
-            if conversation_id == self._conversation_id
-        }
 
     def cancel_subagent(self, conversation_id: str, handle_id: str) -> bool:
         self.cancel_calls.append((conversation_id, handle_id))
@@ -310,7 +322,9 @@ async def test_state_1_summary_counts_every_terminal_status_as_done_not_just_lit
         fleet_section = console.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
-        assert fleet_section.summary == "●✓✗✗⚠ 1 working, 4 done"
+        # Large fleets keep full counts without an unbounded glyph cluster.
+        assert fleet_section.summary == "1 working, 4 done"
+        assert len(fleet_section.rows) == 5
 
 
 # -- State 2: expanded rows, two lines each (spec §7) --------------------
@@ -582,7 +596,7 @@ async def test_state_2_secondary_line_shows_token_spend_for_a_finished_child():
         _assert_painted_at_own_region(host, secondary)
         text = str(secondary.renderable)
         assert "drafted the summary" in text
-        assert "1.2k tok" in text
+        assert "1.2k budget tok" in text
 
 
 @pytest.mark.asyncio

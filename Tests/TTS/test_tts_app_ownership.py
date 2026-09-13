@@ -918,6 +918,8 @@ def test_removal_settings_inputs_prefer_exact_detached_typed_draft() -> None:
         "semantic_vad",
         "0.5",
         "500",
+        "",
+        False,
     )
 
     def snapshot(model_id: str) -> SpeechTTSPanelDraftSnapshot:

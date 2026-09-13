@@ -1,0 +1,38 @@
+{
+  "date": "2026-09-12",
+  "method": "Sequential replay of four retained final-run recordings with ffplay -nodisp -autoexit -loglevel error; explicit PULSE_SINK and SDL_AUDIODRIVER=pulseaudio",
+  "sink": "alsa_output.usb-Logitech_Logi_USB_Headset_000000000000-00.analog-stereo",
+  "clips": [
+    {
+      "run": "kokoro-cuda-03",
+      "phase": "console-repeat-01",
+      "remote_audio": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-cuda-03/audio/console-repeat-01.wav",
+      "audio_sha256": "e06b189abcd65f5203bcef38a43eecf7b2a2fd775e2fb082de78494b54030ca6",
+      "ffplay_exit": 0
+    },
+    {
+      "run": "kokoro-onnx-03",
+      "phase": "console-repeat-01",
+      "remote_audio": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-onnx-03/audio/console-repeat-01.mp3",
+      "audio_sha256": "a26186be68056bfb37b993909dcc73e2cd282417bef9232452f0f0ff88751aae",
+      "ffplay_exit": 0
+    },
+    {
+      "run": "chatterbox-cuda-05",
+      "phase": "console-repeat-01",
+      "remote_audio": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-05/audio/console-repeat-01.wav",
+      "audio_sha256": "83fce6d2eb2e9087abaf0066d4409232f7e0682d43c1056cd06d3ef2268d39bc",
+      "ffplay_exit": 0
+    },
+    {
+      "run": "chatterbox-cuda-05",
+      "phase": "speech-lab-reference",
+      "remote_audio": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-05/audio/speech-lab-reference.wav",
+      "audio_sha256": "75f343ce85ea2543013075cbfcf3e743970a644ad3129fb188db6136ecac6dad",
+      "ffplay_exit": 0
+    }
+  ],
+  "question": "Did all four replayed clips sound clear and complete through the Logi headset—Kokoro CUDA, Kokoro ONNX, Chatterbox default, and Chatterbox reference? In particular, did the last clip include “Silver compass opens this reply,” “a quiet orchard,” and “amber sunrise”?",
+  "user_response": "All four were clear and complete",
+  "scope": "Human confirmation covers these four replayed recordings. Original mounted Lab/Console delivery, repeats, cancellation and routing are established by separate runtime receipts. No microphone capture was made; historical ASR disagreements remain unchanged."
+}

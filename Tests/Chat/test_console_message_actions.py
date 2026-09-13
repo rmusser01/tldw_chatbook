@@ -199,6 +199,7 @@ def test_assistant_message_actions_include_required_order():
         "--->",
         "Feedback",
         "🗑",
+        "Capture as note",
         "Summarize up to here as note",
         "Save transcript up to here as note",
     ]
@@ -363,6 +364,7 @@ def test_variant_action_labels_use_symbolic_navigation():
         "--->",
         "Feedback",
         "🗑",
+        "Capture as note",
         "Summarize up to here as note",
         "Save transcript up to here as note",
     ]
@@ -566,6 +568,7 @@ def test_regression_no_generation_kwargs_matches_text_sibling_gating():
         "--->",
         "Feedback",
         "🗑",
+        "Capture as note",
         "Summarize up to here as note",
         "Save transcript up to here as note",
     ]
@@ -1076,6 +1079,7 @@ def test_speak_action_swaps_to_stop_when_message_is_speaking():
         "continue",
         "feedback",
         "delete",
+        "capture-note",
         "summarize-note",
         "save-transcript-note",
     ]
@@ -1195,6 +1199,7 @@ def test_original_attempt_is_an_exceptional_diagnostic_in_more() -> None:
         "feedback-up",
         "feedback-down",
         "delete",
+        "capture-note",
         "summarize-note",
         "save-transcript-note",
     )
@@ -1353,6 +1358,31 @@ def test_tool_marker_with_full_output_and_diff_keeps_full_output_label():
 
     assert action is not None
     assert action.label == "Full output"
+
+
+@pytest.mark.parametrize(
+    "status", ["denied", "blocked_off", "blocked_kill_switch", "blocked"]
+)
+def test_refused_tool_marker_says_the_body_went_to_the_model(status: str):
+    """task-32279: what a refused step hides is the instruction the MODEL got.
+
+    Live evidence: after a Deny, expanding the marker showed "Do not retry
+    this call..." under "Full output" -- reading as if the tool had produced
+    it.
+    """
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="list_characters → ERROR: tool call denied by the user.",
+        tool_output_full="tool call denied by the user. Do not retry this call.",
+        activity_presentation=ConsoleActivityPresentation(
+            "tool", "list_characters", status
+        ),
+    )
+
+    action = _tool_output_action(message)
+
+    assert action is not None
+    assert action.label == "Sent to the model"
 
 
 def test_plain_tool_marker_offers_no_expansion():
@@ -1579,6 +1609,7 @@ def test_action_groups_separate_primary_overflow_and_media_actions() -> None:
         "Helpful",
         "Not helpful",
         "Delete",
+        "Capture as note",
         "Summarize up to here as note",
         "Save transcript up to here as note",
     ]
@@ -1705,6 +1736,7 @@ def test_video_actions_are_an_exact_separate_media_group() -> None:
         "feedback-up",
         "feedback-down",
         "delete",
+        "capture-note",
         "summarize-note",
         "save-transcript-note",
     )
@@ -1800,3 +1832,74 @@ def test_fork_dispatch_requests_the_exact_message() -> None:
 
     assert result.status == "fork_requested"
     assert result.target_message_id == "fork-boundary"
+
+
+# --- task-32146: capture one answer as a Library note -----------------------
+
+
+@pytest.mark.parametrize(
+    ("message", "offered"),
+    (
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT, content="answer", id="a-done"
+            ),
+            True,
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER, content="question", id="u-done"
+            ),
+            False,
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="half",
+                status="streaming",
+                id="a-streaming",
+            ),
+            False,
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT, content="   ", id="a-blank"
+            ),
+            False,
+        ),
+    ),
+)
+def test_capture_note_is_offered_only_on_finished_assistant_answers(
+    message, offered
+) -> None:
+    """There is no answer to file until an ASSISTANT row has finished with
+    text -- the question and a half-streamed row must not offer it."""
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+
+    assert ("capture-note" in [a.action_id for a in groups.overflow]) is offered
+    # Never a direct row button: it is an overflow (More…) action.
+    assert "capture-note" not in [a.action_id for a in groups.primary]
+
+
+def test_capture_note_is_blocked_while_the_chat_is_temporary() -> None:
+    """A temporary chat promises no local write; capturing a note is one,
+    so it is disabled with the registry's reason rather than hidden."""
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="a-temp"
+    )
+
+    action = next(
+        action
+        for action in ConsoleMessageActionService().action_groups(
+            message,
+            ephemeral=True,
+            fork_eligibility=ConsoleForkEligibility(True),
+        ).overflow
+        if action.action_id == "capture-note"
+    )
+
+    assert action.enabled is False
+    assert "temporary chat" in action.disabled_reason

@@ -68,7 +68,6 @@ from ..Utils.egress import (
     origin_set,
     warn_insecure_ssl,
 )
-from .security import SecurityValidator
 from .watchlist_failure import InvalidFeedError, WatchlistPolicyFailure
 #
 ########################################################################################################################
@@ -897,17 +896,14 @@ class FeedMonitor:
     def __init__(
         self,
         rate_limiter: RateLimiter = None,
-        security_validator: SecurityValidator = None,
     ):
         """
         Initialize feed monitor.
 
         Args:
             rate_limiter: Rate limiter instance
-            security_validator: Security validator instance
         """
         self.rate_limiter = rate_limiter or RateLimiter()
-        self.security_validator = security_validator
         self.circuit_breakers = {}  # Per-subscription circuit breakers
 
     async def check_feed(self, subscription: Dict[str, Any]) -> List[Dict[str, Any]]:

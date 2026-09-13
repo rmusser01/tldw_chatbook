@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -2110,3 +2111,63 @@ async def test_boundary_anchor_does_not_survive_focus_leaving_the_scroller():
         outer.focus()
         await pilot.pause()
         assert rail._last_boundary_index is None
+
+
+@pytest.mark.asyncio
+async def test_rail_focus_prepends_escape_hint(monkeypatch) -> None:
+    """TASK-32322: focusing either rail teaches the exits where they're needed.
+
+    Tab is region-locked (TASK-2154.11 AC-02); F6 and Esc are the ways out.
+    When keyboard focus enters a rail, the footer must say so -- for BOTH
+    rails, not just the Inspector's n/p hint.
+    """
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        rail = await _open_inspector(pilot)
+        registered = []
+        monkeypatch.setattr(
+            screen,
+            "register_footer_shortcuts",
+            lambda *, source, shortcuts: registered.append((source, shortcuts)),
+        )
+
+        def _has_hint() -> bool:
+            return bool(registered) and (
+                "Esc", "composer · F6 panes"
+            ) in registered[-1][1]
+
+        def _refresh_hint() -> None:
+            screen._register_console_footer_shortcuts()
+
+        # TASK-32322 live-smoke hardening: the flow-driven path must
+        # produce the hint with NO manual refresh — widget.focus() alone
+        # fired on_focus-adjacent handlers, but the real entry (Alt+C)
+        # lands on a DESCENDANT, which needs on_descendant_focus (caught
+        # in live smoke after the manual-refresh version passed tests).
+        await pilot.press("alt+c")  # close
+        await pilot.pause()
+        await pilot.press("alt+c")  # reopen -> focus lands on Terminal
+        for _ in range(40):
+            if _has_hint():
+                break
+            await asyncio.sleep(0.05)
+        assert _has_hint(), "Alt+C reopen must surface the escape hint"
+
+        # Focus the RIGHT rail: hint stays, alongside n/p Sections.
+        collapse = rail.query_one("#console-inspector-rail-collapse", Button)
+        collapse.focus()
+        for _ in range(40):
+            _refresh_hint()
+            if _has_hint() and ("n/p", "Sections") in registered[-1][1]:
+                break
+            await asyncio.sleep(0.05)
+        assert _has_hint()
+
+        # Back to the composer: hint gone.
+        screen.query_one("#console-native-composer").focus()
+        for _ in range(40):
+            _refresh_hint()
+            if registered and not _has_hint():
+                break
+            await asyncio.sleep(0.05)
+        assert not _has_hint(), "composer focus must drop the escape hint"

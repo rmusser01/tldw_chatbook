@@ -29,7 +29,12 @@ async def test_archive_read_cannot_publish_after_owner_or_archive_changes(
         _conversation_archive_states={"c": False},
         _conversation_archive_inflight=set(),
     )
-    controller = _workspace_controller(app_instance=app)
+    store = SimpleNamespace(
+        sessions=lambda: [SimpleNamespace(persisted_conversation_id="c")]
+    )
+    controller = _workspace_controller(
+        app_instance=app, current_chat_store_accessor=lambda: store
+    )
     row = _browser_row("c", "Saved chat")
 
     async def rows(*args, **kwargs):

@@ -128,7 +128,10 @@ from ...Chat.console_chat_models import (
     ConsoleVariantSet,
     MessageAttachment,
 )
-from ...Chat.console_chat_store import ConsoleChatStore
+from ...Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleThinkingCompatibilityError,
+)
 from ...Chat.console_chat_fork import ConsoleForkEligibility
 from ...Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
@@ -148,7 +151,9 @@ from ...Chat.console_message_actions import (
     resolve_canvas_html_block,
 )
 from ...Chat.console_save_targets import (
+    console_answer_note_title,
     console_chatbook_artifact_payload,
+    console_note_provenance_keywords,
     derive_console_save_title,
     resolve_console_artifact_owner_request,
 )
@@ -161,11 +166,14 @@ from ...Notes.notes_scope_service import ScopeType
 from ...Widgets.Console import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
+    ConsoleEditThinkingModal,
     ConsoleSaveAsModal,
+    ConsoleThinkingEditResult,
 )
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
+    from ...Widgets.Console.console_transcript import ConsoleThinkingEditRequested
 
 logger = logger.bind(module="ChatScreen")
 
@@ -1493,6 +1501,26 @@ class ConsoleMessageController:
             )
             return True
 
+        if action_id == "capture-note":
+            # task-32146 fix round 1: the registry decides at row-build
+            # time whether this row is offered; check it again here, as
+            # the regenerate image/video branches do, so a temporary
+            # chat never reaches the note write whatever built the
+            # button.
+            note_blocked = blocked_reason(
+                "capture-note",
+                ephemeral=self._console_active_session_is_ephemeral(),
+            )
+            if note_blocked is not None:
+                self.app_instance.notify(note_blocked, severity="warning")
+                return True
+            self.run_worker(
+                self._capture_console_answer_as_note(message_id),
+                exclusive=True,
+                group="console-note-actions",
+            )
+            return True
+
         if action_id == "summarize-note":
             self.run_worker(
                 self._summarize_console_span_as_note(message_id),
@@ -2081,6 +2109,98 @@ class ConsoleMessageController:
                 f"Saved {len(written)} images to {escape_markup(str(save_location))}"
             )
 
+    def _console_notes_owner_id(self) -> str:
+        """Return the identity every Console note write is saved under.
+
+        ``user_id`` becomes the row's ``client_id`` -- the author id sync
+        attribution and optimistic locking read -- and the key under which
+        ``Notes_Library`` caches one DB connection. It is NOT a
+        visibility filter: the ``notes`` table has no owner column and
+        ``list_notes`` has no owner clause, so Library ▸ Notes lists every
+        note whatever id wrote it. ``_save_console_message_as_note`` used to
+        pass ``current_user``, which nothing in the tree sets, so its notes
+        carried the literal "default_user" as author and each write opened a
+        second cached connection to the same file. task-32146 hoisted the
+        one resolution here for all three Console note writers (fix round 1
+        corrected this docstring: those notes were never invisible).
+        """
+        return getattr(self.app_instance, "notes_user_id", None) or "default_user"
+
+    async def _capture_console_answer_as_note(self, message_id: str) -> None:
+        """Capture one finished assistant answer as a Local Note (task-32146).
+
+        The reverse of "Use in Console": the note is titled by the answer's
+        own first line, carries the answer verbatim, and records the
+        conversation and message it came from as keywords (AC#2). No LLM
+        call and no clipboard -- unlike the two TASK-31759 span actions,
+        this is a straight copy of one row.
+
+        Args:
+            message_id: Console transcript message to capture.
+        """
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        content = self._console_message_content(message)
+        note_id = await self._write_console_note(
+            title=console_answer_note_title(content),
+            content=content,
+            keywords=console_note_provenance_keywords(
+                conversation_id=self._current_console_conversation_id(),
+                message_id=message_id,
+            ),
+            action_id="capture-note",
+            saved_copy="Saved answer as Note.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        # A note that landed without a known id gets no receipt rather than
+        # a hand-off that cannot resolve.
+        if note_id is not None:
+            await self._offer_captured_note_handoff(note_id)
+
+    async def _offer_captured_note_handoff(self, note_id: str) -> None:
+        """Offer the receipt that lands on the note just captured.
+
+        Uses the same ``LIBRARY_NAV_CONTEXT_NOTE_ID`` deep link Home's
+        resume-latest control posts, so the Library notes editor opens on
+        this note with its entry focus armed.
+
+        Args:
+            note_id: Id of the note created by the capture.
+        """
+        from ...Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_LIBRARY
+        from ...Widgets.confirmation_dialog import ConfirmationDialog
+        from ..Navigation.main_navigation import NavigateToScreen
+
+        def _open_note(confirmed: bool | None) -> None:
+            if not confirmed:
+                return
+            self.app_instance.post_message(
+                NavigateToScreen(
+                    TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTE_ID: note_id}
+                )
+            )
+
+        await self.push_screen(
+            ConfirmationDialog(
+                title="Saved to Notes",
+                message=(
+                    "The answer is now a note in Library ▸ Notes, tagged with "
+                    "this conversation."
+                ),
+                confirm_label="Open note",
+                cancel_label="Stay in Console",
+            ),
+            callback=_open_note,
+        )
+
     async def _save_console_message_as_note(self, message_id: str) -> None:
         """Persist one selected Console message as a local Note."""
         notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
@@ -2110,8 +2230,12 @@ class ConsoleMessageController:
                 content=content,
                 note_id=None,
                 version=None,
-                user_id=getattr(self.app_instance, "current_user", None)
-                or "default_user",
+                # task-32146: was `current_user`, which nothing in the tree
+                # sets -- every note this path saved carried the literal
+                # "default_user" as its author id (sync attribution /
+                # locking identity) and opened a second cached connection.
+                # Never a visibility problem; see _console_notes_owner_id.
+                user_id=self._console_notes_owner_id(),
                 workspace_id=None,
                 keywords=["console"],
             )
@@ -2134,63 +2258,96 @@ class ConsoleMessageController:
         # FB-07 (TASK-2154.17): success confirmations read as success.
         self.app_instance.notify("Saved message as Note.", severity="success")
 
+    async def _write_console_note(
+        self,
+        *,
+        title: str,
+        content: str,
+        keywords: list[str],
+        action_id: str,
+        saved_copy: str,
+        target_message_id: str | None = None,
+        target_content: str | None = None,
+    ) -> str | None:
+        """Write one local Note through the notes seam; notify either way.
+
+        The one save/notify tail behind the TASK-31759 span actions and
+        task-32146's capture (fix round 1 folded capture's own copy of it
+        in here): service lookup, ``save_note``, the failure toasts, and
+        the ``_last_console_action`` receipt.
+
+        Returns:
+            The created note's id when the service reports one (it returns
+            the created row whenever keywords are supplied), else ``None``
+            -- for an unavailable service, a failed write, or a result
+            carrying no id.
+        """
+        notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
+        save_note = getattr(notes_scope_service, "save_note", None)
+        if not callable(save_note):
+            self.app_instance.notify(
+                "Saving as a Note is unavailable: Notes service is not ready.",
+                severity="warning",
+            )
+            return None
+        try:
+            result = save_note(
+                scope=ScopeType.LOCAL_NOTE.value,
+                title=title,
+                content=content,
+                note_id=None,
+                version=None,
+                # TASK-31759 review, corrected by task-32146 fix round 1:
+                # the configured notes identity, NOT current_user (which
+                # nothing sets). The id is the row's author/client_id and
+                # the per-connection cache key -- not a visibility filter;
+                # see _console_notes_owner_id.
+                user_id=self._console_notes_owner_id(),
+                workspace_id=None,
+                keywords=keywords,
+            )
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console note action failed.")
+            self.app_instance.notify(
+                f"Saving as a Note failed: {escape_markup(str(exc))}",
+                severity="error",
+            )
+            return None
+        if not result:
+            self.app_instance.notify("Saving as a Note failed.", severity="error")
+            return None
+        self._last_console_action = ConsoleActionResult(
+            action_id=action_id,
+            status="completed",
+            visible_copy=saved_copy,
+            target_message_id=target_message_id,
+            target_content=target_content,
+        )
+        self.app_instance.notify(saved_copy, severity="success")
+        note_id = result.get("id") if isinstance(result, Mapping) else None
+        return note_id if isinstance(note_id, str) and note_id else None
+
     def _save_console_note_draft(
         self, draft: "ConsoleNoteDraft", *, action_id: str, saved_copy: str
     ) -> None:
-        """Persist a controller-built note draft; notify either way.
+        """Persist a controller-built note draft on the note worker group.
 
-        Shared tail of the TASK-31759 More-menu note actions: the draft
-        already carries title/content (and its provenance header); this
-        writes it through the same notes seam as save-as Note.
+        Shared entry of the TASK-31759 More-menu note actions: the draft
+        already carries title/content (and its provenance header).
         """
-
-        async def _run() -> None:
-            notes_scope_service = getattr(
-                self.app_instance, "notes_scope_service", None
-            )
-            save_note = getattr(notes_scope_service, "save_note", None)
-            if not callable(save_note):
-                self.app_instance.notify(
-                    "Saving as a Note is unavailable: Notes service is not ready.",
-                    severity="warning",
-                )
-                return
-            try:
-                result = save_note(
-                    scope=ScopeType.LOCAL_NOTE.value,
-                    title=draft.title,
-                    content=draft.content,
-                    note_id=None,
-                    version=None,
-                    # TASK-31759 review: notes are owned by the configured
-                    # notes identity (app.notes_user_id drives every local
-                    # note view/ingest), NOT current_user -- saving under a
-                    # different id would make the note invisible in the
-                    # library.
-                    user_id=getattr(self.app_instance, "notes_user_id", None)
-                    or "default_user",
-                    workspace_id=None,
-                    keywords=["console"],
-                )
-                if inspect.isawaitable(result):
-                    result = await result
-            except Exception as exc:
-                logger.opt(exception=True).warning("Console note action failed.")
-                self.app_instance.notify(
-                    f"Saving as a Note failed: {exc}", severity="error"
-                )
-                return
-            if not result:
-                self.app_instance.notify("Saving as a Note failed.", severity="error")
-                return
-            self._last_console_action = ConsoleActionResult(
+        self.run_worker(
+            self._write_console_note(
+                title=draft.title,
+                content=draft.content,
+                keywords=["console"],
                 action_id=action_id,
-                status="completed",
-                visible_copy=saved_copy,
-            )
-            self.app_instance.notify(saved_copy, severity="success")
-
-        self.run_worker(_run(), exclusive=True, group="console-note-actions")
+                saved_copy=saved_copy,
+            ),
+            exclusive=True,
+            group="console-note-actions",
+        )
 
     async def _summarize_console_span_as_note(self, message_id: str) -> None:
         """Summarize the active-path span up to message_id into a Note.
@@ -2541,6 +2698,104 @@ class ConsoleMessageController:
                 can_resend=can_resend,
                 clears_generation_provenance=clears_generation_provenance,
             ),
+            callback=_apply_edit,
+        )
+
+    def _console_thinking_edit_target(
+        self, activity_id: str
+    ) -> tuple[str, str, str] | None:
+        """Resolve a thinking row's editable displayable block.
+
+        Returns ``None`` when ``activity_id`` is not a projected thinking row
+        or carries no displayable block; the caller decides how to respond.
+        """
+        from ...Widgets.Console.console_transcript import ConsoleTranscript
+
+        try:
+            transcript = self._screen.query_one(
+                "#console-native-transcript", ConsoleTranscript
+            )
+        except Exception:
+            return None
+        if transcript.thinking_owner_message_id(activity_id) is None:
+            return None
+        return transcript.thinking_editable_block(activity_id)
+
+    async def handle_console_thinking_edit_requested(
+        self, event: "ConsoleThinkingEditRequested"
+    ) -> None:
+        """Open the block-scoped thinking edit modal (TASK-32312).
+
+        Called by ``ChatScreen``'s ``@on(ConsoleThinkingEditRequested)``
+        handler: the transcript posts the event from the thinking row's
+        keyboard edit seam (mirroring copy, which has no action buttons
+        either), and the screen resolves the displayable block from the
+        display model because the display-only activity id can never
+        resolve in the store.
+
+        Args:
+            event: Thinking-row edit request carrying the projected
+                activity id of the selected disclosure row.
+        """
+        editable = self._console_thinking_edit_target(event.activity_id)
+        if editable is None:
+            self.app_instance.notify(
+                "This thinking block cannot be edited.", severity="warning"
+            )
+            return
+        owner_message_id, block_id, text = editable
+        await self._open_console_thinking_edit_modal(
+            owner_message_id=owner_message_id,
+            block_id=block_id,
+            text=text,
+        )
+
+    async def _open_console_thinking_edit_modal(
+        self, *, owner_message_id: str, block_id: str, text: str
+    ) -> None:
+        """Open the block-scoped thinking edit modal for one displayable block."""
+        store = self._ensure_console_chat_store()
+
+        def _apply_edit(result: ConsoleThinkingEditResult | None) -> None:
+            if result is None:
+                return
+            try:
+                store.update_message_thinking_block(
+                    owner_message_id,
+                    block_id,
+                    result.text,
+                    expected_text=text,
+                )
+            except ValueError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except ConsoleThinkingCompatibilityError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except KeyError:
+                self.app_instance.notify(
+                    "Console message action target no longer exists.",
+                    severity="error",
+                )
+                return
+            self._last_console_action = ConsoleActionResult(
+                action_id="edit",
+                status="completed",
+                visible_copy="Edited thinking block.",
+                target_message_id=owner_message_id,
+                target_content=result.text,
+            )
+            self.run_worker(
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            self.app_instance.notify(
+                "Edited thinking block.", severity="information"
+            )
+
+        await self.push_screen(
+            ConsoleEditThinkingModal(text=text),
             callback=_apply_edit,
         )
 

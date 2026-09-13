@@ -502,12 +502,37 @@ class ChatbookCreator:
             logger.info(
                 f"ChatbookCreator.create_chatbook: Creating ZIP archive at {output_path}"
             )
-            self._create_zip_archive(
-                work_dir,
-                output_path,
-                partial_path,
-                deterministic=manifest.version is ChatbookVersion.V3,
-            )
+            try:
+                self._create_zip_archive(
+                    work_dir,
+                    output_path,
+                    partial_path,
+                    deterministic=manifest.version is ChatbookVersion.V3,
+                )
+            except OSError as error:
+                # task-32251 AC#4, narrowed by review F6: ONLY the packaging
+                # step. A live export reported `[Errno 2] No such file or
+                # directory: '...notes-bundle.zip.partial'` -- an internal
+                # temp file the user never named -- and the first fix caught
+                # `OSError` for the whole method, so a failure READING a
+                # source file would have claimed the bundle could not be
+                # written. Those still fall through to the generic branch.
+                # Metadata only, deliberately: an OSError's own message
+                # carries the destination path, and this sink is persistent.
+                logger.error(
+                    "ChatbookCreator.create_chatbook: could not write the "
+                    "archive error_type={}",
+                    type(error).__name__,
+                )
+                reason = error.strerror or "the file system refused the write"
+                return (
+                    False,
+                    f"Could not write the bundle to {output_path}: {reason}.",
+                    {
+                        "missing_dependencies": list(self.missing_dependencies),
+                        "auto_included": list(self.auto_included_characters),
+                    },
+                )
 
             # Best-effort size calc: the archive is already finalized on disk
             # (os.replace done inside _create_zip_archive), so a stat() failure

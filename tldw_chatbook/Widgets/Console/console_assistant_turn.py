@@ -14,8 +14,10 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_ACTIVITY_STATUSES,
     ConsoleActivityStatus,
     RawCliPresentation,
+    console_activity_status_word,
 )
 
 
@@ -132,7 +134,7 @@ class ConsoleActivityHeader(Horizontal):
         """Build the fixed terminal-status copy kept separate from the label."""
         if self.raw_cli_presentation is not None:
             return Content(f"· {raw_cli_status_copy(self.raw_cli_presentation)}")
-        return Content(f"· {self.status}")
+        return Content(f"· {console_activity_status_word(self.status)}")
 
     @property
     def renderable(self) -> Content:
@@ -174,15 +176,7 @@ class ConsoleActivityHeader(Horizontal):
         self.set_class(self.selected, "console-activity-header-selected")
         self.set_class(self.expanded, "console-activity-header-expanded")
         self.set_class(self.expandable, "console-activity-header-expandable")
-        for status in (
-            "success",
-            "blocked",
-            "failed",
-            "done",
-            "live",
-            "stopped",
-            "unavailable",
-        ):
+        for status in CONSOLE_ACTIVITY_STATUSES:
             self.status_widget.set_class(
                 self.status == status,
                 f"console-activity-status-{status}",

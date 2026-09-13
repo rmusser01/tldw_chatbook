@@ -16,12 +16,14 @@ import stat
 import contextlib
 import threading
 import time
+from contextlib import nullcontext
 from collections import OrderedDict
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
+from sqlite3 import Error as SQLiteError
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -52,6 +54,7 @@ from tldw_chatbook.Chat.attachment_core import (
     vision_block_reason,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
     CONSOLE_DISPATCH_DISCARDED_COPY,
@@ -322,6 +325,7 @@ from tldw_chatbook.Chat.library_preparation import (
     library_preparation_event_for_outcome,
 )
 from tldw_chatbook.Chat.rag_scope import EffectiveScope
+from tldw_chatbook.Agents.agent_models import WorkOrigin
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
     PromptQueueMutationResult,
@@ -338,6 +342,7 @@ from tldw_chatbook.Chat.console_fleet_wake import (
 )
 from tldw_chatbook.Chat.message_metadata import (
     MESSAGE_ORIGIN_AGENT_WAKE,
+    MESSAGE_ORIGIN_HOOK,
     MessageMetadata,
 )
 from tldw_chatbook.Chat.console_skill_resolver import (
@@ -396,7 +401,11 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     ProjectInstructionResolver,
     StartupInstructionCandidate,
 )
-from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+from tldw_chatbook.Agents.mcp_tool_provider import (
+    MCPPendingCall,
+    MCPToolProvider,
+    approval_effects_for_tool,
+)
 from tldw_chatbook.Agents.run_context import current_run_actor, current_run_id
 
 # NOTE (boot budget, ADR-097): `Agents.persona_policy` is imported lazily
@@ -408,6 +417,7 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolExecutionPolicy
+from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 
 # task-24458: these two providers pull the whole workspace tool-execution
 # cluster (`Tools.workspace_tool_executor` -> `Tools.{git,local,patch,
@@ -438,6 +448,7 @@ from tldw_chatbook.Library.library_rag_service import (
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
+from tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 from tldw_chatbook.runtime_policy.bootstrap import (
     load_default_runtime_source_state,
@@ -738,6 +749,10 @@ _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: `request_skill_script_confirm`'s own wait loop (fallback used when no
 #: `skill_script_confirm_timeout_seconds` seam is injected).
 _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
+#: Same ADR-067 contract as `_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS`,
+#: for `request_chat_create_confirm`'s own wait loop (fallback used when no
+#: `chat_create_confirm_timeout_seconds` seam is injected).
+_DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: Same ADR-067 contract, for `request_worktree_merge_confirm`'s own wait
 #: loop (fallback used when no `worktree_merge_confirm_timeout_seconds`
 #: seam is injected).
@@ -747,6 +762,36 @@ _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS = 0.0
 _DEFAULT_ASK_USER_TIMEOUT_SECONDS = 0.0
 #: Env override for `[console] ask_user_timeout_seconds` (env -> config -> default).
 ASK_USER_TIMEOUT_ENV_VAR = "TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS"
+#: task-32344: ceiling on the pre-provider setup a send will wait through
+#: before giving up on the optional part of it and calling the provider
+#: anyway. The one seam that needed a bound is the app-owned Personal
+#: Context service, which is bootstrapped lazily on the FIRST agent send of
+#: a process and whose constructor reads the OS credential store -- on
+#: macOS that can enter the Keychain authorization UI and block for as long
+#: as nobody answers it (traced live: a warm-restart first send sat in
+#: `SecItemAdd` -> `makeLoginAuthUI` for >6 minutes with the assistant row
+#: blank). Personalization is documented never to block chat; that promise
+#: was enforced against exceptions only, and a hang is not an exception.
+#: 10s is the budget because a healthy cold bootstrap measured 3.7s on the
+#: same machine -- generous enough never to fire on a slow-but-working
+#: profile, short enough that a wedged one degrades instead of hanging.
+CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS = 10.0
+#: Set while a Personal Context bootstrap attempt is still running in a
+#: worker thread, and cleared by that thread whichever way it ends -- or by
+#: the waiter, when the callable was cancelled before the executor ever
+#: started it and so will never run its own `finally`.
+#: Expiring the budget above abandons the worker but cannot kill it, and
+#: `TldwCli.get_personal_context_service` holds a module-level lock for the
+#: WHOLE bootstrap -- so a wedged credential store means every later send
+#: would park another `to_thread` worker on that lock, permanently. The
+#: shared default executor has ~22 slots and also carries `run_reply` and
+#: ~1100 other `to_thread` calls, so ~22 sends against an unanswered
+#: keychain prompt would starve every offload in the app (and Python 3.12's
+#: `Runner.close()` then joins that executor for up to 300s on quit).
+#: While this is set the resolver returns `None` without submitting
+#: anything. Self-healing survives: the original worker clears the flag and
+#: caches the service if the OS ever answers.
+_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT = threading.Event()
 #: A9 bounce counters are keyed by run id; a run that only ever bounced has no
 #: end-of-run hook here, so the map is bounded by evicting the oldest run.
 _MAX_TRACKED_QUESTION_BOUNCE_RUNS = 64
@@ -1570,7 +1615,17 @@ AGENT_LESSON_DENIED = "foreground approval denied for Agent Lesson save"
 #: find_tools, load_tools) that previously ran normally with the switch on.
 #: Deliberately names the switch so the model (and a user reading the
 #: transcript) can tell this from a per-call denial.
-KILL_SWITCH_REFUSAL = "tool call blocked: chat tool calls are disabled (kill switch)"
+#: task-32285: wording unified across every kill-switch refusal path
+#: (this controller, `Agents.mcp_tool_provider`, `Agents.
+#: local_tool_provider`, and the builtin gate's own copy hand-duplicated
+#: in `Chat.console_agent_bridge` -- see that module's
+#: `_BUILTIN_KILL_SWITCH_REFUSAL` docstring) -- four differently worded
+#: strings used to exist for the same event, and a downstream classifier
+#: (lane B's transcript status table, `console_agent_bridge.py`'s own
+#: `_refusal_statuses()`-style tables) keys on these by identity/prefix.
+#: Qodo #2597 #2: the sentence now has exactly ONE definition, the
+#: import-free leaf `Agents.tool_refusals`; every NAME below stays put.
+KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 
 #: TASK-1861: how broad each approval scope is. A session/always grant is
 #: recorded against a tool NAME, so when per-call rows of one tool are
@@ -1582,6 +1637,56 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
     "approve_session": 2,
     "always_allow": 3,
 }
+
+
+class ApprovalDecisions(dict):
+    """One approval round's verdict map, plus the keys nobody actually answered.
+
+    task-32280 fix round (R23). A round the user never answered -- Stop
+    mid-card, or a revoked round -- fails CLOSED: every undecided key
+    defaults to ``"deny"`` and the runtime must keep seeing exactly that,
+    so the tool does not run. But an unanswered card is not a refusal, and
+    ``request_mcp_approvals`` already writes the honest
+    ``denied-unresolved`` audit row for it. The review hooks, seeing only
+    ``"deny"``, then recorded a SECOND row that Audit renders as "Denied by
+    you" -- a decision nobody made.
+
+    This is a plain ``dict`` (every consumer keeps treating it as the
+    verdict map it always was) carrying one extra attribute so the two
+    hooks can tell the two cases apart at the one place it matters:
+    ``record_user_denial``. Deliberately NOT a distinct verdict string --
+    that would have to be taught to `_apply_verdict`, `apply_batch_
+    decisions`, `apply_promotion_decisions`, `builtin_gate.stamp` and the
+    refusal loop, and any one of them missing it would let a denied tool
+    run.
+
+    Attributes:
+        unresolved_keys: The verdict keys (``call_id`` where the runtime
+            can address the call, else ``llm_name`` -- the same keying
+            ``request_mcp_approvals`` uses) that were defaulted to deny by
+            cancellation or revocation rather than chosen by the user.
+    """
+
+    unresolved_keys: frozenset[str] = frozenset()
+
+
+def approval_was_unanswered(row: "MCPPendingCall", decisions: Mapping[str, str]) -> bool:
+    """True when ``row``'s deny came from a Stop/revoke, not from the user.
+
+    Args:
+        row: The pending call whose verdict is being recorded.
+        decisions: The map ``request_mcp_approvals`` returned -- an
+            `ApprovalDecisions` in production, a bare dict in tests and in
+            any other `request_approvals` shape (which then reports
+            "answered", the pre-fix behaviour).
+
+    Returns:
+        Whether the verdict for ``row`` was defaulted by an unresolved round.
+    """
+    unresolved = getattr(decisions, "unresolved_keys", ())
+    if not unresolved:
+        return False
+    return (str(getattr(row, "call_id", "") or "") or row.llm_name) in unresolved
 
 
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
@@ -2299,6 +2404,11 @@ def build_tool_review_hook(
                         :TOOL_DESCRIPTION_CAPTURE_CAP
                     ],
                     reason="risk_floored" if state.risk_floored else "ask",
+                    # task-32278: the card's high-risk sentence must say
+                    # "changes" for a mutating built-in, and `effects` is the
+                    # only signal it reads. Derived from the same tags the
+                    # floor above keys on, so the two cannot disagree.
+                    effects=approval_effects_for_tool(tool),
                     options=("approve_once", "approve_session", "deny"),
                     # TASK-1231/F3 AC2: pre-flight the roots check for the
                     # three file tools -- never gates or auto-denies, just
@@ -2406,6 +2516,25 @@ def build_tool_review_hook(
             )
         for name, decision in _stamps_for(builtin_pending).items():
             builtin_gate.stamp(run_id, name, decision)
+
+        # task-32280: because the runtime turns the refusal below into the
+        # call's result and never dispatches it, `MCPToolProvider.invoke` --
+        # which records every refusal IT reaches -- never runs for a denied
+        # call. Live on dev 3315241674 that left three approvals of one tool
+        # in the execution log and no row at all for the Deny. Record at the
+        # point the denial becomes final, through the provider's own audit
+        # seam. Built-in rows are left alone: nothing records their
+        # approvals either, so a denial-only trail would be worse than none.
+        # R23: skip rows whose "deny" was DEFAULTED by a Stop/revoke --
+        # `request_mcp_approvals` already logged those as
+        # `denied-unresolved`, and recording them again here claimed the
+        # user pressed Deny on a card they never saw resolved.
+        if mcp_provider is not None:
+            for row in mcp_pending:
+                if _decision_for(row) == "deny" and not approval_was_unanswered(
+                    row, decisions
+                ):
+                    mcp_provider.record_user_denial(row.llm_name)
 
         # The refusal half, enforced HERE rather than through the stamps.
         # The runtime resolves `call_id` before name and turns any
@@ -2541,10 +2670,22 @@ def build_local_review_hook(
             decisions,
         )
 
+        # task-32280 fix round (Critical): mirrors the MCP hook's own
+        # record_user_denial call a few hundred lines up. `run_agent_loop`
+        # turns any non-"proceed" verdict straight into the call's result
+        # and skips dispatch entirely, so `LocalToolProvider.invoke_detailed`
+        # -- the only thing that otherwise records a local refusal -- never
+        # runs for a hook-level denied call. Record at the point the denial
+        # becomes final, through the provider's own audit seam.
         verdicts: dict[str, str] = {row.llm_name: "proceed" for row in pending}
         for row in pending:
             if _decision_for(row) != "deny":
                 continue
+            # R23: as in the MCP hook -- a deny the user never chose (Stop
+            # mid-card) is already logged as `denied-unresolved`; only the
+            # REFUSAL below applies to it, not a second audit row.
+            if not approval_was_unanswered(row, decisions):
+                provider.record_user_denial(row.llm_name)
             key = str(getattr(row, "call_id", "") or "") or row.llm_name
             verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
         return verdicts
@@ -2923,6 +3064,7 @@ class _DurablePostcommitContinuation:
     #: publish site passed a hard-coded None -- so no durable Console turn
     #: persisted any citation provenance from `a26cdafd8` onward.
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
+    hook_context: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -3444,6 +3586,7 @@ class ConsoleChatController:
         cancel_raw_cli_session: Callable[[str], object] | None = None,
         canvas_enabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
+        ensure_run_hooks: "Callable[[], Any] | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -3568,6 +3711,15 @@ class ConsoleChatController:
             confirm_project_instruction_dispatch
         )
         self._select_project_instruction_binding = select_project_instruction_binding
+        #: Run hooks (spec 2026-09-11, Task 7): the runtime-owned engine
+        #: accessor (`ConsoleRuntime.ensure_run_hooks`), threaded exactly
+        #: the Task 5 way the bridge takes it -- the controller holds only
+        #: the callable, never the runtime, and ``None`` (the default, and
+        #: every controller-only construction) means the submit path never
+        #: consults hooks. Resolved per send via ``_run_hooks_engine`` so a
+        #: mid-session config edit (first-ever ``[hooks]`` entry) is picked
+        #: up without rebuilding the controller.
+        self._ensure_run_hooks = ensure_run_hooks
         self._project_instruction_display: dict[
             str, ProjectInstructionDisplayMetadata
         ] = {}
@@ -3626,8 +3778,17 @@ class ConsoleChatController:
         #     viewed session's own terminal transition is seen live and is
         #     deliberately never stamped here.
         self._pending_approvals: dict[str, set[str]] = {}
+        #: Qodo #4 (task-32345): the KIND of each outstanding round, kept
+        #: beside `_pending_approvals` rather than inside it -- that map's
+        #: `set[str]` value is asserted on verbatim across eight test files,
+        #: and the lifecycle logic wants "is anything outstanding", not the
+        #: kind. Same key, same writers, same lock; `pending_round_kinds`
+        #: reads it. An entry is only ever present for a round id that is
+        #: also in `_pending_approvals`.
+        self._pending_round_kinds: dict[str, dict[str, str]] = {}
         self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
         self._ordinary_outcome_ids: dict[str, str] = {}
+        self._run_hooks_stop_pending: set[str] = set()
         self._ordinary_outcome_assistant_ids: dict[str, str | None] = {}
         #: F2b fix (Qodo wave): guards every mutation of `_pending_
         #: approvals`, `_parked_approval_payloads`, and `_pending_
@@ -4154,6 +4315,32 @@ class ConsoleChatController:
         #: skill-script confirm (round-keyed registry + retained payloads).
         self.set_pending_question: Callable[[dict | None], None] | None = None
         self.ask_user_timeout_seconds: Callable[[], float] | None = None
+        #: Agent-initiated chat creation (fork_chat/new_chat) confirm
+        #: bridge -- mirrors the skill-script block above piece for piece
+        #: (see `request_chat_create_confirm`). One addition: the "remember"
+        #: decision is session-SCOPED here -- `_chat_create_session_grants`
+        #: maps owning session id -> tool names the user granted standing
+        #: permission for in that session, and a granted (session, tool)
+        #: short-circuits subsequent rounds (no card) until the session
+        #: closes.
+        self._pending_chat_create_lock = threading.Lock()
+        self._pending_chat_create_rounds: dict[str, dict[str, Any]] = {}
+        #: Retained payload per ROUND, keyed by `request_id` -- the mounted
+        #: card is the session's FIFO head, exactly like the sibling maps.
+        self._parked_chat_create_payloads: dict[str, dict[str, Any]] = {}
+        self._chat_create_session_grants: dict[str, set[str]] = {}
+        #: UI-thread callback that pushes/clears the pending chat-create
+        #: confirm payload into the owning screen's state. Invoked through
+        #: self.app.call_from_thread from request_chat_create_confirm.
+        #: Mirrors set_pending_skill_script.
+        self.set_pending_chat_create: Callable[[dict | None], None] | None = None
+        #: Optional test override for the confirm timeout, mirroring
+        #: `skill_script_confirm_timeout_seconds`.
+        self.chat_create_confirm_timeout_seconds: Callable[[], float] | None = None
+        #: Task 7 wires this: completion callback invoked once a confirmed
+        #: chat-create lands. Declared here (unused until then) so the init
+        #: block is not touched twice across the task split.
+        self.complete_agent_chat_create: Callable[..., None] | None = None
         self._pending_question_rounds = self._interrupt_host.registries["question"]
         self._pending_question_lock = self._interrupt_host.lock
         self._parked_question_payloads = self._interrupt_host.payloads["question"]
@@ -5498,7 +5685,9 @@ class ConsoleChatController:
         """
         return len(self._live_busy_session_ids())
 
-    def add_pending_round(self, session_id: str, round_id: str) -> None:
+    def add_pending_round(
+        self, session_id: str, round_id: str, kind: str = "approval"
+    ) -> None:
         """Register ``round_id`` as an outstanding approval-like round for ``session_id``.
 
         TASK-1050 (Defect A): the fleet-visible pending-approval badge used
@@ -5529,6 +5718,16 @@ class ConsoleChatController:
             round_id: The round's own unique id (a real bridge round id, or
                 the reserved ``_LEGACY_PENDING_APPROVAL_ROUND_ID`` sentinel
                 -- see ``set_run_pending_approval``).
+            kind: Which interrupt kind is waiting -- a
+                ``console_interrupt_rounds.KIND_SETTER_ATTRS`` key
+                (``approval``, ``question``, ``skill_install``,
+                ``skill_script``, ``worktree_merge``). Qodo #4: the badge and
+                lifecycle do not care, but the run chip and activity line do
+                -- they used to translate this registry's generic "something
+                is pending" into "Waiting for your approval" even for a
+                question. Defaults to ``approval``, which is what every
+                caller without a kind of its own (the deprecated boolean
+                shim, direct test drives) has always meant.
         """
         # F2b fix (Qodo wave), preserved: reachable from a worker thread
         # while the UI thread concurrently iterates `_pending_approvals`
@@ -5538,6 +5737,9 @@ class ConsoleChatController:
             rounds = self._pending_approvals.setdefault(session_id, set())
             changed = round_id not in rounds
             rounds.add(round_id)
+            self._pending_round_kinds.setdefault(session_id, {})[round_id] = str(
+                kind or "approval"
+            )
         if changed:
             if self._buddy_sink is not None:
                 self._buddy_sink.approval_round(session_id, round_id, pending=True)
@@ -5568,6 +5770,11 @@ class ConsoleChatController:
                 return
             changed = round_id in rounds
             rounds.discard(round_id)
+            kinds = self._pending_round_kinds.get(session_id)
+            if kinds is not None:
+                kinds.pop(round_id, None)
+                if not kinds:
+                    self._pending_round_kinds.pop(session_id, None)
             if not rounds:
                 self._pending_approvals.pop(session_id, None)
         if changed:
@@ -5610,6 +5817,29 @@ class ConsoleChatController:
         """
         with self._approval_state_lock:
             return session_id in self._pending_approvals
+
+    def pending_round_kinds(self, session_id: str) -> frozenset[str]:
+        """Return the KINDS of ``session_id``'s outstanding interrupt rounds.
+
+        Qodo #4: ``has_pending_approval_round`` answers "is anything waiting
+        on the user", which is the right question for the badge and the
+        lifecycle but the wrong one for copy -- the shared registry holds
+        questions, skill-install/skill-script confirms and worktree-merge
+        confirms as well as MCP approvals, and translating the generic
+        predicate into "Waiting for your approval" mislabels the other four
+        (and can disagree with the inspector, which counts mounted approval
+        cards only).
+
+        Args:
+            session_id: The session to read.
+
+        Returns:
+            Every distinct kind currently outstanding for ``session_id``
+            (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys), empty
+            when nothing is.
+        """
+        with self._approval_state_lock:
+            return frozenset(self._pending_round_kinds.get(session_id, {}).values())
 
     def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
         """DEPRECATED boolean shim -- prefer ``add_pending_round``/``discard_pending_round``.
@@ -5850,13 +6080,11 @@ class ConsoleChatController:
         tick (task-15664). Reads the bridge's drain-paired unsettled
         counter (``has_unsettled_children``, Task 3) per live session --
         cheap dict reads under one lock, safe on a UI timer, unlike
-        ``_fleet_survivor_session_ids``'s coordinator sweep (which
-        ``busy_fleet_session_count`` documents as navigation-only and
-        which task-15666 records as prune-on-read). True exactly while at
-        least one fleet child of a live session has entered its run scope
-        and not yet reached its settle hook -- so the tick keeps painting
-        through the scope-exit->settle window and stops on the same edge
-        the drain (and the badge it stamps) fires on.
+        ``_fleet_survivor_session_ids``'s coordinator sweep. True exactly
+        while at least one fleet child of a live session has entered its
+        run scope and not yet reached its settle hook -- so the tick keeps
+        painting through the scope-exit->settle window and stops on the
+        same edge the drain (and the badge it stamps) fires on.
 
         Returns:
             True while any live session's fleet still owes a drain.
@@ -8214,6 +8442,93 @@ class ConsoleChatController:
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
     ) -> ConsoleSubmitResult:
+        """Submit work, explicitly identifying a wake's proven preflight refusal."""
+        from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
+        scope = (
+            nullcontext()
+            if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+            else manual_work_scope()
+        )
+        try:
+            with scope:
+                result = await self._submit_draft_body(
+                    draft,
+                    session_id=session_id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    queue_authorization=queue_authorization,
+                    wake_authorization=wake_authorization,
+                    preserve_composer=preserve_composer,
+                    configuration=configuration,
+                    accepted_attachments=accepted_attachments,
+                    captured_one_shot_prefill=captured_one_shot_prefill,
+                    captured_one_shot_prefill_revision=captured_one_shot_prefill_revision,
+                    staged_evidence_launch=staged_evidence_launch,
+                    staged_evidence_capture=staged_evidence_capture,
+                    staged_evidence_release=staged_evidence_release,
+                    custody_acceptance_hook=custody_acceptance_hook,
+                    _resume_preparation_id=_resume_preparation_id,
+                    _resume_resolution=_resume_resolution,
+                )
+        except BaseException as exc:
+            # A wake may stop while preparation is still awaiting a helper,
+            # before the streaming layer owns its terminal-state cleanup.
+            if (
+                origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                and self._fleet_wake.authorizes(wake_authorization, session_id)
+            ):
+                self._signal_stop(session_id=session_id)
+                if (
+                    self.run_state_for(session_id).status
+                    in FEEDBACK_ACTIVE_RUN_STATUSES
+                ):
+                    status = (
+                        ConsoleRunStatus.STOPPED
+                        if isinstance(exc, asyncio.CancelledError)
+                        else ConsoleRunStatus.FAILED
+                    )
+                    self._set_run_state(
+                        ConsoleRunState(
+                            status, "Automatic follow-up paused. Results are saved."
+                        ),
+                        session_id=session_id,
+                    )
+            raise
+
+        if (
+            origin is ConsoleSubmissionOrigin.AGENT_WAKE
+            and self._fleet_wake.authorizes(
+                wake_authorization, result.session_id or session_id
+            )
+            and not wake_authorization.acceptance_started
+            and not result.accepted
+        ):
+            wake_authorization.preflight_refused = True
+        return result
+
+    async def _submit_draft_body(
+        self,
+        draft: str,
+        *,
+        session_id: str | None = None,
+        origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id: str | None = None,
+        queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
+        preserve_composer: bool = False,
+        configuration: ConsoleTurnConfigurationSnapshot | None = None,
+        accepted_attachments: tuple[PendingAttachment, ...] | None = None,
+        captured_one_shot_prefill: str | None = None,
+        captured_one_shot_prefill_revision: int | None = None,
+        staged_evidence_launch: Any | None = None,
+        staged_evidence_capture: (
+            Callable[[str, Any, Any], Awaitable[Any]] | None
+        ) = None,
+        staged_evidence_release: Callable[[Any, Any], None] | None = None,
+        custody_acceptance_hook: Callable[[], None] | None = None,
+        _resume_preparation_id: str | None = None,
+        _resume_resolution: Any | None = None,
+    ) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution.
 
         PR3a-2 Task 5: ``origin=AGENT_WAKE`` (requires a coordinator-issued
@@ -9053,6 +9368,21 @@ class ConsoleChatController:
                         queue_entry_id=queue_entry_id,
                     )
 
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+            try:
+                accepted = await self._fleet_wake.accept(wake_authorization, session.id)
+            except (SQLiteError, OSError, AutomaticWorkRefused):
+                return self._block(
+                    session.id,
+                    "Automatic work paused. Results are saved; send a message to continue.",
+                )
+            if not accepted:
+                return self._block(
+                    session.id,
+                    "Manual work has priority. Background results are saved.",
+                )
         citation_context: str | None = None
         citation_trace_builder: CitationTraceBuilder | None = None
         prompt_evidence_set_id: str | None = None
@@ -9273,6 +9603,60 @@ class ConsoleChatController:
                     "content": clean_draft,
                 },
             ]
+        # This await remains before acceptance. A refusal or cancellation must
+        # release the exact optimistic echo and preparation, preserving custody.
+        hook_context = ""
+        if origin is ConsoleSubmissionOrigin.MANUAL:
+            try:
+                from tldw_chatbook.Agents.run_hooks import truncate_hook_text
+
+                hooks_engine = self._run_hooks_engine()
+                outcome = (
+                    await hooks_engine.fire_async(
+                        "UserPromptSubmit",
+                        session_id=session.id,
+                        data={"prompt": truncate_hook_text(clean_draft)},
+                    )
+                    if hooks_engine is not None else None
+                )
+            except BaseException:
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                if preparation is not None:
+                    self._abandon_preparation(preparation.preparation_id)
+                self._set_run_state(
+                    ConsoleRunState(ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."),
+                    session_id=session.id,
+                )
+                raise
+            if outcome is not None and outcome.blocked:
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                if preparation is not None:
+                    self._abandon_preparation(preparation.preparation_id)
+                self._set_run_state(
+                    ConsoleRunState.blocked(f"Blocked by hook: {outcome.reason}"),
+                    session_id=session.id,
+                )
+                self.store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=f"Send blocked by hook: {outcome.reason}",
+                    persist=self.store.persistence is not None,
+                    metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
+                )
+                return ConsoleSubmitResult(
+                    False, False, f"Blocked by hook: {outcome.reason}",
+                    session_id=session.id, origin=origin, queue_entry_id=queue_entry_id,
+                )
+            hook_context = outcome.context if outcome is not None else ""
+        if hook_context:
+            # Freeze the model-visible half before either acceptance path seals
+            # its request. The SYSTEM audit row is excluded from future history.
+            provider_messages = [
+                *provider_messages,
+                {"role": ConsoleMessageRole.USER.value, "content": hook_context},
+            ]
         if preparation is not None:
             current_preparation = self._preparation_by_id(preparation.preparation_id)
             if current_preparation is None or (
@@ -9316,6 +9700,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 committed_context_epoch=committed_context_epoch,
                 custody_acceptance_hook=custody_acceptance_hook,
+                hook_context=hook_context,
             )
         # TASK-1364: record the accepted send to the shared prompt history.
         # Same placement rule as the accepted-hook above: only a send that is
@@ -9373,6 +9758,20 @@ class ConsoleChatController:
                 if preparation is not None:
                     self._rollback_committing_preparation(preparation.preparation_id)
                 raise
+            if hook_context:
+                # Run hooks (spec 2026-09-11, Task 7): a UserPromptSubmit
+                # hook's captured stdout is recorded as its own hook-origin
+                # SYSTEM row -- appended only once the user echo is
+                # confirmed proceeding (same placement rule as the wake
+                # notice above) and BEFORE the assistant row, persisted
+                # like it, and never merged into the user's message.
+                self.store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=hook_context,
+                    persist=self.store.persistence is not None,
+                    metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
+                )
         assistant: ConsoleChatMessage | None = None
         citation_repair_session = (
             ConsoleCitationRepairSession(
@@ -9513,6 +9912,16 @@ class ConsoleChatController:
             stream_result = await self._stream_assistant_response(
                 route=ConsoleRequestRoute.FRESH,
                 resolution=resolution,
+                work_origin=(
+                    WorkOrigin.AUTOMATIC
+                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                    else WorkOrigin.MANUAL
+                ),
+                work_chain_id=(
+                    wake_authorization.work_chain_id
+                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                    else None
+                ),
                 provider_messages=provider_messages,
                 assistant_message_id=assistant.id,
                 prefill=prefill,
@@ -10251,6 +10660,7 @@ class ConsoleChatController:
         queue_entry_id: str | None,
         committed_context_epoch: int,
         custody_acceptance_hook: Callable[[], None] | None,
+        hook_context: str = "",
     ) -> ConsoleSubmitResult:
         """Commit one durable owner, then enter its idempotent effect chain."""
 
@@ -10313,7 +10723,7 @@ class ConsoleChatController:
             resolved_destination=turn_context.resolved_destination,
             reconstructability=ConsoleDispatchReconstructability(
                 attachments_reconstructable=True,
-                evidence_reconstructable=not bool(
+                evidence_reconstructable=not hook_context and not bool(
                     prepared_continuation is not None
                     and (
                         prepared_continuation.staged_evidence_frozen
@@ -10360,6 +10770,9 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 preparation_id=preparation.preparation_id,
             )
+        # The durable turn now exists even if later publication needs recovery.
+        # Arm once here; replaying postcommit effects must not rearm a settled turn.
+        self._arm_run_hooks_stop(session.id)
         if custody_acceptance_hook is not None:
             custody_acceptance_hook()
         record_send_stage("durable_commit", "succeeded")
@@ -10414,6 +10827,7 @@ class ConsoleChatController:
                 ),
             ),
             terminal_citation_finalizer=terminal_citation_finalizer,
+            hook_context=hook_context,
         )
         with self.store.durable_preparation_lock:
             self.store.validate_durable_acceptance_fingerprint(fingerprint)
@@ -10613,6 +11027,20 @@ class ConsoleChatController:
                 ),
             )
             assistant_holder["assistant"] = assistant
+            if continuation.hook_context:
+                # Keep publication idempotent even when persistence fails after
+                # inserting the live row and this postcommit effect is retried.
+                audit_id = f"hook:{preparation_id}"
+                try:
+                    self.store.get_message(audit_id)
+                except KeyError:
+                    self.store.append_message(
+                        session_id, role=ConsoleMessageRole.SYSTEM,
+                        content=continuation.hook_context,
+                        metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
+                        message_id=audit_id,
+                    )
+                self.store.persist_message_if_needed(audit_id)
 
         def clear_staged_input() -> None:
             self._release_prepared_evidence(continuation.prepared)
@@ -12329,6 +12757,10 @@ class ConsoleChatController:
         # approval-card revocation and cancelled-is-never-retained ride
         # along. getattr-guarded and wrapped: a bare bridge double, no
         # bridge, or a raising cancel must never break a close.
+        fleet_conversation_id = self._agent_conversation_id(session_id)
+        close_progress = getattr(self._agent_bridge, "close_progress", None)
+        if callable(close_progress):
+            close_progress(session_id, conversation_id=fleet_conversation_id)
         cancel_all = (
             getattr(self._agent_bridge, "cancel_all_subagents", None)
             if self._agent_bridge is not None
@@ -12416,6 +12848,9 @@ class ConsoleChatController:
         ticket: ConsoleSessionCloseTicket,
     ) -> ConsoleChatSession | None:
         """Delete a session only after its runtime-owned work was drained."""
+
+        # ADR-150: session-scoped chat-create remember grants die with the session.
+        self._chat_create_session_grants.pop(session_id, None)
 
         state = self._session_close_states.pop(ticket.close_id, None)
         if state is None or state[0] != ticket:
@@ -12948,9 +13383,13 @@ class ConsoleChatController:
                 session is active at ROUND-key time; no parking).
 
         Returns:
-            A decision string (``approve_once``/``approve_session``/
-            ``always_allow``/``deny``/``timeout``) for every addressable
-            call-id-or-name verdict key in ``pending``.
+            An `ApprovalDecisions` (a plain verdict `dict` carrying
+            ``unresolved_keys``) holding a decision string
+            (``approve_once``/``approve_session``/``always_allow``/
+            ``deny``/``timeout``) for every addressable call-id-or-name
+            verdict key in ``pending``. Keys listed in ``unresolved_keys``
+            hold the fail-closed ``"deny"`` default of a round nobody
+            answered, not a user refusal -- see that class.
         """
         unique_keys: list[str] = []
         seen: set[str] = set()
@@ -12964,7 +13403,20 @@ class ConsoleChatController:
         if not unique_keys:
             return {}
         if self.app is None:
-            return {key: "deny" for key in unique_keys}
+            # Qodo #2597 #8: no UI is wired, so no card can be shown and
+            # nobody can answer -- this fails CLOSED, but it is NOT a user
+            # denial. Returned as a bare dict it looked exactly like one to
+            # `approval_was_unanswered()`, and both review hooks then wrote
+            # a `record_user_denial()` audit row claiming a person picked
+            # Deny. Every key here is unresolved, by construction.
+            # No `denied-unresolved` audit row is written (or possible)
+            # here: the execution log is reached through
+            # `self.app.unified_mcp_service`, and this branch exists
+            # precisely because there is no app. `unresolved_keys` is what
+            # keeps the hooks from inventing a user decision instead.
+            headless = ApprovalDecisions({key: "deny" for key in unique_keys})
+            headless.unresolved_keys = frozenset(unique_keys)
+            return headless
         event = threading.Event()
         decisions: dict[str, str] = {}
         round_id = str(uuid4())
@@ -12992,8 +13444,11 @@ class ConsoleChatController:
         # Registered before the timeout config read so sweeps and
         # `pending_*` readers see the round across that (lock-taking) call;
         # `run_round` re-registers the same object, harmlessly.
-        with self._approval_state_lock:
-            self._pending_approval_rounds[round_id] = round_state
+        if not self._interrupt_host.register_round("approval", round_id, round_state):
+            self._record_cancelled_approval_decisions(list(unique_keys), call_by_key)
+            denied = ApprovalDecisions({key: "deny" for key in unique_keys})
+            denied.unresolved_keys = frozenset(unique_keys)
+            return denied
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
         deadline = (
             time.monotonic() + timeout_seconds
@@ -13012,11 +13467,19 @@ class ConsoleChatController:
             self.store.active_session_id or ""
         )
         approved_values = {"approve_once", "approve_session", "always_allow"}
+        # task-32280 fix round (R23): the keys whose "deny" below is a
+        # fail-closed DEFAULT, not a user decision. `_record_cancelled_
+        # approval_decisions` already wrote the honest `denied-unresolved`
+        # audit row for exactly these; carried out on the returned map so
+        # the review hooks can skip recording a second, dishonest "Denied
+        # by you" row for the same call. See `ApprovalDecisions`.
+        unresolved_keys: set[str] = set()
 
         def _on_cancelled() -> None:
             cancelled_keys = [key for key in unique_keys if key not in decisions]
             for key in unique_keys:
                 decisions.setdefault(key, "deny")
+            unresolved_keys.update(cancelled_keys)
             self._record_cancelled_approval_decisions(cancelled_keys, call_by_key)
 
         def _on_timeout() -> None:
@@ -13030,15 +13493,23 @@ class ConsoleChatController:
         result: dict[str, dict[str, str]] = {}
 
         def _on_outcome(outcome: str) -> None:
-            if outcome == "revoked":
+            # Commit the whole batch under the sweep lock. Cancellation can
+            # win before this snapshot, but cannot retract a completed one.
+            with self._approval_state_lock:
+                revoked = outcome == "revoked" or bool(round_state.get("revoked"))
+                if revoked:
+                    unresolved_keys.update(unique_keys)
+                    result["map"] = {key: "deny" for key in unique_keys}
+                else:
+                    for key in unique_keys:
+                        decisions.setdefault(key, "deny")
+                    result["map"] = {
+                        key: decisions.get(key, "deny") for key in unique_keys
+                    }
+            if revoked:
                 self._record_cancelled_approval_decisions(
                     list(unique_keys), call_by_key
                 )
-                result["map"] = {key: "deny" for key in unique_keys}
-                return
-            for key in unique_keys:
-                decisions.setdefault(key, "deny")
-            result["map"] = {key: decisions.get(key, "deny") for key in unique_keys}
 
         def _announce_if_detached() -> bool:
             # Sampled after the park, at the same moment the pre-host body
@@ -13105,7 +13576,11 @@ class ConsoleChatController:
             on_teardown=_on_teardown,
             on_outcome=_on_outcome,
         )
-        return result.get("map") or {key: "deny" for key in unique_keys}
+        verdicts_out = ApprovalDecisions(
+            result.get("map") or {key: "deny" for key in unique_keys}
+        )
+        verdicts_out.unresolved_keys = frozenset(unresolved_keys)
+        return verdicts_out
 
     def _record_cancelled_approval_decisions(
         self,
@@ -13141,7 +13616,12 @@ class ConsoleChatController:
                 record(
                     call.server_key,
                     call.tool_name,
-                    decision="denied",
+                    # task-32280 fix round: the turn was stopped WHILE the
+                    # card was up -- the user never answered it. Recording
+                    # this as the bare "denied" made Audit report an
+                    # explicit "Denied by you" for a question nobody got to
+                    # answer.
+                    decision=UNRESOLVED_DENIED_DECISION,
                     initiator="agent",
                     error="run stopped while approval pending",
                 )
@@ -13581,6 +14061,11 @@ class ConsoleChatController:
 
     def _reproject_pending_decision_for_session(self, session_id: str) -> None:
         """Re-derive one session through the unified or legacy card seams."""
+        # ADR-150: the chat-create card rides its OWN standalone registry
+        # (pre-host design), so it must re-derive BEFORE the unified
+        # decision projection's early return -- otherwise a resolved card
+        # lingers on every session switch (live-UAT defect).
+        self._remount_parked_chat_create(session_id)
         if self.set_pending_decision is not None:
             self.project_pending_decision_for_active_session()
             return
@@ -14835,6 +15320,21 @@ class ConsoleChatController:
                 initiator="agent",
             )
 
+        def persist_arg_rule(hub: "HubTool", args: Mapping[str, Any]) -> None:
+            # task-32281: same shape as `MCPToolProvider._apply_verdict()`'s
+            # own "allow_matching" handling -- persist scoped to EXACTLY
+            # the displayed arguments, never a whole-tool allow.
+            service.add_tool_arg_rule(
+                hub.server_key,
+                hub.name,
+                args=dict(args),
+                tool=hub,
+                **profile_kwargs,
+            )
+
+        def arg_rule_allows(hub: "HubTool", args: Mapping[str, Any]) -> bool:
+            return service.arg_rule_allows_call(hub, dict(args), **profile_kwargs)
+
         from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 
         provider = VirtualCliProvider(
@@ -14849,6 +15349,8 @@ class ConsoleChatController:
                 hub.server_key, hub.name, **profile_kwargs
             ),
             persist_approval=persist,
+            persist_arg_rule=persist_arg_rule,
+            arg_rule_allows=arg_rule_allows,
             record_decision=record,
             root_guard=root_guard,
             authority_scope=authority_scope,
@@ -15281,16 +15783,10 @@ class ConsoleChatController:
         session: session-keyed teardown could not tell a cancelled child's
         card from its live sibling's.
 
-        Covers BOTH card registries a cancelled child can be holding:
-        ``_pending_approval_rounds`` (tool-call approvals) and
-        ``_pending_skill_script_rounds`` (run_skill_script confirms). The
-        skill-script leg is the wider hazard of the two -- that tool is
-        all-agents scope, its schema is not filtered by
-        ``config.allowed_tools``, and ``console_agent_bridge``'s closure
-        runs the script on the very next line after the confirm returns
-        Allow, with no cancellation checkpoint in between. (Skill-INSTALL
-        confirms are deliberately not swept: ``install_skill`` is wired
-        for the primary agent only, so no sub-agent can arm one.)
+        Covers tool-call approvals, run_skill_script confirms, and ask_user
+        questions. Skill-install and worktree-merge confirms are primary-only
+        and are not swept. The host also fences future arms for the revoked
+        run and these kinds for its lifetime, even when no round exists yet.
 
         Each revoked round is (a) marked ``revoked`` so the waiting thread
         fails closed even if a click lands in its shared decision box
@@ -15305,11 +15801,10 @@ class ConsoleChatController:
         round's own teardown uses, so a sibling round's card is never
         clobbered.
 
-        Thread-safe. Each registry is swept under its own lock, and the
-        two locks are taken SEQUENTIALLY, never nested. ``discard_pending_
-        round`` and both UI clears take those (non-reentrant) locks
-        themselves, so they are deliberately called after every critical
-        section is released.
+        Thread-safe. InterruptRoundHost records the per-kind revocation
+        fences and sweeps the registries under one shared non-reentrant lock.
+        Exact-round payload cleanup and badge/UI callbacks run after that
+        critical section; callbacks may acquire the same lock themselves.
 
         Args:
             run_id: The cancelled/abandoned run whose cards must die. A
@@ -15318,8 +15813,8 @@ class ConsoleChatController:
                 sweeping those would deny cards no run owns.
 
         Returns:
-            How many rounds were revoked across both registries (``0``
-            when the run had none).
+            How many existing rounds were revoked across the swept kinds
+            (``0`` when the run had none; the late-arm fence still persists).
         """
         if not run_id:
             return 0
@@ -15327,6 +15822,7 @@ class ConsoleChatController:
         # the badge discard and the FIFO-head re-derive per affected
         # session stay here, exactly as the per-kind sweeps did them.
         swept = self._interrupt_host.revoke_for_run(run_id, _REVOCATION_STAMPS)
+        chat_create_swept = self._revoke_chat_create_rounds(run_id)
         with self._pending_question_lock:
             self._question_bounces.pop(run_id, None)
         total = 0
@@ -15337,6 +15833,7 @@ class ConsoleChatController:
                     self.discard_pending_round(session_id, round_id)
                 with contextlib.suppress(Exception):
                     self._interrupt_host.remount_head(kind, session_id)
+        total += len(chat_create_swept)
         if total:
             logger.info("Revoked pending approval rounds for cancelled run")
         return total
@@ -15408,9 +15905,9 @@ class ConsoleChatController:
     def _revoke_skill_script_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
         """Fail this run's ``run_skill_script`` confirms closed.
 
-        Registry work only, under ``_pending_skill_script_lock`` and then
-        (sequentially, never nested) ``_approval_state_lock`` for the
-        retained-payload slot.
+        The host fences and sweeps under its shared lock, then removes only
+        each swept round's retained payload. Same-session siblings retain
+        their own round-keyed payloads through revocation and teardown.
 
         Args:
             run_id: The cancelled/abandoned run.
@@ -15421,6 +15918,79 @@ class ConsoleChatController:
         return self._interrupt_host.revoke_for_run(
             run_id, {"skill_script": _REVOCATION_STAMPS["skill_script"]}
         )["skill_script"]
+
+
+    @staticmethod
+    def _discard_chat_create_orphan(db: Any, conversation_id: str) -> None:
+        """Best-effort soft-delete of a just-created chat-create conversation.
+
+        Final-review fix wave (Finding 3b): when the fork copy fails after
+        ``create_conversation`` already committed, the orphaned row would
+        surface in the workspace listing with no explanation -- the spec
+        contracts "transaction rolled back; nothing created". Mirrors
+        ``ChatPersistenceService._discard_created_conversation``'s pattern
+        (soft-delete via the db seam, optimistic-locked, idempotent when the
+        row is already deleted); every failure only debug-logs and never
+        masks the executor outcome's original error kind.
+        """
+        try:
+            row = db.get_conversation_by_id(conversation_id, include_deleted=True)
+            if row is None or row.get("deleted"):
+                return
+            db.soft_delete_conversation(
+                conversation_id, expected_version=int(row["version"])
+            )
+        except Exception:  # noqa: BLE001 — discard is best-effort by contract
+            logger.opt(exception=True).debug(
+                "Failed to discard orphaned chat-create conversation "
+                f"(conversation_id={conversation_id})"
+            )
+
+    def _revoke_chat_create_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
+        """Fail this run's ``fork_chat``/``new_chat`` confirms closed.
+
+        Registry work only, under ``_pending_chat_create_lock`` and then
+        (sequentially, never nested) ``_approval_state_lock`` for the
+        retained-payload slot. Mirrors ``_revoke_skill_script_rounds``
+        exactly.
+
+        Args:
+            run_id: The cancelled/abandoned run.
+
+        Returns:
+            ``(request_id, session_id)`` for each revoked confirm.
+        """
+        revoked: list[tuple[str, str | None]] = []
+        with self._pending_chat_create_lock:
+            for request_id, state in list(self._pending_chat_create_rounds.items()):
+                if state.get("run_id") != run_id:
+                    continue
+                state["revoked"] = True
+                # Defense in depth -- the post-wait `revoked` guard in
+                # `request_chat_create_confirm` is what actually denies.
+                decision = state.get("decision")
+                if isinstance(decision, dict):
+                    decision["allow"] = False
+                    decision["remember"] = False
+                self._pending_chat_create_rounds.pop(request_id, None)
+                session_id = state.get("session_id") or None
+                revoked.append((request_id, session_id))
+                event = state.get("event")
+                if event is not None:
+                    event.set()
+        # PR0: mirrors `request_chat_create_confirm`'s `finally` exactly --
+        # each round drops exactly its OWN retained payload, so a
+        # still-armed sibling keeps its own copy. Runs outside the critical
+        # section above because `_unpark_round_payload` takes the
+        # (non-reentrant) same lock.
+        for round_id_to_drop, _session_id in revoked:
+            self._unpark_round_payload(
+                self._parked_chat_create_payloads, round_id_to_drop
+            )
+        return revoked
+
+    # -- Skill-install confirm bridge (task-5, parked TASK-910) --------------
+
 
     def request_skill_install_confirm(
         self, url: str, *, session_id: str | None = None
@@ -15483,6 +16053,7 @@ class ConsoleChatController:
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
+            "run_id": owning_run_id,
             "cancel_event": round_cancel_event,
             "visit_event": visit_cancel_event,
         }
@@ -15505,6 +16076,7 @@ class ConsoleChatController:
             "timeout_seconds": timeout_seconds,
             "request_id": request_id,
             "session_id": owning_session_id,
+            "run_id": owning_run_id,
             "deadline_monotonic": deadline,
         }
         is_parked = session_id is not None and session_id != (
@@ -15675,8 +16247,10 @@ class ConsoleChatController:
             "cancel_event": round_cancel_event,
             "visit_event": visit_cancel_event,
         }
-        with self._pending_skill_script_lock:
-            self._pending_skill_script_rounds[request_id] = script_round_state
+        if not self._interrupt_host.register_round(
+            "skill_script", request_id, script_round_state
+        ):
+            return {"allow": False, "remember": False}
         timeout_seconds = (
             self.skill_script_confirm_timeout_seconds()
             if self.skill_script_confirm_timeout_seconds is not None
@@ -15840,6 +16414,671 @@ class ConsoleChatController:
             return list(self._pending_skill_script_rounds)
 
     # -- Worktree-merge confirm bridge (TASK-28238 phase 2 Task 6) -----------
+
+
+    def _enrich_chat_create_confirm_payload(
+        self, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Fill the confirm card's fork facts, default title, and run id.
+
+        Final-review fix wave (Finding 1): the card renders
+        ``fork_source_title`` / ``fork_message_count`` (its "Copies N
+        messages from '<title>'" line) and a non-empty header title, but no
+        production payload producer ever set the fork keys -- every card
+        read "Copies ? messages from ''" -- and an agent-omitted title left
+        the header blank until the executor computed its default
+        post-confirm. The controller is the only side holding
+        store/persistence/db access at arm time, so it enriches here,
+        BEFORE the round is armed.
+
+        EVERYTHING is best-effort: any failure degrades -- the fork line's
+        keys are omitted, a fork title falls back to the owning session's
+        display title so the header still renders -- and can never block,
+        delay, or deny the round.
+        """
+        from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+        enriched = dict(payload)
+        tool = str(enriched.get("tool") or "")
+        try:
+            title = str(enriched.get("title") or "").strip()
+            if tool == "fork_chat":
+                session = next(
+                    (
+                        s
+                        for s in self.store.sessions()
+                        if s.id == str(enriched.get("session_id") or "")
+                    ),
+                    None,
+                )
+                conversation_id = (
+                    getattr(session, "persisted_conversation_id", None)
+                    if session is not None
+                    else None
+                )
+                if (
+                    session is not None
+                    and not session.ephemeral
+                    and conversation_id
+                ):
+                    # The tree-read leg carries its OWN guard so a failure
+                    # here degrades to the session-title fallback below
+                    # instead of skipping it.
+                    try:
+                        database = (
+                            getattr(self.store.persistence, "db", None)
+                            if self.store.persistence
+                            else None
+                        )
+                        tree = ChatConversationService(
+                            database
+                        ).get_conversation_tree(
+                            str(conversation_id),
+                            root_limit=10_000,
+                            depth_cap=10_000,
+                        )
+                        conversation_row = dict(
+                            tree.get("conversation") or {}
+                        )
+                        source_title = str(
+                            conversation_row.get("title") or ""
+                        )
+                        # Count definition -- ACTIVE-PATH LENGTH, not total
+                        # tree nodes: the executor's
+                        # copy_conversation_active_path copies exactly the
+                        # leaf-to-root ancestry, so the card must not count
+                        # off-path siblings the fork drops.
+                        nodes: dict[str, Mapping[str, Any]] = {}
+
+                        def _walk(node: Mapping[str, Any]) -> None:
+                            nodes[str(node["id"])] = node
+                            for child in node.get("children") or []:
+                                _walk(child)
+
+                        for root in tree.get("root_threads") or []:
+                            _walk(root)
+                        leaf = (
+                            database.get_conversation_active_leaf(
+                                str(conversation_id)
+                            )
+                            if database is not None
+                            else None
+                        )
+                        if leaf is None or leaf not in nodes:
+                            # Mirrors copy_conversation_active_path's own
+                            # fallback: a missing/dangling pointer means
+                            # the most recent message by timestamp.
+                            leaf = (
+                                max(
+                                    nodes,
+                                    key=lambda i: str(
+                                        nodes[i].get("timestamp") or ""
+                                    ),
+                                )
+                                if nodes
+                                else None
+                            )
+                        count = 0
+                        cursor = leaf
+                        while cursor is not None and cursor in nodes:
+                            count += 1
+                            cursor = nodes[cursor].get("parent_message_id")
+                        enriched["fork_source_title"] = source_title
+                        enriched["fork_message_count"] = count
+                        if not title:
+                            # Same default formula the executor applies
+                            # post-confirm, so the card header matches the
+                            # title that would actually be created.
+                            title = (
+                                f"Fork of {source_title or 'chat'}"[:120]
+                            )
+                    except Exception:  # noqa: BLE001 — omit the fork line only
+                        logger.opt(exception=True).debug(
+                            "chat-create confirm fork enrichment degraded; "
+                            "card omits the fork line"
+                        )
+                if not title and session is not None:
+                    # Degraded fork path (tree read failed, ephemeral
+                    # source, or unpersisted source): default the title
+                    # from the SESSION's display title -- the header must
+                    # never render empty.
+                    title = f"Fork of {session.title or 'chat'}"[:120]
+            elif not title:
+                title = "New Chat"
+            if title:
+                enriched["title"] = title
+            # Run attribution: the bridge payload already carries run_id;
+            # normalize it so the card can render "requested by agent run".
+            if enriched.get("run_id"):
+                enriched["run_id"] = str(enriched["run_id"])
+        except Exception:  # noqa: BLE001 — enrichment never blocks the round
+            logger.opt(exception=True).debug(
+                "chat-create confirm payload enrichment degraded"
+            )
+        return enriched
+
+    def request_chat_create_confirm(
+        self, payload: dict[str, Any], *, session_id: str | None = None
+    ) -> dict[str, bool]:
+        """WORKER THREAD: ask the user to confirm an agent-initiated chat create.
+
+        Mirrors request_skill_script_confirm for the fork_chat/new_chat
+        tools, with one addition: a session-scoped "remember" grant store.
+        A prior allow+remember decision for ``(session_id, tool)`` (recorded
+        in ``_chat_create_session_grants``) short-circuits this call with
+        ``{"allow": True, "remember": True}`` before any round is armed --
+        no card, no wait. Grants die with their session (``close_session``
+        pops the whole set).
+
+        Each call arms a fresh round under a newly-generated request id
+        (embedded in the payload handed to the UI as ``"request_id"``) so
+        that ``resolve_pending_chat_create`` can reject a decision left
+        over from a prior, already-torn-down round -- see that method's
+        docstring for why this matters.
+
+        Carries the SAME park/mount/retain contract as
+        ``request_skill_script_confirm`` -- see that method's docstring for
+        the full mount-vs-park/retain rationale, identical here.
+
+        Args:
+            payload: Confirm details to render ({"tool" ("fork_chat"|
+                "new_chat"), "title", "opening_prompt", "instructions"});
+                "fork_source_title"/"fork_message_count" (fork_chat only),
+                a default "title" when the agent omitted one, and a
+                normalized "run_id" are enriched by
+                ``_enrich_chat_create_confirm_payload`` before arming, and
+                "timeout_seconds", "request_id", "session_id" and
+                "deadline_monotonic" keys are added before marshaling to
+                the UI.
+            session_id: The run's OWNING session, scoping the cancel check
+                (``_is_session_cancelled``), the park/mount decision, and
+                the remember-grant lookup. ``None`` preserves the
+                viewed-session fallback and never parks.
+
+        Returns:
+            ``{"allow": bool, "remember": bool}``. Every non-Allow path
+            (deny, cancel, stop, timeout, no wired UI) returns
+            ``allow=False``.
+        """
+        from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+        if self.app is None or self.set_pending_chat_create is None:
+            return {"allow": False, "remember": False}
+
+        owning_session_id = session_id if session_id is not None else (
+            self.store.active_session_id or ""
+        )
+        tool = str(payload.get("tool") or "")
+        # PR review #13: the card must display the TRUE owning run id. The
+        # bridge closure rides the originating assistant message id under
+        # `run_id` (the run's own id does not exist when the closure is
+        # built); the round's arm-time stamp knows the real one.
+        true_run_id = current_run_id()
+        if true_run_id:
+            payload = {**payload, "run_id": str(true_run_id)}
+        # Session-scoped remember: a standing grant for this (session, tool)
+        # pair short-circuits -- no card is armed at all.
+        if tool in self._chat_create_session_grants.get(owning_session_id, set()):
+            return {"allow": True, "remember": True}
+
+        # Final-review fix wave (Finding 1): enrich the payload BEFORE the
+        # round is armed -- fork_source_title/fork_message_count (the card's
+        # fork line), a default title when the agent omitted one, and run-id
+        # attribution. Entirely best-effort; see the helper.
+        enriched_payload = self._enrich_chat_create_confirm_payload(payload)
+
+        event = threading.Event()
+        decision: dict[str, bool] = {}
+        request_id = str(uuid4())
+        # Arm-time cancel binding, identical to the sibling bridges' -- see
+        # `_bind_round_cancel_signal`.
+        round_cancel_event = self._bind_round_cancel_signal(session_id)
+        # The visit's teardown Event, captured at ARM time for the same
+        # reason the run's cancel event is -- see `_bind_visit_cancel_signal`.
+        visit_cancel_event = self._bind_visit_cancel_signal()
+        # Same run-ownership stamp the sibling bridges carry -- a revoked
+        # round must fail closed even against a late Allow.
+        chat_create_round_state: dict[str, Any] = {
+            "event": event,
+            "decision": decision,
+            "session_id": owning_session_id,
+            "run_id": current_run_id(),
+            # Re-read after the wait: a late Allow must not stick. See
+            # `revoke_approval_rounds_for_run`.
+            "revoked": False,
+        }
+        with self._pending_chat_create_lock:
+            self._pending_chat_create_rounds[request_id] = chat_create_round_state
+
+        timeout_seconds = (
+            self.chat_create_confirm_timeout_seconds()
+            if self.chat_create_confirm_timeout_seconds is not None
+            else _DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS
+        )
+        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
+        # for a decision or the owning run's cancellation.
+        deadline = (
+            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        )
+        card_payload = dict(enriched_payload)
+        card_payload["timeout_seconds"] = timeout_seconds
+        card_payload["request_id"] = request_id
+        card_payload["session_id"] = owning_session_id
+        # See `_head_round_payload`'s remaining-time snapshot. None when
+        # ADR-067 armed no deadline.
+        card_payload["deadline_monotonic"] = deadline
+        is_parked = session_id is not None and session_id != (
+            self.store.active_session_id or ""
+        )
+        # Legacy `session_id is None` callers never park and never queue --
+        # they keep the unconditional mount below.
+        is_head = True
+        if session_id is not None:
+            self.add_pending_round(session_id, request_id)
+            # Keyed by ROUND; the return says whether THIS round is its
+            # session's FIFO head. A non-head round must not mount: an
+            # older sibling is still holding the card.
+            is_head = self._park_round_payload(
+                self._parked_chat_create_payloads, request_id, card_payload
+            )
+        try:
+            if is_parked:
+                if self.app is not None and self.park_pending_approval is not None:
+                    self.app.call_from_thread(self.park_pending_approval, session_id)
+            elif is_head:
+                self._marshal_pending_chat_create(card_payload)
+            # ADR-067: mark the owning run as waiting on a human decision
+            # (see the sibling bridges' identical wrap for the why).
+            with use_human_input_wait(
+                str(chat_create_round_state.get("run_id") or "")
+            ):
+                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                    if self._is_session_cancelled(
+                        session_id,
+                        cancel_event=round_cancel_event,
+                        visit_event=visit_cancel_event,
+                    ):
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        break
+            # A revoked round denies unconditionally, without consulting
+            # `decision` at all -- an Allow delivered just after the child
+            # was cancelled must not authorize the create. Mirrors the
+            # sibling bridges' identical post-wait guard.
+            with self._pending_chat_create_lock:
+                was_revoked = bool(chat_create_round_state.get("revoked"))
+            if was_revoked:
+                return {"allow": False, "remember": False}
+            allow = bool(decision.get("allow", False))
+            remember = bool(decision.get("remember", False))
+            # Record a standing grant only on an allow that ALSO asked to
+            # be remembered -- a remembered deny must not poison later
+            # rounds into auto-allowing.
+            if allow and remember:
+                self._chat_create_session_grants.setdefault(
+                    owning_session_id, set()
+                ).add(tool)
+            return {"allow": allow, "remember": remember}
+        finally:
+            with self._pending_chat_create_lock:
+                self._pending_chat_create_rounds.pop(request_id, None)
+            # Drop exactly THIS round's retained payload -- each round owns
+            # its own key, so no still-armed sibling guard is needed.
+            self._unpark_round_payload(
+                self._parked_chat_create_payloads, request_id
+            )
+            if session_id is not None:
+                # Discard ONLY this round's own id -- the badge clears only
+                # once every bridge round for this session has resolved.
+                self.discard_pending_round(session_id, request_id)
+            # Re-derive the card from the session's remaining FIFO head
+            # rather than deciding whether to CLEAR it -- a legacy
+            # no-session round passes None so `_remount_head` re-derives
+            # for the session active WHEN THE CALLBACK RUNS; a
+            # session-attributed round keeps its exact-match owning id.
+            try:
+                # Live-UAT fix: `_remount_head` early-returns into the
+                # decision-projection system when `set_pending_decision`
+                # is wired and would never clear OUR standalone map's
+                # payload, leaving a resolved card re-appearing on every
+                # re-render. Push the head (or None) directly instead.
+                target_session = (
+                    owning_session_id
+                    if session_id is not None
+                    else (self.store.active_session_id or "")
+                )
+                if target_session == (self.store.active_session_id or ""):
+                    self._marshal_pending_chat_create(
+                        self._head_round_payload(
+                            self._parked_chat_create_payloads, target_session
+                        )
+                    )
+            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
+                logger.opt(exception=True).debug(
+                    "Failed to marshal chat-create remount during teardown"
+                )
+
+    def _remount_parked_chat_create(self, session_id: str) -> None:
+        """Re-derive the mounted chat-create confirm card for ``session_id``.
+
+        Called from `switch_session`/`new_session`/`close_session` exactly
+        like the sibling confirm cards' own re-derive -- mounts
+        ``session_id``'s retained payload (if any) and clears whatever the
+        departing session had shown, all in one call. A no-op when no UI
+        bridge is wired.
+
+        Already runs on the UI thread, so it calls `_head_round_payload`
+        directly rather than `_remount_head`.
+
+        Args:
+            session_id: The session now being activated/viewed.
+        """
+        if self.set_pending_chat_create is None:
+            return
+        self.set_pending_chat_create(
+            self._head_round_payload(self._parked_chat_create_payloads, session_id)
+        )
+
+    def _marshal_pending_chat_create(self, payload: dict[str, Any] | None) -> None:
+        """WORKER THREAD: hand a chat-create confirm payload to the UI thread.
+
+        Args:
+            payload: The pending confirm dict to show, or None to hide it.
+        """
+        if self.app is not None and self.set_pending_chat_create is not None:
+            self.app.call_from_thread(self.set_pending_chat_create, payload)
+
+    def resolve_pending_chat_create(
+        self, allow: bool, remember: bool, request_id: str | None = None
+    ) -> None:
+        """UI THREAD: apply the user's decision, releasing the worker thread.
+
+        ``request_id`` must be the exact ``"request_id"`` value the pending
+        confirm's payload carried (``request_chat_create_confirm`` embeds a
+        fresh one per round, and the confirm card built in a later task
+        MUST echo it back here unchanged). This is a strict match: a
+        resolve carrying no id, or an id from any round other than the one
+        currently armed, is silently dropped rather than resolved.
+
+        Same hazard class as ``resolve_pending_skill_script``: if round 1
+        ends (deadline, cancel, stop, conversation switch) and the agent
+        immediately issues a second fork_chat/new_chat call arming round 2,
+        a ``Button.Pressed`` queued for round 1 just before its teardown
+        could otherwise be handled after round 2 is armed -- resolving
+        round 2 (a chat the user never saw) with round 1's stale click.
+        Widget messages and ``call_from_thread`` calls are separate
+        queues, so ordering across a round boundary is not guaranteed.
+
+        Args:
+            allow: True to create the chat this once.
+            remember: True to also grant this tool standing permission in
+                the owning session.
+            request_id: The armed round's id, as echoed back by the UI.
+                ``None`` (the default) never matches an armed round, so an
+                un-migrated or malformed caller fails closed by omission.
+        """
+        if request_id is None:
+            return
+        with self._pending_chat_create_lock:
+            round_state = self._pending_chat_create_rounds.get(request_id)
+        if round_state is None:
+            return
+        round_state["decision"]["allow"] = bool(allow)
+        round_state["decision"]["remember"] = bool(remember)
+        round_state["event"].set()
+
+    def pending_chat_create_ids(self) -> list[str]:
+        """Return the request ids of every currently-armed chat-create round.
+
+        Returns:
+            The armed round ids, in insertion order. Empty when none is
+            pending. Exposed for tests and for any surface that needs to
+            know whether a decision is outstanding.
+        """
+        with self._pending_chat_create_lock:
+            return list(self._pending_chat_create_rounds)
+
+    def execute_agent_chat_create(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """WORKER THREAD: create the confirmed chat and marshal UI completion.
+
+        TASK-32482 Task 7. Runs ONLY after ``request_chat_create_confirm``
+        returned an allow (the bridge closure enforces that ordering), so
+        every failure below is fail-closed: nothing is created, and the
+        outcome's ``kind`` tells the model (and the run log) why.
+
+        For ``fork_chat`` the new conversation copies the source's active
+        path verbatim (``ChatConversationService.copy_conversation_active_
+        path``) and records fork lineage (``parent_conversation_id`` +
+        ``forked_from_message_id`` -- both FK-enforced, so only real
+        persisted ids are ever passed). For ``new_chat`` a fresh
+        conversation is created in the owning session's workspace scope.
+        Both stamp the ``console_agent_handoff`` metadata key (``draft``/
+        ``created_via``/``source_run_id``) Task 8 rehydrates from.
+
+        On success the UI-thread completion (``complete_agent_chat_create``)
+        is marshaled via ``app.call_from_thread`` with the new session's
+        placement inputs; the executor itself returns the outcome dict the
+        bridge closure renders into the ToolResult.
+
+        Args:
+            payload: ``{"tool" ("fork_chat"|"new_chat"), "session_id",
+                "run_id", "title", "opening_prompt", "instructions"}``.
+
+        Returns:
+            ``{"ok": True, "title", "conversation_id", "workspace_id",
+            "copied_messages", "draft_set"}`` on success, else
+            ``{"ok": False, "kind", "error"}`` with ``kind`` one of
+            ``session_gone``, ``payload_too_large``,
+            ``source_not_persisted``, ``character_conflict``,
+            ``empty_history``, ``execution_failed``.
+        """
+        from tldw_chatbook.Agents.agent_models import (
+            CHAT_CREATE_PAYLOAD_MAX,
+            CHAT_CREATE_TITLE_MAX,
+        )
+        from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+
+        tool = str(payload.get("tool") or "")
+        session_id = str(payload.get("session_id") or "")
+        session = next(
+            (s for s in self.store.sessions() if s.id == session_id), None
+        )
+        if session is None:
+            return {"ok": False, "kind": "session_gone",
+                    "error": "source session not found"}
+        title = str(payload.get("title") or "").strip()
+        opening_prompt = str(payload.get("opening_prompt") or "")
+        instructions = str(payload.get("instructions") or "")
+        # Mirrors the bridge closures' cap (CHAT_CREATE_PAYLOAD_MAX in
+        # agent_models -- the single shared constant, PR review #5);
+        # duplicated here so the executor stays safe even if wired to a
+        # caller other than the closures.
+        if len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX or len(
+            instructions
+        ) > CHAT_CREATE_PAYLOAD_MAX:
+            return {
+                "ok": False,
+                "kind": "payload_too_large",
+                "error": f"payload exceeds {CHAT_CREATE_PAYLOAD_MAX} chars",
+            }
+        persistence = self.store.persistence
+        db = getattr(persistence, "db", None)
+        if persistence is None or db is None:
+            return {"ok": False, "kind": "execution_failed",
+                    "error": "persistence unavailable"}
+
+        source_conv: str | None = None
+        source_row: dict[str, Any] | None = None
+        new_conv: str | None = None
+        copied = 0
+        if tool == "fork_chat":
+            source_conv = session.persisted_conversation_id
+            if session.ephemeral or not source_conv:
+                return {"ok": False, "kind": "source_not_persisted",
+                        "error": "the current chat is temporary; nothing to fork"}
+        elif not title:
+            title = "New Chat"
+
+        def _handoff_metadata(source_metadata: str | None) -> dict[str, Any]:
+            """PR review #9: MERGE the handoff key into the source's own
+            metadata (speech/roleplay/canvas prefs ride along) instead of
+            replacing it with a handoff-only mapping."""
+            merged: dict[str, Any] = {}
+            if source_metadata:
+                try:
+                    parsed = json.loads(source_metadata)
+                    if isinstance(parsed, dict):
+                        merged.update(parsed)
+                except ValueError:
+                    logger.debug("chat_create: source metadata unparseable; replaced")
+            merged["console_agent_handoff"] = {
+                "draft": opening_prompt,
+                "created_via": tool,
+                "source_run_id": str(payload.get("run_id") or ""),
+            }
+            return merged
+
+        try:
+            if tool == "fork_chat":
+                tree = ChatConversationService(db).get_conversation_tree(
+                    str(source_conv), root_limit=10_000, depth_cap=10_000
+                )
+                source_row = dict(tree.get("conversation") or {})
+                if not title:
+                    title = f"Fork of {source_row.get('title') or 'chat'}"[
+                        :CHAT_CREATE_TITLE_MAX
+                    ]
+                if instructions and source_row.get("character_id"):
+                    return {"ok": False, "kind": "character_conflict",
+                            "error": "character chats keep their persona; "
+                                     "fork without instructions"}
+                conversation_service = ChatConversationService(db)
+                # PR review #3: resolve the EFFECTIVE leaf (pointer, else
+                # latest -- always a live row) through the same resolver the
+                # copy uses, so the FK-enforced lineage column can never
+                # receive a stale/dangling pointer.
+                source_leaf = conversation_service.effective_active_leaf(
+                    str(source_conv)
+                )
+                if source_leaf is None:
+                    return {"ok": False, "kind": "empty_history",
+                            "error": "nothing to fork yet; use new_chat"}
+                new_conv = persistence.create_conversation(
+                    conversation_title=title,
+                    scope_type=source_row.get("scope_type") or "global",
+                    workspace_id=source_row.get("workspace_id"),
+                    system_prompt=instructions or source_row.get("system_prompt"),
+                    character_id=source_row.get("character_id"),
+                    assistant_kind=source_row.get("assistant_kind"),
+                    assistant_id=source_row.get("assistant_id"),
+                    assistant_authority_id=source_row.get("assistant_authority_id"),
+                    metadata=_handoff_metadata(source_row.get("metadata")),
+                    parent_conversation_id=source_conv,
+                    forked_from_message_id=source_leaf,
+                )
+                copy_outcome = conversation_service.copy_conversation_active_path(
+                    str(source_conv), new_conv
+                )
+                copied = int(copy_outcome["copied"])
+            else:
+                workspace_id = session.workspace_id
+                scope = (
+                    "global"
+                    if workspace_id in (None, CONSOLE_GLOBAL_WORKSPACE_ID)
+                    else "workspace"
+                )
+                new_conv = persistence.create_conversation(
+                    conversation_title=title,
+                    scope_type=scope,
+                    workspace_id=None if scope == "global" else workspace_id,
+                    system_prompt=instructions or None,
+                    metadata=_handoff_metadata(None),
+                )
+        except ValueError as exc:
+            if new_conv is not None:
+                self._discard_chat_create_orphan(db, new_conv)
+            if "empty_history" in str(exc):
+                return {"ok": False, "kind": "empty_history",
+                        "error": "nothing to fork yet; use new_chat"}
+            return {"ok": False, "kind": "execution_failed", "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            if new_conv is not None:
+                self._discard_chat_create_orphan(db, new_conv)
+            return {"ok": False, "kind": "execution_failed", "error": str(exc)}
+
+        # PR reviews #6/#10: hydrate the new session's transcript nodes on
+        # THIS worker thread -- the UI-thread completion must not run the
+        # fork's DB reads (a large fork would freeze the chat UI). A
+        # hydration failure degrades to an empty transcript (the durable
+        # messages are safe); it never strands the created chat.
+        nodes: list[Any] = []
+        new_leaf: str | None = None
+        try:
+            from tldw_chatbook.Chat.console_conversation_hydration import (
+                console_messages_from_conversation_tree,
+            )
+
+            new_tree = ChatConversationService(db).get_conversation_tree(
+                new_conv, root_limit=10_000, depth_cap=10_000
+            )
+            nodes = list(console_messages_from_conversation_tree(new_tree, db=db))
+            new_leaf = db.get_conversation_active_leaf(new_conv)
+        except Exception:  # noqa: BLE001 -- hydration is best-effort here
+            logger.opt(exception=True).warning(
+                "chat_create: new-chat hydration failed; restoring empty transcript"
+            )
+
+        # PR review #8: a globally scoped fork carries workspace_id None;
+        # the session restore path expects the Console's GLOBAL workspace
+        # id, not None (None is replaced by create_session's default).
+        completion_workspace_id = (
+            (source_row or {}).get("workspace_id")
+            if tool == "fork_chat"
+            else session.workspace_id
+        ) or CONSOLE_GLOBAL_WORKSPACE_ID
+        # PR review #1: pass the conversation's identity through so the
+        # restored session keeps the fork's assistant/character identity
+        # instead of generic Console defaults (settings themselves stay
+        # None: the restore path rebuilds provider defaults from the
+        # durable generation snapshot like any reopened conversation).
+        identity = {
+            "assistant_kind": (source_row or {}).get("assistant_kind"),
+            "assistant_id": (source_row or {}).get("assistant_id"),
+            "assistant_authority_id": (source_row or {}).get("assistant_authority_id"),
+            "persona_memory_mode": (source_row or {}).get("persona_memory_mode"),
+            "character_id": (source_row or {}).get("character_id"),
+            "character_name": (source_row or {}).get("character_name"),
+        }
+        if tool != "fork_chat":
+            identity = {
+                "assistant_kind": session.assistant_kind,
+                "assistant_id": session.assistant_id,
+                "assistant_authority_id": session.assistant_authority_id,
+                "persona_memory_mode": None,
+                "character_id": session.local_character_id(),
+                "character_name": session.character_name
+                if session.local_character_id() is not None
+                else None,
+            }
+        if self.app is not None and self.complete_agent_chat_create is not None:
+            self.app.call_from_thread(
+                self.complete_agent_chat_create,
+                session_id=session_id,
+                conversation_id=new_conv,
+                title=title,
+                tool=tool,
+                opening_prompt=opening_prompt,
+                workspace_id=completion_workspace_id,
+                nodes=nodes,
+                active_leaf_persisted_id=new_leaf,
+                **identity,
+            )
+        return {
+            "ok": True,
+            "title": title,
+            "conversation_id": new_conv,
+            "workspace_id": completion_workspace_id,
+            "copied_messages": copied,
+            "draft_set": bool(opening_prompt),
+        }
 
     def _resolve_ask_user_timeout_seconds(self) -> float:
         """PRD A7: the question deadline -- seam, else env, else config, else 0.
@@ -17096,6 +18335,9 @@ class ConsoleChatController:
             content="",
             persist=self.store.persistence is not None,
         )
+        existing_message_ids = {
+            row.id for row in self.store.all_messages_for_session(session_id)
+        }
         result = await self._stream_assistant_response(
             route=ConsoleRequestRoute.REGENERATE,
             resolution=resolution,
@@ -17117,7 +18359,7 @@ class ConsoleChatController:
             if (
                 failure_row is not None
                 and failure_row.role is ConsoleMessageRole.SYSTEM
-                and failure_row.content == result.visible_copy
+                and failure_row.id not in existing_message_ids
             ):
                 # Provider failure rows are transcript-only. Re-home the row
                 # from beneath the failed sibling onto the restored original
@@ -17128,9 +18370,9 @@ class ConsoleChatController:
             if (
                 failure_row is not None
                 and failure_row.role is ConsoleMessageRole.SYSTEM
-                and failure_row.content == result.visible_copy
+                and failure_row.id not in existing_message_ids
             ):
-                self._append_failure_system_row(session_id, result.visible_copy)
+                self._append_failure_system_row(session_id, failure_row.content)
         replacement_event_id = (
             f"message:{persisted_sibling.persisted_message_id}"
             if persisted_sibling is not None
@@ -18506,17 +19748,126 @@ class ConsoleChatController:
             )
 
     async def _personal_context_service(self) -> PersonalContextService | None:
-        """Resolve the app-owned Personal Context service off the UI loop."""
+        """Resolve the app-owned Personal Context service off the UI loop.
+
+        Bounded by ``CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS`` (task-
+        32275). ``get_personal_context_service`` bootstraps the service on
+        first use, and that bootstrap talks to the OS credential store,
+        which can block indefinitely; without a bound the "personalization
+        never blocks chat" rule below held only against exceptions, and the
+        first send after a restart stalled with a blank assistant row.
+
+        Giving up yields ``None``, the same value every other failure here
+        yields: the turn runs without profile tools rather than not at all.
+        The worker thread is NOT killed (nothing can interrupt a blocking
+        syscall); it is abandoned, and will finish and cache its result for
+        a later send if the OS ever answers. Because it is abandoned rather
+        than finished, `_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT` keeps the
+        next send from parking a SECOND worker behind the first on the
+        app's bootstrap lock -- see that flag's comment for why a shared
+        executor makes that fatal rather than merely wasteful.
+
+        Returns:
+            The service, or ``None`` when the app owns none, an earlier
+            attempt is still running, the bootstrap raised, or it outran
+            its budget.
+        """
 
         getter = getattr(
             getattr(self, "app", None), "get_personal_context_service", None
         )
         if not callable(getter):
             return None
-        try:
-            return await asyncio.to_thread(getter)
-        except Exception:  # noqa: BLE001 - personalization never blocks chat
+        if _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set():
             return None
+        _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
+        # SUBMITTED is not STARTED: `to_thread` only queues the callable, and
+        # a Stop that cancels this await while it is still queued cancels the
+        # executor future outright -- the callable never runs, so its
+        # `finally` never clears the guard and every later resolution in the
+        # process returns None (Qodo #5). The worker owns the clear once it
+        # has started; before that, we do.
+        started = threading.Event()
+
+        def _bootstrap():
+            started.set()
+            # We may have already given up and cleared the guard on the way
+            # to the executor; the worker is running now, so re-assert it.
+            _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
+            try:
+                return getter()
+            finally:
+                _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
+
+        def _release_unless_worker_owns_it() -> None:
+            """Clear the guard only while nothing is holding the lock yet.
+
+            A budget expiry with the callable genuinely running keeps it set:
+            that worker is still parked on the app's bootstrap lock, which is
+            exactly what the guard exists to stop later sends from joining.
+            """
+            if not started.is_set():
+                _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
+
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(_bootstrap),
+                CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            _release_unless_worker_owns_it()
+            logger.warning(
+                "Console personal context bootstrap exceeded its "
+                "{budget_seconds}s budget; sending without profile tools",
+                budget_seconds=CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
+            )
+            return None
+        except asyncio.CancelledError:
+            _release_unless_worker_owns_it()
+            raise
+        except Exception:  # noqa: BLE001 - personalization never blocks chat
+            _release_unless_worker_owns_it()
+            return None
+
+    @contextlib.asynccontextmanager
+    async def _pre_provider_setup_phase(
+        self, conversation_id: str
+    ) -> AsyncIterator[None]:
+        """Name the pre-provider setup window on the assistant row.
+
+        task-32344: between "send accepted" and "provider called" the run
+        does not exist yet, so nothing publishes a step and the row renders
+        blank -- for however long the setup takes. The mark is cleared on
+        every exit, including a raise: a stale mark would keep the row
+        claiming setup into the next turn.
+
+        The live send opens this at tool-catalog composition and holds it to
+        the provider dispatch, so the whole window is named. Most of the time
+        is still the personal-context resolution (3.7s cold, unbounded when
+        the credential store wedged) against composition's 20ms measured
+        live -- but composition does async MCP discovery I/O, which a slow or
+        unreachable server turns into an unbounded blank row of its own
+        (Qodo #6 on PR #2586).
+
+        The 10s budget is unaffected: it belongs to the Personal Context
+        bootstrap (`CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS`), not to this
+        phase, which bounds nothing and only labels the row.
+
+        Args:
+            conversation_id: The conversation whose assistant row should say
+                it is setting up for the duration of the block.
+        """
+
+        bridge = getattr(self, "_agent_bridge", None)
+        begin = getattr(bridge, "begin_setup_phase", None)
+        end = getattr(bridge, "end_setup_phase", None)
+        if callable(begin):
+            begin(conversation_id)
+        try:
+            yield
+        finally:
+            if callable(end):
+                end(conversation_id)
 
     async def _personal_context_builder(
         self,
@@ -20398,7 +21749,7 @@ class ConsoleChatController:
                 # Logs is finally true.
                 "Not sent: your conversation database could not be opened, so "
                 "this message could not be saved. Your draft was kept; a "
-                "temporary chat still sends. Open Logs (F8) for the recorded "
+                "temporary chat still sends. Open Logs (F3) for the recorded "
                 "database error."
             )
         else:
@@ -20717,6 +22068,7 @@ class ConsoleChatController:
             preparation_id=preparation_id,
             defer_queued_settlement=defer_queued_settlement,
         )
+        self._arm_run_hooks_stop(session_id)
         if preparation_id:
             self._ordinary_outcome_ids[session_id] = f"turn:{preparation_id}"
             self._ordinary_outcome_assistant_ids[session_id] = assistant_message_id
@@ -20772,6 +22124,68 @@ class ConsoleChatController:
             accepted_attachments=(),
             staged_evidence_launch=request.staged_evidence_launch,
         )
+
+    def _notify_run_hook_approval(
+        self, kind: str, payload: dict[str, Any], state: dict[str, Any]
+    ) -> None:
+        """Publish one successfully admitted permission round, including headless runs."""
+        engine = self._run_hooks_engine()
+        if engine is None:
+            return
+        from tldw_chatbook.Agents.run_hooks import summarize_hook_arguments
+
+        session_id = payload.get("session_id") or state.get("session_id")
+        if kind == "approval":
+            calls = [
+                {
+                    "name": row.get("llm_name") or row.get("tool_name") or "",
+                    "args_summary": summarize_hook_arguments(row.get("arguments") or {}),
+                }
+                for row in payload.get("calls", ())
+            ]
+        else:
+            arguments = (
+                {"url": payload.get("url", "")}
+                if kind == "skill_install"
+                else {
+                    key: payload[key]
+                    for key in ("skill_name", "script_path", "mechanism", "args")
+                    if key in payload
+                }
+            )
+            calls = [{
+                "name": "install_skill" if kind == "skill_install" else "run_skill_script",
+                "args_summary": summarize_hook_arguments(arguments),
+            }]
+        engine.notify(
+            "ApprovalRequested", session_id=session_id,
+            run_id=payload.get("run_id") or state.get("run_id"),
+            data={
+                "calls": calls,
+                "session_active": bool(
+                    session_id == self.store.active_session_id
+                    and self._interrupt_host.view_visible is not False
+                    and (
+                        self.set_pending_decision is not None
+                        or self._interrupt_host._setter(kind) is not None
+                    )
+                ),
+            },
+        )
+
+    def _run_hooks_engine(self):
+        """Resolve the app-owned run-hooks engine for this send, or ``None``.
+
+        Spec 2026-09-11 (Task 7): the submit path reaches the engine through
+        the optional ``ensure_run_hooks`` accessor (the Task 5 bridge seam --
+        a bound ``ConsoleRuntime.ensure_run_hooks``, or a test double).
+        ``None`` -- no accessor wired, or no ``[hooks]`` configured -- means
+        the fire site skips entirely; the accessor is consulted per send, so
+        an engine built after the first-ever ``[hooks]`` entry appears is
+        picked up without rebuilding this controller.
+        """
+        accessor = self._ensure_run_hooks
+        return accessor() if accessor is not None else None
 
     async def _record_prompt_history(self, text: str) -> None:
         """Append an accepted send's draft to the shared prompt history.
@@ -22533,33 +23947,45 @@ class ConsoleChatController:
         trace_request: PreparedConsoleRequest | None = None,
         propagate_trace_call_persistence_errors: bool = False,
         trusted_profile_user_message_id: str | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
     ) -> ConsoleSubmitResult:
+        from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
+
+        scope = (
+            nullcontext()
+            if work_origin is WorkOrigin.AUTOMATIC
+            else manual_work_scope()
+        )
         try:
-            return await self._stream_assistant_response_inner(
-                resolution=resolution,
-                provider_messages=provider_messages,
-                assistant_message_id=assistant_message_id,
-                route=route,
-                prepare_retry=prepare_retry,
-                variant_mode=variant_mode,
-                prefill=prefill,
-                prefill_from_one_shot=prefill_from_one_shot,
-                one_shot_prefill_revision=one_shot_prefill_revision,
-                skill_bindings=skill_bindings,
-                skill_bundle_block=skill_bundle_block,
-                citation_repair_session=citation_repair_session,
-                turn_context=turn_context,
-                preparation_id=preparation_id,
-                stream_signals=stream_signals,
-                generation_token=generation_token,
-                before_provider_dispatch=before_provider_dispatch,
-                capture_mode_override=capture_mode_override,
-                trace_request=trace_request,
-                propagate_trace_call_persistence_errors=(
-                    propagate_trace_call_persistence_errors
-                ),
-                trusted_profile_user_message_id=trusted_profile_user_message_id,
-            )
+            with scope:
+                return await self._stream_assistant_response_inner(
+                    resolution=resolution,
+                    work_origin=work_origin,
+                    work_chain_id=work_chain_id,
+                    provider_messages=provider_messages,
+                    assistant_message_id=assistant_message_id,
+                    route=route,
+                    prepare_retry=prepare_retry,
+                    variant_mode=variant_mode,
+                    prefill=prefill,
+                    prefill_from_one_shot=prefill_from_one_shot,
+                    one_shot_prefill_revision=one_shot_prefill_revision,
+                    skill_bindings=skill_bindings,
+                    skill_bundle_block=skill_bundle_block,
+                    citation_repair_session=citation_repair_session,
+                    turn_context=turn_context,
+                    preparation_id=preparation_id,
+                    stream_signals=stream_signals,
+                    generation_token=generation_token,
+                    before_provider_dispatch=before_provider_dispatch,
+                    capture_mode_override=capture_mode_override,
+                    trace_request=trace_request,
+                    propagate_trace_call_persistence_errors=(
+                        propagate_trace_call_persistence_errors
+                    ),
+                    trusted_profile_user_message_id=trusted_profile_user_message_id,
+                )
         finally:
             if isinstance(turn_context, ConsoleTurnExecutionContext):
                 try:
@@ -22597,6 +24023,8 @@ class ConsoleChatController:
         trace_request: PreparedConsoleRequest | None = None,
         propagate_trace_call_persistence_errors: bool = False,
         trusted_profile_user_message_id: str | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -22859,6 +24287,36 @@ class ConsoleChatController:
                 "trajectory_step_start_failed"
             )
         try:
+            runs_db = getattr(self._agent_bridge, "runs_db", None)
+            ledger = getattr(runs_db, "automatic_work", None)
+            try:
+                if ledger is not None:
+                    if work_origin is WorkOrigin.MANUAL:
+                        work_chain_id = await asyncio.to_thread(
+                            ledger.create_chain,
+                            self._agent_conversation_id(owner_id),
+                            root_submission_id=uuid4().hex,
+                        )
+                    elif work_chain_id is not None:
+                        snapshot = await asyncio.to_thread(
+                            ledger.snapshot, work_chain_id
+                        )
+                        if snapshot.conversation_id != self._agent_conversation_id(
+                            owner_id
+                        ):
+                            raise ValueError(
+                                "Automatic work chain does not own this conversation."
+                            )
+            except (SQLiteError, OSError):
+                self.store.mark_message_failed(assistant_message_id)
+                return self._block(
+                    owner_id, "Run history could not be saved. Try again."
+                )
+            if self._disposed or owner_id not in {
+                session.id for session in self.store.sessions()
+            }:
+                return self._session_closed_result()
+            stream_signals.automatic_work_chain_id = work_chain_id
             if (
                 bool(
                     turn_context.tool_configuration.get(
@@ -22871,6 +24329,8 @@ class ConsoleChatController:
             ):
                 return await self._run_agent_reply(
                     resolution=resolution,
+                    work_origin=work_origin,
+                    work_chain_id=work_chain_id,
                     provider_messages=provider_messages,
                     assistant_message_id=assistant_message_id,
                     prepare_retry=prepare_retry,
@@ -23145,12 +24605,13 @@ class ConsoleChatController:
         self._fleet_wake.capture_loop_if_running()
         if bridge is None:
             return
-        register = getattr(bridge, "on_fleet_drained", None)
+        register = getattr(bridge, "on_fleet_child_settled", None)
         if callable(register):
-            register(
-                ConsoleFleetWakeCoordinator.NAME,
-                self._fleet_wake.on_fleet_drained,
-            )
+            register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled)
+        else:
+            register = getattr(bridge, "on_fleet_drained", None)
+            if callable(register):
+                register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained)
 
     def _on_fleet_drained_reattach_usage(self, event: Any) -> None:
         """``FleetDrained`` consumer: hop off the child's thread and fold.
@@ -24350,6 +25811,8 @@ class ConsoleChatController:
         propagate_trace_call_persistence_errors: bool = False,
         _generation_handoff: _GenerationTokenHandoff | None = None,
         trusted_profile_user_message_id: str | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -24370,6 +25833,11 @@ class ConsoleChatController:
             session_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
+        # Capture before preparatory awaits or executor scheduling. A restored
+        # native session can reuse its ID without setting this run's cancel event.
+        progress_owner_id = self.store.progress_owner_id(session_id)
+        if progress_owner_id is None:
+            return self._session_closed_result(session_id=session_id)
         turn_context = self._require_complete_turn_execution_context(turn_context)
         if turn_context.session_id != session_id:
             raise ValueError("Console turn context does not own the assistant row.")
@@ -24658,296 +26126,303 @@ class ConsoleChatController:
             if preparation is not None:
                 capture_mode = preparation.capture_mode
 
-        # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
-        # on the running main loop, BEFORE the bridge is dispatched onto
-        # asyncio.to_thread below -- see `_compose_mcp_provider`'s own
-        # docstring for why `compose_catalog()`'s async I/O can never run
-        # from the worker thread. `(None, None)` (no service, kill switch
-        # on, or nothing composed) leaves the bridge's MCP-free path
-        # byte-identical to before this task.
-        #
-        # task-545/T6: `_compose_mcp_provider`'s own `mcp_review_hook`
-        # (built from `build_mcp_review_hook`) is deliberately discarded
-        # here rather than wired -- it is `None` whenever MCP is not
-        # eligible for this run, and built-in tools (calculator/datetime
-        # today) must be gated regardless of MCP eligibility. Changing
-        # `_compose_mcp_provider`'s own return contract to drop that
-        # second element was considered and rejected: several existing
-        # test suites (`Tests/Chat/test_console_agent_swap.py`,
-        # `Tests/UI/test_console_internals_decomposition.py`) assert its
-        # exact `(provider, hook)` / `(None, None)` shape directly and sit
-        # outside this task's file scope, so keeping that function
-        # byte-identical and building the run-level hook separately here
-        # is the lower-blast-radius choice.
-        run_admitted_roots = capture_run_admitted_workspace_roots(
-            session=next(
-                (item for item in self.store.sessions() if item.id == session_id),
-                None,
-            ),
-            registry=getattr(self.app, "workspace_registry_service", None),
-            project_selection=project_selection,
-            project_authority_guard=project_authority_guard,
-        )
-        (
-            mcp_provider,
-            builtin_gate,
-            local_provider,
-            local_review_hook,
-        ) = await self._compose_agent_request_providers(
-            session_id=session_id,
-            project_selection=project_selection,
-            project_authority_guard=project_authority_guard,
-            turn_context=turn_context,
-            admitted_roots=run_admitted_roots,
-        )
-        virtual_cli_provider, virtual_cli_review_hook = (
-            self._compose_virtual_cli_provider(
+        # task-32344: from here to the provider dispatch is the window the
+        # first send of a process pays in full -- the MCP catalog composition
+        # below (async discovery I/O) and the lazy Personal Context bootstrap
+        # above all, plus the profile and canvas providers built from it. The
+        # row says so for the WHOLE window: entering only after composition
+        # left a slow discovery rendering a blank row (Qodo #6 on PR #2586).
+        async with self._pre_provider_setup_phase(conversation_id):
+            # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
+            # on the running main loop, BEFORE the bridge is dispatched onto
+            # asyncio.to_thread below -- see `_compose_mcp_provider`'s own
+            # docstring for why `compose_catalog()`'s async I/O can never run
+            # from the worker thread. `(None, None)` (no service, kill switch
+            # on, or nothing composed) leaves the bridge's MCP-free path
+            # byte-identical to before this task.
+            #
+            # task-545/T6: `_compose_mcp_provider`'s own `mcp_review_hook`
+            # (built from `build_mcp_review_hook`) is deliberately discarded
+            # here rather than wired -- it is `None` whenever MCP is not
+            # eligible for this run, and built-in tools (calculator/datetime
+            # today) must be gated regardless of MCP eligibility. Changing
+            # `_compose_mcp_provider`'s own return contract to drop that
+            # second element was considered and rejected: several existing
+            # test suites (`Tests/Chat/test_console_agent_swap.py`,
+            # `Tests/UI/test_console_internals_decomposition.py`) assert its
+            # exact `(provider, hook)` / `(None, None)` shape directly and sit
+            # outside this task's file scope, so keeping that function
+            # byte-identical and building the run-level hook separately here
+            # is the lower-blast-radius choice.
+            run_admitted_roots = capture_run_admitted_workspace_roots(
+                session=next(
+                    (item for item in self.store.sessions() if item.id == session_id),
+                    None,
+                ),
+                registry=getattr(self.app, "workspace_registry_service", None),
+                project_selection=project_selection,
+                project_authority_guard=project_authority_guard,
+            )
+            (
+                mcp_provider,
+                builtin_gate,
+                local_provider,
+                local_review_hook,
+            ) = await self._compose_agent_request_providers(
+                session_id=session_id,
+                project_selection=project_selection,
+                project_authority_guard=project_authority_guard,
+                turn_context=turn_context,
+                admitted_roots=run_admitted_roots,
+            )
+            virtual_cli_provider, virtual_cli_review_hook = (
+                self._compose_virtual_cli_provider(
+                    session_id=session_id,
+                    turn_context=turn_context,
+                    project_root=(
+                        project_selection.root if project_selection is not None else None
+                    ),
+                    project_root_identity=(
+                        project_selection.root_identity
+                        if project_selection is not None
+                        else None
+                    ),
+                    project_root_guard=project_authority_guard,
+                    admitted_roots=run_admitted_roots,
+                )
+            )
+            raw_shell_provider, raw_shell_review_hook = self._compose_raw_shell_provider(
                 session_id=session_id,
                 turn_context=turn_context,
                 project_root=(
                     project_selection.root if project_selection is not None else None
                 ),
-                project_root_identity=(
-                    project_selection.root_identity
-                    if project_selection is not None
-                    else None
-                ),
-                project_root_guard=project_authority_guard,
-                admitted_roots=run_admitted_roots,
             )
-        )
-        raw_shell_provider, raw_shell_review_hook = self._compose_raw_shell_provider(
-            session_id=session_id,
-            turn_context=turn_context,
-            project_root=(
-                project_selection.root if project_selection is not None else None
-            ),
-        )
-        self._mcp_provider = mcp_provider
+            self._mcp_provider = mcp_provider
 
-        # Resolve the direct Library provider before building the shared
-        # review hook: Agent Lesson saves are classified by that exact
-        # provider instance and its approve-once authority must be visible
-        # to the same instance later registered for dispatch.
-        library_provider: Any | None = None
-        library_provider_authority: Any | None = None
-        if self._library_provider_factory is not None:
-            try:
-                library_selection = self._library_provider_for_context(turn_context)
-                if library_selection is not None:
-                    library_provider, library_provider_authority = library_selection
-            except Exception:  # noqa: BLE001 -- never block a send
-                logger.opt(exception=True).warning(
-                    "library_provider_factory failed; running without Library tools"
-                )
+            # Resolve the direct Library provider before building the shared
+            # review hook: Agent Lesson saves are classified by that exact
+            # provider instance and its approve-once authority must be visible
+            # to the same instance later registered for dispatch.
+            library_provider: Any | None = None
+            library_provider_authority: Any | None = None
+            if self._library_provider_factory is not None:
+                try:
+                    library_selection = self._library_provider_for_context(turn_context)
+                    if library_selection is not None:
+                        library_provider, library_provider_authority = library_selection
+                except Exception:  # noqa: BLE001 -- never block a send
+                    logger.opt(exception=True).warning(
+                        "library_provider_factory failed; running without Library tools"
+                    )
 
-        # task-545/T6: build THIS run's built-in permission gate and hand
-        # the SAME instance to both the review hook (below) and
-        # `ConsoleAgentBridge.run_reply` (which threads it into the
-        # `BuiltinToolProvider` that actually invokes tools) -- a second,
-        # independently-built gate would silently desynchronize stamps:
-        # a decision made here would never be visible to `invoke()`'s own
-        # gate, and vice versa. `build_builtin_gate(None)` (no
-        # `unified_mcp_service` on the app) is fail-closed-correct, not
-        # "ungated" -- see that function's own docstring.
-        # Only `.tool_for(name)` is used by the review hook below, to
-        # resolve a `ToolCall.name` to the `Tool` object `builtin_gate.
-        # resolve` needs -- this instance is never used to invoke a tool,
-        # so it does not need to be the SAME `BuiltinToolProvider` object
-        # the bridge's registry actually dispatches through (its `_tools`
-        # dict is stateless data rebuilt identically by any instance).
-        # Round 1 review CRITICAL 1: resolve THIS run's OWN workspace id --
-        # the SAME lookup `ConsoleAgentBridge.run_reply` makes
-        # (`self._store.session_workspace_id(session_id)`) for the real
-        # `BuiltinToolProvider(workspace_id=...)` dispatch below -- and
-        # thread it into the review hook so its `path_precheck_failed`
-        # pre-flight resolves the IDENTICAL workspace dispatch will, never
-        # whatever happens to be active in the UI for a parked/background
-        # session. `KeyError` (an already-closed session) degrades to
-        # `None`, matching `allowed_file_roots`'s own fail-safe posture.
-        review_workspace_id = frozen_workspace_id
-        builtin_review_provider = BuiltinToolProvider(
-            gate=builtin_gate,
-            workspace_id=review_workspace_id,
-            workspace_read_binding_ids=frozen_workspace_read_binding_ids,
-            workspace_write_binding_ids=frozen_workspace_write_binding_ids,
-            workspace_binding_authority=frozen_workspace_binding_authority,
-            sandbox_root=scratch_snapshot.root,
-            sandbox_lease=scratch_lease,
-        )
-        # Task 9: bind THIS run's owning session id into the approval
-        # bridge so `request_mcp_approvals` can (a) scope its cancellation
-        # check to this run's own cancel event rather than falling back to
-        # whichever session is currently VIEWED (finding #1), and (b) park
-        # rather than mount when `session_id` is not the active session.
-        review_hook = build_tool_review_hook(
-            builtin_gate,
-            builtin_review_provider,
-            mcp_provider,
-            functools.partial(self.request_mcp_approvals, session_id=session_id),
-            workspace_id=review_workspace_id,
-            # TASK-631: the switch must cover the tool families NEITHER
-            # provider claims (skills/spawn/find/load), and this hook is the
-            # only choke point they all pass. Read fresh per turn so a
-            # mid-run flip takes effect on the next batch. Absent service ->
-            # no switch to honor (None), matching `_compose_mcp_provider`.
-            kill_switch=self._console_tool_kill_switch_reader(),
-            library_provider=library_provider,
-        )
-
-        # Local tools (ADR-032): same per-run composition point. Both
-        # hooks see every batch; each gates only what its provider owns,
-        # so the combined hook is a collision-free merge.
-        if local_review_hook is not None:
-            review_hook = build_combined_review_hook([review_hook, local_review_hook])
-        if virtual_cli_review_hook is not None:
-            review_hook = build_combined_review_hook(
-                [review_hook, virtual_cli_review_hook]
+            # task-545/T6: build THIS run's built-in permission gate and hand
+            # the SAME instance to both the review hook (below) and
+            # `ConsoleAgentBridge.run_reply` (which threads it into the
+            # `BuiltinToolProvider` that actually invokes tools) -- a second,
+            # independently-built gate would silently desynchronize stamps:
+            # a decision made here would never be visible to `invoke()`'s own
+            # gate, and vice versa. `build_builtin_gate(None)` (no
+            # `unified_mcp_service` on the app) is fail-closed-correct, not
+            # "ungated" -- see that function's own docstring.
+            # Only `.tool_for(name)` is used by the review hook below, to
+            # resolve a `ToolCall.name` to the `Tool` object `builtin_gate.
+            # resolve` needs -- this instance is never used to invoke a tool,
+            # so it does not need to be the SAME `BuiltinToolProvider` object
+            # the bridge's registry actually dispatches through (its `_tools`
+            # dict is stateless data rebuilt identically by any instance).
+            # Round 1 review CRITICAL 1: resolve THIS run's OWN workspace id --
+            # the SAME lookup `ConsoleAgentBridge.run_reply` makes
+            # (`self._store.session_workspace_id(session_id)`) for the real
+            # `BuiltinToolProvider(workspace_id=...)` dispatch below -- and
+            # thread it into the review hook so its `path_precheck_failed`
+            # pre-flight resolves the IDENTICAL workspace dispatch will, never
+            # whatever happens to be active in the UI for a parked/background
+            # session. `KeyError` (an already-closed session) degrades to
+            # `None`, matching `allowed_file_roots`'s own fail-safe posture.
+            review_workspace_id = frozen_workspace_id
+            builtin_review_provider = BuiltinToolProvider(
+                gate=builtin_gate,
+                workspace_id=review_workspace_id,
+                workspace_read_binding_ids=frozen_workspace_read_binding_ids,
+                workspace_write_binding_ids=frozen_workspace_write_binding_ids,
+                workspace_binding_authority=frozen_workspace_binding_authority,
+                sandbox_root=scratch_snapshot.root,
+                sandbox_lease=scratch_lease,
             )
-        if raw_shell_review_hook is not None:
-            review_hook = build_combined_review_hook(
-                [review_hook, raw_shell_review_hook]
-            )
-        managed_skill_promotion_gate = None
-        if library_provider is not None:
-            from tldw_chatbook.Agents.agent_lesson_promotion import (
-                ManagedSkillProposalGate,
-            )
-
-            managed_skill_promotion_gate = ManagedSkillProposalGate()
-            managed_skill_review_hook = build_managed_skill_promotion_review_hook(
-                managed_skill_promotion_gate,
+            # Task 9: bind THIS run's owning session id into the approval
+            # bridge so `request_mcp_approvals` can (a) scope its cancellation
+            # check to this run's own cancel event rather than falling back to
+            # whichever session is currently VIEWED (finding #1), and (b) park
+            # rather than mount when `session_id` is not the active session.
+            review_hook = build_tool_review_hook(
+                builtin_gate,
+                builtin_review_provider,
+                mcp_provider,
                 functools.partial(self.request_mcp_approvals, session_id=session_id),
-            )
-            review_hook = build_combined_review_hook(
-                [review_hook, managed_skill_review_hook]
+                workspace_id=review_workspace_id,
+                # TASK-631: the switch must cover the tool families NEITHER
+                # provider claims (skills/spawn/find/load), and this hook is the
+                # only choke point they all pass. Read fresh per turn so a
+                # mid-run flip takes effect on the next batch. Absent service ->
+                # no switch to honor (None), matching `_compose_mcp_provider`.
+                kill_switch=self._console_tool_kill_switch_reader(),
+                library_provider=library_provider,
             )
 
-        # TASK-1971 (Agent Change Review): THIS run's tracked roots -- the
-        # same workspace folder bindings the file tools resolve against.
-        # Best-effort: an unavailable registry yields no roots and an
-        # untracked (but otherwise normal) run.
-        from tldw_chatbook.Tools.workspace_file_roots import frozen_workspace_roots
-
-        live_frozen_roots = set(
-            frozen_workspace_roots(
-                frozen_workspace_id,
-                frozen_workspace_binding_authority,
-                registry=getattr(self.app, "workspace_registry_service", None),
-            )
-        )
-        change_roots: list = [
-            Path(root)
-            for root in turn_context.workspace_roots
-            if Path(root) in live_frozen_roots
-        ]
-
-        # Swap site: the agent loop runs synchronously on a worker thread via
-        # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
-        # polled between chunks/steps inside the bridge, never preempts the
-        # thread itself. A provider that hangs mid-request without emitting a
-        # single chunk cannot be interrupted here; RunBudget.max_wall_seconds
-        # (agent_models.py) is what bounds a run overall, but only once
-        # control returns to a checkpoint the loop actually polls -- it is
-        # not a hard timeout on an in-flight, zero-chunk provider call.
-        if self._teardown_refuses_turn(session_id):
-            return self._accepted_shutdown_before_dispatch(
-                assistant_message_id, session_id
-            )
-        await self._wait_for_trace_maintenance_dispatch()
-        self._trace_last_provider_activity = time.monotonic()
-        if before_provider_dispatch is not None:
-            try:
-                await before_provider_dispatch()
-            except asyncio.CancelledError:
-                if not cancel_event.is_set():
-                    raise
-                # No agent worker exists yet; the durable handoff has drained
-                # and its published checkpoint can now settle normally.
-                stopped = self._mark_stream_stopped(
-                    assistant_message_id, visible_copy="Response stopped."
+            # Local tools (ADR-032): same per-run composition point. Both
+            # hooks see every batch; each gates only what its provider owns,
+            # so the combined hook is a collision-free merge.
+            if local_review_hook is not None:
+                review_hook = build_combined_review_hook([review_hook, local_review_hook])
+            if virtual_cli_review_hook is not None:
+                review_hook = build_combined_review_hook(
+                    [review_hook, virtual_cli_review_hook]
                 )
-                return ConsoleSubmitResult(True, True, stopped.content)
-        elif preparation_id is not None and not self._transition_preparation(
-            preparation_id,
-            ConsoleTurnPreparationState.ACCEPTED,
-            ConsoleTurnPreparationState.DISPATCH_STARTED,
-        ):
-            raise RuntimeError("Prepared turn changed before provider dispatch.")
-        if generation_token is None:
-            generation_token = self.store.begin_generation_attempt(assistant_message_id)
-        _generation_handoff.issue(generation_token)
-        if variant_mode:
-            self.store.begin_variant_stream(
-                assistant_message_id,
-                generation_token=generation_token,
-            )
-        elif prepare_retry:
-            self.store.prepare_message_retry(
-                assistant_message_id,
-                generation_token=generation_token,
-            )
-        personal_context_service = await self._personal_context_service()
-        profile_context_service = await self._personal_context_builder(
-            personal_context_service
-        )
-        trusted_profile_user_message = None
-        if trusted_profile_user_message_id is not None:
-            try:
-                candidate = self.store.get_message(trusted_profile_user_message_id)
-                if (
-                    candidate.role is ConsoleMessageRole.USER
-                    and self.store.session_id_for_message(candidate.id) == session_id
-                ):
-                    trusted_profile_user_message = candidate
-            except KeyError:
-                pass
-        profile_provider = None
-        if personal_context_service is not None and session is not None:
-            profile_provider = await asyncio.to_thread(
-                _compose_profile_tool_provider,
-                personal_context_service,
-                workspace_id=session.workspace_id,
-                ephemeral=session.ephemeral,
-                run_id=assistant_message_id,
-                session_id=session_id,
-                current_user_message=trusted_profile_user_message,
-                kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
-            )
-        canvas_provider = None
-        canvas_authority = None
-        canvas_controller = getattr(self.store, "canvas_turn_controller", None)
-        try:
-            canvas_enabled = self._canvas_enabled_reader() is True
-        except Exception:  # noqa: BLE001 - Canvas tool advertising fails closed
-            canvas_enabled = False
-        if canvas_enabled and canvas_controller is not None and session is not None:
-            from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
-            from tldw_chatbook.Canvas.models import CanvasScope
+            if raw_shell_review_hook is not None:
+                review_hook = build_combined_review_hook(
+                    [review_hook, raw_shell_review_hook]
+                )
+            managed_skill_promotion_gate = None
+            if library_provider is not None:
+                from tldw_chatbook.Agents.agent_lesson_promotion import (
+                    ManagedSkillProposalGate,
+                )
 
-            canvas_run_id = str(uuid4())
-            canvas_scope = CanvasScope(
-                session_id=session_id,
-                conversation_id=conversation_id,
-                active_message_ids=self.store.canvas_active_path_message_ids(
-                    session_id
-                ),
-                selected_canvas_id=None,
-                selected_revision_id=None,
-                run_id=canvas_run_id,
+                managed_skill_promotion_gate = ManagedSkillProposalGate()
+                managed_skill_review_hook = build_managed_skill_promotion_review_hook(
+                    managed_skill_promotion_gate,
+                    functools.partial(self.request_mcp_approvals, session_id=session_id),
+                )
+                review_hook = build_combined_review_hook(
+                    [review_hook, managed_skill_review_hook]
+                )
+
+            # TASK-1971 (Agent Change Review): THIS run's tracked roots -- the
+            # same workspace folder bindings the file tools resolve against.
+            # Best-effort: an unavailable registry yields no roots and an
+            # untracked (but otherwise normal) run.
+            from tldw_chatbook.Tools.workspace_file_roots import frozen_workspace_roots
+
+            live_frozen_roots = set(
+                frozen_workspace_roots(
+                    frozen_workspace_id,
+                    frozen_workspace_binding_authority,
+                    registry=getattr(self.app, "workspace_registry_service", None),
+                )
             )
-            canvas_scope = canvas_controller.capture_selected_scope(canvas_scope)
-            canvas_run = canvas_controller.register_run(
-                canvas_scope,
-                assistant_message_id=assistant_message_id,
-                temporary=session.ephemeral,
+            change_roots: list = [
+                Path(root)
+                for root in turn_context.workspace_roots
+                if Path(root) in live_frozen_roots
+            ]
+
+            # Swap site: the agent loop runs synchronously on a worker thread via
+            # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
+            # polled between chunks/steps inside the bridge, never preempts the
+            # thread itself. A provider that hangs mid-request without emitting a
+            # single chunk cannot be interrupted here; RunBudget.max_wall_seconds
+            # (agent_models.py) is what bounds a run overall, but only once
+            # control returns to a checkpoint the loop actually polls -- it is
+            # not a hard timeout on an in-flight, zero-chunk provider call.
+            if self._teardown_refuses_turn(session_id):
+                return self._accepted_shutdown_before_dispatch(
+                    assistant_message_id, session_id
+                )
+            await self._wait_for_trace_maintenance_dispatch()
+            self._trace_last_provider_activity = time.monotonic()
+            if before_provider_dispatch is not None:
+                try:
+                    await before_provider_dispatch()
+                except asyncio.CancelledError:
+                    if not cancel_event.is_set():
+                        raise
+                    # No agent worker exists yet; the durable handoff has drained
+                    # and its published checkpoint can now settle normally.
+                    stopped = self._mark_stream_stopped(
+                        assistant_message_id, visible_copy="Response stopped."
+                    )
+                    return ConsoleSubmitResult(True, True, stopped.content)
+            elif preparation_id is not None and not self._transition_preparation(
+                preparation_id,
+                ConsoleTurnPreparationState.ACCEPTED,
+                ConsoleTurnPreparationState.DISPATCH_STARTED,
+            ):
+                raise RuntimeError("Prepared turn changed before provider dispatch.")
+            if generation_token is None:
+                generation_token = self.store.begin_generation_attempt(assistant_message_id)
+            _generation_handoff.issue(generation_token)
+            if variant_mode:
+                self.store.begin_variant_stream(
+                    assistant_message_id,
+                    generation_token=generation_token,
+                )
+            elif prepare_retry:
+                self.store.prepare_message_retry(
+                    assistant_message_id,
+                    generation_token=generation_token,
+                )
+            personal_context_service = await self._personal_context_service()
+            profile_context_service = await self._personal_context_builder(
+                personal_context_service
             )
-            canvas_provider = CanvasToolProvider(
-                canvas_run,
-                scope=canvas_scope,
-                enabled_reader=self._canvas_enabled_reader,
-            )
-            canvas_authority = canvas_provider.issue_registration_authority()
+            trusted_profile_user_message = None
+            if trusted_profile_user_message_id is not None:
+                try:
+                    candidate = self.store.get_message(trusted_profile_user_message_id)
+                    if (
+                        candidate.role is ConsoleMessageRole.USER
+                        and self.store.session_id_for_message(candidate.id) == session_id
+                    ):
+                        trusted_profile_user_message = candidate
+                except KeyError:
+                    pass
+            profile_provider = None
+            if personal_context_service is not None and session is not None:
+                profile_provider = await asyncio.to_thread(
+                    _compose_profile_tool_provider,
+                    personal_context_service,
+                    workspace_id=session.workspace_id,
+                    ephemeral=session.ephemeral,
+                    run_id=assistant_message_id,
+                    session_id=session_id,
+                    current_user_message=trusted_profile_user_message,
+                    kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+                )
+            canvas_provider = None
+            canvas_authority = None
+            canvas_controller = getattr(self.store, "canvas_turn_controller", None)
+            try:
+                canvas_enabled = self._canvas_enabled_reader() is True
+            except Exception:  # noqa: BLE001 - Canvas tool advertising fails closed
+                canvas_enabled = False
+            if canvas_enabled and canvas_controller is not None and session is not None:
+                from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
+                from tldw_chatbook.Canvas.models import CanvasScope
+
+                canvas_run_id = str(uuid4())
+                canvas_scope = CanvasScope(
+                    session_id=session_id,
+                    conversation_id=conversation_id,
+                    active_message_ids=self.store.canvas_active_path_message_ids(
+                        session_id
+                    ),
+                    selected_canvas_id=None,
+                    selected_revision_id=None,
+                    run_id=canvas_run_id,
+                )
+                canvas_scope = canvas_controller.capture_selected_scope(canvas_scope)
+                canvas_run = canvas_controller.register_run(
+                    canvas_scope,
+                    assistant_message_id=assistant_message_id,
+                    temporary=session.ephemeral,
+                )
+                canvas_provider = CanvasToolProvider(
+                    canvas_run,
+                    scope=canvas_scope,
+                    enabled_reader=self._canvas_enabled_reader,
+                )
+                canvas_authority = canvas_provider.issue_registration_authority()
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
@@ -24955,8 +26430,11 @@ class ConsoleChatController:
             run_id, outcome = await asyncio.to_thread(
                 self._run_owned_chat_db_operation,
                 self._agent_bridge.run_reply,
+                work_origin=work_origin,
+                work_chain_id=work_chain_id,
                 conversation_id=conversation_id,
                 session_id=session_id,
+                expected_progress_owner_id=progress_owner_id,
                 resolution=resolution,
                 assistant_message_id=assistant_message_id,
                 model=(
@@ -25053,6 +26531,18 @@ class ConsoleChatController:
                     or self._interrupt_host.has_retained_decision_target(session_id)
                     else None
                 ),
+                request_chat_create_confirm=(
+                    functools.partial(
+                        self.request_chat_create_confirm, session_id=session_id
+                    )
+                    if self.set_pending_chat_create is not None
+                    else None
+                ),
+                execute_agent_chat_create=(
+                    self.execute_agent_chat_create
+                    if self.complete_agent_chat_create is not None
+                    else None
+                ),
                 # TASK-28238 phase 2 Task 6/Task 7: same "advertised must
                 # equal usable" gate as `request_skill_script_confirm`
                 # above. Task 5 originally advertised
@@ -25112,6 +26602,8 @@ class ConsoleChatController:
                 profile_context_service=profile_context_service,
             )
         except asyncio.CancelledError:
+            if work_origin is WorkOrigin.AUTOMATIC:
+                cancel_event.set()
             if cancel_event.is_set():
                 # Whatever the provider already billed for this turn's
                 # completed steps is real money -- record it (partial)
@@ -26511,6 +28003,10 @@ class ConsoleChatController:
                 )
         return stopped
 
+    def _arm_run_hooks_stop(self, session_id: str) -> None:
+        """Register one accepted turn for a single terminal hook notification."""
+        self._run_hooks_stop_pending.add(session_id)
+
     def _set_run_state(
         self, run_state: ConsoleRunState, *, session_id: str | None = None
     ) -> None:
@@ -26625,6 +28121,7 @@ class ConsoleChatController:
             # stays correct if a future caller ever moves this off-thread).
             with self._approval_state_lock:
                 self._pending_approvals.pop(target, None)
+                self._pending_round_kinds.pop(target, None)
             if self._buddy_sink is not None:
                 self._buddy_sink.release_session(target, sources={"approval"})
             # PR3a-2 Task 5: a terminal transition frees send capacity
@@ -26636,6 +28133,29 @@ class ConsoleChatController:
             wake = getattr(self, "_fleet_wake", None)
             if wake is not None:
                 wake.retry_soon()
+        # Hook lifecycle belongs to an accepted turn, independently of the
+        # queue's coalesced notification policy. Pop before invoking callbacks.
+        if (
+            target in self._run_hooks_stop_pending
+            and run_state.status in {
+                ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED,
+                ConsoleRunStatus.STOPPED,
+            }
+        ):
+            self._run_hooks_stop_pending.discard(target)
+            try:
+                engine = self._run_hooks_engine()
+                if engine is not None:
+                    engine.notify(
+                        "Stop", session_id=target,
+                        data={"status": {
+                            ConsoleRunStatus.COMPLETED: "completed",
+                            ConsoleRunStatus.FAILED: "error",
+                            ConsoleRunStatus.STOPPED: "cancelled",
+                        }[run_state.status]},
+                    )
+            except Exception:  # noqa: BLE001 -- observers cannot break settlement
+                logger.warning("Stop observer failed; continuing terminal publication")
         # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
         # ONLY for a session other than the currently active (viewed) one --
         # the viewed session's own COMPLETED/FAILED transition is visible

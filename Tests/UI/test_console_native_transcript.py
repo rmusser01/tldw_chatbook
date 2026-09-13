@@ -16,6 +16,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    PROPRIETARY_THINKING_NOTICE,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleCitationNoticeCode,
@@ -4283,3 +4284,33 @@ def test_console_transcript_empty_state_is_centered_in_stylesheets():
         assert "align: center middle" in panel_rule, css_path
         body_rule = css.split(".console-transcript-empty-body {", 1)[1].split("}", 1)[0]
         assert "text-align: center" in body_rule, css_path
+
+
+def test_console_thinking_row_edit_action_gated_by_displayability():
+    service = ConsoleMessageActionService()
+    displayable_row = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="visible reasoning",
+        id="thinking-displayable",
+        activity_presentation=ConsoleActivityPresentation(
+            "thinking", "Thinking", "done"
+        ),
+    )
+    proprietary_row = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content=PROPRIETARY_THINKING_NOTICE,
+        id="thinking-proprietary",
+        activity_presentation=ConsoleActivityPresentation(
+            "thinking", "Thinking", "unavailable"
+        ),
+    )
+
+    displayable_ids = [
+        action.action_id for action in service.available_actions(displayable_row)
+    ]
+    proprietary_ids = [
+        action.action_id for action in service.available_actions(proprietary_row)
+    ]
+
+    assert "edit" in displayable_ids
+    assert "edit" not in proprietary_ids

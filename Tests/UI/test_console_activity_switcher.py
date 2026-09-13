@@ -801,7 +801,7 @@ async def test_zero_active_matches_widens_to_history_and_f3_retains_query():
         ).has_class("console-switcher-mode-current")
         assert calls == [("migration", 0, 50)]
 
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await pilot.pause()
         assert query.value == "migration"
         history_mode = app.screen.query_one("#console-switcher-history-mode", Button)
@@ -1063,7 +1063,7 @@ async def test_history_page_buttons_keep_pages_bounded():
 
     app = _ActivitySwitcherApp(history_loader=load_history)
     async with app.run_test(size=(52, 20)) as pilot:
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await pilot.pause()
         assert len(app.screen.query(".console-switcher-result")) == 2
         await pilot.click("#console-switcher-next-page")
@@ -1315,7 +1315,7 @@ async def test_closing_during_history_load_drops_the_late_commit():
 
     app = _ActivitySwitcherApp(history_loader=load_history)
     async with app.run_test(size=(90, 30)) as pilot:
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await asyncio.wait_for(entered.wait(), timeout=2)
         await pilot.press("escape")
         await pilot.pause()
@@ -1417,7 +1417,7 @@ async def test_projection_change_during_history_load_retries_without_stuck_pendi
         authority_snapshot=authority_snapshot,
     )
     async with app.run_test(size=(90, 30)) as pilot:
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await asyncio.wait_for(entered.wait(), timeout=2)
         state["generation"] = 8
         await pilot.pause(ACTIVE_PROJECTION_POLL_SECONDS + 0.1)

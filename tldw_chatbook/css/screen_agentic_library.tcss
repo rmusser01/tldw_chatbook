@@ -75,6 +75,37 @@ $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
 $ds-library-source-browser-width: 31;
 
+$ds-space-0: 0;
+$ds-space-1: 1;
+$ds-space-2: 2;
+$ds-space-3: 3;
+$ds-space-inline: $ds-space-1;
+$ds-space-stack: $ds-space-1;
+$ds-space-section: $ds-space-2;
+$ds-space-inset: $ds-space-1;
+
+$ds-control-height: 3;
+$ds-control-height-compact: 1;
+$ds-textarea-min-height: 5;
+
+$ds-duration-fast: 0.2s;
+$ds-duration-medium: 0.3s;
+$ds-duration-slow: 0.5s;
+
+$ds-opacity-dim: 70%;
+
+$ds-text-strong: bold;
+$ds-text-emphasis: italic;
+
+$ds-hover-bg: $surface-lighten-1;
+$ds-hover-fg: $ds-text-primary;
+$ds-disabled-bg: $surface-darken-1;
+$ds-surface-sunken: $surface-darken-1;
+
+$ds-sidebar-width: 25%;
+$ds-sidebar-min-width: 35;
+$ds-sidebar-max-width: 80;
+
 
 .tldw-agentic-split-preamble-end { }
 
@@ -1228,18 +1259,6 @@ $ds-library-source-browser-width: 31;
     outline: none;
 }
 
-/* "From a template" group label: separates the primary Blank note action
-   from the template rows (same top-rule section grammar as the media
-   viewer's Content/Analysis/Highlights headers). */
-#library-notes-template-section {
-    width: 100%;
-    text-style: bold;
-    color: $ds-text-primary;
-    border-top: solid $ds-grid-line;
-    padding: 1 0 0 0;
-    margin: 1 0 1 0;
-}
-
 .library-canvas-action {
     height: $ds-home-control-button-height;
     min-height: $ds-home-control-button-height;
@@ -1822,11 +1841,40 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 /* Muted meta line: same tier as the media viewer's metadata block
-   (#library-media-viewer-meta) so both editors read consistently. */
-#library-note-meta {
-    width: 100%;
+   (#library-media-viewer-meta) so both editors read consistently.
+
+   task-32143 AC#2: this rule named `#library-note-meta`, a Static whose
+   container has been `display = False` unconditionally since the utilities
+   moved into Info -- so the muting was being spent on a line nobody could
+   see while Info's `#library-note-context-meta`, the one that renders, had
+   no colour rule at all. The dead Static is gone; the COLOUR moves to the
+   line it was always describing.
+
+   Colour only. Review F2: carrying the old block's `width: 100%` and
+   `margin: 0 0 1 0` across with it changed Info's wide layout -- measured
+   at 170x48, the backlinks title and the "Reuse & Export"/"Danger" headers
+   each moved down a row (20 -> 21, 21 -> 22, 25 -> 26) because
+   `#library-note-context-meta` had never had a margin of its own. No
+   compact test could see it: the compact sheet already pins
+   `margin: 0` there with a more specific selector. */
+#library-note-context-meta {
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+}
+
+/* task-32143: the editor chrome strip -- one row at the bottom of the body
+   carrying "N words · L:C", right-aligned so the eye finds it in the same
+   place whatever the note is called. Exactly one row: it is shown only
+   while Edit is the open view on a terminal 80 columns or wider, and the
+   body's `1fr` pays for it there (measured at 100x30: body 16 -> 15).
+   Muted to the same tier as the meta line above -- chrome, not content. */
+#library-note-chrome-facts {
+    width: 100%;
+    height: 1;
+    padding: 0 1 0 0;
+    text-align: right;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 #library-note-conflict-copy,

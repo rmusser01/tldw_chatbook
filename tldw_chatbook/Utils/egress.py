@@ -14,6 +14,17 @@ Non-goals (documented residual risk): DNS-rebinding IP pinning (we
 resolve-and-check; the HTTP client re-resolves to connect), proxy-aware
 policy (env-var proxies keep working; the target URL is what's validated),
 and DNS caching (OS resolver caches suffice).
+
+Known residual (TASK-590): the guarded_fetch_* helpers buffer the body up
+to ``max_bytes`` before the caller can inspect the status. A response that
+BOTH exceeds the cap AND carries a retryable status (408/429/5xx) therefore
+raises ``EgressFetchError("response exceeds ...")`` with the status
+discarded, so it surfaces as a size failure rather than a transient error
+worth retrying. Mitigations today: treat ``EgressFetchError`` as retryable
+where the caller has a retry budget (``Subscriptions.watchlist_failure``
+already classifies it into its retryable connection_failure bucket), or
+raise the caller's ``max_bytes``. A future enhancement would peek at the
+status before buffering and attach it to the error.
 """
 
 from __future__ import annotations

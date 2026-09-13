@@ -1114,9 +1114,12 @@ def test_executor_links_wikilink_targets_created_in_the_same_batch(
     )
     note = target.read_note(note_id=_expected_note_id("link-source", 0))
     assert note is not None
+    # task-32263: the stored link keeps the readable wikilink, shows the
+    # linked note's own title, and carries the identifier behind it.
     assert note.content == (
-        f"See [link-target](note://{_expected_note_id('link-target', 0)}) "
-        f"and [see it](note://{_expected_note_id('link-deep', 0)}) "
+        f"See [[link-target|B]](note://{_expected_note_id('link-target', 0)}) "
+        f"and [[Reading/link-deep|see it]]"
+        f"(note://{_expected_note_id('link-deep', 0)}) "
         "and [[Missing]]."
     )
 
@@ -4433,3 +4436,40 @@ def test_update_existing_on_an_unchanged_repeat_updates_without_new_placement(
     durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
     assert durable.items[0].outcome is ImportItemOutcome.UPDATED
     assert durable.membership_effects == ()
+
+
+def _note_link_rows(db: CharactersRAGDB) -> set[tuple[str, str]]:
+    return {
+        (str(row[0]), str(row[1]))
+        for row in db.get_connection().execute(
+            "SELECT source_note_id, target_note_id FROM note_links"
+        )
+    }
+
+
+def test_imported_bodies_maintain_the_note_link_relation(target_harness) -> None:
+    """Import writes notes with its own SQL, so it maintains links too.
+
+    task-32186: backlinks are answered from ``note_links``, not from a scan of
+    every body. The importer bypasses ``CharactersRAGDB.add_note`` /
+    ``update_note`` (it needs its own version and client-id semantics), so the
+    relation is maintained at its two write sites as well -- otherwise an
+    imported vault's ``[[wikilinks]]``, the exact links this feature exists
+    for, would never appear under "Linked from".
+    """
+    target, _service, _folders, db = target_harness
+    hub = "00000000-0000-5000-8000-0000000001aa"
+    other = "00000000-0000-5000-8000-0000000001bb"
+
+    created = target.create_note(
+        note_id=_NOTE_ID,
+        payload=_payload(content=f"See [[Hub|hub]](note://{hub}) for the method."),
+    )
+    assert _note_link_rows(db) == {(_NOTE_ID, hub)}
+
+    target.replace_note(
+        note_id=_NOTE_ID,
+        expected_version=created.version,
+        payload=_payload(content=f"Moved to [elsewhere](note://{other})."),
+    )
+    assert _note_link_rows(db) == {(_NOTE_ID, other)}

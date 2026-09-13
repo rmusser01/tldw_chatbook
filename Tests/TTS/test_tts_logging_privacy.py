@@ -457,6 +457,7 @@ async def test_console_tts_metrics_use_only_the_safe_slice_one_allowlist(
             *,
             text: str,
             voice_override: str | None = None,
+            response_format_override: str | None = None,
             progress_sink: object = None,
         ) -> Response:
             assert text == private_values[2]
@@ -854,6 +855,7 @@ async def test_console_tts_lifecycle_errors_use_bounded_actionable_copy(
             *,
             text: str,
             voice_override: str | None = None,
+            response_format_override: str | None = None,
             progress_sink: object = None,
         ) -> None:
             del text, voice_override, progress_sink

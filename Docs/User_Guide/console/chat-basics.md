@@ -78,6 +78,12 @@ three-column handles; expanded rails, tooltips, and badges keep their normal
 behavior. Return to Console after a successful save to see the change — no app
 restart is required.
 
+You can also open and close the rails with the keyboard — **Alt+C** for the
+Context rail, **Alt+I** for the Inspector — which works at every width,
+including the single-pane sizes where the handles hide. The handle badges
+abbreviate ("N appr" = N approvals pending, "art" = artifact ready); hover a
+badge for its full text.
+
 Console Behavior uses category-wide drafts: **Save** writes every pending edit
 in that category, and **Revert** discards every pending edit there, not just the
 rail-label choice. A failed save keeps the draft and leaves the active rail
@@ -304,6 +310,13 @@ to hidden chain-of-thought.
   by the adapter. Proprietary evidence is text-free and appears as
   **Thinking · unavailable**; expanding it shows exactly
   `Proprietary thinking obfuscated - not available`.
+- Select a displayable Thinking row and press **e** to edit its text in place.
+  The answer, block identity, provenance, and replay encoding stay intact.
+  Blank edits are rejected, and text containing `<think>`/`</think>` tags is
+  rejected for start-anchored blocks so replay serialization stays safe.
+  Edited thinking stays replay-eligible under the same replay policy.
+  Proprietary (**unavailable**) rows cannot be edited, and editing the answer
+  itself still clears the turn's thinking.
 - A new live disclosure opens when its first evidence arrives, then
   auto-collapses once at the first visible answer or tool event. If neither
   occurs, the terminal state is the fallback boundary. Expanding or collapsing
@@ -382,21 +395,26 @@ tooltip "Wait for response to finish before using message actions."
 The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
 text-response **< / >** controls when applicable, **Fork**,
 **Regenerate/Retry** when applicable, **Continue** when applicable, and
-**More…**. The menu contains **Save as…**, **Helpful**, **Not helpful**, and
-**Delete** when those actions are available; the diagnostic **View original**
-also appears there when an original attempt can be shown safely.
+**More…**. The menu contains **Save as…**, **Helpful**, **Not helpful**,
+**Delete**, and — on a finished assistant reply — the three note actions
+**Capture as note**, **Summarize up to** (here as note) and **Save
+transcript** (up to here as note), when those actions are available; the
+diagnostic **View original** also appears there when an original attempt can
+be shown safely. The menu is 24 cells wide and cuts a long label at about
+fifteen characters, which is why the last two read short.
 
 | Action | What it does | Where it appears |
 |---|---|---|
 | Copy | Copies the message body to the clipboard. | All messages |
 | 🔊 / ⏹ | Speaks the reply aloud; playback starts automatically, and while it plays the button becomes ⏹ to stop ("Stopped speaking."). Text-to-speech provider setup lives in Settings. | Completed assistant replies |
-| Edit | Opens the "Edit Message" editor; editing one of your own messages can also fork and resend — see [branching & rewind](branching-and-rewind.md). | All messages |
+| Edit | Opens the "Edit Message" editor; editing one of your own messages can also fork and resend — see [branching & rewind](branching-and-rewind.md). On a selected displayable **Thinking** row, **e** opens the "Edit Thinking" editor for that block's text — see [model thinking disclosures](#model-thinking-disclosures). | All messages |
 | < > | Step between regenerated variants — see [branching & rewind](branching-and-rewind.md). | Messages with variants |
 | Fork | Opens a focused naming dialog, then creates a new independent chat containing the active conversation path through this message, inclusive. Press **f** for the same action — see [branching & rewind](branching-and-rewind.md). | Stable User and Assistant messages |
 | ♻ | Regenerate — fork another assistant variant for this turn; the old answer is kept, not overwritten — see [branching & rewind](branching-and-rewind.md). | Assistant replies |
 | ---> | Continue — extend the selected message with more generated text. | All messages |
 | Retry | Retry a failed reply. | Failed assistant replies |
-| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, and **Delete** actions. Delete still requires confirmation and removes the message plus everything under it. | User and Assistant messages with an available overflow action |
+| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, **Delete** and note actions. Delete still requires confirmation and removes the message plus everything under it. | User and Assistant messages with an available overflow action |
+| Capture as note | Saves this one reply into Library ▸ Notes: the note is titled with the reply's first line of text (a leading code fence or heading mark is dropped), holds the reply verbatim, and is tagged `console`, `conversation:<id>` and `message:<id>` so it records where it came from. Nothing is sent to a model. | Finished assistant replies (disabled in a temporary chat) |
 | View / Save Image | Cycle how an inline image renders / save the message's images to disk. These controls live on the image card — see [attachments, images & voice](attachments-images-voice.md). | Messages with images |
 | Play / Save copy | Play a generated video or save its ephemeral bytes. These controls live on the video card. | Generated videos while their bytes remain available |
 
@@ -428,10 +446,26 @@ also appears there when an original attempt can be shown safely.
 2. Open **More…** and choose **Delete** again. The message and everything
    beneath it are removed.
 
-### Save a reply as a Note
+### Capture a reply into a note
+1. Select the assistant reply, click **More…**, then choose
+   **Capture as note**.
+2. A "Saved to Notes" receipt appears. Click **Open note** to land in the
+   Library ▸ Notes editor on that note, or **Stay in Console** to keep
+   going — either way the note is already saved (toast: "Saved answer as
+   Note.").
+
+The note's title is the reply's first line of text (a leading code fence or
+heading mark is dropped), its body is the reply verbatim,
+and its keywords are `console`, `conversation:<id>` and `message:<id>` — so
+the note says which conversation and which message it came from. This is the
+return leg of Library ▸ Notes' **Use in Console**.
+
+### Save a reply as a Note (choosing the destination)
 1. Select the assistant reply, click **More…**, then choose **Save as…**.
 2. Choose **Note** — toast: "Saved message as Note." It appears in
-   Library ▸ Notes.
+   Library ▸ Notes. This route titles the note after the CONVERSATION
+   ("Console message — \<chat\> (date)") and tags it `console` only; for a
+   note that records the exact message, use **Capture as note** above.
 
 ### Fork a chat from a message
 1. Select a stable User or Assistant message and press **f**, or click
@@ -477,7 +511,7 @@ Transcript:
 ### Exchange capture privacy
 
 Provider exchanges use **Safe** capture by default. The Conversation
-Inspector and live Trace use `c` for scoped future controls; F9 **Console
+Inspector and live Trace use `c` for scoped future controls; F4 **Console
 Behavior** controls the global On/Off and Safe/Full default. Next-send Full is
 one-shot and expires when consumed. Capture Off preserves dormant Full choices
 and warns before they resume. Imported Trace stays read-only.
@@ -538,3 +572,24 @@ undocumented and was being re-derived on every keystroke; it is now derived on
 hover, and the tooltip content above was read off a live 400-message session).*
 *Fork, More…, and media-card action ownership were verified against
 TASK-23088's production-shaped provider-free journey on 2026-08-27.*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146: **Capture as note** walked live at 235x52 and 100x30 on a seeded
+profile — More… ▸ Capture as note ▸ "Saved to Notes" ▸ **Open note** landing
+in the Library note editor; the saved note's keywords were read back from the
+database as `console`, `conversation:<id>`, `message:<id>`. The More… menu
+contents above were read off that same walk. This stamp was "Save as… ▸ Note
+was ALSO saving under an owner id nothing sets, so its notes never appeared in
+Library ▸ Notes; both routes now write under the configured notes identity" —
+superseded by task-32146 fix round 1 below.)*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146 fix round 1: the owner-id sentence in the stamp above was wrong
+and is withdrawn — notes have no owner column and Library ▸ Notes lists every
+note whatever identity wrote it, so nothing saved by Save as… ▸ Note was ever
+missing. What changed is only which identity a note records as its author:
+the configured notes identity instead of a literal nothing sets. Both routes
+write under it. Also: a captured reply that opens with a code fence or a
+heading is now titled by its first line of text, and Capture as note refuses
+at dispatch in a temporary chat as well as being offered disabled. Copy-only
+correction checked against the notes schema and list query; no live walk.)*

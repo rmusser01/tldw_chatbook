@@ -109,6 +109,27 @@ def describe_prefill_preview(text: str, max_chars: int = _PREVIEW_MAX_CHARS) -> 
     return flattened[: max_chars - 1] + "…"
 
 
+#: Appended to every ARMED prefill row's value so the row is self-describing
+#: about its side effect: while any prefill is armed, tool calling (including
+#: MCP) is skipped for that send (TASK-32340). The row LABEL is a stable key
+#: (inspector row-id ownership, send-authority summary lookups) and must not
+#: change — the consequence rides on the value.
+PREFILL_TOOLS_SKIPPED_SUFFIX = " — tools skipped this send"
+
+
+def armed_prefill_row_value(text: str, max_chars: int = _PREVIEW_MAX_CHARS) -> str:
+    """Return the inspector row value for one armed prefill.
+
+    Args:
+        text: Full prefill text.
+        max_chars: Preview budget passed through to ``describe_prefill_preview``.
+
+    Returns:
+        The collapsed preview plus the tools-skipped suffix.
+    """
+    return describe_prefill_preview(text, max_chars) + PREFILL_TOOLS_SKIPPED_SUFFIX
+
+
 def pinned_prefill_from_conversation_metadata(raw_metadata: object) -> str | None:
     """Read the pinned prefill out of a raw conversation ``metadata`` value.
 

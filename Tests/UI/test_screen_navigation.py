@@ -1441,12 +1441,12 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
 async def test_navigation_keypress_during_splash_is_safely_ignored():
     """Regression lock for the F9-during-splash crash (task-1339).
 
-    Pressing a shell-destination key (F7/F8/F9 or Ctrl+digit) while the
+    Pressing a shell-destination key (F2..F7 or Ctrl+digit) while the
     splash screen is still up posted ``NavigateToScreen`` before the initial
     screen existed; ``switch_screen`` then hit Textual's empty
     result-callback stack and raised ``IndexError: pop from empty list``.
     Navigation requests must be ignored until the initial screen has been
-    pushed: pressing F9 mid-splash must raise nothing and must not navigate,
+    pushed: pressing F4 mid-splash must raise nothing and must not navigate,
     leaving the app to finish startup on its configured initial screen.
     """
     app = _build_test_app()  # splash enabled by default (skip_on_keypress=True)
@@ -1474,7 +1474,7 @@ async def test_navigation_keypress_during_splash_is_safely_ignored():
             assert app.splash_screen_active, "splash must still be active at press time"
             assert not getattr(app, "_initial_screen_pushed", False)
 
-            await pilot.press("f9")  # F9 = Settings destination; must not crash
+            await pilot.press("f4")  # F4 = Settings destination; must not crash
             await pilot.pause(0.2)
 
             # Wait for startup to finish: splash dismissed, initial screen pushed.
@@ -4108,18 +4108,18 @@ async def test_main_navigation_copy_and_order():
         ("nav-home", "\u23031 Home"),
         ("nav-console", "\u23032 Console"),
         ("nav-library", "\u23033 Library"),
-        ("nav-research", "F10 Research"),
-        ("nav-artifacts", "\u23034 Artifacts"),
-        ("nav-personas", "\u23035 Roleplay"),
-        ("nav-watchlists_collections", "\u23036 Watchlists"),
+        ("nav-personas", "\u23034 Roleplay"),
+        ("nav-watchlists_collections", "\u23035 Watchlists"),
+        ("nav-artifacts", "\u23036 Artifacts"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
-        ("nav-meetings", "F11 Meetings"),
         ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
-        ("nav-lab", "F7 Lab"),
-        ("nav-logs", "F8 Logs"),
-        ("nav-settings", "F9 Settings"),
+        ("nav-lab", "F2 Lab"),
+        ("nav-logs", "F3 Logs"),
+        ("nav-settings", "F4 Settings"),
+        ("nav-research", "F5 Research"),
+        ("nav-meetings", "F7 Meetings"),
     ]
 
     class TestApp(ConsolidatedCSSApp):
@@ -4140,7 +4140,7 @@ async def test_main_navigation_copy_and_order():
         assert str(app.query_one("#nav-console", Button).label).strip() == "\u23032 Console"
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
-        assert nav_buttons[-1].id == "nav-settings"
+        assert nav_buttons[-1].id == "nav-meetings"
         # TASK-2154.21 (NV-01): the static hint is now the overflow menu's
         # compact button (hidden at widths where nothing clips).
         hint = app.query_one("#nav-overflow-hint", Button)
@@ -5548,13 +5548,13 @@ async def test_nav_bar_overflow_menu_reaches_undigitized_destinations():
         # The undigitized destinations are listed with their F-key labels
         # (Lab/Logs/Settings), hotkey prefixes survive on the first ten, and
         # the active one is marked.
-        assert str(menu.query_one("#nav-overflow-lab", Button).label) == "F7 Lab"
+        assert str(menu.query_one("#nav-overflow-lab", Button).label) == "F2 Lab"
         assert (
             str(menu.query_one("#nav-overflow-research", Button).label)
-            == "F10 Research"
+            == "F5 Research"
         )
-        assert str(menu.query_one("#nav-overflow-logs", Button).label) == "F8 Logs"
-        assert str(menu.query_one("#nav-overflow-settings", Button).label) == "F9 Settings"
+        assert str(menu.query_one("#nav-overflow-logs", Button).label) == "F3 Logs"
+        assert str(menu.query_one("#nav-overflow-settings", Button).label) == "F4 Settings"
         assert str(menu.query_one("#nav-overflow-home", Button).label).startswith("⌃1 Home")
         assert "(current)" in str(
             menu.query_one("#nav-overflow-console", Button).label
