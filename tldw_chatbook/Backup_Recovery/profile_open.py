@@ -70,6 +70,20 @@ def _name(attempt):
     return "opened-" + attempt + ".json"
 
 
+def unchanged_selected_config(config_path: Path) -> bool:
+    """Preserve the exact recovered config during a no-edit process shutdown."""
+    selected = _selected
+    if selected is None or selected.process != os.getpid():
+        return False
+    if (
+        lexical_path(config_path) != Path(selected.expected.config)
+        or _expected(selected.profile_id, selected.control_root, selected.attempt)
+        != selected.expected
+    ):
+        raise ValueError("profile_open_generation_changed")
+    return True
+
+
 def opened_receipt(profile_id, control_root, attempt):
     """Read only the matching current locally verified launch result."""
     expected = _expected(profile_id, control_root, attempt)

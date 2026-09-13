@@ -91,6 +91,14 @@ if mode!='exit_only':
    if receipt:
     assert app._initial_screen_pushed and app._ui_ready
     assert receipt.installation_id==app.client_id
+   if mode in ('ordinary_quit','changed_config_quit'):
+    from tldw_chatbook import config
+    selected=config.get_cli_config_path()
+    if mode=='changed_config_quit':
+     assert config.save_setting_to_cli_config('general','default_theme','textual-light')
+    before=selected.read_bytes()
+    await app._confirm_and_quit()
+    assert selected.read_bytes()==before,'Shutdown rewrote the recovered config'
  asyncio.run(mount())
 assert not blocked_attempts(),blocked_attempts()
 """
@@ -100,6 +108,7 @@ _LAUNCH = r"""
  from tldw_chatbook.Backup_Recovery import isolated_restore
  original_call=subprocess.call
  def headless(argv,**kwargs):
+  if sys.argv[2]=='spawn_failure':raise OSError('fixture spawn unavailable')
   # Only replace the terminal driver; execute actual paired CLI selection and app.
   with (base/'open-child.log').open('w') as output:
    result=subprocess.run([sys.executable,'-c',CHILD,*argv[4:],sys.argv[2]],
@@ -119,12 +128,12 @@ _LAUNCH = r"""
  try:
   operation=service.start_open_profile(profile)
   state=service.wait(operation,timeout=50)
-  if sys.argv[2] in ('tampered','nonzero'):
+  if sys.argv[2] in ('tampered','nonzero','spawn_failure','changed_config_quit'):
    assert state['state']=='failed',dict(state)
    assert not state['result'].get('opened_successfully',False),dict(state)
   else:
    assert state['state']=='succeeded',dict(state)
-   assert state['result'].get('opened_successfully')==(sys.argv[2]=='mounted'),dict(state)
+   assert state['result'].get('opened_successfully')==(sys.argv[2] in ('mounted','ordinary_quit')),dict(state)
    assert state['result']['exit_code']==0
    assert state['result']['needs_setup']
  finally:subprocess.call=original_call
@@ -141,6 +150,9 @@ _LAUNCH = r"""
         "post_mount_failure",
         "tampered",
         "nonzero",
+        "ordinary_quit",
+        "changed_config_quit",
+        "spawn_failure",
     ],
 )
 def test_profile_open_requires_actual_mounted_local_reads(tmp_path, mode):
@@ -155,6 +167,13 @@ def test_profile_open_requires_actual_mounted_local_reads(tmp_path, mode):
             " assert service.profiles()[0]['status']=='restoration_validated'",
             " assert service.profiles()[0]['status']=='restoration_validated'"
             + _LAUNCH,
+        ).replace(
+            "\nassert _launch_descriptor(profile,control).profile_id==profile",
+            "\nif sys.argv[2]=='changed_config_quit':\n"
+            " try:_launch_descriptor(profile,control)\n"
+            " except ValueError as error:assert str(error)=='isolated_activation_required'\n"
+            " else:raise AssertionError('Changed config remained launchable')\n"
+            "else:assert _launch_descriptor(profile,control).profile_id==profile",
         )
     )
     _run(tmp_path, "isolated", mode, script=script, timeout=70)

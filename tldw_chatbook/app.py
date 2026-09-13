@@ -9311,13 +9311,26 @@ class TldwCli(
         list_runs = getattr(service, "list_runs", None)
         if not callable(list_runs):
             return {"pending": 0, "failed": 0}
+        from .Backup_Recovery.participants import run_finite_local_worker
+        from .DB.Evals_DB import EvalsDB
+
+        def counts():
+            return {
+                "pending": len(list_runs(status="pending", limit=_HOME_EVAL_RUN_QUERY_LIMIT)),
+                "failed": len(list_runs(status="failed", limit=_HOME_EVAL_RUN_QUERY_LIMIT)),
+            }
+
         try:
-            pending = len(list_runs(status="pending", limit=_HOME_EVAL_RUN_QUERY_LIMIT))
-            failed = len(list_runs(status="failed", limit=_HOME_EVAL_RUN_QUERY_LIMIT))
+            if (
+                type(service) is LocalEvaluationsService
+                and type(service.db) is EvalsDB
+                and getattr(list_runs, "__func__", None) is LocalEvaluationsService.list_runs
+            ):
+                return run_finite_local_worker(counts)
+            return counts()
         except Exception:
             logger.opt(exception=True).debug("Home eval run counts failed.")
             return {"pending": 0, "failed": 0}
-        return {"pending": pending, "failed": failed}
 
     def _local_read_later_count(self) -> int | None:
         """Count read-it-later media for Home; None when the DB is absent.
@@ -9329,7 +9342,14 @@ class TldwCli(
         counter = getattr(db, "count_read_it_later_media", None)
         if not callable(counter):
             return None
+        from .Backup_Recovery.participants import run_finite_local_worker
+
         try:
+            if (
+                type(db) is MediaDatabase
+                and getattr(counter, "__func__", None) is MediaDatabase.count_read_it_later_media
+            ):
+                return int(run_finite_local_worker(counter))
             return int(counter())
         except Exception:
             logger.opt(exception=True).debug("Home read-it-later count failed.")

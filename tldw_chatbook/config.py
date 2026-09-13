@@ -7085,6 +7085,12 @@ def persist_cli_config_for_shutdown() -> bool:
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
+            from .Backup_Recovery.profile_open import unchanged_selected_config
+
+            # Settings writes already persist. A defaults-only rewrite would
+            # invalidate the selected recovery generation's config fingerprint.
+            if unchanged_selected_config(config_path):
+                return True
             bootstrap = _load_cli_config_bootstrap_unlocked(force_reload=True)
             if not bootstrap.succeeded:
                 logger.warning(
