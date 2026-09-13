@@ -81,8 +81,16 @@ async def main():
         try:
             screen.query_one("#backup-later-review", Button).focus()
             await pilot.press("enter")
-            async with asyncio.timeout(180 if sys.platform == "win32" else 15):
-                while not entered.is_set():await asyncio.sleep(.03)
+            # Linux measured 15.13s for inventory plus the first native preview.
+            # Reuse its later-review budget; product deadlines are unchanged.
+            first_review_timeout = 180 if sys.platform == "win32" else 45 if sys.platform == "linux" else 15
+            async with asyncio.timeout(first_review_timeout):
+                while not entered.is_set():
+                    text = str(screen.query_one("#backup-later-preview", Static).render())
+                    if "refused" in text:
+                        retain("first_review_refused", text=text)
+                        raise AssertionError(text)
+                    await asyncio.sleep(.03)
             screen.query_one('#backup-later-target',Input).value=os.environ['TLDW_CONFIG_PATH']+'.changed'
             await pilot.pause()
         finally:

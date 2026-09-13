@@ -24,6 +24,9 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
 from tldw_chatbook.Backup_Recovery import archive_reader,storage_admission
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures
+stop_stacks=observe_threads(Path.home()/'mounted-stacks.log',interval=30)
+stop_failures=observe_recovery_failures(Path.home()/'mounted-recovery-failures.log')
 import tldw_chatbook
 assert Path(tldw_chatbook.__file__).resolve()==Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])/'tldw_chatbook'/'__init__.py'
 async def main():
@@ -40,14 +43,23 @@ async def main():
    await asyncio.sleep(3)
    before=app.chachanotes_db.add_note('Mounted backup','Saved before mounted capture')
    if sys.argv[1]=='settings':
+    print('MOUNTED_BEFORE_SETTINGS',flush=True)
     await pilot.press('f4')
+    print('MOUNTED_AFTER_SETTINGS',flush=True)
     await asyncio.sleep(1)
    destination=Path.home()/'mounted.tldw-backup.zip'
    options={'staging_parent':Path.home()}
+   print('MOUNTED_BEFORE_PREVIEW',flush=True)
    inventory=await asyncio.to_thread(service.preview_backup,(selector,),options=options)
+   print('MOUNTED_AFTER_PREVIEW',inventory.complete,inventory.issues,flush=True)
    assert inventory.complete,inventory.issues
+   print('MOUNTED_BEFORE_START',flush=True)
    operation=service.start_backup((selector,),inventory.scope_digest,destination,options=options,password=None)
-   result=await asyncio.to_thread(service.wait,operation,timeout=240)
+   print('MOUNTED_BEFORE_WAIT',flush=True)
+   try:result=await asyncio.to_thread(service.wait,operation,timeout=240)
+   finally:
+    state=service.status(operation)
+    print('MOUNTED_AFTER_WAIT',state['state'],state['phase'],tuple(state['issues']),flush=True)
    assert result['state']=='succeeded',dict(result)
    assert result['result']['complete']
    async with asyncio.timeout(60):
@@ -66,7 +78,8 @@ async def main():
  finally:
   await asyncio.to_thread(service.close)
  assert not blocked_attempts(),blocked_attempts()
-asyncio.run(main())
+try:asyncio.run(main())
+finally:stop_failures();stop_stacks()
 print('retired and reopened')
 '''
 
