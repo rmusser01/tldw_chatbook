@@ -146,39 +146,83 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
 )
 
 
-def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
+def build_spawn_schema(
+    definitions: Sequence[AgentDefinition],
+    *,
+    override_enabled: bool = False,
+    override_targets: Sequence[tuple[str, tuple[str, ...]]] = (),
+) -> ToolSchema:
     """The spawn tool's schema for THIS run.
 
-    With no definitions, returns ``SPAWN_TOOL_SCHEMA`` itself (identity —
-    byte-identical payloads for every pre-definition caller). With
-    definitions, adds an OPTIONAL ``agent`` parameter carrying both an
-    ``enum`` (native tool-calling) and a prose roster in the description
-    (fence-protocol models read prose better than schema; this text rides
-    every fence-model turn, which is why AgentDefinition.description is
-    hard-capped).
+    With no definitions AND the override gate closed, returns
+    ``SPAWN_TOOL_SCHEMA`` itself (identity — byte-identical payloads for
+    every pre-ADR-147 caller). With definitions, adds an OPTIONAL ``agent``
+    parameter carrying both an ``enum`` (native tool-calling) and a prose
+    roster in the description (fence-protocol models read prose better than
+    schema; this text rides every fence-model turn, which is why
+    AgentDefinition.description is hard-capped). A definition that sets
+    ``provider`` or ``model`` (ADR-147) gets its roster line suffixed with
+    ``(runs on <provider> / <model>)`` so the master can SEE the preset's
+    routing; an unrouted definition's line is unchanged.
+
+    When ``override_enabled`` ([agents] spawn_override_enabled), also adds
+    OPTIONAL ``provider``/``model`` string args — the exact names Task 6's
+    spawn dispatch parses. ``override_targets`` enumerates the allowlisted
+    targets as ``(provider, models)`` pairs rendered into the ``provider``
+    description so the master can pick a VALID target; the enumeration is
+    identity-only (provider ids and model names — never base URLs or
+    params), and allowlist globs are NOT expanded (the model description
+    says so: the master picks from the enumerated models).
+
+    Args:
+        definitions: This turn's named agent presets (may be empty).
+        override_enabled: Whether ad-hoc provider/model spawn args are
+            offered at all.
+        override_targets: Allowlisted ``(provider, models)`` pairs to
+            enumerate in the ``provider`` description.
+
+    Returns:
+        ``SPAWN_TOOL_SCHEMA`` itself when there is nothing to add, else a
+        new ToolSchema sharing its id/name/description.
     """
-    if not definitions:
+    if not definitions and not override_enabled:
         return SPAWN_TOOL_SCHEMA
     roster = "\n".join(
-        f"- {d.name} — {d.description}" if d.description else f"- {d.name}"
-        for d in definitions
+        _spawn_roster_line(d) for d in definitions
     )
+    properties: dict[str, Any] = {
+        # Shallow-copied so no future consumer of the built schema can
+        # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
+        "task": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["task"]),
+        "isolation": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["isolation"]),
+    }
+    if definitions:
+        properties["agent"] = {
+            "type": "string",
+            "enum": [d.name for d in definitions],
+            "description": (
+                "Optional: run the task as one of these named agents "
+                "(omit for a generic sub-agent):\n" + roster
+            ),
+        }
+    if override_enabled:
+        properties["provider"] = {
+            "type": "string",
+            "description": _override_provider_description(override_targets),
+        }
+        properties["model"] = {
+            "type": "string",
+            "description": (
+                "Optional: run the sub-agent on this model instead of the "
+                "resolved default. Pick one of the models enumerated under "
+                "your chosen provider above; allowlist globs are NOT "
+                "expanded here, so a model that is not listed will be "
+                "refused."
+            ),
+        }
     parameters = {
         "type": "object",
-        "properties": {
-            # Shallow-copied so no future consumer of the built schema can
-            # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
-            "task": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["task"]),
-            "isolation": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["isolation"]),
-            "agent": {
-                "type": "string",
-                "enum": [d.name for d in definitions],
-                "description": (
-                    "Optional: run the task as one of these named agents "
-                    "(omit for a generic sub-agent):\n" + roster
-                ),
-            },
-        },
+        "properties": properties,
         "required": ["task"],
     }
     return ToolSchema(
@@ -187,6 +231,39 @@ def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
         description=SPAWN_TOOL_SCHEMA.description,
         parameters=parameters,
     )
+
+
+def _spawn_roster_line(d: AgentDefinition) -> str:
+    """One roster line; ADR-147 routing suffix only when routed."""
+    line = f"- {d.name} — {d.description}" if d.description else f"- {d.name}"
+    if d.provider or d.model:
+        line += (
+            f" (runs on {d.provider or 'parent'}"
+            f" / {d.model or 'default model'})"
+        )
+    return line
+
+
+def _override_provider_description(
+    override_targets: Sequence[tuple[str, tuple[str, ...]]],
+) -> str:
+    """The ``provider`` arg description: enumerated allowlisted targets.
+
+    Identity only — provider ids and model names; base URLs and params
+    never reach the schema.
+    """
+    header = (
+        "Optional: run the sub-agent on this provider instead of the "
+        "resolved default. Allowed targets:"
+    )
+    if not override_targets:
+        return header + "\n(none configured — any override will be refused)"
+    lines = "\n".join(
+        f"- {provider} (models: {', '.join(models)})" if models
+        else f"- {provider}"
+        for provider, models in override_targets
+    )
+    return header + "\n" + lines
 
 
 # Fleet (PR2a Task 6). Pinned together with the spawn schema, and only

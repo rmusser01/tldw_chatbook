@@ -640,7 +640,7 @@ def test_first_request_plan_contains_exact_named_agent_and_fleet_schemas(monkeyp
     )
 
 
-def test_first_request_plan_omits_worktree_mutation_schemas_even_when_confirm_exists(
+def test_first_request_plan_includes_worktree_mutation_schemas_when_confirm_exists(
     monkeypatch,
 ):
     """TASK-28238 phase 2 Task 7 ruling: merge/discard for a
@@ -654,6 +654,8 @@ def test_first_request_plan_omits_worktree_mutation_schemas_even_when_confirm_ex
         "wait_agents",
         "check_agents",
         "send_to_agent",
+        "merge_agent_worktree",
+        "discard_agent_worktree",
     ]
 
 
@@ -1357,6 +1359,10 @@ def test_child_uses_exactly_one_root_delivery_path(
         startup_instruction_candidate=candidate,
         confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
         project_instruction_context=context,
+        # TASK-32477 review fix: the spawn resolver's readiness gate fires on
+        # the inherit level too (spec-mandated); a fake key keeps this test
+        # about delivery-path plumbing, not host credentials.
+        app_config={"api_settings": {"openai": {"api_key": "test"}}},
     )
     config = AgentConfig(
         model="m",
@@ -1482,7 +1488,18 @@ def test_native_subagent_turns_also_carry_tools(db):
         ],
         {"say hi": ["hi from child"]},  # child's (native-mode) only turn
     )
-    service = _service_with(db, chat)
+    # TASK-32477 review fix: inline `_service_with`'s body so this test can
+    # inject a fake-key app_config -- the spawn resolver's readiness gate
+    # fires on the inherit level too (spec-mandated), and the test is about
+    # native-tool propagation, not host credentials.
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        app_config={"api_settings": {"groq": {"api_key": "test"}}},
+    )
     _run_id, outcome = service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "go"}],

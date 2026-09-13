@@ -87,7 +87,7 @@ def test_structural_record_and_definition_cap_survive_reopen(tmp_path):
                     "SELECT MAX(version) FROM schema_version"
                 ).fetchone()[0]
                 == AgentRunsDB._CURRENT_SCHEMA_VERSION
-                == 20
+                == 21
             )
     finally:
         reopened.close()
@@ -412,7 +412,11 @@ def test_reference_migration_upgrades_real_v19_shape(tmp_path):
     connection = sqlite3.connect(path)
     try:
         connection.execute("DROP TABLE agent_worktrees")
-        connection.execute("DELETE FROM schema_version WHERE version = 20")
+        connection.execute("DELETE FROM schema_version WHERE version >= 20")
+        for column in ("provider", "params_json"):
+            connection.execute(f"ALTER TABLE agent_definitions DROP COLUMN {column}")
+        for column in ("resolved_provider", "resolved_model", "resolved_base_url", "resolved_params_json"):
+            connection.execute(f"ALTER TABLE agent_runs DROP COLUMN {column}")
         connection.commit()
         migration = (
             __import__("pathlib").Path(__file__).parents[2]
@@ -449,7 +453,11 @@ def test_runtime_reopen_migrates_v19_and_preserves_definition_cap(tmp_path):
     connection = sqlite3.connect(path)
     try:
         connection.execute("DROP TABLE agent_worktrees")
-        connection.execute("DELETE FROM schema_version WHERE version = 20")
+        connection.execute("DELETE FROM schema_version WHERE version >= 20")
+        for column in ("provider", "params_json"):
+            connection.execute(f"ALTER TABLE agent_definitions DROP COLUMN {column}")
+        for column in ("resolved_provider", "resolved_model", "resolved_base_url", "resolved_params_json"):
+            connection.execute(f"ALTER TABLE agent_runs DROP COLUMN {column}")
         connection.commit()
         assert connection.execute(
             "SELECT MAX(version) FROM schema_version"
@@ -463,7 +471,7 @@ def test_runtime_reopen_migrates_v19_and_preserves_definition_cap(tmp_path):
         with migrated.connection() as connection:
             assert tuple(
                 connection.execute("SELECT MAX(version) FROM schema_version").fetchone()
-            ) == (20,)
+            ) == (AgentRunsDB._CURRENT_SCHEMA_VERSION,)
             assert tuple(
                 connection.execute(
                     "SELECT name FROM sqlite_master WHERE name='agent_worktrees'"

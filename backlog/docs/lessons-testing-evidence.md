@@ -13678,6 +13678,26 @@ contract copy; when production moves to a new seam, the fake keeps passing
 whatever it still implements. And treat a production `if not callable(...):
 return` as a place where a missing seam becomes invisible, not as a safety net.
 
+## A green suite cannot see kwargs the production adapter swallows
+
+**TASK-32477, 2026-09-12.** The agent-routing feature's spawn integration passed
+every test — 152 green across three suites — because the tests stubbed
+`chat_call` with a capturing fake and asserted on the captured kwargs. The task's
+own gateway trace then found the PRODUCTION adapter
+(`_StreamingModelAdapter.chat_call`, console_agent_bridge.py) accepted
+`api_endpoint` and never referenced it, and dropped `api_base_url` plus all 13
+sampling kwargs into `**_ignored`, always streaming via the parent's fixed
+resolution. The feature was completely inert in production behind a green suite;
+a whole plan task (6B) had to be added to make routed calls actually route. The
+final review independently re-verified the fix end-to-end through
+`resolve_for_send` → `stream_chat` → `_chat_api_kwargs_from_prepared` →
+`chat_api_call`.
+
+**What to do.** When a feature's contract crosses a seam the tests stub, "the
+seam forwards my kwargs" is a claim to verify against the real implementation —
+read the production adapter's body once (grep for the kwargs; watch for
+`**_ignored`), and have the integration review trace one call end-to-end. A
+capturing stub proves what you EMIT, never what the other side CONSUMES.
 
 ## Completed first-run setup is not a send-ready Console (TASK-13154.4, 2026-09-12)
 
@@ -13782,6 +13802,21 @@ with `invalid_path`. Canonicalizing the new allocation parent before Git creatio
 made that roundtrip pass. Keep loaded ownership paths strict: resolving an
 application-owned new allocation does not justify normalizing a stored authority.
 
+
+## A saved endpoint is only pinned if the real gateway honors it
+
+**PR #2651 recovery, 2026-09-13.** Routing tests used a gateway fake that copied
+`selection.base_url`, so they passed while the real gateway preferred an edited
+registry URL over a child's saved target. Review also found same-provider
+sampling overlays retaining parent-only optional values absent from the child's
+snapshot. Regression tests failed before the fixes; joined adapter → real gateway
+checks then verified both generic and llama.cpp children dispatch and discover
+against the saved URL while ordinary sessions still follow registry edits.
+
+**What to do.** Assert the effective transport resolution through the real
+consumer of saved configuration, with conflicting live values as controls. An
+omitted optional setting must also be exercised: overlaying present keys does
+not establish that a child owns the absent ones.
 
 ## A first reactive read can reenter a loader before its arguments finish evaluating
 

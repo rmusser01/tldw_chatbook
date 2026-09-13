@@ -109,6 +109,7 @@ commit, with the owner's explicit sign-off recorded in the PR.
 | date | guard | constant | old → new | named cause | owner sign-off |
 |---|---|---|---|---|---|
 | 2026-08-29 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 970 → 972 | `tls_trust` | Owner commit `6fac5dbf95`, "perf: raise ui-ready census ratchet 970->972 for tls_trust (PR #2223, ADR-097 deliberate refresh)" |
+| 2026-09-12 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 973 → 975 | agent provider routing (`Agents.agent_routing` + `Chat.sampling_params`, pure modules on the already-resident AgentService import path) | Owner directive on PR #2651 ("address all issues... approved for all of it"); commit "perf: raise ui-ready census ratchet 973->975 for agent provider routing (PR #2651, ADR-097 exception)" |
 
 Row added retroactively on 2026-08-31 (TASK-25813), found while taking the
 ratchet baseline for the 2026-08-30 holistic review. **The decision was the
