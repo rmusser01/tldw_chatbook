@@ -48,10 +48,12 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
+    SLUG_PATTERN,
     canonical_custom_endpoint_id,
     entry_for,
     family_execution_key,
     load_custom_endpoints,
+    split_custom_endpoint_id,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ChatDisplayNameError,
@@ -414,14 +416,22 @@ def _snapshot_provider(value: object) -> str | None:
     Registry entry ids (``custom-ep:<slug>``) are provider IDENTITY values
     (CE-001): the config-key normalizer would rewrite their dashes to
     underscores, so they validate against the dashed canonical spelling
-    instead of the plain-key idempotence check below.
+    instead of the plain-key idempotence check below. The suffix must also
+    satisfy the registry's :data:`SLUG_PATTERN` -- canonical-spelling
+    idempotence alone accepted any printable ``custom-ep:`` value, so a
+    malformed restored payload survived fail-closed deserialization and
+    crashed the provider ``Select`` with an illegal value on restore
+    (PR-2668 review).
     """
     if not _snapshot_text(value, limit=128, allow_blank=False):
         return None
     assert type(value) is str
     registry_id = canonical_custom_endpoint_id(value)
     if registry_id is not None:
-        return value if registry_id == value else None
+        slug = split_custom_endpoint_id(value)
+        if registry_id != value or slug is None or not SLUG_PATTERN.fullmatch(slug):
+            return None
+        return value
     normalized = provider_config_key(value)
     if normalized != value or _SNAPSHOT_PROVIDER_RE.fullmatch(value) is None:
         return None

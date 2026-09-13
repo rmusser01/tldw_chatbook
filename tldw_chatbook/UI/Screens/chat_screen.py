@@ -409,6 +409,7 @@ from ...Chat.local_server_discovery import (
     DiscoveredLocalServer,
     discover_local_servers,
 )
+from ...Chat.custom_endpoint_registry import provider_identity_key
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.provider_readiness import (
     get_provider_readiness,
@@ -9667,14 +9668,20 @@ class ChatScreen(BaseAppScreen):
         """Build a provider selection from one immutable settings snapshot."""
         app_config = self._provider_readiness_app_config()
         store = self._ensure_console_chat_store()
-        provider = provider_config_key(selection_settings.provider) or "llama_cpp"
+        # PR-2668 review (CE-001 class): the selection's ``provider`` is a
+        # provider IDENTITY the gateway resolves through ``entry_for`` (dashed
+        # registry slugs), so registry ids must keep their dashed spelling;
+        # only the ``api_settings`` section lookup wants the config-table key.
+        provider = provider_identity_key(selection_settings.provider) or "llama_cpp"
         explicit_model = (
             str(selection_settings.model).strip()
             if _has_selected_text(selection_settings.model)
             else None
         )
         api_settings = self._config_section(app_config, "api_settings")
-        provider_config = self._config_section(api_settings, provider)
+        provider_config = self._config_section(
+            api_settings, provider_config_key(provider)
+        )
         console_config = self._config_section(app_config, "console")
         configured_model_value = (
             provider_config.get("model")

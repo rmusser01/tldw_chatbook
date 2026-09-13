@@ -11943,3 +11943,55 @@ async def test_custom_endpoint_llama_family_entry_url_outranks_stale_session_url
     assert resolved.ready is True
     assert resolved.execution_key == "llama_cpp"
     assert resolved.base_url == "http://192.168.1.9:9090"
+
+
+# PR-2668 review (High): hyphenated registry ids are provider IDENTITY on the
+# send path. Both selection builders previously canonicalized
+# ``custom-ep:gpu-box`` into its ``api_settings`` lookup key
+# ``custom_ep:gpu_box``; registry slugs are dashed, so the gateway's
+# ``entry_for`` missed and the send fell through to generic resolution
+# (blocked as unsupported) instead of the entry's family execution and
+# entry-URL authority.
+
+
+@pytest.mark.asyncio
+async def test_send_resolution_keeps_hyphenated_registry_entry_identity() -> None:
+    """End to end: session settings -> selection builder -> gateway send
+    resolution must execute a hyphenated custom endpoint through its entry."""
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_console_provider_selection_from_settings,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    app_config = {
+        "api_settings": {},
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU box",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.9:9090",
+            }
+        },
+    }
+    selection = build_console_provider_selection_from_settings(
+        ConsoleSessionSettings(provider="custom-ep:gpu-box", model="m"),
+        app_config=app_config,
+        workspace_context=ConsoleWorkspaceContext(active_workspace_id=None),
+    )
+    assert selection.provider == "custom-ep:gpu-box"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            config_provider=lambda: app_config,
+            environ={},
+        )
+        resolved = await gateway.resolve_for_send(selection)
+
+    assert resolved.ready is True
+    assert resolved.execution_key == "llama_cpp"
+    assert resolved.base_url == "http://192.168.1.9:9090"

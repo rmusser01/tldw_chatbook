@@ -6583,6 +6583,136 @@ def test_suspended_draft_snapshot_accepts_registry_provider_identity() -> None:
     assert restored.provider_model_drafts == {"custom-ep:gpu-box": "model-a"}
 
 
+@pytest.mark.parametrize(
+    "malformed_provider",
+    [
+        "custom-ep:bad/value",  # path separator
+        "custom-ep:bad value",  # punctuation/space
+        "custom-ep:UPPER",  # slug alphabet is [a-z0-9-]
+        "custom-ep:" + "a" * 65,  # overlong slug (SLUG_PATTERN caps at 64)
+        "custom-ep:",  # bare prefix, empty slug
+    ],
+)
+def test_suspended_draft_snapshot_rejects_malformed_registry_slugs(
+    malformed_provider: str,
+) -> None:
+    """PR-2668 review: the snapshot's fail-closed deserialization must bound
+    registry ids to the registry's slug pattern. Canonical-spelling-only
+    checking accepted any printable ``custom-ep:`` value, so a malformed
+    restored payload survived ``from_mapping`` and crashed the provider
+    ``Select`` with an illegal value on ``_restore_suspended_draft``."""
+    with pytest.raises(ValueError):
+        ConsoleSettingsDraftSnapshot(
+            settings=ConsoleSessionSettings(
+                provider=malformed_provider, model="model-a", base_url=None
+            ),
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            raw_values={},
+            provider_model_drafts={},
+            provider_base_url_drafts={},
+            active_view="model",
+            scroll_anchor=0,
+            focus_control_id=None,
+            disclosure_state={
+                "advanced_generation": False,
+                "connection_details": False,
+            },
+        )
+
+    valid = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="custom-ep:gpu-box", model="model-a", base_url=None
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-provider": "custom-ep:gpu-box"},
+        provider_model_drafts={"custom-ep:gpu-box": "model-a"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    payload = valid.to_mapping()
+    payload["settings"] = {**payload["settings"], "provider": malformed_provider}
+    assert ConsoleSettingsDraftSnapshot.from_mapping(payload) is None
+
+    payload = valid.to_mapping()
+    payload["raw_values"] = {
+        **payload["raw_values"],
+        "console-settings-provider": malformed_provider,
+    }
+    assert ConsoleSettingsDraftSnapshot.from_mapping(payload) is None
+
+
+@pytest.mark.parametrize(
+    "valid_provider",
+    ["custom-ep:gpu-box", "custom-ep:a", "custom-ep:" + "a" * 64],
+)
+def test_suspended_draft_snapshot_accepts_pattern_valid_registry_slugs(
+    valid_provider: str,
+) -> None:
+    """PR-2668 review companion: pattern bounding must not over-reject --
+    every ``SLUG_PATTERN``-valid dashed id still snapshots and round-trips."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider=valid_provider, model="model-a", base_url=None
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-provider": valid_provider},
+        provider_model_drafts={valid_provider: "model-a"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
+    assert restored is not None
+    assert restored.settings.provider == valid_provider
+    assert restored.raw_values["console-settings-provider"] == valid_provider
+
+
+def test_screen_send_selection_keeps_hyphenated_registry_entry_identity() -> None:
+    """PR-2668 review (High): ChatScreen's send-path selection builder is the
+    screen-side spelling of the CE-001 identity rule. Canonicalizing the
+    dashed registry id into its ``api_settings`` lookup key left
+    ``ConsoleProviderSelection.provider`` as ``custom_ep:gpu_box``; registry
+    slugs are dashed, so the gateway's ``entry_for`` missed and the send was
+    blocked as an unsupported provider instead of executing through the
+    entry's family and URL."""
+    app_config = {
+        "api_settings": {},
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU box",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.9:9090",
+                "models": ["model-a"],
+            }
+        },
+    }
+    screen = SimpleNamespace(
+        _provider_readiness_app_config=lambda: app_config,
+        _ensure_console_chat_store=lambda: None,
+        _config_section=lambda config, key: dict(config.get(key, {})),
+        _workspace=SimpleNamespace(
+            _current_console_workspace_context=lambda: ConsoleWorkspaceContext(
+                active_workspace_id=None
+            )
+        ),
+        _normalize_llamacpp_base_url=lambda value: value,
+    )
+
+    selection = ChatScreen._build_console_provider_selection_from_settings(
+        screen,
+        None,
+        ConsoleSessionSettings(provider="custom-ep:gpu-box", model="model-a"),
+        legacy_model=None,
+    )
+
+    assert selection.provider == "custom-ep:gpu-box"
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_provider_options_end_with_new_endpoint_sentinel() -> (
     None
