@@ -2779,3 +2779,23 @@ rail row) gets one `tmux capture-pane` before the guide is written — and if
 the incumbents in that surface are also truncated, say so in the guide rather
 than assuming the copy on screen is the copy in the source. Choosing a label
 that fits is a one-line fix; widening a shared menu for one row is not.
+
+## A click-by-text driver lands on the status copy that echoes the button (task-32519 sync-tail walk, 2026-09-12)
+
+**What happened.** Driving Manage sync folders with a find-the-text-then-SGR-click
+helper, three clicks in a row hit the wrong target: "Check changes" matched the
+root row's "✓ Up to date · Next: Check changes" one line above the button;
+"Review" matched "Manual check finished. Review exact effects." and then
+"Next: Review changes" before reaching the button; "Select folder" matched the
+picker's hint "Select folder to use this folder", and that stray click
+dismissed the picker, so the next capture read as a setup canvas that had
+never accepted a folder. None of these was a product defect: every Library
+canvas deliberately names its next action in the status copy, so the label a
+click helper searches for is on screen at least twice, and the button is
+always the LAST occurrence.
+
+**What to do.** Match the last occurrence (or the exact padded button
+rendering), and grep the capture for the expected next state after every
+click before sending the next one — a silent mis-click leaves the app in a
+state the following command misreads, and the capture then documents the
+wrong bug.

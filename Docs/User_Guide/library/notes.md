@@ -605,7 +605,11 @@ configured sync folder.
 recovery, stopped, and migrated-candidate states. Use **Check changes** to scan
 an available root. **Review** appears when its changes need attention;
 legacy candidates use **Review migration**. **Pause** and **Resume** control an
-active root. **Retarget** and **Disconnect** remain visibly disabled with an
+active root. **Resume** re-activates the root and runs the same check as
+**Check changes**: a root with nothing changed returns to "✓ Up to date · Next:
+Check changes", and edits made while it was paused surface as "◌ Changes
+available" or "⚠ Needs attention · Next: Review changes" (task-32519).
+**Retarget** and **Disconnect** remain visibly disabled with an
 unavailable-in-this-release reason; no files or notes change.
 
 ### Import once
@@ -823,7 +827,9 @@ stayed as text and are not counted.
    and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead. **Manage sync folders** appears in the notes toolbar once
-   a root is active.
+   a root is active. Choosing **Back** returns to a Notes list that already
+   counts the synced notes and shows them under a **⇄ Sync managed** folder
+   named after the display name — no restart needed (task-32518).
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
@@ -1285,7 +1291,9 @@ changes** → "⚠ Needs attention · Next: Review changes" → **Review** →
 and character counts) → **Keep file** → **Apply reviewed** → an at-action
 receipt with **Undo** and **Dismiss** → **Undo** → **Resolution history**,
 where the entry is recorded "undone" → **Pause** (the action becomes Resume)
-→ **Resume**. **Retarget** and **Disconnect** stay visibly disabled
+→ **Resume** (was recorded here as walked; that Resume had in fact landed in
+"✕ Failed" with the root still paused — superseded by task-32519 below).
+**Retarget** and **Disconnect** stay visibly disabled
 throughout, as this chapter says.
 
 Added in this pass: what a folder and its files have to be before they can be
@@ -1364,3 +1372,28 @@ with the vault — to 0.08 ms flat. Upgrading an existing database backfills
 the relation from the bodies it already holds. task-32467: a "Linked from"
 answer that lands while the work pane is mid-recompose is now held for the
 next paint instead of terminating the app.)*
+
+*Verified against fix/library-notes-w3-sync-tail — 2026-09-12 (task-32519, at
+235x52 and 100x30, scratch profile with a 58-file vault): **Pause** →
+"Ⅱ Paused · Next: Resume" → **Resume** → "✓ Up to date · Next: Check changes"
+→ **Check changes** → "Manual check finished. Review exact effects."
+(`wave3-caps/sync-tail/09-paused`, `10-resumed`, `11-check-after-resume`).
+With the same note edited in Chatbook and on disk while paused, **Resume** →
+"⚠ Needs attention · Next: Review changes" → **Review** → "59 safe · 1 need
+attention", no "That folder is paused" (`12-resume-with-two-sided-edit`,
+`13-review-after-resume`; `23-paused`/`24-resumed` at 100x30). Resume used
+to review the root before re-activating it, so the pause cascade's paused
+bindings refused every review and every Resume read "✕ Failed"; it now
+re-activates first and runs the ordinary check. A profile already holding
+the broken paused-on-disk state resumes cleanly too.)*
+
+*Verified against fix/library-notes-w3-sync-tail — 2026-09-12 (task-32518, at
+235x52 and 100x30 on a profile with 10 existing notes): **Activate reviewed
+root** → "60 applied · durable receipt recorded" → **Back** → "Notes (70)"
+with "▸ t13 sync ⇄ Sync managed" in the list at once
+(`wave3-caps/sync-tail/06-root-activated`, `07-list-after-activate`); a
+second 5-file root at 100x30 → "Notes (75)" and "▸ t13 second ⇄ Sync managed"
+(`26-second-root-activated`, `27-list-after-second-activate`). Activation
+and **Apply reviewed** now refresh the list through the same path an import
+does; before this the list kept its old count and folder rows until
+restart.)*
