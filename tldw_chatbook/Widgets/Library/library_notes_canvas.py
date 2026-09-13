@@ -11,10 +11,13 @@ from typing import Any, Callable, Literal
 
 from rich.markup import escape as escape_markup
 from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.events import Focus, Resize
+from textual.message_pump import NoActiveAppError
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.Library.library_notes_state import (
@@ -156,6 +159,28 @@ _AUTHORITY_PREFIX_MIN_WIDTH = 64
 #: pane and shave it -- without this the answer would flip straight back
 #: and `on_resize` would recompose for ever.
 _TOOLBAR_SPLIT_HYSTERESIS = 2
+
+#: task-32143: terminal columns below which the editor chrome strip drops
+#: its facts cell. The save state owns that row alone on a narrow terminal,
+#: where the compact sheet already caps it at one ellipsized line.
+NOTE_CHROME_FACTS_MIN_WIDTH = 80
+
+
+def library_note_chrome_facts(word_count: int, row: int, column: int) -> str:
+    """The editor chrome strip's right-hand facts (task-32143).
+
+    Args:
+        word_count: Words in the body draft, counted by the controller for
+            the meta line it already builds every keystroke.
+        row: Zero-based caret row, as ``TextArea.cursor_location`` reports it.
+        column: Zero-based caret column, likewise.
+
+    Returns:
+        ``"N words · L:C"`` with a one-based caret -- what every other
+        editor's status line means by "line 3, column 14".
+    """
+    words = "1 word" if word_count == 1 else f"{word_count:,} words"
+    return f"{words} · {row + 1}:{column + 1}"
 
 
 def browse_row_width(labels: tuple[str, ...]) -> int:
@@ -570,6 +595,10 @@ class LibraryNotePresentationState:
     #: Whether the backlink query has answered yet -- see
     #: ``library_note_backlink_header``.
     backlinks_status: str = "loading"
+    #: Words in the draft body, for the editor chrome strip (task-32143).
+    #: The controller counts this for ``metadata_line`` anyway; carrying the
+    #: number instead of the sentence keeps the strip off a second scan.
+    word_count: int = 0
 
 
 class _LibraryNotesTreePagerButton(Button):
@@ -722,6 +751,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         #: Which backlink rows the mounted Info panel currently holds, so a
         #: sync only remounts them when the set actually changed (task-32145).
         self._rendered_backlinks: tuple[tuple[str, str], ...] = ()
+        #: Last word count the controller fed the chrome strip (task-32143).
+        #: Caret moves and resizes repaint from this instead of re-scanning
+        #: a body the controller already counted.
+        self._note_chrome_word_count = 0
         self._tree_focus_intent_generation: Callable[[], int] | None = None
         self.styles.width = "1fr"
         self.styles.min_width = 40
@@ -2373,6 +2406,24 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # can be: Delete is reachable from Info alone (task-32132), and
             # ``apply_session_state`` keeps Info open while confirming.
             yield from self._compose_delete_confirmation()
+        # task-32143: the editor chrome strip. One row at the bottom of the
+        # body, where a terminal reader looks for a status line, carrying
+        # the two facts the critique found nowhere on the editing surface:
+        # the word count (it lived only under Info) and the caret's line and
+        # column (it existed nowhere at all).
+        #
+        # It does NOT carry the save state, even though the design sketch
+        # asked for it: ``apply_compact_presentation`` sets the save state's
+        # width/height/wrap as INLINE styles that assume it sits in
+        # ``#library-note-header-second-row`` (whose own ``min_height`` is
+        # pinned to 3 there), so relocating it means rewriting that shared
+        # compact block and re-pinning five deliberate tests -- see
+        # task-32143's Implementation Notes.
+        yield Static(
+            library_note_chrome_facts(0, 0, 0),
+            id="library-note-chrome-facts",
+            markup=False,
+        )
         yield Static(
             presentation_state.transfer_status,
             id="library-note-transfer-status",
@@ -2386,7 +2437,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 placeholder="Comma-separated keywords",
                 id="library-note-keywords",
             )
-            yield Static(metadata_line, id="library-note-meta", markup=False)
+            # task-32143 AC#2: `#library-note-meta` used to render the
+            # Created/Modified/version/word-count line here. Its container
+            # has been `display = False` unconditionally since the utilities
+            # moved into Info (see ``apply_session_state``), so it was
+            # composed and re-rendered on every state apply and never seen.
+            # Info's `#library-note-context-meta` is the one that is read,
+            # and the word count it carried now also reads on the chrome
+            # strip under the body. Removed rather than left as a second,
+            # invisible home for the same sentence.
             wide_actions = Horizontal(classes="ds-toolbar")
             wide_actions.styles.height = "auto"
             with wide_actions:
@@ -2626,7 +2685,26 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         self.presentation_state = state
         self.compact = state.compact
-        authority = self.query_one(f"#{self.authority_id}", Static)
+        # Second half of the early-out above: a MOUNTED pane whose CHILDREN
+        # are between removal and remount has none of the surfaces below, and
+        # `query_one` raised `NoMatches` on the first of them. The backlinks
+        # loader reaches here from a WORKER, whose default
+        # `exit_on_error=True` turns that into a dead process rather than a
+        # skipped paint (task-32467, reproduced twice live on dev).
+        #
+        # Guarded HERE, not at a caller: several callers reach this method
+        # directly, and returning before it would also discard the
+        # `title_placeholder_only` and stage-visibility work the controller
+        # does around this call. `_apply_post_compose_state` guards the same
+        # shape for its own call and documents the sequence that produces it.
+        #
+        # Returning is complete, not lossy: the state is stored above and
+        # `_apply_post_compose_state` re-applies it the moment the recompose
+        # that removed these children mounts the new ones.
+        authority_matches = self.query(f"#{self.authority_id}")
+        if not authority_matches or not self.query("#library-note-title"):
+            return
+        authority = authority_matches.first(Static)
         authority_copy = self._authority_copy()
         if self._static_text(authority) != authority_copy:
             authority.update(authority_copy)
@@ -2740,10 +2818,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         authority_status = self.query_one("#library-note-authority-git-status", Static)
         if self._static_text(authority_status) != channels.authority_git:
             authority_status.update(channels.authority_git)
-        for selector in ("#library-note-meta", "#library-note-context-meta"):
-            widget = self.query_one(selector, Static)
-            if self._static_text(widget) != state.metadata_line:
-                widget.update(state.metadata_line)
+        # task-32143 AC#2: was a two-selector loop -- the second home,
+        # `#library-note-meta`, was never displayed. One meta line now.
+        context_meta = self.query_one("#library-note-context-meta", Static)
+        if self._static_text(context_meta) != state.metadata_line:
+            context_meta.update(state.metadata_line)
         # task-32145: backlinks are loaded by their own worker AFTER the note
         # opens, so they land on an editor that is already composed -- and a
         # recompose is deferred for as long as the reader owns a field
@@ -2902,6 +2981,85 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-delete-cancel",
         ):
             self.query_one(selector, Button).disabled = state.destructive_running
+        self.update_note_chrome_facts(state.word_count)
+
+    # --- editor chrome strip (task-32143) ---------------------------------
+
+    def update_note_chrome_facts(
+        self,
+        word_count: int | None = None,
+        body: TextArea | None = None,
+    ) -> None:
+        """Repaint the chrome strip's facts cell from the live editor.
+
+        Counts nothing: the controller already scans the body for the meta
+        line on every change, so the number arrives with the presentation
+        state, and the caret comes off the ``TextArea``. Nothing here reads
+        the database.
+
+        It is not free, though, and this docstring used to imply it was
+        (review F3). The cost was never the format -- it was the lookups,
+        and specifically ``if not self.query("#id")``: truth-testing a
+        ``DOMQuery`` walks the whole subtree, where ``query_one`` on an id
+        does not. Measured per call on a 35,310-byte note in the real
+        editor route: the old four-lookup sequence **263.6 us**, the two
+        lookups that replace it **0.7 us**, and the whole-body
+        ``len(text.split())`` the design ruled out **80.4 us**. So the
+        repaint had been costing ~3x the banned scan, and now costs ~1% of
+        it. The caret handler hands in the ``TextArea`` its own event
+        already carries; the rest share one ``try``. No debounce needed at
+        0.7 us -- add one only if this ever grows a real scan back.
+
+        Args:
+            word_count: The controller's count. Omitted by the caret and
+                resize handlers, which repaint from the last one fed in.
+            body: The editor body, when the caller already holds it (the
+                ``SelectionChanged`` event carries it). Looked up otherwise.
+        """
+        if word_count is not None:
+            self._note_chrome_word_count = word_count
+        try:
+            facts = self.query_one("#library-note-chrome-facts", Static)
+            editing = bool(self.query_one("#library-note-editor-region").display)
+            if body is None:
+                body = self.query_one("#library-note-body", TextArea)
+        except NoMatches:
+            # Any mode but the editor, and the editor before it composes.
+            return
+        try:
+            wide = self.app.size.width >= NOTE_CHROME_FACTS_MIN_WIDTH
+        except NoActiveAppError:
+            # Same answer as ``_authority_prefix`` (:769), which reads this
+            # same ``self.app.size.width`` under its own guard and documents
+            # the choice as "a widget with no live app keeps the prefix:
+            # that is the answer that loses nothing". It catches ``Exception``
+            # where this catches the one error ``self.app`` actually raises.
+            wide = True
+        # Preview and Info have no caret to report, and a narrow terminal
+        # has no room -- the save state owns the row alone in both cases.
+        facts.display = editing and wide
+        if not facts.display:
+            return
+        row, column = body.cursor_location
+        copy = library_note_chrome_facts(self._note_chrome_word_count, row, column)
+        if self._static_text(facts) != copy:
+            facts.update(copy)
+
+    @on(TextArea.SelectionChanged, "#library-note-body")
+    def _note_chrome_follows_caret(self, event: TextArea.SelectionChanged) -> None:
+        """Follow the caret: arrow keys never reach the presentation state."""
+        self.update_note_chrome_facts(body=event.text_area)
+
+    @on(Resize)
+    def _note_chrome_follows_width(self, event: Resize) -> None:
+        """Re-decide the 80-column gate; the compact flag only flips at 120.
+
+        Load-bearing for any resize that does not also cross 120 -- a
+        breakpoint crossing re-runs ``apply_session_state``, which decides
+        the gate anyway. Pinned by the 100 -> 79 -> 100 walk in
+        ``test_the_strip_is_hidden_off_the_editor_and_below_eighty_columns``.
+        """
+        self.update_note_chrome_facts()
 
     def _compose_create(self) -> ComposeResult:
         """Render the notes canvas in create mode: Blank note + template rows.

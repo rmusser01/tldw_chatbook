@@ -896,6 +896,26 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         "PRD A10's headless posture.",
     ),
     ConsoleViewHookSlot(
+        "set_pending_chat_create",
+        "controller",
+        why="Same fail-closed-at-once contract for "
+        "`request_chat_create_confirm` (`allow=False, remember=False`): "
+        "with no view nothing could ever set the Event, so denying at "
+        "once beats blocking for the full timeout.",
+    ),
+    ConsoleViewHookSlot(
+        "complete_agent_chat_create",
+        "controller",
+        why="Guarded (`if self.app is not None and self.complete_agent_"
+        "chat_create is not None`) in `execute_agent_chat_create`, and it "
+        "is the EXECUTE half's advertised-equals-usable gate: with it None "
+        "the controller passes `execute_agent_chat_create=None` to the "
+        "bridge, which never builds the fork_chat/new_chat closures at "
+        "all. The durable conversation row is complete before the callback "
+        "is consulted, so a viewless create loses only the (Task 8) "
+        "session placement, never data.",
+    ),
+    ConsoleViewHookSlot(
         "wake_user_priority_probe",
         "controller",
         viewless_user_priority_probe,

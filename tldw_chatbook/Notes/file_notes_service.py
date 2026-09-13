@@ -93,6 +93,20 @@ class OpenedFileNote:
     is_excerpt: bool
     replica_warning: str | None = None
 
+    @property
+    def frontmatter_lines(self) -> int:
+        """Return how many lines of YAML frontmatter are hidden from `body`.
+
+        ``preserved_prefix`` holds the BOM (if any) followed by the
+        frontmatter block ``_parse_opened`` split off, and
+        ``_serialize_body`` writes it back untouched -- so the editor
+        hides text it is faithfully preserving, with nothing on screen
+        saying so (task-32264). This is the fact the editor needs to say
+        it; ``0`` means there is no frontmatter.
+        """
+        block = self.preserved_prefix.removeprefix(UTF8_BOM)
+        return len(block.splitlines()) if block else 0
+
 
 @dataclass(frozen=True)
 class OperationResult:

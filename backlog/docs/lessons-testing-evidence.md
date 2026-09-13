@@ -9,6 +9,48 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A shared counter's value does not name which side moved it
+
+**TASK-32302, Library Conversations entry focus, 2026-09-11.** The task's
+diagnosis was "the arm generation reaches 2 on every run, so a second arm fires
+during route entry and invalidates the first scheduled attempt", and the fix was
+scoped to re-arming. But `_disarm_library_list_entry_focus` bumps the SAME
+counter as `_arm_library_list_entry_focus`, so "generation 2" is equally one arm
+plus one disarm. Instrumenting the real route entry (arm, disarm and each focus
+attempt logged with a stack) showed ONE arm and one silently wasted attempt: the
+recovery hop repaints the rows disabled, a disabled widget is not `focusable`,
+`set_focus` on it is a no-op, and `_focus_library_list_entry` returned as if the
+landing had happened. The fix landed one branch away from where the task pointed.
+
+**What to do.** Before building on a counter reading, check every writer of that
+counter. A measurement that only pins the counter's VALUE cannot distinguish the
+paths that move it; log the transitions instead, with which call site produced
+each one.
+
+## A custom Rich renderable is not measured by Textual 8's visual protocol
+
+**TASK-32306, Library Details rail rows, 2026-09-11.** A hanging indent for the
+rail's wrapped rows was first built as a small object with `__rich_console__`
+doing the wrap at render time; printed through a Rich `Console` at 34 cells it
+produced exactly the intended four lines. Mounted, the row painted its first
+line and nothing else: Textual 8 measures a `Static`'s auto height through
+`visualize()`, which reported ONE line for the unrecognised object, so the
+remaining lines were painted into a one-line box and clipped. `get_content_height
+(..., width=32)` returned 1 for a 41-cell text. Handing Textual a plain `Text`
+with real newlines (re-wrapped on resize) measures correctly.
+
+The same change then broke two unrelated pins a second way: this repo's
+compatibility shim (`tldw_chatbook/__init__.py`) exposes `Static.renderable` as
+`self.content`, so storing the RE-WRAPPED text as content changed what every
+`.renderable.plain` assertion in the suite sees.
+
+**What to do.** For anything that changes how a widget's content is laid out,
+capture the compositor strips (`screen._compositor.render_strips()`) over the
+widget's region -- a `.renderable` probe passes on a renderable that is measured
+at one line and clipped. And when a widget re-derives what it paints, keep
+`content`/`renderable` reporting what the caller passed, or every pin that reads
+it becomes a second consumer of your paint format.
+
 ## Fail-closed assertions need a successful control on the real scheduler path
 
 During PR #2645 review, a disposal test called synchronous `RunHooksEngine.fire`
@@ -13347,6 +13389,48 @@ reveals whether the plan's code or its tests encode the wrong API. When a
 RED failure contradicts the plan, check the *test-side* API usage for
 version rot before hunting a bug in code that follows the plan.
 
+## A new schema artifact maintained ON WRITE breaks every historical-bootstrap fixture at once (TASK-32186, 2026-09-11)
+
+**What happened.** v73 added `note_links` and made every note writer maintain
+it. `Tests/ChaChaNotesDB/historical_bootstrap.py` builds a genuinely old
+database by patching `_CURRENT_SCHEMA_VERSION` — but fixtures then seed it
+through TODAY's `add_note`, which now wrote to a table a v35/v57/v58 schema
+does not have. Four unrelated migration test files would have gone red with
+`sqlite3.OperationalError: no such table: note_links` raised from deep inside
+`add_note` — an opaque failure with no connection to the fixture's subject.
+Production is never in that state (migration runs in `CharactersRAGDB.__init__`,
+before any write), so the gap belongs to the bootstrap alone.
+
+**What to do.** When a migration adds an artifact that a WRITE path maintains
+(not just one a read path queries), check `historical_bootstrap` in the same
+commit: add it to `_add_forward_write_dependencies` so older fixtures keep
+seeding, and make the test that PINS your migration drop it first — otherwise
+that test asserts against the scaffold and would pass with the migration's DDL
+deleted. The tell that you need this: your new code writes to the table from a
+method a fixture calls, not only from the migration.
+
+## `cursor.execute()` returns the cursor, so a follow-up write rewrites the `rowcount` you were about to check (TASK-32186, 2026-09-11)
+
+**What happened.** Adding note-link maintenance to
+`LocalNoteImportTarget._update_note` turned
+
+    result = cursor.execute("UPDATE notes SET …")
+    return result.rowcount == 1
+
+into the same lines with `replace_note_links(cursor, …)` — a DELETE plus an
+executemany — inserted between them. `sqlite3.Cursor.execute` returns the
+cursor **itself**, so `result is cursor`: the return value stopped reporting
+the note update and started reporting the link writes. Every optimistic-update
+path in the importer began reading as a conflict — 18 tests in
+`Tests/Notes/test_note_import_executor.py`. A targeted run of the one test I
+had added for the new behaviour was green; only the whole FILE showed it.
+
+**What to do.** Bind the count to a local the moment the statement returns
+(`updated = result.rowcount == 1`) before any other statement touches that
+cursor. And when a change adds a write inside an existing method, run that
+method's whole test FILE, not just your new test: the tests that catch a
+clobbered out-parameter are the ones you did not write.
+
 ## A refusal path needs its own test, or it will lose both its name and its cleanup (task-32243, 2026-09-11)
 
 Library ▸ Notes lasting sync shipped on 2026-08-21 with a working happy path and
@@ -13496,6 +13580,35 @@ the_same_height_the_body_does`) against the same worktree. It passed on
 `origin/dev` and failed on the branch, which located the regression in seconds —
 whereas "the note never opens" is indistinguishable from the harness flake if
 you only look at your own new tests.
+
+### Two pins in one wave contradicted each other, and both landing passes were green (tasks 32250/32259, 2026-09-12)
+
+Wave 3 of Library ▸ Notes landed task-32250 (PR #2612: the import review owns
+the work pane) and task-32259 (PR #2618: a full-canvas task closes the items
+pane) from different groups. Each PR was green at its head. On dev at
+87f6edb4c1, `test_library_notes_wave_import_ux.py::test_the_review_takes_the_
+pane_while_it_is_the_task_in_hand` failed: its second assertion pinned "choosing
+a source leaves the list open" (task-32250's corollary), while task-32259 AC#2
+and its own pin in `test_library_notes_w3_layout.py` assert the opposite for the
+same `import`/`select` state. No ordering of the two rules in
+`_library_notes_work_first_preferences` could satisfy both — the code on dev
+was byte-identical to #2618's head, and the layout group's report that "each
+keeps its shipped behaviour" was true of the review state and false of the
+corollary.
+
+It surfaced only on dev because each group's landing test set excluded the
+other's interaction file: the import-review group ran its `wave_import_ux`
+file, the layout group ran its `w3_layout` file, and the second was written
+against the real `_import_review_owns_the_pane` precisely to prove the
+ordering — which it did, without ever exercising the sibling's negative pin.
+A green landing pass over your own pins says nothing about a pin that asserts
+the negation of your AC.
+
+Rule: when a change touches a shared decision point (here the reader-layout
+derivation), the landing pass runs the pin files of every sibling group that
+also touched it in the same wave — `git log -S'<function>' --oneline` on the
+wave's branches names them — not only your own. A contradiction between two
+pins is a product ruling to record in both task files, not a merge fix.
 
 ## Reproduce geometry UNDER pytest — a bare probe reads the real user config
 

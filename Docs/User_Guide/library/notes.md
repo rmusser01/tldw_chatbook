@@ -385,8 +385,9 @@ own. Nothing is ever painted as half a word.
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. An Obsidian callout (`> [!note] Title`) renders as a quoted block headed "Note: Title" rather than printing its `[!note]` marker. The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
-| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
+| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
+| Chrome strip | One row directly under the body, right-aligned: "N words · L:C" — the words in the note and the caret's line and column, both counted from 1. It follows your typing and your arrow keys with no save and no reload. Nothing on it is a control; Tab never stops there. It appears while **Edit** is the open view on a terminal 80 columns or wider; **Preview** and **Info** have no caret, and a narrower terminal gives the row back to the body. The strip does not repeat the save state — that stays on the status line above the mode controls. The editor's Created/Modified/version line lives in one place, Info → Properties; the editor pane no longer builds a second, never-shown copy of it. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
@@ -542,8 +543,9 @@ Both folder pickers remember where you were. Each reopens at the directory it
 last picked in *that* flow, so Import once and Keep a folder synced never move
 each other's starting point, and neither borrows the Library ingest browser's.
 The first use of either — or a remembered folder that has since been moved or
-deleted — opens at your home directory instead. **Folder files** keeps its own
-separate memory, see [File notes](file-notes.md).
+deleted — falls through to the folder `[notes] sync_directory` names, and only
+then to your home directory. **Folder files** keeps its own separate memory,
+see [File notes](file-notes.md).
 
 **What a folder has to be before it can be checked.** The folder itself must be
 a real folder (not a link to one) on a local disk, outside Chatbook's own data
@@ -638,8 +640,11 @@ your home directory the first time. Its **Folder path** field can be typed into
 directly: press **Enter** to browse into the typed path, or click **Select
 folder** to use it immediately without pressing Enter first — either way,
 whatever the field currently holds is what gets picked, not merely the
-directory being browsed. An invalid path shows an inline reason and leaves the
-dialog open. Once a folder is picked, the confirmation line shows its full path
+directory being browsed. The field arrives pre-filled with the directory being
+browsed, and the click that puts the cursor in it selects that value, so typing
+a path replaces it rather than appending to it (`Ctrl+A` selects it too). An
+invalid path shows its reason on a row under the field and leaves the dialog
+open. Once a folder is picked, the confirmation line shows its full path
 (elided in the middle for long paths, keeping the folder name itself visible),
 not just its name.
 
@@ -833,6 +838,20 @@ automatic-sync setting.
    prompt "Use this note as context and help me work with it." ready to
    send or rewrite.
 
+### Capture a Console answer as a note
+The return leg of **Use in Console**. In the Console, select an assistant
+reply, click **More…**, then **Capture as note**. The reply is saved here
+immediately — titled with its first line of text (a leading code fence or
+heading mark is dropped), holding the answer verbatim — and
+a "Saved to Notes" receipt offers **Open note**, which lands you on that note
+in the editor.
+
+A captured note carries three keywords: `console`, `conversation:<id>` and
+`message:<id>`. They are ordinary keywords, so filtering the list on
+`conversation:` finds every answer kept from one chat. Capturing is blocked
+while the Console chat is temporary — a temporary chat promises nothing is
+written locally, and a note is a local write.
+
 ### Export a note as Markdown
 1. Open the note, choose **Info**, and click **Export Markdown**.
 2. Choose a destination in the "Export Note as Markdown" dialog — the
@@ -891,7 +910,8 @@ automatically. Global navigation keys live in the [guide index](../index.md).
   written whenever a selection is made in that flow. Separate keys, so neither
   flow moves the other's starting point; **Folder files** has its own
   `[file_notes] browse`. A key naming a folder that no longer exists is
-  ignored and the picker opens at your home directory.
+  ignored and the picker falls back to `[notes] sync_directory`, then to your
+  home directory.
 - [Lasting Notes folder sync](../../Features/notes_bidirectional_sync.md) —
   runtime, cutover, ownership, and recovery details.
 - [File notes](file-notes.md) — the **Folder files** side of the source strip.
@@ -1308,3 +1328,41 @@ the selection (task-32272, landed first). task-32270: the `‹ Library / Notes` 
 control — the wide sentences that promised it are corrected above.
 task-32389: below 64 columns an empty work pane hands the whole stage to the
 list.*
+
+*Verified against fix/library-notes-w3-pickers-git — 2026-09-11 (task-32251:
+every path field in these pickers now selects its pre-fill on the click that
+focuses it — clicking in and typing an absolute path used to leave
+`/Users/you/Users/you/vault` — and an invalid path reports on a row under the
+field instead of inside the dialog's bottom border. With nothing remembered, a
+picker opens at `[notes] sync_directory` before falling back to home. Verified
+live at 235x52.)*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146: Console's **More… ▸ Capture as note** walked live at 235x52 and
+100x30 — the receipt's **Open note** landed on the new note in this screen's
+editor, and the note's `console` / `conversation:<id>` / `message:<id>`
+keywords were read back from the database.)*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146 fix round 1: the title wording above gained the code-fence /
+heading rule; copy-only, no live walk.)*
+
+*Verified against fix/library-notes-w3-chrome-strip — 2026-09-11 (task-32143:
+the note editor gained a chrome strip — one right-aligned row under the body
+reading "N words · L:C", live at 235x52 and 100x30, hidden at 79 columns and
+in Preview/Info. The editor's second, never-displayed Created/Modified/version
+line was removed with it, leaving Info → Properties as its one home. The save
+state was NOT moved onto the strip: it stays on the status line above the mode
+controls, so nothing on screen reports saving twice — moving it is rider
+task-32513.)*
+
+*Verified against fix/library-notes-w3-backlinks-table — 2026-09-11
+(task-32186: "Linked from" now reads a persisted link relation instead of
+scanning every note body on every note open. Same rows, same "checking…" /
+"couldn't check" / count states; a note in Trash drops out of the list and
+comes back with it when restored. Measured on throwaway vaults of 1,000 /
+3,000 / 10,000 notes: the lookup went from 0.85 / 3.07 / 8.79 ms — growing
+with the vault — to 0.08 ms flat. Upgrading an existing database backfills
+the relation from the bodies it already holds. task-32467: a "Linked from"
+answer that lands while the work pane is mid-recompose is now held for the
+next paint instead of terminating the app.)*

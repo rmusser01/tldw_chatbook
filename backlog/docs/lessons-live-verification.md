@@ -2582,6 +2582,25 @@ testing means you are testing the wrong tree, not that the code is missing.
 After any suspicious run, `pwd` plus `git -C <tree> status` is one second
 of insurance against a split-brain patch.
 
+## zsh does not word-split `$var`, so my computed SGR click typed itself into the note (TASK-32186, 2026-09-11)
+
+**What happened.** I located a row with `L=$(capture-pane -p | awk '…{print NR" "i}')`
+and then `set -- $L` to get row and column. In bash that splits into `$1`/`$2`;
+**zsh does not word-split unquoted parameters**, so `$1` became `"24 62"` and
+`$2` was empty. The click escape came out as `\e[<0;;24 62M` — not a mouse
+report at all. The first such "click" silently did nothing (I read that as a
+wedge and started debugging the app). The second, sent while the body TextArea
+had focus, was typed into the note: `^[<0;;12 189M…` landed at the top of the
+open note's body and autosaved.
+
+**What to do.** In zsh use `${L%% *}` / `${L##* }`, or `read row col <<< "$L"`,
+or pass the two numbers as separate command substitutions — never `set -- $var`.
+Echo the assembled escape once before sending it: a real SGR click is
+`\e[<0;<col>;<row>M`, and any space or empty field in it means the split failed.
+A click that "does nothing" is more often a malformed escape than a broken app,
+and if a text field has focus the malformed escape becomes input — check the
+note body before blaming the feature.
+
 ## A performance claim gets re-measured at the commit it was made on, before you go hunting (TASK-32260, 2026-09-11)
 
 **What happened.** The critique reported Library opening in 12.6 s on a
@@ -2741,3 +2760,22 @@ starting. Note also that every encoding a terminal might send for one key
 usually normalises to a single Textual name (`\x1b[1;5F`, `\x1b[1;5H` →
 `ctrl+end`/`ctrl+home` in `_ansi_sequences.py`), so "it failed in three
 encodings" is one failure, not three.
+
+## A new menu label can ship pre-truncated — only the running app says so (task-32146, 2026-09-11)
+
+**What happened.** A new Console message action shipped with the label
+"Save answer as note" (19 chars). Every test was green: the action-row
+contracts assert `action_id`/label STRINGS, never rendered width. The first
+live walk showed the More menu — a fixed 24-cell overlay — rendering it as
+"Save answer as": Textual had cut it at about fifteen characters with no
+ellipsis, so the live label named no destination at all. The two TASK-31759
+note labels beside it ("Summarize up to here as note", "Save transcript up to
+here as note") were already taking the same cut, undetected, since they
+shipped.
+
+**What to do.** A label is not verified until a capture shows it rendered.
+Any new entry in a fixed-width surface (this More menu, the composer menu, a
+rail row) gets one `tmux capture-pane` before the guide is written — and if
+the incumbents in that surface are also truncated, say so in the guide rather
+than assuming the copy on screen is the copy in the source. Choosing a label
+that fits is a one-line fix; widening a shared menu for one row is not.

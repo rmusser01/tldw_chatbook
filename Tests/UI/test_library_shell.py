@@ -19343,7 +19343,14 @@ async def test_library_shell_notes_row_opens_editor_with_detail():
         assert title.value == "Q3 retro"
         body = screen.query_one("#library-note-body", TextArea)
         assert body.text == "alpha budget line"
-        meta = str(screen.query_one("#library-note-meta").renderable)
+        # task-32143 AC#2: the meta line this read, `#library-note-meta`,
+        # was never displayed (its `#library-note-wide-utilities` container
+        # is `display = False` unconditionally) and has been removed. The
+        # same sentence is read from the one that renders, in Info.
+        assert not screen.query("#library-note-meta"), (
+            "The dead editor meta line is back; Info's is the only one."
+        )
+        meta = str(screen.query_one("#library-note-context-meta").renderable)
         assert "v2" in meta
         assert screen._notes_state.view == "editor"
         assert screen._notes_state.selected_note_id == "n-1"
@@ -21053,13 +21060,21 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
         assert screen._library_note_version == 1  # n-2's own seeded version
         # (task-3022) The same state-then-DOM race task-699 diagnosed for
         # the note-conflict family: ``_library_note_detail`` flips to n-2
-        # a tick before the recompose that mounts ITS OWN
-        # ``#library-note-meta`` (a fresh widget instance, not a reused
-        # one) actually lands -- polling state alone (as above) can pass
-        # while the query below still sees the old/no widget. Await the
-        # widget itself, not just the state, before reading it.
+        # a tick before the recompose that mounts ITS OWN meta line (a
+        # fresh widget instance, not a reused one) actually lands --
+        # polling state alone (as above) can pass while the query below
+        # still sees the old/no widget. Await the widget itself, not just
+        # the state, before reading it.
+        #
+        # task-32143 AC#2: this was ``#library-note-meta``, which was never
+        # displayed and has been removed; Info's is the meta line now.
+        assert not screen.query("#library-note-meta"), (
+            "The dead editor meta line is back; Info's is the only one."
+        )
         n2_meta_before = str(
-            (await _wait_for_selector(screen, pilot, "#library-note-meta")).renderable
+            (
+                await _wait_for_selector(screen, pilot, "#library-note-context-meta")
+            ).renderable
         )
         assert "saved" not in n2_meta_before
 
@@ -21080,7 +21095,9 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
             f"{screen._library_note_version!r}"
         )
         n2_meta_after = str(
-            (await _wait_for_selector(screen, pilot, "#library-note-meta")).renderable
+            (
+                await _wait_for_selector(screen, pilot, "#library-note-context-meta")
+            ).renderable
         )
         assert "saved" not in n2_meta_after, (
             f"n-1's stale save result leaked into n-2's meta line: {n2_meta_after!r}"
@@ -22884,26 +22901,40 @@ async def test_library_shell_note_use_in_console_without_open_note_notifies():
 def test_library_note_css_bounds_editor_body_and_mutes_meta():
     """Generated-CSS presence check (house pattern: see
     ``test_library_source_actions_use_console_text_control_style``) --
-    the note editor's ``TextArea`` must never be left at Textual's default
-    ``height: 1fr`` inside the scrolling Library canvas, and the meta line
-    must use the same muted tone as the media viewer's.
+    the note editor's ``TextArea`` must be sized deliberately inside the
+    scrolling Library canvas, and the meta line must use the same muted
+    tone as the media viewer's.
     """
     source_css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
         encoding="utf-8"
     )
-    bundled_css = Path("tldw_chatbook/css/tldw_cli_modular.tcss").read_text(
+    # task-25812/24459 split the `#library-*` rules out of the boot bundle
+    # into the screen-owned sheet, so the generated half of this pair is
+    # that sheet -- `tldw_cli_modular.tcss` has carried none of these rules
+    # for some time, which is the second reason this test was red on dev.
+    bundled_css = Path("tldw_chatbook/css/screen_agentic_library.tcss").read_text(
         encoding="utf-8"
     )
     for css in (source_css, bundled_css):
         assert "#library-note-body {" in css
         body_block = css[css.index("#library-note-body {") :]
         body_block = body_block[: body_block.index("}")]
-        assert "height: auto;" in body_block
-        assert "min-height: 12;" in body_block
-        assert "max-height: 20;" in body_block
+        # task-32217 retired the auto/12/20 ceiling: the Body is this pane's
+        # primary content box and takes the pane, so it is `1fr` with a floor
+        # of 6. This test had kept asserting the old ceiling and was red on
+        # dev for it, which also meant its meta half below never ran. Re-
+        # pinned to the shipped truth by task-32143 (which needed that half).
+        assert "height: 1fr;" in body_block
+        assert "min-height: 6;" in body_block
+        assert "max-height:" not in body_block
 
-        assert "#library-note-meta {" in css
-        meta_block = css[css.index("#library-note-meta {") :]
+        # task-32143 AC#2: the muted-meta rule named `#library-note-meta`,
+        # a Static that was never displayed, while Info's
+        # `#library-note-context-meta` -- the meta line that renders -- had
+        # no colour rule at all. The Static is gone and the rule moved.
+        assert "#library-note-meta {" not in css
+        assert "#library-note-context-meta {" in css
+        meta_block = css[css.index("#library-note-context-meta {") :]
         meta_block = meta_block[: meta_block.index("}")]
         assert "color: $ds-text-muted;" in meta_block
 
@@ -32333,10 +32364,18 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-note-body-label",
                 "#library-note-status",
                 "#library-note-primary-actions",
+                # task-32143: the editor chrome strip ("N words · L:C") is
+                # one more fixed row under the body at 80 columns and wider,
+                # so the 1fr owner is one shorter at BOTH sizes below --
+                # 10 -> 9 and 16 -> 15. It is still one owner growing by the
+                # same 6, which is what this test is about. Below 80 columns
+                # the strip is hidden and nothing here changes (the 60x20
+                # allocations keep their 6-row body).
+                "#library-note-chrome-facts",
             ),
-            (1, 1, 1, 1, 2),
-            10,
-            16,
+            (1, 1, 1, 1, 2, 1),
+            9,
+            15,
         ),
         (
             "context",
