@@ -5,10 +5,51 @@ import pytest
 from Tests.TTS.test_profile_repository_maintenance import _run_private_child
 
 
+def _native_admission_probe(control, names):
+    """Distinguish observed lock contention from an expired traversal budget."""
+    import json
+    import subprocess  # nosec B404
+    import sys
+
+    # Fixed test interpreter/code and separate path arguments; no shell.
+    result = subprocess.run(  # nosec B603
+        [sys.executable, "-c", """
+import json, sys, time
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery import admission
+native = admission.fcntl
+class ObservedLocks:
+    contended = False
+    def __getattr__(self, name):
+        return getattr(native, name)
+    def flock(self, *args):
+        try:
+            return native.flock(*args)
+        except BlockingIOError:
+            self.contended = True
+            raise
+locks = ObservedLocks()
+admission.fcntl = locks
+started = time.monotonic()
+try:
+    with admission.Admission(Path(sys.argv[1])).maintenance(tuple(json.loads(sys.argv[2])), 2):
+        status = "entered"
+except admission.AdmissionTimeout:
+    status = "contended" if locks.contended else "timeout_without_contention"
+print(json.dumps({"status": status, "elapsed": time.monotonic() - started}))
+""", str(control), json.dumps(names)],
+        capture_output=True,
+        text=True,
+        timeout=6,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
 async def _native_close_child(root, fault):
     import sqlite3
 
-    from Tests.DB.test_sqlite_source_pin_lifetime import _probe
     from Tests.TTS.test_profile_schema import _build_candidate_version
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
     from tldw_chatbook.TTS import profile_repository as repository
@@ -78,8 +119,11 @@ async def _native_close_child(root, fault):
         else:
             assert not live.in_transaction
         storage._shutdown()
-        assert _probe(hold.authority.control_root, hold.names) == "blocked"
+        probe = _native_admission_probe(hold.authority.control_root, hold.names)
+        assert probe["status"] == "contended", probe
     else:
+        held = _native_admission_probe(hold.authority.control_root, hold.names)
+        assert held["status"] == "contended", held
         try:
             await repo.close()
         except ProfileRepositoryError:
@@ -91,7 +135,8 @@ async def _native_close_child(root, fault):
             with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
                 _ = connection.in_transaction
         owner.close()
-        assert _probe(hold.authority.control_root, hold.names) == "entered"
+        released = _native_admission_probe(hold.authority.control_root, hold.names)
+        assert released["status"] == "entered", released
 
 
 @pytest.mark.parametrize("fault", ["success", "live_before", "live_after", "evidence"])
