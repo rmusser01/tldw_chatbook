@@ -1,6 +1,6 @@
 # Cross-platform backup correction plan
 
-TASK-32496. Spec: ../specs/2026-09-12-cross-platform-backup-correction.md.
+TASK-32562. Spec: ../specs/2026-09-12-cross-platform-backup-correction.md.
 ADR required: existing ADR amendment.
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: correct platform operation contracts without changing recovery behavior.

@@ -1,6 +1,6 @@
 # Cross-platform backup correction
 
-TASK-32496. The user requires the existing backup feature to work on macOS,
+TASK-32562. The user requires the existing backup feature to work on macOS,
 Linux and Windows, with actual Linux SSH and Windows GitHub Actions testing.
 This supersedes earlier decisions to leave native Linux/Windows operations out.
 

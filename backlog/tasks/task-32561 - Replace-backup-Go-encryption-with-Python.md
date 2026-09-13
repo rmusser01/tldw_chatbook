@@ -1,5 +1,5 @@
 ---
-id: TASK-32495
+id: TASK-32561
 title: Replace backup Go encryption with Python
 status: Done
 created_date: 2026-09-12 15:09
@@ -36,7 +36,7 @@ ADR required: no new ADR. Existing backlog/decisions/126-complete-local-backup-a
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-User: 'go should haven ever been used'. Plan authoring choice is superseded; do not insist on Go due to original plan. Python cryptography candidates are under read-only assessment. Project already depends on pycryptodomex. Existing pure-Python age packages and Rust-backed pyrage are not assumed suitable; stream limits and byte-password compatibility must be verified. Existing crypto public transform signature and .age format should remain stable. Linux baseline is tracked separately byTASK32494 and shows unrelated Darwin-native publication/barrier gaps.
+User: 'go should haven ever been used'. Plan authoring choice is superseded; do not insist on Go due to original plan. Python cryptography candidates are under read-only assessment. Project already depends on pycryptodomex. Existing pure-Python age packages and Rust-backed pyrage are not assumed suitable; stream limits and byte-password compatibility must be verified. Existing crypto public transform signature and .age format should remain stable. Linux baseline is tracked separately byTASK32560 and shows unrelated Darwin-native publication/barrier gaps.
 Design/plan recorded in Docs/superpowers/specs/2026-09-12-python-backup-encryption-design.md and matching plans path, implementing the user's explicit language correction while preserving .age files and existing API. Existing pycryptodomex provides primitives; no additional crypto runtime dependency or Rust replacement. Bounded isolated Python worker retains cancellable KDF and pipe secret handling. Task1 worker implementation/review dispatched under SDD; root owns independent legacy test-vector provenance, packaging plan and records. Existing Linux test ciphertext is synthetic and predates the correction; preserve it for compatibility, with no additional Go execution.
 Fixed independent interoperability fixtures committed749f116b2: official age1.3.2 ciphertext (SHAfb98c008...), previous worker empty/raw4096-byte password ciphertext (SHA3f67cd98...), prior worker streaming ciphertext (SHA747e0916...). Root verified remote/local hashes; README records fully synthetic inputs and original37pass test receipt. No newGo execution. Worker/test-only implementation active; independent read-only packaging map delegated while root prepares unchanged transport/capability integration. Design/plan commitc19068652.
 Task1 worker frozen for independent review: 60 tests passed (15.95s), including three fixed pre-existing age archives and exact ciphertext reproduction with recorded entropy. Ruff/format/compile and production Bandit passed; test-only Bandit findings retained in report. Worker protocol2/python/age-v1. Parent transport and Go packaging removal remain pending. Evidence /private/tmp/task32495-python-worker-report.md; reviewer dispatched.
@@ -60,3 +60,9 @@ Removed Go from backup source/build/package/runtime and replaced encryption with
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-32495 to TASK-32561 on 2026-09-13 to resolve the collision introduced when PR2642 merged dev in `d914a76a21b10cf687eeed5d2bee619bc6b4bb6e`. The already-landed “Hands-free failure honesty: dictation-death exit, degraded copy, entry preflight” task retains TASK-32495; dev assigned that ID in `97041ab370402ba22e75ba214bab75075be11dfb` before this backup record first appeared in `c19068652a38f2407ca885cc8c8c44d9777b4a18`. This follows the landed-task rule in `backlog/docs/lessons-backlog-hygiene.md`.
+
+The fresh sweep covered all reachable task filenames across both local repositories' refs and 23 live worktrees (maximum 32559), then confirmed no TASK-32560/32561/32562 content references across 179 and 224 unique ref tips or live worktrees. Backup-owned semantic references follow the new IDs. Historical receipt paths retain their original names.

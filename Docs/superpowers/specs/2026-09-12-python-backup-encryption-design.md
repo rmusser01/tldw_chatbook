@@ -3,7 +3,7 @@
 User decision, 2026-09-12: Go was an oversight in the original backup plan and must
 be removed. This correction supersedes the Go implementation/build/delivery portions
 of the revision-4 design and ADR-126. The backup feature scope and archive format
-remain unchanged. Tracked by TASK-32495; Linux baseline testing is TASK-32494.
+remain unchanged. Tracked by TASK-32561; Linux baseline testing is TASK-32560.
 
 ## Required behavior
 

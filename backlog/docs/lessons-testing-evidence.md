@@ -9,7 +9,7 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
-## Private test parents must be private too (TASK-32494/TASK-32495, 2026-09-12)
+## Private test parents must be private too (TASK-32560/TASK-32561, 2026-09-12)
 
 **Incident.** The Linux Python backup run failed all 116 cases during setup:
 the remote umask left the harness run root and timestamp parent at 0775, although

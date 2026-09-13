@@ -6,7 +6,7 @@
 Goal: replace the backup Go implementation with Python while preserving encrypted
 archive compatibility and the existing backup/recovery behavior.
 
-Spec: ../specs/2026-09-12-python-backup-encryption-design.md. TASK-32495.
+Spec: ../specs/2026-09-12-python-backup-encryption-design.md. TASK-32561.
 Architecture: a package-owned Python streaming worker using existing PyCryptodome
 primitives; the current parent transport retains cancellation and atomic output.
 Tech stack: Python>=3.11, existing pycryptodomex, stdlib pipes/files, pytest.
@@ -100,5 +100,5 @@ recorded in Docs/Development/backup-python-verification-2026-09-12.md and PR2642
 Run serial native tests in private locations with NullKeyring/network guard.
 Record exact source/package identities; distinguish test fixture faults from native
 Linux publication/F_FULLFSYNC gaps. Independent review of final change and evidence;
-scoped production Bandit and static checks. Update TASK-32495, TASK-32494 and PR2642
+scoped production Bandit and static checks. Update TASK-32561, TASK-32560 and PR2642
 with the final implementation and actual results. Commit only task-owned files.

@@ -1,9 +1,9 @@
 # Linux backup baseline, 2026-09-12
 
-TASK-32494; [PR2642](https://github.com/rmusser01/tldw_chatbook/pull/2642).
+TASK-32560; [PR2642](https://github.com/rmusser01/tldw_chatbook/pull/2642).
 Source: `2220f3bdcd5c8e9f43bd4acac10a07a12ef049d0`, fetched directly from the public
 GitHub repository. This is the baseline before the user's Python-only correction
-(TASK-32495), not qualification of the replacement implementation.
+(TASK-32561), not qualification of the replacement implementation.
 
 Environment: Debian Linux6.12.107+deb13-amd64, x86_64, ext4 home filesystem,
 Python3.12.8 in a private venv, Go1.26.2 provisioned privately for the initial

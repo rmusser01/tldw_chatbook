@@ -1,6 +1,6 @@
 """Exact current core sqlite_schema SQL, captured from installed domain constructors.
 
-Provenance: TASK-32496, dev a3142cb35 merge qualification.
+Provenance: TASK-32562, dev a3142cb35 merge qualification.
 Captured from fresh actual constructors in private test directories and checked
 by test_schema_policy_matches_installed_store. Requalification must compare actual schemas,
 not change version labels or silently normalize SQL. Historical schemas unsupported.

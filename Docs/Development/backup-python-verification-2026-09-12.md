@@ -1,6 +1,6 @@
 # Python backup encryption verification, 2026-09-12
 
-TASK-32495; Linux testing TASK-32494;
+TASK-32561; Linux testing TASK-32560;
 [PR 2642](https://github.com/rmusser01/tldw_chatbook/pull/2642).
 This record covers the user-requested removal of Go. Earlier Go qualification
 receipts are historical and do not qualify the Python implementation.

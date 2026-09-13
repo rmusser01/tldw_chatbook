@@ -90,7 +90,7 @@ archive/restore/native-readback test passes in 34.25s without changing inventory
 requirements. Native Windows and remaining final Linux results follow below.
 
 
-TASK-32496; PR2642 targets dev. The published cross-platform correction has the
+TASK-32562; PR2642 targets dev. The published cross-platform correction has the
 platform evidence recorded below. Integration includes dev `5fd502dba`; final native reruns are in progress;
 those earlier receipts do not qualify the merged implementation. The requester
 has supplied the PR's human-written Change summary. Resolving the conflicts does

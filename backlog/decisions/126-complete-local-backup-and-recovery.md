@@ -5,10 +5,10 @@ Date: 2026-09-07
 
 2026-09-12 user correction: the Go implementation/build/delivery choice in decision
 6 is superseded by the [Python encryption correction](../../Docs/superpowers/specs/2026-09-12-python-backup-encryption-design.md)
-(TASK-32495). The existing age v1 format, isolated worker, integrity checks and
+(TASK-32561). The existing age v1 format, isolated worker, integrity checks and
 recovery boundaries remain. See the [verification record](../../Docs/Development/backup-python-verification-2026-09-12.md).
 
-2026-09-12 platform correction (TASK-32496), explicitly requested by the user:
+2026-09-12 platform correction (TASK-32562), explicitly requested by the user:
 the existing recovery feature must operate on macOS, Linux and Windows. Use the
 [cross-platform correction spec](../../Docs/superpowers/specs/2026-09-12-cross-platform-backup-correction.md).
 Native APFS, ext4 and local NTFS contracts replace exact OS/Python patch matching;
