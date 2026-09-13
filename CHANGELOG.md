@@ -14,6 +14,7 @@ the unpublished PyPI 0.2.0 release candidate.
 - Console conversation archive recovery and retained local reasoning history.
 - Expanded Persona Buddy management and Petdex import support.
 - Custom endpoint registry, a chat tokenization sheet, and artifact web export.
+- Agent provider routing and configurable Console run hooks.
 
 ### Changed
 - App-only release: ordinary speech recording no longer depends on the unavailable

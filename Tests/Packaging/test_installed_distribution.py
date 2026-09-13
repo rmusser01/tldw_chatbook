@@ -2994,7 +2994,7 @@ from tldw_chatbook.Chat.console_voice_settings import speculative_voice_qualifie
 requirements = requires("tldw_chatbook") or []
 assert not any(re.match(r"tldw[-_.]voice[-_.]aec(?:[\s<>=!~;@\[]|$)", item.strip(), re.I) for item in requirements)
 for ordinary in ("pyaudio", "sounddevice", "webrtcvad-wheels"):
-    assert any(item.lower().startswith(ordinary) and "speech_recording" in item for item in requirements)
+    assert any(item.lower().startswith(ordinary) and 'extra == "speech-recording"' in item for item in requirements)
 os.environ["TLDW_DEV_SPECULATIVE_VOICE"] = "1"
 assert speculative_voice_qualified() is False
 print("installed-app-only-voice-gate-ok")
