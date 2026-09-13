@@ -433,10 +433,21 @@ class ConsoleModelPopover(
                 error.display = False
                 yield error
                 yield Static("Provider", classes="console-popover-field-label")
+                # TASK-32533: a no-provider draft carries "" and a stale draft
+                # can carry a key the option builder no longer lists; Textual's
+                # Select raises InvalidSelectValueError at mount for either,
+                # and that exit took the whole app with it (critique #3 P0).
+                # Same guard as the model select below.
+                provider_values = {value for _, value in provider_options}
                 yield Select(
                     provider_options,
-                    value=settings.provider,
+                    value=(
+                        settings.provider
+                        if settings.provider in provider_values
+                        else Select.NULL
+                    ),
                     id="console-popover-provider",
+                    allow_blank=True,
                 )
                 yield Static("Model", classes="console-popover-field-label")
                 model_select = Select(
