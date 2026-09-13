@@ -9,6 +9,22 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Windows test homes need USERPROFILE isolation (TASK-32562, 2026-09-13)
+
+**Incident.** Backup native-close run 34745966265 reported lease-lock error 33
+after all 18 child leases retired and their holder thread exited. The test helper
+changed HOME but inherited USERPROFILE, which Windows Path.home uses. Its child
+therefore shared the parent's bootstrap authority and contended with the parent's
+startup lease. A controlled native reproduction failed with shared authority and
+passed with an isolated home while the same parent lease remained alive.
+
+Select both HOME and USERPROFILE before importing a Windows test child, then
+verify its actual home and bootstrap scope. Empty child ownership alone does not
+prove that an external lock belongs to the child. Keep the held/released native
+probes; do not weaken production locking to accommodate a shared test profile.
+
+---
+
 ## Private test parents must be private too (TASK-32560/TASK-32561, 2026-09-12)
 
 **Incident.** The Linux Python backup run failed all 116 cases during setup:

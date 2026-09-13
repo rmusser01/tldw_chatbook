@@ -91,6 +91,7 @@ def _native_hold_summary(storage, selected):
 
 async def _native_close_child(root, fault):
     import sqlite3
+    from pathlib import Path
 
     from Tests.TTS.test_profile_schema import _build_candidate_version
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
@@ -98,6 +99,13 @@ async def _native_close_child(root, fault):
     from tldw_chatbook.TTS import profile_schema as schema
     from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 
+    home_aligned = Path.home() == root / "home"
+    authority_aligned = storage.bootstrap.default_bootstrap_root().is_relative_to(
+        root / "home"
+    )
+    assert home_aligned and authority_aligned, {
+        "home_aligned": home_aligned, "authority_aligned": authority_aligned
+    }
     active = root / "profiles.sqlite"
     fixture = _build_candidate_version(active, 4)
     assert fixture.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
@@ -188,7 +196,11 @@ async def _native_close_child(root, fault):
 
 
 @pytest.mark.parametrize("fault", ["success", "live_before", "live_after", "evidence"])
-def test_native_repository_close_preserves_proven_state_and_exclusion(tmp_path, fault):
+def test_native_repository_close_preserves_proven_state_and_exclusion(
+    tmp_path, monkeypatch, fault
+):
+    # The child helper selects HOME; Windows Path.home selects USERPROFILE.
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     _run_private_child(
         tmp_path,
         """

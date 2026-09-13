@@ -1,6 +1,76 @@
 # Cross-platform backup verification — 2026-09-12
 
-## Current merged revision
+## Current verification status
+
+The conflict resolution includes dev `5fd502dba`; GitHub reports PR 2642
+mergeable. The requester's Change summary is preserved verbatim. The PR has
+not been merged. Backup task IDs that collided with upstream voice tasks were
+renumbered to TASK-32560, TASK-32561 and TASK-32562; the voice records and
+historical receipt paths remain unchanged.
+
+The last production correction is `7666ebf6b9fbe234e7bb220e9e09fd1f06e4a539`.
+[Windows run 34743946448](https://github.com/rmusser01/tldw_chatbook/actions/runs/34743946448)
+passes all six actual installed workflows: plaintext 331.630s, encrypted 326.884s,
+credential-inclusive 474.703s, two-profile restore 705.195s, replacement 591.235s,
+and later rollback 1074.953s. Rollback records successful validated restoration.
+All 294 native checks pass. The 152 artifact hashes, clean 16,025-file source, and
+2,838 installed source-file matches verify. Support passes 132/133; the remaining
+native TTS success-close test reports contention when requesting maintenance
+after successful repository closure.
+
+[Windows support run 34744933254](https://github.com/rmusser01/tldw_chatbook/actions/runs/34744933254)
+at test-only revision `e9307dd9c4f4869a4089263aef0832a5e1d0f8d6` also passes
+132/133 support and 42/42 native cases, with zero skips. All 32 artifact hashes,
+clean 16,025-file source and 2,838 installed source matches verify. The refined
+probe distinguishes actual native contention from traversal timeout; it still
+observes contention after successful closure. Thus the cause remains unresolved.
+The fixed four-case diagnostic at `79a665bca44028a3da810fb1f64d9249ac1dd2ea`,
+[run 34745966265](https://github.com/rmusser01/tldw_chatbook/actions/runs/34745966265),
+records raw native error, lock kind and remaining owner state without changing
+production behavior, test assertions or deadlines. Its 9 artifact hashes and
+clean source verify; 42 native and 3 of 4 close cases pass. The failure shows
+all 18 child leases retired and the holder thread exited, with no errors or
+retiring owners, followed by lease-lock error 33.
+
+A controlled native reproduction identifies an external parent startup hold:
+sharing the parent's home/bootstrap scope reproduces the same contention after
+all child leases retire; an isolated child enters while the same parent hold
+remains alive. On Windows the test helper changed HOME but inherited USERPROFILE,
+so Path.home retained the parent's recovery authority. The correction aligns
+USERPROFILE in this four-case test and asserts the selected home/control scope.
+Production locking remains unchanged. Native Windows verification of that
+test-isolation correction is pending.
+
+The supplied Linux host passes the final committed correction group 22/22,
+all three F9 modes 3/3, and combined replacement/later rollback 1/1 at
+`071aefcdf51f2db69ba5bbd62f929f6cae86bb17`: 26 passed, no failures, errors or
+skips. The groups take 23.56s, 215.24s and 349.92s. This test-only revision preserves
+the 7666 production behavior and adjusts only measured Linux fixture waits.
+The clean source archive and both installed wheels verify, including 2,849
+installed files per fixture; every flow preserves and reopens its source.
+Environment: Python 3.12.8, Linux 6.12.107+deb13amd64, ext4. Evidence:
+`/private/tmp/owners-final-071-linux-evidence.json` and
+`/private/tmp/backup-final-071-linux.log`.
+
+macOS passes all six installed flows at the conflict-resolution revision below.
+After 7666 production corrections, a fresh installed plaintext F9
+backup/restore/open passes 55.05s with committed build and wheel bytes verified.
+Targeted native-close and isolated-recovery regressions also pass locally.
+
+The merged PR's GGUF and UI latency checks exposed seven full-app tests that
+changed their selected profile after importing the app. Their original assertions
+now pass locally under an opt-in private interpreter/profile lifetime: 35 GGUF
+cases and 10 latency cases. Nine controlled process checks also verify failure
+propagation, cancellation/timeout kill and reap, and existing timeout precedence.
+The four-file test correction adds no Bandit/Ruff findings; native CI remains pending.
+The separate binary Windows checkout failure names long upstream task paths
+introduced after the merged dev revision; it occurs before packaging and remains
+outside this backup correction. No full-repository test pass is claimed.
+
+## Earlier merged-revision investigation
+
+The following entries preserve the investigation state when each earlier run
+was recorded; the current status above supersedes their pending outcomes.
 
 Production corrections are published in `7666ebf6b9fbe234e7bb220e9e09fd1f06e4a539`.
 Its installed macOS plaintext F9 backup/restore/open passes in 55.05s, with
