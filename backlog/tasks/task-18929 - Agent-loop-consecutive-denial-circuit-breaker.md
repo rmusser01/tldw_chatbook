@@ -1,11 +1,11 @@
 ---
 id: TASK-18929
 title: 'Agent loop: consecutive-denial circuit breaker'
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-19 09:55'
-updated_date: '2026-09-13 00:05'
+updated_date: '2026-09-13 00:19'
 labels:
   - agents
   - tools
@@ -30,7 +30,7 @@ Port of hermes-agent's consecutive-denial circuit breaker (2026-08-19 hermes-rel
 - [x] #6 Only authoritative explicit user denial or configured permission Off increments the streak; unanswered, timeout, cancellation, stale authority, legacy refusal text and synthetic restored-pending results do not.
 - [x] #7 Evaluate the trailing streak after a fully settled tool batch, preserve every tool reply, and stop before another model call; an approved tail resets the streak and the terminal message reports the actual observed count.
 - [x] #8 Builtin, local, MCP, virtual CLI and raw-shell authoritative invocation decisions reach the run-local counter even when pending review is bypassed; defaulted unanswered stamps and opaque runtime refusals never fabricate denial authority.
-- [ ] #9 Ordinary non-denial budget and cancellation stops preserve the established coherent continuation boundary; denial-breaker terminal history still includes every settled tool reply, with targeted regression coverage.
+- [x] #9 Ordinary non-denial budget and cancellation stops preserve the established coherent continuation boundary; denial-breaker terminal history still includes every settled tool reply, with targeted regression coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,4 +57,6 @@ Targeted evidence (overlapping runs are not summed): 30 shared-type/trace cases;
 Evidence qualifications: core runtime preimplementation RED was missed; a later exact-BASE 13-failure control proves sensitivity only. Task4 missing-placeholder RED was observed before editing (1failed/1passed), but only an explicitly labelled output summary was retained. Shared RequestsDependencyWarning and foreign pytest cleanup warnings remain unchanged. No full suite, live provider test, shared dependency repair or foreign cleanup was performed. Full reports/reviews and exact commands remain in .superpowers/sdd/2026-09-12-agent-denial-breaker/ in the preserved orchestration worktree; current completion is reflected in backlog/docs/agent-orchestration-followups-2026-09-12.md.
 
 Reopened during final integration on 2026-09-12: test_budget_exhausted_at_loop_top_yields_the_last_boundary fails with an extra completed tool batch. Its test AST is unchanged from merged base d66908a69, while this wave added unconditional coherent_len advancement after every batch in agent_runtime.py. Source/AST classification and current failure evidence are preserved in the orchestration SDD workspace; no pristine-base test execution is claimed. Earlier reviewed delivery remains historical evidence, not current completion. The focused repair and combined review are pending.
+
+Final integration repair completed in 7852cf47ba and independently re-reviewed: coherent_len advances after a settled batch only when the denial breaker itself terminates. Ordinary budget/cancellation stops retain the established boundary; denial history still retains the entire settled batch. The unchanged loop-top regression now passes in the complete 45-case continuation module, with zero teardown errors. Six focused denial/cancellation/history neighbors also pass. Scoped static adds no diagnostics and all edited formatting ranges pass. AC9 is complete; this supersedes the reopened status while preserving the original failure evidence and earlier implementation notes. The shared final review/evidence/50-ruling record is Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md. Existing ADR154 applies; no new ADR, full-suite claim, live provider, foreign cleanup or unsafe worktree behavior. TASK31210/31211 and the parent remain open.
 <!-- SECTION:NOTES:END -->

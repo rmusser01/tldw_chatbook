@@ -12,24 +12,18 @@ supersedes its pending-integration and remaining-work labels.
   TASK-18601 bounded segment-log paging, TASK-31511 bounded reusable webhook
   delivery. Their task notes contain scoped test results and evidence
   qualifications.
-- **Reopened for integration repair:** TASK-18929 denial breaker. The reviewed
-  delivery includes authoritative approval facts, completed-batch enforcement,
-  terminal copy, persistence and sibling isolation. Final integration found that
-  unconditional advancement of the saved continuation boundary also changes
-  ordinary budget stops. The unchanged loop-top regression currently fails; a
-  focused correction must retain complete denial-terminal history without
-  changing unrelated budget/cancellation boundaries. Earlier completion notes
-  are historical; the task is In Progress until repair and review finish.
-- **Reopened for integration repair:** TASK-18923 live per-run usage, from
-  service/adapter/bridge attribution through primary/child Console rendering
-  (`16c10faca7`, `2f39215549`, `ca9418b33a`, `c1b2bf984b`, `3580bc6ae0`).
-  The UI gate passed 88 tests; exact test-owner cleanup was followed by 15 usage
-  selectors and 12 fleet-panel tests with zero regular-file descriptor growth.
-  Provider/local labels, zero omission, current-call reset and existing timer
-  ownership are verified. Final review confirmed that a per-chunk telemetry
-  extraction fault can abort a valid stream; that narrow failure boundary needs
-  repair while preserving genuine provider errors and final accounting. Earlier
-  reviewed results and warning qualifications remain in the task notes.
+- **Done after final integration repair and review:** TASK-18929 denial breaker.
+  The final correction (`7852cf47ba`) preserves the established ordinary budget
+  and cancellation continuation boundary while retaining complete settled
+  denial batches. The formerly failing continuation module now passes all 45
+  tests with no teardown errors; six denial/cancellation neighbors also pass.
+- **Done after final integration repair and review:** TASK-18923 live per-run
+  usage. Primary and child labels use the existing timers and distinguish
+  provider counts from local estimates. Per-chunk telemetry extraction faults
+  are now isolated from valid streams; actual attributed text regressions and
+  the final 13-case accounting/provider-error selection pass. Genuine provider
+  failures and final accounting retain their established behavior. Earlier UI,
+  lifecycle and descriptor evidence remains qualified in the task notes.
 - **Settings ownership and feedback done:** TASK-13154.5 closes only panel-owned
   connections and explains filtered runtime tools after Save (`97c3bce2e0`,
   `1b9cff9776`). Independent review, real held-connection tests and wide/narrow
@@ -43,9 +37,9 @@ supersedes its pending-integration and remaining-work labels.
   storage, frozen spawn minimums, retained continuation ceilings and the canonical
   Settings field (`b46807d547`, `be709a648f`, `bbfc233aad`, `c0d419d420`).
   All three slices passed independent review; task notes separate successful
-  targeted gates from the outstanding continuation integration failures and
-  historical test-isolation qualifications. Parent TASK-13154 reconciliation
-  and the combined branch review remain open.
+  targeted gates from the earlier continuation integration failures and
+  historical test-isolation qualifications. The partial parent reconciliation
+  and combined branch review are now complete; parent closure remains open.
 - **Execution design unresolved:** TASK-31210/31211 confirmed worktree actions
   and prior-turn recovery. A real temporary-repository race demonstrated that
   Git running from a pinned linked child can advance a replacement parent
@@ -58,10 +52,17 @@ supersedes its pending-integration and remaining-work labels.
   Ordinary agents remain available; existing work is retained. The final affected
   Console/service selection passed 25 tests with no new skips. Functional
   recovery itself remains incomplete.
-- Three of the eight requested outcome areas are complete; denial-breaker
-  and live-usage integration repairs are reopened. The parent stays open
-  until the remaining implementation and combined branch review finish. No new
-  PR, push or merge has been performed for this continuation.
+- **Final integration review complete:** all four identified integration defects
+  are fixed and independently re-reviewed in `7852cf47ba`, including replacement
+  of obsolete worktree-positive continuation tests and the required diagnostic
+  inventory refresh. No new Critical/Important finding remains in that correction.
+  The [complete review, evidence and 50-ruling record](../../Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md)
+  preserves historical failures, decisions and process qualifications.
+- **Remaining functional work:** TASK-31210 and TASK-31211 need a qualified
+  worktree execution backend before their confirmation/recovery features can be
+  enabled. Parent TASK-13154 remains In Progress with acceptance unchecked.
+  Changes are committed locally; no new PR, push or merge was performed.
+
 
 
 Baseline: `origin/dev` at `8ab21ecaf372ad0b5cc8bca98dd12c427f4aef87`.
