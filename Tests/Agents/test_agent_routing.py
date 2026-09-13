@@ -85,6 +85,41 @@ def test_final_provider_guard_allows_model_only_on_parent_provider():
         routing=CFG_ON, readiness=READY)
     assert (t.provider, t.model) == ("llama_cpp", "qwen3.8-27b")
 
+def test_model_only_override_outside_glob_refused_on_parent_provider():
+    # qodo PR-2651 High: the final (provider, model) glob check must fire even
+    # when the override lands on the parent's own provider -- otherwise a
+    # restricted model rides in through the same-provider seam.
+    cfg = AgentsRoutingConfig(spawn_override_enabled=True,
+        spawn_override_allowlist=("llama_cpp/qwen3.8-*",))
+    try:
+        resolve_spawn_target(APP_CFG, parent_provider="llama_cpp",
+            parent_model="qwen3.8-27b", override_model="llama-3-8b",
+            routing=cfg, readiness=READY)
+        assert False
+    except RoutingError as e:
+        assert e.code == "provider_not_allowlisted" and e.level == "override"
+
+def test_explicit_same_provider_override_outside_glob_refused():
+    # Same hole via override_provider repeating the parent provider verbatim.
+    cfg = AgentsRoutingConfig(spawn_override_enabled=True,
+        spawn_override_allowlist=("llama_cpp/qwen3.8-*",))
+    try:
+        resolve_spawn_target(APP_CFG, parent_provider="llama_cpp",
+            parent_model="qwen3.8-27b", override_provider="llama_cpp",
+            override_model="llama-3-8b", routing=cfg, readiness=READY)
+        assert False
+    except RoutingError as e:
+        assert e.code == "provider_not_allowlisted" and e.level == "override"
+
+def test_same_provider_override_inside_glob_allowed():
+    cfg = AgentsRoutingConfig(spawn_override_enabled=True,
+        spawn_override_allowlist=("llama_cpp/qwen3.8-*",))
+    t = resolve_spawn_target(APP_CFG, parent_provider="llama_cpp",
+        parent_model="llama-3-8b", override_provider="llama_cpp",
+        override_model="qwen3.8-27b", routing=cfg, readiness=READY)
+    assert (t.provider, t.model, t.source) == (
+        "llama_cpp", "qwen3.8-27b", "override")
+
 def test_allowlist_glob_matching():
     al = ("llama_cpp/qwen3.8-*", "custom-ep:box")
     assert allowlist_matches(al, "llama_cpp", "Qwen3.8-27B")      # case-insensitive

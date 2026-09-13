@@ -265,9 +265,13 @@ def resolve_spawn_target(
                 "model; set one or name a model",
                 level=source)
 
-    if (override_provider or override_model) and provider != parent_provider \
-            and not allowlist_matches(
-                routing.spawn_override_allowlist, provider, model):
+    # Final (provider, model) glob check runs for EVERY ad-hoc override —
+    # including a model-only override or one that explicitly repeats the
+    # parent provider. Gating it on provider != parent_provider would let a
+    # restricted model ride in through the same-provider seam (qodo PR-2651
+    # review, High).
+    if (override_provider or override_model) and not allowlist_matches(
+            routing.spawn_override_allowlist, provider, model):
         raise RoutingError(
             "provider_not_allowlisted",
             f"final target '{provider}/{model}' matches no allowlist entry",
