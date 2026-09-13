@@ -3297,8 +3297,15 @@ class ChatScreen(BaseAppScreen):
         _pre_push_guard: Callable[[], bool] | None = None,
         _suspended_owner_token: int | None = None,
         _on_transfer_committed: Callable[[], bool] | None = None,
+        _pushed_modal_sink: Callable[["ConsoleSettingsModal"], None] | None = None,
     ) -> bool:
-        """Open Console session settings for the active native session."""
+        """Open Console session settings for the active native session.
+
+        ``_pushed_modal_sink`` (PR-2646 review): called with the exact modal
+        instance right after a clean successful push, so layered flows
+        (``/endpoint``) can retain it instead of re-opening settings or
+        guessing at the screen stack.
+        """
         controller = self._ensure_console_chat_controller()
         store = self._ensure_console_chat_store()
         if transfer is None:
@@ -3476,6 +3483,8 @@ class ChatScreen(BaseAppScreen):
                 return False
             return False
         if report_transfer_committed():
+            if _pushed_modal_sink is not None:
+                _pushed_modal_sink(modal)
             return True
         await self._unwind_failed_console_settings_modal(modal)
         return False
@@ -6097,6 +6106,71 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         self.run_worker(self._open_console_settings(), exclusive=False)
+
+    def action_open_console_new_endpoint(self) -> None:
+        """Open the endpoint-template creation flow on top of session settings.
+
+        ``/endpoint`` (H6): the same flow the Conversation-settings provider
+        list's "New custom endpoint…" sentinel row opens. The settings modal
+        is pushed first so the created entry lands as its selected provider
+        (``EndpointCreated`` is announced to the opener screen).
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(self._open_console_new_endpoint(), exclusive=False)
+
+    async def _open_console_new_endpoint(self) -> None:
+        """Push Conversation settings, then its endpoint template modal.
+
+        PR-2646 review: the template must layer on the *exact* settings
+        modal this flow opened -- ``EndpointCreated`` is delivered to the
+        screen directly beneath the template (``screen_stack[-2]``), so a
+        template that lands over ChatScreen would orphan the creation (no
+        provider selection, no model discovery). The exact modal is retained
+        through ``_pushed_modal_sink``, its already-resolved provider models
+        and app config are reused (no second async resolution window while
+        the user could dismiss settings), and the stack is rechecked
+        immediately before the push: abort if the modal was dismissed or
+        covered by an unrelated screen.
+        """
+        retained: list["ConsoleSettingsModal"] = []
+
+        def _retain_settings_modal(modal: "ConsoleSettingsModal") -> None:
+            retained.append(modal)
+
+        opened = await self._open_console_settings(
+            _pushed_modal_sink=_retain_settings_modal
+        )
+        if not opened or not retained:
+            return
+        settings_modal = retained[0]
+        # Lazy import: the modal module chain is heavy and stays off the boot
+        # path (ADR-097 ratchet); this action imports it on first use only.
+        from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+            ConsoleEndpointTemplateModal,
+        )
+
+        try:
+            settings_directly_beneath = (
+                self.app.screen_stack[-1] is settings_modal
+            )
+        except Exception:
+            settings_directly_beneath = False
+        if not settings_directly_beneath:
+            # Dismissed (or covered by an unrelated screen) between the
+            # settings push settling and now: layering the template here
+            # would deliver EndpointCreated to whatever currently sits
+            # beneath it, so abort the flow instead.
+            return
+        self.app.push_screen(
+            ConsoleEndpointTemplateModal(
+                # The sentinel-flow seam: seed from the exact settings
+                # modal's own resolved inputs rather than re-resolving.
+                app_config=settings_modal._app_config,
+                providers_models=settings_modal._providers_models,
+                template_provider=settings_modal._active_provider or None,
+            )
+        )
 
     def action_open_console_prompt_insert(self) -> None:
         """Open the `/prompt` insert picker from the command palette ("Insert prompt…").
@@ -18785,6 +18859,7 @@ class ChatScreen(BaseAppScreen):
         "temp": "action_new_temporary_console_tab",
         "settings": "action_open_console_session_settings",
         "context": "action_view_chat_context",
+        "endpoint": "action_open_console_new_endpoint",
     }
     _CONSOLE_COMMAND_NAME_TO_HANDLER_ID = {
         PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,

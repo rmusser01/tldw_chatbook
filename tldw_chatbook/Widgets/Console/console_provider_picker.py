@@ -178,6 +178,10 @@ class ConsoleProviderPicker(Widget):
         label = provider_display_name(option.value)
         if option.label.endswith(" (WIP)"):
             return f"{label} (WIP)"
+        if label == option.value and option.label and option.label != option.value:
+            # Unmapped value (e.g. the modal's trailing "New custom endpoint…"
+            # sentinel row): the builder-supplied label is the display copy.
+            return option.label
         return label
 
     def _display_name(self, provider: str | None) -> str:

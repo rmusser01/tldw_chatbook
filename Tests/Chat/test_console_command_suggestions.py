@@ -46,6 +46,7 @@ COMMANDS = [
     "/temp",
     "/settings",
     "/context",
+    "/endpoint",
 ]
 
 
