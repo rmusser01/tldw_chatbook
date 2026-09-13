@@ -1,10 +1,10 @@
 ---
 id: TASK-13154
 title: Supervisor agent fleet program
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-09 13:57'
-updated_date: '2026-09-13 00:19'
+updated_date: '2026-09-13 04:33'
 labels: []
 dependencies: []
 ---
@@ -17,7 +17,7 @@ Named sub-agent definitions, background/parallel execution, steering, Console fl
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All approved fleet outcomes are delivered and verified: definitions, concurrency runtime, fleet panel, cross-turn lifetime, wake and notification, steering and continuation, and phase-four polish; every remaining TASK-13154 child is Done.
+- [x] #1 All approved fleet outcomes are delivered and verified: definitions, concurrency runtime, fleet panel, cross-turn lifetime, wake and notification, steering and continuation, and phase-four polish; every remaining TASK-13154 child is Done.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,7 +54,7 @@ gitignored and does not survive merge.
   navigation (Troubleshooting vs. Expert) is a placement judgment call, not
   a defect; left for the owner to decide.
 
-Current reconciliation (2026-09-12): all seven actual TASK13154 children are Done with checked acceptance criteria and implementation notes. This supersedes the historical deferred labels above, while preserving their original review context. The parent remains In Progress, with its acceptance unchecked, because final integration and the broader requested worktree outcomes are unresolved.
+Interim reconciliation (2026-09-12, superseded by final closure below): all seven actual TASK13154 children are Done with checked acceptance criteria and implementation notes. This supersedes the historical deferred labels above, while preserving their original review context. The parent remains In Progress, with its acceptance unchecked, because final integration and the broader requested worktree outcomes are unresolved.
 
 Six core deliveries are present in reachable local history: definitions PR1461 f24f8c6921; concurrency PR1477 7625968469; fleet panel PR1498 2ff4c27084; cross-turn lifetime PR1557 d5445a4c10; wake/notification PR1609 b456263894; steering/continuation PR1816 230acdaac0. These are historical ancestry checks recorded at 770a1735d5, not fresh runtime or live-provider tests. PR2631 merged the 25-item audit; PR2641 merged the five subsequent reliability/verification follow-ups at d66908a69. No duplicate historical children were created and wake delivery is counted once.
 
@@ -68,5 +68,15 @@ ADR required: no new ADR for this records-only reconciliation. Existing backlog/
 
 Final integration checkpoint: all four broad-review findings were repaired in 7852cf47ba and the single scoped re-review approved all four with no new Critical/Important breakage. TASK18929 and TASK18923 are Done again with their new regression criteria checked. The continuation module now passes 45 cases without teardown errors, and provider/error plus denial/cancel selections pass. The partial records review was also approved. Complete review, evidence qualifications and all 50 controller rulings are durably preserved in Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md. No additional parent child or retroactive completion was invented; no PR/push/merge is implied.
 
-Current restoration checkpoint: ordinary selected-authority worktree creation, schema20 durable ownership and actual physical-owner drain integration are implemented and independently reviewed (a11db916ff/d63d4f2a19, 4756f88793/94f7110db1, 8efca6ee05/c8e1d119b8/eed41ac5d2). There is no missing external backend. Confirmed apply/merge/discard and the visible Console recovery flow are being completed under Docs/superpowers/specs/2026-09-12-agent-worktree-restoration-design.md; until those outcomes pass review, TASK31210, TASK31211 and this parent remain In Progress. The current evidence and restoration rulings are in Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md. Automatic root deletion remains disabled; ordinary Git has the documented concurrent external metadata-replacement limitation.
+Interim restoration checkpoint (superseded by final closure below): ordinary selected-authority worktree creation, schema20 durable ownership and actual physical-owner drain integration are implemented and independently reviewed (a11db916ff/d63d4f2a19, 4756f88793/94f7110db1, 8efca6ee05/c8e1d119b8/eed41ac5d2). There is no missing external backend. Confirmed apply/merge/discard and the visible Console recovery flow are being completed under Docs/superpowers/specs/2026-09-12-agent-worktree-restoration-design.md; until those outcomes pass review, TASK31210, TASK31211 and this parent remain In Progress. The current evidence and restoration rulings are in Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md. Automatic root deletion remains disabled; ordinary Git has the documented concurrent external metadata-replacement limitation.
+
+Final closure checkpoint (supersedes interim remaining-work labels above): all approved fleet outcomes and the requested worktree restoration are implemented and independently reviewed through e135a085f2. TASK-31210 and TASK-31211 now have all acceptance criteria checked and Done status. Fresh local records verification confirmed all seven actual TASK-13154 children are Done with zero unchecked acceptance criteria and implementation notes; no retroactive children or historical test results were invented.
+
+The restoration includes ordinary selected-authority Git creation, schema 20 durable ownership and positive physical completion, shared confirmed apply/merge/discard, a visible retained card and paged earlier-turn recovery. Final integration found two startup-lifetime gaps; both are corrected and independently re-reviewed. The final fix has11 pre-source RED failures,88 passing affected/capacity cases and2 passing actual card/Git flows. Exact earlier selections and process/guard qualifications are preserved without summing overlapping counts.
+
+Verification is targeted, not a full-suite or live-provider claim. The inherited Requests warning remains; UI-ready passes at 973/973 with zero headroom. Existing ChatScreen size/no-growth guards (including the disclosed 21-line/3-method addition) and eight stale historical diagnostic-label expectations remain failures. The current diagnostic inventory/sink guard passes, and changed-file static comparisons add no diagnostic identities with edited-range formatting passing.
+
+Current communication remains bounded process-local steering/progress, explicit supervisor relay and continuation, and versioned session tasks. Durable inboxes, arbitrary direct peer routing and progress-triggered wakes are optional designs outside this completed scope. Recovery retains uncertain/legacy work and its disclosed baseline checkout; ordinary Git does not promise atomic protection against concurrent external metadata replacement.
+
+ADR check: the existing decisions named above plus ADR-155/158 govern delivery; no new ADR for records-only closure. The complete restoration review, evidence and rulings are in Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md; the earlier remaining-wave review stays linked and preserved. Source and closeout records remain committed locally on codex/agent-orchestration-remaining.
 <!-- SECTION:NOTES:END -->
