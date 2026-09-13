@@ -274,3 +274,34 @@ def test_load_config_garbage_bool_raises(monkeypatch):
         assert False
     except ValueError as e:
         assert "spawn_override_enabled" in str(e)
+
+def test_inherit_to_scripted_parent_provider_skips_validity_gate():
+    # Embedded/headless harnesses drive AgentService against provider ids no
+    # readiness key knows; inheriting the parent's provider must not be
+    # gated on provider validity (same principle as the readiness skip).
+    t = resolve_spawn_target(
+        {}, parent_provider="recording-provider", parent_model="scripted",
+        preset=None, routing=CFG_OFF)
+    assert (t.provider, t.model, t.source) == (
+        "recording-provider", "scripted", "inherit")
+
+def test_routed_unknown_provider_still_refused():
+    preset = AgentDefinition(
+        name="ghost", instructions="i", provider="not-a-provider", model="m")
+    try:
+        resolve_spawn_target(
+            {}, parent_provider="moonshot", parent_model="k",
+            preset=preset, routing=CFG_OFF)
+        assert False
+    except RoutingError as e:
+        assert e.code == "unknown_provider" and e.level == "preset"
+
+def test_spawn_admission_refusal_type_is_shared_with_service():
+    # agent_service once re-declared this class locally, shadowing its own
+    # agent_models import: the runtime loop's isinstance() guard then
+    # counted admission refusals against the loop-level spawn budget and
+    # refused every retry before the chain ledger could pause the chain
+    # (regressed six Tests/Agents/test_automatic_child_scope.py cases).
+    from tldw_chatbook.Agents import agent_models, agent_service
+    assert (agent_service.SpawnAdmissionRefusal
+            is agent_models.SpawnAdmissionRefusal)

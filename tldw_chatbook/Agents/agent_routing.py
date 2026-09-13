@@ -308,7 +308,14 @@ def resolve_spawn_target(
 
     # Provider validity is checked before model fill so a routed-to phantom
     # provider/endpoint reports itself (unknown_provider/unknown_endpoint_slug)
-    # instead of the secondary no_model_resolved.
+    # instead of the secondary no_model_resolved. A target that IS the
+    # parent's own provider skips the plain-provider check for the same
+    # reason it skips the readiness gate below: the child then fails or
+    # succeeds exactly where the parent would, and embedded/headless runs
+    # drive AgentService against scripted provider ids (e.g. test doubles)
+    # that no readiness key knows. A dangling custom-ep slug still refuses
+    # even on inherit -- the console resolved the parent's entry at send
+    # time, so a missing one is a real registry change worth reporting.
     base_url: str | None = None
     if split_custom_endpoint_id(provider):
         entry = entry_for(app_config, provider)
@@ -318,7 +325,7 @@ def resolve_spawn_target(
                 f"registry has no endpoint '{provider}'",
                 level=source)
         base_url = entry.base_url
-    elif provider_config_key(provider) not in set(
+    elif provider != parent_provider and provider_config_key(provider) not in set(
             supported_console_provider_readiness_keys()):
         raise RoutingError(
             "unknown_provider",

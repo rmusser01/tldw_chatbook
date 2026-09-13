@@ -256,20 +256,6 @@ def __getattr__(name: str):
 TRUNCATION_NOTICE = "\n[truncated]"
 
 
-class SpawnAdmissionRefusal(ToolResult):
-    """The spawn tool's ADMISSION-time refusal (ADR-147, TASK-32477).
-
-    The routing resolver rejected WHERE the child would run, so the refusal
-    happens before any budget or fleet work: no child run row exists, the
-    sub-agent spawn counter was not incremented, and no fleet slot was
-    reserved. ``error`` is prefixed with the machine-readable ``[<code>]``
-    so the supervisor model can pick another target or ask the user. A
-    distinct type (not merely ``ToolResult(ok=False)``) keeps "never
-    admitted" distinguishable from "ran and failed" for any consumer that
-    needs the two apart; the dataclass fields are inherited unchanged.
-    """
-
-
 #: ``AgentConfig.sampling_params`` keys -> ``chat_api_call`` kwarg names,
 #: verified against the real signature (Chat/Chat_Functions.py ``def
 #: chat_api_call``); the key set is exactly ``KNOWN_SAMPLING_PARAM_KEYS``
