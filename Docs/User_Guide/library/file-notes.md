@@ -222,7 +222,9 @@ The panel is headed "Prepare session for commit" with the scope line
 it shows "Repository: not checked" / "Status: NOT CHECKED".
 
 **Trust first.** Press **Trust and check status** and a confirmation dialog
-titled "Trust Session Git repository?" appears:
+titled "Trust repository for session changes?" appears (was "Trust Session
+Git repository?" — superseded by task-32271 below; the title was read off the
+live dialog on dev):
 
 > Repository: \<path\>
 >
@@ -439,8 +441,8 @@ save shortcut. File edits save automatically.
   session appear in the panel, and staging records each file's complete
   current state — not a partial diff. A path you already staged outside
   Chatbook shows BLOCKED here on purpose: finish it in Git, then **Refresh**.
-- **Trust doesn't persist.** The "Trust Session Git repository?" dialog
-  returns after every app restart — trust lasts only for the running
+- **Trust doesn't persist.** The "Trust repository for session changes?"
+  dialog returns after every app restart — trust lasts only for the running
   process, by design.
 - **Guarded push is deliberately narrow.** It publishes only the exact guarded
   commit created in this app process, to its one existing tracking upstream,

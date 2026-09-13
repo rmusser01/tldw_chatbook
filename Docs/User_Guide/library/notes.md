@@ -526,8 +526,10 @@ because Enter there goes back rather than creating anything.
 ### Add from files and lasting sync
 
 **Add from files…** first asks what relationship you want. Until you choose,
-the header names neither relationship — it reads "Add from files" and its next
-action is to pick one:
+the header names neither relationship — it reads "Add files to Library notes."
+over "Choose how files should relate to Library notes.", and its next action is
+to pick one. (Was "it reads "Add from files"" — superseded by task-32271 below:
+that was the toolbar button's label, never the heading's.)
 
 - **Import once** copies supported files into Library notes and ends after its
   reviewed receipt. Later changes to the originals are not tracked.
@@ -605,7 +607,10 @@ configured sync folder.
 recovery, stopped, and migrated-candidate states. Use **Check changes** to scan
 an available root. **Review** appears when its changes need attention;
 legacy candidates use **Review migration**. **Pause** and **Resume** control an
-active root. **Retarget** and **Disconnect** remain visibly disabled with an
+active root — though today a paused root whose note changed on both sides
+while it was paused does not come back on **Resume**: its row reads "✕ Failed
+· Next: Review changes", **Check changes** answers "Manual check failed", and
+**Review** says the folder is still paused (task-32519). **Retarget** and **Disconnect** remain visibly disabled with an
 unavailable-in-this-release reason; no files or notes change.
 
 ### Import once
@@ -634,15 +639,22 @@ yet.
 
 The picker — from **Add another file**, from a folder choice, and from
 **Change selection** — reopens at the directory Import once last picked, or at
-your home directory the first time. Its **Folder path** field can be typed into
-directly: press **Enter** to browse into the typed path, or click **Select
-folder** to use it immediately without pressing Enter first — either way,
-whatever the field currently holds is what gets picked, not merely the
-directory being browsed. The field arrives pre-filled with the directory being
-browsed, and the click that puts the cursor in it selects that value, so typing
-a path replaces it rather than appending to it (`Ctrl+A` selects it too). An
-invalid path shows its reason on a row under the field and leaves the dialog
-open. Once a folder is picked, the confirmation line shows its full path
+your home directory the first time. Its **File name** field ("File name or
+path") can be typed into directly: press **Enter** to browse into the typed
+path, or click **Select folder** to use the folder being browsed. The field
+arrives empty and stays empty as you browse — the "Folder path" field that
+arrives pre-filled with the directory being browsed, and selects that value on
+the click that focuses it, is the Folder files root picker's
+([File notes](file-notes.md)); here `Ctrl+A` selects whatever you typed. An
+invalid path shows its reason on a row under the field ("The file must exist")
+and leaves the dialog open. **Select folder** picks the folder row you last
+clicked if you clicked one, otherwise the folder being browsed. (Was "Its
+**Folder path** field … The field arrives pre-filled with the directory being
+browsed, and the click that puts the cursor in it selects that value" —
+superseded by task-32271 below: Import once and Keep a folder synced open the
+files-or-one-folder dialog, whose field is "File name" and starts empty; only
+Folder files' "Choose File Notes Folder" has the pre-filled "Folder path".)
+Once a folder is picked, the confirmation line shows its full path
 (elided in the middle for long paths, keeping the folder name itself visible),
 not just its name.
 
@@ -672,9 +684,11 @@ headed for the same place — collapses to one summary row with a disclosure
 Open it to reach every individual **Skip** / **Create new**; the group's own
 bulk actions settle the whole run without opening it. Pages are filled by the
 rows they *show*, so a collapsed run costs a page one line and never has a
-page break through the middle of it. When there is more than one page,
-**Previous page** and **Next page** say which end you are at rather than
-merely greying out.
+page break through the middle of it. When there is more than one page, a
+pager strip closes the list — **Previous page**, "Page 1 of 3", **Next
+page** — and the two buttons say which end you are at ("Previous page
+unavailable — this is the first page") rather than merely greying out. A
+single-page review has no pager at all.
 A `.git` folder is never walked, whatever the source and whatever the Obsidian
 toggle says: it is listed once under **Skipped** as "Git repository data —
 skipped. Nothing in it becomes a note." A git-backed vault would otherwise
@@ -823,7 +837,11 @@ stayed as text and are not counted.
    and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead. **Manage sync folders** appears in the notes toolbar once
-   a root is active.
+   a root is active. The synced notes and their **⇄ Sync managed** folder are
+   in the database as soon as the receipt says "N applied", but on a profile
+   that already held notes the list beside you does not pick them up — its
+   count and tree stay as they were, through a manual check and a source
+   round trip — until you restart the app (task-32518).
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
@@ -1274,7 +1292,10 @@ on this branch at 235x52, in two sessions.
 Session one, a 179-file vault under `$HOME`: refusal copy on a folder inside
 the profile → **Choose folder…** → the `$HOME` vault → 60 safe · 0 attention →
 **Activate reviewed root** → "Sync root activated. 60 applied · durable
-receipt recorded" → the notes appear under a **⇄ Sync managed** folder →
+receipt recorded" → the notes appear under a **⇄ Sync managed** folder (on
+that fresh profile; on a seeded profile the list stays at its old count with
+no such folder until the app restarts — superseded by task-32271 below,
+rider task-32518) →
 **Manage sync folders** (which only exists once a root is active) → **Check
 changes** → "Manual check finished."
 
@@ -1286,31 +1307,33 @@ and character counts) → **Keep file** → **Apply reviewed** → an at-action
 receipt with **Undo** and **Dismiss** → **Undo** → **Resolution history**,
 where the entry is recorded "undone" → **Pause** (the action becomes Resume)
 → **Resume**. **Retarget** and **Disconnect** stay visibly disabled
-throughout, as this chapter says.
+throughout, as this chapter says. (The Resume step was recorded as done, but
+that walk's own capture ends on "✕ Failed · Next: Review changes", and the
+docs sweep reproduced it: with a change pending on both sides, Resume leaves
+the root paused and every later Check changes fails — superseded by
+task-32271 below, rider task-32519.)
 
 Added in this pass: what a folder and its files have to be before they can be
 checked, and the named refusals. Known gap, not fixed here: the root row in
 **Manage sync folders** reads "Sync folder (name unavailable before cutover)"
 rather than the display name you typed — task-32451.)*
 
-*Verified against fix/library-notes-w3-import-review — 2026-09-11 (fix round 1):
-`.git` is skipped at the walker for every source and both platform adapters;
-the update diff reduces both sides to one link spelling before comparing, so
-an unchanged source shows no diff; a collapsed run's summary names the whole
-run's size when a page shows only part of it; and a collapsed run's title is
-no longer parsed as Textual markup, so a vault folder named `[bold]Archive`
-renders as itself.*
-
 *Verified against fix/library-notes-w3-import-review — 2026-09-11 (task-32250,
-task-32256, task-32257, task-32258, task-32262, task-32263): the Import once
-review pages by rendered rows so no group or run is cut in two, collapses an
-interchangeable run to one summary row with a disclosure, spends the path
-budget last so the outcome survives, and takes the pane while it is open; a
-disabled primary carries its reason as text; the receipt states its outcome
-once and reconciles the two denominators; dropped frontmatter properties, the
-no-change/diff basis, the pre-selected collision default and vault-aware
-unsupported copy are all stated on the surface; and a resolved wikilink is
-stored as `[[target|title]](note://<id>)`.*
+task-32256, task-32257, task-32258, task-32262, task-32263, and its fix round
+1): the Import once review pages by rendered rows so no group or run is cut in
+two, collapses an interchangeable run to one summary row with a disclosure,
+spends the path budget last so the outcome survives, and takes the pane while
+it is open; a disabled primary carries its reason as text; the receipt states
+its outcome once and reconciles the two denominators; dropped frontmatter
+properties, the no-change/diff basis, the pre-selected collision default and
+vault-aware unsupported copy are all stated on the surface; and a resolved
+wikilink is stored as `[[target|title]](note://<id>)`. Fix round 1: `.git` is
+skipped at the walker for every source and both platform adapters; the update
+diff reduces both sides to one link spelling before comparing, so an unchanged
+source shows no diff; a collapsed run's summary names the whole run's size
+when a page shows only part of it; and a collapsed run's title is no longer
+parsed as Textual markup, so a vault folder named `[bold]Archive` renders as
+itself.*
 
 *Verified against fix/library-notes-w3-layout — 2026-09-11 (wave-3 group
 `layout`, live at 235x52 / 100x30 / 60x24 on a seeded scratch profile with a
@@ -1336,14 +1359,11 @@ picker opens at `[notes] sync_directory` before falling back to home. Verified
 live at 235x52.)*
 
 *Verified against fix/library-notes-w3-capture-console — 2026-09-11
-(task-32146: Console's **More… ▸ Capture as note** walked live at 235x52 and
-100x30 — the receipt's **Open note** landed on the new note in this screen's
-editor, and the note's `console` / `conversation:<id>` / `message:<id>`
-keywords were read back from the database.)*
-
-*Verified against fix/library-notes-w3-capture-console — 2026-09-11
-(task-32146 fix round 1: the title wording above gained the code-fence /
-heading rule; copy-only, no live walk.)*
+(task-32146 and its fix round 1: Console's **More… ▸ Capture as note** walked
+live at 235x52 and 100x30 — the receipt's **Open note** landed on the new note
+in this screen's editor, and the note's `console` / `conversation:<id>` /
+`message:<id>` keywords were read back from the database. The title wording
+above gained the code-fence / heading rule in fix round 1, copy-only.)*
 
 *Verified against fix/library-notes-w3-chrome-strip — 2026-09-11 (task-32143:
 the note editor gained a chrome strip — one right-aligned row under the body
