@@ -4764,7 +4764,7 @@ def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
 def test_worktree_tools_refuse_before_preview_confirmation_or_mutation(
     db, git_repo, monkeypatch, confirmation
 ):
-    """No absent, allowing, or denying callback can reopen the boundary."""
+    """Missing current authority/card refuses before preview or confirmation."""
     provider = _fs_local_provider(git_repo)
     service, chat, _coordinator = make_fleet_service(
         db,
@@ -4797,7 +4797,7 @@ def test_worktree_tools_refuse_before_preview_confirmation_or_mutation(
     results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
     results += _tool_results(db.get_run(run_id), DISCARD_AGENT_WORKTREE_TOOL_NAME)
     assert len(results) == 2
-    assert all("unsupported_execution_boundary" in result for result in results)
+    assert all("source_authority_unavailable" in result or "Tool not permitted" in result or "Unknown tool" in result for result in results), results
     assert confirm_calls == []
 
 
@@ -4922,3 +4922,79 @@ def test_retire_after_map_reset_still_clears_provider_routing(
     service._retire_agent_worktree("run-retained", "missing-handle")
 
     assert retired == ["run-retained"]
+
+
+@pytest.mark.parametrize("action", ["apply", "discard"])
+def test_confirmed_current_turn_worktree_uses_real_drained_child(
+    db, git_repo, monkeypatch, tmp_path, action
+):
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    monkeypatch.setattr(
+        agent_worktree, "_worktrees_base", lambda: tmp_path / "children"
+    )
+    authority = RunAdmittedWorkspaceRoot(
+        "workspace",
+        "binding",
+        "repo",
+        git_repo,
+        "f" * 64,
+        agent_worktree._worktree_root_identity(git_repo),
+        True,
+        lambda write: True,
+    )
+    payloads = []
+
+    def recover_reply():
+        join_fleet_children(service)
+        created = next(iter(service._agent_worktrees.values()))
+        record = AgentWorktreeRepository(db).get_for_conversation(created.run_id, "c")
+        assert record["writer_state"] == "drained"
+        handle_id = next(iter(service._agent_worktrees))
+        name = (
+            DISCARD_AGENT_WORKTREE_TOOL_NAME
+            if action == "discard"
+            else MERGE_AGENT_WORKTREE_TOOL_NAME
+        )
+        return fence(name, {"handle_id": handle_id})
+
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            recover_reply,
+            "done",
+        ],
+        child_replies={
+            "iso task": [
+                fence("fs_write", {"path": "child.txt", "content": "child work"}),
+                "child done",
+            ]
+        },
+        providers=(_fs_local_provider(git_repo),),
+        worktree_repo_authority=authority,
+    )
+
+    def confirm(payload):
+        payloads.append(payload)
+        return {"allow": True}
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=confirm,
+    )
+    join_fleet_children(service)
+    assert outcome.status == RUN_DONE
+    assert len(payloads) == 1
+    assert payloads[0]["destination"] == str(git_repo)
+    created = next(iter(service._agent_worktrees.values()))
+    record = AgentWorktreeRepository(db).get_for_conversation(created.run_id, "c")
+    assert record["mutation_state"] == (
+        "applied" if action == "apply" else "discarded_cleanup_pending"
+    )
+    assert created.worktree_path.is_dir()
+    assert (git_repo / 'child.txt').exists() is (action == 'apply')

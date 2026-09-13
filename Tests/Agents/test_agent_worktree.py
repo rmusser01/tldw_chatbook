@@ -21,7 +21,10 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 @pytest.fixture
-def repo(tmp_path):
+def repo(tmp_path, monkeypatch):
+    from tldw_chatbook.Agents import agent_worktree
+
+    monkeypatch.setattr(agent_worktree, "_worktrees_base", lambda: tmp_path / "children")
     root = tmp_path / "repo"
     root.mkdir()
     _git(root, "init", "-b", "main")
