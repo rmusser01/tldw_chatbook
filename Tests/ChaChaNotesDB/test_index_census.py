@@ -418,6 +418,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         ("server_profile_id", "dataset_id", "intent_sequence"),
     ),
     "idx_notekw_kw": IndexPin("note_keywords", False, ("keyword_id",)),
+    "idx_note_links_target": IndexPin(
+        "note_links", False, ("target_note_id", "source_note_id")
+    ),
     "idx_notes_file_path": IndexPin("notes", False, ("file_path_on_disk",)),
     "idx_notes_file_path_unique": IndexPin("notes", True, ("file_path_on_disk",)),
     "idx_notes_is_synced": IndexPin("notes", False, ("is_externally_synced",)),

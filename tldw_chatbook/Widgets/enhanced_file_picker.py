@@ -24,6 +24,7 @@ from textual.widgets import Button, Input, Label, ListItem, ListView, OptionList
 from ..Third_Party.textual_fspicker import Filters
 from ..Third_Party.textual_fspicker.base_dialog import (
     FileSystemPickerScreen,
+    PathInput,
     resolve_typed_directory,
 )
 from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
@@ -1413,7 +1414,7 @@ class EnhancedFileDialog(BaseFileDialog):
 
                     # Path input field (hidden by default, shown with Ctrl+L)
                     with Horizontal(id="path-input-container", classes="hidden"):
-                        yield Input(placeholder="Enter path...", id="path-input")
+                        yield PathInput(placeholder="Enter path...", id="path-input")
                         yield Button("Go", id="go-to-path", variant="primary")
                         yield Button("Cancel", id="cancel-path-input", variant="default")
 
@@ -2414,10 +2415,10 @@ class EnhancedFileOpen(EnhancedFileDialog):
 
     def _input_bar(self) -> ComposeResult:
         """Provide input widgets for file selection"""
-        from textual.widgets import Input, Select
+        from textual.widgets import Select
 
         if not self.multi_select:
-            yield Input(placeholder=self._filename_placeholder(), id="filename-input")
+            yield PathInput(placeholder=self._filename_placeholder(), id="filename-input")
         if self.filters:
             yield Select(
                 self.filters.selections,
@@ -2460,9 +2461,9 @@ class EnhancedFileSave(EnhancedFileDialog):
 
     def _input_bar(self) -> ComposeResult:
         """Provide input widgets for file saving"""
-        from textual.widgets import Input, Select
+        from textual.widgets import Select
 
-        yield Input(
+        yield PathInput(
             value=self.default_filename,
             placeholder=self._filename_placeholder(),
             id="filename-input",
@@ -2552,10 +2553,13 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
         AC#2 (task-32122): a persistent "Folder path" label, not just a
         placeholder that vanishes the moment the user types.
         """
-        from textual.widgets import Input, Label
+        from textual.widgets import Label
 
         yield Label("Folder path:", id="dir-path-label")
-        yield Input(id="dir-path-input", placeholder="Type path or select below")
+        # `PathInput`: `_sync_dir_path_input` pre-fills this with the
+        # browsed directory on mount and on every navigation, so the click
+        # that focuses it must select that value (task-32251).
+        yield PathInput(id="dir-path-input", placeholder="Type path or select below")
 
     def _dir_nav(self) -> SearchableDirectoryNavigation:
         return self.query_one(SearchableDirectoryNavigation)

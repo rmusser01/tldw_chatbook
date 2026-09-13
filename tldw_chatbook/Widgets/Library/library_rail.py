@@ -90,6 +90,147 @@ def library_dim_label_text(label: str, value: str) -> Text:
 LIBRARY_DETAILS_CONTINUATION_PAD = "  "
 
 
+#: Lazily built, for ``Text.wrap``'s justify/overflow defaults only -- the
+#: width is always passed explicitly.
+_HANG_CONSOLE: Any = None
+
+
+def library_hang_details_row(renderable: Any, width: int) -> Any:
+    """Re-wrap one Details row so its continuation lines hang under the first.
+
+    task-32306, user ruling: "tab over subsequent lines so it's clear what
+    they correspond to". The Details column is 34 cells at 235 columns, and a
+    row that carries a reason AND its next step (the blocked Handoff row) runs
+    to three or four of them; flush-left continuations read as separate rows,
+    which is the whole complaint.
+
+    Neither Rich nor Textual has a hanging indent, and a custom renderable is
+    not an option either: Textual 8 measures a ``Static``'s auto height
+    through its visual protocol, which reports ONE line for an unrecognised
+    ``__rich_console__`` object -- so the extra lines are painted and then
+    clipped (measured live at 235x52: the first wrapped line showed, the rest
+    was blank). The wrap therefore happens here and is handed over as a plain
+    ``Text`` with real newlines, which measures correctly.
+
+    Two limits, both measured and both deliberate (review round 1, F5/F7):
+
+    - EVERY line is wrapped at ``width - indent``, including the first, which
+      carries no indent -- so line one gives up two of its 34 cells. A true
+      per-line budget needs a second wrap pass over the remainder (Rich takes
+      one width for the whole ``Text``), which is more machinery than a ragged
+      two cells is worth. The visual contract -- first line at the glyph
+      column, continuations indented under it -- holds either way.
+    - A ``str`` renderable is wrapped as literal text (``Text(renderable)``),
+      so a ``markup=True`` row whose content contains Rich markup would render
+      differently once it wraps. No such row exists today: both ``str`` sites
+      pass ``markup=False``, and the fold cue is 17 cells and never wraps.
+
+    Args:
+        renderable: The row's own renderable, as its caller passed it.
+        width: The row's CONTENT width in cells.
+
+    Returns:
+        The renderable unchanged whenever it is not text, has no room, or
+        already fits on one line (so a non-wrapping row keeps byte-identical
+        content); otherwise a ``Text`` whose continuation lines are indented.
+    """
+    source = Text(renderable) if isinstance(renderable, str) else renderable
+    pad = LIBRARY_DETAILS_CONTINUATION_PAD
+    if not isinstance(source, Text) or width <= len(pad) + 1:
+        return renderable
+    global _HANG_CONSOLE
+    if _HANG_CONSOLE is None:
+        from rich.console import Console  # noqa: PLC0415 -- lazy: measurement only
+
+        _HANG_CONSOLE = Console()
+    lines = source.wrap(_HANG_CONSOLE, width - len(pad))
+    if len(lines) < 2:
+        return renderable
+    hung = Text()
+    for index, line in enumerate(lines):
+        if index:
+            hung.append("\n")
+            hung.append(pad)
+        hung.append_text(line)
+    return hung
+
+
+class LibraryDetailsRow(Static):
+    """A ``.library-details-row`` whose wrapped lines hang under the first.
+
+    The rail's shared row painter (task-32306): applied once here rather than
+    to the Handoff row alone, because every sibling on this column wraps the
+    same way at 34 cells -- the Status counts line, a long workspace name, the
+    Chunking Lab gloss, an error sentence.
+
+    The re-wrap runs on resize (the only moment the row's real width is known)
+    and on ``update()``. A row that fits its width keeps the exact renderable
+    it was given, so nothing changes for the rows that never wrapped.
+    """
+
+    def __init__(self, renderable: Any = "", *args: Any, **kwargs: Any) -> None:
+        super().__init__(renderable, *args, **kwargs)
+        self._details_source: Any = renderable
+        #: What was last handed to ``Static.update`` -- at construction that is
+        #: the raw renderable, which is also what a fitting row re-hangs to.
+        self._details_painted: Any = renderable
+
+    @property
+    def content(self) -> Any:
+        """The renderable the CALLER passed, not the re-wrapped paint form.
+
+        ``tldw_chatbook``'s Textual compatibility shim exposes ``.renderable``
+        as ``self.content``, and rows are asserted through it all over the
+        suite ("Active · Local Default"). Re-wrapping is a paint concern, so
+        the source is what this reports; ``Static``'s own ``__content`` (which
+        the visual is built from) still holds the hung text.
+        """
+        return self._details_source
+
+    @content.setter
+    def content(self, value: Any) -> None:
+        self.update(value)
+
+    def update(self, content: Any = "", *, layout: bool = True) -> None:
+        """Store the caller's renderable, then paint its hung form.
+
+        Args:
+            content: The row's renderable, exactly as the caller means it.
+            layout: Forwarded to ``Static.update``.
+        """
+        self._details_source = content
+        self._details_painted = library_hang_details_row(
+            content, self.content_size.width
+        )
+        super().update(self._details_painted, layout=layout)
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-hang at the new width, but only when the hung text changes.
+
+        No ``super().on_resize()``: Textual dispatches every class's own
+        handler along the MRO, so chaining would double-fire a mixin's (and
+        neither ``Static`` nor ``Widget`` defines one to chain to).
+
+        The guard is not cosmetic: ``Static.update`` always calls
+        ``refresh(layout=True)``, and a Resize arrives for height-only changes
+        too -- including the second one this row's own height change provokes
+        -- so without it every rail resize forces a layout pass on all eight
+        rows for byte-identical text (review round 1, F3).
+
+        Args:
+            event: Textual's resize event for this row. Deliberately unread:
+                its ``size`` is the OUTER size, and the wrap needs the content
+                width (outer minus this row's ``padding: 0 1``), which
+                ``content_size`` already reports for the layout this event
+                announces.
+        """
+        hung = library_hang_details_row(self._details_source, self.content_size.width)
+        if hung == self._details_painted:
+            return
+        self._details_painted = hung
+        super().update(hung)
+
+
 def library_db_size_rows(
     sizes: Iterable[str],
 ) -> tuple[tuple[str, Text], ...]:
@@ -1015,7 +1156,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         Verified live at 235x52 -- the un-docked first version sat below the
         very fold it was describing.
         """
-        fold_cue = Static(
+        fold_cue = LibraryDetailsRow(
             LIBRARY_RAIL_FOLD_CUE,
             id="library-rail-fold-cue",
             classes="library-details-row",
@@ -1039,7 +1180,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         )
         details_lines = self.shell.details_lines
         runtime_value = details_lines[0] if details_lines else ""
-        yield Static(
+        yield LibraryDetailsRow(
             # F-013: "Source", not "Runtime" -- the line says where the
             # Library's content lives (this device or a server), and
             # "Runtime" taught nothing.
@@ -1048,7 +1189,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             classes="library-details-row",
         )
         counts_or_error = details_lines[1] if len(details_lines) > 1 else ""
-        yield Static(
+        yield LibraryDetailsRow(
             counts_or_error,
             id="library-details-body",
             classes="library-details-row",
@@ -1074,7 +1215,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             yield diagnostics_header
             with diagnostics_body:
                 for row_id, renderable in size_rows:
-                    yield Static(
+                    yield LibraryDetailsRow(
                         renderable,
                         id=row_id,
                         classes="library-details-row",

@@ -1371,3 +1371,28 @@ def test_scan_stops_between_files_in_one_flat_directory(
     )
     assert service._operation_lock.acquire(blocking=False)
     service._operation_lock.release()
+
+
+# --- task-32264: the editor hides frontmatter it is preserving --------------
+
+
+def test_frontmatter_lines_counts_only_the_hidden_block(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """The fact the editor needs to say what it is not showing."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "props.md").write_bytes(
+        b"\xef\xbb\xbf---\ntitle: Exact\ntags: [a]\n---\nbody\n"
+    )
+    (root / "bom-only.md").write_bytes(b"\xef\xbb\xbfbody\n")
+    (root / "plain.md").write_bytes(b"body\n")
+    (root / "unclosed.md").write_bytes(b"---\ntitle: Open\nbody")
+    service = FileNotesService(root, replica)
+
+    assert service.open_file("props.md").frontmatter_lines == 4
+    assert service.open_file("bom-only.md").frontmatter_lines == 0
+    assert service.open_file("plain.md").frontmatter_lines == 0
+    # An unterminated block is not frontmatter -- it stays in the body.
+    assert service.open_file("unclosed.md").frontmatter_lines == 0

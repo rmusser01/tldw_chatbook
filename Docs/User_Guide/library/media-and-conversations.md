@@ -1270,3 +1270,11 @@ one undoable step, with a receipt and an "Undo link" beside it, and the
 blocks a link cannot resolve keep refusing; task-32361: the reader wins the
 width once a conversation is open — measured live and in tests at 235x52,
 100x30 and 60x24).*
+
+*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
+(task-32302: entering Conversations from the rail lands on its first row and
+keeps its `esc focus Library` chip even while the list is briefly refreshing —
+the rows are painted un-actionable during a reload, and the entry focus now
+waits for them to come back instead of being spent on a row that cannot take
+it. A cold first visit to a large Library can still outlast the arrival window;
+that ceiling is tracked separately.)*

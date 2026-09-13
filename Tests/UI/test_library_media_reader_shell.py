@@ -11,7 +11,7 @@ from textual.containers import Horizontal
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
     _active_library_screen,
@@ -46,7 +46,6 @@ from tldw_chatbook.Widgets.Library import (
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
     PaneToggleRequested as SharedPaneToggleRequested,
 )
-from tldw_chatbook.app import TldwCli
 
 # The profile reserves the same five-cell controls that the shell paints.
 MEDIA_GRIP_WIDTH = MEDIA_READER_LAYOUT_PROFILE.grip_width
@@ -486,7 +485,7 @@ async def test_media_shell_resize_uses_resolver_without_reads_or_recompose(size)
 
 
 class _SixtyColumnMediaShellApp(ConsolidatedCSSApp):
-    CSS_PATH = TldwCli.CSS_PATH
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
         # This direct host pins the Media shell's own allocation to the design

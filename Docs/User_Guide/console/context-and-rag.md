@@ -698,8 +698,9 @@ Which *kinds* of sources it searches is shown on that card's **Sources:**
 line — by default "Sources: Notes, Media, Conversations (Prompts off)" —
 and is editable: **Search Library** with nothing typed opens the manual
 **Library search** modal, which carries
-the query box plus a toggle per source kind (**✓ Notes**, **○ Media**,
-**✓ Conversations**, **○ Prompts**). Running keeps the edited query/source-kind
+the query box plus a toggle per source kind (**☑ Notes**, **☐ Media**,
+**☑ Conversations**, **☐ Prompts** — the same checkbox pair Library uses for a
+selection). Running keeps the edited query/source-kind
 selection (it also survives leaving and returning to Console); **Cancel**
 discards it. The separate **Library** status chip opens the per-conversation
 access modal described above. Run stays disabled until there is both a query and at least
@@ -1070,3 +1071,9 @@ Code-level pass (compositor contrast sweep at 80x24 and 200x50, pure
 projection, widget, controller and screen-wiring suites) plus a live
 `tmux` capture at 235x52 for the background diagnosis; not re-driven live
 for the rest.*
+
+*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
+(task-32303, user decision: this modal adopts the Library glyph legend, so the
+Library search modal's source toggles paint ☑/☐ from the shared constants
+instead of the ✓/○ pair. The per-conversation Library access modal's radio
+buttons still use ●/○ — a separate decision, task-32464.)*

@@ -27,6 +27,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_selector,
 )
+from tldw_chatbook.Library.library_notes_tree_state import LibraryNotesTreeRow
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Library_Modules.library_notes_work_session import (
@@ -59,6 +60,11 @@ def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
 
     assert set(get_args(library_screen_module.LibraryReaderDestination)) == {
         "media",
+        # task-32294: Collections became a reader destination of its own
+        # (screen_support_types.LibraryReaderDestination); this inventory is
+        # the list of destinations that own reader preferences, so it grew
+        # with it.
+        "collections",
         "conversations",
         "notes",
         "notes_files",
@@ -254,19 +260,29 @@ async def test_database_notes_capability_inventory_and_modes(
 
         mutations: list[tuple[str, dict[str, object]]] = []
         pushed: list[tuple[object, object]] = []
-        folder = SimpleNamespace(
+        # task-32185: the REAL projection row, not a SimpleNamespace. The
+        # hand-rolled stand-in went stale the moment the move mutation
+        # started carrying ``source_placement_id`` -- it raised
+        # AttributeError deep inside the production handler instead of
+        # failing where the contract changed. A dataclass cannot drift.
+        folder = LibraryNotesTreeRow(
+            placement_id="folder:folder-1",
             kind="folder",
-            protected=False,
-            folder_id="folder-1",
-            version=7,
             label="Projects",
-        )
-        note = SimpleNamespace(
-            kind="note",
-            protected=False,
+            depth=0,
             folder_id="folder-1",
+            protected=False,
+            version=7,
+        )
+        note = LibraryNotesTreeRow(
+            placement_id="placement-1",
+            kind="note",
+            label="Note one",
+            depth=1,
             note_id="note-1",
+            folder_id="folder-1",
             membership_id="member-1",
+            protected=False,
             version=11,
         )
         tree_screen = SimpleNamespace(
@@ -346,6 +362,8 @@ async def test_database_notes_capability_inventory_and_modes(
                 "note_id": "note-1",
                 "destination_folder_id": "folder-2",
                 "source_folder_id": "folder-1",
+                "source_membership_id": "member-1",
+                "source_placement_id": "placement-1",
                 "membership_version": 11,
                 "protected": False,
             },
@@ -356,6 +374,8 @@ async def test_database_notes_capability_inventory_and_modes(
             {
                 "folder_id": "folder-1",
                 "note_id": "note-1",
+                "source_membership_id": "member-1",
+                "source_placement_id": "placement-1",
                 "expected_version": 11,
                 "protected": False,
             },
@@ -1589,3 +1609,68 @@ async def test_bulk_mode_keeps_last_note_as_labelled_read_only_preview() -> None
 
         assert screen._notes_state.select_mode is False
         assert screen._notes_state.view == "editor"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_route", ["escape", "filter-submit", "filter-clear"])
+async def test_leaving_select_mode_beside_an_open_note_restores_its_editor(
+    exit_route: str,
+) -> None:
+    """task-32185 AC#5 (fix round 1): every select-mode EXIT repaints the pane.
+
+    Entering select mode is one handler; leaving it from the UI is three more
+    -- Escape, a filter submit, a filter clear -- each of which flips the flag
+    and syncs the list canvas with no re-apply of its own. They repaint all
+    the same: select mode hides the editor fields, so the reader no longer
+    owns one and ``LibraryNoteWorkPane.sync_state`` recomposes with the
+    stored state (measured: all three green before any product change). This
+    pins that, so the exit path cannot regress to the entry path's bug. The
+    fourth flag-clearing site, ``handle_library_notes_sort_choice``, is not
+    reachable from select mode at all: the sort control and its choice strip
+    compose only in browse mode.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async def _submit_filter(value: str) -> None:
+        filter_input = screen.query_one("#library-notes-filter", Input)
+        filter_input.value = value
+        filter_input.focus()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-notes-filter-clear")
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        if exit_route == "filter-clear":
+            await _submit_filter("alpha")
+
+        screen.query_one("#library-notes-select-toggle", Button).press()
+        await pilot.pause()
+        assert screen._notes_state.select_mode is True
+        assert screen.query_one("#library-note-bulk-status", Static).display is True
+        assert screen.query_one("#library-note-save", Button).disabled is True
+
+        if exit_route == "escape":
+            await screen.action_library_notes_escape()
+        elif exit_route == "filter-submit":
+            await _submit_filter("alpha")
+        else:
+            screen.query_one("#library-notes-filter-clear", Button).press()
+            await _wait_for_selector(screen, pilot, ".library-notes-row")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.select_mode is False,
+            message=f"{exit_route} never left select mode",
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._notes_state.view == "editor"
+        assert screen.query_one("#library-note-bulk-status", Static).display is False
+        assert screen.query_one("#library-note-preview-region").display is False
+        assert screen.query_one("#library-note-editor-region").display is True
+        assert screen.query_one("#library-note-save", Button).disabled is False
+        assert screen.check_action("library_notes_save", ()) is True

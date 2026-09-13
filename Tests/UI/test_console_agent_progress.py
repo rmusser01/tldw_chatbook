@@ -7,6 +7,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, SelectionList
 
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -63,7 +64,7 @@ def _modal_type():
 
 
 class ProgressHarness(App):
-    CSS_PATH = "../../tldw_chatbook/css/tldw_cli_modular.tcss"
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, modal):
         super().__init__()

@@ -40,6 +40,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     build_entry_mutation,
     derive_slug,
     load_custom_endpoints,
+    split_custom_endpoint_id,
     validate_entry,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
@@ -69,6 +70,16 @@ FAMILY_SELECT_OPTIONS: tuple[tuple[str, str], ...] = (
 )
 OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 MODELS_INPUT_PLACEHOLDER = "Comma-separated model ids"
+#: H4: the llama prefill is the configured Chatbook default (:9099), while
+#: stock llama-server listens on :8080 -- the placeholder explains both so
+#: the prefill/placeholder pair stops contradicting itself.
+DEFAULT_URL_PLACEHOLDER = "http://127.0.0.1:8080"
+_LLAMA_URL_PLACEHOLDER = "llama-server default :8080 · Chatbook default :9099"
+#: Display names for registry families, reused by the same-family starter
+#: label (H5) so the picker names the family exactly like the Family select.
+_FAMILY_DISPLAY_NAMES = {
+    family: label for label, family in FAMILY_SELECT_OPTIONS
+}
 SAVE_FAILED_COPY = "Could not write the endpoint to the config file."
 INVALID_SLUG_COPY = (
     "Enter a display name containing letters or numbers to derive an id."
@@ -329,14 +340,28 @@ class ConsoleEndpointTemplateModal(
         super().__init__()
         self._app_config = app_config
         self._providers_models = providers_models
+        self._template_provider = template_provider
+        self._same_family_starter: _EndpointTemplate | None = None
         self._templates = self._build_templates()
         self._active_template_index = 0
-        if template_provider is not None:
+        if self._same_family_starter is not None:
+            # H5: opened from a registry entry -- start on the same-family
+            # starter (a second server), with the entry's "(duplicate)" one
+            # row below for a true copy.
+            self._active_template_index = self._templates.index(
+                self._same_family_starter
+            )
+        elif template_provider is not None:
             for index, template in enumerate(self._templates):
                 if template.provider_id == template_provider:
                     self._active_template_index = index
                     break
         self._create_in_flight = False
+        # H8 (calm dialog): Create is gated from the first frame, but the
+        # error banner only renders once the user has actually touched the
+        # form -- an untouched blank template is not an error to scold.
+        self._form_touched = False
+        self._untouched_form_values: tuple[str, str, str, str] | None = None
 
     class EndpointCreated(Message):
         """Posted to the opener screen after an entry was persisted."""
@@ -350,7 +375,10 @@ class ConsoleEndpointTemplateModal(
 
         Built-in provider options come from the shared option builder
         (Cloud / Local / Custom & legacy order); their registry entries follow
-        as ``<display name> (duplicate)`` duplicates of themselves.
+        as ``<display name> (duplicate)`` duplicates of themselves. When the
+        opener names a registry entry as ``template_provider`` (H5), a
+        synthetic same-family starter is inserted immediately before that
+        entry's duplicate option and becomes the active template.
         """
         templates = [
             _EndpointTemplate(
@@ -362,6 +390,7 @@ class ConsoleEndpointTemplateModal(
             )
         ]
         entries = load_custom_endpoints(self._app_config)
+        starter_slug = split_custom_endpoint_id(self._template_provider)
         for option in build_console_provider_options(
             self._providers_models, app_config=self._app_config
         ):
@@ -370,6 +399,24 @@ class ConsoleEndpointTemplateModal(
                 entry = entries.get(slug)
                 if entry is None:
                     continue
+                if slug == starter_slug and self._same_family_starter is None:
+                    # H5: adding "from" an existing entry usually means a
+                    # second server of the same kind, so the starter preselect
+                    # prefills only the family -- blank name and URL, never
+                    # the family default (that is a different server's port)
+                    # and never the entry's own URL/models.
+                    self._same_family_starter = _EndpointTemplate(
+                        label=(
+                            "Same family "
+                            f"({_FAMILY_DISPLAY_NAMES.get(entry.family, entry.family)})"
+                            " — new URL"
+                        ),
+                        provider_id=None,
+                        family=entry.family,
+                        base_url="",
+                        models=(),
+                    )
+                    templates.append(self._same_family_starter)
                 templates.append(
                     _EndpointTemplate(
                         label=f"{entry.display_name} (duplicate)",
@@ -453,7 +500,7 @@ class ConsoleEndpointTemplateModal(
                 yield Static("Base URL", classes="console-endpoint-template-label")
                 yield ConsoleSettingsInput(
                     value=template.base_url,
-                    placeholder="http://127.0.0.1:8080",
+                    placeholder=self._url_placeholder_for_family(template.family),
                     id=URL_INPUT_ID,
                     classes="console-settings-control",
                 )
@@ -478,6 +525,13 @@ class ConsoleEndpointTemplateModal(
     def on_mount(self) -> None:
         """Validate the prefilled form so Create starts in a truthful state."""
         super().on_mount()
+        # Reset the touch flag BEFORE validating: the family Select announces
+        # its composed value as a Select.Changed around mount, and that
+        # programmatic echo is not interaction. An echo landing after this
+        # point is filtered by the value comparison in
+        # ``_form_field_changed``.
+        self._form_touched = False
+        self._untouched_form_values = self._current_form_values()
         self._sync_validation()
         try:
             self.query_one(f"#{NAME_INPUT_ID}", Input).focus()
@@ -494,6 +548,7 @@ class ConsoleEndpointTemplateModal(
             return
         self._active_template_index = index
         template = self._templates[index]
+        self._form_touched = True
         if template.duplicate_name is not None:
             # Duplicating carries the source display name (suffixed
             # "(copy)"); templates without a name leave a typed name alone.
@@ -509,7 +564,44 @@ class ConsoleEndpointTemplateModal(
     @on(Select.Changed)
     def _form_field_changed(self, _event) -> None:
         """Re-validate on every edit so Create reflects the current draft."""
+        if (
+            not self._form_touched
+            and self._current_form_values() == self._untouched_form_values
+        ):
+            # The composed prefill re-announcing itself (the family Select's
+            # mount echo): not a user edit, so the banner stays calm.
+            self._sync_validation()
+            return
+        self._form_touched = True
+        # Keep the URL placeholder aligned with the chosen family (H4): the
+        # explanatory llama copy only applies while the llama family is (or
+        # becomes) active.
+        self._sync_url_placeholder()
         self._sync_validation()
+
+    def _sync_url_placeholder(self) -> None:
+        """Render the family-appropriate URL placeholder (presentation only)."""
+        try:
+            url_input = self.query_one(f"#{URL_INPUT_ID}", Input)
+        except (NoMatches, QueryError):
+            return
+        url_input.placeholder = self._url_placeholder_for_family(self._family_value())
+
+    @staticmethod
+    def _url_placeholder_for_family(family: str) -> str:
+        """Return the URL-input placeholder explaining the family's defaults."""
+        if family == "llama_cpp":
+            return _LLAMA_URL_PLACEHOLDER
+        return DEFAULT_URL_PLACEHOLDER
+
+    def _current_form_values(self) -> tuple[str, str, str, str]:
+        """Return the four editable form values (used for echo filtering)."""
+        return (
+            self.query_one(f"#{NAME_INPUT_ID}", Input).value,
+            self._family_value(),
+            self.query_one(f"#{URL_INPUT_ID}", Input).value,
+            self.query_one(f"#{MODELS_INPUT_ID}", Input).value,
+        )
 
     @on(Button.Pressed, f"#{CANCEL_BUTTON_ID}")
     async def _cancel(self, event: Button.Pressed) -> None:
@@ -534,6 +626,9 @@ class ConsoleEndpointTemplateModal(
         event.stop()
         if self._create_in_flight:
             return
+        # A Create press is interaction: any validation failure it surfaces
+        # belongs in the banner even on an otherwise-untouched form.
+        self._form_touched = True
         name = self.query_one(f"#{NAME_INPUT_ID}", Input).value.strip()
         family = self._family_value()
         base_url = self.query_one(f"#{URL_INPUT_ID}", Input).value
@@ -666,13 +761,19 @@ class ConsoleEndpointTemplateModal(
         create.disabled = bool(errors) or self._create_in_flight
 
     def _show_errors(self, errors: list[str]) -> None:
-        """Render the inline error banner, hiding it when there is no error."""
+        """Render the inline error banner, hiding it when there is no error.
+
+        The banner also stays hidden while the form is untouched (H8): the
+        prefilled/blank state at mount is not user error. ``_sync_validation``
+        still gates Create from the first frame, so nothing invalid is
+        submittable while the banner is calm.
+        """
         try:
             error = self.query_one(f"#{ERROR_STATIC_ID}", Static)
         except (NoMatches, QueryError):
             return
         error.update(" ".join(errors))
-        error.display = bool(errors)
+        error.display = bool(errors) and self._form_touched
 
     def _mirror_entry_into_app_config(self, entry: CustomEndpointEntry) -> None:
         """Mirror the persisted entry into the shared in-memory app_config.

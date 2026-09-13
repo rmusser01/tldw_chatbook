@@ -210,3 +210,48 @@ async def test_backlinks_are_requested_bounded_and_for_the_open_note():
         assert calls[-1]["note_id"] == "hub"
         assert calls[-1]["scope"] == "local_note"
         assert isinstance(calls[-1]["limit"], int) and calls[-1]["limit"] <= 51
+
+
+@pytest.mark.asyncio
+async def test_a_backlink_result_landing_mid_recompose_does_not_kill_the_app():
+    """The load is a worker, so an exception here takes the whole app down.
+
+    Reproduced twice on plain dev by the wave-3 editor-keys group: opening a
+    note raised ``NoMatches: '#library-note-work-authority'`` out of
+    ``_load_library_note_backlinks``'s presentation sync and killed the app.
+    The work pane is mounted but its CHILDREN are between removal and
+    remount, which ``apply_session_state`` assumed could not happen --
+    ``_apply_post_compose_state`` already guards the same shape for the
+    editor fields, and this path does not go through it.
+
+    ``remove_children()`` is that DOM shape exactly: mounted pane, no
+    composed children. The state the sync stores is what the pending
+    recompose paints from, so it must still be recorded.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_in_info(screen, pilot, "hub")
+        await _wait_for_backlink_header(screen, pilot, "Linked from (2)")
+
+        pane = screen.query_one("#library-note-work-pane")
+        await pane.remove_children()
+
+        await screen._notes_controller._load_library_note_backlinks("hub")
+
+        assert pane.presentation_state is not None
+        assert pane.presentation_state.backlinks_status == "ready"
+        assert [row[0] for row in pane.presentation_state.backlinks] == [
+            "daily",
+            "review",
+        ]
+
+        # Dropped, not lost: the pending recompose paints the stored state
+        # onto the surfaces it mounts, so the rows still reach Info.
+        pane.refresh(recompose=True)
+        await _wait_for_backlink_header(screen, pilot, "Linked from (2)")
+        assert [
+            getattr(entry, "note_id", "")
+            for entry in screen.query(".library-note-backlink")
+        ] == ["daily", "review"]

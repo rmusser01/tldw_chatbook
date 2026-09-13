@@ -314,3 +314,7 @@ review_sets_one_active	pre-convention	partial UNIQUE constraint (one active revi
 idx_automatic_reservations_chain	plan-pinned	Tests/DB/test_automatic_work_budget.py
 idx_automatic_wake_conversation_active	plan-pinned	Tests/DB/test_automatic_work_budget.py
 idx_automatic_claims_attempt	plan-pinned	Tests/DB/test_automatic_work_budget.py
+
+# task-32186: the Library ▸ Notes "Linked from" lookup (schema 73). The
+# plan must SEARCH note_links on this index and never SCAN notes.
+idx_note_links_target	plan-pinned	Tests/Notes/test_note_backlink_query.py::test_the_lookup_does_not_scan_the_note_corpus

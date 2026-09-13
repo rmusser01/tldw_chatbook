@@ -58,6 +58,7 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     ADDITIONAL_CONTEXT_RESERVED_PREFIX,
 )
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 
 _BUNDLED_STYLESHEET = (
@@ -268,7 +269,7 @@ class _Harness(App):
 class _StyledHarness(_Harness):
     """Modal harness with the same bundled stylesheet as the real Console."""
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 class _ApplyOverlay(ModalScreen[None]):

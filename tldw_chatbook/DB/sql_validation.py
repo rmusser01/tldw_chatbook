@@ -146,6 +146,7 @@ VALID_TABLES = {
         "note_folder_sync_suppressions",
         "note_folders",
         "note_keywords",
+        "note_links",
         "note_organization_receipts",
         "note_sync_publication_intents",
         "notes",

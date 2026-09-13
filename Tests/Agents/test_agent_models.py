@@ -11,10 +11,13 @@ from tldw_chatbook.Agents.agent_models import (
     MAX_RUN_CONTROL_STEPS,
     CHECK_AGENTS_TOOL_NAME,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
+    DIRECT_DISCLOSURE_CONTEXT_FRACTION,
+    FORK_CHAT_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
     MERGE_AGENT_WORKTREE_TOOL_NAME,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     LOOP_DETECTION_N,
+    NEW_CHAT_TOOL_NAME,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
@@ -45,6 +48,8 @@ from tldw_chatbook.Agents.agent_models import (
     definition_fingerprint,
     definition_from_row,
     validate_agent_definition,
+    READ_AGENT_MESSAGES_TOOL_NAME,
+    REPORT_TO_SUPERVISOR_TOOL_NAME,
 )
 
 
@@ -77,7 +82,11 @@ def test_run_status_values_and_terminal_set():
 
 def test_runtime_tool_names():
     assert SPAWN_TOOL_NAME == "spawn_subagent"
-    assert RUNTIME_TOOL_NAMES == {
+    assert RUNTIME_TOOL_NAMES == {        # ADR-150 chat fork/spawn + dev-baseline completion (fleet message/
+        # worktree constants were in RUNTIME_TOOL_NAMES but unlisted here).
+        REPORT_TO_SUPERVISOR_TOOL_NAME,
+        READ_AGENT_MESSAGES_TOOL_NAME,
+
         "spawn_subagent",
         "find_tools",
         "load_tools",
@@ -99,6 +108,8 @@ def test_runtime_tool_names():
         # directly above.
         MERGE_AGENT_WORKTREE_TOOL_NAME,
         DISCARD_AGENT_WORKTREE_TOOL_NAME,
+        FORK_CHAT_TOOL_NAME,
+        NEW_CHAT_TOOL_NAME,
     }
     assert LOOP_DETECTION_N == 3
 

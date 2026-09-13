@@ -21,6 +21,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SOURCE_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
@@ -30,7 +31,7 @@ _BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 class _ComposerGeometryApp(App[None]):
     """Mount a composer with the production stylesheet for geometry assertions."""
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, *, collapsed: bool = False) -> None:
         super().__init__()
@@ -46,7 +47,7 @@ class _ComposerGeometryApp(App[None]):
 class _BundledConsoleGeometryHarness(ConsoleHarness):
     """Mount the full Console with the generated production stylesheet."""
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 @pytest.mark.asyncio

@@ -1144,6 +1144,65 @@ def test_repurpose_rejects_mismatched_roleplay_title_without_mutation():
     assert store.sessions() == [before]
 
 
+def test_repurpose_pristine_session_accepts_persona_identity():
+    defaults = _pristine_defaults()
+    persona_settings = replace(
+        defaults, system_prompt="Guide User as Archivist.", character_label=""
+    )
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    updated = store.repurpose_pristine_session(
+        session.id,
+        canonical_settings=defaults,
+        trusted_system_prompt="Guide User as Archivist.",
+        title="Chat with Archivist",
+        settings=persona_settings,
+        runtime_backend="local",
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_authority_id=None,
+        character_id=None,
+        character_name=None,
+        assistant_name="Archivist",
+    )
+
+    assert updated is session
+    assert updated.assistant_kind == "persona"
+    assert updated.assistant_id == "local-persona-abc"
+    assert updated.assistant_name == "Archivist"
+    assert updated.character_id is None
+    assert updated.character_name is None
+    assert updated.assistant_authority_id is None
+    assert updated.settings == persona_settings
+
+
+def test_repurpose_pristine_session_rejects_persona_authority():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    before = replace(session)
+
+    with pytest.raises(ValueError, match="authority-free"):
+        store.repurpose_pristine_session(
+            session.id,
+            canonical_settings=defaults,
+            trusted_system_prompt="Guide User.",
+            title="Chat with Archivist",
+            settings=replace(defaults, system_prompt="Guide User."),
+            runtime_backend="server",
+            assistant_kind="persona",
+            assistant_id="opaque-persona",
+            assistant_authority_id="server-user-v1:" + ("a" * 64),
+            character_id=None,
+            character_name=None,
+            assistant_name="Archivist",
+        )
+
+    assert store.sessions()[0] is session
+    assert session == before
+
+
 def test_session_character_ref_projects_complete_local_and_server_identities():
     local = ConsoleChatSession(
         runtime_backend="local",
@@ -2689,6 +2748,139 @@ def test_real_persistence_round_trips_roleplay_and_reply_speech_metadata(tmp_pat
         ).user_name_override == ("Rowan")
     finally:
         db.close_connection()
+
+
+@pytest.fixture
+def real_db_store(tmp_path):
+    """Store over a real SQLite DB for agent-handoff restore tests.
+
+    Construction mirrors the real-DB restore tests above (same class,
+    same file-per-test pattern, no workspace_registry).
+    """
+    db = CharactersRAGDB(tmp_path / "console-agent-handoff.db", "console-handoff-test")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        yield store, db
+    finally:
+        db.close_connection()
+
+
+def test_restore_persisted_session_activate_false_keeps_current(real_db_store):
+    store, db = real_db_store
+    first = store.create_session(title="A")
+    conv = store.persistence.create_conversation(conversation_title="B")
+    restored = store.restore_persisted_session(
+        title="B", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert store.active_session_id == first.id  # NOT switched
+    assert restored.persisted_conversation_id == conv
+
+
+def test_restore_rehydrates_handoff_draft_once(real_db_store):
+    """Final-review fix wave (Finding 2), consume-on-first-ACTIVATION: the
+    draft rehydrates at RESTORE, the persisted key is cleared at the
+    session's FIRST activation (verified via durable metadata), and a
+    second restore after that first open never re-fills the composer."""
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(
+        conversation_title="C",
+        metadata={"console_agent_handoff": {"draft": "please plan the migration",
+                                            "created_via": "fork_chat", "source_run_id": "r9"}},
+    )
+    restored = store.restore_persisted_session(
+        title="C", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert restored.draft == "please plan the migration"
+    # restore alone does NOT clear the key (never-opened drafts survive
+    # restarts)
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" in (row.get("metadata") or "{}")
+    # first activation -- same run -- clears the key exactly once
+    store.switch_session(restored.id)
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" not in (row.get("metadata") or "{}")
+    # and a later restore (post-restart reopen) no longer re-fills the draft
+    again = store.restore_persisted_session(
+        title="C", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=True,
+    )
+    assert again.draft == ""
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" not in (row.get("metadata") or "{}")
+
+
+def test_never_opened_handoff_keeps_key_across_activity(real_db_store):
+    """Semantics (a): restore with activate=False records the pending clear
+    but the durable key survives other sessions' activity -- only THIS
+    session's first activation may consume it."""
+    store, db = real_db_store
+    store.create_session(title="owner")
+    conv = store.persistence.create_conversation(
+        conversation_title="Keep",
+        metadata={"console_agent_handoff": {"draft": "unopened",
+                                            "created_via": "new_chat", "source_run_id": "r1"}},
+    )
+    restored = store.restore_persisted_session(
+        title="Keep", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert restored.draft == "unopened"
+    # other sessions come and go; the handoff session is never activated
+    store.create_session(title="other-1")
+    other2 = store.create_session(title="other-2")
+    store.switch_session(other2.id)
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" in (row.get("metadata") or "{}")
+
+
+def test_activating_restore_clears_handoff_key_immediately(real_db_store):
+    """Semantics (b), post-restart leg: the normal open path restores with
+    activate=True -- the draft rehydrates and the key clears in the same
+    restore (create_session activates before the pending clear is
+    registered, so restore re-consumes directly)."""
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(
+        conversation_title="Open",
+        metadata={"console_agent_handoff": {"draft": "hello",
+                                            "created_via": "fork_chat", "source_run_id": "r2"}},
+    )
+    restored = store.restore_persisted_session(
+        title="Open", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=True,
+    )
+    assert restored.draft == "hello"
+    assert store.active_session_id == restored.id
+    row = db.get_conversation_by_id(conv)
+    assert "console_agent_handoff" not in (row.get("metadata") or "{}")
+
+
+def test_handoff_read_failure_never_fails_restore(real_db_store, monkeypatch):
+    """Semantics (d): a raising metadata read degrades to no draft and never
+    fails the restore."""
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(conversation_title="Boom")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("metadata read exploded")
+
+    monkeypatch.setattr(db, "get_conversation_by_id", _boom)
+    restored = store.restore_persisted_session(
+        title="Boom", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=True,
+    )
+    assert restored.draft == ""
+
+
+def test_restore_without_handoff_leaves_draft_alone(real_db_store):
+    store, db = real_db_store
+    conv = store.persistence.create_conversation(conversation_title="D")
+    restored = store.restore_persisted_session(
+        title="D", workspace_id=None, persisted_conversation_id=conv,
+        all_nodes=[], activate=False,
+    )
+    assert restored.draft == ""
 
 
 def test_initial_reply_speech_is_inserted_at_version_one_with_sibling_metadata(
@@ -9354,3 +9546,133 @@ def _create_staged_canvas_for_console(
         source=f"<!doctype html><html><body>{suffix}</body></html>",
         origin_message_id=f"assistant-{suffix}",
     )
+
+def test_presentation_context_carries_persona_display_name():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Archivist",
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+    context = store.presentation_context(session.id, "")
+    assert context.assistant_kind == "persona"
+    assert context.assistant_name == "Archivist"
+    assert context.character_name is None
+
+
+def _persona_settings() -> ConsoleSessionSettings:
+    return ConsoleSessionSettings(provider="anthropic", model="claude-3-haiku")
+
+
+def _persona_session(store: ConsoleChatStore) -> ConsoleChatSession:
+    return store.create_session(
+        title="Chat with Archivist",
+        settings=_persona_settings(),
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+
+
+def test_named_identity_gates_separate_kinds():
+    persona = SimpleNamespace(
+        assistant_kind="persona", character_name=None, assistant_name="Archivist"
+    )
+    character = SimpleNamespace(
+        assistant_kind="character", character_name="Alraune", assistant_name=None
+    )
+    generic = SimpleNamespace(
+        assistant_kind="generic", character_name=None, assistant_name=None
+    )
+    assert ConsoleChatStore._is_named_persona_session(persona) is True
+    assert ConsoleChatStore._is_named_character_session(persona) is False
+    assert ConsoleChatStore._is_named_persona_session(character) is False
+    assert ConsoleChatStore._is_named_character_session(character) is True
+    assert ConsoleChatStore._is_named_identity_session(persona) is True
+    assert ConsoleChatStore._is_named_identity_session(character) is True
+    assert ConsoleChatStore._is_named_identity_session(generic) is False
+
+
+def test_persona_seed_expands_identity_macros_into_system_prompt():
+    store = ConsoleChatStore()
+    session = _persona_session(store)
+    store.seed_persona_roleplay(
+        session.id,
+        system_template="Guide {{user}} as {{persona}}.",
+        global_default="Rowan",
+    )
+    assert session.persona_system_template == "Guide {{user}} as {{persona}}."
+    assert session.settings is not None
+    assert session.settings.system_prompt == "Guide Rowan as Archivist."
+    # Personas have no greeting: seeding never appends a message.
+    assert store.messages_for_session(session.id) == []
+
+
+def test_persona_seed_without_system_prompt_keeps_default_settings():
+    store = ConsoleChatStore()
+    session = _persona_session(store)
+    store.seed_persona_roleplay(
+        session.id, system_template="  ", global_default="Rowan"
+    )
+    assert session.persona_system_template is None
+    assert session.settings is not None
+    assert session.settings.system_prompt == _persona_settings().system_prompt
+    assert session.assistant_name == "Archivist"
+
+
+def test_persona_rename_rematerializes_projection():
+    store = ConsoleChatStore()
+    session = _persona_session(store)
+    store.seed_persona_roleplay(
+        session.id,
+        system_template="I am {{char}} for {{user}}.",
+        global_default="Rowan",
+    )
+    _session, persisted = store.set_session_assistant_name(
+        session.id, "Scribe", global_default="Rowan"
+    )
+    assert persisted is True
+    assert session.assistant_name == "Scribe"
+    assert session.settings is not None
+    assert session.settings.system_prompt == "I am Scribe for Rowan."
+
+
+def test_set_session_assistant_name_clears_character_name():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Alraune",
+        settings=_persona_settings(),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
+    store.set_session_assistant_name(session.id, "Archivist", global_default="Rowan")
+    assert session.assistant_name == "Archivist"
+    assert session.character_name is None
+
+
+def test_character_swap_off_persona_session_clears_persona_identity():
+    store = ConsoleChatStore()
+    session = _persona_session(store)
+    store.seed_persona_roleplay(
+        session.id, system_template="Guide {{user}}.", global_default="Rowan"
+    )
+    # The screen sets kind/id fields before calling the store seam; mirror it.
+    session.assistant_kind = "character"
+    session.assistant_id = "7"
+    session.character_id = 7
+    _session, _greeting, persisted = store.swap_session_character_roleplay(
+        session.id,
+        character_name="Alraune",
+        system_template="Be {{char}}.",
+        greeting_template="",
+        global_default="Rowan",
+    )
+    assert persisted is True
+    assert session.character_name == "Alraune"
+    assert session.assistant_name is None
+    assert session.persona_system_template is None
+    assert session.settings is not None
+    assert session.settings.system_prompt == "Be Alraune."

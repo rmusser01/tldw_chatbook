@@ -32,6 +32,7 @@ from Tests.UI.test_destination_shells import _visible_text, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
@@ -40,7 +41,7 @@ BUNDLE = ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
 class StyledConsoleHarness(ConsoleHarness):
     """ConsoleHarness with the shipped stylesheet so app-tier rules apply."""
 
-    CSS_PATH = str(BUNDLE)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 def _static_text(widget: Static) -> str:

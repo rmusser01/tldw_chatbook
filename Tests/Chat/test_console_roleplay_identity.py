@@ -259,3 +259,60 @@ def test_resolver_uses_the_current_variant_and_leaves_system_and_tool_content_li
     assert resolve_console_message_presentation(tool, context).content == (
         "{{character}}"
     )
+
+
+
+def test_persona_session_labels_assistant_rows_with_persona_name():
+    presentation = resolve_console_message_presentation(
+        assistant_message("Certainly."),
+        ConsolePresentationContext(
+            assistant_kind="persona", assistant_name="Archivist"
+        ),
+    )
+    assert presentation.speaker_label == "Archivist"
+    assert presentation.speaker_tone == "assistant"
+    assert presentation.row_class == "console-transcript-message-role-assistant"
+
+
+def test_persona_session_without_name_falls_back_to_assistant():
+    presentation = resolve_console_message_presentation(
+        assistant_message("Certainly."),
+        ConsolePresentationContext(assistant_kind="persona", assistant_name="  "),
+    )
+    assert presentation.speaker_label == "Assistant"
+    assert presentation.speaker_tone == "assistant"
+
+
+def test_persona_name_never_gets_roleplay_character_styling():
+    presentation = resolve_console_message_presentation(
+        assistant_message("Certainly."),
+        ConsolePresentationContext(
+            assistant_kind="persona",
+            assistant_name="Archivist",
+            transcript_style=ConsoleTranscriptStyle.IMMERSIVE_RP,
+        ),
+    )
+    assert presentation.speaker_label == "Archivist"
+    assert presentation.speaker_tone == "assistant"
+    assert presentation.row_class == "console-transcript-message-role-assistant"
+
+
+def test_session_assistant_display_name_picks_per_kind():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_roleplay_identity import (
+        session_assistant_display_name,
+    )
+
+    character = SimpleNamespace(
+        assistant_kind="character", character_name="Alraune", assistant_name=None
+    )
+    persona = SimpleNamespace(
+        assistant_kind="persona", character_name=None, assistant_name=" Archivist "
+    )
+    generic = SimpleNamespace(
+        assistant_kind="generic", character_name=None, assistant_name=None
+    )
+    assert session_assistant_display_name(character) == "Alraune"
+    assert session_assistant_display_name(persona) == "Archivist"
+    assert session_assistant_display_name(generic) is None

@@ -497,6 +497,12 @@ class LocalNoteImportTarget:
                 self._user_id,
             ),
         )
+        # task-32186: backlinks are answered from `note_links`, not from a
+        # scan of every body, and this writer does not go through
+        # `CharactersRAGDB.add_note` (it needs its own version and client-id
+        # semantics). Imported `[[wikilinks]]` are the links the feature
+        # exists for, so the relation is maintained here too.
+        CharactersRAGDB.replace_note_links(cursor, note_id, payload.content)
 
     def _update_note(
         self,
@@ -522,7 +528,14 @@ class LocalNoteImportTarget:
                 expected_version,
             ),
         )
-        return result.rowcount == 1
+        # Read the count BEFORE anything else runs on this cursor:
+        # `cursor.execute` returns the cursor ITSELF, so the link writes below
+        # overwrite `result.rowcount` and the return value would report them
+        # instead of the note update (18 tests in this file caught it).
+        updated = result.rowcount == 1
+        if updated:
+            CharactersRAGDB.replace_note_links(cursor, note_id, payload.content)
+        return updated
 
     def _sync_keywords(
         self,

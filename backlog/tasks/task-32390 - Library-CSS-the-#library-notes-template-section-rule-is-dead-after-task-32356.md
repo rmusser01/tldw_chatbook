@@ -4,7 +4,9 @@ title: 'Library CSS: the #library-notes-template-section rule is dead after task
 status: Done
 assignee:
   - '@zcode'
+  - '@claude'
 created_date: '2026-09-11 10:30'
+updated_date: '2026-09-11 16:48'
 labels:
   - library
   - css
@@ -26,8 +28,18 @@ task-32356 replaced the nine-option new-note chooser, and with it the widget tha
 - [x] #3 The Notes create flow renders unchanged at 235x52 and on a compact terminal
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Delete the rule from the component source
+2. Regenerate with python -m tldw_chatbook.css.build_css; check_bundle_sync + boot-CSS budget
+3. Pin the selector's absence from source and both generated sheets
+4. Verify the Notes create flow live at 235x52 and compact
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Removed the dead ``#library-notes-template-section`` rule (plus its two-line group-label comment) from BOTH hand-maintained sources that carried it: ``css/screen_agentic_library.tcss`` and ``css/components/_agentic_terminal.tcss``.
 
 Premise correction, verified empirically: the task said the rule "still ships in the generated bundle", but rebuilding with ``build_css.py`` on current dev reproduces ``tldw_cli_modular.tcss`` byte-identically WITHOUT the selector (a later split/cleanup already stopped emitting it), and the split outputs (``widget_defaults_*``/``screen_css_*``) do not contain it either. The dead weight was confined to the two sources. Proof of deadness: after removing the rule from both sources, the rebuilt bundle is byte-identical to before the change -- a selector whose removal cannot change any generated output matches nothing.
@@ -37,3 +49,16 @@ ADR path: N/A
 Reason: Dead-CSS cleanup; no design change.
 
 Modified: ``tldw_chatbook/css/screen_agentic_library.tcss``, ``tldw_chatbook/css/components/_agentic_terminal.tcss``.
+
+---
+
+Landed independently on the wave-3 layout branch (fix/library-notes-w3-layout) before 181f36d944 merged; both removals converge on the same source text.
+
+Deleted the rule and its comment from `css/components/_agentic_terminal.tcss` and regenerated with `python -m tldw_chatbook.css.build_css`. The splitter routes `#library-*` rules to `screen_agentic_library.tcss`, which the Library screen loads lazily, so the boot bundle `tldw_cli_modular.tcss` is byte-identical and the 768,000-byte ratchet never saw it: `check_bundle_sync` and `Tests/Performance/test_boot_css_byte_budget.py` both green.
+
+Pinned by `test_the_retired_template_section_rule_is_gone_from_source_and_bundle`, which checks the component source and BOTH generated sheets -- a hand-edit of one would fail it.
+
+AC#3 verified live on the branch build: the create flow renders unchanged at 235x52 (`wave3-caps/layout/18-create.txt`) and at 100x30 (`23-compact-create.txt`) -- "New note", "Blank note", "From a template…".
+
+Modified: `tldw_chatbook/css/components/_agentic_terminal.tcss`, `tldw_chatbook/css/screen_agentic_library.tcss`, `Tests/UI/test_library_notes_w3_layout.py`.
+<!-- SECTION:NOTES:END -->

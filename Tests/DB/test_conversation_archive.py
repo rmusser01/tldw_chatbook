@@ -163,7 +163,12 @@ def test_v70_migration_preserves_existing_rows_and_adds_archive_index(
             conn.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()[0]
-            == 72
+            # The chain ran to completion. Deliberately the constant, not a
+            # literal: this asserts "fully migrated", not "migrated to the
+            # version that was current when this test was written" (it was
+            # pinned at 72 and went stale on the v73 bump, task-32186). The
+            # v70 artifacts this test exists for are asserted below.
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         )
         assert any(
             row[2] == "archived"

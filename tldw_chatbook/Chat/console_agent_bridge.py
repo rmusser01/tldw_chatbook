@@ -80,6 +80,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
     definition_from_row,
 )
+from tldw_chatbook.Agents import agent_models as agent_models_constants
 from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import (
     RUN_LOG_PROMPT_SECTION,
@@ -4232,6 +4233,8 @@ def build_console_first_request_plan(
     turn_bundle_block: str,
     install_skill_enabled: bool,
     run_skill_script_enabled: bool,
+    fork_chat_enabled: bool = False,
+    new_chat_enabled: bool = False,
     worktree_merge_enabled: bool = False,
     agent_messages: list[dict],
     agent_definitions: tuple[AgentDefinition, ...] = (),
@@ -4423,6 +4426,8 @@ def build_console_first_request_plan(
         install_skill_enabled=install_skill_enabled,
         managed_skill_promotion_enabled=library_provider is not None,
         run_skill_script_enabled=run_skill_script_enabled,
+        fork_chat_enabled=fork_chat_enabled,
+        new_chat_enabled=new_chat_enabled,
         run_log_active=run_log.requested,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
@@ -5051,6 +5056,8 @@ class ConsoleAgentBridge:
                 self._skills_service is not None and request_skill_install_enabled
             ),
             run_skill_script_enabled=script_tool_enabled,
+            fork_chat_enabled=bool(fork_chat_tool is not None),
+            new_chat_enabled=bool(new_chat_tool is not None),
             agent_messages=agent_messages,
             agent_definitions=runtime_definitions,
             fleet_max_live=fleet_max_live,
@@ -5204,6 +5211,8 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
+        request_chat_create_confirm: Callable[[dict], dict] | None = None,
+        execute_agent_chat_create: Callable[[dict], dict] | None = None,
         # TASK-28238 phase 2 Task 6: forwarded straight to
         # `AgentService.run_turn(request_worktree_merge_confirm=...)` --
         # unlike `request_skill_script_confirm` above, this is never
@@ -5467,6 +5476,27 @@ class ConsoleAgentBridge:
             )
             diff_feedback_included_ids = []
             diff_feedback_included_notes = []
+        # advertised) rather than auto-denying every call, the same
+        # advertised-equals-usable rule as `install_skill_tool`/
+        # `run_skill_script_tool` below. Built up here (before the first
+        # request plan) because the plan's schema flags must reflect
+        # whether the tools exist.
+        # `run_id`: the run's own id only exists once `run_turn` mints it
+        # (far below), so the originating assistant message id -- this
+        # turn's stable identity, already in scope -- rides in the payload
+        # under the `run_id` key instead.
+        fork_chat_tool = new_chat_tool = None
+        if (
+            request_chat_create_confirm is not None
+            and execute_agent_chat_create is not None
+        ):
+            fork_chat_tool, new_chat_tool = build_chat_create_tool_closures(
+                confirm=request_chat_create_confirm,
+                execute=execute_agent_chat_create,
+                session_id=session_id,
+                run_id=assistant_message_id,
+            )
+
         first_request_plan = build_console_first_request_plan(
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
@@ -5501,6 +5531,8 @@ class ConsoleAgentBridge:
                 and request_skill_install_confirm is not None
             ),
             run_skill_script_enabled=script_tool_enabled,
+            fork_chat_enabled=bool(fork_chat_tool is not None),
+            new_chat_enabled=bool(new_chat_tool is not None),
             worktree_merge_enabled=request_worktree_merge_confirm is not None,
             agent_messages=planning_messages,
             agent_definitions=runtime_definitions,
@@ -6558,6 +6590,8 @@ class ConsoleAgentBridge:
             install_skill_tool=install_skill_tool,
             prepare_managed_skill_promotion_tool=(prepare_managed_skill_promotion_tool),
             run_skill_script_tool=run_skill_script_tool,
+            fork_chat_tool=fork_chat_tool,
+            new_chat_tool=new_chat_tool,
             run_log_writer=run_log_writer,
             post_tool_call=(
                 run_hooks_engine.post_tool_dep(session_id=session_id)
@@ -9705,3 +9739,167 @@ class ConsoleAgentBridge:
         # resumed transcript's step summaries render byte-identical to what
         # a live run of the same steps would have shown.
         return _truncate_step_text(str(raw), limit=_console_tool_result_display_cap())
+
+
+# -- agent-initiated chat creation (fork_chat / new_chat) ------------------
+#
+# TASK-32482 Task 7. The two runtime-tool closures run_reply builds when a
+# confirm callback and an executor are both wired (see the build site in
+# run_reply). Kept at module level -- unlike run_skill_script_tool, which is
+# inline in run_reply -- because the confirm flow is pure data in/decision
+# out: no bridge state, no skills service, no asyncio, so it needs none of
+# run_reply's closure scope and exporting it keeps the denial/remember
+# mechanics directly testable.
+
+#: Re-exported from Agents.agent_models (the single shared definition --
+#: PR review #5) so existing imports and tests keep working.
+CHAT_CREATE_TITLE_MAX = agent_models_constants.CHAT_CREATE_TITLE_MAX
+CHAT_CREATE_PAYLOAD_MAX = agent_models_constants.CHAT_CREATE_PAYLOAD_MAX
+#: Denials after which a tool goes terminal for the rest of the run.
+_CHAT_CREATE_DENIAL_LIMIT = 2
+
+
+def build_chat_create_tool_closures(
+    *,
+    confirm: Callable[[dict], dict],
+    execute: Callable[[dict], dict],
+    session_id: str,
+    run_id: str,
+) -> tuple[Callable[[dict], ToolResult], Callable[[dict], ToolResult]]:
+    """Build the fork_chat/new_chat runtime-tool closures for one run.
+
+    Both share one per-run denial counter (terminal after two denials --
+    the model is told, once, that chat creation is off for the run) and
+    one per-run remember memo. The memo is the RUN-local half of the
+    remember contract: a remembered tool skips the confirm card for the
+    rest of this run, while the controller's session-scoped grants
+    (``_chat_create_session_grants``) cover cross-run remembers inside
+    the same session -- the confirm callback itself short-circuits those
+    before a card is ever armed.
+
+    Args:
+        confirm: Worker-thread blocking confirm callable (the controller's
+            ``request_chat_create_confirm`` partial). Returns a mapping
+            with ``"allow"``/``"remember"``; anything else, or a raise,
+            fails closed as a denial.
+        execute: The controller's ``execute_agent_chat_create``; called
+            only after an allow (or a remembered allow).
+        session_id: The run's owning session id.
+        run_id: The run identity stamp riding in the payload's
+            ``"run_id"`` key (run_reply passes the originating assistant
+            message id).
+
+    Returns:
+        ``(fork_chat_tool, new_chat_tool)`` -- each ``args -> ToolResult``.
+    """
+    denials = {"fork_chat": 0, "new_chat": 0}
+    remembered: set[str] = set()
+
+    def _run(tool: str, args: dict) -> ToolResult:
+        if denials[tool] >= _CHAT_CREATE_DENIAL_LIMIT:
+            return ToolResult(
+                ok=False,
+                error=(
+                    "denied_repeatedly: the user declined twice; chat creation "
+                    "is disabled for the rest of this run. Do not retry."
+                ),
+            )
+        # PR review #14: strict types -- the model's args are untrusted; a
+        # non-string value is a clear tool error, never a str() coercion
+        # that silently stringifies mappings/collections into payloads.
+        raw_title = args.get("title", "")
+        raw_prompt = args.get("opening_prompt", "")
+        raw_instructions = args.get("instructions", "")
+        for name, value in (
+            ("title", raw_title),
+            ("opening_prompt", raw_prompt),
+            ("instructions", raw_instructions),
+        ):
+            if not isinstance(value, str):
+                return ToolResult(
+                    ok=False,
+                    error=f"invalid_args: {name} must be a string, got "
+                    f"{type(value).__name__}",
+                )
+        title = raw_title.strip()[:CHAT_CREATE_TITLE_MAX]
+        opening_prompt = raw_prompt
+        instructions = raw_instructions
+        if (
+            len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX
+            or len(instructions) > CHAT_CREATE_PAYLOAD_MAX
+        ):
+            return ToolResult(
+                ok=False,
+                error=(
+                    "payload_too_large: opening_prompt/instructions exceed "
+                    f"{CHAT_CREATE_PAYLOAD_MAX} chars"
+                ),
+            )
+        payload = {
+            "tool": tool,
+            "session_id": session_id,
+            "run_id": run_id,
+            "title": title,
+            "opening_prompt": opening_prompt,
+            "instructions": instructions,
+        }
+        if tool not in remembered:
+            try:
+                decision = confirm(dict(payload))
+            except Exception:  # noqa: BLE001 — a UI error fails closed
+                decision = {"allow": False, "remember": False}
+            if not isinstance(decision, Mapping) or not decision.get(
+                "allow", False
+            ):
+                denials[tool] += 1
+                return ToolResult(
+                    ok=False,
+                    error="The user declined. Do not retry this turn.",
+                )
+            if decision.get("remember", False):
+                remembered.add(tool)
+        # Broad-catch the EXECUTE phase exactly like the sibling
+        # run_skill_script_tool does: a raising executor must surface as
+        # the outcome contract (ok=False, execution_failed), never as an
+        # uncaught worker-thread exception escaping into the run loop --
+        # the one path that would bypass the outcome-dict handling below.
+        try:
+            outcome = execute(dict(payload))
+        except Exception as exc:  # noqa: BLE001 — the outcome contract is the error boundary
+            return ToolResult(ok=False, error=f"execution_failed: {exc}")
+        if not isinstance(outcome, dict) or not outcome.get("ok"):
+            kind = (
+                str(outcome.get("kind", "execution_failed"))
+                if isinstance(outcome, dict)
+                else "execution_failed"
+            )
+            detail = (
+                outcome.get("error", "chat creation failed")
+                if isinstance(outcome, dict)
+                else "chat creation failed"
+            )
+            return ToolResult(ok=False, error=f"{kind}: {detail}")
+        note = (
+            "The new chat opened in the background (same workspace) with your "
+            "opening prompt as a draft in its input box; the user reviews and "
+            "sends it themselves. Do not send messages into the new chat."
+        )
+        content = json.dumps(
+            {
+                "title": outcome.get("title"),
+                "conversation_id": outcome.get("conversation_id"),
+                "workspace_id": outcome.get("workspace_id"),
+                "copied_messages": outcome.get("copied_messages"),
+                "draft_set": bool(outcome.get("draft_set")),
+                "note": note,
+            }
+        )
+        return ToolResult(ok=True, content=content)
+
+    def fork_chat_tool(args: dict) -> ToolResult:
+        return _run("fork_chat", args)
+
+    def new_chat_tool(args: dict) -> ToolResult:
+        return _run("new_chat", args)
+
+    return fork_chat_tool, new_chat_tool

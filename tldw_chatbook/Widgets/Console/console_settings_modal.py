@@ -166,6 +166,16 @@ MODEL_DISCOVER_BUTTON_LABEL = "Test connection & list models"
 ENDPOINT_NEW_BUTTON_ID = "console-settings-endpoint-new"
 ENDPOINT_NEW_BUTTON_LABEL = "New endpoint…"
 ENDPOINT_NEW_BUTTON_WIDTH = 17
+BASE_URL_ENTRY_HINT_ID = "console-settings-base-url-entry-hint"
+BASE_URL_ENTRY_HINT_COPY = (
+    "Managed by this endpoint entry — rename or edit it in F9 Settings › "
+    "Providers & Models."
+)
+#: H6: provider-list sentinel row that opens endpoint creation instead of
+#: switching providers. It must never reach drafts, persistence, readiness,
+#: or the model picker -- both selection entry points intercept it first.
+NEW_CUSTOM_ENDPOINT_SENTINEL = "__new_custom_endpoint__"
+NEW_CUSTOM_ENDPOINT_LABEL = "New custom endpoint…"
 MODEL_DISCOVER_SCOPE_COPY = (
     "Tests this endpoint by listing models; this does not test generation."
 )
@@ -1558,6 +1568,7 @@ class ConsoleSettingsModal(
         selected_model = self._model_for_provider(self._active_provider)
         base_url = self._base_url_for_provider(self._active_provider)
         uses_base_url = self._provider_uses_base_url(self._active_provider)
+        entry = self._custom_endpoint_entry_for(self._active_provider)
         model_options = self._model_select_options(
             self._active_provider, selected_model
         )
@@ -1692,7 +1703,8 @@ class ConsoleSettingsModal(
                             base_url_input = ConsoleSettingsInput(
                                 value=base_url or "",
                                 id="console-settings-base-url",
-                                disabled=not uses_base_url,
+                                disabled=not uses_base_url
+                                or entry is not None,
                                 classes="console-settings-control",
                             )
                             base_url_input.display = uses_base_url
@@ -1711,6 +1723,17 @@ class ConsoleSettingsModal(
                                 self._settings.provider
                             )
                             yield new_endpoint
+                        # H1: a registry entry's URL is display-only, so the
+                        # row explains where to actually change it instead of
+                        # offering an edit that Save would silently drop.
+                        entry_hint = Static(
+                            BASE_URL_ENTRY_HINT_COPY,
+                            id=BASE_URL_ENTRY_HINT_ID,
+                            classes="console-settings-field-help",
+                            markup=False,
+                        )
+                        entry_hint.display = entry is not None
+                        yield entry_hint
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("Model")
                             yield ModelSearchPicker(
@@ -5154,6 +5177,9 @@ class ConsoleSettingsModal(
         if self._restoring_suspended_draft:
             return
         provider = self._select_value_text(event.value)
+        if provider == NEW_CUSTOM_ENDPOINT_SENTINEL:
+            self._open_new_endpoint_sentinel_flow()
+            return
         self._switch_provider(provider)
 
     @on(ConsoleProviderPicker.ProviderSelected)
@@ -5163,10 +5189,41 @@ class ConsoleSettingsModal(
         """Mirror a user selection into the legacy state adapter and switch."""
         event.stop()
         provider = event.provider
+        if provider == NEW_CUSTOM_ENDPOINT_SENTINEL:
+            self._open_new_endpoint_sentinel_flow()
+            return
         provider_adapter = self.query_one("#console-settings-provider", Select)
         with provider_adapter.prevent(Select.Changed):
             provider_adapter.value = provider
         self._switch_provider(provider)
+
+    def _open_new_endpoint_sentinel_flow(self) -> None:
+        """Open endpoint creation from the sentinel row, restoring selection.
+
+        H6: the sentinel is an action, not a provider. Both selection entry
+        points intercept it before any switch logic, so the previously active
+        provider stays selected (no readiness flicker) and no draft, model
+        resolution, or persistence ever sees the sentinel value. The push is
+        not awaited: the template modal drives its own lifecycle and reports
+        back through ``EndpointCreated`` (which switches onto the new entry).
+        """
+        prior_provider = self._active_provider
+        provider_adapter = self.query_one("#console-settings-provider", Select)
+        with provider_adapter.prevent(Select.Changed):
+            provider_adapter.value = prior_provider or Select.NULL
+        try:
+            self.query_one(
+                "#console-settings-provider-picker", ConsoleProviderPicker
+            ).set_provider(prior_provider)
+        except (NoMatches, QueryError):
+            pass
+        self.app.push_screen(
+            ConsoleEndpointTemplateModal(
+                app_config=self._app_config,
+                providers_models=self._providers_models,
+                template_provider=prior_provider or None,
+            )
+        )
 
     def _switch_provider(self, provider: str) -> None:
         """Apply one known provider while preserving the outgoing raw drafts."""
@@ -6567,10 +6624,13 @@ class ConsoleSettingsModal(
         option builder is preserved. Registry entries (``custom-ep:<slug>``
         values, ADR-146) already carry their ``display_name`` label from the
         option builder, so they bypass the shared-catalog relabel unchanged.
+        The trailing creation sentinel (H6) keeps its own label too.
         """
         options: list[tuple[str, str]] = []
         for option in self._provider_picker_options():
-            if option.value.startswith(CUSTOM_ENDPOINT_ID_PREFIX):
+            if option.value.startswith(CUSTOM_ENDPOINT_ID_PREFIX) or (
+                option.value == NEW_CUSTOM_ENDPOINT_SENTINEL
+            ):
                 options.append((escape_markup(option.label), option.value))
                 continue
             label = provider_display_name(option.value)
@@ -6596,6 +6656,12 @@ class ConsoleSettingsModal(
                     value=current_provider,
                 )
             )
+        options.append(
+            ConsoleSettingsOption(
+                label=NEW_CUSTOM_ENDPOINT_LABEL,
+                value=NEW_CUSTOM_ENDPOINT_SENTINEL,
+            )
+        )
         return options
 
     def _model_select_options(
@@ -6694,6 +6760,12 @@ class ConsoleSettingsModal(
 
     def _store_current_base_url_for_provider(self, provider: str) -> None:
         if provider and self._provider_uses_base_url(provider):
+            if self._custom_endpoint_entry_for(provider) is not None:
+                # H1: the displayed entry URL is read-only provenance, not an
+                # editable draft -- capturing it would pin a stale session
+                # base_url that outranks nothing on send (the entry always
+                # wins) yet contradicts the blank-URL save contract above.
+                return
             self._provider_base_url_drafts[provider] = self.query_one(
                 "#console-settings-base-url", Input
             ).value
@@ -6732,18 +6804,37 @@ class ConsoleSettingsModal(
     def _sync_base_url_control(self, provider: str, base_url: str | None) -> None:
         base_url_input = self.query_one("#console-settings-base-url", Input)
         uses_base_url = self._provider_uses_base_url(provider)
+        entry = self._custom_endpoint_entry_for(provider)
         base_url_input.value = base_url or ""
-        base_url_input.disabled = not uses_base_url
+        base_url_input.disabled = not uses_base_url or entry is not None
         base_url_input.display = uses_base_url
+        try:
+            entry_hint = self.query_one(f"#{BASE_URL_ENTRY_HINT_ID}", Static)
+        except (NoMatches, QueryError):
+            entry_hint = None
+        if entry_hint is not None:
+            entry_hint.display = entry is not None
 
     def _current_base_url_value(self, provider: str) -> str | None:
         if not self._provider_uses_base_url(provider):
+            return None
+        if self._custom_endpoint_entry_for(provider) is not None:
+            # Gateway invariant (ADR-146 entry-URL authority): a blank session
+            # base_url is what makes the entry URL authoritative on send.
+            # The read-only displayed URL must never flow back into drafts,
+            # readiness identities, or the saved settings.
             return None
         return self.query_one("#console-settings-base-url", Input).value.strip() or None
 
     def _base_url_for_provider(self, provider: str) -> str | None:
         if not self._provider_uses_base_url(provider):
             return None
+        entry = self._custom_endpoint_entry_for(provider)
+        if entry is not None:
+            # Display-only provenance: the entry's persisted URL, never a
+            # session draft or family default (both would misrepresent the
+            # endpoint that actually executes).
+            return entry.base_url
         if provider in self._provider_base_url_drafts:
             return self._provider_base_url_drafts[provider] or None
         if provider == self._settings.provider and self._settings.base_url:
@@ -6752,7 +6843,26 @@ class ConsoleSettingsModal(
             )
         return self._default_base_url_for_provider(provider)
 
+    def _custom_endpoint_entry_for(self, provider: str | None):
+        """Resolve the registry entry behind a ``custom-ep:<slug>`` provider.
+
+        H1 seam: provider ids addressing registry entries never normalize to
+        a URL-based provider key (``provider_config_key`` mangles the prefix
+        to ``custom_ep:<slug>``), so every base-URL surface must consult the
+        registry itself before falling back to provider-key checks.
+
+        Args:
+            provider: Candidate provider id (any shape, may be None).
+
+        Returns:
+            The resolved :class:`CustomEndpointEntry`, or None when
+            ``provider`` is not a resolvable registry id.
+        """
+        return entry_for(self._app_config, provider)
+
     def _provider_uses_base_url(self, provider: str) -> bool:
+        if self._custom_endpoint_entry_for(provider) is not None:
+            return True
         provider_key = provider_config_key(provider)
         provider_settings = self._provider_settings(provider_key)
         return provider_key in URL_BASED_PROVIDER_KEYS or any(

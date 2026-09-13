@@ -3,9 +3,11 @@ id: TASK-32264
 title: >-
   Library Notes Folder files hides YAML frontmatter it is silently preserving,
   and neither the editor nor the guide says so
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 12:00'
 labels:
   - library
   - notes
@@ -29,7 +31,38 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The editor indicates that hidden frontmatter exists on a file that has it, and that it is preserved
-- [ ] #2 `Docs/User_Guide/library/file-notes.md` documents the behaviour
-- [ ] #3 Covered by a test asserting the indication for a file with frontmatter
+- [x] #1 The editor indicates that hidden frontmatter exists on a file that has it, and that it is preserved
+- [x] #2 `Docs/User_Guide/library/file-notes.md` documents the behaviour
+- [x] #3 Covered by a test asserting the indication for a file with frontmatter
 <!-- AC:END -->
+
+
+## Implementation Plan
+<!-- SECTION:PLAN:BEGIN -->
+1. Confirm the split: `_parse_opened` moves the frontmatter into `preserved_prefix`, `_serialize_body` writes it back untouched.
+2. RED tests: a service-level `frontmatter_lines`, and a workspace-level disclosure for a file that has frontmatter (and silence for one that does not).
+3. Carry it on the editor's existing "what you are not seeing" line rather than a new widget.
+4. Guide + stamp.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+`OpenedFileNote.frontmatter_lines` names the fact the editor needed: the
+count of lines in the block `_parse_opened` split into `preserved_prefix`
+and `_serialize_body` writes back byte-for-byte (BOM excluded; an
+unterminated `---` block is not frontmatter and stays in the body).
+
+The editor's existing "what you are not seeing" line --
+`#file-notes-preview-status`, until now the large-file excerpt disclosure --
+carries it, because that is the same question asked twice. Both disclosures
+can show at once, joined by ` · `. No new widget, no new CSS.
+
+Live GREEN: opening a vault daily note shows "4 lines of YAML frontmatter
+above this body are hidden here and kept exactly as they are on disk."
+
+Files: `Notes/file_notes_service.py`,
+`Widgets/Library/library_file_notes_workspace.py`,
+`Tests/Notes/test_file_notes_service.py`,
+`Tests/UI/test_library_notes_wave_file_notes.py`,
+`Docs/User_Guide/library/file-notes.md`.
+<!-- SECTION:NOTES:END -->

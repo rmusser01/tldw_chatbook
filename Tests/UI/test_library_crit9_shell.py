@@ -377,19 +377,6 @@ def test_the_narrow_stage_gate_survives_a_screen_with_no_active_app() -> None:
     assert isinstance(screen._library_footer_shortcuts_for_current_state(), tuple)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "task-32302: regressed by dev adb7d5886f (the archive-scope recovery "
-        "annotate hop). Green 24/24 on this branch before that merge, 4 of 5 "
-        "runs red after it with no branch-side change. Not the 2s ceiling: the "
-        "rows mount 0.44s in with 1.75s of window left, the arm is still "
-        "pending, and the generation reaches 2 -- a second arm during route "
-        "entry invalidates the first attempt. Kept asserting the delivered "
-        "behaviour rather than weakened, and non-strict because it still "
-        "passes about one run in five."
-    ),
-    strict=False,
-)
 async def test_the_conversations_footer_advertises_escape_on_arrival() -> None:
     """task-32228 AC#1 (ruling R1): arrive with focus on the list, like siblings.
 
@@ -584,3 +571,66 @@ async def test_an_unrecognised_trust_status_paints_no_word_on_the_row() -> None:
         assert any("summarize · needs review" in label for label in labels), labels
         # No orphan separator where the word was dropped.
         assert not any(label.rstrip().endswith("·") for label in labels), labels
+
+
+async def test_a_row_that_is_not_yet_focusable_does_not_consume_the_entry_focus_arm() -> None:
+    """task-32302: the mechanism behind the 32228 regression, pinned.
+
+    dev's archive-scope recovery hop fires a SECOND conversations page request
+    during route entry (``handle_library_rail_row``), and
+    ``LibraryConversationRecovery.project`` folds ``state.loading`` into
+    ``actions_disabled`` -- so the rows that mounted for the FIRST load are
+    repainted ``disabled`` while the second one is in flight. A disabled widget
+    is not ``focusable``, so ``set_focus`` on it is a silent no-op: the entry
+    arm's one attempt was spent, ``_focus_library_list_entry`` returned as if it
+    had landed, and nothing re-requested focus while the flag stayed armed --
+    measured live as rows mounting 0.44s into a 2s window with focus on nothing.
+
+    Only a LANDING counts as done, the same rule task-32228 already wrote for
+    the empty-list fallback controls one branch above. The window itself is
+    unchanged (that is task-32301).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", "") == "library-conversation-row-0",
+            message=lambda: f"never arrived on row 0: {screen.focused!r}",
+        )
+
+        # Reproduce the live race: rows mounted, a second page load in flight,
+        # so every row is painted disabled when the arm's attempt runs.
+        screen.set_focus(None)
+        screen._conversations_state.loading = True
+        screen._sync_library_conversation_canvas()
+        await pilot.pause()
+        row = screen.query_one("#library-conversation-row-0")
+        assert row.disabled is True, "the loading page must paint its rows disabled"
+        assert row.focusable is False, row
+
+        screen._arm_library_list_entry_focus()
+        await pilot.pause()
+        assert screen.focused is None, (
+            f"a disabled row cannot take focus, but something did: {screen.focused!r}"
+        )
+
+        # The second load settles and re-enables the rows: the arm is still
+        # owed a landing, and must deliver one without another rail press.
+        screen._conversations_state.loading = False
+        screen._sync_library_conversation_canvas()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", "") == "library-conversation-row-0",
+            timeout=5.0,
+            message=lambda: (
+                "the entry-focus arm was consumed by an unfocusable row and "
+                f"never retried: {screen.focused!r}"
+            ),
+        )

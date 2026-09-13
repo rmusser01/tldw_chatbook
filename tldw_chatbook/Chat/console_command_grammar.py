@@ -114,6 +114,7 @@ CONSOLE_ACTION_COMMANDS: tuple[tuple[str, str], ...] = (
     ("temp", ""),
     ("settings", ""),
     ("context", ""),
+    ("endpoint", ""),
 )
 
 

@@ -163,6 +163,162 @@ async def test_template_modal_surfaces_slug_exhaustion_inline(tmp_path, monkeypa
         config_module.load_cli_config_and_ensure_existence(force_reload=True)
 
 
+@pytest.mark.asyncio
+async def test_template_modal_hides_error_banner_on_untouched_blank_form(tmp_path):
+    """H8: at mount the blank template is invalid (no name, no URL) but the
+    form is untouched -- Create is disabled from the first frame while the
+    error banner stays hidden instead of scolding the untouched form."""
+    app = _TemplateModalHarness(app_config={})
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = ConsoleEndpointTemplateModal(
+            app_config=app.app_config,
+            providers_models={},
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        error = app.screen.query_one("#endpoint-template-error", Static)
+        assert error.display is False
+        create = app.screen.query_one("#endpoint-template-create", Button)
+        assert create.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_template_modal_shows_error_banner_after_first_edit(tmp_path):
+    """Once the user edits a field, the same invalid state surfaces the
+    banner (validation feedback begins with interaction)."""
+    app = _TemplateModalHarness(app_config={})
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = ConsoleEndpointTemplateModal(
+            app_config=app.app_config,
+            providers_models={},
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#endpoint-template-name")
+        await pilot.press("G")
+        await pilot.pause()
+        error = app.screen.query_one("#endpoint-template-error", Static)
+        assert error.display is True
+        assert "http(s)" in str(error.renderable)
+        create = app.screen.query_one("#endpoint-template-create", Button)
+        assert create.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_template_modal_from_entry_preselects_same_family_starter(tmp_path):
+    """H5: opened with template_provider=custom-ep:X, the active template is
+    the synthetic same-family starter (entry's family, blank name, blank URL
+    -- a second server, not the family default and not a copy of X), placed
+    immediately before X's '(duplicate)' option, which stays selectable."""
+    from textual.widgets import OptionList, Select
+
+    app_config = {
+        "custom_endpoints": {
+            "gpu": {
+                "display_name": "GPU llama",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.5:8080",
+                "models": ["model-a"],
+            }
+        }
+    }
+    app = _TemplateModalHarness(app_config=app_config)
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = ConsoleEndpointTemplateModal(
+            app_config=app.app_config,
+            providers_models={},
+            template_provider="custom-ep:gpu",
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        url = app.screen.query_one("#endpoint-template-url", Input)
+        assert url.value == ""
+        family = app.screen.query_one("#endpoint-template-family", Select)
+        assert family.value == "llama_cpp"
+        name = app.screen.query_one("#endpoint-template-name", Input)
+        assert name.value == ""
+        models = app.screen.query_one("#endpoint-template-models", Input)
+        assert models.value == ""
+
+        picker = app.screen.query_one("#endpoint-template-picker", OptionList)
+        labels = [str(option.prompt) for option in picker.options]
+        duplicate_index = next(
+            index
+            for index, label in enumerate(labels)
+            if "GPU llama (duplicate)" in label
+        )
+        assert "Same family (llama.cpp) — new URL" in labels[duplicate_index - 1]
+        assert picker.highlighted == duplicate_index - 1
+
+
+@pytest.mark.asyncio
+async def test_template_modal_builtin_template_provider_unchanged(tmp_path):
+    """A built-in template_provider keeps the plain prefill behavior: no
+    synthetic starter is inserted and the family default URL prefills."""
+    from textual.widgets import OptionList, Select
+
+    app = _TemplateModalHarness(app_config={})
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = ConsoleEndpointTemplateModal(
+            app_config=app.app_config,
+            providers_models={"llama_cpp": ["model-a"]},
+            template_provider="llama_cpp",
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        url = app.screen.query_one("#endpoint-template-url", Input)
+        assert url.value == "http://127.0.0.1:9099"
+        picker = app.screen.query_one("#endpoint-template-picker", OptionList)
+        labels = [str(option.prompt) for option in picker.options]
+        assert not any("Same family" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_template_modal_llama_url_placeholder_explains_both_defaults(tmp_path):
+    """H4: the llama family's URL placeholder explains the prefill/default
+    split instead of quoting a port the prefill does not use."""
+    from textual.widgets import Select
+
+    app = _TemplateModalHarness(app_config={})
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = ConsoleEndpointTemplateModal(
+            app_config=app.app_config,
+            providers_models={},
+            template_provider="llama_cpp",
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        url = app.screen.query_one("#endpoint-template-url", Input)
+        assert url.value == "http://127.0.0.1:9099"
+        assert url.placeholder == "llama-server default :8080 · Chatbook default :9099"
+
+        # Switching family re-renders the explanatory placeholder per family.
+        family = app.screen.query_one("#endpoint-template-family", Select)
+        family.value = "openai_compatible"
+        await pilot.pause()
+        assert url.placeholder == "http://127.0.0.1:8080"
+
+
+async def _activate_duplicate_option(pilot, app, label_fragment: str) -> None:
+    """Highlight and commit the picker option whose label contains the
+    fragment (H5: opening from an entry now preselects the same-family
+    starter, so a true duplicate is an explicit picker choice)."""
+    from textual.widgets import OptionList
+
+    picker = app.screen.query_one("#endpoint-template-picker", OptionList)
+    picker.focus()
+    index = next(
+        index
+        for index, option in enumerate(picker.options)
+        if label_fragment in str(option.prompt)
+    )
+    picker.highlighted = index
+    await pilot.press("enter")
+    await pilot.pause()
+
+
 def _registry_section() -> dict:
     """A valid raw ``[custom_endpoints.<slug>]`` table for fake loads."""
     return {
@@ -397,6 +553,7 @@ async def test_template_modal_duplicate_carries_env_ref_and_copy_name(
                 template_provider="custom-ep:paid",
             )
             await app.push_screen(modal)
+            await _activate_duplicate_option(pilot, app, "Paid (duplicate)")
             # The duplicate template prefills the display name with (copy).
             name = app.screen.query_one("#endpoint-template-name", Input)
             assert name.value == "Paid (copy)"
@@ -453,6 +610,7 @@ async def test_template_modal_duplicate_prefill_respects_display_name_limit(
                 template_provider="custom-ep:long",
             )
             await app.push_screen(modal)
+            await _activate_duplicate_option(pilot, app, "(duplicate)")
             name = app.screen.query_one("#endpoint-template-name", Input)
             # 73 truncated source chars + " (copy)" = exactly 80.
             assert name.value == "L" * 73 + " (copy)"

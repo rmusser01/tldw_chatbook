@@ -48,12 +48,17 @@ selected Library note, switch between Library notes and Folder files,
 change the linked Folder files root, leave Notes, or close the open Folder
 files file. Folder files' compact **Back to navigator** action is not a reset.
 
-When Library navigation is closed, one stable cue names the return
-destination:
+On a wide terminal the strip above the canvas keeps both source switches —
+**Library notes | Folder files** — whether Library navigation is open or
+closed, and the in-canvas **‹ Notes** control is the way back to the list.
+The **‹ Library / Notes** cue this page used to describe here belongs to
+compact terminals, where the strip collapses to it — see the Source strip
+bullet below. (Was "When Library navigation is closed, one stable cue names
+the return destination" — superseded by task-32270 below.)
 
 ```text
 +-----------------------------------------------------------------------+
-| ‹ Library / Notes                                                     |
+| ‹ Library / Notes            (compact terminals only)                 |
 |                                                                       |
 |  Focused note editor or retained Files workspace                      |
 |                                                                       |
@@ -91,7 +96,10 @@ editor's own Back control returns to its list.
   otherwise be identical carry it. While no note is
   open the list takes the width the empty work area would otherwise waste,
   so long titles are not truncated on a wide terminal; opening a note hands
-  that width back. Its own grip collapses or restores the list without
+  that width back. The same rule holds below 64 columns, where there is no
+  room for two panes at all: with nothing open the list is the whole stage
+  instead of sharing it with an empty work area, and opening a note gives
+  the stage to the note. Its own grip collapses or restores the list without
   changing the Folder files tree choice. Renaming a note does not repaint its
   list row live while the note stays open: a Notes refresh that lands while
   the title field holds focus is skipped rather than queued, so tabbing or
@@ -118,14 +126,16 @@ editor's own Back control returns to its list.
 - **Note work area** — opens when you click a note. **Edit** shows the title
   and body, **Preview** renders the Markdown, and **Info** holds keywords,
   dates, version details, copy/export actions, and Delete. Save status and
-  frequent actions remain in the header. On wide terminals the
-  top `‹ Library / Notes` cue returns to the exact prior list row, scope, and
+  frequent actions remain in the header. On wide terminals the editor's own
+  `‹ Notes` control returns to the exact prior list row, scope, and
   scroll positions; on compact terminals use `‹ Back to list`. While you are
   typing, the title, body and keyword fields are each their own authority: a
   background refresh never rewrites the field under your hands, and it never
   moves your place in the Items list beside it. Tab out of any of them —
   title, body or keywords — takes effect before the next keystroke, so
-  typing straight through a Tab puts the rest where you meant it.
+  typing straight through a Tab puts the rest where you meant it, and it
+  lands on the next control **inside the editor** rather than in the
+  browse chrome above it (see "Editor keys" below).
 - **New note view** — opens from the rail's "New note": a "Blank note"
   button and a "From a template…" row that unfolds the eight templates.
   (**Ctrl+N** / **n** skip this view: they make the blank note itself.)
@@ -348,7 +358,7 @@ both stay closed until you choose to reopen one.
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
 
 With no notes at all, the list reads "No notes yet. Create your first note."
 above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
@@ -373,15 +383,16 @@ own. Nothing is ever painted as half a word.
 |---|---|
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
-| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
+| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. An Obsidian callout (`> [!note] Title`) renders as a quoted block headed "Note: Title" rather than printing its `[!note]` marker. The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
-| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
+| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
+| Chrome strip | One row directly under the body, right-aligned: "N words · L:C" — the words in the note and the caret's line and column, both counted from 1. It follows your typing and your arrow keys with no save and no reload. Nothing on it is a control; Tab never stops there. It appears while **Edit** is the open view on a terminal 80 columns or wider; **Preview** and **Info** have no caret, and a narrower terminal gives the row back to the body. The strip does not repeat the save state — that stays on the status line above the mode controls. The editor's Created/Modified/version line lives in one place, Info → Properties; the editor pane no longer builds a second, never-shown copy of it. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
 | **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
-| **Delete** (Info → Danger) | Asks inline, in place — Info stays open, the prompt renders where Delete was pressed: "Delete this note? Undo will be available in the Notes list." Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). Every other Info action — including "‹ Notes" / "‹ Back to list" — is disabled until you choose Cancel or Delete. A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
+| **Delete** (Info → Danger) | Asks inline, in place — Info stays open and the prompt renders inside the Info box, on the row directly under the Delete button that raised it: "Delete this note? Undo will be available in the Notes list." Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). Every other Info action — including "‹ Notes" / "‹ Back to list" — is disabled until you choose Cancel or Delete. Cancelling puts focus back on Delete and leaves Info scrolled exactly where it was. A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
 Opening a note shows "Loading note…" only while the note is being read. If a
 read takes longer than about three seconds the editor stops waiting and shows
@@ -409,13 +420,32 @@ shortcut. Use the visible **Save** button when you want an immediate Library
 notes save; normal Tab navigation and **F6** can reach it. Autosave continues to
 handle ordinary typing.
 
+#### Editor keys
+
+| Key | What it does |
+|---|---|
+| **Tab** / **Shift+Tab** | Move between the editor's own controls and stay there: "‹ Notes", Edit, Preview, Info, Save, Use in Console, Title, Body, and back round to "‹ Notes". Tab out of the body no longer wraps round to the "Library notes / Folder files" switch above the pane, where typed characters went nowhere. The move lands before the next keystroke, so typing straight through a Tab puts the rest where you meant it. |
+| **F6** / **Shift+F6** | Leave the editor for the Notes list or the Library rail. This is the way out of the editor's Tab cycle; **Escape** is the other (it returns to the list). |
+| **Ctrl+End** / **Ctrl+Home** | Jump the caret to the end or the start of the note body. `End` and `Home` still move within the current line. |
+| **Escape** | Returns to the list — one press, from Edit, Preview, or Info. From Info it goes back to the editor first. |
+
+Arriving in the **Title** by keyboard puts the caret at the end of the
+existing title; it does not select the title, so one keystroke can no longer
+replace it. Select the text yourself (Shift+Home, or drag) when you do want
+to overwrite. The keyword boxes behave the same way.
+
+The footer names whichever editor control has focus as an "enter …" chip, so
+focus is never unaccounted for: Tab onto "‹ Notes" and the footer reads
+"enter back to list", onto Save and it reads "enter save note". While the
+body or a field has focus there is no enter chip, because Enter types.
+
 When the note body has keyboard focus, only its boundary becomes more
 prominent. The body background and editor size stay unchanged, so focusing
 the editor does not flash or fill the writing surface. Small fields such as
 Title and Keywords still use their usual filled focus treatment.
 
-The wide `‹ Library / Notes` cue and Escape use the same guarded return as
-the compact Back control. A dirty save, sync, conflict, reload confirmation,
+The editor's `‹ Notes` control, the compact `‹ Library / Notes` cue and
+Escape all use the same guarded return. A dirty save, sync, conflict, reload confirmation,
 or running mutation can therefore keep the focused task open until it is safe
 to leave. A successful return restores the Library notes / Folder files source, filter,
 sort, selected note or placement, Notes-list scroll, Library-rail scroll, and
@@ -451,6 +481,15 @@ returns the row to the folder tree, not only the count).*
 Undo opens the restored note's folder, including when a branch reload
 fails; task-32254: a third part tells apart two rows that share title,
 folder and age; task-32272: one selection count, not two that disagree).*
+
+*Verified against fix/library-notes-w3-editor-keys — 2026-09-11 at 235x52
+and 100x30 (task-32246: Tab out of the body stays in the editor and the
+footer names where focus is; task-32247: Ctrl+End reaches the end of a
+37 KB note and is on the footer; task-32253: Shift+Tab into the Title no
+longer selects it; task-32268: the delete prompt renders inside the Info
+box under Delete).*
+
+*Verified against fix/library-notes-w3-test-health — 2026-09-12 (task-32185 AC#5: entering select mode beside an open note now re-applies that note's work-pane state, so the read-only preview and its disabled actions appear as described above — before this they never did — and leaving it by any route (Done, Escape, a filter submit or clear) hands the editor back).*
 
 ### New note view
 
@@ -489,8 +528,10 @@ because Enter there goes back rather than creating anything.
 ### Add from files and lasting sync
 
 **Add from files…** first asks what relationship you want. Until you choose,
-the header names neither relationship — it reads "Add from files" and its next
-action is to pick one:
+the header names neither relationship — it reads "Add files to Library notes."
+over "Choose how files should relate to Library notes.", and its next action is
+to pick one. (Was "reads **Add from files**" — superseded by task-32271 below:
+that was the toolbar button's label, never the heading's.)
 
 - **Import once** copies supported files into Library notes and ends after its
   reviewed receipt. Later changes to the originals are not tracked.
@@ -504,8 +545,9 @@ Both folder pickers remember where you were. Each reopens at the directory it
 last picked in *that* flow, so Import once and Keep a folder synced never move
 each other's starting point, and neither borrows the Library ingest browser's.
 The first use of either — or a remembered folder that has since been moved or
-deleted — opens at your home directory instead. **Folder files** keeps its own
-separate memory, see [File notes](file-notes.md).
+deleted — falls through to the folder `[notes] sync_directory` names, and only
+then to your home directory. **Folder files** keeps its own separate memory,
+see [File notes](file-notes.md).
 
 **What a folder has to be before it can be checked.** The folder itself must be
 a real folder (not a link to one) on a local disk, outside Chatbook's own data
@@ -567,7 +609,21 @@ configured sync folder.
 recovery, stopped, and migrated-candidate states. Use **Check changes** to scan
 an available root. **Review** appears when its changes need attention;
 legacy candidates use **Review migration**. **Pause** and **Resume** control an
-active root. **Retarget** and **Disconnect** remain visibly disabled with an
+active root. **Resume** re-activates the root and runs the same check as
+**Check changes**: a root with nothing changed returns to "✓ Up to date · Next:
+Check changes", and edits made while it was paused surface as "◌ Changes
+available" or "⚠ Needs attention · Next: Review changes" (task-32519). (Was
+"though today **Resume** does not bring a paused root back at all, whether or
+not anything changed while it was paused: its row reads '✕ Failed · Next:
+Review changes', **Check changes** answers 'Manual check failed', and
+**Review** says the folder is still paused. A restart does not recover it
+either: the row comes back as 'Ⅱ Paused · Next: Resume', Check changes fails
+while it is paused, Resume fails the same way, and a file edited on disk after
+the restart never syncs — so pause only if you can live with the root staying
+paused; nothing in this release resumes it" — fixed by task-32519 below. Before
+that it was "so pause only when you can live with a restart" — superseded by
+task-32271 below: the restart was asserted, then walked.)
+**Retarget** and **Disconnect** remain visibly disabled with an
 unavailable-in-this-release reason; no files or notes change.
 
 ### Import once
@@ -575,6 +631,15 @@ unavailable-in-this-release reason; no files or notes change.
 **Import once** copies supported note files into local Library notes. It is
 not the same as **Keep a folder synced**: the import ends after this reviewed
 batch, while lasting sync retains a root relationship.
+
+Import once and **Add from files** are whole tasks, not a second reading
+pane: while one of them is open the Notes list beside it closes to its grip
+and the task takes the pane's width, and the list comes back the moment you
+leave. While you are reviewing or running an import, Library navigation
+closes too, so the review has the whole canvas. **Check selection** stands
+directly under the selection summary it acts on rather than at the pane
+floor; the review, import and receipt steps keep their action pinned under
+the scrolling list it approves.
 
 Choose files one at a time with **Add another file**, or choose one folder.
 A folder is exclusive; it cannot be combined with selected files, so a folder
@@ -587,12 +652,22 @@ yet.
 
 The picker — from **Add another file**, from a folder choice, and from
 **Change selection** — reopens at the directory Import once last picked, or at
-your home directory the first time. Its **Folder path** field can be typed into
-directly: press **Enter** to browse into the typed path, or click **Select
-folder** to use it immediately without pressing Enter first — either way,
-whatever the field currently holds is what gets picked, not merely the
-directory being browsed. An invalid path shows an inline reason and leaves the
-dialog open. Once a folder is picked, the confirmation line shows its full path
+your home directory the first time. Its **File name** field ("File name or
+path") can be typed into directly: press **Enter** to browse into the typed
+path, or click **Select folder** to use the folder being browsed. The field
+arrives empty and stays empty as you browse — the "Folder path" field that
+arrives pre-filled with the directory being browsed, and selects that value on
+the click that focuses it, is the Folder files root picker's
+([File notes](file-notes.md)); here `Ctrl+A` selects whatever you typed. An
+invalid path shows its reason on a row under the field ("The file must exist")
+and leaves the dialog open. **Select folder** picks the folder row you last
+clicked if you clicked one, otherwise the folder being browsed. (Was "Its
+**Folder path** field … The field arrives pre-filled with the directory being
+browsed, and the click that puts the cursor in it selects that value" —
+superseded by task-32271 below: Import once and Keep a folder synced open the
+files-or-one-folder dialog, whose field is "File name" and starts empty; only
+Folder files' "Choose File Notes Folder" has the pre-filled "Folder path".)
+Once a folder is picked, the confirmation line shows its full path
 (elided in the middle for long paths, keeping the folder name itself visible),
 not just its name.
 
@@ -623,8 +698,12 @@ Open it to reach every individual **Skip** / **Create new**; the group's own
 bulk actions settle the whole run without opening it. Pages are filled by the
 rows they *show*, so a collapsed run costs a page one line and never has a
 page break through the middle of it. When there is more than one page,
-**Previous page** and **Next page** say which end you are at rather than
-merely greying out.
+three lines close the page under its last group — **Previous page**, "Page 1
+of 4", **Next page** — and the button at either end says which end you are at
+("Previous page unavailable — this is the first page", "Next page unavailable
+— this is the last page") rather than merely greying out; a group that
+continues on another page says so in its header ("New (25 of 73 on this
+page)"). A single-page review has no pager at all.
 A `.git` folder is never walked, whatever the source and whatever the Obsidian
 toggle says: it is listed once under **Skipped** as "Git repository data —
 skipped. Nothing in it becomes a note." A git-backed vault would otherwise
@@ -763,17 +842,28 @@ stayed as text and are not counted.
    cutover release.
 2. In the notes list, click **Add from files…** and choose **Keep a folder
    synced**.
-3. Click **Choose folder…**; type into the **Folder path** field and either
-   press Enter (browses into it) or click **Select folder** (uses it right
-   away). Choose a direction and local destination. Server sync remains
-   unavailable until its separate capability is installed.
+3. Click **Choose folder…**; type a path into the **File name** field ("File
+   name or path") and either press Enter (browses into it) or click **Select
+   folder** (uses the folder being browsed, or the folder row you last
+   clicked). (Was "type into the **Folder path** field" — superseded by
+   task-32271 below: this is the files-or-one-folder dialog, whose field is
+   "File name" and starts empty.) Choose a direction and local destination.
+   Server sync remains unavailable until its separate capability is
+   installed.
 4. Choose **Check changes** and review the exact safe, attention, skipped, and
    deletion-like effects. If the folder cannot be used, the status line under
    the pane's "Add files to Library notes" heading says which rule it broke
    and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead. **Manage sync folders** appears in the notes toolbar once
-   a root is active.
+   a root is active. Choosing **Back** returns to a Notes list that already
+   counts the synced notes and shows them under a **⇄ Sync managed** folder
+   named after the display name — no restart needed (task-32518). (Was "the
+   synced notes and their **⇄ Sync managed** folder are in the database as soon
+   as the receipt says 'N applied', but on a profile that already held notes
+   the list beside you does not pick them up — its count and tree stay as they
+   were, through a manual check and a source round trip — until you restart
+   the app" — fixed by task-32518 below.)
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
@@ -785,6 +875,20 @@ automatic-sync setting.
 2. You land in the Console with the note staged as context and the
    prompt "Use this note as context and help me work with it." ready to
    send or rewrite.
+
+### Capture a Console answer as a note
+The return leg of **Use in Console**. In the Console, select an assistant
+reply, click **More…**, then **Capture as note**. The reply is saved here
+immediately — titled with its first line of text (a leading code fence or
+heading mark is dropped), holding the answer verbatim — and
+a "Saved to Notes" receipt offers **Open note**, which lands you on that note
+in the editor.
+
+A captured note carries three keywords: `console`, `conversation:<id>` and
+`message:<id>`. They are ordinary keywords, so filtering the list on
+`conversation:` finds every answer kept from one chat. Capturing is blocked
+while the Console chat is temporary — a temporary chat promises nothing is
+written locally, and a note is a local write.
 
 ### Export a note as Markdown
 1. Open the note, choose **Info**, and click **Export Markdown**.
@@ -844,7 +948,8 @@ automatically. Global navigation keys live in the [guide index](../index.md).
   written whenever a selection is made in that flow. Separate keys, so neither
   flow moves the other's starting point; **Folder files** has its own
   `[file_notes] browse`. A key naming a folder that no longer exists is
-  ignored and the picker opens at your home directory.
+  ignored and the picker falls back to `[notes] sync_directory`, then to your
+  home directory.
 - [Lasting Notes folder sync](../../Features/notes_bidirectional_sync.md) —
   runtime, cutover, ownership, and recovery details.
 - [File notes](file-notes.md) — the **Folder files** side of the source strip.
@@ -1019,7 +1124,8 @@ superseded by task-32173 below; see [File notes](file-notes.md).)*
 Import once and Keep-synced folder pickers used to commit the directory
 being browsed and silently ignore a typed-but-unsubmitted path when
 **Select folder** was pressed. Both now resolve the **Folder path** field
-first — Enter still browses into it, and Select/Select folder use it
+(on the dialog both flows open today that field is **File name** — task-32271
+below) first — Enter still browses into it, and Select/Select folder use it
 immediately, with an inline error and the dialog left open for an invalid
 path. The confirmation line shows the full picked path, not just its
 basename. Pinned in `Tests/UI/test_file_open_select_folder.py`,
@@ -1209,7 +1315,10 @@ on this branch at 235x52, in two sessions.
 Session one, a 179-file vault under `$HOME`: refusal copy on a folder inside
 the profile → **Choose folder…** → the `$HOME` vault → 60 safe · 0 attention →
 **Activate reviewed root** → "Sync root activated. 60 applied · durable
-receipt recorded" → the notes appear under a **⇄ Sync managed** folder →
+receipt recorded" → the notes appear under a **⇄ Sync managed** folder (on
+that fresh profile; on a seeded profile the list stays at its old count with
+no such folder until the app restarts — superseded by task-32271 below,
+rider task-32518; fixed by task-32518 below) →
 **Manage sync folders** (which only exists once a root is active) → **Check
 changes** → "Manual check finished."
 
@@ -1221,28 +1330,134 @@ and character counts) → **Keep file** → **Apply reviewed** → an at-action
 receipt with **Undo** and **Dismiss** → **Undo** → **Resolution history**,
 where the entry is recorded "undone" → **Pause** (the action becomes Resume)
 → **Resume**. **Retarget** and **Disconnect** stay visibly disabled
-throughout, as this chapter says.
+throughout, as this chapter says. (The Resume step was recorded as done, but
+that walk's own capture ends on "✕ Failed · Next: Review changes", and the
+docs sweep reproduced it with nothing changed on either side: Resume leaves
+the root paused and every later Check changes fails — superseded by
+task-32271 below, rider task-32519; fixed by task-32519 below.)
 
 Added in this pass: what a folder and its files have to be before they can be
 checked, and the named refusals. Known gap, not fixed here: the root row in
 **Manage sync folders** reads "Sync folder (name unavailable before cutover)"
 rather than the display name you typed — task-32451.)*
 
-*Verified against fix/library-notes-w3-import-review — 2026-09-11 (fix round 1):
-`.git` is skipped at the walker for every source and both platform adapters;
-the update diff reduces both sides to one link spelling before comparing, so
-an unchanged source shows no diff; a collapsed run's summary names the whole
-run's size when a page shows only part of it; and a collapsed run's title is
-no longer parsed as Textual markup, so a vault folder named `[bold]Archive`
-renders as itself.*
-
 *Verified against fix/library-notes-w3-import-review — 2026-09-11 (task-32250,
-task-32256, task-32257, task-32258, task-32262, task-32263): the Import once
-review pages by rendered rows so no group or run is cut in two, collapses an
-interchangeable run to one summary row with a disclosure, spends the path
-budget last so the outcome survives, and takes the pane while it is open; a
-disabled primary carries its reason as text; the receipt states its outcome
-once and reconciles the two denominators; dropped frontmatter properties, the
-no-change/diff basis, the pre-selected collision default and vault-aware
-unsupported copy are all stated on the surface; and a resolved wikilink is
-stored as `[[target|title]](note://<id>)`.*
+task-32256, task-32257, task-32258, task-32262, task-32263, and its fix round
+1): the Import once review pages by rendered rows so no group or run is cut in
+two, collapses an interchangeable run to one summary row with a disclosure,
+spends the path budget last so the outcome survives, and takes the pane while
+it is open; a disabled primary carries its reason as text; the receipt states
+its outcome once and reconciles the two denominators; dropped frontmatter
+properties, the no-change/diff basis, the pre-selected collision default and
+vault-aware unsupported copy are all stated on the surface; and a resolved
+wikilink is stored as `[[target|title]](note://<id>)`. Fix round 1: `.git` is
+skipped at the walker for every source and both platform adapters; the update
+diff reduces both sides to one link spelling before comparing, so an unchanged
+source shows no diff; a collapsed run's summary names the whole run's size
+when a page shows only part of it; and a collapsed run's title is no longer
+parsed as Textual markup, so a vault folder named `[bold]Archive` renders as
+itself.*
+
+*Verified against fix/library-notes-w3-layout — 2026-09-11 (wave-3 group
+`layout`, live at 235x52 / 100x30 / 60x24 on a seeded scratch profile with a
+Markdown-showcase note). task-32249: Preview fills the work pane, takes focus
+on arrival so `pgup`/`pgdn` page without a click, renders an Obsidian callout
+instead of printing its `[!note]` marker, and its status line names **Edit**
+rather than offering to keep editing. task-32259: **Check selection** stands
+with the selection summary, and Import once / Add from files close the Notes
+list beside them while they are the task in hand. task-32261: the compact
+select strip drops its own copy of the count and keeps the line below it, so
+Done, All N, Clear and Export all stay on a 42-column pane; both counts track
+the selection (task-32272, landed first). task-32270: the `‹ Library / Notes` cue is a compact
+control — the wide sentences that promised it are corrected above.
+task-32389: below 64 columns an empty work pane hands the whole stage to the
+list.*
+
+*Verified against fix/library-notes-w3-pickers-git — 2026-09-11 (task-32251:
+every path field in these pickers now selects its pre-fill on the click that
+focuses it — clicking in and typing an absolute path used to leave
+`/Users/you/Users/you/vault` — and an invalid path reports on a row under the
+field instead of inside the dialog's bottom border. With nothing remembered, a
+picker opens at `[notes] sync_directory` before falling back to home. Verified
+live at 235x52.)*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146 and its fix round 1: Console's **More… ▸ Capture as note** walked
+live at 235x52 and 100x30 — the receipt's **Open note** landed on the new note
+in this screen's editor, and the note's `console` / `conversation:<id>` /
+`message:<id>` keywords were read back from the database. The title wording
+above gained the code-fence / heading rule in fix round 1, copy-only.)*
+
+*Verified against fix/library-notes-w3-chrome-strip — 2026-09-11 (task-32143:
+the note editor gained a chrome strip — one right-aligned row under the body
+reading "N words · L:C", live at 235x52 and 100x30, hidden at 79 columns and
+in Preview/Info. The editor's second, never-displayed Created/Modified/version
+line was removed with it, leaving Info → Properties as its one home. The save
+state was NOT moved onto the strip: it stays on the status line above the mode
+controls, so nothing on screen reports saving twice — moving it is rider
+task-32513.)*
+
+*Verified against fix/library-notes-w3-backlinks-table — 2026-09-11
+(task-32186: "Linked from" now reads a persisted link relation instead of
+scanning every note body on every note open. Same rows, same "checking…" /
+"couldn't check" / count states; a note in Trash drops out of the list and
+comes back with it when restored. Measured on throwaway vaults of 1,000 /
+3,000 / 10,000 notes: the lookup went from 0.85 / 3.07 / 8.79 ms — growing
+with the vault — to 0.08 ms flat. Upgrading an existing database backfills
+the relation from the bodies it already holds. task-32467: a "Linked from"
+answer that lands while the work pane is mid-recompose is now held for the
+next paint instead of terminating the app.)*
+
+*Verified against fix/library-notes-wave3-docs — 2026-09-12 (task-32271, the
+wave-3 docs sweep, on dev 7159fc0b99 merged into this branch: every wave-3
+claim on this page re-walked live at 235x52, the compact claims at 100x30 and
+the below-64-column claim at 60x24, on two seeded scratch profiles with
+git-backed vaults under `$HOME`. Contradictions found and superseded above:
+the Import once and Keep a folder synced pickers are the files-or-one-folder
+dialog with an empty "File name" field, not the pre-filled "Folder path" one
+(that is Folder files'); the review's pager is three stacked lines under a
+page's last group, present only past one page ("Page 1 of 4" on an 81-source
+vault — a 67-source vault with a collapsed run fits one page); the chooser
+heading reads "Add files to Library notes." over "Choose how files should
+relate to Library notes."; and the Session Git trust dialog is "Trust
+repository for session changes?" (see [File notes](file-notes.md)). Two
+defects found and filed rather than fixed: activating a lasting-sync root on
+a profile that already holds notes leaves the Notes list at its old count
+with no ⇄ Sync managed folder until the app restarts (task-32518), and Resume
+after Pause always lands the root in "✕ Failed" with every later Check
+changes failing (task-32519 — the paused bindings are refused by the
+observation Resume runs before it re-activates them; the task-32269 walk's
+own Resume capture shows the same row). Everything else on this page held:
+the third-part row disambiguator, one selection count, Tab staying inside the
+editor with the footer naming focus, Ctrl+End, Shift+Tab into the Title, the
+delete prompt inside the Info box, Preview taking focus, the chrome strip at
+235x52 and 100x30 and gone at 60x24, Linked from after import, trash and
+undo, the `.git` skip, the collision default, the receipt's two
+denominators, the export destination refusal, the ingest browser opening at
+`[notes] sync_directory`, and Capture as note's Open note landing in this
+editor.)*
+
+*Verified against fix/library-notes-w3-sync-tail — 2026-09-12 (task-32519, at
+235x52 and 100x30, scratch profile with a 58-file vault): **Pause** →
+"Ⅱ Paused · Next: Resume" → **Resume** → "✓ Up to date · Next: Check changes"
+→ **Check changes** → "Manual check finished. Review exact effects."
+(`wave3-caps/sync-tail/09-paused`, `10-resumed`, `11-check-after-resume`).
+With the same note edited in Chatbook and on disk while paused, **Resume** →
+"⚠ Needs attention · Next: Review changes" → **Review** → "59 safe · 1 need
+attention", no "That folder is paused" (`12-resume-with-two-sided-edit`,
+`13-review-after-resume`; `23-paused`/`24-resumed` at 100x30). Resume used
+to review the root before re-activating it, so the pause cascade's paused
+bindings refused every review and every Resume read "✕ Failed"; it now
+re-activates first and runs the ordinary check. A profile already holding
+the broken paused-on-disk state resumes cleanly too.)*
+
+*Verified against fix/library-notes-w3-sync-tail — 2026-09-12 (task-32518, at
+235x52 and 100x30 on a profile with 10 existing notes): **Activate reviewed
+root** → "60 applied · durable receipt recorded" → **Back** → "Notes (70)"
+with "▸ t13 sync ⇄ Sync managed" in the list at once
+(`wave3-caps/sync-tail/06-root-activated`, `07-list-after-activate`); a
+second 5-file root at 100x30 → "Notes (75)" and "▸ t13 second ⇄ Sync managed"
+(`26-second-root-activated`, `27-list-after-second-activate`). Activation
+and **Apply reviewed** now refresh the list through the same path an import
+does; before this the list kept its old count and folder rows until
+restart.)*

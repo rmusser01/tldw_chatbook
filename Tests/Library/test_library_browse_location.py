@@ -135,3 +135,58 @@ def test_home_is_never_used_as_a_silent_stand_in_for_a_real_directory():
     """``validated_browse_directory`` reports refusal; the fallback choice
     stays with each caller (all three use ``Path.home()``)."""
     assert validated_browse_directory(str(Path.home())) == Path.home().resolve()
+
+
+# --- task-32251 AC#5: the configured notes folder beats bare $HOME ----------
+
+
+def test_a_remembered_directory_still_wins(tmp_path, monkeypatch):
+    from tldw_chatbook.Library.library_browse_location import browse_start_directory
+
+    remembered = tmp_path / "remembered"
+    configured = tmp_path / "configured"
+    remembered.mkdir()
+    configured.mkdir()
+    monkeypatch.setattr(
+        module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: str(configured),
+    )
+    assert browse_start_directory(str(remembered)) == remembered.resolve()
+
+
+def test_the_configured_notes_folder_is_offered_before_home(tmp_path, monkeypatch):
+    """AC#5: with nothing remembered, open where the user keeps notes."""
+    from tldw_chatbook.Library.library_browse_location import browse_start_directory
+
+    configured = tmp_path / "configured"
+    configured.mkdir()
+    seen: list[tuple] = []
+
+    def fake_get(section, key=None, default=None):
+        seen.append((section, key))
+        return str(configured)
+
+    monkeypatch.setattr(module, "get_cli_setting", fake_get)
+    assert browse_start_directory(None) == configured.resolve()
+    assert seen == [("notes", "sync_directory")]
+
+
+def test_home_is_still_the_last_resort(monkeypatch):
+    from tldw_chatbook.Library.library_browse_location import browse_start_directory
+
+    monkeypatch.setattr(
+        module, "get_cli_setting", lambda section, key=None, default=None: None
+    )
+    assert browse_start_directory(None) == Path.home()
+
+
+def test_an_unusable_configured_notes_folder_is_skipped(monkeypatch):
+    from tldw_chatbook.Library.library_browse_location import browse_start_directory
+
+    monkeypatch.setattr(
+        module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: "~/definitely/not/here/32251",
+    )
+    assert browse_start_directory(None) == Path.home()

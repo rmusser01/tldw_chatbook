@@ -3,7 +3,7 @@ id: TASK-32252
 title: >-
   Library Notes slash accelerator still inserts itself into the filter
   although task-32131 is Done and its test is green
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-10 18:05'
 labels:
@@ -28,7 +28,32 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Pressing `/` when no control on the Notes canvas is focused focuses the filter and leaves its content unchanged
-- [ ] #2 `/` typed into the already-focused filter still lands as a literal character, so `Work/Q3` stays typeable (the task-32131 ruling holds)
-- [ ] #3 Covered by a new test that reproduces the live starting state (no focused control on the canvas) and is demonstrated failing before the fix; the test record states why `test_slash_focuses_the_notes_filter_without_inserting_itself` passes today
+- [x] #1 Pressing `/` when no control on the Notes canvas is focused focuses the filter and leaves its content unchanged
+- [x] #2 `/` typed into the already-focused filter still lands as a literal character, so `Work/Q3` stays typeable (the task-32131 ruling holds)
+- [x] #3 Covered by a new test that reproduces the live starting state (no focused control on the canvas) and is demonstrated failing before the fix; the test record states why `test_slash_focuses_the_notes_filter_without_inserting_itself` passes today
 <!-- AC:END -->
+
+## Implementation Plan
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce the live starting state: a Notes canvas with nothing focused and an empty filter.
+2. If it reproduces, trace and fix; if not, record why the report read as it did.
+3. Ship the regression pin the report's own state requires, with the `Work/Q3` half kept.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+**NOT REPRODUCED at dev 4a14b3f36f.** No code change; the task ships the regression pin AC#3 asks for, written against the live starting state the report describes.
+
+What was tried, live on a seeded profile at 235x52, and in the harness:
+
+- Notes list showing, focus on the rail row just pressed, `/` then `zz` -> filter focused, value `zz`. No leak.
+- Notes list showing, `screen.set_focus(None)` (a genuinely unfocused canvas, which is the state `R/caps/61` shows), `/` -> filter focused, value `""`. No leak. This is the new pin.
+- After Escape from the filter, `/` then `qq` -> the RAIL search box takes the keys (`#2590`'s landed behaviour), not the notes filter.
+- A click on a non-focusable Static in the canvas does not blur the focused widget, so it cannot construct the state either.
+
+The mechanism the captures are consistent with: the notes filter was ALREADY focused. `R/caps/61` reads as unfocused because a Textual `Input` shows its placeholder whenever its value is empty, focused or not, and a plain-text `capture-pane` cannot show the focus border colour — the two states are indistinguishable in that capture. With the filter focused, `/` types literally, which is exactly the task-32131 ruling this task's own AC#2 preserves so `Work/Q3` stays typeable. The reviewer then read "the filter is focused and contains `/`" as "`/` focused it and typed itself".
+
+Both halves of the behaviour are now pinned from the unfocused state in one test, so a regression in either direction fails.
+
+Files: `Tests/UI/test_library_notes_wave_editor_keys.py`.
+<!-- SECTION:NOTES:END -->

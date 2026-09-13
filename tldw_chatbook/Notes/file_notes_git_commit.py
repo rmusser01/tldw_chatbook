@@ -98,6 +98,18 @@ class GitIdentity:
         return f"{self.name} <{self.email}>"
 
 
+def session_note_count(count: int) -> str:
+    """Pluralise the session-note count, including the one-note case.
+
+    task-32265: "1 session notes will be committed" / "Committed 1 session
+    notes as bd746be6...". Lives here rather than in the panel (review F7)
+    because the same sentence is built in three layers -- the panel's
+    projections, the service's commit receipt, and the workspace's action
+    status -- and three copies is how the defect survived the first pass.
+    """
+    return f"{count} session note{'' if count == 1 else 's'}"
+
+
 @dataclass(frozen=True, slots=True)
 class CommitIncludedNote:
     """Sanitized display facts for one included session note.

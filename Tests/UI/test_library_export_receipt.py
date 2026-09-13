@@ -41,6 +41,9 @@ from tldw_chatbook.Library.library_export_state import (
     format_last_export_line,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_EXPORT
+from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+    LibraryExportController,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_export_canvas import LibraryExportCanvas
 
@@ -516,3 +519,66 @@ def test_receipt_copy_is_singular_for_one_item():
         format_empty_export_error(2)
         == "✗ export produced no content · 2 items were selected"
     )
+
+
+# --- task-32251 AC#3: a refused destination reports at the control ----------
+
+
+@pytest.mark.asyncio
+async def test_a_refused_destination_reports_on_the_destination_line():
+    """Not a toast three rows up and already gone: the row under the button."""
+    reason = "Can't save there: The folder /nope does not exist."
+    state = _state(destination="", destination_error=reason)
+
+    app = _Host(state)
+    async with app.run_test() as pilot:
+        line = pilot.app.query_one("#library-export-destination-line", Static)
+        assert str(line.renderable) == reason
+        button = pilot.app.query_one("#library-export-destination", Button)
+        assert line.region.y - (button.region.y + button.region.height) <= 1
+
+
+def test_choosing_an_unwritable_destination_refuses_it_with_a_reason(tmp_path):
+    """The controller half: nothing is accepted, and the reason is kept.
+
+    Live shape (task-32251): the pre-filled path field produced
+    ``.../Library export 2026-09-10.zip/private/tmp/.../notes-bundle.zip``
+    and the form showed it as the chosen destination.
+    """
+    form: dict[str, object] = {}
+    refreshed: list[bool] = []
+    fake = SimpleNamespace(
+        _library_export_form=form,
+        refresh=lambda **kwargs: refreshed.append(True),
+    )
+    fake._refuse_library_export_destination = (
+        lambda reason: LibraryExportController._refuse_library_export_destination(
+            fake, reason
+        )
+    )
+
+    LibraryExportController._apply_library_export_destination(
+        fake,
+        tmp_path / "Library export.zip" / "private" / "notes-bundle",
+    )
+
+    assert form["destination"] == ""
+    assert form["destination_exists"] is False
+    assert str(form["destination_error"]).startswith("Can't save there:")
+    assert "does not exist" in str(form["destination_error"])
+    assert refreshed
+
+
+def test_choosing_a_writable_destination_clears_any_previous_reason(tmp_path):
+    form: dict[str, object] = {"destination_error": "Can't save there: stale."}
+    fake = SimpleNamespace(
+        _library_export_form=form,
+        refresh=lambda **kwargs: None,
+    )
+
+    LibraryExportController._apply_library_export_destination(
+        fake, tmp_path / "bundle"
+    )
+
+    assert form["destination"] == str(tmp_path / "bundle.zip")
+    assert form["destination_error"] == ""

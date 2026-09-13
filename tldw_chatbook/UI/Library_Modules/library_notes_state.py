@@ -38,7 +38,7 @@ Notes has no class-level-only attribute) rather than a ``startswith`` filter,
 per the conversations exemplar's own "startswith enumeration trap" lesson:
 
 - ``_library_notes_`` is the DEFAULT prefix -- 73 of the 100 moved fields.
-- ``_library_note_`` (SINGULAR) covers 21 fields, listed in
+- ``_library_note_`` (SINGULAR) covers 22 fields, listed in
   ``NOTE_SINGULAR_STATE_FIELDS`` below -- the same singular/plural split the
   prompts and skills series each carried, with the majority family reversed
   (Prompts' default was the singular one).
@@ -296,8 +296,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         LibraryFileNotesWorkspace,
     )
 
-#: The 21 fields whose original attribute uses the SINGULAR
-#: ``_library_note_`` prefix rather than the plural default.
+#: The 22 fields whose original attribute uses the SINGULAR
+#: ``_library_note_`` prefix rather than the plural default. (21 from the
+#: original move census; ``delete_origin_scroll`` was added by task-32268.)
 NOTE_SINGULAR_STATE_FIELDS: frozenset[str] = frozenset(
     {
         "autosave_generation",
@@ -310,6 +311,7 @@ NOTE_SINGULAR_STATE_FIELDS: frozenset[str] = frozenset(
         "create_token",
         "delete_origin_context",
         "delete_origin_preview",
+        "delete_origin_scroll",
         "delete_receipt",
         "editor_armed",
         "import_snapshot",
@@ -497,6 +499,11 @@ class LibraryNotesState:
     context: bool = False
     delete_origin_context: bool = False
     delete_origin_preview: bool = False
+    #: task-32268: Info's scroll offset when the delete prompt was
+    #: raised. The prompt renders inside that pane now, so focusing its
+    #: Cancel button scrolls it; cancelling puts the reader back where
+    #: they were rather than where the prompt happened to sit.
+    delete_origin_scroll: float | None = None
 
     #: ``(note_id, title)`` for each note whose body links to the open one
     #: (task-32145). Loaded by its own worker after the note opens and reset

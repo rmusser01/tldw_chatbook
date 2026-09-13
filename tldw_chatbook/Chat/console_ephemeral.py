@@ -103,6 +103,10 @@ EPHEMERAL_BLOCKED_ACTIONS: dict[str, str] = {
         "Saving as a Note writes it to the local Notes database — not "
         "available in a temporary chat."
     ),
+    "capture-note": (
+        "Saving the answer as a Note writes it to the local Notes database "
+        "— not available in a temporary chat."
+    ),
     "save-as-media": (
         "Saving as Media writes it to the local Media library — not "
         "available in a temporary chat."

@@ -119,7 +119,39 @@ def chachanotes_db_at_version(
             client_id=client_id,
             console_library_migration_seed=console_library_migration_seed,
         )
+        _add_forward_write_dependencies(db, version)
         try:
             yield db
         finally:
             db.close_connection()
+
+
+def _add_forward_write_dependencies(db: CharactersRAGDB, version: int) -> None:
+    """Create the artifacts CURRENT write methods need on a historical DB.
+
+    The schema is historical but the code is not: a fixture seeds through
+    today's ``add_note``/``update_note``, which maintain artifacts a schema
+    this old does not have. Production never sees that pairing (a real
+    database is migrated in ``__init__``, before any write), so the gap is the
+    bootstrap's alone to close.
+
+    Keep this list minimal and justified: an entry here means a fixture at an
+    older version cannot see the artifact genuinely being created, so the test
+    that PINS the declaring migration must drop it first (the same discipline
+    this module's header states for the artifacts that pre-exist their step).
+
+    * ``note_links`` (task-32186, V72->V73) -- every note writer records the
+      note's outgoing ``(note://<id>)`` links.
+    """
+    if version < 73:
+        with db.transaction() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS note_links(
+                  source_note_id TEXT NOT NULL
+                    REFERENCES notes(id) ON DELETE CASCADE ON UPDATE CASCADE,
+                  target_note_id TEXT NOT NULL,
+                  PRIMARY KEY(source_note_id, target_note_id)
+                )
+                """
+            )

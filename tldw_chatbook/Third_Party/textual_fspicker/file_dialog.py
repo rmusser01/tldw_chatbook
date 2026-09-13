@@ -13,7 +13,6 @@ from pathlib import Path
 # Textual imports.
 from textual import on
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.events import Mount
 from textual.widgets import Button, Input, Label, Select
@@ -24,6 +23,7 @@ from .base_dialog import (
     ButtonLabel,
     FileSystemPickerScreen,
     InputBar,
+    PathInput,
     resolve_typed_directory,
 )
 from .parts import DirectoryNavigation, DriveNavigation
@@ -32,17 +32,16 @@ from .path_maker import MakePath
 
 
 ##############################################################################
-class FileNameInput(Input):
+class FileNameInput(PathInput):
     """The input bar's file-name/path field.
 
-    Exists for one binding: Textual's `Input` maps `ctrl+a` to "go to
-    start", so the terminal-standard "select everything I typed" was
-    unreachable in the one field of this dialog a user types a path into
-    (task-32229). A subclass is the only place that binding can win --
-    the focused widget's own bindings beat the screen's.
+    Nothing of its own any more: both behaviours it was created for --
+    `ctrl+a` selects the field (task-32229) and the focusing click selects
+    the pre-fill (task-32251) -- now live on the shared `PathInput`, so
+    every path field in every one of these dialogs gets them, not just
+    this one. Kept as a name because the dialog's own docs and tests
+    refer to it.
     """
-
-    BINDINGS = [Binding("ctrl+a", "select_all", show=False)]
 
 
 ##############################################################################

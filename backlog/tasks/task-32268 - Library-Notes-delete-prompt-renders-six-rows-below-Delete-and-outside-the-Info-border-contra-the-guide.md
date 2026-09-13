@@ -3,7 +3,7 @@ id: TASK-32268
 title: >-
   Library Notes delete prompt renders six rows below Delete and outside the
   Info border, contra the guide
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-10 18:05'
 labels:
@@ -25,7 +25,28 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The prompt renders adjacent to the Delete control and inside the Info border
-- [ ] #2 The guide's claim matches the live surface
-- [ ] #3 Covered by a test asserting the prompt's position relative to the control that raised it
+- [x] #1 The prompt renders adjacent to the Delete control and inside the Info border
+- [x] #2 The guide's claim matches the live surface
+- [x] #3 Covered by a test asserting the prompt's position relative to the control that raised it
 <!-- AC:END -->
+
+## Implementation Plan
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live: measure the prompt's rows against the Info border and the Delete button.
+2. RED test asserting containment and adjacency.
+3. Compose the prompt inside Info's Danger section; keep Info the surface while confirming.
+4. Handle the scroll the move introduces; GREEN; verify live at 235x52 and 100x30; guide; stamp.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+Cause PROVEN live at dev 4a14b3f36f (`wave3-caps/editor-keys/22-delete-prompt.txt`): Info's border closed at row 31, Delete sat at row 27 inside it, and the prompt painted at rows 32-34 — outside the box, five rows below the button. `_compose_editor` mounted `#library-note-delete-confirmation` as a sibling of every region, after the (permanently hidden) wide utilities and the conflict callout.
+
+Fix: the prompt composes as the next child of Info's Danger section, immediately after `#library-note-context-delete`. `apply_session_state` now also states the invariant that placement depends on — Info is the surface whenever `confirming_delete` is set — instead of leaving it incidental to Delete being Info-only (task-32132's ruling).
+
+The move puts the prompt inside Info's scroll, which focusing Cancel then drags. `LibraryNotesState.delete_origin_scroll` remembers the offset the reader was on when the prompt opened, and cancelling restores it (with `immediate=True`, because the default defers the scroll past the next refresh where the still-running focus animation wins) and focuses Delete without a second scroll. That keeps `test_library_note_delete_captures_context_origin_before_gated_flush`'s promise, which is what "restore the origin" has always meant there.
+
+Verified live at 235x52 (prompt at row 28, directly under Delete at row 27, both inside a border that closes at row 49) and at 100x30.
+
+Files: `tldw_chatbook/Widgets/Library/library_notes_canvas.py`, `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`, `tldw_chatbook/UI/Library_Modules/library_notes_state.py`, `Tests/UI/test_library_notes_wave_editor_keys.py`, `Tests/UI/test_library_shell.py`, `Docs/User_Guide/library/notes.md`.
+<!-- SECTION:NOTES:END -->

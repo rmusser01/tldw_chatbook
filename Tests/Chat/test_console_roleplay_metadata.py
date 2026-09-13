@@ -181,3 +181,45 @@ def test_merge_refuses_unsafe_character_name_snapshot(snapshot):
             {},
             ConsoleRoleplayContext(character_name_snapshot=snapshot),
         )
+
+
+def test_persona_template_round_trip_preserves_sibling_keys():
+    merged = merge_console_roleplay_context(
+        '{"unrelated": true}',
+        ConsoleRoleplayContext(persona_system_template="Guide {{user}}."),
+    )
+    decoded = json.loads(merged)
+    assert decoded["unrelated"] is True
+    owned = decoded["console_roleplay_context"]
+    assert owned["version"] == 2
+    assert "user_name_override" not in owned
+    assert "character_system_template" not in owned
+    assert owned["persona_system_template"] == "Guide {{user}}."
+    parsed = parse_console_roleplay_context(merged)
+    assert parsed.persona_system_template == "Guide {{user}}."
+
+
+def test_envelope_without_persona_key_parses_as_before():
+    merged = merge_console_roleplay_context(
+        None,
+        ConsoleRoleplayContext(
+            user_name_override="Rowan", character_system_template="Be {{char}}."
+        ),
+    )
+    parsed = parse_console_roleplay_context(merged)
+    assert parsed.user_name_override == "Rowan"
+    assert parsed.character_system_template == "Be {{char}}."
+    assert parsed.persona_system_template is None
+
+
+def test_blank_persona_template_fails_soft_and_all_empty_pops_envelope():
+    assert parse_console_roleplay_context(
+        '{"console_roleplay_context": '
+        '{"version": 1, "persona_system_template": "  "}}'
+    ) == ConsoleRoleplayContext()
+    merged = merge_console_roleplay_context(
+        '{"console_roleplay_context": '
+        '{"version": 1, "persona_system_template": "x"}}',
+        ConsoleRoleplayContext(),
+    )
+    assert json.loads(merged) == {}

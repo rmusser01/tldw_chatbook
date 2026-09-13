@@ -13,7 +13,6 @@ from textual.widgets import Button, Static
 from Tests.textual_test_utils import widget_pilot  # noqa: F401
 from Tests.UI.consolidated_css import (
     APP_STYLESHEETS,
-    BUNDLED_STYLESHEET,
     ConsolidatedCSSApp,
 )
 from tldw_chatbook.Library.library_notes_state import (
@@ -892,7 +891,7 @@ async def test_pager_focus_survives_failure_retry_and_retry_loading_recompose() 
     )
 
     class PagerFocusApp(ConsolidatedCSSApp):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
         def compose(self) -> ComposeResult:
             yield LibraryNotesCanvas(list_state=_list_state(), tree_projection=idle)

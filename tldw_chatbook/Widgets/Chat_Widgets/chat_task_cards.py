@@ -38,6 +38,19 @@ class ChatTaskCards(Container):
             self.answers = answers
             self.request_id = request_id
 
+
+    class ChatCreateDecided(Message):
+        """The chat-create card's decision (class hosted HERE so the
+        screen's @on handler never needs the lazily-imported card module
+        at boot -- ADR-097's UI-ready census; same pattern as
+        QuestionAnswered above)."""
+
+        def __init__(self, allow: bool, remember: bool, request_id: str) -> None:
+            super().__init__()
+            self.allow = allow
+            self.remember = remember
+            self.request_id = request_id
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize the surface hidden.
 
@@ -57,6 +70,30 @@ class ChatTaskCards(Container):
         yield SkillScriptConfirmCard(id="chat-skill-script-card")
         yield Vertical(id="console-watchlists-operation-cards")
         yield ChatResumePanel(id="chat-resume-panel")
+
+    def _chat_create_card(self, *, create: bool):
+        """Return the chat-create card, mounting it on first use (ADR-097:
+        the module is NOT imported at boot -- same lazy pattern as
+        ``_question_card`` above).
+
+        Args:
+            create: Mount the card when it is absent.
+
+        Returns:
+            The ``ChatCreateConfirmCard``, or None when absent and not created.
+        """
+        try:
+            return self.query_one("#chat-create-card")
+        except NoMatches:
+            if not create:
+                return None
+            from tldw_chatbook.Widgets.Chat_Widgets.chat_create_confirm_card import (
+                ChatCreateConfirmCard,
+            )
+
+            card = ChatCreateConfirmCard(id="chat-create-card")
+            self.mount(card, after=self.query_one(SkillScriptConfirmCard))
+            return card
 
     def _question_card(self, *, create: bool):
         """Return the question card, mounting it on first use.
@@ -121,6 +158,7 @@ class ChatTaskCards(Container):
             task_state.has_pending_approval()
             or task_state.has_pending_skill_install()
             or task_state.has_pending_skill_script()
+            or task_state.has_pending_chat_create()
             or task_state.has_pending_question()
             or bool(task_state.followed_watchlists_operations)
             or task_state.has_resume_content()
@@ -141,6 +179,9 @@ class ChatTaskCards(Container):
         yield ("pending_approval", self._set_approval)
         yield ("pending_skill_install", self.query_one(SkillInstallConfirmCard).set_install)
         yield ("pending_skill_script", self.query_one(SkillScriptConfirmCard).set_script)
+        chat_create_card = self._chat_create_card(create=bool(task_state.pending_chat_create))
+        if chat_create_card is not None:
+            yield ("pending_chat_create", chat_create_card.set_payload)
         # Generated lazily so the question card is created (mounted) only
         # after the three fixed cards have synced, as before the table.
         question_card = self._question_card(create=bool(task_state.pending_question))

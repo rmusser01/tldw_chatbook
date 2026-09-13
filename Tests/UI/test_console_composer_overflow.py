@@ -21,7 +21,6 @@ directly in the pure-function tests below.
 from __future__ import annotations
 
 import signal
-from pathlib import Path
 
 from rich.cells import cell_len
 import pytest
@@ -32,6 +31,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 
 class _CssTrueConsoleHarness(ConsoleHarness):
@@ -42,12 +42,7 @@ class _CssTrueConsoleHarness(ConsoleHarness):
     (the live-gate crop shipped through two review rounds because of it).
     """
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 # PURE-FUNCTION width parameter only -- pass it to `_wrap_draft_line_slices`/
 # `_cell_wrap_line`/etc. below, where an explicit width argument is exactly

@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     ConsoleSetupStep,
 )
 from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
@@ -97,7 +98,7 @@ def test_setup_step_wraps_instead_of_ellipsizing_on_overflow():
 class SetupModalGeometryApp(App[None]):
     """Mount the setup modal with the production stylesheet for geometry checks."""
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         yield ConsoleSetupModal(id="console-setup-modal")
@@ -128,7 +129,7 @@ async def test_step_three_is_one_complete_line_at_default_terminal_size():
 class StagedNoticeGeometryApp(App[None]):
     """Mount the setup modal and sync a staged-evidence receipt (task-2852)."""
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, *, blocking: bool, notice: str) -> None:
         super().__init__()

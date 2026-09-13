@@ -44,14 +44,19 @@ skills/search+RAG precedent's identical resolution at a comparable scale.
 
 **22 of the 78 candidates excluded, not moved (56 move):**
 
-1. **4 `@work(thread=True)`-decorated methods -- the "framework-decorator
+1. **`@work(thread=True)`-decorated methods -- the "framework-decorator
    self-type assertion" hazard (recipe §3, the export series' own
    precedent).** Textual's ``@work`` decorator asserts ``isinstance(self,
    DOMNode)`` at call time (read from ``textual/_work_decorator.py``, not
-   assumed); a plain controller object is not a ``DOMNode``. ``_save_
-   library_ingest_backend``, ``_persist_library_ingest_location``, ``_run_
-   library_ingest_preflight``, and ``_save_library_ingest_options`` stay on
-   ``LibraryScreen``, UNMOVED, decorator and body byte-for-byte untouched.
+   assumed); a plain controller object is not a ``DOMNode``.
+   ``_save_library_ingest_backend``, ``_persist_library_ingest_location``,
+   ``_run_library_ingest_preflight``, and ``_save_library_ingest_options``
+   stay on ``LibraryScreen``, UNMOVED. (task-32242 rewrote ONE of the four:
+   ``_persist_library_ingest_location`` no longer carries ``@work`` -- it
+   now claims a write generation on the event loop and dispatches
+   ``self.run_worker(...)`` itself, which needs the screen just as much, so
+   the exclusion stands on the ``DOMNode`` requirement rather than on the
+   decorator. The other three are still decorator-and-body untouched.)
    Of these, only ``_persist_library_ingest_location`` and ``_run_library_
    ingest_preflight`` have a MOVER caller (``handle_library_ingest_browse``,
    ``_trigger_library_ingest_preflight``); the other two (``_save_library_
@@ -85,17 +90,18 @@ skills/search+RAG precedent's identical resolution at a comparable scale.
      controller's forwarded call. Reverted to ``LibraryScreen``, UNMOVED,
      full-bodied; its only caller, ``_submit_library_ingest_form`` (a
      mover), reaches it through a named late-binding dependency below.
-   - ``_remember_library_ingest_location`` reads the bare name ``save_
-     setting_to_cli_config`` (an ordinary module-level import in
-     ``library_screen.py``, resolved against the DEFINING module's
-     ``__globals__`` at call time). ``Tests/UI/test_library_screen.py::
-     test_ingest_browse_remembers_the_directory_of_the_picked_file`` patches
-     ``tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config``
-     and calls the REAL, ``__init__``-constructed screen's method directly,
-     expecting the internal free-name call to observe the patch -- moving
-     the body would silently repoint this test's patch away from the call it
-     actually makes. Its only caller, the ALSO-excluded (@work hazard)
-     ``_persist_library_ingest_location``, needs no binding for it.
+   - ``_remember_library_ingest_location`` is excluded because
+     ``Tests/UI/test_library_screen.py::
+     test_ingest_browse_remembers_the_directory_of_the_picked_file`` calls
+     the REAL, ``__init__``-constructed screen's method directly. (task-32242
+     changed WHERE the write happens: the body now delegates to
+     ``Library/library_browse_location.remember_browse_directory``, so the
+     bare-name/``__globals__`` hazard this entry originally described is
+     gone, and that test patches
+     ``tldw_chatbook.Library.library_browse_location.save_setting_to_cli_config``
+     instead. The direct-call shape -- and so the exclusion -- is unchanged.)
+     Its only caller, the ALSO-excluded ``_persist_library_ingest_location``,
+     needs no binding for it.
    - ``_load_library_ingest_options_from_config`` calls the bare name
      ``_library_ingest_options_for`` -- one of recipe §3's own permanently
      screen-routed trio (``_INGEST_OPTIONS_CACHE_ATTR``, ``_read_library_

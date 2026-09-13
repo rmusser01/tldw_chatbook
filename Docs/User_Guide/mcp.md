@@ -14,10 +14,6 @@ It does not publish source or collection mutation, checking, briefing generation
 
 Use Console when an agent needs to read or summarize a complete briefing on your behalf. Use external MCP for discovery, receipts, and status automation without exporting private briefing bodies.
 
-> 🚧 **This page is a stub.** The full write-up is planned; the sections
-> below cover orientation only, except where a section says otherwise. See
-> the [guide index](index.md).
-
 ## What this screen is for
 
 MCP manages MCP servers, scoped tools, permissions, and audit readiness
@@ -132,7 +128,7 @@ Watchlists tools
 (`web_search`, `web_fetch`, `web_crawl`, plus Watchlists metadata and receipt
 reads). The task tools `todo_create`, `todo_update`, `todo_get`,
 and `todo_list` require Console session state and are not Hub tools. Turning
-the master switch off remains a supported opt-out. The same panel lets you set
+this control off remains a supported opt-out. The same panel lets you set
 **Workspace root**, the directory that confines every `fs_*` path. A blank
 root uses the folder from which the app was launched; a non-blank root must be
 an existing directory.
@@ -140,9 +136,11 @@ an existing directory.
 Both changes are used by the next Console agent run. They do not grant tool
 permission: fresh permission state is still **Ask**, explicit Allow/Ask/Off
 overrides still win, mutating tools retain their risk floor, and the global
-kill switch remains authoritative. The controls read back persisted config
-truth after saving, and a failed save restores the persisted value instead of
-leaving an optimistic toggle on screen.
+kill switch remains authoritative. The master switch's label flips
+immediately on press, before the save round-trip completes, and reverts to
+the persisted value if the save is rejected — so a fast second press can
+reverse the first before it lands, rather than sending the same value
+twice. The Servers-mode Tool gates rows below do the same.
 
 Tools mode also lists a distinct **Virtual CLI (read-only)** local group. The
 model sees one structured `virtual_cli` tool, while this group exposes separate
@@ -165,7 +163,8 @@ decide MCP availability independently.
 Select the built-in server's row in Servers mode; its detail pane has a
 **Tool gates** group under the existing enable/expose checkboxes. Each gate
 is a button that spells its own state out in text — `Read file: off ▸`,
-`Read file: on ▸` — and presses toggle it; the tool's plain-language name
+`Read file: on ▸` — and presses toggle it the same optimistic-then-revert
+way the local master switch above does; the tool's plain-language name
 and one-line description are the same copy the first-run setup wizard
 shows. The group is split into two subheadings:
 
@@ -176,15 +175,15 @@ shows. The group is split into two subheadings:
   a Library search result, so it reads your library and, like every
   risk-tagged tool, is floored to **Ask**: expect one approval card per
   call until you set Allow).
-- **Local workspace, web, and Watchlists tools** — a master switch, labeled
-  **Local workspace, web, and Watchlists tools (master switch)**, mirroring the
-  direct Tools-mode control. `web_deep_search` (multi-query web research that
-  may cost real money on paid providers) has an additional individual gate
-  underneath it, as does `ask_user`. The master switch and `ask_user` are
-  on by default; every `Agent built-ins` gate and `web_deep_search` default
-  to off.
+- **Local workspace, web, and Watchlists tools** — a toggle button whose
+  label states its own on/off state in text (`…: on ▸` / `…: off ▸`),
+  mirroring the direct Tools-mode control. `web_deep_search` (multi-query
+  web research that may cost real money on paid providers) has an
+  additional individual gate underneath it, as does `ask_user`. This
+  control and `ask_user` are on by default; every `Agent built-ins` gate
+  and `web_deep_search` default to off.
 
-The master switch governs the **Console/agent path only**. It does *not*
+This control governs the **Console/agent path only**. It does *not*
 control whether an enabled tool (e.g. `web_deep_search`) is exposed to
 *external* MCP clients connecting to chatbook's own server — that is a
 separate switch, `[mcp] expose_local_tools`, unrelated to this pane.
@@ -391,6 +390,81 @@ the web-page options, and press **Start import**. The retired `ingest_media`
 placeholder returned a fabricated `queued` response without submitting work;
 it is absent from the standalone inventory. Use Library Import instead.
 
+## Permissions mode — Allow, Ask, Off
+
+Permissions mode is the client-side gate every tool call passes through. It is
+a three-column matrix (**Tool**, **State**, **Tags**) with one pinned
+**Global default** row, a **Server default** row per source, and the tools
+indented underneath each.
+
+Four states, three of which you can store:
+
+- **Allow** — the call runs without asking.
+- **Ask** — the call raises an approval card in Console (this is the shipped
+  default: fresh permission state is Ask).
+- **Off** — the call is refused. In Tools mode a run of that tool reads
+  "Blocked · not run"; in Console it never reaches the tool at all.
+- **Inherit** — nothing is stored at this level, so the row shows whatever it
+  resolves to from the level below. Only server and tool rows can be Inherit;
+  the global default always holds a real value.
+
+Precedence runs tool → server → global: an explicit tool entry beats its
+server's default, which beats the profile's global default. A row carrying its
+own explicit value is marked with **•** in the State cell, so an override is
+visible without opening it.
+
+**Space** on the matrix's cursor row cycles it — **Inherit → Allow → Ask →
+Off → Inherit** for a server or tool row, and **Allow → Ask → Off** for the
+global row, which has no Inherit rung. The legend under the matrix states the
+cycle and every marker it can show:
+
+> • override · ⚠ definition changed · ⚑ high-risk floor · ≡ exact-input
+> allows · (session) approved until Chatbook exits · Space cycles Inherit →
+> Allow → Ask → Off
+
+When any registration gate is off, a second legend line names where the gates
+live — **MCP ▸ Servers ▸ built-in row ▸ Tool gates** — since a gate-off tool
+has no row here to find.
+
+### The risk floor, and how an explicit Allow gets past it
+
+A tool whose tags mark it risky does not get to be quietly Allow-by-
+inheritance. An **inherited** Allow — one that came from the server or global
+default rather than from the tool's own row — is floored back to **Ask** when
+the tool is risk-tagged, and the row shows **⚑**. For MCP tools the risky tags
+are `mutates` and `process`; the app's own built-ins additionally floor on
+`reads` and `network`, because an agent reading arbitrary files is a
+disclosure risk and network egress is the exfiltration half of a
+prompt-injection chain.
+
+An **explicit tool-level Allow** is never floored. Setting Allow on the tool's
+own row is read as opting in to that specific tool with full knowledge of it,
+which a blanket "allow everything" default is not. That is the whole
+distinction: the floor exists to stop a broad default from silently covering a
+dangerous tool, not to override a decision you made about one tool.
+
+The separate rug-pull guard still applies on top: an explicit tool-level Allow
+is downgraded to Ask (marked **⚠**) when the tool's current definition no
+longer matches the one stored with the allow. Only setting the state again
+clears it — the inspector's **Re-allow** button is that route.
+
+### The kill switch
+
+Above the matrix sits a single toggle button that spells out its own state:
+**Block all tool calls in chat: On ▸** / **Block all tool calls in chat: Off
+▸**. Its blast radius is stated on the line beneath it rather than hidden in a
+tooltip:
+
+> Also blocks the app's own built-in tools (calculator, date/time, file and
+> note tools).
+
+That is the honest reading — the switch is a global tool kill switch, not an
+MCP-only one: the built-in tool gate and the local workspace provider both
+consult the same value. It takes effect with the chat bridge and does *not*
+affect a tool you run by hand from the Hub's own Tools mode. A call the kill
+switch refuses is logged as **Blocked (kill switch)**, distinct from a
+permissions **Blocked (Off)** and from a **Denied by you**.
+
 ## Testing a tool (Tools mode)
 
 Tools mode lists every tool the hub knows about — the app's own built-in
@@ -498,32 +572,42 @@ its filter can answer "what did I refuse?":
 A Deny you press in Console lands here as its own row, exactly as each
 approval does.
 
+Pressing **Stop** mid-approval and a headless round with no app wired both
+leave the call unanswered, and neither is recorded as **Denied by you**:
+Stop's cancelled round is the "cancelled approval" case above and writes
+the same **Denied (no decision)** row every other unresolved round does. A
+headless round writes no audit row at all — not even that one — since the
+log is reached through the app, and this path exists precisely because
+there is no app to reach it through.
+
 ### Session approvals
 
-**Approve for session** lasts until Chatbook exits or you revoke it — it is
-never written to disk, and it is not a permission change (the tool's
-Allow/Ask/Off setting is untouched). A tool holding one gets a `(session)`
-suffix on its State cell in the Permissions matrix, and selecting any tool
-row lists every live grant in the inspector with a **Revoke** button next to
-each. Revoking takes effect immediately: the next call to that tool asks
-again.
+The approval card's **This session** decision ("Every call to this tool until
+Chatbook exits") lasts until Chatbook exits or you revoke it — it is never
+written to disk, and it is not a permission change (the tool's Allow/Ask/Off
+setting is untouched). A tool holding one gets a `(session)` suffix on its
+State cell in the Permissions matrix, and selecting any tool row lists every
+live grant in the inspector with a **Revoke** button next to each. Revoking
+takes effect immediately: the next call to that tool asks again.
 
 ### Exact-input allow rules
 
-Alongside **Approve once** / **Approve for session** / **Always allow** /
-**Deny**, the approval card can offer a fifth choice: **Always allow this
-exact input**. Unlike **Always allow** — which sets the whole tool to
-Allow — this remembers only the *exact arguments shown on that card*: the
-same tool called again with different arguments still asks. It's scoped
-per tool, tied to that tool's current definition the same way **Always
-allow** is (a server that changes the tool's definition invalidates the
-rule, same rug-pull guard).
+Alongside **Once** / **This session** / **Always** / **Deny**, an MCP tool's
+approval card offers a fifth choice: **Always · these args**. Unlike
+**Always** — which sets the whole tool to Allow — this remembers only the
+*exact arguments shown on that card*: the same tool called again with
+different arguments still asks. It's scoped per tool, tied to that tool's
+current definition the same way **Always** is (a server that changes the
+tool's definition invalidates the rule, same rug-pull guard).
 
-The card does **not** offer it for a high-risk tool (one tagged `mutates`
-or `process`): the risk floor beats an argument rule, so such a rule would
-never quiet a call. If one is already stored — hand-written, or left by an
-earlier version — the inspector lists it as *Exact-input allow (not in
-effect: risk floor)*, with its **Remove** button still live.
+The card does **not** offer **Always · these args** for a high-risk tool
+(one tagged `mutates` or `process`): the risk floor beats an argument rule,
+so such a rule would never quiet a call. If one is already stored —
+hand-written, or left by an earlier version — the inspector lists it as
+*Exact-input allow (not in effect: risk floor)*, with its **Remove** button
+still live. See [the approval
+card](console/agent-runs-and-tools.md#approvals--tools-ask-before-they-run)
+for all five decisions and which tools offer which.
 
 A tool that carries one or more of these rules gets a `≡` marker on its
 State cell in the Permissions matrix (see the legend line under the
@@ -531,6 +615,16 @@ matrix). Selecting that tool's row lists each stored rule in the
 inspector — its (capped) argument summary and a **Remove** button — right
 below the permission explanation. Removing a rule takes effect
 immediately: the next call with those exact arguments asks again.
+
+The inspector's rule list walks the profile you're reviewing's inheritance
+chain too (only the `default` profile can be an ancestor), since an
+inherited rule already quiets calls made under the profile you're looking
+at. A rule owned by an ancestor reads `Exact-input allow · <args> · from
+<profile>`, naming the profile that actually stores it; the `≡` marker
+marks an inherited rule the same way it marks one owned outright. **Remove**
+on an inherited row deletes it from the profile that owns it, not the one
+under review — so the blast radius (every profile that inherits it) is
+visible before you press it.
 
 ## Advanced (legacy control plane)
 
@@ -621,11 +715,11 @@ buttons that state on/off in text under the tool's plain-language name
 to the next Console agent run, with `web_deep_search`'s external-MCP
 publication the single next-client-launch exception. Fix round, same day:
 that exception now names its own precondition — the external-MCP half
-only applies when `[mcp] expose_local_tools` is on — and the master
-switch is corrected alongside `ask_user` as on by default (it was
+only applies when `[mcp] expose_local_tools` is on — and this control
+is corrected alongside `ask_user` as on by default (it was
 previously the only one credited). Docs pass 2026-09-10 (task-32291,
 against code and tests, not a live screen): added "Session approvals" —
-"Approve for session" grants are now listed in the inspector's permission
+**This session** grants are now listed in the inspector's permission
 block with a per-row **Revoke**, and the Permissions matrix marks a tool
 holding one with a ` (session)` suffix; until this pass a session grant
 was invisible and could only be dropped by restarting the app. Docs pass
@@ -633,7 +727,29 @@ was invisible and could only be dropped by restarting the app. Docs pass
 selected server's own group now leads both Tools mode and the Permissions
 matrix, and **Open tool catalog** drills straight to that server rather
 than to the top of an unfiltered list. Docs pass 2026-09-10 (task-32286,
-against code and tests, not a live screen): the Tools-mode master
-control is now a toggle button (it used to be a Checkbox plus a
+against code and tests, not a live screen): the Tools-mode control
+is now a toggle button (it used to be a Checkbox plus a
 separate "Enabled"/"Disabled" label, which a bundle width escape hatch
 had clamped to a truncated seven-cell frame at wide terminal widths).*
+
+*Verified against `fix/approval-wave-c-hub` @ a999fcf6e6 and `fix/approval-wave-b-card` @ e7409210cc — 2026-09-10 (task-32290, against
+code and tests, not a live screen). Added "Permissions mode — Allow, Ask,
+Off": the four matrix states and the tool → server → global precedence, the
+Space cycle and the legend line verbatim (`_LEGEND_TEXT`,
+`mcp_permissions_mode.py`), the risk floor with the rule that an explicit
+tool-level Allow is never floored (`permission_store.resolve`), and the kill
+switch's real label and blast-radius line. Corrected the leftover
+"checkboxes" reading of the Tool gates rows, which are buttons.*
+
+*Docs pass 2026-09-11 (Qodo follow-ups: task-32277/32278/32279/32280/32281/
+32284/32286/32289/32291/32345, against code and tests, not a live screen):
+"Exact-input allow rules" now documents an inherited rule's `· from
+<profile>` row, the `≡` marker covering it too, and **Remove** deleting
+from the owning profile rather than the one under review; the Tools-mode
+master switch and the Servers-mode Tool gates rows now say their label
+flips immediately on press and reverts if the save is rejected, correcting
+this page's stale claim that the toggle only updated after a successful
+save; and "Permission continuity for built-in tools" now distinguishes a
+Stop-cancelled round (`Denied (no decision)`, same as any other unresolved
+round) from a headless round with no app wired, which writes no audit row
+at all.*

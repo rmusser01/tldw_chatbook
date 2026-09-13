@@ -2630,12 +2630,16 @@ async def test_shutdown_settles_in_flight_pause_and_resume_before_store_close(
             "sync_now",
             NotesSyncRootState.ACTIVE,
         ),
+        # task-32519: a root with changes to review still returns to service;
+        # the changes surface exactly as an active root's Check changes shows
+        # them, instead of the root staying paused behind a review it could
+        # not open.
         (
             _input(),
-            False,
+            True,
             "changes_available",
             "review_changes",
-            NotesSyncRootState.PAUSED,
+            NotesSyncRootState.ACTIVE,
         ),
     ),
 )
