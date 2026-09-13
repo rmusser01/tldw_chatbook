@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from datetime import datetime
 from typing import Never, Protocol
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
@@ -15,9 +16,11 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncReviewSource,
     LastingSyncReceiptRow,
     LastingSyncRootRow,
+    LastingSyncWriteReceipt,
     LibraryNotesLastingSyncSnapshot,
     build_reconciliation_review,
     check_failure_line,
+    check_failure_row,
     initial_lasting_sync_snapshot,
     set_setup_value,
     validate_lasting_sync_history_page,
@@ -36,11 +39,13 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
 )
 from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncControlResult,
+    NotesSyncRootRuntimeSnapshot,
     NotesSyncRootSetup,
     NotesSyncRuntimeSnapshot,
     RuntimeConflictHistoryRow,
     RuntimeConflictLabel,
     RuntimeConflictReceipt,
+    RuntimeWriteReceipt,
 )
 from tldw_chatbook.Notes.notes_sync_models import (
     NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
@@ -120,6 +125,10 @@ class LastingSyncRuntimePort(Protocol):
     ) -> NotesSyncControlResult: ...
 
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> object: ...
+
+    async def write_receipts(
+        self, root_id: str, *, limit: int = 20
+    ) -> tuple[RuntimeWriteReceipt, ...]: ...
 
 
 class _ImportOncePort(Protocol):
@@ -209,6 +218,11 @@ class InertLastingSyncRuntime:
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> object:
         return await self._blocked()
 
+    async def write_receipts(
+        self, root_id: str, *, limit: int = 20
+    ) -> tuple[RuntimeWriteReceipt, ...]:
+        return ()
+
 
 _STATUS_LABELS = {
     "up_to_date": "✓ Up to date",
@@ -236,6 +250,16 @@ _ACTION_LABELS = {
     "apply_reviewed": "Apply reviewed",
     "finish_upgrade": "Finish upgrade",
     "close_other_process_and_restart": "Close other process and restart",
+}
+#: task-32534 AC#3: what one completed journal row did, in the user's terms.
+#: The journal names a direction ("update_file" = Notes -> disk); the row
+#: has to say which side ended up carrying the text.
+_RECEIPT_EFFECTS = {
+    "create_file": "Created file from note",
+    "update_file": "Wrote note to file",
+    "move_file": "Moved file",
+    "create_note": "Created note from file",
+    "update_note": "Updated note from file",
 }
 _ROOT_PAGE_SIZE = 20
 # TASK-21112: "not_configured" is the boot-deferred runtime — nothing is set
@@ -288,6 +312,11 @@ class LibraryNotesSyncController:
             lasting_available=runtime.snapshot().status in _SETUP_READY_STATUSES
         )
         self._all_roots: tuple[LastingSyncRootRow, ...] = ()
+        # task-32534 AC#1: root_id -> (failure phrase, next action) for the
+        # last refused action on that root. The runtime's own projection only
+        # knows what the last successful pass saw, so without this a refusal
+        # left "✓ Up to date" standing beside the failure.
+        self._root_failures: dict[str, tuple[str, str]] = {}
         self.refresh_roots()
 
     def _notes_changed(self) -> None:
@@ -619,18 +648,7 @@ class LibraryNotesSyncController:
         runtime = self._runtime.snapshot()
         available = runtime.status in _SETUP_READY_STATUSES
         self._all_roots = tuple(
-            LastingSyncRootRow(
-                root.root_id,
-                "Sync folder (name unavailable before cutover)",
-                root.status,
-                root.next_action,
-                _STATUS_LABELS.get(root.status, root.status.replace("_", " ").title()),
-                _ACTION_LABELS.get(
-                    root.next_action, root.next_action.replace("_", " ").title()
-                ),
-                root.action_id,
-            )
-            for root in runtime.roots
+            self._project_root(root) for root in runtime.roots
         )
         page_count = max(
             1, (len(self._all_roots) + _ROOT_PAGE_SIZE - 1) // _ROOT_PAGE_SIZE
@@ -646,6 +664,76 @@ class LibraryNotesSyncController:
         )
         if publish:
             self._publish()
+
+    def _project_root(self, root: NotesSyncRootRuntimeSnapshot) -> LastingSyncRootRow:
+        """Project one runtime root, with its last refusal laid over the top."""
+
+        status, next_action = root.status, root.next_action
+        failure, failed_action = self._root_failures.get(root.root_id, ("", ""))
+        if failure:
+            status, next_action = "needs_attention", failed_action
+        return LastingSyncRootRow(
+            root.root_id,
+            "Sync folder (name unavailable before cutover)",
+            status,
+            next_action,
+            _STATUS_LABELS.get(status, status.replace("_", " ").title()),
+            _ACTION_LABELS.get(next_action, next_action.replace("_", " ").title()),
+            root.action_id,
+            failure=failure,
+        )
+
+    def _record_root_failure(
+        self, root_id: str, error: BaseException, *, verb: str
+    ) -> str:
+        """Name one refused root action on its row, and return the status line.
+
+        task-32534 AC#1/#2: the four bare ``except Exception`` branches on
+        this controller used to set a generic line, leave the row at its last
+        projection and log nothing. ``check_failure_row`` is the one site
+        that logs the refusal (metadata only) and names it.
+        """
+
+        failure, next_action = check_failure_row(error, root_id=root_id, verb=verb)
+        self._root_failures[root_id] = (failure, next_action)
+        self.refresh_roots(publish=False)
+        return f"{failure}. Next: {_ACTION_LABELS.get(next_action, 'Check changes')}."
+
+    def _clear_root_failure(self, root_id: str) -> None:
+        """Drop a root's refusal overlay once an action on it succeeds."""
+
+        if self._root_failures.pop(root_id, None) is not None:
+            self.refresh_roots(publish=False)
+
+    async def refresh_receipts(self) -> None:
+        """Project the newest completed writes across the visible roots.
+
+        task-32534 AC#3: lasting sync writes to disk and into notes on its
+        own schedule; before this the only trace was the file itself.
+        """
+
+        collected: list[tuple[int, LastingSyncWriteReceipt]] = []
+        for row in self._state.roots:
+            for receipt in await self._runtime.write_receipts(row.root_id):
+                collected.append(
+                    (
+                        receipt.completed_at,
+                        LastingSyncWriteReceipt(
+                            datetime.fromtimestamp(
+                                receipt.completed_at / 1e9
+                            ).strftime("%Y-%m-%d %H:%M"),
+                            _RECEIPT_EFFECTS.get(receipt.kind, "Synced"),
+                            receipt.relative_path,
+                            receipt.note_title,
+                        ),
+                    )
+                )
+        collected.sort(key=lambda entry: entry[0], reverse=True)
+        self._state = replace(
+            self._state,
+            write_receipts=tuple(receipt for _, receipt in collected[:20]),
+        )
+        self._publish()
 
     def set_root_page(self, page: int) -> None:
         """Show one bounded path-free page of roots."""
@@ -1025,17 +1113,18 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return
             self._selections.clear()
             self._clear_comparison()
             self._project_review(stale=True)
+            status_line = self._record_root_failure(root_id, error, verb="Apply")
             self._state = replace(
                 self._state,
                 phase="review",
                 review=replace(self._state.review, next_action="Check again"),
-                status_line="Apply failed. Review root status, then Check again.",
+                status_line=status_line,
             )
             self._publish()
             return
@@ -1137,7 +1226,7 @@ class LibraryNotesSyncController:
                 status_line=(
                     f"{applied} applied · no conflicts remain{receipt_suffix}."
                 ),
-                receipt_line=f"{applied} applied · durable receipt recorded",
+                receipt_line=f"{applied} applied · listed under Receipts",
             )
         self.refresh_roots(publish=False)
         self._publish()
@@ -1152,18 +1241,18 @@ class LibraryNotesSyncController:
         self._publish()
         try:
             plan = await self._runtime.request_sync_now(root_id)
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return
+            status_line = self._record_root_failure(root_id, error, verb="Check")
             self._state = replace(
-                self._state,
-                phase="roots",
-                status_line="Manual check failed. Review root status, then try again.",
+                self._state, phase="roots", status_line=status_line
             )
             self._publish()
             return
         if not self._lifecycle_is_current(root_id, epoch):
             return
+        self._clear_root_failure(root_id)
         if type(plan) is not ReconciliationPlan or plan.root_id != root_id:
             self._state = replace(
                 self._state,
@@ -1194,13 +1283,12 @@ class LibraryNotesSyncController:
         epoch = self._begin_bound_control_lifecycle(root_id)
         try:
             await self._runtime.resolve_cleanup(root_id, operation_id)
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return
+            status_line = self._record_root_failure(root_id, error, verb="Recovery")
             self._state = replace(
-                self._state,
-                phase="roots",
-                status_line="Recovery needs attention. Review root status, then try again.",
+                self._state, phase="roots", status_line=status_line
             )
             self._publish()
             return
@@ -2005,13 +2093,12 @@ class LibraryNotesSyncController:
 
         try:
             result = await operation
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return False
+            status_line = self._record_root_failure(root_id, error, verb="Action")
             self._state = replace(
-                self._state,
-                phase="roots",
-                status_line="Control failed. Review root status, then try its next action.",
+                self._state, phase="roots", status_line=status_line
             )
             self._publish()
             return False

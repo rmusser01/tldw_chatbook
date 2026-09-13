@@ -262,9 +262,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             yield from self._compose_phase()
         if self._expects_body_overflow():
             yield Static(
-                "Additional setup content is scrollable."
-                if self.snapshot.phase == "configure"
-                else "Additional reviewed effects are scrollable.",
+                "More below — scroll.",
                 id="notes-sync-fold-hint",
                 classes="library-disabled-reason",
                 markup=False,
@@ -323,12 +321,13 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             keep.tooltip = (
                 None
                 if lasting
-                else "Unavailable until the reviewed lasting-sync cutover."
+                else "Keeping a folder synced isn't ready on this profile yet."
             )
             yield keep
             if not lasting:
                 yield Static(
-                    "Unavailable until the reviewed lasting-sync cutover. Nearest valid action: Import once.",
+                    "Keeping a folder synced isn't ready on this profile yet. "
+                    "Nearest valid action: Import once.",
                     classes="library-disabled-reason",
                     markup=False,
                 )
@@ -423,7 +422,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 yield from self._compose_receipts()
             yield Static(
                 f"{review.safe_count} safe · {review.attention_count} need attention · "
-                f"{review.skip_count} skipped · {review.managed_count} managed placements",
+                f"{review.skip_count} skipped · {review.managed_count} folder moves",
                 id="notes-sync-review-summary",
                 markup=False,
             )
@@ -652,7 +651,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     def _compose_receipts(self) -> ComposeResult:
         if self.snapshot.receipts_unavailable:
             yield Static(
-                "At-action receipts are unavailable. Open Resolution history.",
+                "Per-change receipts aren't available here. Open Resolution history.",
                 classes="library-disabled-reason",
                 markup=False,
             )
@@ -1042,7 +1041,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             review = snapshot.review
             summary.first(Static).update(
                 f"{review.safe_count} safe · {review.attention_count} need attention · "
-                f"{review.skip_count} skipped · {review.managed_count} managed placements"
+                f"{review.skip_count} skipped · {review.managed_count} folder moves"
             )
         apply = self.query("#notes-sync-apply")
         if apply:

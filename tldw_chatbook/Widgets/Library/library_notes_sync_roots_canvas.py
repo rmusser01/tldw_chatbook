@@ -14,6 +14,9 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncRootRow,
     LibraryNotesLastingSyncSnapshot,
 )
+from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
+    _disabled_action_label,
+)
 
 
 class LibraryNotesSyncRootsCanvas(Vertical):
@@ -71,7 +74,15 @@ class LibraryNotesSyncRootsCanvas(Vertical):
                         markup=False,
                     )
                     yield Static(
-                        f"{root.status_label} · Next: {root.next_action_label}",
+                        " · ".join(
+                            part
+                            for part in (
+                                root.status_label,
+                                root.failure,
+                                f"Next: {root.next_action_label}",
+                            )
+                            if part
+                        ),
                         classes="library-notes-sync-root-status",
                         markup=False,
                     )
@@ -99,8 +110,31 @@ class LibraryNotesSyncRootsCanvas(Vertical):
                         disabled=self.snapshot.root_page
                         >= self.snapshot.root_page_count,
                     )
+            # task-32534 AC#3: lasting sync writes on its own; before this
+            # section a completed write left no trace anywhere in the app.
+            yield Static(
+                "Receipts",
+                id="notes-sync-receipts-heading",
+                classes="destination-section",
+                markup=False,
+            )
+            if not self.snapshot.write_receipts:
+                yield Static(
+                    "No writes yet. Sync writes appear here as they happen.",
+                    id="notes-sync-receipts-empty",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+            for receipt in self.snapshot.write_receipts:
+                yield Static(
+                    f"{receipt.when} · {receipt.effect} · "
+                    f"{receipt.relative_path} · {receipt.note_title}",
+                    classes="library-notes-sync-receipt-row",
+                    markup=False,
+                )
         yield Static(
-            "Retarget and Disconnect are unavailable in this release. No files or notes are changed.",
+            "Retarget/Disconnect unavailable — not in this release; "
+            "nothing on disk or in Notes changes.",
             id="notes-sync-disconnect-copy",
             classes="library-disabled-reason",
             markup=False,
@@ -124,9 +158,9 @@ class LibraryNotesSyncRootsCanvas(Vertical):
                 "check",
                 "○ Check changes" if check_blocked else "Check changes",
                 check_blocked,
-                "Reconnect the folder before checking changes."
+                "the folder is disconnected"
                 if root.status == "offline"
-                else "Use the active process to check changes."
+                else "another Chatbook has this folder open"
                 if root.status == "passive"
                 else None,
             )
@@ -143,17 +177,19 @@ class LibraryNotesSyncRootsCanvas(Vertical):
             actions.append(("recover", "Recovery", False, None))
         actions.extend(
             (
+                # task-32545 AC#1: the reason was tooltip-only, so the
+                # control said "○" and nothing else.
                 (
                     "retarget",
                     "○ Retarget",
                     True,
-                    "Retarget is unavailable in this release.",
+                    "not in this release",
                 ),
                 (
                     "disconnect",
                     "○ Disconnect",
                     True,
-                    "Disconnect is unavailable in this release.",
+                    "not in this release",
                 ),
             )
         )
@@ -172,7 +208,7 @@ class LibraryNotesSyncRootsCanvas(Vertical):
                 index,
                 root.root_id,
                 action,
-                label,
+                _disabled_action_label(label, disabled=disabled, reason=tooltip or ""),
                 disabled=disabled,
                 tooltip=tooltip,
                 primary=action == primary_action,

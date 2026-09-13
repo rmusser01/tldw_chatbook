@@ -800,7 +800,15 @@ async def test_control_failure_publishes_explicit_bounded_recovery_action() -> N
     await controller.pause_root("root-1")
 
     assert controller.snapshot.phase == "roots"
-    assert "Review root status" in controller.snapshot.status_line
+    # task-32545 AC#3: was "Review root status" -- an instruction to read a
+    # row that had not changed. The line now names the category and the next
+    # action, and the row carries the same failure (task-32534 AC#1).
+    assert controller.snapshot.status_line == (
+        "Action failed — RuntimeError. Next: Check changes."
+    )
+    assert controller.snapshot.roots[0].failure == "Action failed — RuntimeError"
+    assert controller.snapshot.roots[0].status == "needs_attention"
+    assert "/private/root" not in controller.snapshot.status_line
     assert "/private/root" not in repr(controller.snapshot)
 
 
