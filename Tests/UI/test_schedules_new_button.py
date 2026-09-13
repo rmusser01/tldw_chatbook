@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button
 
-from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import (
     MockSchedulingDB,
     MockSchedulingServiceMixin,

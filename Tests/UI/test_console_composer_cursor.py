@@ -6,7 +6,6 @@ will be sent); collapsed paste tokens are single units for movement, deletion,
 and word boundaries.
 """
 
-from pathlib import Path
 
 import pytest
 from rich.cells import cell_len

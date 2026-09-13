@@ -21,7 +21,6 @@ directly in the pure-function tests below.
 from __future__ import annotations
 
 import signal
-from pathlib import Path
 
 from rich.cells import cell_len
 import pytest

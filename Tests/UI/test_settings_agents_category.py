@@ -1,12 +1,10 @@
 """Settings ▸ Agents: category registration + panel CRUD (fleet spec §4)."""
 
-from pathlib import Path
 
 import pytest
 from textual.app import App
 from textual.widgets import ListView
 
-import tldw_chatbook
 from Tests.UI.test_destination_shells import _static_text
 from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB

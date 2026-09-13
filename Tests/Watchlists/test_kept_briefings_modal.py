@@ -32,9 +32,6 @@ from rich.console import Console
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Select, Static
 
-from Tests.UI.test_destination_visual_parity_correction import (
-    ProductionCSSDestinationHarness,
-)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import briefing_cast

@@ -31,7 +31,6 @@ from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
     LibraryAdaptiveReaderShell,
     PaneToggleRequested,
 )
-from tldw_chatbook.app import TldwCli
 
 
 CSS_SOURCE = (

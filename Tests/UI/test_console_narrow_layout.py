@@ -25,7 +25,7 @@ import pytest
 from textual.widgets import Button, Static, Switch
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_console_internals_decomposition import (
     _configure_native_ready_console,
 )

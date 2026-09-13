@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook import config
 from tldw_chatbook.UI.Screens.settings_config_models import (

@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from textual.widgets import Button, DataTable, Input, Select, Static
 
-from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import (
     MockSchedulingDB,
     MockSchedulingServiceMixin,

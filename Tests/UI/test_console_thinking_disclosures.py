@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from textual.app import App, ComposeResult
 
-from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from tldw_chatbook.Chat.console_chat_models import (
     PROPRIETARY_THINKING_NOTICE,
     ConsoleActivityPresentation,

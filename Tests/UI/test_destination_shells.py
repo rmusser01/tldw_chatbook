@@ -4296,7 +4296,6 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
     # and Selection side chat landed; in the bundled app the card
     # auto-grows and the control is reachable by scrolling, exactly as a
     # user does below.
-    from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 
     class _StyledDestinationHarness(DestinationHarness):
         CSS_PATH = [str(path) for path in APP_STYLESHEETS]
