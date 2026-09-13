@@ -403,14 +403,19 @@ def stage_restore(
             ):
                 raise ValueError("staging_target_alias")
     work_parent = _ancestor(work_root)
-    targets = tuple(path for _, path in plan.destinations)
-    if any(
-        work_root == target
-        or target in work_root.parents
-        or work_root in target.parents
-        for target in targets
-    ):
-        raise ValueError("staging_destination_alias")
+    roots = {row.logical_id: row for row in doc.directories if row.parent_id is None}
+    for key, target in plan.destinations:
+        if (
+            work_root == target
+            or target in work_root.parents
+            or work_root in target.parents
+        ):
+            from .service_storage import is_preserved_service_container
+
+            if not is_preserved_service_container(
+                work_root, target, plan, synthetic=roots[key].synthetic
+            ):
+                raise ValueError("staging_destination_alias")
     if work_root == archive.path.parent or work_root in archive.path.parents:
         raise ValueError("staging_archive_alias")
     if work_root.exists():

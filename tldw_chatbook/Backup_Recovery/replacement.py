@@ -679,14 +679,80 @@ def _first_binding_inventory(plan, selector):
     return current
 
 
+def _preserved_default_controls(plan, document, parent, protected):
+    """Recognize excluded native siblings without granting their parent authority."""
+    from .bootstrap import _overlap, default_bootstrap_root
+    from .inventory import _fixed_control_exclusion
+    from .service_storage import default_control_root, is_preserved_service_container
+
+    if plan is None or document is None or plan.target is None:
+        return ()
+    synthetic = any(
+        row.synthetic and dict(plan.destinations).get(row.logical_id) == parent
+        for row in document.directories
+    )
+    if not any(
+        is_preserved_service_container(path, parent, plan, synthetic=synthetic)
+        for path in protected
+    ):
+        return ()
+    controls = [default_control_root().parent]
+    fixed = default_bootstrap_root()
+    if _overlap(parent, fixed):
+        items = _fixed_control_exclusion()
+        if (
+            len(items) != 1
+            or items[0].status != "intentionally_excluded"
+            or items[0] not in plan.target.items
+            or (items[0].logical_id, fixed) not in plan.preserve
+            or parent not in fixed.parents
+            or any(
+                _overlap(path, fixed)
+                for _, path in (*plan.restore, *plan.retire, *plan.containers)
+            )
+        ):
+            return ()
+        controls.append(fixed)
+    return tuple(controls)
+
+
 def _first_config_container(
-    selector, inventory, names, registry, profiles, selectors, protected
+    selector,
+    inventory,
+    names,
+    registry,
+    profiles,
+    selectors,
+    protected,
+    *,
+    plan=None,
+    document=None,
 ):
     """Prove a private current container without adopting unknown sibling files."""
-    from .bootstrap import _overlap
-    from .file_inventory import inventory_tree
+    from .bootstrap import _overlap, default_bootstrap_root
+    from .control_records import UNBOUND_NAMESPACE
+    from .file_inventory import _inventory_root, inventory_tree
+    from .service_storage import default_control_root, is_preserved_service_container
 
     parent = selector.parent
+    controls = _preserved_default_controls(plan, document, parent, protected)
+    if controls and any(
+        item not in inventory.items
+        for item in plan.target.items
+        if item.path in controls
+    ):
+        raise ValueError("replacement_config_container_unverified")
+
+    def protected_overlap(path):
+        if not _overlap(parent, path):
+            return False
+        return not controls or not (
+            path == default_control_root()
+            or path == default_bootstrap_root()
+            and path in controls
+            or is_preserved_service_container(path, parent, plan, synthetic=True)
+        )
+
     configs = [item for item in inventory.items if item.owner == "config"]
     actual = {
         item.path
@@ -696,7 +762,7 @@ def _first_config_container(
     if (
         len(configs) != 1
         or configs[0].path != selector
-        or any(_overlap(parent, path) for path in protected)
+        or any(protected_overlap(path) for path in protected)
         or any(
             other != selector and _overlap(parent, other)
             for other in (*selectors, *(Path(row["selector"]) for row in profiles))
@@ -708,6 +774,11 @@ def _first_config_container(
             for name, entry in registry.items()
             for path in entry["roots"]
             if _overlap(parent, Path(path))
+            and not (
+                default_bootstrap_root() in controls
+                and name == UNBOUND_NAMESPACE
+                and Path(path) == default_bootstrap_root() / "unbound-owner"
+            )
         )
     ):
         raise ValueError("replacement_config_container_unverified")
@@ -725,8 +796,22 @@ def _first_config_container(
     directories = {
         item.path for item in inventory.items if item.status == "included_directory"
     }
-    rows = inventory_tree(parent, owner="config", external=False)
-    state = []
+    if not controls:
+        rows = inventory_tree(parent, owner="config", external=False)
+        state = []
+    else:
+        # The excluded service subtree evolves while its container stays put.
+        # Reuse the planner's native identity proof; enumerate every other sibling.
+        from .restore_plan import _fingerprint
+
+        rows = [_inventory_root(parent, owner="config", external=False)]
+        with pinned_directory(parent) as fd:
+            children = sorted(os.listdir(fd))
+        for child in children:
+            path = parent / child
+            if path not in controls:
+                rows.extend(inventory_tree(path, owner="config", external=False))
+        state = [(path, _fingerprint((path,), inventory)) for path in controls]
     config_lock = selector.with_name(selector.name + ".lock")
     for item in rows:
         native_lock = item.status == "included" and item.path == config_lock
@@ -757,7 +842,9 @@ def _first_config_container(
     return identity, tuple(state)
 
 
-def _ensure_first_bindings(plan, selectors, root, cancel, *, protected=()):
+def _ensure_first_bindings(
+    plan, selectors, root, cancel, *, protected=(), document=None
+):
     """Compose first ordinary binding under actual unbound/source retirement."""
     from . import bootstrap
     from .capture_service import _capture_names
@@ -807,7 +894,13 @@ def _ensure_first_bindings(plan, selectors, root, cancel, *, protected=()):
             profiles,
             selectors,
             protected,
+            plan=plan,
+            document=document,
         )
+        if _preserved_default_controls(plan, document, parent, protected):
+            # Every actual source already has an exact native namespace. The
+            # synthetic parent is observed, never enrolled over fixed controls.
+            continue
         name = "backup.source." + hashlib.sha256(str(parent).encode()).hexdigest()
         authority.register(name, (parent,))
         names_by_selector[selector] = tuple(sorted({*names, name}))
@@ -851,6 +944,8 @@ def _ensure_first_bindings(plan, selectors, root, cancel, *, protected=()):
                     current_profiles,
                     selectors,
                     protected,
+                    plan=plan,
+                    document=document,
                 )
                 != containers[selector]
             ):
@@ -965,7 +1060,7 @@ def _register_publication_parents(plan, authority, protected, *, document):
         ]
         if any(
             row.root_id == key and row.owner_id == "config" for row in document.files
-        ):
+        ) and not _preserved_default_controls(plan, document, destination, protected):
             paths.append(destination)
         if all(
             any(root == path or root in path.parents for root in roots)
@@ -1052,7 +1147,12 @@ def replace(
     if not selectors:
         raise ValueError("replacement_local_binding_required")
     _ensure_first_bindings(
-        plan, selectors, root, cancel, protected=(control_root, candidate, archive.path)
+        plan,
+        selectors,
+        root,
+        cancel,
+        protected=(control_root, candidate, archive.path),
+        document=document,
     )
     _, profiles = bootstrap._records(root)
     registry = bootstrap._registry(root)

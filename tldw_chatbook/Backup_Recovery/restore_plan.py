@@ -402,12 +402,6 @@ def plan_restore(
             )
         ):
             raise ValueError("destination_exists")
-        if (
-            path == archive.path
-            or path in archive.path.parents
-            or archive.path.parent in path.parents
-        ):
-            raise ValueError("archive_destination_alias")
     normalized = [
         unicodedata.normalize("NFC", str(path)).casefold()
         for path in destinations.values()
@@ -881,6 +875,20 @@ def plan_restore(
             for path in sorted(parents, key=lambda path: (len(path.parts), str(path)))
         ),
     )
+    # Check the completed mutation plan before accepting internal service work
+    # beneath an existing synthetic container. Every other archive alias refuses.
+    for key, path in plan.destinations:
+        if (
+            path == archive.path
+            or path in archive.path.parents
+            or archive.path.parent in path.parents
+        ):
+            from .service_storage import is_preserved_service_container
+
+            if not is_preserved_service_container(
+                archive.path, path, plan, synthetic=roots[key].synthetic
+            ):
+                raise ValueError("archive_destination_alias")
     return replace(
         plan,
         target_fingerprint=_fingerprint(_paths(plan), target),

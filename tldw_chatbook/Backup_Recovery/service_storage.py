@@ -63,6 +63,42 @@ def is_private_service_work(candidate: Path, preserved_item) -> bool:
     return True
 
 
+def is_preserved_service_container(
+    candidate: Path, destination: Path, plan, *, synthetic: bool
+) -> bool:
+    """Allow private service work only inside an untouched existing container.
+
+    A synthetic archive root does not own its existing directory. Its selected
+    files may share that parent with the exact excluded default service store,
+    provided no planned publication, retirement or new container touches it.
+    """
+    from .models import Inventory
+    from .restore_plan import RestorePlan
+
+    if (
+        synthetic is not True
+        or type(plan) is not RestorePlan
+        or plan.mode != "replace"
+        or type(plan.target) is not Inventory
+        or destination not in dict(plan.destinations).values()
+        or destination.is_symlink()
+        or not destination.is_dir()
+    ):
+        return False
+    mutations = (*plan.restore, *plan.retire, *plan.containers)
+    return any(
+        item.path is not None
+        and destination in item.path.parents
+        and (item.logical_id, item.path) in plan.preserve
+        and is_private_service_work(candidate, item)
+        and not any(
+            path == item.path or path in item.path.parents or item.path in path.parents
+            for _, path in mutations
+        )
+        for item in plan.target.items
+    )
+
+
 def ensure_storage(control: Path) -> Path:
     """Create missing private storage; never chmod or repair existing evidence."""
     is_default = control == default_control_root()

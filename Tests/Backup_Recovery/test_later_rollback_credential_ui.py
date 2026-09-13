@@ -226,9 +226,13 @@ assert not blocked_attempts(), blocked_attempts()
 # including setup. Windows retains the native runner's existing 2400s bound.
 @pytest.mark.timeout(2400 if sys.platform == "win32" else 600)
 def test_f9_later_rollback_requires_explicit_credential_review(
-    tmp_path, native_package
+    tmp_path, native_package, *, default_profile=False
 ):
-    _earn_replacement(tmp_path, native_package)
+    _earn_replacement(tmp_path, native_package, default_profile=default_profile)
+    selector = (
+        tmp_path / "home" / ".config" / "tldw_cli" / "config.toml"
+        if default_profile else tmp_path / "config" / "config.toml"
+    )
     test_root = Path(__file__).resolve().parents[2]
     environment = dict(
         os.environ,
@@ -236,7 +240,7 @@ def test_f9_later_rollback_requires_explicit_credential_review(
         USERPROFILE=str(tmp_path / "home"),
         XDG_CONFIG_HOME=str(tmp_path / "config"),
         XDG_DATA_HOME=str(tmp_path / "data"),
-        TLDW_CONFIG_PATH=str(tmp_path / "config" / "config.toml"),
+        TLDW_CONFIG_PATH=str(selector),
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
         PYTHONNOUSERSITE="1",

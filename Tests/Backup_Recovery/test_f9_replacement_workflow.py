@@ -366,13 +366,26 @@ _CHILD = "DRIVER=" + repr(_MINIMAL_DRIVER) + "\n" + _NORMAL
 
 
 def test_full_f9_replacement_after_explicit_safety_and_credential_review(
-    tmp_path: Path, native_package: Path
+    tmp_path: Path, native_package: Path, *, default_profile: bool = False
 ):
+    selector = (
+        tmp_path / "home" / ".config" / "tldw_cli" / "config.toml"
+        if default_profile else tmp_path / "config" / "config.toml"
+    )
+    seed = _SEED
+    if default_profile:
+        seed = (
+            "import os\nfrom pathlib import Path\n"
+            "selected=Path.home()/'.config'/'tldw_cli'/'config.toml'\n"
+            "selected.parent.mkdir(mode=0o700,parents=True,exist_ok=True)\n"
+            "os.environ['TLDW_CONFIG_PATH']=str(selected)\n"
+            + seed
+        )
     _run(
         tmp_path,
         "service",
         "backup",
-        script=_SEED,
+        script=seed,
         timeout=480 if sys.platform == "win32" else 110,
         installed_package=native_package,
     )
@@ -383,7 +396,7 @@ def test_full_f9_replacement_after_explicit_safety_and_credential_review(
         USERPROFILE=str(tmp_path / "home"),
         XDG_CONFIG_HOME=str(tmp_path / "config"),
         XDG_DATA_HOME=str(tmp_path / "data"),
-        TLDW_CONFIG_PATH=str(tmp_path / "config" / "config.toml"),
+        TLDW_CONFIG_PATH=str(selector),
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
         PYTHONNOUSERSITE="1",
