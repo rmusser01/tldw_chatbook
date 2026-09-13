@@ -184,6 +184,11 @@ def _config_targets(data, profile, config_target, doc, plan, owners, *, derive=F
             expected = user_data_dir(configured) / "generated_images"
             relative = Path(payload.relative_path)
             root = directories.get(payload.root_id)
+            empty_root = (
+                derive
+                and payload.logical_id == payload.root_id
+                and payload.relative_path == ""
+            )
             if (
                 root is None
                 or root.synthetic
@@ -192,8 +197,8 @@ def _config_targets(data, profile, config_target, doc, plan, owners, *, derive=F
                 or root.logical_id != payload.root_id
                 or root.relative_path != ""
                 or relative.is_absolute()
-                or len(relative.parts) < 2
-                or relative.parts[0] != "saved"
+                or not empty_root
+                and (len(relative.parts) < 2 or relative.parts[0] != "saved")
                 or ".." in relative.parts
                 or not derive
                 and selected[payload.logical_id] != expected / relative

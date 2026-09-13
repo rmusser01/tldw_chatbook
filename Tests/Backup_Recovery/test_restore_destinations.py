@@ -683,15 +683,258 @@ def test_unused_deferred_owner_needs_no_setup_directory(tmp_path):
 @pytest.mark.parametrize("kind", ["missing", "public", "overlap", "alias"])
 def test_files_needing_setup_parent_must_be_private_and_independent(tmp_path, kind):
     from tldw_chatbook.Backup_Recovery.destinations import check_setup_parent
+    from tldw_chatbook.Utils.platform_files import os
 
     protected = tmp_path / "profile"
     protected.mkdir(mode=0o700)
     parent = tmp_path / "setup"
     if kind == "public":
         parent.mkdir(mode=0o755)
+        if os.name == "nt":
+            import subprocess
+
+            subprocess.run(
+                ["icacls", str(parent), "/grant", "*S-1-1-0:(R)"],
+                check=True,
+                capture_output=True,
+            )
+        else:
+            os.chmod(parent, 0o755)
     elif kind == "overlap":
         parent = protected
     elif kind == "alias":
         parent.symlink_to(protected, target_is_directory=True)
     with pytest.raises(ValueError):
         check_setup_parent(parent, (protected,))
+
+
+@pytest.mark.parametrize(
+    "relative", [None, "saved/image.png", "temp/image.png", "saved"]
+)
+def test_generated_root_derivation_preserves_saved_file_boundary(tmp_path, relative):
+    source = profile_archive(tmp_path)
+    root = "profile:source:generation.assets"
+
+    def generated(doc, content):
+        doc["owners"].append(
+            {"owner_id": "generation.assets", "schema_version": 1, "capabilities": []}
+        )
+        doc["directories"].append(
+            {
+                "logical_id": root,
+                "root_id": root,
+                "parent_id": None,
+                "relative_path": "",
+                "metadata": {"version": 1, "mode": 448, "mtime_ns": 0},
+                "synthetic": False,
+            }
+        )
+        doc["producer_inventory"].append(
+            {
+                "logical_id": root,
+                "owner_id": "generation.assets",
+                "status": "included_directory",
+                "dependencies": [],
+                "shared_group": None,
+            }
+        )
+        doc["dependency_groups"][0]["members"].append(root)
+        if relative is not None:
+            data = b"saved-image-fixture"
+            key = root + ":image"
+            parent_id = root
+            if "/" in relative:
+                directory = relative.split("/")[0]
+                parent_id = root + ":" + directory
+                doc["directories"].append(
+                    {
+                        "logical_id": parent_id,
+                        "root_id": root,
+                        "parent_id": root,
+                        "relative_path": directory,
+                        "metadata": {"version": 1, "mode": 448, "mtime_ns": 0},
+                        "synthetic": False,
+                    }
+                )
+                doc["producer_inventory"].append(
+                    {
+                        "logical_id": parent_id,
+                        "owner_id": "generation.assets",
+                        "status": "included_directory",
+                        "dependencies": [],
+                        "shared_group": None,
+                    }
+                )
+                doc["dependency_groups"][0]["members"].append(parent_id)
+            doc["files"].append(
+                {
+                    "logical_id": key,
+                    "root_id": root,
+                    "parent_id": parent_id,
+                    "relative_path": relative,
+                    "owner_id": "generation.assets",
+                    "payload": "payload/generated",
+                    "size": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                }
+            )
+            content["payload/generated"] = data
+            doc["producer_inventory"].append(
+                {
+                    "logical_id": key,
+                    "owner_id": "generation.assets",
+                    "status": "included",
+                    "dependencies": [],
+                    "shared_group": None,
+                }
+            )
+            doc["dependency_groups"][0]["members"].append(key)
+
+    _rewrite_archive(source, generated)
+    parent = tmp_path / "restore-locations"
+    parent.mkdir(mode=0o700)
+    base = parent / "new"
+    service = RecoveryService(tmp_path / "control")
+    try:
+        op = service.start_inspection(source, password=None)
+        assert service.wait(op)["state"] == "succeeded"
+        choices = {
+            "mode": "isolated",
+            "profile_bases": {"source": base},
+            "external_destinations": {},
+            "target": None,
+            "profile_names": {"source": "New"},
+        }
+        if relative not in (None, "saved/image.png"):
+            with pytest.raises(
+                ValueError, match="owner_relocation_unverified:generation.assets"
+            ):
+                service.preview_restore(op, **choices)
+        else:
+            plan = service.preview_restore(op, **choices)
+            assert (
+                dict(plan.destinations)[root]
+                == base / "data" / "New" / "generated_images"
+            )
+        assert not base.exists()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("mode", ["isolated", "replace"])
+@pytest.mark.parametrize("optional", ["absent", "blank", "sentinel", "custom"])
+def test_restore_keeps_unused_optional_selectors_optional(tmp_path, mode, optional):
+    import tomllib
+    from threading import Event
+
+    import toml
+
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+        Inventory,
+        StorageItem,
+    )
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+    from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
+    from tldw_chatbook.Backup_Recovery.staging import stage_restore
+
+    source = profile_archive(tmp_path)
+    data = {"general": {"users_name": "Original"}}
+    if optional != "absent":
+        data["database"] = {
+            "research_db_path": {
+                "blank": "",
+                "sentinel": "~/.local/share/tldw_cli/tldw_chatbook_research.db",
+                "custom": "/archive/source/research.db",
+            }[optional]
+        }
+        data["app_tts"] = {
+            "CHATTERBOX_VOICE_DIR": "/archive/source/voices"
+            if optional == "custom"
+            else ""
+        }
+
+    def config_only(doc, content):
+        row = next(row for row in doc["files"] if row["owner_id"] == "config")
+        payload = toml.dumps(data).encode()
+        row.update(size=len(payload), sha256=hashlib.sha256(payload).hexdigest())
+        content.clear()
+        content[row["payload"]] = payload
+        doc["files"] = [row]
+        doc["directories"] = [
+            d for d in doc["directories"] if d["root_id"] == row["root_id"]
+        ]
+        ids = {row["logical_id"], row["root_id"]}
+        doc["producer_inventory"] = [
+            r for r in doc["producer_inventory"] if r["logical_id"] in ids
+        ]
+        doc["dependency_groups"][0]["members"] = [row["logical_id"]]
+        doc["owners"] = [r for r in doc["owners"] if r["owner_id"] == "config"]
+
+    _rewrite_archive(source, config_only)
+    parent = tmp_path / "restore-locations"
+    parent.mkdir(mode=0o700)
+    service = RecoveryService(tmp_path / "control")
+    try:
+        op = service.start_inspection(source, password=None)
+        assert service.wait(op)["state"] == "succeeded"
+        choices = {
+            "mode": mode,
+            "profile_bases": {"source": parent / "new"},
+            "external_destinations": {},
+            "target": None,
+            "profile_names": {"source": "New"},
+        }
+        if mode == "replace":
+            config = parent / "existing" / "config.toml"
+            config.parent.mkdir(mode=0o700)
+            config.write_text(
+                toml.dumps(
+                    {
+                        "general": {"users_name": "Existing"},
+                        "paths": {"data_dir": str(parent / "data")},
+                    }
+                )
+            )
+            choices.update(
+                profile_bases={},
+                target_configs={"source": config},
+                target=Inventory(
+                    (
+                        StorageItem(
+                            "config", "profile:local:config", config, "included", ()
+                        ),
+                    ),
+                    True,
+                    "local",
+                    (),
+                ),
+            )
+        plan = service.preview_restore(op, **choices)
+        stage = stage_restore(service.inspection(op), plan, tmp_path / "work", Event())
+        descriptor = json.loads((stage / "candidate.json").read_text())
+        artifact = next(row for row in descriptor["artifacts"] if row["kind"] == "file")
+        restored = tomllib.loads(Path(artifact["candidate"]).read_text())
+        restored[DISCOVERY_CONTEXT_KEY] = DiscoveryContext(
+            dict(plan.restore)["profile:source:config"], "source"
+        )
+        user_data_dir(restored).mkdir(parents=True, mode=0o700)
+        adapters = {a.owner_id: a for a in install_adapters()}
+        if optional == "custom":
+            assert "/archive/source" not in Path(artifact["candidate"]).read_text()
+        else:
+            for owner in (
+                "notifications.client",
+                "research.local",
+                "writing.local",
+                "tts.profile_store",
+            ):
+                assert all(
+                    row.status in {"unused", "intentionally_excluded"}
+                    for row in adapters[owner].discover(restored)
+                ), owner
+            assert restored.get("database", {}) == data.get("database", {})
+            assert restored.get("app_tts", {}) == data.get("app_tts", {})
+    finally:
+        service.close()

@@ -16,7 +16,7 @@ Reason: Correct observed defects within the approved backup design and existing 
 **Goal:** Let users select a new local location per profile and explicit locations for independent external content; derive required shared/owner paths from installed policy.
 **Success Criteria:** A normal profile restores without entering hashed internal roots; the reviewed destinations pass owner relocation checks and open with the saved note. Existing explicit low-level restore API remains checked.
 **Tests:** Real archive fixtures, shared DB and owner path layout, multiple profiles, custom paths, and GUI keyboard workflow.
-**Status:** Complete — derived destinations, earlier refusal, isolated restore/open, and native replacement passed; independent review approved.
+**Status:** Complete — derived destinations, earlier refusal, isolated restore/open, and native replacement passed; final review also corrected empty generated-image roots and preserved unused optional stores. Native replacement and later rollback passed after those corrections; independent review approved.
 
 ## Stage 3: Review and failure guidance
 **Goal:** Explain coverage, credential requirements, extraction contents, and failures using user-facing descriptions; correct F9 documentation.

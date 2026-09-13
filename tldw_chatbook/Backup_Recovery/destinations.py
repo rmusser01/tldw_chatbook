@@ -9,7 +9,13 @@ from types import MappingProxyType, SimpleNamespace
 from . import archive_reader
 from .config_adapter import CONFIG_LOCATION_KEYS, remap_config_locations
 from .owner_registry import install_adapters
-from .profile_paths import DATABASE_PATHS, data_base, database_path, user_data_dir
+from .profile_paths import (
+    DATABASE_PATHS,
+    custom_database_input,
+    data_base,
+    database_path,
+    user_data_dir,
+)
 from .restore_plan import _ancestor, _shared_directory_aliases, plan_restore
 
 
@@ -293,14 +299,26 @@ def resolve_destinations(
             mapping = {
                 section + "." + key: user_root / section / key
                 for section, key in CONFIG_LOCATION_KEYS
+                if section != "database" and data.get(section, {}).get(key)
             }
             mapping.update(
                 {"paths.data_dir": data_target, "Paths.data_dir": data_target}
             )
-            for owner, setting, leaf, _ in DATABASE_PATHS:
+            for owner, setting, leaf, legacy_leaf in DATABASE_PATHS:
                 row = next(
                     (row for row in doc.files if row.logical_id == prefix + owner), None
                 )
+                legacy = (
+                    "~/.local/share/tldw_cli/" + legacy_leaf if legacy_leaf else None
+                )
+                if (
+                    row is None
+                    and custom_database_input(
+                        data.get("database", {}).get(setting), legacy
+                    )
+                    is None
+                ):
+                    continue
                 path = user_root / (Path(row.relative_path).name if row else leaf)
                 declaration = producer.get(row.logical_id) if row else None
                 if declaration and declaration.shared_group:
@@ -363,12 +381,28 @@ def resolve_destinations(
             mapping = {
                 section + "." + key: user_root / section / key
                 for section, key in CONFIG_LOCATION_KEYS
+                if section != "database"
+                and (data.get(section, {}).get(key) or local.get(section, {}).get(key))
             }
             mapping.update(
                 {"paths.data_dir": data_target, "Paths.data_dir": data_target}
             )
-            for _, setting, _, _ in DATABASE_PATHS:
-                mapping["database." + setting] = database_path(local, setting)
+            for owner, setting, _, legacy_leaf in DATABASE_PATHS:
+                legacy = (
+                    "~/.local/share/tldw_cli/" + legacy_leaf if legacy_leaf else None
+                )
+                if (
+                    any(row.logical_id == prefix + owner for row in doc.files)
+                    or custom_database_input(
+                        data.get("database", {}).get(setting), legacy
+                    )
+                    is not None
+                    or custom_database_input(
+                        local.get("database", {}).get(setting), legacy
+                    )
+                    is not None
+                ):
+                    mapping["database." + setting] = database_path(local, setting)
             for section, key in CONFIG_LOCATION_KEYS:
                 if (
                     section != "database"
