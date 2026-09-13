@@ -96,6 +96,7 @@ def test_loopdeps_preserves_pre_wall_clock_positional_continuation_slot() -> Non
         lambda _ids: [],
         lambda: False,
         lambda: 0.0,
+        lambda _names: None,
         continuation,
     )
 

@@ -44,12 +44,14 @@ from .agent_models import (
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
     FIND_TOOLS_NAME,
+    FORK_CHAT_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
     MERGE_AGENT_WORKTREE_TOOL_NAME,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     LOAD_TOOLS_NAME,
     LOOP_DETECTION_N,
     MAX_LOOP_PERIOD,
+    NEW_CHAT_TOOL_NAME,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
@@ -494,6 +496,14 @@ class LoopDeps:
     # payload budget, so this layer never knows the budget. `None` (the
     # default) is a no-op: behavior is byte-identical to pre-hooks runs.
     post_tool_call: Callable[[str, str, dict, str, bool], None] | None = None
+    # fork_chat / new_chat: the chat-creation runtime tools (ADR-150).
+    # Wired ONLY for the top-level agent (agent_kind == primary) by the
+    # service, like install_skill above -- children never create chats in
+    # v1 (sub-agents: TASK-32480). `None` (the default) means the run is
+    # not wired for them and a call by either name falls through to the
+    # generic deps.invoke_tool path.
+    fork_chat: Callable[[dict], ToolResult] | None = None
+    new_chat: Callable[[dict], ToolResult] | None = None
     # search_run_log: the seventh runtime tool (run-log query). Wired ONLY
     # for the top-level agent (agent_kind == primary), like install_skill:
     # a depth-1 child has max_subagents clamped to 0, so its "subtree" is
@@ -2847,6 +2857,18 @@ def run_agent_loop(
                         str(call.args.get("script_path", "")),
                         [str(item) for item in raw_args],
                     )
+                elif (
+                    call.name == FORK_CHAT_TOOL_NAME
+                    and deps.fork_chat is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.fork_chat(dict(call.args))
+                elif (
+                    call.name == NEW_CHAT_TOOL_NAME
+                    and deps.new_chat is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.new_chat(dict(call.args))
                 elif (
                     call.name == SEARCH_RUN_LOG_TOOL_NAME
                     and deps.search_run_log is not None

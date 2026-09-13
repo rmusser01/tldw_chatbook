@@ -49,9 +49,11 @@ from .agent_models import (
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FIND_TOOLS_RESULT_LIMIT,
     FIND_TOOLS_NAME,
+    FORK_CHAT_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
     MERGE_AGENT_WORKTREE_TOOL_NAME,
+    NEW_CHAT_TOOL_NAME,
     RUN_LOG_SLICE_TOOL_NAME,
     RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
@@ -569,6 +571,84 @@ RUN_SKILL_SCRIPT_TOOL_SCHEMA = ToolSchema(
             },
         },
         "required": ["skill_name", "script_path"],
+    },
+)
+
+FORK_CHAT_TOOL_SCHEMA = ToolSchema(
+    id="runtime:fork_chat",
+    name=FORK_CHAT_TOOL_NAME,
+    description=(
+        "Fork the current chat into a new chat so the user can pursue a parallel "
+        "workstream: the conversation's active message history is copied verbatim "
+        "into a brand-new chat (nothing is removed from the current chat). The "
+        "user is asked to confirm every fork. The copy is a snapshot at the "
+        "moment of this call — your current in-progress reply is NOT included, "
+        "so put the workstream's framing into opening_prompt. opening_prompt is "
+        "placed in the new chat's input box as a draft the user reviews and "
+        "sends themselves; it is never sent automatically. instructions, when "
+        "given, become the new chat's standing system prompt (refused for "
+        "character chats). The new chat opens in the background; the user "
+        "switches to it when ready. Use sparingly — each call shows the user an "
+        "approval card, and do not retry after the user declines."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Short title for the new chat, e.g. 'Workstream: DB migration'.",
+            },
+            "opening_prompt": {
+                "type": "string",
+                "description": (
+                    "First message for the workstream, delivered as a draft in "
+                    "the new chat's input box for the user to review, edit, and send."
+                ),
+            },
+            "instructions": {
+                "type": "string",
+                "description": (
+                    "Optional standing system prompt for the new chat, replacing "
+                    "the forked chat's system prompt. Not allowed when the current "
+                    "chat is bound to a character."
+                ),
+            },
+        },
+        "required": [],
+    },
+)
+
+NEW_CHAT_TOOL_SCHEMA = ToolSchema(
+    id="runtime:new_chat",
+    name=NEW_CHAT_TOOL_NAME,
+    description=(
+        "Create a brand-new, empty chat for a parallel workstream unrelated to "
+        "the current conversation's history. The user is asked to confirm every "
+        "creation. opening_prompt is placed in the new chat's input box as a "
+        "draft the user reviews and sends themselves; it is never sent "
+        "automatically. instructions, when given, become the new chat's standing "
+        "system prompt. The new chat opens in the same workspace, in the "
+        "background; the user switches to it when ready. Use sparingly — each "
+        "call shows the user an approval card, and do not retry after the user "
+        "declines."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Short title for the new chat.",
+            },
+            "opening_prompt": {
+                "type": "string",
+                "description": "Draft first message placed in the new chat's input box.",
+            },
+            "instructions": {
+                "type": "string",
+                "description": "Optional standing system prompt for the new chat.",
+            },
+        },
+        "required": [],
     },
 )
 

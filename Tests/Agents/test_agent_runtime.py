@@ -46,7 +46,10 @@ def fence(name, args):
     return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
 
 
-def make_deps(turns, *, invoke=None, spawn=None, cancel=None, clock=None):
+def make_deps(
+    turns, *, invoke=None, spawn=None, cancel=None, clock=None,
+    fork_chat=None, new_chat=None,
+):
     """Deps whose call_model pops scripted ModelTurns."""
     script = list(turns)
 
@@ -70,6 +73,8 @@ def make_deps(turns, *, invoke=None, spawn=None, cancel=None, clock=None):
         ),
         should_cancel=cancel or (lambda: False),
         clock=clock or (lambda: 0.0),
+        fork_chat=fork_chat,
+        new_chat=new_chat,
     )
 
 
@@ -1512,3 +1517,71 @@ def test_spawn_passes_agent_kwarg_only_when_present():
     assert len(spawn_steps) == 2
     assert spawn_steps[0].summary == "plain"
     assert spawn_steps[1].summary.startswith("[researcher] ")
+
+
+def test_fork_chat_dispatches_to_injected_callable():
+    seen = []
+
+    def fake_fork(args):
+        seen.append(args)
+        return ToolResult(ok=True, content='{"conversation_id": "c2"}')
+
+    out = run(
+        [
+            ModelTurn(text=fence("fork_chat", {"title": "W: db"})),
+            ModelTurn(text="Forked."),
+        ],
+        fork_chat=fake_fork,
+    )
+    assert out.status == RUN_DONE and out.final_text == "Forked."
+    assert seen == [{"title": "W: db"}]
+    kinds = [s.kind for s in out.steps]
+    assert kinds == ["model", "tool_call", "tool_result", "model"]
+    assert out.steps[1].tool_name == "fork_chat"
+
+
+def test_new_chat_dispatches_to_injected_callable():
+    seen = []
+
+    def fake_new(args):
+        seen.append(args)
+        return ToolResult(ok=False, error="user_denied")
+
+    out = run(
+        [
+            ModelTurn(text=fence("new_chat", {"title": "W: api"})),
+            ModelTurn(text="Declined."),
+        ],
+        new_chat=fake_new,
+    )
+    assert out.status == RUN_DONE
+    assert seen == [{"title": "W: api"}]
+
+
+def test_chat_create_tools_fall_through_when_not_wired():
+    # No fork_chat/new_chat in deps: the generic invoke_tool path handles it,
+    # exactly like any other unknown runtime tool name.
+    calls = []
+    out = run(
+        [
+            ModelTurn(text=fence("new_chat", {"title": "x"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda c: calls.append(c) or ToolResult(ok=True, content="ok"),
+    )
+    assert out.status == RUN_DONE
+    assert calls[0].name == "new_chat"
+
+
+def test_chat_create_pin_gating_matrix():
+    from tldw_chatbook.Agents.agent_service import _chat_create_runtime_schemas
+    from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT
+
+    tool = lambda args: ToolResult(ok=True, content="{}")  # noqa: E731
+    primary = _chat_create_runtime_schemas(AGENT_KIND_PRIMARY, tool, tool)
+    assert [s.name for s in primary] == ["fork_chat", "new_chat"]
+    assert _chat_create_runtime_schemas(AGENT_KIND_SUBAGENT, tool, tool) == []
+    assert _chat_create_runtime_schemas(AGENT_KIND_PRIMARY, None, tool) == [
+        s for s in primary if s.name == "new_chat"
+    ]
+    assert _chat_create_runtime_schemas(AGENT_KIND_PRIMARY, None, None) == []

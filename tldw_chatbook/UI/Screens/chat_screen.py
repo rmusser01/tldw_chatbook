@@ -10122,6 +10122,14 @@ class ChatScreen(BaseAppScreen):
             "set_pending_skill_script": getattr(
                 skill, "_set_console_pending_skill_script", None
             ),
+            "set_pending_chat_create": getattr(
+                skill, "_set_console_pending_chat_create", None
+            ),
+            # TASK-32482 Task 7: UI-thread completion for a confirmed
+            # agent-created chat (fork_chat/new_chat) -- the executor's
+            # marshal target. Wired here (not at construction) because it
+            # closes over THIS screen, exactly like its sibling bridges.
+            "complete_agent_chat_create": self._complete_agent_chat_create,
             # PRD Feature B: the pinned task panel above the transcript.
             "set_task_panel": self._set_console_task_panel,
             # PRD Feature A: the ask_user question card.
@@ -23876,6 +23884,539 @@ class ChatScreen(BaseAppScreen):
         self._skill.handle_console_skill_install_decided(
             event.allow, request_id=event.request_id
         )
+
+    def _complete_agent_chat_create(
+        self,
+        *,
+        session_id: str,
+        conversation_id: str,
+        title: str,
+        tool: str,
+        opening_prompt: str,
+        workspace_id: str | None,
+        nodes: "list[Any] | None" = None,
+        active_leaf_persisted_id: "str | None" = None,
+        assistant_kind: "str | None" = None,
+        assistant_id: "str | None" = None,
+        assistant_authority_id: "str | None" = None,
+        persona_memory_mode: "str | None" = None,
+        character_id: "int | None" = None,
+        character_name: "str | None" = None,
+    ) -> None:
+        """TASK-32482 Task 7: land a confirmed agent-created chat as a session.
+
+        UI-thread completion target for ``ConsoleChatController.
+        execute_agent_chat_create`` (marshaled via ``app_instance.
+        call_from_thread``). By the time this runs the CONVERSATION row,
+        the fork's copied path, AND the session's transcript nodes are
+        already durable/resolved -- the executor hydrates them on the
+        WORKER thread (PR reviews #6/#10) so this UI-thread method never
+        runs a conversation-sized DB read. This half only places them in
+        the UI: restore the session (not-activated; carrying the
+        conversation's identity per PR review #1), pre-fill the composer
+        draft with the agent's opening prompt (the user reviews and sends
+        it -- never the agent), drop the persisted-rows cache so the
+        conversation browser shows the new row immediately, and run one
+        console-sync pass. Every step is guarded (PR review #10): a
+        failure here logs and degrades -- the durable chat is never
+        stranded without a session.
+
+        Task 8 final wiring: the session is restored NOT-activated
+        (``activate=False``) so a completed create never switches the
+        user's current view; the store rehydrates the persisted
+        ``console_agent_handoff`` draft into the new session's composer
+        and defers clearing the persisted key to that session's FIRST
+        activation, so an unopened draft survives an app restart. The
+        explicit draft fill below is KEPT as an idempotent same-value
+        write and as the safety net for a degraded restore-side handoff
+        read.
+
+        Args:
+            session_id: The OWNING (source) session of the confirmed run.
+            conversation_id: The newly created durable conversation id.
+            title: The new conversation's title.
+            tool: ``"fork_chat"`` or ``"new_chat"`` (toast wording only).
+            opening_prompt: Draft to pre-fill the new session's composer
+                with; empty means no draft was requested.
+            workspace_id: The new conversation's workspace scope; the
+                executor already maps global forks to the Console's GLOBAL
+                workspace id (PR review #8).
+            nodes: Transcript nodes hydrated by the executor (empty list
+                when hydration degraded; None never reaches here).
+            active_leaf_persisted_id: The new conversation's durable
+                active-leaf pointer, resolved worker-side.
+            assistant_kind/assistant_id/assistant_authority_id/
+            persona_memory_mode/character_id/character_name: The new
+                conversation's identity (PR review #1) so the restored
+                session keeps the fork's assistant/character binding
+                instead of generic Console defaults.
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            return
+        store = controller.store
+        try:
+            session = store.restore_persisted_session(
+                title=title,
+                workspace_id=workspace_id,
+                persisted_conversation_id=conversation_id,
+                all_nodes=nodes or [],
+                active_leaf_persisted_id=active_leaf_persisted_id,
+                assistant_kind=assistant_kind,
+                assistant_id=assistant_id,
+                assistant_authority_id=assistant_authority_id,
+                persona_memory_mode=persona_memory_mode,
+                character_id=character_id,
+                character_name=character_name,
+                activate=False,
+            )
+            if opening_prompt:
+                store.set_session_draft(session.id, opening_prompt)
+            self._workspace._invalidate_console_persisted_rows_cache()
+            self.run_worker(
+                self._sync_native_console_chat_ui, exclusive=True, group="console-sync"
+            )
+            verb = "Forked" if tool == "fork_chat" else "New"
+            self.app_instance.notify(f"{verb} chat created: {title}")
+        except Exception:  # noqa: BLE001 -- PR review #10: never strand the chat
+            logger.opt(exception=True).error(
+                "chat_create: UI completion failed after durable create",
+                conversation_id=conversation_id,
+            )
+            self.app_instance.notify(
+                f"{'Forked' if tool == 'fork_chat' else 'New'} chat created "
+                f"(open it from the chat list): {title}"
+            )
+            try:
+                self._workspace._invalidate_console_persisted_rows_cache()
+                self.run_worker(
+                    self._sync_native_console_chat_ui,
+                    exclusive=True,
+                    group="console-sync",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+    @on(ChatTaskCards.ChatCreateDecided)
+    def handle_console_chat_create_decided(self, event: Any) -> None:
+        event.stop()
+        self._skill.handle_console_chat_create_decided(
+            event.allow, event.remember, request_id=event.request_id
+        )
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """
+        Handle button events at the screen level.
+        This ensures buttons work properly with screen-based navigation.
+        """
+        button_id = event.button.id
+
+        # Log for debugging
+        logger.info(f"ChatScreen on_button_pressed called with button: {button_id}")
+
+        if button_id == "console-composer-menu":
+            event.stop()
+            await self._open_console_composer_menu()
+            return
+        if button_id == "console-send-message":
+            await self.handle_console_send_message(event)
+            return
+        if button_id == "console-dictation":
+            event.stop()
+            self._dictation._handle_console_dictation_button()
+            return
+        if button_id in {
+            "console-stop-generation",
+            "console-collapsed-stop-generation",
+        }:
+            await self.handle_console_stop_generation(event)
+            return
+        if button_id == "console-settings-open":
+            await self.on_console_settings_open(event)
+            return
+        if button_id == "console-model-section-configure":
+            await self.on_console_settings_open(event)
+            return
+        if button_id == "console-agent-drilldown-back":
+            event.stop()
+            self._console_agent_drilldown_run_id = None
+            self.run_worker(
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            return
+        if button_id == "console-agent-view-full-log":
+            event.stop()
+            self._agent._open_console_agent_run_log_viewer()
+            return
+        if button_id == "console-new-chat-tab":
+            event.stop()
+            await self._session._create_native_console_session_from_active_context()
+            return
+        if button_id and button_id.startswith(
+            "console-conversation-browser-section-toggle-"
+        ):
+            event.stop()
+            self._workspace._toggle_console_conversation_browser_section(
+                str(getattr(event.button, "group_id", "") or "").strip()
+            )
+            return
+        if button_id and button_id.startswith(
+            "console-conversation-browser-group-toggle-"
+        ):
+            event.stop()
+            self._workspace._toggle_console_conversation_browser_group(
+                str(getattr(event.button, "group_id", "") or "").strip()
+            )
+            return
+        if button_id and button_id.startswith("console-conversation-star-"):
+            event.stop()
+            self._workspace._toggle_console_conversation_star(
+                str(getattr(event.button, "conversation_id", "") or "").strip(),
+                starred=bool(getattr(event.button, "starred", False)),
+                conversation_title=str(
+                    getattr(event.button, "conversation_title", "") or ""
+                ),
+            )
+            return
+        # NOTE: the `console-workspace-conversations-toggle` branch that stood
+        # here was deleted in wave 4. Commit 3b0374479 removed the only button
+        # carrying that id; the string survives only as a CSS class on toggles
+        # whose ids are `console-conversation-browser-{section,group}-toggle-*`,
+        # and those take their own branches below. The body was dead twice over:
+        # it also required `state.conversation_browser is None`, a state that
+        # same commit retired. `Tests/UI/test_console_button_routing.py` pins the
+        # id's absence so it cannot quietly come back as a branch nobody reaches.
+        if button_id == "console-new-workspace-conversation":
+            event.stop()
+            await self._session._create_native_console_session_from_active_context()
+            return
+        if button_id == "console-workspace-conversation-search-clear":
+            event.stop()
+            self._workspace.clear_console_conversation_browser_search()
+            return
+        if button_id and button_id.startswith("console-workspace-conversation-"):
+            event.stop()
+            conversation_id = str(
+                getattr(event.button, "conversation_id", "") or ""
+            ).strip()
+            row_key = str(getattr(event.button, "row_key", "") or "").strip()
+            browser_row = self._workspace._find_console_browser_row(
+                row_key or conversation_id,
+                conversation_id=conversation_id,
+            )
+            if browser_row is not None:
+                self._workspace._activate_console_workspace_for_browser_row(browser_row)
+                row_conversation_id = str(browser_row.conversation_id or "").strip()
+                session_id = self._session._console_session_id_for_browser_row(
+                    browser_row
+                )
+            else:
+                row_conversation_id = conversation_id
+                session_id = (
+                    self._workspace._console_session_id_for_workspace_conversation(
+                        conversation_id
+                    )
+                )
+            if session_id is None:
+                if not row_conversation_id:
+                    self.app_instance.notify(
+                        "This conversation row is no longer available.",
+                        severity="warning",
+                    )
+                    return
+                # task-457(b): the resume is awaited inline and can be slow or
+                # fail; flag the pressed row loading for the duration so it does
+                # not read as a dead click, and always clear it afterwards (a
+                # successful resume also recomposes the rail, which drops the
+                # flag; the finally covers the not-resumable/error return).
+                self._set_console_conversation_row_loading(row_conversation_id, True)
+                try:
+                    resumed = (
+                        await self._workspace._resume_console_workspace_conversation(
+                            row_conversation_id,
+                            target_scope_type=(
+                                browser_row.scope_type
+                                if browser_row is not None
+                                else None
+                            ),
+                            target_workspace_id=(
+                                browser_row.workspace_id
+                                if browser_row is not None
+                                else None
+                            ),
+                        )
+                    )
+                finally:
+                    self._set_console_conversation_row_loading(
+                        row_conversation_id, False
+                    )
+                if resumed:
+                    await self._workspace._refresh_console_conversation_browser_after_selection()
+                    return
+                if resumed is None:
+                    # Transient failure; the resume path already explained it.
+                    return
+                # TASK-717: the record is missing - say so honestly (Library
+                # has no affordance for a nonexistent record) and mark the
+                # row visibly broken so it stops presenting as openable.
+                self._mark_console_conversation_row_broken(row_conversation_id)
+                self.app_instance.notify(
+                    "This saved conversation could not be loaded - "
+                    "its record is missing.",
+                    severity="warning",
+                )
+                return
+            controller = self._ensure_console_chat_controller()
+            if controller.store.active_session_id != session_id:
+                if browser_row is None:
+                    self._workspace._set_active_workspace_for_console_session(
+                        session_id
+                    )
+                controller.switch_session(session_id)
+                await self._sync_native_console_chat_ui()
+                # task-7 review: an already-open native tab for this
+                # conversation is never ephemeral, but the PREVIOUS active
+                # session might have been -- `_sync_native_console_chat_ui`
+                # above never touches the temporary chip (see
+                # `_sync_console_temporary_chip`), so without this the chip
+                # could keep reading "Temporary" after switching onto a
+                # saved conversation.
+                self._sync_console_temporary_chip()
+            self._focus_console_composer_if_needed(force=True)
+            await (
+                self._workspace._refresh_console_conversation_browser_after_selection()
+            )
+            return
+        if button_id and button_id.startswith("console-close-session-tab-"):
+            event.stop()
+            self._session.start_close_console_session_tab(
+                button_id.removeprefix("console-close-session-tab-")
+            )
+            return
+        if button_id and button_id.startswith("console-session-tab-"):
+            event.stop()
+            await self._session._handle_console_session_tab_press(
+                button_id.removeprefix("console-session-tab-")
+            )
+            return
+        if button_id and button_id.startswith("console-message-action-"):
+            handled = await self.handle_console_message_action(event)
+            if handled:
+                return
+
+    def watch_sidebar_state(self, new_state: dict) -> None:
+        """Debounce persistence when sidebar state changes.
+
+        task-15470: this used to call `_save_sidebar_state()` directly --
+        synchronous open+parse+rewrite of `ui_state.toml` on the event loop,
+        once per `Collapsible.Toggled`. Now it only marks the state dirty and
+        (re)arms one debounce timer; a burst of toggles collapses into a
+        single write, dispatched off the loop by
+        `_flush_sidebar_state_after_debounce`. `on_unmount` force-flushes any
+        pending write so a toggle immediately followed by quit is not lost.
+        """
+        self._schedule_sidebar_state_save()
+
+    def _schedule_sidebar_state_save(self) -> None:
+        """Mark the sidebar state dirty and (re)arm the debounce timer.
+
+        The single scheduling point -- `watch_sidebar_state` and any direct
+        caller that mutates `ui_state.collapsible_states` without going
+        through the reactive (e.g. a bulk reset that may reassign an
+        already-`{}` `sidebar_state`, which the reactive would then treat as
+        a no-op and never call the watcher for) both route through here so
+        a pending write is unconditionally scheduled.
+        """
+        self._sidebar_state_dirty = True
+        if self._sidebar_state_save_timer is not None:
+            self._sidebar_state_save_timer.stop()
+        self._sidebar_state_save_timer = self.set_timer(
+            SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS,
+            self._flush_sidebar_state_after_debounce,
+        )
+
+    def _flush_sidebar_state_after_debounce(self) -> None:
+        """Debounce timer callback: hand the actual write to a worker."""
+        self._sidebar_state_save_timer = None
+        self._sidebar_state_persist_worker = self.run_worker(
+            self._persist_sidebar_state_off_loop(),
+            exclusive=True,
+            group="sidebar-state-persist",
+        )
+
+    async def _persist_sidebar_state_off_loop(self) -> None:
+        """Write `ui_state.toml` on a worker thread, off the event loop.
+
+        Snapshots `self.ui_state` here, on the main thread, before handing
+        the write to `to_thread` -- a further toggle can still arrive and
+        mutate `collapsible_states` while this write is in flight, and it
+        must not race the worker thread's read of that same dict.
+
+        Clears `_sidebar_state_dirty` immediately after taking the
+        snapshot, NOT after the write completes (review round,
+        task-15470): the awaited `to_thread` call below yields to the
+        event loop, and a further toggle can land while this write is
+        still in flight. Clearing dirty only after the write finished
+        would blindly stamp it False again on completion -- clobbering
+        the True a mid-flight toggle had just set -- so a quit landing
+        before that toggle's own new debounce timer fires would see
+        `dirty=False` and lose it. Clearing right here instead means the
+        dirty flag always answers "is there a toggle newer than the
+        snapshot this worker is holding", which a mid-flight toggle
+        correctly flips back to True.
+        """
+        snapshot = self._sidebar_state_snapshot()
+        self._sidebar_state_dirty = False
+        await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
+
+    async def _flush_sidebar_state_now(self) -> None:
+        """Force-flush a pending sidebar-state write (unmount/quit path).
+
+        Cancels any pending debounce timer and writes off the loop via
+        `to_thread` so the screen never unmounts with an unpersisted toggle
+        -- the AC #2 flush-on-quit guarantee. If a debounced write is
+        already in flight (the timer fired moments before quit), this waits
+        for it rather than dispatching a second writer against the same
+        file -- `_write_sidebar_state_snapshot` does an unlocked
+        read-modify-write of `ui_state.toml`, so two concurrent writers
+        could interleave.
+        """
+        if self._sidebar_state_save_timer is not None:
+            self._sidebar_state_save_timer.stop()
+            self._sidebar_state_save_timer = None
+        worker = self._sidebar_state_persist_worker
+        if worker is not None and not worker.is_finished:
+            try:
+                await worker.wait()
+            except Exception as error:
+                logger.error(
+                    "Pending sidebar-state write failed: {}", type(error).__name__
+                )
+            # Falls through to the dirty re-check below (review round,
+            # task-15470) rather than returning here: a toggle can land
+            # while THIS await was in flight, re-dirtying the state after
+            # the awaited worker already took its own snapshot. Returning
+            # unconditionally after the wait would silently drop it.
+        if self._sidebar_state_dirty:
+            snapshot = self._sidebar_state_snapshot()
+            await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
+            self._sidebar_state_dirty = False
+
+    def _load_sidebar_state(self) -> None:
+        """Load sidebar state from config file."""
+        config_path = _get_effective_config_path().parent / "ui_state.toml"
+
+        try:
+            if config_path.exists():
+                with open(config_path, "r") as f:
+                    data = toml.load(f)
+                    sidebar_data = data.get("sidebar", {})
+
+                    # Load collapsible states into UIState
+                    self.ui_state.collapsible_states = sidebar_data.get(
+                        "collapsible_states", {}
+                    )
+                    self.ui_state.sidebar_search_query = sidebar_data.get(
+                        "search_query", ""
+                    )
+                    self.ui_state.last_active_section = sidebar_data.get(
+                        "last_active_section", None
+                    )
+
+                    # Update reactive property
+                    self.sidebar_state = dict(self.ui_state.collapsible_states)
+
+                    logger.debug(
+                        f"Loaded sidebar state with {len(self.ui_state.collapsible_states)} collapsibles"
+                    )
+        except Exception as e:
+            logger.error(f"Failed to load sidebar state: {e}")
+            self.sidebar_state = {}
+
+    def _sidebar_state_snapshot(self) -> Dict[str, Any]:
+        """Copy the sidebar-persisted fields off `self.ui_state`.
+
+        `collapsible_states` is a plain mutable dict; taking this copy on
+        the caller's thread (always the main/event-loop thread -- see
+        `_persist_sidebar_state_off_loop`) before handing the write to a
+        worker thread means the worker never reads `self.ui_state` directly,
+        so a toggle arriving while that write is in flight cannot race it.
+        """
+        return {
+            "collapsible_states": dict(self.ui_state.collapsible_states),
+            "search_query": self.ui_state.sidebar_search_query,
+            "last_active_section": self.ui_state.last_active_section,
+        }
+
+    def _write_sidebar_state_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        """Write a pre-captured sidebar-state snapshot to `ui_state.toml`.
+
+        Safe to call from a worker thread: touches only the passed-in
+        `snapshot`, never `self.ui_state`.
+        """
+        config_path = _get_effective_config_path().parent / "ui_state.toml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Load existing config or create new
+            if config_path.exists():
+                with open(config_path, "r") as f:
+                    data = toml.load(f)
+            else:
+                data = {}
+
+            # Update sidebar section
+            data["sidebar"] = snapshot
+
+            # Save back to file
+            with open(config_path, "w") as f:
+                toml.dump(data, f)
+
+            logger.debug(
+                f"Saved sidebar state with {len(snapshot['collapsible_states'])} collapsibles"
+            )
+        except Exception as e:
+            logger.error(f"Failed to save sidebar state: {e}")
+
+    def _save_sidebar_state(self) -> None:
+        """Save sidebar state to config file, synchronously, on this thread.
+
+        Convenience wrapper around `_sidebar_state_snapshot` +
+        `_write_sidebar_state_snapshot` for a caller that is already off the
+        event loop (a worker thread via `to_thread`) or does not care (a
+        direct test call). Callers on the event loop that must NOT block it
+        should go through `watch_sidebar_state`'s debounce instead.
+        """
+        self._write_sidebar_state_snapshot(self._sidebar_state_snapshot())
+
+    def _restore_collapsible_states(self) -> None:
+        """Restore collapsible states from saved state."""
+        if not self.ui_state.collapsible_states:
+            logger.debug("No collapsible states to restore")
+            return
+
+        try:
+            # Find all collapsibles in the sidebar
+            collapsibles = self.query(Collapsible)
+            restored_count = 0
+
+            for collapsible in collapsibles:
+                if (
+                    collapsible.id
+                    and collapsible.id in self.ui_state.collapsible_states
+                ):
+                    collapsed_state = self.ui_state.collapsible_states[collapsible.id]
+                    collapsible.collapsed = collapsed_state
+                    restored_count += 1
+                    logger.debug(
+                        f"Restored {collapsible.id}: collapsed={collapsed_state}"
+                    )
+
+            logger.info(f"Restored {restored_count} collapsible states")
+        except Exception as e:
+            logger.error(f"Error restoring collapsible states: {e}")
 
     @on(SkillScriptConfirmCard.ScriptDecided)
     def handle_console_skill_script_decided(self, event: Any) -> None:
