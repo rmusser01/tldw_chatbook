@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03 11:45'
-updated_date: '2026-09-12 21:19'
+updated_date: '2026-09-13 01:29'
 labels:
   - agents
 dependencies: []
@@ -35,11 +35,5 @@ Constraint carried from the phase-2 rulings: implicit deletion of unmerged work 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes. ADR path: backlog/decisions/155-agent-worktree-recovery.md. Reason: durable local worktree ownership/base, physical drain proof, uncertainty policy and controller-owned recovery lifetime. Execute the four reviewed slices of Docs/superpowers/plans/2026-09-12-agent-worktree-recovery.md under Docs/superpowers/specs/2026-09-12-agent-worktree-recovery-design.md. The selected product path is a Console recovery list for previous-turn work, leaving model tools scoped to current-turn handles and directing older work to the list. Verify real SQLite reopen, two-turn Git effects, consent/drift/cancellation/uncertainty and mounted wide/narrow behavior before closeout.
-
-Execution qualification remains open: actual Git2.39.5 temp-repository tests show linked administrative paths can reopen a replaced parent despite both root pins. Only the test-isolation prerequisite has been implemented and independently reviewed (32557b80f2; four affected tests passed). Do not enable the new mutation capability or mark these tasks Done until the execution boundary is redesigned and qualified. See backlog/docs/agent-orchestration-followups-2026-09-12.md for current status.
-
-ADR-158 (backlog/decisions/158-agent-runs-migration-order-after-worktree-qualification.md) changes only migration order: caps18→19, recovery later19→20 after execution qualification. Recheck actual schema before source edits; all existing authority and definition-policy requirements remain binding.
-
-The interim prerequisite Docs/superpowers/plans/2026-09-12-agent-worktree-interim-safety.md is implemented and independently reviewed in 93ee16a144 and 534ad2c890. Fleet and inline worktree requests refuse unsupported_execution_boundary without shared fallback; Console preview/live omit mutation tools; confirmed calls cannot reach Git helpers; automatic/failed-start cleanup retains existing work while retiring provider routes. Final targeted Console/service selection: 25 passed, 246 deselected, no new skips; changed-hunk static checks passed with inherited dependency warnings qualified. This does not complete functional recovery or any acceptance criterion requiring a qualified mutation backend; the task stays In Progress.
+ADR required: yes, amendment. ADR path: backlog/decisions/155-agent-worktree-recovery.md. Reason: restore ordinary local Git with exact selected writable authority and explicit limits, then finish confirmation and durable ownership/recovery. Current spec: Docs/superpowers/specs/2026-09-12-agent-worktree-restoration-design.md. First slice: Docs/superpowers/plans/2026-09-12-agent-worktree-creation-restoration.md. Keep automatic deletion disabled. Application checks do not promise atomic protection against an external process replacing Git metadata during a command. The former qualified-backend blocker is superseded by the user-approved restoration scope. Tasks remain In Progress until their actual acceptance criteria and targeted verification are complete. Recovery migration remains 19 to 20 after caps (ADR-158).
 <!-- SECTION:PLAN:END -->
