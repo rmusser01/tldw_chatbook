@@ -3222,8 +3222,17 @@ class _StreamingModelAdapter:
         }
         api_base_url = per_call_kwargs.pop("api_base_url", None)
         # Any keys still in per_call_kwargs stay ignored, exactly as before.
+        # Same-target decision keys on the parent's RAW selection identity,
+        # not the flattened execution key: a child explicitly routed to the
+        # built-in family of a custom-ep parent (e.g. `llama_cpp` under
+        # `custom-ep:qwen-local`) is a DIFFERENT target and must resolve the
+        # built-in provider independently, while an inheriting child names
+        # the raw slug and reuses this resolution (qodo PR-2651 High).
+        # Plain providers leave ``selected_provider`` empty and fall through
+        # to the historical execution_key/provider chain unchanged.
         parent_endpoint = (
-            getattr(self._resolution, "execution_key", "")
+            getattr(self._resolution, "selected_provider", "")
+            or getattr(self._resolution, "execution_key", "")
             or getattr(self._resolution, "provider", "")
             or ""
         )
@@ -4329,6 +4338,11 @@ class ConsoleFirstRequestPlan:
     messages: list[dict]
     api_endpoint: str
     profile_context_snapshot: ProfileContextSnapshot
+    # Raw selection id before family flattening (``custom-ep:<slug>`` when
+    # the session's provider names a registry endpoint; otherwise equals
+    # ``api_endpoint``). Spawn resolution uses it as ``parent_provider`` so
+    # an inheriting child snapshots the endpoint, not the execution family.
+    selected_provider: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -4518,6 +4532,13 @@ def build_console_first_request_plan(
         or getattr(resolution, "provider", "")
         or "agent"
     )
+    # Raw selection identity (custom-ep:<slug>) rides alongside the flattened
+    # execution key: spawn resolution and the adapter's same-target decision
+    # must never conflate a registry endpoint with its execution family
+    # (qodo PR-2651 High). Falls back to api_endpoint for fakes/plain ids.
+    selected_provider = (
+        str(getattr(resolution, "selected_provider", "") or "") or api_endpoint
+    )
     run_log = build_run_log_request_plan()
     direct_prompt = compose_agent_system_prompt(
         session_system_prompt,
@@ -4690,6 +4711,7 @@ def build_console_first_request_plan(
         messages=messages,
         api_endpoint=api_endpoint,
         profile_context_snapshot=profile_snapshot,
+        selected_provider=selected_provider,
     )
 
 
@@ -6881,6 +6903,10 @@ class ConsoleAgentBridge:
                 # attribute (e.g. resolution=object() in existing tests),
                 # which keeps them on the fence path unchanged.
                 api_endpoint=first_request_plan.api_endpoint,
+                # Raw selection identity for spawn resolution: an inheriting
+                # child of custom-ep:<slug> must snapshot the endpoint (and
+                # its registry base URL), not the flattened execution family.
+                parent_raw_provider=first_request_plan.selected_provider,
                 should_cancel=should_cancel,
                 supersede_run_id=supersede_run_id,
                 continuation_owner_message_id=assistant_message_id,

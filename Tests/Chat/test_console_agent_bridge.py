@@ -11115,3 +11115,72 @@ def test_routed_call_on_continuation_pinned_turn_raises_typed_conflict():
             continuation_groups=(group,),
         )
     assert gateway.stream_calls == []
+
+
+# --- qodo PR-2651 High (raw identity vs execution key): a custom-ep parent's
+# raw ``custom-ep:<slug>`` identity, carried on the resolution's
+# ``selected_provider``, decides the same-target question — never the
+# flattened execution family. ---
+
+
+def _custom_ep_parent_resolution():
+    """A parent resolution for a llama-family registry endpoint: provider and
+    execution_key flattened to the family, raw identity kept alongside."""
+    return ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:8080",
+        model="qwen3.8-27b",
+        ready=True,
+        readiness_key="llama_cpp",
+        execution_key="llama_cpp",
+        selected_provider="custom-ep:qwen-local",
+    )
+
+
+def test_custom_ep_parent_inheriting_child_overlays_parent_resolution():
+    """A child whose resolved target IS the parent's raw slug names
+    ``custom-ep:qwen-local`` on its calls: same target as the parent, so no
+    re-resolution — the parent resolution (registry base_url) is streamed
+    from, and the raw identity survives the per-call copy."""
+    gateway = _RoutingGateway()
+    parent = _custom_ep_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="custom-ep:qwen-local",
+            model="qwen3.8-27b",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+        )
+    assert response["choices"][0]["message"]["content"] == "routed answer"
+    assert gateway.resolve_calls == []
+    assert len(gateway.stream_calls) == 1
+    resolution, _messages, _kwargs = gateway.stream_calls[0]
+    assert resolution is parent
+    assert resolution.base_url == "http://127.0.0.1:8080"
+    assert resolution.selected_provider == "custom-ep:qwen-local"
+
+
+def test_custom_ep_parent_child_routed_to_builtin_family_resolves_independently():
+    """A child explicitly routed to the built-in FAMILY its parent's endpoint
+    executes through (``llama_cpp`` under ``custom-ep:qwen-local``) is a
+    DIFFERENT target: it re-resolves through ``resolve_for_send`` instead of
+    silently reusing the parent's custom base_url."""
+    gateway = _RoutingGateway()
+    parent = _custom_ep_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="llama_cpp",
+            model="llama-3-8b",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+        )
+    assert response["choices"][0]["message"]["content"] == "routed answer"
+    assert len(gateway.resolve_calls) == 1
+    assert gateway.resolve_calls[0].provider == "llama_cpp"
+    assert gateway.resolve_calls[0].explicit_model == "llama-3-8b"
+    resolution, _messages, _kwargs = gateway.stream_calls[0]
+    # The echo resolver answers with the selection's own identity — the
+    # parent's custom URL was NOT reused.
+    assert resolution.provider == "llama_cpp"
+    assert resolution.model == "llama-3-8b"
+    assert resolution.base_url == ""

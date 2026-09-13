@@ -4724,6 +4724,10 @@ class AgentService:
         agent_kind: str,
         task: str | None,
         parent_run_id: str | None,
+        # Raw parent selection identity (custom-ep:<slug>) for spawn
+        # routing; empty keys spawn inheritance off ``api_endpoint`` as
+        # before. Only a primary carries it (children cannot spawn).
+        parent_raw_provider: str = "",
         assistant_message_id: str | None = None,
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
@@ -5827,7 +5831,11 @@ class AgentService:
             try:
                 target = resolve_spawn_target(
                     self._app_config,
-                    parent_provider=api_endpoint,
+                    # Raw identity first (custom-ep:<slug>): an inheriting
+                    # child of a registry-endpoint parent resolves to the
+                    # endpoint itself — snapshotting its registry base URL —
+                    # not the flattened execution family (qodo PR-2651 High).
+                    parent_provider=(parent_raw_provider or api_endpoint),
                     parent_model=config.model,
                     preset=resolved,
                     override_provider=provider,
@@ -8226,6 +8234,7 @@ class AgentService:
         first_request_schema_plan: FirstRequestSchemaPlan | None = None,
         request_worktree_merge_confirm: "Callable[[dict], dict] | None" = None,
         requested_run_id: str | None = None,
+        parent_raw_provider: str = "",
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -8243,6 +8252,13 @@ class AgentService:
                 and budget.
             api_endpoint: The provider endpoint identifier passed through
                 to ``chat_api_call``.
+            parent_raw_provider: The parent selection's raw provider id
+                before execution-family flattening (``custom-ep:<slug>``
+                when the parent runs on a registry endpoint). Spawn routing
+                uses it as ``parent_provider`` so an inheriting child
+                resolves to — and snapshots — the endpoint itself, not the
+                built-in family it executes through. Empty keeps the legacy
+                behavior of keying spawn inheritance off ``api_endpoint``.
             should_cancel: Polled at step and tool-call boundaries; once it
                 returns ``True`` the whole run tree stops and persists as
                 ``cancelled``.
@@ -8475,6 +8491,7 @@ class AgentService:
             messages=messages,
             config=config,
             api_endpoint=api_endpoint,
+            parent_raw_provider=parent_raw_provider,
             should_cancel=should_cancel,
             agent_kind=AGENT_KIND_PRIMARY,
             task=None,

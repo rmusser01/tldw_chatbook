@@ -332,3 +332,80 @@ def test_plain_spawn_snapshot_matches_parent(db):
     parent_row = db.get_run(run_id)
     assert parent_row["resolved_provider"] is None
     assert parent_row["resolved_params_json"] is None
+
+
+def test_inheriting_child_of_custom_ep_parent_snapshots_endpoint_not_family(db):
+    """qodo PR-2651 High: spawn resolution keys inheritance off the parent's
+    RAW selection identity, not the flattened execution key. The parent here
+    executes through the llama_cpp family (``api_endpoint``) but was selected
+    as ``custom-ep:qwen-local`` (``parent_raw_provider``): the inheriting
+    child resolves to the endpoint itself — snapshotting its registry
+    base_url and entry params — and its calls ride the slug, so the audit
+    row (and every continuation copied from it) names the endpoint that
+    actually handled the calls."""
+    service, chat = _make_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "say hi"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"say hi": ["hi back"]},
+        app_config=APP_CFG,
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+        parent_raw_provider="custom-ep:qwen-local",
+    )
+    join_fleet_children(service)
+    assert outcome.status == RUN_DONE
+
+    child_calls = chat.child_calls["say hi"]
+    assert child_calls[0]["api_endpoint"] == "custom-ep:qwen-local"
+    assert child_calls[0]["model"] == "parent-model"  # inherited parent model
+    assert child_calls[0]["api_base_url"] == "http://127.0.0.1:8080"
+    assert child_calls[0]["topk"] == 40  # registry entry params ride along
+    assert child_calls[0]["temp"] == 0.9  # chat_defaults layer (never preset)
+
+    row = _child_row(db)
+    assert row["resolved_provider"] == "custom-ep:qwen-local"
+    assert row["resolved_model"] == "parent-model"
+    assert row["resolved_base_url"] == "http://127.0.0.1:8080"
+    params = json.loads(row["resolved_params_json"])
+    assert params["top_k"] == 40
+    assert params["temperature"] == 0.9
+
+
+def test_spawn_without_raw_identity_keeps_legacy_family_inheritance(db):
+    """The fallback is unchanged: no ``parent_raw_provider`` (every pre-ADR-147
+    caller and every plain-provider selection) keys inheritance off
+    ``api_endpoint`` exactly as before — family target, no registry URL."""
+    service, chat = _make_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "say hi"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"say hi": ["hi back"]},
+        app_config=APP_CFG,
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    assert outcome.status == RUN_DONE
+
+    child_calls = chat.child_calls["say hi"]
+    assert child_calls[0]["api_endpoint"] == "llama_cpp"
+    assert child_calls[0].get("api_base_url") is None
+
+    row = _child_row(db)
+    assert row["resolved_provider"] == "llama_cpp"
+    assert row["resolved_base_url"] is None
