@@ -98,6 +98,9 @@ _PRODUCT_SELECTIONS = {
     "replacement": _PRODUCT_TESTS[3:4],
     "rollback": _PRODUCT_TESTS[4:5],
     "support": (_PRODUCT_TESTS[0], *_PRODUCT_TESTS[5:]),
+    "native-close-diagnostic": (
+        "Tests/TTS/test_profile_native_close_contract.py::test_native_repository_close_preserves_proven_state_and_exclusion",
+    ),
 }
 _SYNTHETIC_CREDENTIALS = (
     "test-only-new-safety-password",

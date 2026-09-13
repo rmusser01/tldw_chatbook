@@ -19,6 +19,7 @@ on:
           - restore-diagnostic
           - replacement-diagnostic
           - support-diagnostic
+          - native-close-diagnostic
         default: full
 
 # Comprehensive tests run on main pushes or explicit dispatch. Pull requests
@@ -413,7 +414,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        selection: ${{ fromJSON(inputs.backup_platform_selection == 'full' && '["plain","encrypted","encrypted-credentials","roundtrip","replacement","rollback","support"]' || inputs.backup_platform_selection == 'replacement-diagnostic' && '["replacement"]' || inputs.backup_platform_selection == 'support-diagnostic' && '["support"]' || '["restore-diagnostic"]') }}
+        selection: ${{ fromJSON(inputs.backup_platform_selection == 'full' && '["plain","encrypted","encrypted-credentials","roundtrip","replacement","rollback","support"]' || inputs.backup_platform_selection == 'replacement-diagnostic' && '["replacement"]' || inputs.backup_platform_selection == 'support-diagnostic' && '["support"]' || inputs.backup_platform_selection == 'native-close-diagnostic' && '["native-close-diagnostic"]' || '["restore-diagnostic"]') }}
 
     steps:
     - uses: actions/checkout@v4

@@ -14,19 +14,29 @@ def _native_admission_probe(control, names):
     # Fixed test interpreter/code and separate path arguments; no shell.
     result = subprocess.run(  # nosec B603
         [sys.executable, "-c", """
-import json, sys, time
+import ctypes, json, sys, time
 from pathlib import Path
 from tldw_chatbook.Backup_Recovery import admission
 native = admission.fcntl
+opened = {}
+original_open = admission.Admission._open
+def observe_open(parent, name, flags):
+    descriptor = original_open(parent, name, flags)
+    opened[descriptor] = "registry" if name == "registry.lock" else name.rsplit(".", 1)[-1]
+    return descriptor
+admission.Admission._open = staticmethod(observe_open)
 class ObservedLocks:
     contended = False
+    failures = set()
     def __getattr__(self, name):
         return getattr(native, name)
     def flock(self, *args):
         try:
             return native.flock(*args)
         except BlockingIOError:
+            raw = ctypes.get_last_error() if sys.platform == "win32" else None
             self.contended = True
+            self.failures.add((opened.get(args[0], "unknown"), raw))
             raise
 locks = ObservedLocks()
 admission.fcntl = locks
@@ -36,7 +46,7 @@ try:
         status = "entered"
 except admission.AdmissionTimeout:
     status = "contended" if locks.contended else "timeout_without_contention"
-print(json.dumps({"status": status, "elapsed": time.monotonic() - started}))
+print(json.dumps({"status": status, "elapsed": time.monotonic() - started, "locks": sorted(locks.failures)}))
 """, str(control), json.dumps(names)],
         capture_output=True,
         text=True,
@@ -45,6 +55,38 @@ print(json.dumps({"status": status, "elapsed": time.monotonic() - started}))
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+def _native_hold_summary(storage, selected):
+    """Bound failure receipts to owner roles and state; omit all user paths."""
+    from collections import Counter
+
+    def state(hold):
+        return {
+            "count": hold.count,
+            "thread_alive": hold.thread.is_alive(),
+            "stopped": hold.stop.is_set(),
+            "error": type(hold.error).__name__ if hold.error else None,
+        }
+
+    with storage._lock:
+        roles = Counter(
+            (
+                type(getattr(lease, "native_owner", None)).__name__,
+                getattr(getattr(lease, "resource_policy", None), "production_module", None),
+                lease._key == selected.key,
+                lease.resource_close_failed,
+            )
+            for lease in storage._live_leases
+        )
+        return {
+            "selected_hold": state(selected),
+            "active_hold_count": len(storage._holds),
+            "retiring_hold_count": len(storage._retiring_holds),
+            "retiring": [state(hold) for hold in tuple(storage._retiring_holds)[:16]],
+            "live_lease_count": len(storage._live_leases),
+            "roles": [(*role, count) for role, count in roles.items()][:16],
+        }
 
 
 async def _native_close_child(root, fault):
@@ -120,10 +162,13 @@ async def _native_close_child(root, fault):
             assert not live.in_transaction
         storage._shutdown()
         probe = _native_admission_probe(hold.authority.control_root, hold.names)
-        assert probe["status"] == "contended", probe
+        assert probe["status"] == "contended", {
+            "probe": probe, "state": _native_hold_summary(storage, hold)
+        }
     else:
+        before = _native_hold_summary(storage, hold)
         held = _native_admission_probe(hold.authority.control_root, hold.names)
-        assert held["status"] == "contended", held
+        assert held["status"] == "contended", {"probe": held, "state": before}
         try:
             await repo.close()
         except ProfileRepositoryError:
@@ -135,8 +180,11 @@ async def _native_close_child(root, fault):
             with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
                 _ = connection.in_transaction
         owner.close()
+        after = _native_hold_summary(storage, hold)
         released = _native_admission_probe(hold.authority.control_root, hold.names)
-        assert released["status"] == "entered", released
+        assert released["status"] == "entered", {
+            "probe": released, "before": before, "after": after
+        }
 
 
 @pytest.mark.parametrize("fault", ["success", "live_before", "live_after", "evidence"])
