@@ -11,7 +11,9 @@ Typed results, no logging (results carry the information).
 from __future__ import annotations
 
 import os
+import re
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +32,7 @@ _BRANCH_PREFIX = "agent/"
 # messages, and log-friendly identifiers.
 _MAX_GIT_ERROR_CHARS = 200
 _RUN_ID_ABBREV_CHARS = 8
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 UNSUPPORTED_EXECUTION_BOUNDARY = "unsupported_execution_boundary"
 UNSUPPORTED_EXECUTION_MESSAGE = (
     "Safe agent worktree execution is unavailable. Existing work is retained "
@@ -99,6 +102,11 @@ def create_agent_worktree(repo_root: Path, run_id: str) -> AgentWorktree | Workt
     Returns:
         The created worktree, or a reason-coded refusal (never raises).
     """
+    if not isinstance(run_id, str) or _RUN_ID_RE.fullmatch(run_id) is None:
+        return WorktreeRefusal(
+            "invalid_run_id",
+            "worktree isolation requires a valid generated run identifier",
+        )
     refusal = _detect(repo_root)
     if refusal is not None:
         return refusal
@@ -111,14 +119,26 @@ def create_agent_worktree(repo_root: Path, run_id: str) -> AgentWorktree | Workt
         )
     base_sha = out.strip()
     branch = f"{_BRANCH_PREFIX}{run_id}"
-    dest = _worktrees_base() / f"agent-{run_id[:_RUN_ID_ABBREV_CHARS]}"
+    dest = _worktrees_base() / (
+        f"agent-{run_id[:_RUN_ID_ABBREV_CHARS]}-{uuid.uuid4().hex}"
+    )
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         return WorktreeRefusal(
             "worktree_create_failed", f"cannot create worktree base: {exc}"
         )
-    code, out, err = _git(repo_root, "worktree", "add", str(dest), "-b", branch, "HEAD")
+    code, out, err = _git(
+        repo_root,
+        "-c",
+        f"core.hooksPath={os.devnull}",
+        "worktree",
+        "add",
+        str(dest),
+        "-b",
+        branch,
+        base_sha,
+    )
     if code != 0:
         return WorktreeRefusal(
             "worktree_create_failed", f"git worktree add failed: {err.strip()[:_MAX_GIT_ERROR_CHARS]}"

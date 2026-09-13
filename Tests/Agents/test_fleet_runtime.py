@@ -203,6 +203,7 @@ def make_fleet_service(
     run_skill_script_tool=None,
     allow_unconsumed=False,
     run_log_writer=None,
+    worktree_repo_authority=None,
 ):
     """An AgentService wired for the fleet (explicit coordinator = opt in).
 
@@ -229,6 +230,7 @@ def make_fleet_service(
         review_tool_calls=review_tool_calls,
         run_skill_script_tool=run_skill_script_tool,
         run_log_writer=run_log_writer,
+        worktree_repo_authority=worktree_repo_authority,
     )
     return service, chat, coordinator
 
@@ -3992,7 +3994,7 @@ def test_end_of_turn_refuses_worktree_spawns_without_creating_cleanup_candidates
     assert outcome.status == RUN_DONE
     results = _tool_results(db.get_run(_run_id), SPAWN_TOOL_NAME)
     assert len(results) == 2
-    assert all("unsupported_execution_boundary" in result for result in results)
+    assert all("source_authority_unavailable" in result for result in results)
     assert coordinator.live_count() == 0
     assert service._agent_worktrees == {}
 
@@ -4039,10 +4041,10 @@ def test_automatic_retirement_and_sweep_retain_clean_unmerged_and_dirty_work(
             agent_worktree.discard_agent_worktree(git_repo, dirty)
 
 
-def test_isolated_spawn_refuses_before_git_or_child_and_plain_sibling_runs(
+def test_isolated_spawn_without_authority_refuses_and_plain_sibling_runs(
     db, git_repo, monkeypatch
 ):
-    """The admitted service boundary stays closed before Git or child execution."""
+    """Missing selected authority refuses before Git while a plain sibling runs."""
     provider = _fs_local_provider(git_repo)
 
     def unexpected_create(*_args, **_kwargs):
@@ -4071,8 +4073,7 @@ def test_isolated_spawn_refuses_before_git_or_child_and_plain_sibling_runs(
         join_fleet_children(service)
         results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
         assert any(
-            "unsupported_execution_boundary" in result
-            and "retained for manual review" in result
+            "source_authority_unavailable" in result
             for result in results
         ), results
         assert chat.child_calls.get("iso task") is None
@@ -4084,10 +4085,155 @@ def test_isolated_spawn_refuses_before_git_or_child_and_plain_sibling_runs(
         }
         refused = child_rows["iso task"]
         assert refused["status"] == RUN_ERROR
-        assert "unsupported_execution_boundary" in refused["result"]
+        assert "source_authority_unavailable" in refused["result"]
         assert child_rows["plain task"]["status"] == RUN_DONE
     finally:
         join_fleet_children(service)
+
+
+def test_isolated_child_writes_only_to_selected_repository_worktree(
+    db, git_repo, tmp_path
+):
+    """The real service routes child path tools into a real isolated checkout."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    _git(fallback, "init", "-b", "main")
+    _git(fallback, "config", "user.email", "t@t")
+    _git(fallback, "config", "user.name", "t")
+    (fallback / "seed.txt").write_text("fallback\n")
+    _git(fallback, "add", "-A")
+    _git(fallback, "commit", "-m", "base")
+    provider = _fs_local_provider(fallback)
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="selected-fingerprint",
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda write: (
+            agent_worktree._worktree_root_identity(git_repo) == authority.root_identity
+        ),
+    )
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        child_replies={
+            "iso task": [
+                fence("fs_write", {"path": "child.txt", "content": "child work"}),
+                "child done",
+            ]
+        },
+        providers=(provider,),
+        worktree_repo_authority=authority,
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=ISO_CFG,
+            api_endpoint="llama_cpp",
+        )
+        join_fleet_children(service)
+        assert outcome.status == RUN_DONE
+        created = next(iter(service._agent_worktrees.values()))
+        assert (created.worktree_path / "child.txt").read_text() == "child work"
+        assert not (git_repo / "child.txt").exists()
+        assert not (fallback / "child.txt").exists()
+        assert coordinator.live_count() == 0
+        assert chat.child_calls["iso task"]
+    finally:
+        for created in service._agent_worktrees.values():
+            agent_worktree.discard_agent_worktree(git_repo, created)
+
+
+@pytest.mark.parametrize(
+    ("allow_write", "guard_result"),
+    [(False, True), (True, False)],
+    ids=("read-only-selection", "revoked-or-killed-selection"),
+)
+def test_worktree_admission_refuses_invalid_source_authority_before_git(
+    db, git_repo, monkeypatch, allow_write, guard_result
+):
+    """Read-only and failed fresh guards cannot reach the Git mutation."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    provider = _fs_local_provider(git_repo)
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="selected-fingerprint",
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=allow_write,
+        guard=lambda _write: guard_result,
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[],
+        providers=(provider,),
+        worktree_repo_authority=authority,
+    )
+    service._agent_worktrees = {}
+    handle = coordinator.reserve(task="iso", agent=None, isolation="worktree")
+    assert handle is not None
+    monkeypatch.setattr(
+        agent_worktree,
+        "create_agent_worktree",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid authority must refuse before Git")
+        ),
+    )
+
+    refusal = service._admit_agent_worktree(handle, "child-run")
+
+    assert refusal is not None and "source_authority_revoked" in refusal
+    assert service._agent_worktrees == {}
+
+
+def test_post_create_authority_drift_retains_created_checkout(db, git_repo):
+    """A failed application recheck preserves the known checkout and branch."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    guard_results = iter((True, False))
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="selected-fingerprint",
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda _write: next(guard_results),
+    )
+    provider = _fs_local_provider(git_repo)
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[],
+        providers=(provider,),
+        worktree_repo_authority=authority,
+    )
+    service._agent_worktrees = {}
+    handle = coordinator.reserve(task="iso", agent=None, isolation="worktree")
+    assert handle is not None
+
+    refusal = service._admit_agent_worktree(handle, "child-drift")
+
+    assert refusal is not None and "source_authority_revoked" in refusal
+    created = service._agent_worktrees[handle.handle_id]
+    try:
+        assert created.worktree_path.is_dir()
+        assert _git(git_repo, "branch", "--list", created.branch).strip()
+    finally:
+        agent_worktree.discard_agent_worktree(git_repo, created)
 
 
 @pytest.mark.parametrize("confirmation", [None, "allow", "deny"])

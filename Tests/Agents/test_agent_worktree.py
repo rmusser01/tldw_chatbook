@@ -183,6 +183,35 @@ def test_create_refuses_when_worktree_base_unwritable(tmp_path, repo, monkeypatc
     assert result.reason_code == "worktree_create_failed"
 
 
+def test_create_uses_captured_base_when_source_head_advances(repo, monkeypatch):
+    """The checkout base remains the SHA observed before a concurrent commit."""
+    from tldw_chatbook.Agents import agent_worktree as module
+
+    original_git = module._git
+    captured_base = _git(repo, "rev-parse", "HEAD").strip()
+    advanced = False
+
+    def advancing_git(root, *args):
+        nonlocal advanced
+        result = original_git(root, *args)
+        if args == ("rev-parse", "HEAD") and not advanced:
+            advanced = True
+            (repo / "advanced.txt").write_text("new source head\n")
+            _git(repo, "add", "advanced.txt")
+            _git(repo, "commit", "-m", "advance source")
+        return result
+
+    monkeypatch.setattr(module, "_git", advancing_git)
+    created = create_agent_worktree(repo, "run-headrace")
+    assert isinstance(created, AgentWorktree)
+    try:
+        assert created.base_sha == captured_base
+        assert _git(created.worktree_path, "rev-parse", "HEAD").strip() == captured_base
+        assert _git(repo, "rev-parse", "HEAD").strip() != captured_base
+    finally:
+        discard_agent_worktree(repo, created)
+
+
 from tldw_chatbook.Agents.agent_worktree import (  # noqa: E402
     MergeOutcome,
     merge_agent_worktree_changes,

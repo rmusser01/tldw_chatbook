@@ -984,9 +984,9 @@ def test_resumed_worktree_isolated_child_refuses_without_git_or_fallback(
     assert refused_row["parent_run_id"] == run_id
     assert refused_row["resumed_from_run_id"] == old_run_id
     assert refused_row["status"] == RUN_ERROR
-    assert "unsupported_execution_boundary" in refused_row["result"]
+    assert "no_local_provider" in refused_row["result"]
     sends = _tool_results(db.get_run(run_id), SEND_TO_AGENT_TOOL_NAME)
-    assert len(sends) == 1 and "unsupported_execution_boundary" in sends[0]
+    assert len(sends) == 1 and "no_local_provider" in sends[0]
 
 
 def test_refused_isolated_resume_filters_shell_and_settles_without_child_script(
