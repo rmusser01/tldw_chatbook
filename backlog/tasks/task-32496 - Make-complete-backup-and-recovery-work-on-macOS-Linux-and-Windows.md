@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 02:11
+updated_date: 2026-09-13 02:21
 ---
 
 ## Description
@@ -121,6 +121,10 @@ Windows e733 full run: replacement, roundtrip, and all three backup modes passed
 e733 actual macOS combined PASS171.53s; supplied Linux host129 reader tests PASS33.54s and combined PASS284.85s (source SHA256 aa663897d5b3fbb50386f496007be8fa48f40ec92f5e60c93febe96dfc9889f4). Corrected three script fixture path strings with json.dumps; added bounded test-only TTS mapper exception metadata retaining original behavior. Affected14 tests PASS7.91s; Ruff and Bandit clean. Windows e733 replacement/roundtrip/three backup modes PASS; rollback still active. No runtime TTS fix yet.
 Add a fixed support-diagnostic workflow choice to isolate current support failures without repeating six successful/ongoing expensive product groups. Preserve full qualification selection and existing timeout/concurrency contracts. Existing e733 later rollback run remains undisturbed.
 Support-diagnostic uses a separate concurrency suffix so the targeted diagnostic can run while the existing full qualification finishes; all other selections preserve the original concurrency group and cancellation behavior. This avoids cancelling the current native rollback or rerunning successful product groups.
+Windows full34731218691 e733 completed: later rollback SUCCESS at02:10:47Z, alongside replacement, roundtrip and all three backup modes. Only expanded support remains failed (11 cases previously diagnosed). Targeted support34732430660 at4428cf47efbe7134de913396e85842d0245ab345 now running corrected TOML fixtures and bounded original TTS error trace. Runner verifies final full artifacts; no product runtime changes since e733.
+e733 full Windows aggregate verified:294/294 native,107/118 product;11 failures confined to support. All137 artifact hashes verify. Actual later rollback passes1559.650s, including eight credential omissions visible unchecked, abort untouched, changed acknowledgement requiring another review, then succeeded/restoration_validated. Before any TTS runtime edits, existing TTS native-maintenance/lifecycle/schema baseline373pass18fail2skip in295.78s; failures retained in /private/tmp/task32496-tts-current-baseline.log. Prechange Bandit49 existing findings captured; compare changes rather than silently claiming full TTS suite green.
+4428 native Windows34732430660 confirms all8 TTS failures originate at repository._worker_open_if_proven_current1820: NotImplementedError from raw os.stat(dir_fd) on native parent FD. Correct repository, schema exact-open/revalidation/post-init authority, and migration recovery absent-journal reads to use existing platform_files.os. These are already-added backup native ownership hooks on fresh/current-store open; do not port migration replay or synthesis. Include existing canonical TTS reference blob archive/restore test in support and preserve required Windows child environment keys.
+Native TTS correction changes only three os imports to platform_files.os; no new primitive/migration feature. Local8 inventory+canonical reference roundtrip9PASS23.46s. Final ACL-aware roundtrip plus existing actual current-store revalidation/parent uncertainty/close-retirement cases8PASS23.86s. Reviewer accepted same-handle identity and barriers; fixed raw Path.stat permission assertion to native ACL projection. Ruff test/runner clean; production static delta0 (49 existing Bandit,157 existing Ruff). Ready for targeted Windows113 support and supplied Linux host tests.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

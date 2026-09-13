@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 from Tests.Backup_Recovery.test_complete_roundtrip import (
+    _CHILD_ENVIRONMENT_KEYS,
     _isolated_environment,
     _run_profile_child,
 )
@@ -178,6 +179,7 @@ _BLOB_RESTORE = (
     _PRIVATE
     + r"""
 import zipfile
+from tldw_chatbook.Utils.platform_files import os as native_os
 from tldw_chatbook.Backup_Recovery.archive_reader import acquire,verify_sealed
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
@@ -196,7 +198,7 @@ profile=restore_isolated(archive,plan,fixture/'blob-control',threading.Event())
 requirements=profile_requirements(profile,fixture/'blob-control')
 assert requirements['requirements_checked'] and requirements['needs_setup']
 assert {'tts.profile_store','tts.references'}<=set(requirements['pending_owners'])
-restored_database=Path(receipt['restored_database']);assert restored_database.is_file() and stat.S_IMODE(restored_database.stat().st_mode)==0o600
+restored_database=Path(receipt['restored_database']);assert restored_database.is_file() and stat.S_IMODE(native_os.stat(restored_database).st_mode)==0o600
 assert digest(restored_database) in {entry['sha256'] for entry in receipt['payloads'].values()}
 (fixture/'blob-restored.json').write_text(json.dumps({'profile':profile,'requirements':requirements,'restored_database':str(restored_database)}))
 assert digest(Path(seed['database']))==receipt['source_post_close_sha256'] and identity(Path(seed['database']))==receipt['source_post_close_identity']
@@ -439,7 +441,7 @@ def _environment(root: Path, *, with_voice_root: bool) -> dict[str, str]:
     selector.chmod(0o600)
     environment = {
         key: os.environ[key]
-        for key in ("PATH", "LANG", "LC_ALL", "GOMODCACHE", "GOCACHE", "GOPROXY")
+        for key in _CHILD_ENVIRONMENT_KEYS
         if key in os.environ
     }
     environment.update(

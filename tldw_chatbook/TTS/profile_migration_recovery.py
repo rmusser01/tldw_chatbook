@@ -11,7 +11,6 @@ from tldw_chatbook.TTS.profile_migration_native import (
     _native_parent,
 )
 
-import os
 import sqlite3
 import stat
 from collections import Counter
@@ -40,6 +39,7 @@ from tldw_chatbook.TTS.profile_migration_namespace import (
     remove_exact as remove_exact_namespace,
 )
 from tldw_chatbook.Utils import private_paths
+from tldw_chatbook.Utils.platform_files import os
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathStatus,
     lexical_path,

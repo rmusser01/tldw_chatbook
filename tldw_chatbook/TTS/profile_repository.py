@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import os
 import sqlite3
 import stat
 import threading
@@ -121,6 +120,7 @@ from tldw_chatbook.TTS.profile_types import (
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils import private_paths
+from tldw_chatbook.Utils.platform_files import os
 
 
 if TYPE_CHECKING:

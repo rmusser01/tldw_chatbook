@@ -10,14 +10,38 @@ passes129 reader cases in33.54 seconds and combined replacement/later rollback
 in284.85 seconds; source SHA256
 `aa663897d5b3fbb50386f496007be8fa48f40ec92f5e60c93febe96dfc9889f4`.
 [Windows34731218691](https://github.com/rmusser01/tldw_chatbook/actions/runs/34731218691)
-has passed replacement, roundtrip and all three backup modes; later rollback is
-still running. Expanded support passes101/112 cases. Three script topology
+passes replacement, roundtrip, all three backup modes and later rollback. The
+full run passes294/294 native cases and107/118 product cases, with all137 artifact
+hashes verified. The rollback product passes in1559.650 seconds; its receipt
+verifies17 artifact hashes,42 native cases, clean9,854-file
+source and a2,030-file installed package. Its checkpoints prove explicit review
+of eight unreadable credentials followed by `succeeded` and
+`restoration_validated=true`; source archive SHA256
+`e90f8657425aa4bce23d9e91d5279d456bf96d8f1c8a6b182bf3eab40dd505d5`.
+Expanded support passes101/112 cases. Three script topology
 fixtures wrote unescaped Windows paths into TOML; these now use JSON string
 escaping. Eight TTS lock cases fail during repository startup, before the backup
 reader; a bounded test-only observer now records original exception metadata at
 the repository's error mappers without changing their behavior. Fourteen affected
 fixture cases pass locally; Ruff and test-scope Bandit pass. Native verification
 of the fixture correction and investigation of the TTS failure remain pending.
+
+Diagnostic `4428cf47efbe7134de913396e85842d0245ab345`,
+[Windows34732430660](https://github.com/rmusser01/tldw_chatbook/actions/runs/34732430660),
+passes42 native and104/112 support cases. All27 artifact hashes verify; the three
+TOML cases now pass. All eight TTS failures trace to `NotImplementedError` at the
+backup-added repository journal probe's raw `os.stat(dir_fd=...)` call. Repository,
+schema exact-open/revalidation, and pre-open absent-journal checks now import the
+existing native file facade. The current/fresh-store path preserves held identities,
+private ACL checks, native close accounting and file/directory barriers; it does
+not add migration replay or synthesis behavior. Eight inventory cases and the
+existing canonical reference archive/restore case pass locally in23.46 seconds.
+The latter is added to Windows support, with required child environment keys and
+an ACL-aware restored-mode observation. Independent review accepted the boundary.
+Static comparison introduces no findings:49 existing Bandit and157 existing Ruff
+findings remain across the three large TTS modules. Before these import changes,
+the broader native-maintenance/lifecycle/schema baseline was373 passed,18 failed,
+two skipped in295.78 seconds; that suite is not represented as green.
 
 Revision `892e11484b6436f0d554ad1a2b591ed6de69632e` passes actual Windows
 replacement, including21 displayed credential omissions, untouched abort,

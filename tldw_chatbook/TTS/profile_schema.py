@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import hashlib
-import os
 import sqlite3
 import stat
 import struct
@@ -31,6 +30,7 @@ from tldw_chatbook.DB.private_sqlite import (
     connect_private_sqlite_descriptor,
 )
 from tldw_chatbook.DB.sql_validation import escape_identifier, validate_identifier
+from tldw_chatbook.Utils.platform_files import os
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
