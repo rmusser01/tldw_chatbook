@@ -4,9 +4,11 @@ title: >-
   Library Notes: Folder files polish — Ctrl+End inert in its editor, .trash
   listed but .obsidian hidden, embeds wrap at 100x30, Escape drops the whole
   mode in one press
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-13 06:47'
+updated_date: '2026-09-13 15:13'
 labels:
   - library
   - notes
@@ -35,3 +37,9 @@ Critique #3 (dev 5fd502dbac), both assessors, personas Jordan and Riley, Folder 
 - [ ] #3 Escape from the Folder files editor first returns to the tree; a second Escape leaves the mode, and the footer says which
 - [ ] #4 Embed lines do not wrap mid-token at 100x30
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live (fn-01..04): Ctrl+End inert, .trash listed / .obsidian hidden, embed wrap at 100x30, Escape leaves the mode in one press\n2. RED pins in Tests/UI/test_library_notes_w4_file_notes.py + a service test for dot-directories\n3. Fix: FileNotesEditorTextArea with ctrl+end/ctrl+home; hide every dot-directory in the service walk; workspace-level Escape that focuses the tree while the editor has focus; footer tier says esc files / esc notes and ctrl+end end of file\n4. Measure the editor pane at 100x30; qualify AC#4 to lines no longer than the pane\n5. GREEN, live captures, guide (keys table, hidden-folder rule, Escape ladder) + stamp
+<!-- SECTION:PLAN:END -->

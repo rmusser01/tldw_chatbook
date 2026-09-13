@@ -252,6 +252,39 @@ def test_scan_excludes_git_and_symlinks_and_rejects_unsafe_paths(
     assert (root / "ignored.rst").exists()
 
 
+def test_dot_directories_are_hidden_from_the_tree(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32552 AC#2: one rule -- every dot-directory is hidden.
+
+    Critique #3 (A 49; B 40): the tree listed ``.trash`` but not
+    ``.obsidian``. Nothing special-cased ``.obsidian``: the walk skipped only
+    ``.git``, and ``.obsidian`` simply held no supported file, so it fell out
+    of the folder index -- ``.trash/Old idea.md`` is Markdown, so it stayed.
+    """
+    root = tmp_path / "vault"
+    (root / ".obsidian").mkdir(parents=True)
+    (root / ".trash").mkdir()
+    (root / ".git").mkdir()
+    (root / ".hidden-notes").mkdir()
+    (root / "visible.md").write_text("visible", encoding="utf-8")
+    (root / ".obsidian" / "app.json").write_text("{}", encoding="utf-8")
+    (root / ".obsidian" / "readme.md").write_text("cfg", encoding="utf-8")
+    (root / ".trash" / "Old idea.md").write_text("old", encoding="utf-8")
+    (root / ".git" / "hidden.md").write_text("hidden", encoding="utf-8")
+    (root / ".hidden-notes" / "secret.md").write_text("secret", encoding="utf-8")
+    (root / ".dotfile.md").write_text("a dot FILE is not a folder", encoding="utf-8")
+    service = FileNotesService(root, replica)
+
+    result = service.scan()
+
+    assert [entry.relative_path for entry in result.entries] == [
+        ".dotfile.md",
+        "visible.md",
+    ]
+
+
 def test_service_uses_shared_path_confinement(
     tmp_path: Path,
     replica: FileNotesReplica,

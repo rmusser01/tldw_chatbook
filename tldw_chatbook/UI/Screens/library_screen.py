@@ -1224,10 +1224,12 @@ class LibraryScreen(BaseAppScreen):
     #: state -- task-2856 adds two more context-specific "esc" sets below
     #: for the same reason; every remaining Library surface keeps
     #: ``LIBRARY_GENERAL_SHORTCUTS``, where Escape is genuinely unbound.
+    #: task-32552: the Escape chip is spliced in per state (see the Folder
+    #: files branch of ``_library_route_shortcuts_for_current_state``):
+    #: ``esc files`` while the editor has focus, ``esc notes`` otherwise.
     LIBRARY_NOTES_FILES_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
-        ("esc", "back to Library notes"),
     )
 
     LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS = (
@@ -4188,7 +4190,21 @@ class LibraryScreen(BaseAppScreen):
             workspace = self._notes_state.file_notes_workspace
             if workspace is not None and workspace.reload_confirmation_active:
                 return self.LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS
-            return self.LIBRARY_NOTES_FILES_SHORTCUTS
+            shortcuts = list(self.LIBRARY_NOTES_FILES_SHORTCUTS)
+            # task-32552 AC#1: Ctrl+End/Ctrl+Home are live once a file is
+            # open, as the Library editor advertises its own (task-32247).
+            if workspace is not None and workspace.current_path:
+                shortcuts.append(("ctrl+end", "end of file"))
+            # task-32552 AC#3: the two-step Escape ladder, named per step.
+            shortcuts.append(
+                (
+                    "esc",
+                    "files"
+                    if workspace is not None and workspace.editor_returns_to_tree
+                    else "notes",
+                )
+            )
+            return tuple(shortcuts)
         if self._library_media_viewer_substate_active():
             return self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
         if (

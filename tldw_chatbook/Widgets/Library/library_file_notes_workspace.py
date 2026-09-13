@@ -17,6 +17,7 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.events import Resize
@@ -305,6 +306,47 @@ FILE_TREE_BATCH_SIZE = 100
 
 class _ServiceLockBusy(Exception):
     """An earlier File Notes operation still owns the service lock."""
+
+
+#: task-32552 AC#1: the Folder files editor's own keys -- see
+#: ``FileNotesEditorTextArea`` for why Textual supplies neither.
+_FILE_NOTES_EDITOR_BINDINGS = [
+    Binding("ctrl+end", "cursor_document_end", "End of file", show=False),
+    Binding("ctrl+home", "cursor_document_start", "Start of file", show=False),
+]
+#: task-32552 AC#3: Escape in the editor steps back to the files tree; only
+#: the next Escape (the screen's ``library_notes_files_back``) leaves the
+#: mode. ``LibraryFileNotesWorkspace.check_action`` gates it to the focused
+#: editor, so everywhere else the key falls through to the screen exactly
+#: as before (critique #3, A 58: one press dropped the whole mode).
+_FILE_NOTES_WORKSPACE_BINDINGS = [
+    Binding("escape", "focus_tree", "Files", show=False),
+]
+
+
+class FileNotesEditorTextArea(TextArea):
+    """The Folder files editor, with document-end and document-start keys.
+
+    task-32552 AC#1: the same defect task-32247 fixed in the Library editor
+    (``NoteEditorTextArea``): Textual 8's ``TextArea`` binds ``end``/``home``
+    to the LINE ends and defines no ``ctrl+end`` binding or
+    ``cursor_document_end`` action at all, so Ctrl+End here was not
+    swallowed -- it did not exist, and the text typed after it landed at
+    the click (critique #3, B D9: ``NoteTAILEDITs`` on disk). The four lines
+    are copied rather than the class imported: that editor's priority Tab
+    pair is namespaced to the Library screen and is not this widget's
+    concern.
+    """
+
+    BINDINGS = _FILE_NOTES_EDITOR_BINDINGS
+
+    def action_cursor_document_end(self) -> None:
+        """Move the caret to the end of the file body."""
+        self.move_cursor(self.document.end)
+
+    def action_cursor_document_start(self) -> None:
+        """Move the caret to the start of the file body."""
+        self.move_cursor((0, 0))
 
 
 def _folder_label(path: Path) -> str:
@@ -750,6 +792,8 @@ class LibraryFileNotesWorkspace(Vertical):
     """Browse and edit one disk-authoritative Markdown/text root."""
 
     ReloadConfirmationChanged = FileNotesReloadConfirmationChanged
+
+    BINDINGS = _FILE_NOTES_WORKSPACE_BINDINGS
 
     DEFAULT_CSS = """
     LibraryFileNotesWorkspace {
@@ -1307,7 +1351,7 @@ class LibraryFileNotesWorkspace(Vertical):
         # Textual calls ``compose`` again when this same workspace object is
         # remounted, so constructing it inside ``compose`` would silently
         # replace the user's draft with a new TextArea instance.
-        self._editor_widget = TextArea(
+        self._editor_widget = FileNotesEditorTextArea(
             "",
             id="file-notes-editor",
             read_only=True,
@@ -6312,6 +6356,34 @@ class LibraryFileNotesWorkspace(Vertical):
         if generation != self._search_generation or not self._active:
             return
         self._rebuild_search_results(tuple(paths))
+
+    @property
+    def editor_returns_to_tree(self) -> bool:
+        """Whether Escape in the editor steps back to the files tree (task-32552)."""
+        return (
+            self._editor_widget.has_focus
+            and self._path_task == "none"
+            and not self.reload_confirmation_active
+            and self._visible_files_tree() is not None
+        )
+
+    def _visible_files_tree(self) -> Tree[object] | None:
+        """Return the mounted, displayed files or search-results tree, if any."""
+        for tree in (self._tree_widget, self._search_results_widget):
+            if tree.is_mounted and tree.display and tree.region.width > 0:
+                return tree
+        return None
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "focus_tree":
+            return self.editor_returns_to_tree
+        return True
+
+    def action_focus_tree(self) -> None:
+        """Escape from the editor: return to the files tree, keep the mode."""
+        tree = self._visible_files_tree()
+        if tree is not None:
+            tree.focus()
 
     @on(Tree.NodeExpanded, "#file-notes-tree")
     def _tree_node_expanded(self, event: Tree.NodeExpanded[object]) -> None:

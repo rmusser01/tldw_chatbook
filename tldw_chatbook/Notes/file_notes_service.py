@@ -1280,10 +1280,14 @@ class FileNotesService:
                 reported = seen
                 on_progress(reported)
             current_path = Path(current)
+            # task-32552 AC#2: one rule, every dot-directory is hidden --
+            # ``.git`` as before, and ``.obsidian``/``.trash``, which used
+            # to differ only by whether they happened to hold a Markdown
+            # file (critique #3: ``.trash`` listed, ``.obsidian`` not).
             directory_names[:] = sorted(
                 name
                 for name in directory_names
-                if name != ".git" and not _is_symlink(current_path / name)
+                if not name.startswith(".") and not _is_symlink(current_path / name)
             )
             for name in sorted(file_names):
                 # A flat folder is ONE walk yield, so the check above never
