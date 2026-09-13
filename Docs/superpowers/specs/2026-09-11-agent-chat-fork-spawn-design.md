@@ -6,7 +6,7 @@ Governance: ADR required (conversation-lineage semantics are a data-ownership
 decision; an agent-initiated, confirmation-gated chat-creation channel is a
 cross-module interface with a security policy). New ADR, not amending ADR-146.
 Backlog task to be created at plan time; follow-up task for sub-agent support
-already filed (`backlog/tasks/task-32480 - Extend-fork_chat-new_chat-tools-to-sub-agents.md`).
+already filed (`backlog/tasks/task-32531 - Extend-fork_chat-new_chat-tools-to-sub-agents.md`).
 
 ```text
 ADR required: yes
@@ -77,7 +77,7 @@ default.
 * Agent-chosen fork points, batch-approval of multiple creations in one card,
   full-tree copies (variants/inactive branches).
 * Provider/model/preset selection on the created chats (decision 7).
-* Sub-agent access to the tools — filed as `task-32480`.
+* Sub-agent access to the tools — filed as `task-32531`.
 * Any change to rewind, branching, or workspace-membership semantics beyond
   what creation needs.
 
@@ -275,7 +275,7 @@ seam):
 * `denied_repeatedly` — terminal after the denial guard trips.
 * `copy_failed` — transaction rolled back; nothing created.
 
-## Sub-agent extension (deferred — task-32480)
+## Sub-agent extension (deferred — task-32531)
 
 v1 pins both tools to `AGENT_KIND_PRIMARY`. Sub-agents are scoped to the
 parent conversation, so extending means: pin schemas for child kinds, fork
@@ -338,7 +338,7 @@ schemas intentionally omit those args so the later change is additive.
 ## Rollout
 
 1. Plan time: create ADR (`backlog/decisions/NNN-agent-chat-fork-and-spawn.md`)
-   and the v1 backlog task; link both ways and to `task-32480`.
+   and the v1 backlog task; link both ways and to `task-32531`.
 2. Sequence against the provider-routing PR: implement on top of it (or
    rebase before opening) — `agent_service.py`, `agent_runtime.py`, and
    `console_agent_bridge.py` are shared files; our edits are additive but

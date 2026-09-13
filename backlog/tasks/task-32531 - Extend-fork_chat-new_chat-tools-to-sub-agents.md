@@ -1,5 +1,5 @@
 ---
-id: TASK-32480
+id: TASK-32531
 title: Extend fork_chat/new_chat tools to sub-agents
 status: To Do
 assignee: []
@@ -13,6 +13,13 @@ dependencies: []
 <!-- SECTION:DESCRIPTION:BEGIN -->
 v1 pins fork_chat/new_chat runtime tools to primary agents only. Sub-agents (fleet children, skill spawns) are scoped to the parent conversation, so the same tools can let a delegated child open follow-up workstream chats for the user with the same confirmation gates. Build on the v1 spec: Docs/superpowers/specs/2026-09-11-agent-chat-fork-spawn-design.md (see Sub-agent extension section).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-32480 during PR #2649 rebase on 2026-09-13: the ID
+collides with dev's older "Tokenize features/_chat.tcss" task, and the
+duplicate-backlog-ID CI gate fails on PR-touched collisions. TASK-32531 is
+free across fetched remote refs and the local worktree.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->

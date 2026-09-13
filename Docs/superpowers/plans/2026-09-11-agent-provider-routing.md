@@ -1528,5 +1528,5 @@ git commit -m "docs: agents routing config template + user guide (TASK-32477)"
 - Type consistency: `params` is `tuple[tuple[str, object], ...]` across
   Tasks 1-6, 8, 9; `params_json` is the JSON object form at the DB
   boundary; `SpawnTarget` fields match Task 6's consumption.
-- Deferred: preset `fallback_models` (TASK-32479), thinking ceiling,
+- Deferred: preset `fallback_models` (TASK-32508), thinking ceiling,
   provider-scoped role matrices — all recorded as spec non-goals.

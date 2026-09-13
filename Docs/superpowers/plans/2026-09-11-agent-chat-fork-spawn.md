@@ -9,13 +9,13 @@
 **Tech Stack:** Python ≥3.11, Textual 8.x, SQLite (FTS5) via `ChaChaNotes_DB`, pytest with real in-memory SQLite.
 
 **Spec:** `Docs/superpowers/specs/2026-09-11-agent-chat-fork-spawn-design.md` — read it first; this plan argues from it.
-**ADR:** `backlog/decisions/150-agent-chat-fork-and-spawn.md` · **Task:** TASK-32482 · **Follow-ups:** TASK-32480 (sub-agents), preset/provider integration (post ADR-147).
+**ADR:** `backlog/decisions/150-agent-chat-fork-and-spawn.md` · **Task:** TASK-32482 · **Follow-ups:** TASK-32531 (sub-agents), preset/provider integration (post ADR-147).
 
 ## Global Constraints
 
 - **No DB schema migration** in either database. The lineage columns `conversations.parent_conversation_id` / `forked_from_message_id` already exist (`DB/ChaChaNotes_DB.py:468-469`).
 - **Advertised must equal usable** (the #847 lesson, restated at `console_chat_controller.py:12114-12126`): only inject a confirm/execute callable when a UI sink is wired, so the bridge never builds a tool the model can never succeed with.
-- **Primary agents only**: every schema pin and `LoopDeps` population for these tools is gated on `agent_kind == AGENT_KIND_PRIMARY` (spec §Architecture; sub-agents are TASK-32480).
+- **Primary agents only**: every schema pin and `LoopDeps` population for these tools is gated on `agent_kind == AGENT_KIND_PRIMARY` (spec §Architecture; sub-agents are TASK-32531).
 - **Fail closed**: any UI error, no-UI, cancel, or timeout in a confirm round denies the call and returns a `ToolResult(ok=False, ...)`; never an exception across the tool seam.
 - **The working tree carries unrelated in-flight WIP** (provider-routing PR). Every commit step stages ONLY the files its task lists — never `git add -A`.
 - **Targeted tests only**: run the test files each task names. Do not run the full suite unless the user asks (AGENTS.md testing rule).
@@ -679,7 +679,7 @@ def _chat_create_runtime_schemas(
     fork_chat_tool: "Callable[[dict], ToolResult] | None",
     new_chat_tool: "Callable[[dict], ToolResult] | None",
 ) -> list[ToolSchema]:
-    """ADR-150: fork_chat/new_chat are primary-only in v1 (sub-agents: TASK-32480)."""
+    """ADR-150: fork_chat/new_chat are primary-only in v1 (sub-agents: TASK-32531)."""
     if agent_kind != AGENT_KIND_PRIMARY:
         return []
     schemas: list[ToolSchema] = []
@@ -1669,7 +1669,7 @@ git commit -m "feat: non-activating persisted-session restore and one-shot agent
 **Interfaces:** none (documentation + closure).
 
 - [ ] **Step 1: Document the tools** — in `agent-runs-and-tools.md`, next to the `run_skill_script`/`install_skill` documentation, add a `fork_chat` / `new_chat` section stating: what each does; that every call requires approval (Allow / Allow for this session / Deny); that "Allow for this session" is per-tool and ends with the session; that the opening prompt is a draft the user sends; the mid-turn snapshot boundary (the agent's current reply is not in the fork); that chats open in the background with a toast; character-chat and temporary-chat refusals; and that the copied chat records lineage (parent + fork point).
-- [ ] **Step 2: Update the backlog task** — check off the ACs in TASK-32482, add the `## Implementation Notes` section (approach, files touched, decisions: no-migration, session-scoped remember, denial guard, one-shot draft rehydration, deferred follow-ups TASK-32480 + preset PR), set status via `backlog task edit 32482 -s Done --notes "..."` only after steps 3-4 pass.
+- [ ] **Step 2: Update the backlog task** — check off the ACs in TASK-32482, add the `## Implementation Notes` section (approach, files touched, decisions: no-migration, session-scoped remember, denial guard, one-shot draft rehydration, deferred follow-ups TASK-32531 + preset PR), set status via `backlog task edit 32482 -s Done --notes "..."` only after steps 3-4 pass.
 - [ ] **Step 3: Run the full targeted verification list**
 
 ```bash
