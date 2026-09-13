@@ -3876,7 +3876,7 @@ class ConsoleProviderGateway:
                     execution_key=identity.execution_key,
                     api_key_source=readiness.api_key_source,
                 )
-            if custom_entry is not None:
+            if custom_entry is not None and not selection.base_url_is_pinned:
                 # ADR-146: the entry's base_url is the endpoint authority
                 # for a custom-ep provider -- an edited entry re-resolves
                 # on the next send, so a stale session-pinned URL never
@@ -4079,7 +4079,7 @@ class ConsoleProviderGateway:
             effective_base_url = effective_provider_endpoint(
                 identity.readiness_key,
                 custom_entry.base_url
-                if custom_entry is not None
+                if custom_entry is not None and not selection.base_url_is_pinned
                 else selection.base_url,
                 provider_settings,
             )
@@ -5081,6 +5081,7 @@ class ConsoleProviderGateway:
         dispatch_purpose: ConsoleProviderCallPurpose = ConsoleProviderCallPurpose.CONVERSATION,
         provisional_trace_attempt: ProvisionalTraceAttempt | None = None,
         before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
+        emission_observer: Callable[[bool], None] | None = None,
     ) -> AsyncIterator[ProviderStreamItem]:
         """Dispatch streaming for a resolved Console provider.
 
@@ -5095,6 +5096,8 @@ class ConsoleProviderGateway:
                 returned native tool-calls, the final item is a
                 ``ProviderToolCalls`` instead of a str.
             signals: Optional out-of-band stream provenance signals.
+            emission_observer: Optional internal callback receiving the exact
+                synthetic flag immediately before each yielded item.
 
         Yields:
             Assistant-visible content chunks, and -- only when ``tools`` was
@@ -5104,6 +5107,18 @@ class ConsoleProviderGateway:
         from tldw_chatbook.Chat.console_voice_trace_gateway import (
             ProvisionalTraceAttempt,
         )
+
+        emission_observer_failed = False
+
+        def observe_emission(synthetic: bool) -> None:
+            nonlocal emission_observer_failed
+            if emission_observer is None or emission_observer_failed:
+                return
+            try:
+                emission_observer(synthetic)
+            except BaseException:  # noqa: BLE001 - observational callback is isolated
+                emission_observer_failed = True
+                logger.warning("provider stream emission observer failed")
         require_durable_capture_admission(
             capture_mode=capture_mode,
             ephemeral=ephemeral,
@@ -5698,6 +5713,7 @@ class ConsoleProviderGateway:
                             chunk,
                             synthetic=synthetic,
                         )
+                        observe_emission(synthetic)
                         yield chunk
                 except Exception:
                     # Only real provider/HTTP failures land here -- a
@@ -5724,6 +5740,7 @@ class ConsoleProviderGateway:
                         dispatch_purpose=dispatch_purpose,
                     ):
                         observe_response(emission.item, synthetic=emission.synthetic)
+                        observe_emission(emission.synthetic)
                         yield emission.item
                 completed = True
                 return

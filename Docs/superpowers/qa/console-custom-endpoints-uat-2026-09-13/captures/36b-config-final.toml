@@ -1,0 +1,52 @@
+[general]
+users_name = "uat_ce2"
+
+[paths]
+data_dir = "/tmp/uat2-scratch/data"
+
+[splash_screen]
+enabled = false
+
+[model_catalog]
+auto_refresh_enabled = false
+
+[first_run]
+setup_started = true
+draft_version = 1
+draft_track = "quick"
+active_step_id = "provider"
+resume_attempted = false
+
+[chat_defaults]
+provider = "llama_cpp"
+model = "../../../Working/Language_Models/gemma-4-26B-A4B/gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf"
+
+[provider_setup.confirmed]
+llama_cpp = true
+
+[custom_endpoints.gemma-relay]
+display_name = "Gemma relay"
+family = "llama_cpp"
+base_url = "http://127.0.0.1:9099"
+models = []
+
+[custom_endpoints.probe-spare]
+display_name = "Probe spare"
+family = "llama_cpp"
+base_url = "http://127.0.0.1:9099"
+models = [ "gemma-probe",]
+created_from = "llama_cpp"
+
+[console.onboarding]
+first_send_completed = true
+
+[console.rail_state."console_rail_state:global:shared-layout-v1"]
+left_open = true
+workspace_open = false
+conversations_open = true
+model_open = false
+details_open = false
+agent_open = false
+inspector_more_open = false
+environment_open = true
+tasks_open = true

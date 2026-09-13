@@ -1,5 +1,58 @@
 # Agent orchestration remaining work — 2026-09-12
 
+## Current completion status
+
+PR #2641 merged the earlier five reliability/verification follow-ups at
+`d66908a69ef03066fed77a92edf77a326f44bd89`. The remaining approved work is now
+complete locally on `codex/agent-orchestration-remaining`. This section
+supersedes the historical pending-work labels retained below.
+
+- **Done and reviewed:** approval verification TASK-13154.4, bounded segment-log
+  paging TASK-18601, denial breaker TASK-18929, live per-run usage TASK-18923,
+  bounded reusable webhook delivery TASK-31511, and the Settings/presets/caps
+  children TASK-13154.5/.6/.7. Earlier integration corrections remain recorded
+  at `7852cf47ba`.
+- **Done and reviewed:** TASK-31210 visible worktree confirmation and TASK-31211
+  earlier-turn recovery. Ordinary selected-authority Git creation, schema 20
+  ownership, positive physical completion, shared confirmed Apply/Merge/Discard
+  and the actual Console picker/card path are delivered. Preview/live schemas
+  now agree for tested progress and virtual CLI/raw-shell availability.
+- **Final integration complete:** `e135a085f2` fixes partial Git-reader startup
+  cleanup and manual executor-submission ownership. The single scoped re-review
+  approved both findings with no new issues. Final verification passed 88
+  affected/capacity cases and 2 actual reopened card/Git flows after 11 RED
+  failures. Earlier 25-case mounted UI, 23-case preview/raw-shell and 60-case
+  lifetime selections overlap and are not summed.
+- **Parent closed:** TASK-13154 is Done. All seven actual children have checked
+  acceptance criteria and implementation notes; both recovery tasks are Done
+  with all 9 and 8 criteria checked. No approved functional task remains open
+  in this workstream.
+
+The [complete restoration review, evidence and decisions](../../Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md)
+retains every finding, correction and qualification. The
+[earlier remaining-wave review](../../Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md)
+remains the record for the preceding changes. All current work is local; no new
+PR, push or merge was performed during this completion.
+
+Verification limits remain: inherited Requests dependency warning; UI-ready at
+973/973 with zero headroom and its intentional drift warning; existing
+ChatScreen size/no-growth failures, including the disclosed 21-line/3-method
+addition; and eight stale historical diagnostic-label expectations already
+absent at the pre-restoration baseline. The current production diagnostic
+inventory/sink guard passes, and changed-file static checks add no diagnostic
+identities with edited-range formatting passing. No full-suite, Windows or
+live-provider result is claimed.
+
+Ordinary Git retains the documented concurrent external metadata-replacement
+limit. Automatic worktree deletion stays disabled; discard leaves a disclosed
+baseline checkout, and held/uncertain or legacy work remains protected.
+Communication remains bounded process-local steering/progress, explicit
+supervisor relay and continuation, and versioned session tasks. Durable inboxes,
+arbitrary direct peer routing and progress-triggered wakes are optional designs
+outside ADR-136 and this completed scope.
+
+## Historical investigation and delivery notes
+
 Baseline: `origin/dev` at `8ab21ecaf372ad0b5cc8bca98dd12c427f4aef87`.
 [PR #2631](https://github.com/rmusser01/tldw_chatbook/pull/2631) merged the
 25-item audit scope. The supervisor and its managed sub-agents remain one

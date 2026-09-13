@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import copy
+import functools
 import hashlib
 import json
 import os
@@ -9406,6 +9407,9 @@ def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
     # rather than by the turn ending.
     live_handle.status = "done"
     assert bridge.fleet_snapshot("conv-resend") == []
+    # Observation is read-only; lifecycle cleanup releases settled owners.
+    assert bridge._fleet_survivor_services["conv-resend"] == [service_b]
+    bridge._prune_settled_fleet_survivors("conv-resend")
     assert bridge._fleet_survivor_services.get("conv-resend") is None
 
 
@@ -10777,6 +10781,609 @@ def test_ending_an_unmarked_setup_phase_is_a_no_op():
     bridge.end_setup_phase("never-marked")
     assert bridge.live_snapshot("never-marked").status == "idle"
 
+
+def test_live_usage_event_contract_exists():
+    event = console_agent_bridge.AgentLiveUsageEvent(
+        "started", "run", "primary", 1, 10.0
+    )
+    assert event.run_id == "run"
+
+
+def test_live_usage_scalar_arbitration_sequence_and_cleanup():
+    bridge = _make_bridge()
+    bridge._live_usage_owners["run"] = ("conv", "primary", "turn")
+    bridge._live_primary_keys["conv"] = "turn"
+    observe = functools.partial(bridge._observe_live_usage, conversation_id="conv")
+    event = console_agent_bridge.AgentLiveUsageEvent
+    observe(event("started", "run", "primary", 1, 10.0))
+    observe(event("text", "run", "primary", 1, 10.0, text="a"))
+    first = bridge._live_usage_snapshot("run")
+    assert (first.output_tokens, first.source) == (1, "local")
+    observe(event("text", "run", "primary", 1, 10.5, text="ééé"))
+    assert bridge._live_usage_snapshot("run") is first
+    observe(event("text", "run", "primary", 1, 11.0, text="bc"))
+    assert bridge._live_usage_snapshot("run").output_tokens == 3
+
+    observe(
+        event(
+            "provider_usage",
+            "run",
+            "primary",
+            1,
+            12.0,
+            provider_output_tokens=0,
+        )
+    )
+    provider = bridge._live_usage_snapshot("run")
+    assert (provider.output_tokens, provider.source) == (0, "provider")
+    for invalid in (True, 1.0, "1", -1, None):
+        observe(
+            event(
+                "provider_usage",
+                "run",
+                "primary",
+                1,
+                13.0,
+                provider_output_tokens=invalid,
+            )
+        )
+    observe(event("text", "run", "primary", 1, 14.0, text="ignored fallback"))
+    assert bridge._live_usage_snapshot("run").source == "provider"
+
+    observe(event("started", "run", "primary", 2, 20.0))
+    observe(event("text", "run", "primary", 1, 21.0, text="late"))
+    assert bridge._live_usage_snapshot("run") is None
+    observe(event("text", "run", "primary", 2, 21.0, text="next"))
+    assert bridge._live_usage_snapshot("run").sequence == 2
+    observe(event("finished", "run", "primary", 1, 22.0))
+    assert bridge._live_usage_snapshot("run") is not None
+    observe(event("finished", "run", "primary", 2, 22.0))
+    assert bridge._live_usage_snapshot("run") is None
+    assert bridge._live_turn_usage == {}
+
+
+def test_live_usage_crosses_primary_and_inline_child_before_first_step(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        agent_service_module,
+        "_setting",
+        lambda key, default: (
+            1 if key == agent_service_module.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+
+    class ObservingGateway(_ChunkGateway):
+        def __init__(self, scripts):
+            super().__init__(scripts)
+            self.bridge = None
+            self.observed = []
+
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            call_index = self.calls
+            async for chunk in super().stream_chat(
+                resolution, messages, tools=tools, **kwargs
+            ):
+                yield chunk
+                owners = dict(self.bridge._live_usage_owners)
+                snapshots = {
+                    run_id: self.bridge.live_run_snapshot("conv-1", run_id)
+                    for run_id in owners
+                }
+                self.observed.append((call_index, owners, snapshots))
+
+    gateway = ObservingGateway(
+        [
+            [_fence("spawn_subagent", {"task": "compute"})],
+            ["child text"],
+            ["primary text"],
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+    gateway.bridge = bridge
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assert outcome.status == "done", outcome.steps
+    primary = gateway.observed[0]
+    primary_run = next(
+        run_id for run_id, owner in primary[1].items() if owner[1] == "primary"
+    )
+    assert primary[2][primary_run].step == 0
+    assert primary[2][primary_run].turn_usage.output_tokens > 0
+    child = gateway.observed[1]
+    child_run = next(
+        run_id for run_id, owner in child[1].items() if owner[1] != "primary"
+    )
+    assert child[2][child_run].step == 0
+    assert child[2][child_run].turn_usage.output_tokens == 3
+    assert bridge._live_turn_usage == {}
+    assert bridge._live_usage_owners == {}
+
+
+def test_live_usage_overlapping_siblings_stay_exact_and_conversation_owned():
+    bridge = _make_bridge()
+    event = console_agent_bridge.AgentLiveUsageEvent
+    bridge._live_usage_owners.update(
+        {
+            "run-a": ("conv", "subagent", "turn"),
+            "run-b": ("conv", "subagent", "turn"),
+        }
+    )
+    barrier = threading.Barrier(3)
+
+    def publish(run_id, text):
+        barrier.wait()
+        bridge._observe_live_usage(
+            event("started", run_id, "subagent", 1, 1.0),
+            conversation_id="conv",
+        )
+        bridge._observe_live_usage(
+            event("text", run_id, "subagent", 1, 1.0, text=text),
+            conversation_id="conv",
+        )
+
+    threads = [
+        threading.Thread(target=publish, args=("run-a", "a")),
+        threading.Thread(target=publish, args=("run-b", "abcdefgh")),
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        barrier.wait()
+        for thread in threads:
+            thread.join(2)
+
+        assert bridge.live_run_snapshot("conv", "run-a").turn_usage.output_tokens == 1
+        assert bridge.live_run_snapshot("conv", "run-b").turn_usage.output_tokens == 2
+        assert bridge.live_run_snapshot("foreign", "run-a") is None
+        assert len(bridge._live_turn_usage) <= len(bridge._live_usage_owners)
+        bridge._live_usage_owners.pop("run-a")
+        bridge._clear_live_usage("run-a")
+        bridge._observe_live_usage(
+            event("started", "run-a", "subagent", 2, 2.0),
+            conversation_id="conv",
+        )
+        assert bridge._live_usage_snapshot("run-a") is None
+    finally:
+        for thread in threads:
+            thread.join(2)
+
+
+def test_live_usage_sink_failure_is_once_per_call_and_contained():
+    adapter = object.__new__(_StreamingModelAdapter)
+    calls = []
+
+    def fail(_event):
+        calls.append("called")
+        raise RuntimeError("private payload")
+
+    adapter._live_usage_sink = fail
+    adapter._failed_live_usage_sequences = set()
+    adapter._live_usage_sequence_lock = threading.Lock()
+    event = console_agent_bridge.AgentLiveUsageEvent
+    adapter._emit_live_usage(event("text", "run", "primary", 1, 1.0, text="secret"))
+    adapter._emit_live_usage(event("text", "run", "primary", 1, 1.1, text="secret"))
+    adapter._emit_live_usage(event("finished", "run", "primary", 1, 1.2))
+    assert calls == ["called"]
+    assert adapter._failed_live_usage_sequences == set()
+
+
+def test_live_usage_finished_callback_failure_does_not_retain_sequence():
+    adapter = object.__new__(_StreamingModelAdapter)
+    kinds = []
+
+    def fail_finished(event):
+        kinds.append(event.kind)
+        if event.kind == "finished":
+            raise RuntimeError("private payload")
+
+    adapter._live_usage_sink = fail_finished
+    adapter._failed_live_usage_sequences = set()
+    adapter._live_usage_sequence = 0
+    adapter._live_usage_sequence_lock = threading.Lock()
+    adapter._thread_loop = threading.local()
+    adapter._chat_call_impl = lambda **_kwargs: {"choices": []}
+
+    with adapter.run_scope("run", "primary"):
+        adapter.chat_call(messages_payload=[])
+
+    assert kinds == ["started", "finished"]
+    assert adapter._failed_live_usage_sequences == set()
+
+
+def test_live_usage_late_old_primary_cannot_replace_new_turn_pointer():
+    bridge = _make_bridge()
+    bridge._live_primary_keys["conv"] = "new-turn"
+    bridge._live_primary_runs["conv"] = "new-run"
+    bridge._live_usage_owners["old-run"] = ("conv", "primary", "old-turn")
+    event = console_agent_bridge.AgentLiveUsageEvent
+
+    bridge._observe_live_usage(
+        event("started", "old-run", "primary", 1, 1.0),
+        conversation_id="conv",
+    )
+    bridge._observe_live_usage(
+        event("text", "old-run", "primary", 1, 1.0, text="late"),
+        conversation_id="conv",
+    )
+
+    assert bridge._live_primary_runs["conv"] == "new-run"
+    bridge._on_live_run_terminal("old-run", None)
+    bridge._observe_live_usage(
+        event("started", "old-run", "primary", 2, 2.0),
+        conversation_id="conv",
+    )
+    assert bridge._live_usage_snapshot("old-run") is None
+
+
+def test_live_usage_new_primary_snapshot_omits_old_turn_before_first_scalar():
+    bridge = _make_bridge()
+    event = console_agent_bridge.AgentLiveUsageEvent
+    bridge._publish_live(
+        "conv",
+        "old-turn",
+        console_agent_bridge.AgentLiveSnapshot(status="running"),
+        primary=True,
+    )
+    bridge._live_usage_owners["old-run"] = ("conv", "primary", "old-turn")
+    bridge._observe_live_usage(
+        event("started", "old-run", "primary", 1, 1.0), conversation_id="conv"
+    )
+    bridge._observe_live_usage(
+        event("text", "old-run", "primary", 1, 1.0, text="old"),
+        conversation_id="conv",
+    )
+    assert bridge.live_snapshot("conv").turn_usage is not None
+
+    bridge._publish_live(
+        "conv",
+        "new-turn",
+        console_agent_bridge.AgentLiveSnapshot(status="running"),
+        primary=True,
+    )
+    bridge._observe_live_usage(
+        event("text", "old-run", "primary", 1, 2.0, text="late old"),
+        conversation_id="conv",
+    )
+
+    assert bridge.live_snapshot("conv").turn_usage is None
+    assert bridge._live_usage_snapshot("old-run").output_tokens == 1
+
+
+def test_live_usage_shutdown_rejects_delayed_scope_entry():
+    bridge = _make_bridge()
+
+    class Adapter:
+        @contextlib.contextmanager
+        def run_scope(self, _run_id, _agent_kind):
+            yield
+
+    bridge.close_all_progress()
+    with bridge._live_usage_run_scope(Adapter(), "conv", "turn", "run", "primary"):
+        assert bridge._live_usage_owners == {}
+
+
+def test_live_usage_prune_invalidates_pre_step_owner_and_late_start():
+    bridge = _make_bridge()
+    bridge._live_usage_owners["old-child"] = ("conv", "subagent", "old-turn")
+    bridge._prune_live_run_slots("conv")
+    bridge._observe_live_usage(
+        console_agent_bridge.AgentLiveUsageEvent(
+            "started", "old-child", "subagent", 1, 1.0
+        ),
+        conversation_id="conv",
+    )
+
+    assert bridge._live_usage_owners == {}
+    assert bridge._live_usage_snapshot("old-child") is None
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        ({"input_tokens": 4, "total_tokens": 4}, []),
+        ({"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [0]),
+        ({"total_tokens": 4}, []),
+        ({"output_tokens": True}, []),
+        ({"output_tokens": 1.5}, []),
+        ({"output_tokens": "2"}, []),
+        ({"output_tokens": -1}, []),
+    ],
+)
+def test_live_usage_adapter_requires_explicit_raw_provider_output(usage, expected):
+    terminal = ProviderToolCalls((), ProviderTurnMetadata("stop", usage=usage))
+    gateway = _ChunkGateway([[terminal]])
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    events = []
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=gateway,
+        resolution=_test_resolution(),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        live_usage_sink=events.append,
+    )
+    try:
+        with adapter.run_scope("run", "primary"):
+            adapter.chat_call(messages_payload=[{"role": "user", "content": "hi"}])
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(2)
+        loop.close()
+
+    assert not loop_thread.is_alive()
+    assert [
+        event.provider_output_tokens
+        for event in events
+        if event.kind == "provider_usage"
+    ] == expected
+
+
+def test_terminal_usage_snapshot_failure_is_observational_and_finishes(
+    monkeypatch,
+):
+    class MetadataGateway(ConsoleProviderGateway):
+        async def stream_chat(self, *_args, **_kwargs):
+            yield ProviderToolCalls((), ProviderTurnMetadata("stop", usage=None))
+
+    def fail_snapshot(_self):
+        raise RuntimeError("private terminal snapshot")
+
+    monkeypatch.setattr(
+        console_agent_bridge.ConsoleProviderCallSignals,
+        "usage_snapshot",
+        fail_snapshot,
+    )
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    events = []
+    warnings = []
+    sink_id = logger.add(warnings.append, level="WARNING", format="{message}")
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=MetadataGateway(),
+        resolution=_test_resolution(),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        live_usage_sink=events.append,
+    )
+    try:
+        with adapter.run_scope("run", "primary"):
+            response = adapter.chat_call(
+                messages_payload=[{"role": "user", "content": "hi"}]
+            )
+    finally:
+        logger.remove(sink_id)
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(2)
+        loop.close()
+
+    assert response["choices"][0]["message"]["content"] == ""
+    assert "usage" not in response
+    assert [event.kind for event in events] == ["started", "finished"]
+    assert adapter._failed_live_usage_sequences == set()
+    assert (
+        warnings.count(
+            "usage accounting failed after a successful provider turn; "
+            "completing the turn without usage (exception_type=RuntimeError)\n"
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize("fault", ["snapshot", "extractor"])
+def test_live_usage_chunk_observation_failure_does_not_truncate_provider_text(
+    monkeypatch,
+    fault,
+):
+    """Optional in-flight accounting cannot become a stream dependency."""
+
+    class TextGateway(ConsoleProviderGateway):
+        async def stream_chat(self, *_args, **_kwargs):
+            yield "complete "
+            yield "provider text"
+
+    if fault == "snapshot":
+        monkeypatch.setattr(
+            console_agent_bridge.ConsoleProviderCallSignals,
+            "usage_snapshot",
+            lambda _self: (_ for _ in ()).throw(RuntimeError("private snapshot")),
+        )
+    else:
+        monkeypatch.setattr(
+            _StreamingModelAdapter,
+            "_provider_output_count",
+            staticmethod(
+                lambda _usage: (_ for _ in ()).throw(RuntimeError("private extraction"))
+            ),
+        )
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    events = []
+    warnings = []
+    sink_id = logger.add(warnings.append, level="WARNING", format="{message}")
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=TextGateway(),
+        resolution=_test_resolution(),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        live_usage_sink=events.append,
+    )
+    try:
+        with adapter.run_scope("run", "primary"):
+            response = adapter.chat_call(
+                messages_payload=[{"role": "user", "content": "hi"}]
+            )
+    finally:
+        logger.remove(sink_id)
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(2)
+        loop.close()
+
+    assert response["choices"][0]["message"]["content"] == ("complete provider text")
+    assert store.get_message(assistant.id).content == "complete provider text"
+    assert events[0].kind == "started"
+    assert events[-1].kind == "finished"
+    assert adapter._failed_live_usage_sequences == set()
+    assert (
+        warnings.count(
+            "live provider usage observation failed; telemetry disabled for call\n"
+        )
+        == 1
+    )
+
+
+def test_terminal_usage_signal_fallback_preserves_explicit_output(monkeypatch):
+    class MetadataGateway(ConsoleProviderGateway):
+        async def stream_chat(self, *_args, **_kwargs):
+            yield ProviderToolCalls((), ProviderTurnMetadata("stop", usage=None))
+
+    monkeypatch.setattr(
+        console_agent_bridge.ConsoleProviderCallSignals,
+        "usage_snapshot",
+        lambda _self: {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+    )
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    events = []
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=MetadataGateway(),
+        resolution=_test_resolution(),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        live_usage_sink=events.append,
+    )
+    try:
+        with adapter.run_scope("run", "primary"):
+            response = adapter.chat_call(
+                messages_payload=[{"role": "user", "content": "hi"}]
+            )
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(2)
+        loop.close()
+
+    assert response["usage"]["completion_tokens"] == 2
+    assert [
+        event.provider_output_tokens
+        for event in events
+        if event.kind == "provider_usage"
+    ] == [2]
+    assert events[-1].kind == "finished"
+
+
+def test_live_usage_two_fleet_streams_publish_pre_step_through_adapter(
+    tmp_path,
+):
+    gate = threading.Event()
+
+    class StreamingChildrenGateway(_FleetTwoChildGateway):
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            system = str(messages[0].get("content", "")) if messages else ""
+            if not system.startswith(SUBAGENT_PROMPT_PREFIX):
+                async for chunk in super().stream_chat(
+                    resolution, messages, tools=tools, **kwargs
+                ):
+                    yield chunk
+                return
+            task_text = str(messages[-1].get("content", "")) if messages else ""
+            yield "a" if "task A" in task_text else "abcdefgh"
+            with self._count_lock:
+                self.child_calls += 1
+                if self.child_calls >= self._needed:
+                    self.entered_event.set()
+            await asyncio.get_running_loop().run_in_executor(None, self._gate.wait)
+
+    gateway = StreamingChildrenGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "task A"})],
+            [_fence("spawn_subagent", {"task": "task B"})],
+            ["parent final"],
+        ],
+        child_result=[],
+        gate=gate,
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+    result = {}
+
+    runner = threading.Thread(
+        target=lambda: result.setdefault(
+            "outcome",
+            _run(
+                bridge,
+                store,
+                session,
+                assistant_id,
+                conversation_id="conv-live-fleet",
+            ),
+        ),
+        name="test-live-fleet-usage",
+    )
+    runner.start()
+    try:
+        assert gateway.entered_event.wait(5)
+        handles = bridge.fleet_snapshot("conv-live-fleet")
+        assert len(handles) == 2
+        snapshots = [
+            bridge.live_run_snapshot("conv-live-fleet", handle.run_id)
+            for handle in handles
+        ]
+        assert all(
+            snapshot is not None and snapshot.step == 0 for snapshot in snapshots
+        )
+        counts_by_task = {
+            handle.task: snapshot.turn_usage.output_tokens
+            for handle, snapshot in zip(handles, snapshots, strict=True)
+        }
+        assert counts_by_task == {"task A": 1, "task B": 2}
+        assert len({snapshot.turn_usage.sequence for snapshot in snapshots}) == 2
+    finally:
+        gate.set()
+        runner.join(10)
+        _join_fleet_threads()
+    assert not runner.is_alive()
+    assert result["outcome"].status == "done"
+    assert bridge._live_turn_usage == {}
+    assert bridge._live_usage_owners == {}
+
+
 # --- ADR-147 Task 6B: `_StreamingModelAdapter.chat_call` honors the per-call
 # routing kwargs Task 6 emits for a spawned child (`api_endpoint`, `model`,
 # `api_base_url`, and the 13 `_CHAT_CALL_PARAM_MAP` sampling kwargs) instead
@@ -10841,7 +11448,8 @@ def _routing_parent_resolution():
 
 @contextlib.contextmanager
 def _streaming_adapter(
-    resolution, gateway, *, continuation_target=None, continuation_owner_key=None
+    resolution, gateway, *, continuation_target=None, continuation_owner_key=None,
+    live_usage_sink=None,
 ):
     """A `_StreamingModelAdapter` on its own driver thread (the :2324 pattern)."""
     store = ConsoleChatStore()
@@ -10862,6 +11470,7 @@ def _streaming_adapter(
         native_tools=False,
         continuation_target=continuation_target,
         continuation_owner_key=continuation_owner_key,
+        live_usage_sink=live_usage_sink,
     )
     try:
         yield adapter
@@ -10873,7 +11482,7 @@ def _streaming_adapter(
 
 def _routed_child_messages():
     return [
-        {"role": "system", "content": SUBAGENT_PROMPT_PREFIX},
+        {"role": "system", "content": bridge_module.get_internal_prompt("agents.subagent_system")},
         {"role": "user", "content": "child task"},
     ]
 
@@ -11184,3 +11793,91 @@ def test_custom_ep_parent_child_routed_to_builtin_family_resolves_independently(
     assert resolution.provider == "llama_cpp"
     assert resolution.model == "llama-3-8b"
     assert resolution.base_url == ""
+
+
+def test_routed_child_keeps_live_usage_scope_and_provider_counts():
+    events = []
+    terminal = ProviderToolCalls((), ProviderTurnMetadata(
+        "stop", usage={"completion_tokens": 9}
+    ))
+    gateway = _RoutingGateway(chunks=("routed answer", terminal))
+    with _streaming_adapter(
+        _routing_parent_resolution(), gateway, live_usage_sink=events.append
+    ) as adapter:
+        with adapter.run_scope("routed-child", "subagent"):
+            adapter.chat_call(
+                api_endpoint="custom-ep:qwen-local", model="qwen3.8-27b",
+                api_base_url="http://127.0.0.1:8080", temp=0.2,
+                messages_payload=_routed_child_messages(),
+            )
+    assert events[0].kind == "started"
+    assert events[-1].kind == "finished"
+    assert {event.run_id for event in events} == {"routed-child"}
+    assert {event.agent_kind for event in events} == {"subagent"}
+    assert {event.sequence for event in events} == {events[0].sequence}
+    assert any(event.text == "routed answer" for event in events)
+    assert any(event.provider_output_tokens == 9 for event in events)
+    assert gateway.stream_calls[0][0].temperature == 0.2
+
+
+def test_same_provider_child_clears_parent_only_sampling_values():
+    parent = replace(
+        _routing_parent_resolution(), seed=123, reasoning_effort="high", top_k=70,
+        thinking_budget_tokens=9000,
+    )
+    gateway = _RoutingGateway()
+    with _streaming_adapter(parent, gateway) as adapter:
+        adapter.chat_call(
+            api_endpoint="moonshot", model=parent.model, temp=0.2, topp=0.8,
+            messages_payload=_routed_child_messages(),
+        )
+    child_resolution = gateway.stream_calls[0][0]
+    assert child_resolution.seed is None
+    assert child_resolution.reasoning_effort is None
+    assert child_resolution.top_k is None
+    assert child_resolution.thinking_budget_tokens is None
+    assert child_resolution.temperature == 0.2
+    assert parent.seed == 123
+
+
+@pytest.mark.parametrize("family", ["llama_cpp", "openai_compatible"])
+def test_routed_adapter_real_gateway_keeps_saved_url_after_registry_edit(monkeypatch, family):
+    import httpx
+
+    requests = []
+    def handler(request):
+        requests.append(str(request.url))
+        return httpx.Response(200, json={"data": [{"id": "child-model"}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ConsoleProviderGateway(
+        http_client=client,
+        config_provider=lambda: {"custom_endpoints": {"gpu": {
+            "display_name": "GPU", "family": family,
+            "base_url": "http://edited-server:9090", "models": ["child-model"],
+        }}},
+        environ={},
+    )
+    streamed = []
+    async def stream_chat(resolution, messages, **kwargs):
+        streamed.append(resolution)
+        yield "child answer"
+
+    # Preserve the real send-resolution boundary; only provider transport and
+    # request framing are outside this endpoint-authority regression.
+    monkeypatch.setattr(gateway, "stream_chat", stream_chat)
+    monkeypatch.setattr(gateway, "prepare_chat_request", None)
+    try:
+        with _streaming_adapter(_routing_parent_resolution(), gateway) as adapter:
+            result = adapter.chat_call(
+                api_endpoint="custom-ep:gpu", model="child-model",
+                api_base_url="http://saved-server:8080", temp=0.2,
+                messages_payload=_routed_child_messages(),
+            )
+        assert result["choices"][0]["message"]["content"] == "child answer"
+        suffix = "/v1/chat/completions" if family == "openai_compatible" else ""
+        assert streamed[0].base_url == "http://saved-server:8080" + suffix
+        assert streamed[0].selected_provider == "custom-ep:gpu"
+        assert all(url.startswith("http://saved-server:8080") for url in requests)
+    finally:
+        asyncio.run(client.aclose())

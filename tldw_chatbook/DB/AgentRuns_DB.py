@@ -31,9 +31,38 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from tldw_chatbook.Chat.sampling_params import params_to_dict
 from .base_db import BaseDB
+
 if TYPE_CHECKING:
     from .automatic_work import AutomaticWorkLedger
 
+
+AGENT_WORKTREES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_worktrees (
+    run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),
+    workspace_id TEXT NOT NULL,
+    binding_id TEXT NOT NULL,
+    locator_fingerprint TEXT NOT NULL,
+    repo_root TEXT NOT NULL,
+    repo_identity TEXT NOT NULL,
+    git_common_dir TEXT NOT NULL,
+    git_common_identity TEXT NOT NULL,
+    child_path TEXT NOT NULL,
+    child_identity TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    base_sha TEXT NOT NULL,
+    execution_id TEXT NOT NULL,
+    writer_state TEXT NOT NULL DEFAULT 'held'
+        CHECK(writer_state IN ('held', 'drained', 'uncertain')),
+    mutation_state TEXT NOT NULL DEFAULT 'unresolved'
+        CHECK(mutation_state IN ('unresolved', 'applying', 'merging', 'discarding',
+            'applied', 'merged', 'discarded_cleanup_pending', 'uncertain')),
+    operation_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_worktrees_scope
+    ON agent_worktrees(workspace_id, binding_id, run_id);
+"""
 
 AUTOMATIC_WORK_SCHEMA = """
 CREATE TABLE IF NOT EXISTS automatic_work_runtime_owner (
@@ -215,14 +244,15 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    # Numbering note (v19): the routing snapshot was planned as v16 when this
+    # Numbering note (v21): the routing snapshot was planned as v16 when this
     # branch forked (ADR-147, TASK-32477); dev landed its own v16
-    # (budget_tokens), v17 (automatic_work), and v18 (runtime_owner) via
-    # #2641 in the meantime, so the routing migration renumbers to v19 and
-    # chains after v18. The guarded ALTERs below are idempotent either way,
-    # and the from-now-on contract only requires the constant to equal the
-    # HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 19
+    # (budget_tokens), v17 (automatic_work), v18 (runtime_owner) via #2641,
+    # then v19 (definition_wall_seconds) and v20 (worktree_recovery) via
+    # #2665 while this PR awaited merge, so the routing migration renumbers
+    # to v21 and chains after v20. The guarded ALTERs below are idempotent
+    # either way, and the from-now-on contract only requires the constant to
+    # equal the HIGHEST recorded version.
+    _CURRENT_SCHEMA_VERSION = 21
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -410,14 +440,14 @@ class AgentRunsDB(BaseDB):
                         budget_tokens IS NULL OR
                         (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)
                     ),
-                    -- v19 (ADR-147, TASK-32477; planned as v16, renumbered
-                    -- after dev landed its own v16-v18 via #2641): the
+                    -- v21 (ADR-147, TASK-32477; planned as v16, renumbered
+                    -- past dev's v16-v20 via #2641 and #2665): the
                     -- resolved-target snapshot -- where this run's agent
                     -- ACTUALLY went after preset routing resolved
                     -- (provider, model, base_url, and the merged params as
                     -- a raw JSON object string). Written once at spawn
                     -- (Task 6); read back verbatim on resume/continuation
-                    -- (Task 8). NULL for every pre-v19 row and for runs
+                    -- (Task 8). NULL for every pre-v21 row and for runs
                     -- spawned without routing resolution.
                     resolved_provider TEXT,
                     resolved_model TEXT,
@@ -504,13 +534,14 @@ class AgentRunsDB(BaseDB):
                     instructions TEXT NOT NULL DEFAULT '',
                     tool_allowlist TEXT NOT NULL DEFAULT '[]',
                     model TEXT NOT NULL DEFAULT '',
-                    -- v16 (ADR-147, TASK-32477): preset routing -- the
+                    -- v21 (ADR-147, TASK-32477): preset routing -- the
                     -- provider this definition pins ('' = inherit the
                     -- caller's provider at spawn) and its sampling-param
                     -- overrides as a JSON object string ('{}' = none).
                     provider TEXT NOT NULL DEFAULT '',
                     params_json TEXT NOT NULL DEFAULT '{}',
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    max_wall_seconds REAL,
                     deleted INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -661,6 +692,17 @@ class AgentRunsDB(BaseDB):
                     "REFERENCES automatic_work_chains(id)"
                 )
             conn.executescript(AUTOMATIC_WORK_SCHEMA)
+            conn.executescript(AGENT_WORKTREES_SCHEMA)
+            definition_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(agent_definitions)"
+                ).fetchall()
+            }
+            if "max_wall_seconds" not in definition_columns:
+                conn.execute(
+                    "ALTER TABLE agent_definitions ADD COLUMN max_wall_seconds REAL"
+                )
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -733,11 +775,11 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT"
                 )
-            # v18->v19 (ADR-147, TASK-32477): preset routing fields on
+            # v20->v21 (ADR-147, TASK-32477): preset routing fields on
             # agent_definitions; resolved-target snapshot on agent_runs.
             # Same idempotent-ALTER mechanism as every column above.
-            # (Numbering: planned as v16; renumbered after dev landed its
-            # own v16-v18 via #2641 -- see the note at
+            # (Numbering: planned as v16; renumbered past dev's v16-v20
+            # landed via #2641 and #2665 -- see the note at
             # _CURRENT_SCHEMA_VERSION.)
             definition_columns = {
                 row[1]
@@ -809,10 +851,12 @@ class AgentRunsDB(BaseDB):
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (16)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (17)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (18)")
-            # v19 (ADR-147, TASK-32477): agent_definitions provider/params_json
-            # + agent_runs resolved-target snapshot (planned as v16;
-            # renumbered when dev landed its own v16-v18 via #2641).
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (19)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (20)")
+            # v21 (ADR-147, TASK-32477): agent_definitions provider/params_json
+            # + agent_runs resolved-target snapshot (planned as v16;
+            # renumbered past dev's v16-v20, landed via #2641 and #2665).
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (21)")
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection
@@ -1773,7 +1817,7 @@ class AgentRunsDB(BaseDB):
             run_id: Preallocated stable identity; generated when omitted.
             work_chain_id: Immutable accepted-work lineage. Children inherit
                 their parent's chain when omitted; legacy roots remain NULL.
-            resolved_provider: v19 (ADR-147, TASK-32477): the provider the
+            resolved_provider: v21 (ADR-147, TASK-32477): the provider the
                 spawn actually routed to after preset resolution; ``None``
                 when routing was not resolved at spawn time.
             resolved_model: The resolved model id; ``None`` likewise.
@@ -1849,6 +1893,9 @@ class AgentRunsDB(BaseDB):
         errors = validate_agent_definition(defn)
         if errors:
             raise ValueError("; ".join(errors))
+        wall_cap = (
+            float(defn.max_wall_seconds) if defn.max_wall_seconds is not None else None
+        )
         definition_id = uuid.uuid4().hex
         now = _now_iso()
         try:
@@ -1856,9 +1903,9 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     """INSERT INTO agent_definitions
                        (id, name, description, instructions, tool_allowlist,
-                        model, provider, params_json, enabled, deleted,
-                        created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                        model, provider, params_json, enabled,
+                        max_wall_seconds, deleted, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
                     (
                         definition_id,
                         defn.name,
@@ -1869,6 +1916,7 @@ class AgentRunsDB(BaseDB):
                         defn.provider,
                         json.dumps(params_to_dict(defn.params)),
                         1 if defn.enabled else 0,
+                        wall_cap,
                         now,
                         now,
                     ),
@@ -1892,13 +1940,17 @@ class AgentRunsDB(BaseDB):
         errors = validate_agent_definition(defn)
         if errors:
             raise ValueError("; ".join(errors))
+        wall_cap = (
+            float(defn.max_wall_seconds) if defn.max_wall_seconds is not None else None
+        )
         try:
             with self.transaction() as conn:
                 cursor = conn.execute(
                     """UPDATE agent_definitions
                        SET name = ?, description = ?, instructions = ?,
                            tool_allowlist = ?, model = ?, provider = ?,
-                           params_json = ?, enabled = ?, updated_at = ?
+                           params_json = ?, enabled = ?,
+                           max_wall_seconds = ?, updated_at = ?
                        WHERE id = ? AND deleted = 0""",
                     (
                         defn.name,
@@ -1909,6 +1961,7 @@ class AgentRunsDB(BaseDB):
                         defn.provider,
                         json.dumps(params_to_dict(defn.params)),
                         1 if defn.enabled else 0,
+                        wall_cap,
                         _now_iso(),
                         definition_id,
                     ),
@@ -1928,7 +1981,7 @@ class AgentRunsDB(BaseDB):
     def _definition_row_to_dict(self, row: sqlite3.Row) -> dict:
         data = {key: row[key] for key in row.keys()}
         data["tool_allowlist"] = json.loads(data["tool_allowlist"] or "[]")
-        # v16 (ADR-147, TASK-32477): hand ``definition_from_row`` a decoded
+        # v21 (ADR-147, TASK-32477): hand ``definition_from_row`` a decoded
         # params mapping under the ``params`` key -- the same contract
         # ``tool_allowlist`` above follows (JSON text in, decoded value
         # out). ``provider`` needs no decoding and flows through as-is.
@@ -2588,7 +2641,7 @@ class AgentRunsDB(BaseDB):
             conn.close()
 
     def get_run_resolved_target(self, run_id: str) -> dict | None:
-        """Fetch the v16 resolved-target snapshot for ``run_id``.
+        """Fetch the v21 resolved-target snapshot for ``run_id``.
 
         ADR-147 (TASK-32477, Task 8): the spawn resolver's frozen target --
         where this run ACTUALLY ran -- which a resume/continuation reuses
@@ -2602,7 +2655,7 @@ class AgentRunsDB(BaseDB):
             raw column values (``params_json`` kept as the raw JSON object
             string, exactly as stored), or ``None`` when the row does not
             exist or carries no snapshot (NULL ``resolved_provider`` --
-            every legacy pre-v16 row), so callers fall back to live
+            every legacy pre-v21 row), so callers fall back to live
             re-resolution.
         """
         with self.connection() as conn:

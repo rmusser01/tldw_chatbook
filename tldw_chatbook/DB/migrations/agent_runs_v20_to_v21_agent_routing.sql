@@ -1,4 +1,4 @@
--- AgentRuns schema migration: v18 -> v19
+-- AgentRuns schema migration: v20 -> v21
 --
 -- ADR-147, TASK-32477 (agent provider routing): preset routing fields on
 -- agent_definitions (provider, params_json) and the resolved-target snapshot
@@ -7,8 +7,9 @@
 -- at spawn and read back verbatim on resume/continuation).
 --
 -- Numbering: planned as v15 -> v16 when the branch forked; renumbered to
--- v18 -> v19 after dev landed its own v16 (budget_tokens), v17
--- (automatic_work), and v18 (runtime_owner) via #2641.
+-- v20 -> v21 after dev landed its own v16 (budget_tokens), v17
+-- (automatic_work), v18 (runtime_owner), v19 (definition wall cap),
+-- and v20 (worktree recovery) via #2641 and #2665.
 --
 -- Applied at runtime by AgentRunsDB._initialize_schema's PRAGMA-guarded
 -- idempotent ALTERs; this file is the per-version audit record, matching

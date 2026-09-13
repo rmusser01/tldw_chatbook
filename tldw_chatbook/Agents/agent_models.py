@@ -409,6 +409,30 @@ class ToolCall:
     rationale: str = ""
 
 
+ApprovalDecision: TypeAlias = Literal["approved", "denied"]  # noqa: UP040
+
+
+@dataclass(frozen=True)
+class ToolReviewDecision:
+    """A review verdict with optional authoritative approval provenance."""
+
+    verdict: str
+    approval_decision: ApprovalDecision | None = None
+
+
+ToolReviewValue: TypeAlias = str | ToolReviewDecision  # noqa: UP040
+
+
+def normalize_tool_review(value: ToolReviewValue) -> ToolReviewDecision:
+    """Normalize one selected review value without inferring provenance."""
+    if isinstance(value, ToolReviewDecision):
+        fact = value.approval_decision
+        return ToolReviewDecision(
+            value.verdict, fact if fact in ("approved", "denied") else None
+        )
+    return ToolReviewDecision(value)
+
+
 @dataclass(frozen=True)
 class ToolResult:
     ok: bool
@@ -417,18 +441,28 @@ class ToolResult:
     # Optional refusal provenance lets the runtime distinguish a permission
     # block from an ordinary failed dispatch without interpreting payload text.
     outcome: ToolOutcome | None = None
+    approval_decision: ApprovalDecision | None = field(default=None, kw_only=True)
 
     @classmethod
-    def blocked(cls, error: str) -> ToolResult:
+    def blocked(
+        cls, error: str, *, approval_decision: ApprovalDecision | None = None
+    ) -> ToolResult:
         """Return a permission/policy refusal with structured provenance.
 
         Args:
             error: User-visible refusal reason.
+            approval_decision: Optional authoritative approval fact supplied by
+                the review owner. This metadata never grants permission.
 
         Returns:
             A failed tool result explicitly classified as blocked.
         """
-        return cls(ok=False, error=error, outcome=TOOL_OUTCOME_BLOCKED)
+        return cls(
+            ok=False,
+            error=error,
+            outcome=TOOL_OUTCOME_BLOCKED,
+            approval_decision=approval_decision,
+        )
 
 
 @dataclass(frozen=True)
@@ -559,6 +593,23 @@ class ModelTurn:
     provider_continuation: ProviderContinuationCheckpoint | None = None
 
 
+DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT = 3
+
+
+def coerce_denial_circuit_breaker_limit(value: object) -> int:
+    """Resolve the per-run denial limit without accepting bools or numerics."""
+    if type(value) is int and value >= 0:
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isascii() and stripped.isdigit():
+            try:
+                return int(stripped)
+            except ValueError:
+                pass
+    return DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT
+
+
 @dataclass(frozen=True)
 class RunBudget:
     """Caps bounding one agent run: steps, wall-clock, sub-agents, and
@@ -628,6 +679,7 @@ class RunBudget:
     #: once to start wrapping up. The notice rides the newest tool result --
     #: never a synthetic user turn -- so the prompt-cache prefix stays intact.
     budget_warning_fraction: float = 0.8
+    denial_circuit_breaker_limit: int = DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT
 
     def __post_init__(self) -> None:
         if self.max_steps > MAX_RUN_CONTROL_STEPS:
@@ -635,6 +687,11 @@ class RunBudget:
                 f"max_steps must be <= {MAX_RUN_CONTROL_STEPS} to preserve "
                 "agent trace storage bands"
             )
+        object.__setattr__(
+            self,
+            "denial_circuit_breaker_limit",
+            coerce_denial_circuit_breaker_limit(self.denial_circuit_breaker_limit),
+        )
 
 
 #: Fleet spec §4: validation caps for user-authored agent definitions.
@@ -671,6 +728,7 @@ class AgentDefinition:
     tool_allowlist: tuple[str, ...] = ()
     model: str = ""
     enabled: bool = True
+    max_wall_seconds: float | None = None
     provider: str = ""
     params: tuple[tuple[str, object], ...] = ()
 
@@ -700,6 +758,16 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
         errors.append(
             f"instructions exceed {AGENT_DEFINITION_INSTRUCTIONS_MAX_CHARS} chars"
         )
+    cap = defn.max_wall_seconds
+    if cap is not None:
+        valid_cap = isinstance(cap, (int, float)) and not isinstance(cap, bool)
+        if valid_cap:
+            try:
+                valid_cap = math.isfinite(cap) and cap > 0
+            except (OverflowError, TypeError, ValueError):
+                valid_cap = False
+        if not valid_cap:
+            errors.append("max_wall_seconds must be a finite positive number")
     if defn.provider:
         if defn.provider.startswith("custom-ep:"):
             # Lazy: keeps Agents/ -> Chat/ edges out of module import time.
@@ -728,18 +796,20 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
 def definition_fingerprint(defn: AgentDefinition) -> str:
     """16-hex-char content hash of the fields that shape a child run.
 
-    Covers instructions/tool_allowlist/model, plus provider/params WHEN SET
-    — the audit identity of what actually ran (spec §4, ADR-147).
-    description/enabled are presentation. The conditional inclusion keeps a
-    legacy provider-less/params-less preset's payload byte-identical to its
-    pre-ADR-147 shape, so fingerprints persisted on existing run rows stay
-    comparable.
+    Covers instructions, tool allow-list, model, an optional wall cap, plus
+    provider/params WHEN SET (spec §4, ADR-147) — the audit identity of what
+    actually ran. Description/enabled are presentation. The conditional
+    inclusion keeps a legacy provider-less/params-less preset's payload
+    byte-identical to its pre-ADR-147 shape, so fingerprints persisted on
+    existing run rows stay comparable.
     """
     payload_dict = {
         "instructions": defn.instructions,
         "tool_allowlist": sorted(defn.tool_allowlist),
         "model": defn.model,
     }
+    if defn.max_wall_seconds is not None:
+        payload_dict["max_wall_seconds"] = float(defn.max_wall_seconds)
     if defn.provider:
         payload_dict["provider"] = defn.provider
     if defn.params:
@@ -759,6 +829,7 @@ def definition_from_row(row: dict) -> AgentDefinition:
         tool_allowlist=tuple(row["tool_allowlist"]),
         model=row["model"],
         enabled=bool(row["enabled"]),
+        max_wall_seconds=row.get("max_wall_seconds"),
         provider=row.get("provider", ""),
         params=params_to_tuple(row.get("params", {})),
     )
@@ -927,6 +998,7 @@ class RunOutcome:
     # coordinator's retention store reads it off the outcome;
     # ``AgentService._persist`` never writes it to the database.
     final_messages: list[dict] | None = None
+    denial_count: int = 0
 
 
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:
@@ -981,17 +1053,12 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
     ``max_subagents`` is zeroed — depth-1 sub-agents never spawn.
     Steps are per-run and stay at the child's own default.
     """
-    return RunBudget(
-        max_steps=child.max_steps,
+    return replace(
+        child,
         max_wall_seconds=min(
             child.max_wall_seconds, max(parent_remaining_seconds, 1.0)
         ),
         max_subagents=0,
-        max_subagent_result_chars=child.max_subagent_result_chars,
-        max_tool_result_chars=child.max_tool_result_chars,
-        max_model_turns=child.max_model_turns,
-        max_total_tokens=child.max_total_tokens,
-        max_tool_call_seconds=child.max_tool_call_seconds,
     )
 
 
@@ -1109,13 +1176,8 @@ def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget
     """
     if not math.isfinite(max_wall_seconds):
         max_wall_seconds = 1.0
-    return RunBudget(
-        max_steps=child.max_steps,
+    return replace(
+        child,
         max_wall_seconds=max(max_wall_seconds, 1.0),
         max_subagents=0,
-        max_subagent_result_chars=child.max_subagent_result_chars,
-        max_tool_result_chars=child.max_tool_result_chars,
-        max_model_turns=child.max_model_turns,
-        max_total_tokens=child.max_total_tokens,
-        max_tool_call_seconds=child.max_tool_call_seconds,
     )

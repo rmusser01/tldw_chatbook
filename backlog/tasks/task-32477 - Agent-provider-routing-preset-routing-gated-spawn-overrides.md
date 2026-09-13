@@ -1,10 +1,10 @@
 ---
 id: TASK-32477
 title: 'Agent provider routing: preset routing + gated spawn overrides'
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-09-12 00:57'
-updated_date: '2026-09-12 17:42'
+updated_date: '2026-09-13 19:31'
 labels:
   - agents
   - console
@@ -32,6 +32,16 @@ Let a Console master/control agent spawn sub-agents onto a specific provider+mod
 
 <!-- SECTION:PLAN:BEGIN -->
 Full plan: Docs/superpowers/plans/2026-09-11-agent-provider-routing.md (executed via subagent-driven development; ledger at .superpowers/sdd/2026-09-11-agent-provider-routing/progress.md). Twelve tasks as executed: T1 sampling_params module; T2 registry entry params (amends ADR-146); T3 AgentDefinition provider/params with legacy-stable fingerprint; T4 AgentRuns schema v16 (12→16 jump — dev's 13–15 land separately; idempotent ALTERs, provably merge-safe); T5 pure resolver + six-layer params; T6 spawn integration (resolver hook before budget, child config, run snapshot); T6B PLAN AMENDMENT — _StreamingModelAdapter honors per-call routing kwargs (added after T6 review confirmed the production adapter swallowed api_endpoint/api_base_url/all sampling kwargs into **_ignored; without it the feature was inert in production); T7 spawn schema gating + roster visibility; T8 continuation reuses persisted snapshot (+ re-freeze onto resumed rows); T9 settings UI (preset routing, defaults, override policy, Test routing dry-run) + endpoint modal params; T10 config template (keys commented out) + user guide; T11 sandboxed live verification (6/6 PASS, evidence below). Follow-ups filed: TASK-32497 (rail resolved-target display), TASK-32498 (custom-ep/built-in conflation), TASK-32499 (polish bundle), TASK-32532 (pre-existing D2 defect), TASK-32508 (fallback_models, pre-existing).
+### PR #2651 integration recovery — 2026-09-13
+
+1. Preserve published head `1de64e158b` and the abandoned rebase checkout; merge current `origin/dev` (`8a6ba98c0d`) into an isolated recovery branch.
+2. Reconcile routing with landed orchestration ownership, definition caps, Settings editing, and gateway changes. Preserve both sets of behavior and regression coverage; advance routing migration beyond dev schema v20.
+3. Regenerate diagnostics, reconcile documentation and task IDs, run targeted routing/bridge/DB/Settings and integration checks, and review the combined diff. Repair review-confirmed production gaps in complete child sampling isolation and snapshot URL precedence through the real gateway, with regression controls for ordinary session behavior.
+4. Record exact verification and leave the result ready for PR publication.
+
+ADR required: no (no new architectural decision).
+ADR path: backlog/decisions/147-agent-provider-routing.md; existing orchestration ADRs govern landed behavior.
+Reason: integration repair implements existing contracts; migration renumbering avoids a collision without changing data ownership.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -58,4 +68,8 @@ Defects found during verification:
 - D3 (harness, not product): Stage A's first empty Test-routing report was my own button-out-of-viewport geometry.
 
 Task left at To Do / not marked Done per the verification brief — DoD review belongs to the parent flow.
+
+PR #2651 recovery (2026-09-13): integrated published head 1de64e158b with dev 8a6ba98c0d in isolated codex/pr-2651-resume. Preserved landed orchestration ownership/recovery, definition caps, live usage and Settings presets; routing migration is now v21. Fixed review-confirmed child sampling leakage and frozen endpoint URL precedence through the real gateway. Retained both documentation additions and corrected stale allowlist/rail claims. Existing ADR-147 applies (no new ADR); schema and delivered-scope notes updated there.
+
+Verification: combined targeted run 1687 passed / 3 failed; Settings paint synchronization repaired and 38-test rerun passed; two remaining unchanged session-settings failures reproduce identically on clean current dev. Joined adapter/real-gateway regressions 2 passed; catalog/endpoint tests 40 passed; boot census 4 passed at 975/975; all derived checks and critical Ruff/whitespace checks pass. Independent review and scoped re-review have no outstanding findings. Full suite not run; broad lint/formatter cleanliness not claimed. Detailed evidence: Docs/superpowers/reviews/2026-09-13-pr-2651-recovery.md. Task remains In Progress pending PR publication/final closeout rather than declaring every repository DoD gate globally green.
 <!-- SECTION:NOTES:END -->

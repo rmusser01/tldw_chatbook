@@ -94,6 +94,15 @@ the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. A sub-agent's work never appears here;
 it belongs to the Inspect rail's **Agents** section.
 
+While a model call is generating or thinking, this line may also show its
+current output count. `17 provider output tok` means the provider supplied an
+explicit count. `~17 local output tok` is Chatbook's local estimate from the
+text received so far. The count belongs only to the current model call: it
+resets for the next call and disappears while a tool or approval is waiting and
+when the call finishes. Missing usage and an explicit provider count of zero
+show no segment. Live counts do not include a price estimate and are separate
+from the completed run's budget-token accounting.
+
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
 
@@ -110,8 +119,13 @@ reply:
   (Back)`) and the **Cancel all agents** button, both reached from the
   Inspect rail's **Agents** section — see below.
 - **View full log** opens the "Full run log — <run id>" window: the complete,
-  untruncated record ("what the model actually saw, before the Console's
-  display cap trimmed it"). **Close** or **Esc** dismisses it.
+  stored record beyond the Console display cap, loaded one page at a time.
+  **Next** advances, **Previous** reloads the previous page, and **First**
+  returns to the beginning (also after older navigation history is dropped).
+  Large records continue across pages; any writer storage truncation is
+  identified separately. A scan with no matching records can still offer
+  **Next**. If access is lost, the last loaded page stays visible.
+  **Close** or **Esc** dismisses the window, including while a page loads.
 
 **In the Inspector** (right rail) — the "Status:" line tracks the run
 (`Status: Ready` / `Status: Generating…` / `Status: Needs approval` /
@@ -229,6 +243,43 @@ Region     Which regions? (pick any)
 
 The tool is on by default. To remove it from every agent, set
 `ask_user_enabled = false` under `[tools]`.
+### Recovering saved agent work
+
+Confirmed Merge uses your Git user identity. If Git cannot resolve an author or
+committer, configure `user.name` and `user.email` for the selected repository
+and retry; Chatbook checks this before capturing or merging child work. Apply
+continues to leave unstaged changes without creating a parent merge commit.
+
+If worktree creation succeeds but authority changes or its ownership record
+cannot be saved, the failed run explains that the checkout is retained for
+manual review. It may be absent from the recovery picker when no ownership row
+was saved. Chatbook does not delete or adopt an unrecorded checkout automatically.
+
+
+### Consecutive tool denials
+
+Console agent runs stop after three consecutive authoritative tool denials by
+default. Set `[agents] denial_circuit_breaker_limit` to another nonnegative
+integer; zero disables this breaker. A nonempty
+`TLDW_AGENTS_DENIAL_CIRCUIT_BREAKER_LIMIT` takes precedence over TOML. Invalid
+values use the conservative default of three; blank environment values use TOML.
+
+### Run lifecycle webhooks are bounded and best effort
+
+When `[webhooks]` is enabled, Chatbook can admit signed notifications for
+subscribed run outcomes without waiting for the network request to finish.
+Admission means the notification entered the process-local delivery queue; it
+does not mean the endpoint received it. One delivery may be in progress while
+up to 32 wait in FIFO order. A newer notification is dropped immediately when
+that queue is full, so webhook traffic never blocks run finalization. Delivery
+remains best effort: notifications have no retry or durable outbox and may also
+be lost when the process exits.
+
+The configured timeout covers both destination lookup and delivery. At most two
+native resolver jobs are admitted, so repeated timeouts cannot build an
+unbounded resolver backlog. A stuck OS lookup cannot be forcibly cancelled: it
+may delay worker retirement and normal process exit. New notifications are
+refused while that worker is retiring.
 
 ### Approvals — tools ask before they run
 
@@ -668,7 +719,15 @@ already streaming.
   identity.
 - A definition's tools can only **narrow** what the sub-agent inherits from
   the parent (never grant something the parent itself couldn't use); its
-  model override stays on the same provider.
+  model override stays on the same provider. Runtime coordination tools such
+  as `spawn_subagent` and `wait_agents` are inherited separately and do not
+  belong in this filter. If you enter one, Save omits it and names every
+  omitted tool in the visible result. If that leaves the filter empty, the
+  result also explains that the agent inherits the parent's tools.
+- **Child time cap (seconds)** optionally tightens the existing child wall-clock
+  limit for this definition. Leave it empty to use the existing child limit.
+  A definition cap can shorten a run but cannot extend a tighter parent,
+  automatic, or global bound.
 - When a reply spawns a named agent, the transcript's `⤷ spawned sub-agent: …`
   marker and the Agent rail's per-sub-agent line both show it as
   `[<name>] <task>` while the run is live. That prefix is a display detail of
@@ -682,6 +741,23 @@ already streaming.
   them — a legacy provider-less preset keeps its pre-routing fingerprint
   shape) are written on every named-agent spawn. Neither is
   currently surfaced in **View full log** or anywhere else in the UI.
+
+Settings includes four editable starter templates: **bulk-reader** for narrow
+local file reading, **researcher** for evidence-led investigation, **critic**
+for correctness review, and **ingest-runner** for explicitly supplied ingestion
+work. Choosing **Load preset** only fills the editor; the template remains
+unsaved until you choose **Save**, and loading it never installs or silently
+enables a definition. You can edit every field before saving.
+
+The model field starts blank, so a saved template inherits the parent run's
+provider and model. An empty tool list inherits the tools available to the
+parent; the bulk-reader and critic lists request only their four local read
+tools. In every case the parent's tool catalog, workspace boundaries, and
+approval rules still apply: a template can narrow authority but cannot add a
+tool the parent lacks. The [bulk-reader comparison
+pilot](../../Examples/agents/bulk-reader/README.md) explains compatible
+same-provider model selection and the opt-in synthetic evaluation. Presets do
+not enable automatic routing or establish savings by themselves.
 
 ### Change review — reviewing a turn's file changes
 
@@ -848,6 +924,40 @@ watching it happen live or reading it back after a resume.
 
 ### Parallel sub-agents (the fleet)
 
+An agent can request `isolation="worktree"` in fleet mode when the run has an
+explicitly selected writable repository binding in a named Workspace. Its
+checkout starts from the repository commit captured at creation; uncommitted
+changes in your working folder stay there. The child uses its own local file
+tools and checkout. Missing or revoked authority refuses the request without
+running the child in the shared folder.
+
+Worktree actions show a confirmation card with the source checkout, destination
+repository and change summary. Choose **Allow once** or **Deny**. Switching
+conversations or screens parks the card; returning restores the same pending
+request. A changed source or repository selection requires fresh confirmation.
+
+For work saved by an earlier turn, open the command palette and choose
+**Console: Recover agent work…**. The list belongs to the current conversation
+and its selected repository. Choose an action to review its confirmation card:
+
+- **Apply** brings the changes into your working folder as unstaged edits,
+  preserving unrelated staged work.
+- **Merge** requires a clean destination checkout and creates a merge commit,
+  or reports that the child commit has already been incorporated.
+- **Discard** removes the agent changes and its recorded branch, then leaves
+  the checkout folder at its original baseline commit. The result identifies
+  this retained folder.
+
+Work whose execution has not been confirmed finished remains protected.
+Interrupted actions with uncertain results remain available for manual review
+and are not retried automatically. Checkouts and branches also survive failed
+starts; automatic cleanup is disabled.
+
+Repository identity checks detect changes at application boundaries. Ordinary
+Git does not guarantee protection against another process replacing repository
+metadata during a command. Unsupported filesystem operations receive a specific
+refusal; discard does not silently fall back to deleting the checkout folder.
+
 Sub-agents the supervisor spawns within a **single reply** no longer run one
 at a time — up to a configured number can be live together, each working its
 own task concurrently. The Agent rail shows this directly: several
@@ -909,10 +1019,12 @@ finishes.
      restart, or one this process never ran live) shows no elapsed segment;
      see *Known gaps* below.
    - Secondary line: the child's last step, result, or error text, dimmed,
-     with the child's measured token spend appended once it finishes — see
-     *Token spend*, below. Both are **transient**: they come from the live
-     fleet, so when the whole turn ends every row falls back to the sparser
-     historical rendering (name and task only). See *Known gaps*.
+     with the current call's `N provider output tok` or `~N local output tok`
+     appended while that child is active. Missing usage and explicit provider
+     zero add nothing. Once the child finishes, the live count clears and its
+     budget-token count is appended instead — see *Budget tokens and billing*,
+     below. Historical rows restore their own saved result or last useful step
+     and their saved budget count.
 3. **Drilled in** — click a specific row: the whole Agent section switches
    to that one child's own view (`Sub-agent · <status> (Back)` plus its own
    step lines), and the Sub-agents panel itself is hidden while you're
@@ -1099,6 +1211,11 @@ others make:
   The ceiling is checked *between* the child's steps, so a child stuck
   inside a single long provider call is not cut off until that call
   returns.
+  A named definition's optional **Child time cap (seconds)** in
+  **Settings ▸ Agents** can tighten this ceiling. Each continuation receives
+  fresh per-run time, but a lineage that has used a definition cap keeps its
+  admitted ceiling: raising or removing the definition cap does not widen an
+  existing lineage. Start a fresh named sub-agent to use the changed policy.
 - **How many at once** — `[agents] max_live_subagents`, which counts
   survivors from earlier messages against the same cap. Per conversation
   and per running app: N conversations can hold N × the cap between them.
@@ -1106,6 +1223,12 @@ others make:
   its own rather than a slice of the parent's remainder, so a fleet's
   worst-case spend scales with the number of children, not with what the
   parent had left.
+
+Waiting for your approval pauses the current tool call's execution deadline;
+it does not pause the run's automatic elapsed wall-clock deadline. Cancellation
+is cooperative, and a timed-out or cancelled result does not guarantee that an
+underlying Python worker or remote side effect has stopped. A worker keeps its
+physical execution slot until it actually exits.
 
 **Changes it makes to files.** Change review keeps a survivor's edits in
 their own record instead of folding them into whatever turn happens to be
@@ -1588,8 +1711,8 @@ steer a spawn, each filling only the blanks the levels above left:
    cannot attempt them. A `provider` arg must match the allowlist
    (below); a model-only arg swaps the model on whatever provider the
    lower levels resolve, with a final guard — when any ad-hoc arg is
-   present, the resolved provider/model must match the allowlist or the
-   provider must be the parent's own, otherwise the spawn is refused
+   present, the resolved provider/model must match the allowlist, even
+   when it uses the parent's provider; otherwise the spawn is refused
    (`provider_not_allowlisted`).
 2. **Preset routing fields** — the spawned [named agent
    definition](#named-agents)'s `provider` and `model`, set per
@@ -1694,8 +1817,8 @@ the flag is off), `provider_not_allowlisted`, `unknown_endpoint_slug` (a
 deleted `custom-ep:` slug), `unknown_provider`, `no_model_resolved`
 (routed to a provider with no model anywhere in the chain), and
 `provider_not_ready` (missing credential or incomplete provider config).
-The Agent rail's per-child line shows each live child's resolved target
-(e.g. `qwen-local · qwen3.8-27b`).
+The resolved target is stored on the run row. Displaying that target in
+the Agent rail is tracked separately in TASK-32497.
 
 ### Project instructions before tools run
 
@@ -2238,6 +2361,14 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   recent turns are trimmed tends to redo work it already did and end
   `stuck`, which is worse than overflowing the window. Turn it on for a
   model you trust to search its own run log. No Settings UI switch.
+- **`[agents] denial_circuit_breaker_limit`** defaults to `3`; explicit `0`
+  disables it, and invalid values use `3`. A run stops before its next model request when a completed
+  tool batch ends with that many consecutive user-denied or permission-Off
+  calls. Approved, successful, and other non-denial results reset the streak,
+  so an approved tail can keep a mixed batch running. The message reports the
+  observed count, which can exceed the limit in one batch. Each child and each
+  new or resumed run starts its own count. Review the denial reasons or
+  rephrase, then retry.
 - **`[agents] max_live_subagents`** in `config.toml` — how many sub-agents
   of one conversation may run at once, counting any still working from an
   earlier message (default 3; `1` disables the fleet). No

@@ -11,6 +11,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError as PydanticValidationError
 
+from tldw_chatbook.Agents.approval_provenance import (
+    ApprovalStamp,
+    approval_key_unanswered,
+    approval_stamp,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import (
@@ -176,7 +181,7 @@ class RawShellToolProvider:
         self._local_tools_enabled = local_tools_enabled
         self._kill_switch = kill_switch
         self._progress_sink = progress_sink
-        self._stamps: dict[tuple[str, str], str] = {}
+        self._stamps: dict[tuple[str, str], ApprovalStamp] = {}
         self._stamps_lock = threading.Lock()
         self._authority_generation = 0
 
@@ -368,7 +373,11 @@ class RawShellToolProvider:
                 decision = decisions.get(key)
                 if decision not in RAW_SHELL_APPROVAL_OPTIONS:
                     continue
-                self._stamps[(run_id, key)] = decision
+                self._stamps[(run_id, key)] = approval_stamp(
+                    decision,
+                    unanswered=approval_key_unanswered(decisions, key),
+                    allowing=("approve_once", "approve_session"),
+                )
                 if decision == "approve_session":
                     grant_session = True
             if not grant_session:
@@ -408,6 +417,10 @@ class RawShellToolProvider:
             return revoked
 
     def _pop_stamp(self, run_id: str, fallback: str) -> str | None:
+        stamp = self._pop_stamp_detail(run_id, fallback)
+        return stamp.decision if stamp is not None else None
+
+    def _pop_stamp_detail(self, run_id: str, fallback: str) -> ApprovalStamp | None:
         key = current_tool_call_id() or fallback
         with self._stamps_lock:
             stamp = self._stamps.pop((run_id, key), None)
@@ -475,7 +488,8 @@ class RawShellToolProvider:
             )
         except (TypeError, ValueError, OSError) as exc:
             return ToolResult(ok=False, error=f"invalid shell_exec request: {exc}")
-        stamp = self._pop_stamp(run_id, RAW_SHELL_TOOL_NAME)
+        detail = self._pop_stamp_detail(run_id, RAW_SHELL_TOOL_NAME)
+        stamp = detail.decision if detail is not None else None
         if not self.catalog_enabled():
             return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
         try:
@@ -483,9 +497,13 @@ class RawShellToolProvider:
         except Exception:
             return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
         if state == "deny":
-            return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
+            return ToolResult.blocked(
+                RAW_SHELL_DENY_REFUSAL, approval_decision="denied"
+            )
         if stamp in {"deny", "timeout"}:
-            return ToolResult.blocked(RAW_SHELL_APPROVAL_REFUSAL)
+            return ToolResult.blocked(
+                RAW_SHELL_APPROVAL_REFUSAL, approval_decision=detail.approval_decision
+            )
         approved = stamp in {"approve_once", "approve_session"}
         if not approved:
             try:
@@ -504,7 +522,9 @@ class RawShellToolProvider:
             return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
         try:
             if resolve_raw_shell_state(self._resolve_state(self.hub_tool())) == "deny":
-                return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
+                return ToolResult.blocked(
+                    RAW_SHELL_DENY_REFUSAL, approval_decision="denied"
+                )
             result = self._runtime.execute(
                 request,
                 lambda event: self._emit_progress(run_id, call_id, event),

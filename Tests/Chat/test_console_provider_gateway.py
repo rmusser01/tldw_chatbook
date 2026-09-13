@@ -5212,6 +5212,68 @@ async def test_stream_signal_omission_preserves_yielded_types_and_text() -> None
 
 
 @pytest.mark.asyncio
+async def test_stream_emission_observer_reports_fallback_then_genuine_provenance() -> (
+    None
+):
+    def fake_chat_api_call(**_kwargs):
+        return iter(({"unexpected": "junk"}, "real"))
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    provenance = []
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hi"}],
+            emission_observer=provenance.append,
+        )
+    ]
+
+    assert chunks == [UNSUPPORTED_PROVIDER_RESPONSE_COPY, "real"]
+    assert provenance == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_stream_emission_observer_failure_does_not_change_stream() -> None:
+    calls = 0
+
+    def fail_observer(_synthetic: bool) -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("private")
+
+    def fake_chat_api_call(**_kwargs):
+        return iter(("one", "two"))
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hi"}],
+            emission_observer=fail_observer,
+        )
+    ]
+
+    assert chunks == ["one", "two"]
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_synthetic_fallback_suppression_leaves_stream_signal_unset() -> None:
     def fake_chat_api_call(**_kwargs):
         return {"choices": [{"message": {}}]}
@@ -11945,6 +12007,58 @@ async def test_custom_endpoint_llama_family_entry_url_outranks_stale_session_url
     assert resolved.base_url == "http://192.168.1.9:9090"
 
 
+# PR-2668 review (High): hyphenated registry ids are provider IDENTITY on the
+# send path. Both selection builders previously canonicalized
+# ``custom-ep:gpu-box`` into its ``api_settings`` lookup key
+# ``custom_ep:gpu_box``; registry slugs are dashed, so the gateway's
+# ``entry_for`` missed and the send fell through to generic resolution
+# (blocked as unsupported) instead of the entry's family execution and
+# entry-URL authority.
+
+
+@pytest.mark.asyncio
+async def test_send_resolution_keeps_hyphenated_registry_entry_identity() -> None:
+    """End to end: session settings -> selection builder -> gateway send
+    resolution must execute a hyphenated custom endpoint through its entry."""
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_console_provider_selection_from_settings,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    app_config = {
+        "api_settings": {},
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU box",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.9:9090",
+            }
+        },
+    }
+    selection = build_console_provider_selection_from_settings(
+        ConsoleSessionSettings(provider="custom-ep:gpu-box", model="m"),
+        app_config=app_config,
+        workspace_context=ConsoleWorkspaceContext(active_workspace_id=None),
+    )
+    assert selection.provider == "custom-ep:gpu-box"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            config_provider=lambda: app_config,
+            environ={},
+        )
+        resolved = await gateway.resolve_for_send(selection)
+
+    assert resolved.ready is True
+    assert resolved.execution_key == "llama_cpp"
+    assert resolved.base_url == "http://192.168.1.9:9090"
+
+
 # qodo PR-2651 High (raw identity vs execution key): a resolved custom-ep
 # resolution keeps the raw ``custom-ep:<slug>`` id in ``selected_provider``
 # alongside the flattened execution family, so spawn routing and the
@@ -12047,3 +12161,28 @@ async def test_plain_provider_resolution_carries_no_raw_selected_provider() -> N
     assert resolved.ready is True
     assert resolved.provider == "llama_cpp"
     assert resolved.selected_provider == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("family", ["llama_cpp", "openai_compatible"])
+@pytest.mark.parametrize("pinned", [False, True])
+async def test_routed_snapshot_url_pin_preserves_ordinary_registry_edits(family, pinned):
+    requests = []
+    def handler(request):
+        requests.append(str(request.url))
+        return httpx.Response(200, json={"data": [{"id": "model"}]})
+    config = {"custom_endpoints": {"gpu": {
+        "display_name": "GPU", "family": family,
+        "base_url": "http://new-server:9090", "models": ["model"],
+    }}}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(http_client=client, config_provider=lambda: config, environ={})
+        resolved = await gateway.resolve_for_send(ConsoleProviderSelection(
+            provider="custom-ep:gpu", explicit_model="model",
+            base_url="http://original-server:8080", base_url_is_pinned=pinned,
+        ))
+    assert resolved.ready
+    expected = "http://original-server:8080" if pinned else "http://new-server:9090"
+    suffix = "/v1/chat/completions" if family == "openai_compatible" else ""
+    assert resolved.base_url == expected + suffix
+    assert all(url.startswith(expected) for url in requests)

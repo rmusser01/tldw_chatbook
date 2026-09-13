@@ -12,6 +12,23 @@
 **ADR:** `backlog/decisions/147-agent-provider-routing.md` (amends ADR-146)
 **Task:** TASK-32477
 
+## Integration amendment — 2026-09-13
+
+The original implementation and review fixes are published at `1de64e158b`.
+Integration with dev `8a6ba98c0d` preserves its definition time caps, worktree
+ownership, recovery, and Settings editing alongside routing. Dev owns schemas
+v19/v20; routing now follows them as v21. Historical task steps below retain the
+original proposed numbering; the actual migration is v20 → v21.
+
+ADR required: no (existing contracts only).
+ADR path: backlog/decisions/147-agent-provider-routing.md.
+Reason: reconcile concurrent implementations without changing their architecture.
+
+1. Resolve production/test conflicts and inspect automatic resolutions.
+2. Preserve both documentation additions; correct stale allowlist and rail claims.
+3. Run targeted routing, continuation, migration, gateway, Settings and derived-artifact checks.
+4. Independently review the integration and record exact results in TASK-32477.
+
 ## Global Constraints
 
 - Python ≥ 3.11; type hints on public APIs; Google-style docstrings.

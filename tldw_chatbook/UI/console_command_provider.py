@@ -30,6 +30,11 @@ class ConsoleCommandProvider(Provider):
         """
         return (
             (
+                "Console: Recover agent work…",
+                screen.action_recover_agent_work,
+                "Review recorded agent work in this conversation and selected repository",
+            ),
+            (
                 "Console: Switch session…",
                 screen.action_open_console_session_switcher,
                 "Fuzzy-find and activate a conversation (Ctrl+K)",

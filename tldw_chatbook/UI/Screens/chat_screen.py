@@ -409,6 +409,7 @@ from ...Chat.local_server_discovery import (
     DiscoveredLocalServer,
     discover_local_servers,
 )
+from ...Chat.custom_endpoint_registry import provider_identity_key
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.provider_readiness import (
     get_provider_readiness,
@@ -9667,14 +9668,20 @@ class ChatScreen(BaseAppScreen):
         """Build a provider selection from one immutable settings snapshot."""
         app_config = self._provider_readiness_app_config()
         store = self._ensure_console_chat_store()
-        provider = provider_config_key(selection_settings.provider) or "llama_cpp"
+        # PR-2668 review (CE-001 class): the selection's ``provider`` is a
+        # provider IDENTITY the gateway resolves through ``entry_for`` (dashed
+        # registry slugs), so registry ids must keep their dashed spelling;
+        # only the ``api_settings`` section lookup wants the config-table key.
+        provider = provider_identity_key(selection_settings.provider) or "llama_cpp"
         explicit_model = (
             str(selection_settings.model).strip()
             if _has_selected_text(selection_settings.model)
             else None
         )
         api_settings = self._config_section(app_config, "api_settings")
-        provider_config = self._config_section(api_settings, provider)
+        provider_config = self._config_section(
+            api_settings, provider_config_key(provider)
+        )
         console_config = self._config_section(app_config, "console")
         configured_model_value = (
             provider_config.get("model")
@@ -10251,6 +10258,7 @@ class ChatScreen(BaseAppScreen):
             "set_task_panel": self._set_console_task_panel,
             # PRD Feature A: the ask_user question card.
             "set_pending_question": self._set_console_pending_question,
+            "set_pending_worktree_merge": self._set_console_pending_worktree_merge,
             # PR3a-2 Task 5, user-wins-ties.
             "wake_user_priority_probe": self._fleet._console_wake_user_priority,
             # task-15971: the delivery COMMIT's visibility probe -- a wake
@@ -23638,6 +23646,26 @@ class ChatScreen(BaseAppScreen):
             if panel is None:
                 return
         panel.set_tasks(session_id, tasks)
+
+    def _set_console_pending_worktree_merge(self, payload):
+        if payload is None and self._task_resume_state.pending_worktree_merge is None:
+            return
+        from ..Console_Modules.worktree import project
+
+        project(self, payload)
+
+    async def action_recover_agent_work(self):
+        from ..Console_Modules.worktree import open_recovery
+
+        await open_recovery(self)
+
+    @on(ChatTaskCards.WorktreeDecided)
+    def handle_console_worktree_decided(self, event):
+        event.stop()
+        if self._console_chat_controller is not None:
+            self._console_chat_controller.resolve_pending_worktree_merge(
+                event.allow, request_id=event.request_id
+            )
 
     def _set_console_pending_question(self, payload: dict[str, Any] | None) -> None:
         """PRD Feature A: replace only the pending question in the task state.

@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.Agents.agent_models import (
+    normalize_tool_review,
     AgentConfig,
     RUN_DONE,
     RunBudget,
@@ -468,7 +469,9 @@ def test_subagent_lesson_call_is_draft_only_and_creates_no_note(lesson_stack):
     with use_run_actor(CurrentRunActor("subagent", "child-1", "parent-1")):
         verdicts = hook([call], "child-1")
 
-    assert verdicts == {"child-save": "foreground_required"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"child-save": "foreground_required"}
     assert requested == []
     assert stack.provider.agent_lesson_approval_count("child-1") == 0
     assert _active_notes(stack) == []

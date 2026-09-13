@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.agent_models import normalize_tool_review, ToolCall
 from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
 from tldw_chatbook.Agents.run_context import use_tool_call_id
 from tldw_chatbook.Chat.console_chat_controller import build_raw_shell_review_hook
@@ -101,8 +101,8 @@ def test_review_hook_keeps_repeated_raw_calls_independent(tmp_path: Path) -> Non
     hook = build_raw_shell_review_hook(provider, request)
     verdicts = hook(calls, "run-1")
 
-    assert verdicts["call-a"] == "proceed"
-    assert "denied by the user" in verdicts["call-b"]
+    assert normalize_tool_review(verdicts["call-a"]).verdict == "proceed"
+    assert "denied by the user" in normalize_tool_review(verdicts["call-b"]).verdict
     with use_tool_call_id("call-a"):
         assert provider._pop_stamp("run-1", "shell_exec") == "approve_once"
     with use_tool_call_id("call-b"):
@@ -142,8 +142,24 @@ def test_session_decision_grants_only_this_console_session(tmp_path: Path) -> No
         provider,
         lambda _rows: {"call-a": "approve_session"},
     )
-    assert hook([call], "run-1") == {"call-a": "proceed"}
+    assert {
+        key: normalize_tool_review(value).verdict
+        for key, value in hook([call], "run-1").items()
+    } == {"call-a": "proceed"}
 
     assert runtime.model_session_granted("console-session") is True
     assert runtime.model_session_granted("different-session") is False
     assert provider.pending_gate_for(call) is None
+
+
+def test_raw_review_does_not_count_an_unselected_name_fallback(tmp_path):
+    from Tests.Agents.test_raw_shell_tool_provider import _provider
+    from tldw_chatbook.Agents.agent_models import ToolCall, normalize_tool_review
+    from tldw_chatbook.Chat.console_chat_controller import build_raw_shell_review_hook
+
+    provider = _provider(tmp_path)
+    call = ToolCall("shell_exec", {"command": "printf hello"}, "exact-call")
+    hook = build_raw_shell_review_hook(provider, lambda rows: {"shell_exec": "deny"})
+    value = normalize_tool_review(hook([call], "run")["exact-call"])
+    assert value.verdict != "proceed"
+    assert value.approval_decision is None
