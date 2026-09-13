@@ -171,8 +171,15 @@ def _painted_text(app) -> str:
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
 
 
-def _seed_real_conflict_authority(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """Create one real two-sided conflict in disposable Notes authorities."""
+def _seed_real_conflict_authority(
+    tmp_path: Path, *, diverge: bool = True
+) -> tuple[Path, Path, Path]:
+    """Create one real bound root in disposable Notes authorities.
+
+    ``diverge`` (the default) edits both sides after the binding so the root
+    holds one real two-sided conflict; ``False`` leaves it clean and up to
+    date (task-32519's pause -> resume walk starts from that state).
+    """
 
     notes_path = tmp_path / "notes.sqlite3"
     state_path = tmp_path / "sync.sqlite3"
@@ -218,12 +225,13 @@ def _seed_real_conflict_authority(tmp_path: Path) -> tuple[Path, Path, Path]:
             note_version=int(baseline_note["version"]),
         )
     )
-    assert database.update_note(
-        "note-1",
-        {"title": "Joined conflict", "content": "note side"},
-        int(baseline_note["version"]),
-    )
-    target.write_text("file side", encoding="utf-8")
+    if diverge:
+        assert database.update_note(
+            "note-1",
+            {"title": "Joined conflict", "content": "note side"},
+            int(baseline_note["version"]),
+        )
+        target.write_text("file side", encoding="utf-8")
     database.close_connection()
     return notes_path, state_path, sync_root
 
@@ -285,6 +293,137 @@ def test_notes_guide_uses_only_shipped_sync_action_labels() -> None:
         label not in normalized
         for label in ("Check folder", "Review attention", "Sync now")
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edit_both_sides", (False, True))
+async def test_real_runtime_resume_after_pause_returns_the_root_to_service(
+    tmp_path: Path,
+    edit_both_sides: bool,
+) -> None:
+    """task-32519: Pause -> Resume -> Check on the production runtime.
+
+    Pausing cascades every binding to ``paused``; Resume used to review the
+    root before re-activating it, so ``observe_root`` refused the paused
+    bindings and every Resume landed in "Failed" with the root still paused
+    and the following Check refused as ``sync_root_not_active``.
+    """
+
+    notes_path, state_path, sync_root = _seed_real_conflict_authority(
+        tmp_path, diverge=False
+    )
+    owner, database, interop, controller = await _start_real_conflict_stack(
+        notes_path, state_path
+    )
+    try:
+        await controller.pause_root("root-1")
+        paused = controller.snapshot.roots[0]
+        assert (paused.status_label, paused.next_action_label) == ("Ⅱ Paused", "Resume")
+
+        if edit_both_sides:
+            note = database.get_note_by_id("note-1")
+            assert note is not None
+            assert database.update_note(
+                "note-1",
+                {"title": "Joined conflict", "content": "note side"},
+                int(note["version"]),
+            )
+            (sync_root / "note.md").write_text("file side", encoding="utf-8")
+
+        await controller.resume_root("root-1")
+
+        resumed = controller.snapshot.roots[0]
+        assert resumed.status != "failed", controller.snapshot.status_line
+        assert "needs attention" not in controller.snapshot.status_line.casefold()
+        store = NotesDeviceStateStore(state_path)
+        store.initialize()
+        assert store.get_root("root-1").state is NotesSyncRootState.ACTIVE
+        assert {binding.state for binding in store.list_bindings("root-1")} == {
+            NotesSyncBindingState.ACTIVE
+        }
+        if edit_both_sides:
+            assert (resumed.status_label, resumed.next_action_label) == (
+                "⚠ Needs attention",
+                "Review changes",
+            )
+        else:
+            assert (resumed.status_label, resumed.next_action_label) == (
+                "✓ Up to date",
+                "Check changes",
+            )
+
+        await controller.check_root("root-1")
+
+        assert controller.snapshot.phase == "review"
+        assert "paused" not in controller.snapshot.status_line.casefold()
+        assert "failed" not in controller.snapshot.status_line.casefold()
+        review = controller.snapshot.review
+        assert review.stale is False
+        row = next(item for item in review.rows if item.item_id == "binding-1")
+        if edit_both_sides:
+            assert row.conflict_eligible
+        else:
+            assert (row.category, row.effect) == ("safe", "No change")
+    finally:
+        await _close_real_conflict_stack(owner, database, interop)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persisted_status", ("paused", "failed"))
+async def test_real_runtime_resumes_a_root_the_old_resume_left_paused_on_disk(
+    tmp_path: Path,
+    persisted_status: str,
+) -> None:
+    """task-32519 follow-up: a profile already holding the broken state recovers.
+
+    Before the fix, a failed Resume left the root ``paused`` with every
+    binding ``paused`` on disk, and a restart did not recover it: the row
+    read "Paused · Resume", Resume and Check failed identically, and a disk
+    edit never synced. The store state is rebuilt here exactly as that path
+    left it -- the pause cascade plus the last status the old code
+    persisted (``failed`` straight after the Resume, ``paused`` once a
+    follow-up Check ran) -- and a fresh runtime must Resume it cleanly.
+    """
+
+    notes_path, state_path, sync_root = _seed_real_conflict_authority(
+        tmp_path, diverge=False
+    )
+    store = NotesDeviceStateStore(state_path)
+    store.initialize()
+    store.transition_root("root-1", NotesSyncRootState.PAUSED)
+    store.update_root_status("root-1", persisted_status)
+    assert {binding.state for binding in store.list_bindings("root-1")} == {
+        NotesSyncBindingState.PAUSED
+    }
+    owner, database, interop, controller = await _start_real_conflict_stack(
+        notes_path, state_path
+    )
+    try:
+        await controller.resume_root("root-1")
+
+        resumed = controller.snapshot.roots[0]
+        assert (resumed.status_label, resumed.next_action_label) == (
+            "✓ Up to date",
+            "Check changes",
+        ), controller.snapshot.status_line
+        assert store.get_root("root-1").state is NotesSyncRootState.ACTIVE
+        assert {binding.state for binding in store.list_bindings("root-1")} == {
+            NotesSyncBindingState.ACTIVE
+        }
+
+        (sync_root / "note.md").write_text("edited on disk", encoding="utf-8")
+        await controller.check_root("root-1")
+
+        assert controller.snapshot.phase == "review"
+        row = next(
+            item
+            for item in controller.snapshot.review.rows
+            if item.item_id == "binding-1"
+        )
+        assert row.category == "safe"
+        assert row.effect != "No change"
+    finally:
+        await _close_real_conflict_stack(owner, database, interop)
 
 
 @pytest.mark.asyncio
