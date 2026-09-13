@@ -10126,6 +10126,7 @@ class ChatScreen(BaseAppScreen):
             "set_task_panel": self._set_console_task_panel,
             # PRD Feature A: the ask_user question card.
             "set_pending_question": self._set_console_pending_question,
+            "set_pending_worktree_merge": self._set_console_pending_worktree_merge,
             # PR3a-2 Task 5, user-wins-ties.
             "wake_user_priority_probe": self._fleet._console_wake_user_priority,
             # task-15971: the delivery COMMIT's visibility probe -- a wake
@@ -23443,6 +23444,26 @@ class ChatScreen(BaseAppScreen):
             if panel is None:
                 return
         panel.set_tasks(session_id, tasks)
+
+    def _set_console_pending_worktree_merge(self, payload):
+        if payload is None and self._task_resume_state.pending_worktree_merge is None:
+            return
+        from ..Console_Modules.worktree import project
+
+        project(self, payload)
+
+    async def action_recover_agent_work(self):
+        from ..Console_Modules.worktree import open_recovery
+
+        await open_recovery(self)
+
+    @on(ChatTaskCards.WorktreeDecided)
+    def handle_console_worktree_decided(self, event):
+        event.stop()
+        if self._console_chat_controller is not None:
+            self._console_chat_controller.resolve_pending_worktree_merge(
+                event.allow, request_id=event.request_id
+            )
 
     def _set_console_pending_question(self, payload: dict[str, Any] | None) -> None:
         """PRD Feature A: replace only the pending question in the task state.

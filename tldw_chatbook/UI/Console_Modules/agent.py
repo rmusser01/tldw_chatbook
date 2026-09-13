@@ -168,7 +168,6 @@ from ...Widgets.Console.console_inspector_section import (
 )
 from textual.worker import get_current_worker
 
-from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from ...Widgets.Console.console_transcript import CONSOLE_GENERATING_PLACEHOLDER
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -1462,6 +1461,8 @@ class ConsoleAgentController:
         page: Any,
     ) -> None:
         """Publish and guard the modal using only the captured UI selection."""
+        from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+
         if not self._run_log_target_matches(bridge, selection):
             return
         self.push_screen(

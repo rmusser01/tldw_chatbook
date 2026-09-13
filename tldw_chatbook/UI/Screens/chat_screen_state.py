@@ -38,6 +38,7 @@ class TaskResumeState:
     # within one screen instance, never repopulated by `from_dict` (the
     # round is a worker thread blocked on the OLD controller's Event).
     pending_question: dict[str, Any] | None = None
+    pending_worktree_merge: dict[str, Any] | None = None
     diff_summary: str = ""
     next_action: str = ""
     followed_watchlists_operations: tuple[str, ...] = ()

@@ -20,6 +20,14 @@ from tldw_chatbook.Widgets.Chat_Widgets.watchlists_operation_card import (
 class ChatTaskCards(Container):
     """Inline task-surface wrapper for approvals, skill-install/script, questions, and resume."""
 
+    class WorktreeDecided(Message):
+        """Exact volatile worktree round decision."""
+
+        def __init__(self, allow: bool, request_id: str):
+            super().__init__()
+            self.allow = allow
+            self.request_id = request_id
+
     class QuestionAnswered(Message):
         """The user submitted the ask_user card (PRD Feature A).
 
@@ -122,6 +130,7 @@ class ChatTaskCards(Container):
             or task_state.has_pending_skill_install()
             or task_state.has_pending_skill_script()
             or task_state.has_pending_question()
+            or bool(task_state.pending_worktree_merge)
             or bool(task_state.followed_watchlists_operations)
             or task_state.has_resume_content()
         )
@@ -143,6 +152,17 @@ class ChatTaskCards(Container):
         yield ("pending_skill_script", self.query_one(SkillScriptConfirmCard).set_script)
         # Generated lazily so the question card is created (mounted) only
         # after the three fixed cards have synced, as before the table.
+        try:
+            worktree_card = self.query_one("#chat-worktree-confirm-card")
+        except NoMatches:
+            worktree_card = None
+            if task_state.pending_worktree_merge:
+                from .worktree_confirm_card import WorktreeConfirmCard
+
+                worktree_card = WorktreeConfirmCard(id="chat-worktree-confirm-card")
+                self.mount(worktree_card)
+        if worktree_card is not None:
+            yield ("pending_worktree_merge", worktree_card.set_confirmation)
         question_card = self._question_card(create=bool(task_state.pending_question))
         if question_card is not None:
             yield ("pending_question", question_card.set_questions)

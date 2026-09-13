@@ -16630,8 +16630,23 @@ class ConsoleChatController:
             run_id, {"question": _REVOCATION_STAMPS["question"]}
         )["question"]
 
+    @property
+    def worktree_confirmation_enabled(self) -> bool:
+        """Only the real disposable worktree surface enables new tool disclosure."""
+        return self.app is not None and self.set_pending_worktree_merge is not None
+
+    def capture_worktree_recovery_intent(self, session_id: str):
+        """Capture pure owning-session selection before worker validation."""
+        from .console_worktree_recovery import capture_intent
+
+        return capture_intent(self, session_id)
+
     def request_worktree_merge_confirm(
-        self, payload: dict[str, Any], *, session_id: str | None = None
+        self,
+        payload: dict[str, Any],
+        *,
+        session_id: str | None = None,
+        operation_cancel_event: threading.Event | None = None,
     ) -> dict[str, bool]:
         """WORKER THREAD: ask the user to confirm merging/discarding an
         agent worktree before ``AgentService`` mutates anything.
@@ -16689,7 +16704,13 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
-        round_cancel_event = self._bind_round_cancel_signal(session_id)
+        if operation_cancel_event is not None and session_id is None:
+            return {"allow": False}
+        round_cancel_event = (
+            operation_cancel_event
+            if operation_cancel_event is not None
+            else self._bind_round_cancel_signal(session_id)
+        )
         visit_cancel_event = self._bind_visit_cancel_signal()
         owning_run_id = current_run_id()
         merge_round_state: dict[str, Any] = {
@@ -16775,10 +16796,10 @@ class ConsoleChatController:
             return
         with self._pending_worktree_merge_lock:
             round_state = self._pending_worktree_merge_rounds.get(request_id)
-        if round_state is None:
-            return
-        round_state["decision"]["allow"] = bool(allow)
-        round_state["event"].set()
+            if round_state is None or round_state["event"].is_set():
+                return
+            round_state["decision"]["allow"] = bool(allow)
+            round_state["event"].set()
 
     def pending_worktree_merge_ids(self) -> list[str]:
         """Return the request ids of every currently-armed worktree-merge
@@ -19325,6 +19346,7 @@ class ConsoleChatController:
                 scratch_lease=scratch_lease,
                 turn_skill_bindings=turn_skill_bindings,
                 turn_bundle_block=turn_bundle_block,
+                worktree_merge_enabled=self.worktree_confirmation_enabled,
                 request_skill_install_enabled=True,
                 request_skill_script_enabled=(
                     self.set_pending_skill_script is not None
@@ -19500,6 +19522,7 @@ class ConsoleChatController:
                 scratch_lease=scratch_lease,
                 turn_skill_bindings=turn_skill_bindings,
                 turn_bundle_block=turn_bundle_block,
+                worktree_merge_enabled=self.worktree_confirmation_enabled,
                 request_skill_install_enabled=True,
                 request_skill_script_enabled=(
                     self.set_pending_skill_script is not None
@@ -25804,8 +25827,7 @@ class ConsoleChatController:
                     functools.partial(
                         self.request_worktree_merge_confirm, session_id=session_id
                     )
-                    if self.set_pending_worktree_merge is not None
-                    or self._interrupt_host.has_retained_decision_target(session_id)
+                    if self.worktree_confirmation_enabled
                     else None
                 ),
                 # PR2a Task 7: the fleet cancels/abandons children on the

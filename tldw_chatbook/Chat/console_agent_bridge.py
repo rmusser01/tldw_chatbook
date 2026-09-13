@@ -5222,6 +5222,7 @@ class ConsoleAgentBridge:
         skills_context: Mapping[str, Any] | None = None,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
+        worktree_merge_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         profile_provider: Any | None = None,
@@ -5286,6 +5287,7 @@ class ConsoleAgentBridge:
                 self._skills_service is not None and request_skill_install_enabled
             ),
             run_skill_script_enabled=script_tool_enabled,
+            worktree_merge_enabled=worktree_merge_enabled,
             agent_messages=agent_messages,
             agent_definitions=runtime_definitions,
             fleet_max_live=fleet_max_live,
@@ -5349,6 +5351,7 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
+        worktree_merge_enabled: bool = False,
         profile_context_service: Any | None = None,
     ) -> ProfileContextSnapshot:
         """Build the exact reserved profile snapshot for disposable Next Send."""
@@ -5368,6 +5371,8 @@ class ConsoleAgentBridge:
             )
 
             script_tool_enabled = sandbox_supported()
+        run_budget = console_run_budget()
+        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(self._db, run_budget)
         plan = build_console_first_request_plan(
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
@@ -5394,7 +5399,11 @@ class ConsoleAgentBridge:
                 self._skills_service is not None and request_skill_install_enabled
             ),
             run_skill_script_enabled=script_tool_enabled,
+            worktree_merge_enabled=worktree_merge_enabled,
             agent_messages=agent_messages,
+            agent_definitions=runtime_definitions,
+            fleet_max_live=fleet_max_live,
+            run_budget=run_budget,
             profile_context_service=profile_context_service,
         )
         return plan.profile_context_snapshot

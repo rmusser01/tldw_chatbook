@@ -879,6 +879,11 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         "so the next attach re-derives the panel from it.",
     ),
     ConsoleViewHookSlot(
+        "set_pending_worktree_merge",
+        "controller",
+        why="Disposable real confirmation surface; exact rounds remain controller-owned.",
+    ),
+    ConsoleViewHookSlot(
         "set_pending_question",
         "controller",
         why="`request_user_questions` returns `{answered: False, reason: "
@@ -965,6 +970,7 @@ class ConsoleRuntime:
         self._chat_store: Any | None = None
         self._provider_gateway: Any | None = None
         self._agent_bridge: Any | None = None
+        self._worktree_recovery = None
         self._agent_runs_db: Any | None = None
         self._activity_receipts: Any | None = None
         self._activity_receipts_lock = Lock()
@@ -3679,6 +3685,23 @@ class ConsoleRuntime:
                     type(exc).__name__,
                 )
 
+    @property
+    def worktree_recovery(self):
+        """Retain manual recovery independently of disposable Console views."""
+        if self._worktree_recovery is None:
+            if (
+                self._disposed
+                or self._chat_controller is None
+                or self._agent_bridge is None
+            ):
+                raise RuntimeError("Console agent recovery is unavailable.")
+            from .console_worktree_recovery import ConsoleWorktreeRecovery
+
+            self._worktree_recovery = ConsoleWorktreeRecovery(
+                self._chat_controller, self._agent_bridge
+            )
+        return self._worktree_recovery
+
     def remount_pending_approval(self) -> None:
         """Re-derive decision cards for rounds armed while viewless.
 
@@ -3708,6 +3731,14 @@ class ConsoleRuntime:
             return
         store = getattr(controller, "store", None) or self._chat_store
         active_session_id = getattr(store, "active_session_id", None)
+        remount_worktree = getattr(controller, "_remount_parked_worktree_merge", None)
+        if active_session_id and callable(remount_worktree):
+            try:
+                remount_worktree(active_session_id)
+            except Exception as exc:  # noqa: BLE001 - a disposable view cannot abort attach
+                logger.debug(
+                    "Worktree remount failed (exception_type={})", type(exc).__name__
+                )
         projection_for = getattr(controller, "pending_decision_projection", None)
         if callable(projection_for) and (
             not active_session_id or projection_for(active_session_id) is None
@@ -3920,6 +3951,8 @@ class ConsoleRuntime:
     ) -> Any | None:
         """Drain already-claimed voice publication before closing its session."""
 
+        if self._worktree_recovery is not None:
+            self._worktree_recovery.cancel_session(session_id)
         owner = self._voice_promotion_owner
         if owner is None:
             if session_id in self._voice_promotion_pending_closes:
@@ -4124,6 +4157,8 @@ class ConsoleRuntime:
         with self._execution_capacity_lock:
             with self._canvas_native_lock:
                 self._disposed = True
+        if self._worktree_recovery is not None:
+            self._worktree_recovery.begin_close()
         if self._voice_process_supervisor is not None:
             self._voice_process_supervisor.begin_close()
         self._admission_fenced_sessions.update(session_ids)
@@ -4178,6 +4213,8 @@ class ConsoleRuntime:
                 self._canvas_native_view_binding = None
         if self._voice_process_supervisor is not None:
             self._voice_process_supervisor.begin_close()
+        if self._worktree_recovery is not None:
+            await self._worktree_recovery.close()
         for turn_id in tuple(self._turn_recoveries):
             self.discard_turn_recovery(turn_id)
         canvas_policy_watch_task = self._canvas_policy_watch_task
