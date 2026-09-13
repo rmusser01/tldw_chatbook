@@ -3156,6 +3156,7 @@ class ConsoleSettingsModal(
         """Recompute the body fold affordance after viewport changes."""
         self._sync_action_layout(event.size.width)
         self.call_after_refresh(self._sync_action_layout, event.size.width)
+        self.call_after_refresh(self._sync_responsive_layout)
         self.call_after_refresh(self._sync_fold_hint)
         self.call_after_refresh(self._reveal_default_feedback)
         self.call_after_refresh(self._reveal_current_focus_after_resize)

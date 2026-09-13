@@ -176,6 +176,13 @@ async def test_conversation_settings_wide_tier_engages_at_150_viewport_columns(
     120-column base width (85% of the viewport, capped at 196), while just
     below the threshold the base geometry (``width: 120; max-width: 95%``)
     is unchanged and neither tier engages.
+
+    Args:
+        size: Terminal size (columns, rows) the harness app runs at.
+        expect_wide: Whether ``#console-settings-modal`` must carry
+            ``-conversation-settings-wide``: True at >= 150 viewport
+            columns, False below, where the fixed base geometry must hold
+            and no tier class may be set.
     """
     app = GeometryHarness()
     modal = build_geometry_modal(app, ready=True)
@@ -193,6 +200,67 @@ async def test_conversation_settings_wide_tier_engages_at_150_viewport_columns(
         else:
             assert container.region.width == min(120, int(app.size.width * 95 / 100))
             assert not modal.has_class("-conversation-settings-compact")
+
+
+@pytest.mark.parametrize(
+    ("start_size", "end_size", "expect_wide_after_resize"),
+    (
+        ((140, 40), (200, 50), True),
+        ((200, 50), (120, 40), False),
+    ),
+    ids=["grow-past-threshold", "shrink-below-threshold"],
+)
+@pytest.mark.asyncio
+async def test_conversation_settings_wide_tier_tracks_live_resize_across_threshold(
+    start_size: tuple[int, int],
+    end_size: tuple[int, int],
+    expect_wide_after_resize: bool,
+) -> None:
+    """An open modal re-syncs its width tier when the terminal is resized.
+
+    Skipping the responsive layout sync in ``on_resize`` fails this test:
+    the ``-conversation-settings-wide`` class (and the 85%-width geometry
+    it drives) would stay frozen at the mount-time tier instead of
+    following the viewport across the 150-column boundary in either
+    direction.
+
+    Args:
+        start_size: Terminal size (columns, rows) the modal is mounted at.
+        end_size: Terminal size (columns, rows) resized to while the modal
+            stays open.
+        expect_wide_after_resize: Whether ``#console-settings-modal`` must
+            carry ``-conversation-settings-wide`` once the resize settles;
+            the container width must follow the matching tier's formula.
+    """
+    app = GeometryHarness()
+    modal = build_geometry_modal(app, ready=True)
+
+    async with app.run_test(size=start_size) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        container = modal.query_one("#console-settings-modal")
+        assert container.has_class("-conversation-settings-wide") is (
+            start_size[0] >= 150
+        )
+
+        await pilot.resize_terminal(*end_size)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.size.width == end_size[0]
+        assert container.has_class("-conversation-settings-wide") is (
+            expect_wide_after_resize
+        )
+        if expect_wide_after_resize:
+            assert container.region.width == min(
+                196, int(end_size[0] * 85 / 100)
+            )
+        else:
+            assert container.region.width == min(
+                120, int(end_size[0] * 95 / 100)
+            )
 
 
 @pytest.mark.parametrize("size", GEOMETRY_SIZES)
