@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import pytest
 import toml
+from rich.style import Style
 from textual import events
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Static
@@ -834,7 +835,22 @@ async def test_double_click_opens_highlighted_dir(tmp_path):
         # The second click of the chain (chain=2) opens the directory.
         dir_nav.on_click(
             events.Click(
-                dir_nav, 0, 0, 0, 0, button=1, shift=False, meta=False, ctrl=False, chain=2
+                dir_nav,
+                0,
+                0,
+                0,
+                0,
+                button=1,
+                shift=False,
+                meta=False,
+                ctrl=False,
+                chain=2,
+                style=Style(
+                    meta={
+                        "option": subdir_index,
+                        "picker_row": id(dir_nav.options[subdir_index]),
+                    }
+                ),
             )
         )
         await pilot.pause()
@@ -1569,12 +1585,13 @@ async def test_search_keystrokes_debounce_into_one_filtered_repopulation(tmp_pat
 
         # Clearing is a RESTORE, not a keystroke (task-15471 fix round,
         # review minor 4): Esc / the Clear button empty the filter and the
-        # unfiltered list must be back IMMEDIATELY -- the watcher runs
-        # synchronously on assignment, so the rebuild has already happened
-        # by the next line, with no debounce interval in between.
+        # restoration is dispatched immediately, without the typing debounce.
+        # ADR-160 performs the projection asynchronously so large folders do
+        # not freeze the UI; wait for its settled contents before asserting.
         dir_nav.search_filter = ""
         assert repopulates["count"] == 2
         dir_nav._repopulate_display = real_repopulate
+        await dir_nav.workers.wait_for_complete()
         restored = {
             dir_nav.get_option_at_index(index).location.name
             for index in range(dir_nav.option_count)

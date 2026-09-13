@@ -1865,6 +1865,21 @@ Select.-textual-compact:focus {
 Select.-textual-compact:focus > SelectCurrent {
     background: $ds-input-focus-bg;
 }
+/* ADR-160: progressive file-picker controls, shared by plain/enhanced dialogs. */
+FileSystemPickerScreen #listing-controls {
+    height: $ds-control-height-compact;
+}
+FileSystemPickerScreen #listing-sort-label {
+    padding: $ds-space-0 $ds-space-inline;
+}
+FileSystemPickerScreen #listing-controls Select {
+    width: 1fr;
+    height: $ds-control-height-compact;
+}
+FileSystemPickerScreen #listing-progress {
+    min-height: $ds-control-height-compact;
+    color: $ds-text-muted;
+}
 
 /* ===== MODULE: components/_navigation.tcss ===== */
 /* ========================================
