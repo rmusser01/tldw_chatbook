@@ -2907,3 +2907,166 @@ def test_screen_selection_builder_targets_session_without_switching_view():
     assert selection.system_prompt == "system-a"
     assert selection.workspace_context.active_workspace_id == "workspace-a"
     assert store.active_session_id != first.id
+
+
+# ---------------------------------------------------------------------------
+# task-32484: the PRODUCTION selection builder (ChatScreen path) applies the
+# same per-send identity re-expansion as the controller's bare path, from the
+# one shared resolver -- persona and character parity. The settings snapshot
+# is deliberately STALE in these tests so only a fresh expansion can pass.
+# ---------------------------------------------------------------------------
+
+
+def _identity_selection_screen(store, global_name="Rowan"):
+    """Fake ChatScreen for the uncached selection builder (task-32484).
+
+    Mirrors test_screen_selection_builder_targets_session_without_switching_view
+    and adds the display-name accessor the identity resolver reads.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    fake_screen = SimpleNamespace(
+        _console_derivation_memo=None,
+        _provider_readiness_app_config=lambda: {
+            "api_settings": {"openai": {"model": "configured"}},
+            "console": {},
+        },
+        _ensure_console_chat_store=lambda: store,
+        _session=SimpleNamespace(
+            _console_session_settings=lambda session_id: store.session_settings(
+                session_id
+            ),
+            _ensure_active_console_session_settings=lambda: store.session_settings(
+                store.active_session_id
+            ),
+        ),
+        _effective_console_provider_model=lambda: ("openai", "model"),
+        _config_section=lambda config, key: dict(config.get(key, {})),
+        _workspace=SimpleNamespace(
+            _current_console_workspace_context=lambda: ConsoleWorkspaceContext(
+                active_workspace_id="workspace-a"
+            )
+        ),
+        _normalize_llamacpp_base_url=lambda value: value,
+        _global_chat_display_name=lambda: global_name,
+    )
+    fake_screen._build_console_provider_selection_uncached = (
+        lambda session_id=None: ChatScreen._build_console_provider_selection_uncached(
+            fake_screen, session_id
+        )
+    )
+    fake_screen._build_console_provider_selection_from_settings = (
+        lambda *args, **kwargs: ChatScreen._build_console_provider_selection_from_settings(
+            fake_screen, *args, **kwargs
+        )
+    )
+    return fake_screen
+
+
+def _persona_session(store, *, settings_prompt="Guide STALE as Archivist."):
+    return store.create_session(
+        title="Chat with Archivist",
+        workspace_id="workspace-a",
+        settings=_settings("openai", "model", settings_prompt),
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+        persona_system_template="Guide {{user}} as {{persona}}.",
+    )
+
+
+def test_screen_selection_re_expands_persona_template_with_override_name():
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    store = ConsoleChatStore()
+    session = _persona_session(store)
+    session.user_display_name_override = "Wren"
+    fake_screen = _identity_selection_screen(store)
+
+    selection = ChatScreen._build_console_provider_selection(
+        fake_screen, session.id
+    )
+
+    # Stale settings projection must NOT leak onto the wire: the live
+    # per-chat override wins per send.
+    assert selection.system_prompt == "Guide Wren as Archivist."
+
+
+def test_screen_selection_persona_without_override_uses_global_name():
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    store = ConsoleChatStore()
+    session = _persona_session(store)
+    fake_screen = _identity_selection_screen(store)
+
+    selection = ChatScreen._build_console_provider_selection(
+        fake_screen, session.id
+    )
+
+    assert selection.system_prompt == "Guide Rowan as Archivist."
+
+
+def test_screen_selection_keeps_settings_prompt_for_template_less_persona():
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Archivist",
+        workspace_id="workspace-a",
+        settings=_settings("openai", "model", "Custom persona prompt."),
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+    fake_screen = _identity_selection_screen(store)
+
+    selection = ChatScreen._build_console_provider_selection(
+        fake_screen, session.id
+    )
+
+    assert selection.system_prompt == "Custom persona prompt."
+
+
+def test_screen_selection_keeps_settings_prompt_when_persona_name_unresolved():
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat",
+        workspace_id="workspace-a",
+        settings=_settings("openai", "model", "Guide Rowan."),
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name=None,
+        persona_system_template="Guide {{user}} as {{persona}}.",
+    )
+    fake_screen = _identity_selection_screen(store)
+
+    selection = ChatScreen._build_console_provider_selection(
+        fake_screen, session.id
+    )
+
+    assert selection.system_prompt == "Guide Rowan."
+
+
+def test_screen_selection_re_expands_character_template_parity():
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Kestrel",
+        workspace_id="workspace-a",
+        settings=_settings("openai", "model", "You are Kestrel. Help STALE."),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Kestrel",
+    )
+    session.character_system_template = "You are {{char}}. Help {{user}}."
+    fake_screen = _identity_selection_screen(store)
+
+    selection = ChatScreen._build_console_provider_selection(
+        fake_screen, session.id
+    )
+
+    assert selection.system_prompt == "You are Kestrel. Help Rowan."

@@ -6195,6 +6195,490 @@ async def test_console_settings_modal_shows_inherited_provider_endpoint() -> Non
         assert base_url_input.value == "http://127.0.0.1:9099"
 
 
+def _registry_app_config() -> dict:
+    """ModalHarness config plus one resolvable llama-family registry entry."""
+    app_config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+            "openai": {"api_key": "test-key"},
+        },
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU box",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.9:8080",
+                "models": ["model-a"],
+            }
+        },
+    }
+    return app_config
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_shows_entry_base_url_readonly_with_hint() -> (
+    None
+):
+    """H1: selecting a custom-ep provider must reveal the entry's URL instead
+    of hiding the whole Base URL row, keep the input read-only, and show the
+    managed-by-entry hint."""
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    settings = ConsoleSessionSettings(
+        provider="custom-ep:gpu-box", model="model-a", base_url=None
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        base_url_input = app.screen.query_one("#console-settings-base-url", Input)
+        assert base_url_input.display is True
+        assert base_url_input.disabled is True
+        assert base_url_input.value == "http://192.168.1.9:8080"
+        hint = app.screen.query_one(
+            "#console-settings-base-url-entry-hint", Static
+        )
+        assert hint.display is True
+        assert "endpoint entry" in str(getattr(hint.renderable, "plain", hint.renderable))
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_hides_entry_hint_for_non_entry_providers() -> (
+    None
+):
+    """The managed-by-entry hint appears only for custom-ep providers; the
+    Base URL row for a keyless non-entry provider (openai) stays hidden."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        base_url_input = app.screen.query_one("#console-settings-base-url", Input)
+        assert base_url_input.display is False
+        hint = app.screen.query_one(
+            "#console-settings-base-url-entry-hint", Static
+        )
+        assert hint.display is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_saves_blank_session_base_url_for_entry() -> (
+    None
+):
+    """Gateway invariant: the read-only entry URL is display-only -- Save must
+    persist a blank session base_url so the registry entry stays the
+    authoritative endpoint on send (ADR-146 entry-URL authority)."""
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    settings = ConsoleSessionSettings(
+        provider="custom-ep:gpu-box", model="model-a", base_url=None
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        base_url_input = app.screen.query_one("#console-settings-base-url", Input)
+        assert base_url_input.value == "http://192.168.1.9:8080"
+        modal = app.screen
+        assert modal._current_base_url_value("custom-ep:gpu-box") is None
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "custom-ep:gpu-box"
+    assert app.saved_settings.base_url is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_entry_url_not_captured_into_provider_drafts() -> (
+    None
+):
+    """Switching away from a custom-ep provider must not capture the displayed
+    read-only entry URL as the provider's editable base-url draft."""
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    settings = ConsoleSessionSettings(
+        provider="custom-ep:gpu-box", model="model-a", base_url=None
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        modal = app.screen
+        # Switch to the built-in llama_cpp provider and back onto the entry.
+        modal._switch_provider("llama_cpp")
+        await pilot.pause()
+        assert "custom-ep:gpu-box" not in modal._provider_base_url_drafts
+        modal._switch_provider("custom-ep:gpu-box")
+        await pilot.pause()
+
+        base_url_input = app.screen.query_one("#console-settings-base-url", Input)
+        assert base_url_input.value == "http://192.168.1.9:8080"
+        assert base_url_input.disabled is True
+        assert modal._current_base_url_value("custom-ep:gpu-box") is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_options_end_with_new_endpoint_sentinel() -> (
+    None
+):
+    """H6: the provider surfaces end with a 'New custom endpoint…' sentinel so
+    a cloud-only user can reach the creation flow from Console settings."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app,
+        providers_models={"llama_cpp": ["model-a"]},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        from tldw_chatbook.Widgets.Console.console_settings_modal import (
+            NEW_CUSTOM_ENDPOINT_LABEL,
+            NEW_CUSTOM_ENDPOINT_SENTINEL,
+        )
+
+        select_options = modal._provider_select_options()
+        assert select_options[-1] == (
+            NEW_CUSTOM_ENDPOINT_LABEL,
+            NEW_CUSTOM_ENDPOINT_SENTINEL,
+        )
+        assert all(
+            value != NEW_CUSTOM_ENDPOINT_SENTINEL for _, value in select_options[:-1]
+        )
+        picker = modal.query_one(
+            "#console-settings-provider-picker", ConsoleProviderPicker
+        )
+        assert NEW_CUSTOM_ENDPOINT_SENTINEL in picker._known_provider_ids
+        assert (
+            picker._display_name(NEW_CUSTOM_ENDPOINT_SENTINEL)
+            == NEW_CUSTOM_ENDPOINT_LABEL
+        )
+
+
+@pytest.mark.parametrize("change_path", ["legacy_select", "provider_picker"])
+@pytest.mark.asyncio
+async def test_console_settings_modal_sentinel_opens_template_modal_and_restores(
+    change_path: str,
+) -> None:
+    """Selecting the sentinel opens the template modal immediately and leaves
+    the previously active provider selected: no switch logic, no drafts, no
+    readiness flicker."""
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        NEW_CUSTOM_ENDPOINT_SENTINEL,
+    )
+
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", base_url=None
+        ),
+        app,
+        providers_models={"llama_cpp": ["model-a"]},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        provider_select = modal.query_one("#console-settings-provider", Select)
+        if change_path == "legacy_select":
+            with provider_select.prevent(Select.Changed):
+                provider_select.value = NEW_CUSTOM_ENDPOINT_SENTINEL
+            modal._provider_changed(
+                Select.Changed(provider_select, NEW_CUSTOM_ENDPOINT_SENTINEL)
+            )
+        else:
+            modal._provider_picker_selected(
+                ConsoleProviderPicker.ProviderSelected(
+                    NEW_CUSTOM_ENDPOINT_SENTINEL
+                )
+            )
+        await pilot.pause()
+
+        assert isinstance(app.screen, ConsoleEndpointTemplateModal)
+        assert modal._active_provider == "llama_cpp"
+        assert provider_select.value == "llama_cpp"
+        picker = modal.query_one(
+            "#console-settings-provider-picker", ConsoleProviderPicker
+        )
+        assert picker.value == "llama_cpp"
+        assert NEW_CUSTOM_ENDPOINT_SENTINEL not in modal._provider_base_url_drafts
+        assert NEW_CUSTOM_ENDPOINT_SENTINEL not in modal._provider_model_drafts
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConsoleEndpointTemplateModal)
+        assert modal._active_provider == "llama_cpp"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_sentinel_never_reaches_saved_settings() -> (
+    None
+):
+    """After visiting the sentinel flow and cancelling, Save still persists the
+    previously active provider -- the sentinel is never a provider value."""
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        NEW_CUSTOM_ENDPOINT_SENTINEL,
+    )
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", base_url=None
+        ),
+        app,
+        providers_models={"llama_cpp": ["model-a"]},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+
+        provider_select = modal.query_one("#console-settings-provider", Select)
+        with provider_select.prevent(Select.Changed):
+            provider_select.value = NEW_CUSTOM_ENDPOINT_SENTINEL
+        modal._provider_changed(
+            Select.Changed(provider_select, NEW_CUSTOM_ENDPOINT_SENTINEL)
+        )
+        await pilot.pause()
+        assert isinstance(app.screen, ConsoleEndpointTemplateModal)
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "llama_cpp"
+    assert app.saved_settings.provider != NEW_CUSTOM_ENDPOINT_SENTINEL
+
+
+def test_endpoint_command_action_is_guarded_and_dispatches_worker() -> None:
+    """/endpoint (Qodo PR-2646): the command action honors the first-run
+    setup guard every other Console action respects, then dispatches the
+    flow as a worker coroutine."""
+    screen = ChatScreen.__new__(ChatScreen)
+    dispatched: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    screen.run_worker = lambda *args, **kwargs: dispatched.append((args, kwargs))
+
+    screen._console_setup_modal_blocking = lambda: True
+    screen.action_open_console_new_endpoint()
+    assert dispatched == []
+
+    screen._console_setup_modal_blocking = lambda: False
+    screen.action_open_console_new_endpoint()
+    assert len(dispatched) == 1
+    args, kwargs = dispatched[0]
+    assert asyncio.iscoroutine(args[0])
+    args[0].close()
+    assert kwargs.get("exclusive") is False
+
+
+def _endpoint_command_screen_double(
+    monkeypatch,
+    *,
+    stack: list[object],
+    pushes: list[object],
+    mount_result,
+    provider_calls: list[str],
+) -> ChatScreen:
+    """Constructor-free ChatScreen double for the ``/endpoint`` command flow.
+
+    Mirrors the seam set of ``test_open_console_settings_real_callback_stages_typed_credential_route``
+    so ``_open_console_settings`` runs for real against a fake app stack.
+    """
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    store = ConsoleChatStore()
+    store.create_session(settings=settings)
+    screen = ChatScreen.__new__(ChatScreen)
+
+    def push_screen(modal, callback=None):
+        stack.append(modal)
+        pushes.append(modal)
+        return mount_result()
+
+    fake_app = SimpleNamespace(screen_stack=stack, push_screen=push_screen)
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen.app_instance = SimpleNamespace(
+        pending_handoffs=chat_screen_module.PendingHandoffStore()
+    )
+    screen._session = SimpleNamespace(
+        _ensure_active_console_session_settings=lambda: settings
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen._console_settings_context_estimate_for_session = lambda *_a, **_k: (
+        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._active_console_settings_context_estimate = lambda: (
+        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._active_console_context_control_state = lambda **_k: None
+    screen._console_context_control_state_for_session = lambda *_a, **_k: None
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
+        effective_thinking_history_policy_for_session=(
+            lambda _session_id: _async_return("auto")
+        ),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+        rebase_console_settings_draft=lambda draft, **_k: draft,
+    )
+    screen._provider_readiness_app_config = lambda: {
+        "api_settings": {"llama_cpp": {}}
+    }
+    screen._global_chat_display_name = lambda: "Ada"
+    screen._console_run_active = lambda: False
+
+    async def provider_models(provider, **_kwargs):
+        provider_calls.append(str(provider))
+        return {"llama_cpp": ["model-a"]}
+
+    screen._providers_models_for_console_settings = provider_models
+    return screen
+
+
+async def _async_return(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_endpoint_command_layers_template_on_exact_settings_modal(
+    monkeypatch,
+) -> None:
+    """/endpoint (Qodo PR-2646 High): Conversation settings opens first and
+    the endpoint template layers directly on top of that exact modal, seeded
+    from the active provider with the already-resolved provider models."""
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    stack: list[object] = []
+    pushes: list[object] = []
+    provider_calls: list[str] = []
+
+    class MountResult:
+        def __await__(self):
+            async def _mounted():
+                return None
+
+            return _mounted().__await__()
+
+    screen = _endpoint_command_screen_double(
+        monkeypatch,
+        stack=stack,
+        pushes=pushes,
+        mount_result=MountResult,
+        provider_calls=provider_calls,
+    )
+
+    await ChatScreen._open_console_new_endpoint(screen)
+
+    assert len(pushes) == 2
+    settings_modal, template = pushes
+    assert isinstance(settings_modal, ConsoleSettingsModal)
+    assert isinstance(template, ConsoleEndpointTemplateModal)
+    # The exact settings modal this flow opened sits directly beneath the
+    # template: EndpointCreated reaches its handler, never ChatScreen.
+    assert stack[-2] is settings_modal
+    assert stack[-1] is template
+    assert template._template_provider == "llama_cpp"
+    # Provider-model options are resolved once for the settings modal and
+    # reused for the template -- no second async resolution window.
+    assert provider_calls == ["llama_cpp"]
+
+
+@pytest.mark.asyncio
+async def test_endpoint_command_aborts_when_settings_dismissed_before_template(
+    monkeypatch,
+) -> None:
+    """/endpoint (Qodo PR-2646 High): if the settings modal is dismissed
+    while its mount settles, the template is never pushed over ChatScreen
+    (an orphaned EndpointCreated would skip provider selection)."""
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    stack: list[object] = []
+    pushes: list[object] = []
+    provider_calls: list[str] = []
+
+    class DismissDuringMount:
+        def __await__(self):
+            async def _dismissed():
+                # The user dismissed Conversation settings while the mount
+                # awaitable resolved; the modal leaves the stack.
+                assert isinstance(stack[-1], ConsoleSettingsModal)
+                stack.pop()
+
+            return _dismissed().__await__()
+
+    screen = _endpoint_command_screen_double(
+        monkeypatch,
+        stack=stack,
+        pushes=pushes,
+        mount_result=DismissDuringMount,
+        provider_calls=provider_calls,
+    )
+
+    await ChatScreen._open_console_new_endpoint(screen)
+
+    assert len(pushes) == 1
+    assert isinstance(pushes[0], ConsoleSettingsModal)
+    assert not any(isinstance(m, ConsoleEndpointTemplateModal) for m in stack)
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_prefers_api_base_url_alias_over_default_api_url() -> (
     None
@@ -9801,7 +10285,7 @@ def test_console_control_state_reads_persona_label_without_storing_it_on_session
     assert session.assistant_authority_id is None
     assert "assistant_kind" in session.__dataclass_fields__
     assert "assistant_id" in session.__dataclass_fields__
-    assert "assistant_name" not in session.__dataclass_fields__
+    assert session.assistant_name is None
 
 
 def test_console_saved_openai_with_key_shows_ready_readiness() -> None:

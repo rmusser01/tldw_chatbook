@@ -39,6 +39,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
     project_instruction_authority_is_current,
     resolve_project_instruction_binding,
 )
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
@@ -1311,3 +1312,166 @@ async def test_project_instruction_disable_terminalizes_and_allows_retry(
     assert second.accepted is True
     assert bridge_calls == [True]
     assert len(provider_calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# task-32483: a turn refused at project-instruction setup must TERMINALIZE --
+# the run state must leave the slot-occupying set and the pending placeholder
+# must not linger, or the session's send gate sticks at "Wait for this turn
+# to be accepted before queueing a message." forever.
+# ---------------------------------------------------------------------------
+
+from tldw_chatbook.Chat.console_chat_models import (  # noqa: E402
+    ConsoleMessageRole,
+    ConsoleRunStatus,
+)
+
+
+class _RefusalProbeBridge:
+    """Agent bridge double: records whether a run ever reached the agent loop."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def run_reply(self, **kwargs):
+        self.calls += 1
+        return "run-1", RunOutcome(status=RUN_DONE, steps=[], final_text="done.")
+
+
+class _RefusalProbeGateway:
+    async def resolve_for_send(self, _selection):
+        return with_destination(
+            ConsoleProviderResolution(
+                provider="OpenAI",
+                base_url="https://api.example/v1",
+                model="test-model",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+                max_tokens=128,
+            )
+        )
+
+
+def _refusal_probe_controller(store, bridge, registry):
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_RefusalProbeGateway(),
+        provider="openai",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    controller.app = SimpleNamespace(workspace_registry_service=registry)
+    return controller
+
+
+def _assert_turn_released(controller, store, session_id, visible_copy):
+    run_state = controller.run_state_for(session_id)
+    assert run_state.status is ConsoleRunStatus.BLOCKED
+    assert run_state.is_send_allowed
+    assistant = next(
+        message
+        for message in store.messages_for_session(session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "failed"
+    assert controller.activity_for(session_id).occupies_slot is False
+
+
+@pytest.mark.asyncio
+async def test_preflight_disable_terminalizes_turn_and_releases_send_gate():
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="w1", ephemeral=True)
+    store.set_session_project_instruction_state(
+        session.id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id="removed-binding",
+            working_folder_locator_fingerprint="f" * 64,
+        ),
+    )
+    bridge = _RefusalProbeBridge()
+    controller = _refusal_probe_controller(store, bridge, _BindingRegistry([]))
+
+    async def choose(_session_id, options, _code):
+        assert options == ()
+        return "disable", None
+
+    controller._select_project_instruction_binding = choose
+
+    result = await controller.submit_draft("first")
+
+    assert result.accepted is False
+    assert result.visible_copy == "project_instructions_disabled"
+    assert bridge.calls == 0
+    _assert_turn_released(
+        controller, store, session.id, "project_instructions_disabled"
+    )
+    # The disable decision persists: a later send skips the preflight and
+    # reaches the agent loop (the actual regression: the composer unbricks).
+    result2 = await controller.submit_draft("second")
+    assert bridge.calls == 1
+    assert result2.accepted is True
+
+
+@pytest.mark.asyncio
+async def test_preflight_cancel_terminalizes_turn_and_releases_send_gate():
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="w1", ephemeral=True)
+    store.set_session_project_instruction_state(
+        session.id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id="removed-binding",
+            working_folder_locator_fingerprint="f" * 64,
+        ),
+    )
+    bridge = _RefusalProbeBridge()
+    controller = _refusal_probe_controller(store, bridge, _BindingRegistry([]))
+
+    async def choose(_session_id, _options, _code):
+        return "cancel", None
+
+    controller._select_project_instruction_binding = choose
+
+    result = await controller.submit_draft("first")
+
+    assert result.accepted is False
+    assert result.visible_copy == "choose_binding"
+    assert bridge.calls == 0
+    _assert_turn_released(controller, store, session.id, "choose_binding")
+    # Cancel keeps the feature enabled; once the user disables it (or picks a
+    # binding later), a subsequent send must still reach the agent loop.
+    store.set_session_project_instruction_state(
+        session.id, ProjectInstructionControlState.legacy_disabled()
+    )
+    result2 = await controller.submit_draft("second")
+    assert bridge.calls == 1
+    assert result2.accepted is True
+
+
+@pytest.mark.asyncio
+async def test_preflight_without_chooser_callback_terminalizes_turn():
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="w1", ephemeral=True)
+    store.set_session_project_instruction_state(
+        session.id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id="removed-binding",
+            working_folder_locator_fingerprint="f" * 64,
+        ),
+    )
+    bridge = _RefusalProbeBridge()
+    controller = _refusal_probe_controller(store, bridge, _BindingRegistry([]))
+    # No chooser callback wired at all: the fail-closed branch must still
+    # release the turn instead of stranding the send gate.
+    controller._select_project_instruction_binding = None
+
+    result = await controller.submit_draft("first")
+
+    assert result.accepted is False
+    assert result.visible_copy == "choose_binding"
+    assert bridge.calls == 0
+    _assert_turn_released(controller, store, session.id, "choose_binding")

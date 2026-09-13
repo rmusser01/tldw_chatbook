@@ -54,6 +54,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "temp": "Open a temporary chat that is never saved locally",
     "settings": "Open the full session settings modal",
     "context": "Show current and next-send context (Ctrl+Shift+P)",
+    "endpoint": "Create a named custom endpoint from a template",
 }
 
 #: Shown for a registered command with no ``_COMMAND_DESCRIPTIONS`` entry --

@@ -442,6 +442,17 @@ def _expanded_css_path_source(value: ast.AST, tree: ast.AST, text: str) -> str:
 
 
 def _pins_css_path(stmt: ast.stmt) -> bool:
+    """``CSS_PATH = ...`` or the annotated ``CSS_PATH: ClassVar = ...`` form.
+
+    Both carry ``.value``; an annotation without a value pins nothing.
+    """
+    if isinstance(stmt, ast.AnnAssign):
+        target = stmt.target
+        return (
+            isinstance(target, ast.Name)
+            and target.id == "CSS_PATH"
+            and stmt.value is not None
+        )
     return isinstance(stmt, ast.Assign) and any(
         isinstance(t, ast.Name) and t.id == "CSS_PATH" for t in stmt.targets
     )

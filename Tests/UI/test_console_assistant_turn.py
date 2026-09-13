@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleActivityPresentation,
     ConsoleChatMessage,
@@ -22,10 +23,6 @@ from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleAssistantTurnWidget,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
-from Tests.UI.consolidated_css import APP_STYLESHEETS
-
-
-_CSS_DIR = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
 
 
 def _painted_background(app: App, widget) -> object:
@@ -87,7 +84,7 @@ def _painted_foreground_and_background(app: App, widget) -> tuple[object, object
     raise AssertionError(f"no painted glyph colors inside {widget.region!r}")
 
 
-class ActivityHarness(App[None]):
+class ActivityHarness(ConsolidatedCSSApp):
     """Mount two independent disclosures and apply their emitted state."""
 
     def __init__(self, *disclosures: ConsoleActivityDisclosure) -> None:
@@ -115,11 +112,7 @@ class ActivityHarness(App[None]):
 class StyledActivityHarness(ActivityHarness):
     """Activity harness loading the exact production stylesheet stack."""
 
-    CSS_PATH = [
-        str(_CSS_DIR / "screen_css_scoped.tcss"),
-        *[str(path) for path in APP_STYLESHEETS],
-        str(_CSS_DIR / "screen_css_self.tcss"),
-    ]
+    CSS_PATH: ClassVar = list(APP_STYLESHEETS)
 
 
 def _disclosure(
@@ -393,14 +386,10 @@ async def test_replacing_activities_preserves_turn_header_and_answer_identity() 
         ]
 
 
-class StyledTranscriptHarness(App[None]):
+class StyledTranscriptHarness(ConsolidatedCSSApp):
     """Production-shaped transcript host loading the exact app CSS stack."""
 
-    CSS_PATH = [
-        str(_CSS_DIR / "screen_css_scoped.tcss"),
-        *[str(path) for path in APP_STYLESHEETS],
-        str(_CSS_DIR / "screen_css_self.tcss"),
-    ]
+    CSS_PATH: ClassVar = list(APP_STYLESHEETS)
 
     def __init__(self) -> None:
         super().__init__()

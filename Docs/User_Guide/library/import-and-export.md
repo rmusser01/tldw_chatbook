@@ -492,6 +492,7 @@ imported items afterwards.
   a next step is tracked as task-32054.
 
 —
+
 *Verified against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: the rail
 button/canvas title/Start button/completion toast all read "Import…" /
 "Import media" / "Start import" / "Import finished" — was "Add content…"
@@ -767,6 +768,7 @@ while its gate is closed the submit button reads "○ Export bundle (.zip)"
 scope uses uncapped active local IDs, while Skills and Prompt collection/history
 lifecycle state remain excluded. Escape returns to the canvas whose Export…
 opened the form, including Prompts, or to the hub when entered from the rail.)*
+
 *Verified against fix/ui-background-signal-bounds — 2026-08-10
 (task-14910): a 0-byte file is no longer uploaded to the server. The
 forecast has always counted one as a certain failure, which was true
@@ -1012,3 +1014,11 @@ the same validation the three Notes pickers use — a relative or traversing
 value is no longer resolved against the process working directory — and its
 write is ordered, so two picks made inside one config write settle on the
 later one.)*
+
+*Verified against fix/library-notes-wave3-docs — 2026-09-12 (task-32271: the
+two wave-3 claims on this page re-walked on dev 7159fc0b99 at 235x52 —
+**Choose destination…** refuses an unwritable pick on the line under the
+button, "Can't save there: The folder /nonexistent/dir does not exist.", and
+accepts nothing; the ingest **Browse…** opens at the folder `[notes]
+sync_directory` names when nothing is remembered. Nothing on this page needed
+correcting.)*

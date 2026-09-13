@@ -3397,6 +3397,106 @@ def test_custom_endpoint_keyed_family_requires_key():
     assert readiness.native_send_supported is False
 
 
+def test_custom_endpoint_declared_resolving_key_names_credential_provenance():
+    """H4: an entry that DECLARES a credential which resolves must not be
+    told 'No API key is required' -- the readiness names the declared
+    credential's provenance instead (the keyless-family copy only stands for
+    entries that declare nothing)."""
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="custom-ep:paid", model="m", base_url=None),
+        app_config=_registry_config(),
+        environ={"PAID_KEY": "paid-secret"},
+    )
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
+    assert "Credential: env PAID_KEY" in readiness.detail
+    assert "No API key is required" not in readiness.detail
+
+
+def test_custom_endpoint_undeclared_key_keeps_family_keyless_copy():
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="custom-ep:gpu", model="m", base_url=None
+        ),
+        app_config=_registry_config(),
+        environ={},
+    )
+    assert readiness.label == "Ready"
+    assert "No API key is required" in readiness.detail
+
+
+def test_custom_endpoint_declared_env_key_updates_structured_facet_and_row():
+    """Qodo PR-2646: a declared entry credential that resolves must reach the
+    structured readiness facet and the rendered summary row too -- not only
+    the detail string -- so the presentation stops saying 'Not required'
+    while the gateway sends the credential."""
+    settings = ConsoleSessionSettings(provider="custom-ep:paid", model="m")
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config=_registry_config(),
+        environ={"PAID_KEY": "paid-secret"},
+    )
+    assert readiness.credential == "present_unverified"
+    assert readiness.credential_source == "environment"
+
+    state = build_console_settings_summary_state(
+        settings,
+        ConsoleSettingsContextEstimate(
+            used_tokens=None, token_limit=None, label="Context: unavailable"
+        ),
+        readiness,
+    )
+    assert state.credential_row == "Credential: environment variable (not verified)"
+
+
+def test_custom_endpoint_declared_stored_key_updates_structured_facet():
+    """The stored ``api_key`` variant of the same rule names 'stored' as the
+    credential source."""
+    stored_config = {
+        "custom_endpoints": {
+            "paid": {
+                "display_name": "Paid compat",
+                "family": "openai_compatible",
+                "base_url": "https://api.example.com/v1",
+                "api_key": "sk-stored",
+            }
+        }
+    }
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="custom-ep:paid", model="m", base_url=None),
+        app_config=stored_config,
+        environ={},
+    )
+    assert readiness.credential == "present_unverified"
+    assert readiness.credential_source == "stored"
+
+
+def test_custom_endpoint_declared_key_authenticated_evidence_upgrades_facet():
+    """Exact-identity authenticated test evidence upgrades the declared
+    credential facet, mirroring the built-in provider chain."""
+    identity = _readiness_identity(
+        provider="custom",
+        endpoint="https://api.example.com/v1",
+        credential_source="environment",
+    )
+    evidence = ProviderTestEvidence(
+        identity,
+        "reachable",
+        (),
+        credential="present_unverified",
+        generation="succeeded",
+    )
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="custom-ep:paid", model="m", base_url=None),
+        app_config=_registry_config(),
+        environ={"PAID_KEY": "paid-secret"},
+        evidence=evidence,
+        current_identity=identity,
+    )
+    assert readiness.credential == "authenticated"
+    assert readiness.credential_source == "environment"
+
+
 def test_provider_settings_resolves_custom_endpoint_aliases():
     settings_view = custom_endpoint_provider_settings(
         _registry_config(), "custom-ep:paid"
