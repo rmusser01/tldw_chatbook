@@ -294,6 +294,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     expand_character_template,
     resolve_console_message_presentation,
+    resolve_send_system_prompt,
 )
 from tldw_chatbook.Chat.console_turn_context import (
     capture_change_review_admission,
@@ -20657,6 +20658,22 @@ class ConsoleChatController:
             selection = replace(
                 selection, system_prompt=self._resolved_system_prompt(session_id)
             )
+        elif (
+            session is not None
+            and self.store._is_named_persona_session(session)
+            and isinstance(session.persona_system_template, str)
+            and session.persona_system_template.strip()
+        ):
+            # Persona sessions always carry settings, so without this override
+            # their sends would reuse the settings' last materialized
+            # projection. Swap in the per-turn re-expansion -- but only under
+            # exactly the conditions where `_resolved_system_prompt` returns a
+            # fresh expansion (named persona + trusted template). A
+            # template-less persona, or a resume whose name resolution failed
+            # (assistant_name=None), keeps the settings-derived prompt.
+            selection = replace(
+                selection, system_prompt=self._resolved_system_prompt(session_id)
+            )
         return selection
 
     def resolve_turn_configuration_snapshot(
@@ -25769,16 +25786,6 @@ class ConsoleChatController:
             selected_body=selected.selected_body,
         )
 
-    def _refuse_project_instruction_setup(
-        self, session_id: str, assistant_message_id: str, visible_copy: str
-    ) -> ConsoleSubmitResult:
-        """Release setup recovery using the existing disable decision contract."""
-        try:
-            self.store.mark_message_failed(assistant_message_id)
-        except KeyError:
-            return self._session_closed_result(session_id=session_id)
-        return self._block(session_id, visible_copy)
-
     @_retire_generation_before_agent_handoff
     async def _run_agent_reply(
         self,
@@ -25946,8 +25953,8 @@ class ConsoleChatController:
                 else:
                     callback = self._select_project_instruction_binding
                     if callback is None:
-                        return self._refuse_project_instruction_setup(
-                            session_id, assistant_message_id, str(exc)
+                        return self._refuse_turn_for_project_setup(
+                            assistant_message_id, session_id, str(exc)
                         )
                     action, binding_id = await callback(session_id, options, str(exc))
                     action, project_selection = (
@@ -25963,15 +25970,15 @@ class ConsoleChatController:
                     )
                     if action == "disable":
                         self._clear_project_instruction_delivery(session_id)
-                        return self._refuse_project_instruction_setup(
-                            session_id,
+                        return self._refuse_turn_for_project_setup(
                             assistant_message_id,
+                            session_id,
                             "project_instructions_disabled",
                         )
                     if action != "select" or project_selection is None:
                         self._clear_project_instruction_delivery(session_id)
-                        return self._refuse_project_instruction_setup(
-                            session_id, assistant_message_id, str(exc)
+                        return self._refuse_turn_for_project_setup(
+                            assistant_message_id, session_id, str(exc)
                         )
             if project_selection is not None:
                 state = project_state
@@ -27007,6 +27014,35 @@ class ConsoleChatController:
         )
         return ConsoleSubmitResult(True, True, failed.content)
 
+    def _refuse_turn_for_project_setup(
+        self,
+        assistant_message_id: str,
+        session_id: str,
+        visible_copy: str,
+    ) -> ConsoleSubmitResult:
+        """Terminalize a turn refused at project-instruction setup (task-32483).
+
+        Every other refusal path (skill ``_block``, runtime cancel, failure)
+        terminalizes the run state and resolves the pending placeholder; the
+        setup-refusal early returns in ``_run_agent_reply`` did neither, so
+        the run state stayed non-terminal and the send gate stuck at
+        "Wait for this turn to be accepted before queueing a message."
+        forever. Mirrors the cancel path: a present placeholder is marked
+        failed; the returned result keeps the exact refusal shape the queue
+        machinery already handles (not accepted, draft preserved).
+        """
+        placeholder = self._ensure_assistant_placeholder(
+            assistant_message_id, session_id
+        )
+        if placeholder is not None:
+            self.store.mark_message_failed(assistant_message_id)
+        self._set_run_state(
+            ConsoleRunState.blocked(visible_copy), session_id=session_id
+        )
+        return ConsoleSubmitResult(
+            accepted=False, should_clear_draft=False, visible_copy=visible_copy
+        )
+
     async def _finalize_agent_success(
         self,
         assistant_message_id: str,
@@ -27300,27 +27336,45 @@ class ConsoleChatController:
         return fallback
 
     def _resolved_system_prompt(self, session_id: str | None) -> str | None:
-        """Resolve a trusted character system template for the current identity."""
+        """Resolve the trusted identity system template for the session kind."""
         if session_id is None:
             return self.system_prompt
         session = next(
             (candidate for candidate in self.store.sessions() if candidate.id == session_id),
             None,
         )
+        if session is None:
+            return self.system_prompt
+        if session.assistant_kind == "character":
+            name = session.character_name
+            template = session.character_system_template
+        elif session.assistant_kind == "persona":
+            name = session.assistant_name
+            template = session.persona_system_template
+        else:
+            return self.system_prompt
         if (
-            session is None
-            or session.assistant_kind != "character"
-            or not isinstance(session.character_name, str)
-            or not session.character_name.strip()
-            or not isinstance(session.character_system_template, str)
-            or not session.character_system_template.strip()
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(template, str)
+            or not template.strip()
         ):
             return self.system_prompt
-        context = self._presentation_context_for(session_id)
-        return expand_character_template(
-            session.character_system_template,
-            user_name=context.user_name,
-            character_name=session.character_name.strip(),
+        # task-32484: route through the shared resolver so this path and the
+        # production provider-selection path can never drift apart. The
+        # expansion is identical to the pre-refactor inline version: the
+        # presentation context's user_name IS effective_user_display_name(
+        # override, global_default) with the same guarded global accessor.
+        try:
+            global_default = self._global_user_display_name()
+        except Exception:
+            global_default = "User"
+        return resolve_send_system_prompt(
+            identity_name=name,
+            identity_template=template,
+            user_name_override=session.user_display_name_override,
+            global_default=global_default,
+            fallback=self.system_prompt,
         )
 
     def _character_emote_authority(
