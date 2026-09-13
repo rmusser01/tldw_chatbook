@@ -4,7 +4,7 @@ title: Supervisor agent fleet program
 status: In Progress
 assignee: []
 created_date: '2026-08-09 13:57'
-updated_date: '2026-09-12 23:52'
+updated_date: '2026-09-13 00:19'
 labels: []
 dependencies: []
 ---
@@ -65,4 +65,6 @@ Current communication is bounded process-local steering and child progress, expl
 Interim worktree safeguards refuse agent create/merge/discard and retain existing checkouts/branches; a qualified execution backend under ADR155 is still missing. TASK31210 and TASK31211 retain unchecked functional criteria. TASK18929 was reopened for this wave's ordinary budget-stop continuation regression; two positive worktree continuation tests and a deferred per-chunk usage extraction observation remain final review obligations. No functional recovery, durable inbox, full-suite run or live-provider certification is claimed. Existing dependency/static warnings, the earlier preset-probe user-config read before sandboxed write failure, and the cap Task 1 automatic foreign pytest-cleanup attempt remain explicitly qualified in child/current-status records.
 
 ADR required: no new ADR for this records-only reconciliation. Existing backlog/decisions/129-fleet-mailbox-and-wake-reliability.md and the exact supplemental decision paths in the linked closeout plan govern delivered behavior. The implementation plan was narrowed to allow honest partial reconciliation without prematurely closing the parent. Independent records review and combined branch review are pending. Work remains local on codex/agent-orchestration-remaining; no new PR, push or merge was performed.
+
+Final integration checkpoint: all four broad-review findings were repaired in 7852cf47ba and the single scoped re-review approved all four with no new Critical/Important breakage. TASK18929 and TASK18923 are Done again with their new regression criteria checked. The continuation module now passes 45 cases without teardown errors, and provider/error plus denial/cancel selections pass. The partial records review was also approved. Complete review, evidence qualifications and all 50 controller rulings are durably preserved in Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md. The parent remains In Progress with its AC unchecked because TASK31210/31211 functional worktree outcomes still require a qualified backend. No additional parent child or retroactive completion was invented; no PR/push/merge is implied.
 <!-- SECTION:NOTES:END -->

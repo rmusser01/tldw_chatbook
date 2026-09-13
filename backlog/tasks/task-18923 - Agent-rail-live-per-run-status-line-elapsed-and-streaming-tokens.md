@@ -1,11 +1,11 @@
 ---
 id: TASK-18923
 title: 'Agent rail: live per-run status line (elapsed + streaming tokens)'
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-19 09:55'
-updated_date: '2026-09-13 00:05'
+updated_date: '2026-09-13 00:19'
 labels:
   - console
   - agents
@@ -27,7 +27,7 @@ Port of hermes-agent's live token-flow spinner idea (2026-08-19 hermes-release r
 - [x] #3 Live children in the fleet panel show the same live elapsed/token treatment where the child's usage is observable
 - [x] #4 The tick reuses/stops per the survivor-tick discipline: self-stopping when nothing is live, no per-chunk repaint cost
 - [x] #5 Tests pin the render, the 1/s cadence bound, idle teardown, and honest-labeling of non-provider counts
-- [ ] #6 Failures in optional per-chunk live-usage snapshot/count observation do not abort or truncate a valid attributed provider stream; genuine provider errors and final accounting retain their established behavior, covered through the actual adapter.
+- [x] #6 Failures in optional per-chunk live-usage snapshot/count observation do not abort or truncate a valid attributed provider stream; genuine provider errors and final accounting retain their established behavior, covered through the actual adapter.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,4 +52,6 @@ Verification: backend focused 16-case provenance/lifecycle gate and later 10-cas
 Evidence and reports: .superpowers/sdd/2026-09-12-live-per-run-usage/task-1-report.md, task-2-report.md and scratch/task-2-review-round1.md. Implementation plan: Docs/superpowers/plans/2026-09-12-live-per-run-usage.md. Modified service, gateway, adapter/bridge, Console agent renderer, focused service/Chat/UI tests and guide. Root preserves evidence; parent program and unresolved worktree recovery remain open.
 
 Reopened by final whole-branch review: optional per-chunk usage_snapshot/count extraction occurs before transcript append and outside observability containment, allowing a telemetry fault to propagate as model failure. The former deferred observation is now a confirmed P2 integration repair. Earlier reviewed UI/source completion remains historical; AC6 and a focused combined repair/review are pending. No unrelated provider error may be swallowed.
+
+Final integration repair completed in 7852cf47ba and independently re-reviewed. Optional per-chunk usage snapshot/count extraction is contained; one fixed warning disables repeated per-chunk observation attempts for that call while complete text, genuine provider failures, final accounting and finished-state cleanup retain their existing paths. Two actual attributed text-stream regressions failed before the fix and passed afterward; the final 13-case adapter accounting/error selection, including genuine provider failure, passes. The new diagnostic and two prior intended fixed warnings were reviewed for data/sink safety, and the generated inventory now matches source (606 owners, 1391 TASK492 calls, 55 TASK31551, 7721 TASK494, 12 sinks). Scoped static adds no diagnostics and edited formatting passes. AC6 is complete; this supersedes the reopened status without erasing earlier warning/process qualifications. Existing ADR156 applies. Final evidence and all 50 reviewed rulings are preserved in Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md. No full-suite/live-provider certification or dependency repair is claimed.
 <!-- SECTION:NOTES:END -->
