@@ -13659,3 +13659,24 @@ which service method the current code calls and whether the fake has it —
 contract copy; when production moves to a new seam, the fake keeps passing
 whatever it still implements. And treat a production `if not callable(...):
 return` as a place where a missing seam becomes invisible, not as a safety net.
+
+## A green suite cannot see kwargs the production adapter swallows
+
+**TASK-32477, 2026-09-12.** The agent-routing feature's spawn integration passed
+every test — 152 green across three suites — because the tests stubbed
+`chat_call` with a capturing fake and asserted on the captured kwargs. The task's
+own gateway trace then found the PRODUCTION adapter
+(`_StreamingModelAdapter.chat_call`, console_agent_bridge.py) accepted
+`api_endpoint` and never referenced it, and dropped `api_base_url` plus all 13
+sampling kwargs into `**_ignored`, always streaming via the parent's fixed
+resolution. The feature was completely inert in production behind a green suite;
+a whole plan task (6B) had to be added to make routed calls actually route. The
+final review independently re-verified the fix end-to-end through
+`resolve_for_send` → `stream_chat` → `_chat_api_kwargs_from_prepared` →
+`chat_api_call`.
+
+**What to do.** When a feature's contract crosses a seam the tests stub, "the
+seam forwards my kwargs" is a claim to verify against the real implementation —
+read the production adapter's body once (grep for the kwargs; watch for
+`**_ignored`), and have the integration review trace one call end-to-end. A
+capturing stub proves what you EMIT, never what the other side CONSUMES.

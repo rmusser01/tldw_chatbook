@@ -138,6 +138,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     custom_endpoint_provider_settings,
     entry_for,
     family_execution_key,
+    split_custom_endpoint_id,
     CustomEndpointEntry,
 )
 from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkSplitter
@@ -1632,6 +1633,13 @@ class ConsoleProviderResolution:
         visible_copy: User-visible blocker or recovery copy.
         readiness_key: Normalized key used for readiness checks.
         execution_key: Provider key passed to ``chat_api_call``.
+        selected_provider: Raw selection id before any family flattening —
+            ``custom-ep:<slug>`` when the selection named a registry
+            endpoint, else ``""`` (plain and alias selections keep the
+            execution/display keys as their only identity). Spawn routing
+            and the streaming adapter's same-target decision read this so a
+            child of ``custom-ep:<slug>`` is never conflated with the
+            built-in family the endpoint executes through.
         api_key: Resolved API key, omitted from repr output.
         api_key_source: Human-readable source of the resolved API key.
         temperature: Optional sampling temperature.
@@ -1654,6 +1662,7 @@ class ConsoleProviderResolution:
     visible_copy: str = ""
     readiness_key: str = ""
     execution_key: str = ""
+    selected_provider: str = ""
     api_key: str | None = field(default=None, repr=False)
     api_key_source: str | None = None
     temperature: float | None = None
@@ -3915,6 +3924,11 @@ class ConsoleProviderGateway:
                     provider=identity.execution_key,
                     readiness_key=identity.readiness_key,
                     execution_key=identity.execution_key,
+                    selected_provider=(
+                        selection.provider
+                        if split_custom_endpoint_id(selection.provider)
+                        else ""
+                    ),
                 ),
                 app_config,
             )
@@ -4175,6 +4189,11 @@ class ConsoleProviderGateway:
             ready=True,
             readiness_key=identity.readiness_key,
             execution_key=identity.execution_key,
+            selected_provider=(
+                selection.provider
+                if split_custom_endpoint_id(selection.provider)
+                else ""
+            ),
             api_key=(
                 entry_api_key if entry_api_key is not None else readiness.api_key
             ),

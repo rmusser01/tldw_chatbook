@@ -155,6 +155,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleActivityStatus,
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleProviderSelection,
     ProjectInstructionActivationEvent,
     RawCliPresentation,
 )
@@ -195,6 +196,7 @@ from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderCallSignals,
     ConsoleProviderGateway,
+    ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
     ProviderProprietaryThinkingEvidence,
     ProviderThinkingDelta,
@@ -2944,6 +2946,29 @@ def reset_session_stalls(*args: Any, **kwargs: Any) -> None:
 
     _impl(*args, **kwargs)
 
+#: ADR-147 Task 6B: per-call sampling kwarg (Task 6's ``_CHAT_CALL_PARAM_MAP``
+#: values, Agents/agent_service.py) -> ``ConsoleProviderResolution`` field of
+#: the same meaning. ``stream_chat`` carries sampling on the RESOLUTION (the
+#: gateway maps fields onto ``chat_api_call`` kwargs in
+#: ``_chat_api_kwargs_from_prepared``: ``temp=resolution.temperature`` etc.),
+#: so honoring these kwargs means overlaying them onto the resolution handed
+#: to the gateway -- forward, never rename.
+_PER_CALL_SAMPLING_RESOLUTION_FIELDS = {
+    "temp": "temperature",
+    "topp": "top_p",
+    "minp": "min_p",
+    "topk": "top_k",
+    "max_tokens": "max_tokens",
+    "seed": "seed",
+    "presence_penalty": "presence_penalty",
+    "frequency_penalty": "frequency_penalty",
+    "reasoning_effort": "reasoning_effort",
+    "reasoning_summary": "reasoning_summary",
+    "verbosity": "verbosity",
+    "thinking_effort": "thinking_effort",
+    "thinking_budget_tokens": "thinking_budget_tokens",
+}
+
 
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
@@ -3169,8 +3194,56 @@ class _StreamingModelAdapter:
         streaming=False,
         tools=None,
         continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
-        **_ignored,
+        **per_call_kwargs,
     ) -> dict:
+        """Stream one turn, honoring ADR-147 per-call routing kwargs.
+
+        Task 6 emits a spawned child's resolved target onto every call:
+        ``api_endpoint`` (raw provider id, possibly ``custom-ep:<slug>``),
+        ``model``, ``api_base_url``, and the 13 sampling kwargs mapped by
+        ``_PER_CALL_SAMPLING_RESOLUTION_FIELDS``. An ``api_endpoint`` naming
+        a DIFFERENT provider re-resolves through the gateway's own send
+        seam (``resolve_for_send``) so the bytes stream from the child's
+        provider; a call on the parent's provider overlays only what it
+        carries onto a per-call copy of the parent resolution. A call
+        carrying none of these behaves exactly as before, on
+        ``self._resolution`` itself -- which is never mutated, since the
+        adapter is shared across concurrent children. An unknown/unready
+        per-call provider raises through the same channel as a stream
+        failure, never a silent fallback to the parent. A routed call on a
+        continuation-pinned turn raises the typed ``ContinuationConflictError``
+        from request preparation (the restore target pins the parent's
+        provider/model/base_url) -- loud, through that same channel.
+        """
+        sampling_overlays = {
+            field: per_call_kwargs.pop(kwarg)
+            for kwarg, field in _PER_CALL_SAMPLING_RESOLUTION_FIELDS.items()
+            if per_call_kwargs.get(kwarg) is not None
+        }
+        api_base_url = per_call_kwargs.pop("api_base_url", None)
+        # Any keys still in per_call_kwargs stay ignored, exactly as before.
+        # Same-target decision keys on the parent's RAW selection identity,
+        # not the flattened execution key: a child explicitly routed to the
+        # built-in family of a custom-ep parent (e.g. `llama_cpp` under
+        # `custom-ep:qwen-local`) is a DIFFERENT target and must resolve the
+        # built-in provider independently, while an inheriting child names
+        # the raw slug and reuses this resolution (qodo PR-2651 High).
+        # Plain providers leave ``selected_provider`` empty and fall through
+        # to the historical execution_key/provider chain unchanged.
+        parent_endpoint = (
+            getattr(self._resolution, "selected_provider", "")
+            or getattr(self._resolution, "execution_key", "")
+            or getattr(self._resolution, "provider", "")
+            or ""
+        )
+        requested_endpoint = str(api_endpoint or "").strip()
+        # "agent" is build_console_first_request_plan's no-identity
+        # fallback, not a provider id: it names THIS resolution by
+        # construction.
+        if requested_endpoint == "agent":
+            requested_endpoint = ""
+        rerouted = bool(requested_endpoint) and requested_endpoint != parent_endpoint
+
         transport_messages = _serialize_project_instruction_rows_for_transport(
             messages_payload, native_tools=self._native_tools
         )
@@ -3251,6 +3324,26 @@ class _StreamingModelAdapter:
                 reasoning_replay=None,
                 local_structured_thinking=False,
             )
+        # ADR-147 Task 6B: per-call sampling/base-url kwargs overlay the
+        # call-local resolution (model already handled above). Only the
+        # dispatch/stream/usage paths read ``effective_resolution``; a
+        # rerouted call re-resolves entirely inside ``_consume``.
+        effective_resolution = call_resolution
+        if (
+            not rerouted
+            and isinstance(call_resolution, ConsoleProviderResolution)
+            and (
+                sampling_overlays
+                or (api_base_url and api_base_url != call_resolution.base_url)
+            )
+        ):
+            overlays = dict(sampling_overlays)
+            if api_base_url and api_base_url != call_resolution.base_url:
+                overlays["base_url"] = str(api_base_url)
+            if overlays:
+                effective_resolution = dataclass_replace(
+                    call_resolution, **overlays
+                )
         call_continuation_target = self._continuation_target
         if is_subagent and call_continuation_target is not None:
             call_continuation_target = dataclass_replace(
@@ -3272,7 +3365,18 @@ class _StreamingModelAdapter:
             gateway_signals = call_signals
 
         async def _consume() -> None:
-            nonlocal any_streamed, terminal_metadata
+            nonlocal any_streamed, terminal_metadata, effective_resolution
+            if rerouted:
+                # Task 6B: the child names a provider other than the
+                # parent's -- re-resolve through the gateway's send seam
+                # BEFORE anything prepares or streams, so the whole turn
+                # (request preparation included) speaks to the child.
+                effective_resolution = await self._resolve_routed_resolution(
+                    provider=requested_endpoint,
+                    model=model,
+                    api_base_url=api_base_url,
+                    sampling_overlays=sampling_overlays,
+                )
             # Forwarding `tools=` only when it is non-None (rather than
             # always passing the keyword, even as None) keeps every
             # pre-Task-5 gateway fake elsewhere in the test suite — whose
@@ -3309,7 +3413,7 @@ class _StreamingModelAdapter:
                 if not callable(prepare_request):
                     raise ValueError("Capture On agent gateway cannot prepare requests")
                 dispatch_messages = prepare_request(
-                    call_resolution,
+                    effective_resolution,
                     self._trace_request_factory.build(
                         semantic_messages,
                         tools=tools or (),
@@ -3330,7 +3434,7 @@ class _StreamingModelAdapter:
                 stream_kwargs.pop("tools", None)
             elif continuation_groups and callable(prepare_request):
                 dispatch_messages = prepare_request(
-                    call_resolution,
+                    effective_resolution,
                     build_console_request(
                         semantic_messages,
                         tools=tools or (),
@@ -3354,7 +3458,7 @@ class _StreamingModelAdapter:
                 # The constructor sidecar belongs to the primary turn. A
                 # child has its own history and must never consume it.
                 dispatch_messages = prepare_request(
-                    call_resolution,
+                    effective_resolution,
                     transport_messages,
                     tools=tools,
                     route=route,
@@ -3383,7 +3487,7 @@ class _StreamingModelAdapter:
                     and not self._store.session_is_ephemeral(owner_session_id)
                 ),
                 may_emit_thinking=bool(
-                    getattr(call_resolution, "may_emit_thinking", False)
+                    getattr(effective_resolution, "may_emit_thinking", False)
                 ),
             )
             from tldw_chatbook.Chat.stream_stall_watchdog import (
@@ -3392,7 +3496,7 @@ class _StreamingModelAdapter:
 
             async for chunk in watch_content_stalls(
                 self._gateway.stream_chat(
-                    call_resolution,
+                    effective_resolution,
                     dispatch_messages,
                     route=route,
                     route_actor_id=route_actor_id,
@@ -3401,7 +3505,7 @@ class _StreamingModelAdapter:
                     **stream_kwargs,
                 ),
                 _stall_timeout_seconds(),
-                provider=call_resolution.provider,
+                provider=effective_resolution.provider,
             ):
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
@@ -3549,14 +3653,14 @@ class _StreamingModelAdapter:
             )
             usage = _openai_usage_from_provider_call(
                 usage_payload,
-                provider=call_resolution.provider,
-                model=call_resolution.model or "",
+                provider=effective_resolution.provider,
+                model=effective_resolution.model or model or "",
             )
             if usage is None and call_signals is not None:
                 usage = _openai_usage_from_provider_call(
                     call_signals.usage_snapshot(),
-                    provider=call_resolution.provider,
-                    model=call_resolution.model or "",
+                    provider=effective_resolution.provider,
+                    model=effective_resolution.model or model or "",
                 )
         except Exception as exc:  # noqa: BLE001 — observability is never fatal
             usage = None
@@ -3571,6 +3675,65 @@ class _StreamingModelAdapter:
             "stopped" if stream_cut() else "complete"
         ).envelope
         return _StreamingProviderResponse(response, terminal_metadata, call_envelope)
+
+    async def _resolve_routed_resolution(
+        self,
+        *,
+        provider: str,
+        model: str | None,
+        api_base_url: str | None,
+        sampling_overlays: Mapping[str, Any],
+    ) -> ConsoleProviderResolution:
+        """Re-resolve a per-call provider target through the gateway's send seam.
+
+        Runs inside ``_consume`` on the run's loop because
+        ``resolve_for_send`` is async (the direct-llama path probes
+        reachability). The seam is custom-ep aware per ADR-146, so a
+        ``custom-ep:<slug>`` id resolves through its registry entry's family
+        and credential. Re-resolving per call -- never caching -- matches
+        Console's per-send discipline: a credential or readiness change
+        between turns takes effect on the very next call.
+
+        Args:
+            provider: Raw per-call provider id (possibly ``custom-ep:<slug>``).
+            model: Per-call model, or None to fall back to the provider's
+                configured default.
+            api_base_url: Per-call endpoint override, or None.
+            sampling_overlays: Provided sampling values keyed by
+                ``ConsoleProviderSelection`` field name.
+
+        Returns:
+            The child's ready, model-pinned resolution.
+
+        Raises:
+            RuntimeError: If the gateway cannot re-resolve sends, or the
+                target does not resolve ready with a model -- never a
+                silent fallback to the parent resolution.
+        """
+        resolve_for_send = getattr(self._gateway, "resolve_for_send", None)
+        if not callable(resolve_for_send):
+            # RuntimeError, not TypeError: no argument has a wrong type --
+            # the gateway lacks a capability routing needs.
+            raise RuntimeError(  # noqa: TRY004
+                f"sub-agent provider routing to '{provider}' needs a gateway "
+                "that resolves sends; this gateway cannot"
+            )
+        resolved = await resolve_for_send(
+            ConsoleProviderSelection(
+                provider=provider,
+                base_url=str(api_base_url) if api_base_url else None,
+                explicit_model=str(model) if model else None,
+                **sampling_overlays,
+            )
+        )
+        if not getattr(resolved, "ready", False) or not getattr(resolved, "model", None):
+            visible_copy = getattr(resolved, "visible_copy", "") or (
+                f"provider '{provider}' did not resolve a ready model"
+            )
+            raise RuntimeError(
+                f"sub-agent provider routing failed for '{provider}': {visible_copy}"
+            )
+        return resolved
 
     @staticmethod
     def _is_subagent(messages_payload) -> bool:
@@ -4175,6 +4338,11 @@ class ConsoleFirstRequestPlan:
     messages: list[dict]
     api_endpoint: str
     profile_context_snapshot: ProfileContextSnapshot
+    # Raw selection id before family flattening (``custom-ep:<slug>`` when
+    # the session's provider names a registry endpoint; otherwise equals
+    # ``api_endpoint``). Spawn resolution uses it as ``parent_provider`` so
+    # an inheriting child snapshots the endpoint, not the execution family.
+    selected_provider: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -4364,6 +4532,13 @@ def build_console_first_request_plan(
         or getattr(resolution, "provider", "")
         or "agent"
     )
+    # Raw selection identity (custom-ep:<slug>) rides alongside the flattened
+    # execution key: spawn resolution and the adapter's same-target decision
+    # must never conflate a registry endpoint with its execution family
+    # (qodo PR-2651 High). Falls back to api_endpoint for fakes/plain ids.
+    selected_provider = (
+        str(getattr(resolution, "selected_provider", "") or "") or api_endpoint
+    )
     run_log = build_run_log_request_plan()
     direct_prompt = compose_agent_system_prompt(
         session_system_prompt,
@@ -4536,6 +4711,7 @@ def build_console_first_request_plan(
         messages=messages,
         api_endpoint=api_endpoint,
         profile_context_snapshot=profile_snapshot,
+        selected_provider=selected_provider,
     )
 
 
@@ -4679,6 +4855,7 @@ class ConsoleAgentBridge:
         # default, and every pre-existing construction site -- i.e. all test
         # harnesses) means this bridge never wires a hooks engine at all.
         ensure_run_hooks: Callable[[], Any] | None = None,
+        app_config: Mapping[str, Any] | None = None,
     ) -> None:
         self._message_store = message_store
         self._progress_closed = False
@@ -4704,6 +4881,12 @@ class ConsoleAgentBridge:
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
         self._ensure_run_hooks = ensure_run_hooks
+        # ADR-147: forwarded to every AgentService this bridge builds; None
+        # (every production site) leaves the service on its live
+        # ``load_settings()`` fallback. Tests inject a fake-key mapping so
+        # the spawn resolver's readiness gate does not depend on host
+        # credentials.
+        self._app_config = app_config
         if registry is None:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
@@ -6575,6 +6758,7 @@ class ConsoleAgentBridge:
             work_origin=work_origin,
             work_chain_id=work_chain_id,
             clock=self._clock,
+            app_config=self._app_config,
             on_step=on_step,
             # TASK-25903: hands the controller a steer(text) bound to THIS
             # run once its mailbox registers -- run ids are minted inside
@@ -6719,6 +6903,10 @@ class ConsoleAgentBridge:
                 # attribute (e.g. resolution=object() in existing tests),
                 # which keeps them on the fence path unchanged.
                 api_endpoint=first_request_plan.api_endpoint,
+                # Raw selection identity for spawn resolution: an inheriting
+                # child of custom-ep:<slug> must snapshot the endpoint (and
+                # its registry base URL), not the flattened execution family.
+                parent_raw_provider=first_request_plan.selected_provider,
                 should_cancel=should_cancel,
                 supersede_run_id=supersede_run_id,
                 continuation_owner_message_id=assistant_message_id,

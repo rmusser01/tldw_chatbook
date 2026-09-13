@@ -103,6 +103,8 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
+    ContinuationConflictError,
+    ContinuationOwnerGroup,
     ContinuationRestoreTarget,
     ContinuationRound,
     ProviderContinuationCheckpoint,
@@ -116,6 +118,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderProprietaryThinkingEvidence,
     ProviderThinkingDelta,
     ProviderToolCalls,
+    ProviderTurnMetadata,
 )
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -589,6 +592,19 @@ class _ToolLoopReservationFailureGateway(_SignalChunkGateway):
             yield chunk
 
 
+# TASK-32477 review fix: fake credentials for the provider ids these suites
+# route spawns to ("openai" default fixture, "groq" native fixture), so the
+# spawn resolver's spec-mandated validity+readiness gates pass without host
+# credentials. AgentService._app_config feeds ONLY resolve_spawn_target, so
+# injecting this mapping changes nothing else about a run.
+_SPAWN_TEST_APP_CONFIG = {
+    "api_settings": {
+        "openai": {"api_key": "test"},
+        "groq": {"api_key": "test"},
+    }
+}
+
+
 def _test_resolution(**over):
     """Minimal REAL-shaped resolution for the shared harness.
 
@@ -600,8 +616,30 @@ def _test_resolution(**over):
     here (instead of a hand-rolled stand-in) keeps this fixture from
     silently drifting the next time the contract widens: a new required
     field fails loudly in every suite that shares ``_run``.
+
+    TASK-32477 review fix: the provider id must be a real,
+    Console-supported one -- Task 6's spawn resolver validity/readiness
+    gates refuse unknown ids, which refused every spawn in these suites
+    when this fixture said ``"TestProvider"``. The harness's injected
+    fake-key ``app_config`` (``_SPAWN_TEST_APP_CONFIG``) covers the
+    readiness half.
+
+    Rebase follow-up: the id must ALSO be native-incapable. The first
+    choice (``"openai"``) is native-capable, which silently moved every
+    un-override harness run from the fence-protocol path onto the native
+    tools path (tools forwarded where the suites assert ``tools is
+    None``). ``llama_cpp`` is a known builtin that does not support
+    native tools -- the same stand-in dev uses for its plain
+    non-native gateways -- and keyless, so readiness never binds.
     """
-    fields = dict(provider="TestProvider", base_url="", model=None, ready=True)
+    fields = dict(
+        provider="llama_cpp",
+        base_url="",
+        model=None,
+        ready=True,
+        readiness_key="llama_cpp",
+        execution_key="llama_cpp",
+    )
     fields.update(over)
     return ConsoleProviderResolution(**fields)
 
@@ -652,6 +690,12 @@ def _bridge_with_gateway(tmp_path, gateway, native_tools_enabled=None):
         store=store,
         provider_gateway=gateway,
         native_tools_enabled=native_tools_enabled,
+        # TASK-32477 review fix: the spawn resolver's readiness gate
+        # fires on the inherit level too (spec-mandated); a fake key
+        # keeps these tests about bridge plumbing, not host credentials.
+        # Same pattern as Tests/Agents/test_agent_service.py's
+        # TASK-32477 injections.
+        app_config=_SPAWN_TEST_APP_CONFIG,
     )
     return bridge, db, store, session, assistant.id
 
@@ -1288,7 +1332,12 @@ def test_usage_accounting_failure_never_flips_a_streamed_run_to_error(
             session,
             aid,
             resolution=ConsoleProviderResolution(
-                provider="TestProvider", base_url="", model=None, ready=True
+                provider="openai",
+                base_url="",
+                model=None,
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
             ),
         )
     finally:
@@ -1320,7 +1369,12 @@ def test_a_genuine_provider_failure_still_classifies_as_error(tmp_path):
         session,
         aid,
         resolution=ConsoleProviderResolution(
-            provider="TestProvider", base_url="", model=None, ready=True
+            provider="openai",
+            base_url="",
+            model=None,
+            ready=True,
+            readiness_key="openai",
+            execution_key="openai",
         ),
     )
     assert outcome.status == "error"
@@ -1394,6 +1448,7 @@ def test_joined_continuation_never_logs_private_tool_arguments_or_results(
         agent_runs_db=db,
         store=store,
         provider_gateway=_ChunkGateway([["finished"]]),
+        app_config=_SPAWN_TEST_APP_CONFIG,
     )
     captured: list[str] = []
     sink = logger.add(lambda record: captured.append(str(record)), level="DEBUG")
@@ -2062,7 +2117,8 @@ def test_a_concurrent_child_runs_alongside_the_parent_on_its_own_loop(tmp_path):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway,
+        app_config=_SPAWN_TEST_APP_CONFIG)
 
     outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-overlap")
 
@@ -5444,6 +5500,7 @@ def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
         store=store,
         provider_gateway=_ChunkGateway(scripts),
         skills_service=skills_service,
+        app_config=_SPAWN_TEST_APP_CONFIG,
     )
 
     outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-skill")
@@ -7181,7 +7238,8 @@ def test_run_reply_keeps_the_parents_mcp_verdict_across_a_concurrent_child(tmp_p
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway,
+        app_config=_SPAWN_TEST_APP_CONFIG)
 
     def release_then_settle():
         # The parent is about to cash in its verdict. Let the child finish
@@ -7394,6 +7452,7 @@ def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path, monkeypatc
         store=store,
         provider_gateway=_FleetChunkGateway(parent_script, child_script),
         skills_service=skills_service,
+        app_config=_SPAWN_TEST_APP_CONFIG,
     )
 
     outcome = _run(
@@ -9202,7 +9261,8 @@ def test_fleet_snapshot_reflects_two_live_handles_in_flight_then_empty_after_run
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway,
+        app_config=_SPAWN_TEST_APP_CONFIG)
 
     result: dict = {}
 
@@ -9397,7 +9457,8 @@ def test_cancel_subagent_delegates_to_the_published_services_live_handle(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway,
+        app_config=_SPAWN_TEST_APP_CONFIG)
 
     result: dict = {}
 
@@ -9573,7 +9634,8 @@ def test_live_snapshot_two_concurrent_subagents_get_distinct_run_ids_that_dont_c
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway,
+        app_config=_SPAWN_TEST_APP_CONFIG)
 
     result: dict = {}
 
@@ -9773,7 +9835,8 @@ def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway,
+        app_config=_SPAWN_TEST_APP_CONFIG)
     try:
         outcome = _run(
             bridge, store, session, assistant.id, conversation_id="conv-survivor"
@@ -9848,7 +9911,8 @@ def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway,
+        app_config=_SPAWN_TEST_APP_CONFIG)
     handle_box: dict = {}
     try:
         _run(bridge, store, session, assistant.id, conversation_id="conv-survivor")
@@ -10110,7 +10174,8 @@ def test_live_children_are_capped_across_run_reply_calls(tmp_path, monkeypatch):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway,
+        app_config=_SPAWN_TEST_APP_CONFIG)
     try:
         _run(bridge, store, session, assistant.id, conversation_id="conv-cap")
         assert gateway.entered_event.wait(5), "turn 1's children never started"
@@ -10407,7 +10472,8 @@ def test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway,
+        app_config=_SPAWN_TEST_APP_CONFIG)
     controller = ConsoleChatController(
         store=store, provider_gateway=object(), agent_bridge=bridge
     )
@@ -10631,7 +10697,7 @@ def test_content_stall_surfaces_through_chat_call(tmp_path, monkeypatch):
     # the watchdog fired end to end through chat_call and reported the stall
     # distinctly (a StreamStallError caught at the boundary, not a generic error)
     assert recorded, "expected the stall boundary handler to fire through chat_call"
-    assert recorded[0][1] == "TestProvider"
+    assert recorded[0][1] == "llama_cpp"
     wd._SESSION_TRACKERS.clear()
 
 
@@ -10710,3 +10776,411 @@ def test_ending_an_unmarked_setup_phase_is_a_no_op():
     bridge = _make_bridge()
     bridge.end_setup_phase("never-marked")
     assert bridge.live_snapshot("never-marked").status == "idle"
+
+# --- ADR-147 Task 6B: `_StreamingModelAdapter.chat_call` honors the per-call
+# routing kwargs Task 6 emits for a spawned child (`api_endpoint`, `model`,
+# `api_base_url`, and the 13 `_CHAT_CALL_PARAM_MAP` sampling kwargs) instead
+# of dropping them into `**_ignored`. ---
+
+
+class _RoutingGateway:
+    """Capturing gateway carrying the ``resolve_for_send`` seam routing uses.
+
+    ``stream_chat`` records each ``(resolution, messages, kwargs)`` call and
+    replays ``chunks``; ``resolve_for_send`` records the selection it was
+    asked to resolve and answers with ``resolver(selection)`` (default: echo
+    the selection's identity and sampling fields into a real
+    ``ConsoleProviderResolution``, so the captured stream resolution proves
+    what the selection carried).
+    """
+
+    def __init__(self, *, resolver=None, chunks=("routed answer",)):
+        self.stream_calls = []
+        self.resolve_calls = []
+        self._resolver = resolver or self._echo_resolution
+        self._chunks = list(chunks)
+
+    @staticmethod
+    def _echo_resolution(selection):
+        return ConsoleProviderResolution(
+            provider=selection.provider,
+            base_url=selection.base_url or "",
+            model=selection.explicit_model,
+            ready=True,
+            readiness_key=selection.provider,
+            execution_key=selection.provider,
+            temperature=selection.temperature,
+            top_p=selection.top_p,
+            top_k=selection.top_k,
+            seed=selection.seed,
+        )
+
+    async def resolve_for_send(self, selection):
+        self.resolve_calls.append(selection)
+        return self._resolver(selection)
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        self.stream_calls.append(
+            (resolution, [dict(message) for message in messages], dict(kwargs))
+        )
+        for chunk in self._chunks:
+            yield chunk
+
+
+def _routing_parent_resolution():
+    return ConsoleProviderResolution(
+        provider="Moonshot",
+        base_url="https://api.moonshot.ai/v1",
+        model="kimi-k2",
+        ready=True,
+        readiness_key="moonshot",
+        execution_key="moonshot",
+        api_key="parent-key",
+    )
+
+
+@contextlib.contextmanager
+def _streaming_adapter(
+    resolution, gateway, *, continuation_target=None, continuation_owner_key=None
+):
+    """A `_StreamingModelAdapter` on its own driver thread (the :2324 pattern)."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=gateway,
+        resolution=resolution,
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        continuation_target=continuation_target,
+        continuation_owner_key=continuation_owner_key,
+    )
+    try:
+        yield adapter
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(timeout=2)
+        loop.close()
+
+
+def _routed_child_messages():
+    return [
+        {"role": "system", "content": SUBAGENT_PROMPT_PREFIX},
+        {"role": "user", "content": "child task"},
+    ]
+
+
+def test_per_call_routing_kwargs_re_resolve_and_forward(monkeypatch):
+    """A routed child re-resolves through the gateway's send-resolution seam:
+    the child's provider/model/base_url and sampling params reach
+    ``stream_chat`` on the per-call resolution -- never the parent's fixed
+    one -- and usage accounting is labeled for the child."""
+    usage_labels = []
+    real_usage = bridge_module._openai_usage_from_provider_call
+
+    def spy(payload, *, provider, model):
+        usage_labels.append((provider, model))
+        return real_usage(payload, provider=provider, model=model)
+
+    monkeypatch.setattr(bridge_module, "_openai_usage_from_provider_call", spy)
+    terminal = ProviderToolCalls(
+        tool_calls=(),
+        metadata=ProviderTurnMetadata(
+            finish_reason="stop",
+            usage={"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+        ),
+    )
+    gateway = _RoutingGateway(chunks=("routed answer", terminal))
+    parent = _routing_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="custom-ep:qwen-local",
+            model="qwen3.8-27b",
+            api_base_url="http://127.0.0.1:8080",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+            temp=0.2,
+            topk=40,
+            seed=7,
+        )
+    assert response["choices"][0]["message"]["content"] == "routed answer"
+    assert len(gateway.resolve_calls) == 1
+    selection = gateway.resolve_calls[0]
+    assert selection.provider == "custom-ep:qwen-local"
+    assert selection.explicit_model == "qwen3.8-27b"
+    assert selection.base_url == "http://127.0.0.1:8080"
+    assert selection.temperature == 0.2
+    assert selection.top_k == 40
+    assert selection.seed == 7
+    assert len(gateway.stream_calls) == 1
+    resolution, _messages, _kwargs = gateway.stream_calls[0]
+    assert resolution.provider == "custom-ep:qwen-local"
+    assert resolution.model == "qwen3.8-27b"
+    assert resolution.base_url == "http://127.0.0.1:8080"
+    assert resolution.temperature == 0.2
+    assert resolution.top_k == 40
+    assert resolution.seed == 7
+    # Usage labels follow the per-call identity, and the shared parent
+    # resolution was never mutated.
+    assert ("custom-ep:qwen-local", "qwen3.8-27b") in usage_labels
+    assert adapter._resolution is parent
+
+
+def test_no_routing_kwargs_uses_parent_resolution_unchanged():
+    """Only today's kwargs (api_endpoint/model naming the parent): the exact
+    parent resolution OBJECT reaches ``stream_chat``, no re-resolution
+    happens, and no new stream kwargs appear."""
+    gateway = _RoutingGateway()
+    parent = _routing_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="moonshot",
+            model="kimi-k2",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+        )
+    assert response["choices"][0]["message"]["content"] == "routed answer"
+    assert gateway.resolve_calls == []
+    assert len(gateway.stream_calls) == 1
+    resolution, _messages, stream_kwargs = gateway.stream_calls[0]
+    assert resolution is parent
+    # Nothing per-call leaked into the stream kwargs: only the adapter's
+    # standard trace/routing envelope (dev's route identity + capture mode)
+    # rides along, exactly as it does for any unrouted turn.
+    assert set(stream_kwargs) == {
+        "capture_mode",
+        "route",
+        "route_actor_id",
+        "route_chain_id",
+    }
+
+
+def test_per_call_routing_sampling_only_reroutes_params_not_provider():
+    """Sampling kwargs with the PARENT's endpoint (the inherit-with-own-params
+    case) keep the parent's provider identity and overlay only what the call
+    carried -- including a per-call model on the same provider."""
+    gateway = _RoutingGateway()
+    parent = _routing_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        adapter.chat_call(
+            api_endpoint="moonshot",
+            model="kimi-k2",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+            temp=0.2,
+            topk=40,
+        )
+        adapter.chat_call(
+            api_endpoint="moonshot",
+            model="kimi-k2-instruct",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+            max_tokens=512,
+        )
+    assert gateway.resolve_calls == []
+    assert len(gateway.stream_calls) == 2
+    first, _messages, _kwargs = gateway.stream_calls[0]
+    assert first is not parent
+    assert first.provider == parent.provider
+    assert first.execution_key == parent.execution_key
+    assert first.base_url == parent.base_url
+    assert first.api_key == parent.api_key
+    assert first.model == "kimi-k2"
+    assert first.temperature == 0.2
+    assert first.top_k == 40
+    assert first.max_tokens is None
+    second, _messages, _kwargs = gateway.stream_calls[1]
+    assert second.provider == parent.provider
+    assert second.model == "kimi-k2-instruct"
+    assert second.max_tokens == 512
+    assert second.temperature is None
+    # The shared parent resolution was never mutated.
+    assert adapter._resolution is parent
+    assert parent.model == "kimi-k2"
+    assert parent.temperature is None
+
+
+def test_unknown_per_call_provider_routing_is_a_loud_error_not_silent_fallback():
+    """An unready/unknown per-call provider raises through chat_call's error
+    channel (the same one stream failures use); the parent's resolution is
+    never silently streamed from."""
+
+    def blocked(selection):
+        return ConsoleProviderResolution(
+            provider=selection.provider,
+            base_url="",
+            model=selection.explicit_model,
+            ready=False,
+            visible_copy=(
+                f"Provider blocked: '{selection.provider}' is not available "
+                "in Console yet. Choose a supported provider."
+            ),
+            readiness_key=selection.provider,
+            execution_key=selection.provider,
+        )
+
+    gateway = _RoutingGateway(resolver=blocked)
+    parent = _routing_parent_resolution()
+    with (
+        _streaming_adapter(parent, gateway) as adapter,
+        pytest.raises(RuntimeError, match="not-a-provider"),
+    ):
+        adapter.chat_call(
+            api_endpoint="not-a-provider",
+            model="some-model",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+        )
+    assert len(gateway.resolve_calls) == 1
+    assert gateway.stream_calls == []
+
+
+def test_routed_call_on_continuation_pinned_turn_raises_typed_conflict():
+    """A routed call carrying continuation groups cannot be prepared against
+    the parent's pinned restore target: the typed ``ContinuationConflictError``
+    surfaces through chat_call's error channel, never a silent
+    parent-provider stream."""
+    child = ConsoleProviderResolution(
+        provider="custom-ep:qwen-local",
+        base_url="http://127.0.0.1:8080",
+        model="qwen3.8-27b",
+        ready=True,
+        readiness_key="custom-openai-api",
+        execution_key="custom-openai-api",
+    )
+
+    class _ContinuationGateway(ConsoleProviderGateway):
+        """Real request preparation (where the target pin is enforced)."""
+
+        def __init__(self):
+            super().__init__(config_provider=dict, environ={})
+            self.stream_calls = []
+
+        async def resolve_for_send(self, selection):
+            return child
+
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            self.stream_calls.append(resolution)
+            yield "must never stream"
+
+    target = ContinuationRestoreTarget(
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k2",
+        api_base_url="https://api.moonshot.ai/v1",
+    )
+    checkpoint = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k2",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=(),
+    )
+    group = ContinuationOwnerGroup(
+        owner_message_id="owner-1", checkpoint=checkpoint, rounds=()
+    )
+    gateway = _ContinuationGateway()
+    parent = _routing_parent_resolution()
+    owner_marked_messages = [
+        {"role": "system", "content": SUBAGENT_PROMPT_PREFIX},
+        {"role": "assistant", "content": "prior answer", "_owner": "owner-1"},
+        {"role": "user", "content": "child task"},
+    ]
+    with (
+        _streaming_adapter(
+            parent,
+            gateway,
+            continuation_target=target,
+            continuation_owner_key="_owner",
+        ) as adapter,
+        pytest.raises(ContinuationConflictError, match="restore target"),
+    ):
+        adapter.chat_call(
+            api_endpoint="custom-ep:qwen-local",
+            model="qwen3.8-27b",
+            api_base_url="http://127.0.0.1:8080",
+            messages_payload=owner_marked_messages,
+            streaming=False,
+            continuation_groups=(group,),
+        )
+    assert gateway.stream_calls == []
+
+
+# --- qodo PR-2651 High (raw identity vs execution key): a custom-ep parent's
+# raw ``custom-ep:<slug>`` identity, carried on the resolution's
+# ``selected_provider``, decides the same-target question — never the
+# flattened execution family. ---
+
+
+def _custom_ep_parent_resolution():
+    """A parent resolution for a llama-family registry endpoint: provider and
+    execution_key flattened to the family, raw identity kept alongside."""
+    return ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:8080",
+        model="qwen3.8-27b",
+        ready=True,
+        readiness_key="llama_cpp",
+        execution_key="llama_cpp",
+        selected_provider="custom-ep:qwen-local",
+    )
+
+
+def test_custom_ep_parent_inheriting_child_overlays_parent_resolution():
+    """A child whose resolved target IS the parent's raw slug names
+    ``custom-ep:qwen-local`` on its calls: same target as the parent, so no
+    re-resolution — the parent resolution (registry base_url) is streamed
+    from, and the raw identity survives the per-call copy."""
+    gateway = _RoutingGateway()
+    parent = _custom_ep_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="custom-ep:qwen-local",
+            model="qwen3.8-27b",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+        )
+    assert response["choices"][0]["message"]["content"] == "routed answer"
+    assert gateway.resolve_calls == []
+    assert len(gateway.stream_calls) == 1
+    resolution, _messages, _kwargs = gateway.stream_calls[0]
+    assert resolution is parent
+    assert resolution.base_url == "http://127.0.0.1:8080"
+    assert resolution.selected_provider == "custom-ep:qwen-local"
+
+
+def test_custom_ep_parent_child_routed_to_builtin_family_resolves_independently():
+    """A child explicitly routed to the built-in FAMILY its parent's endpoint
+    executes through (``llama_cpp`` under ``custom-ep:qwen-local``) is a
+    DIFFERENT target: it re-resolves through ``resolve_for_send`` instead of
+    silently reusing the parent's custom base_url."""
+    gateway = _RoutingGateway()
+    parent = _custom_ep_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="llama_cpp",
+            model="llama-3-8b",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+        )
+    assert response["choices"][0]["message"]["content"] == "routed answer"
+    assert len(gateway.resolve_calls) == 1
+    assert gateway.resolve_calls[0].provider == "llama_cpp"
+    assert gateway.resolve_calls[0].explicit_model == "llama-3-8b"
+    resolution, _messages, _kwargs = gateway.stream_calls[0]
+    # The echo resolver answers with the selection's own identity — the
+    # parent's custom URL was NOT reused.
+    assert resolution.provider == "llama_cpp"
+    assert resolution.model == "llama-3-8b"
+    assert resolution.base_url == ""

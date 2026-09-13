@@ -127,7 +127,7 @@ def test_v15_upgrade_preserves_upstream_records_and_authority(tmp_path, standalo
                     conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[
                         0
                     ]
-                    == 18
+                    == AgentRunsDB._CURRENT_SCHEMA_VERSION
                 )
         finally:
             db.close()

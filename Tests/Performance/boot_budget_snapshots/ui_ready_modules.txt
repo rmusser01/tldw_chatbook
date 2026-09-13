@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 973 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 975 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -17,6 +17,7 @@ tldw_chatbook.Actor_Packs.publication
 tldw_chatbook.Actor_Packs.repository
 tldw_chatbook.Agents
 tldw_chatbook.Agents.agent_models
+tldw_chatbook.Agents.agent_routing
 tldw_chatbook.Agents.agent_runtime
 tldw_chatbook.Agents.agent_service
 tldw_chatbook.Agents.agent_stream
@@ -36,6 +37,7 @@ tldw_chatbook.Agents.run_log_format
 tldw_chatbook.Agents.run_log_search
 tldw_chatbook.Agents.session_todo_store
 tldw_chatbook.Agents.tool_catalog
+tldw_chatbook.Agents.tool_refusals
 tldw_chatbook.Audio
 tldw_chatbook.Audio.streaming_sink
 tldw_chatbook.Audio_Services_Interop
@@ -50,10 +52,13 @@ tldw_chatbook.Canvas.archive
 tldw_chatbook.Canvas.compilation
 tldw_chatbook.Canvas.limits
 tldw_chatbook.Canvas.models
+tldw_chatbook.Canvas.profiles
 tldw_chatbook.Canvas.repository
+tldw_chatbook.Canvas.runtime_assets
 tldw_chatbook.Canvas.service
 tldw_chatbook.Character_Chat
 tldw_chatbook.Character_Chat.Chat_Dictionary_Lib
+tldw_chatbook.Character_Chat.artwork_attribution
 tldw_chatbook.Character_Chat.builtin_pixel_migu
 tldw_chatbook.Character_Chat.character_conversation_navigation
 tldw_chatbook.Character_Chat.character_mood
@@ -73,6 +78,7 @@ tldw_chatbook.Chat.Chat_Functions
 tldw_chatbook.Chat.answer_citations
 tldw_chatbook.Chat.assistant_generation_state
 tldw_chatbook.Chat.attachment_core
+tldw_chatbook.Chat.character_expression_playback
 tldw_chatbook.Chat.chat_conversation_scope_service
 tldw_chatbook.Chat.chat_conversation_service
 tldw_chatbook.Chat.chat_handoff_models
@@ -179,9 +185,11 @@ tldw_chatbook.Chat.console_turn_preparation
 tldw_chatbook.Chat.console_voice_input
 tldw_chatbook.Chat.conversation_local_marks_service
 tldw_chatbook.Chat.cost_display
+tldw_chatbook.Chat.custom_endpoint_registry
 tldw_chatbook.Chat.library_activity
 tldw_chatbook.Chat.library_preparation
 tldw_chatbook.Chat.llamacpp_think_filter
+tldw_chatbook.Chat.local_reasoning
 tldw_chatbook.Chat.local_server_discovery
 tldw_chatbook.Chat.message_metadata
 tldw_chatbook.Chat.prompt_history
@@ -195,6 +203,7 @@ tldw_chatbook.Chat.provider_test_evidence
 tldw_chatbook.Chat.provider_usage
 tldw_chatbook.Chat.rag_scope
 tldw_chatbook.Chat.reply_sentence_sequencer
+tldw_chatbook.Chat.sampling_params
 tldw_chatbook.Chat.scope_picker_listers
 tldw_chatbook.Chat.server_chat_conversation_service
 tldw_chatbook.Chat.server_chat_loop_service
@@ -233,6 +242,10 @@ tldw_chatbook.DB.Workspace_DB
 tldw_chatbook.DB.base_db
 tldw_chatbook.DB.fts_backfill_pacing
 tldw_chatbook.DB.private_sqlite
+tldw_chatbook.DB.private_sqlite_files
+tldw_chatbook.DB.private_sqlite_process
+tldw_chatbook.DB.private_sqlite_protocol
+tldw_chatbook.DB.sql_identifier_core
 tldw_chatbook.DB.sql_logging
 tldw_chatbook.DB.sql_validation
 tldw_chatbook.DB.sqlite_datetime_fix
@@ -279,6 +292,7 @@ tldw_chatbook.Internal_Prompts.catalog
 tldw_chatbook.Internal_Prompts.character_prompts
 tldw_chatbook.Internal_Prompts.console_prompts
 tldw_chatbook.Internal_Prompts.document_generation_prompts
+tldw_chatbook.Internal_Prompts.prompt_improvement_prompts
 tldw_chatbook.Internal_Prompts.rag_reranker_prompts
 tldw_chatbook.Internal_Prompts.resolver
 tldw_chatbook.Internal_Prompts.summarization_prompts
@@ -330,6 +344,7 @@ tldw_chatbook.Library.library_rag_answer_service
 tldw_chatbook.Library.library_rag_score_kinds
 tldw_chatbook.Library.library_rag_service
 tldw_chatbook.Library.library_rag_state
+tldw_chatbook.Library.library_shell_state
 tldw_chatbook.Library.library_tool_contract
 tldw_chatbook.Library.local_library_tool_service
 tldw_chatbook.Library.server_ingest_reconcile
@@ -435,6 +450,7 @@ tldw_chatbook.Persona_Buddy
 tldw_chatbook.Persona_Buddy.console_adapter
 tldw_chatbook.Persona_Buddy.preferences
 tldw_chatbook.Persona_Visual
+tldw_chatbook.Persona_Visual.artwork
 tldw_chatbook.Persona_Visual.contracts
 tldw_chatbook.Persona_Visual.repository
 tldw_chatbook.Persona_Visual.validation
@@ -636,30 +652,16 @@ tldw_chatbook.TTS.default_profile_request_resolver
 tldw_chatbook.TTS.effective_settings
 tldw_chatbook.TTS.legacy_bridge
 tldw_chatbook.TTS.legacy_catalogs
-tldw_chatbook.TTS.migrations
-tldw_chatbook.TTS.migrations.v0_to_v1
-tldw_chatbook.TTS.migrations.v1_to_v2
-tldw_chatbook.TTS.migrations.v2_to_v3
-tldw_chatbook.TTS.migrations.v3_to_v4
 tldw_chatbook.TTS.openai_compatible_config
 tldw_chatbook.TTS.pcm_stream
 tldw_chatbook.TTS.playground_types
 tldw_chatbook.TTS.preferences
 tldw_chatbook.TTS.profile_errors
-tldw_chatbook.TTS.profile_migration_candidate
-tldw_chatbook.TTS.profile_migration_journal
-tldw_chatbook.TTS.profile_migration_namespace
-tldw_chatbook.TTS.profile_migration_publication
-tldw_chatbook.TTS.profile_migration_recovery
 tldw_chatbook.TTS.profile_portability
 tldw_chatbook.TTS.profile_reference_audio
 tldw_chatbook.TTS.profile_reference_materialization
-tldw_chatbook.TTS.profile_reference_storage
 tldw_chatbook.TTS.profile_reference_types
-tldw_chatbook.TTS.profile_repository
-tldw_chatbook.TTS.profile_schema
 tldw_chatbook.TTS.profile_service
-tldw_chatbook.TTS.profile_store_lock
 tldw_chatbook.TTS.profile_types
 tldw_chatbook.TTS.provider_ids
 tldw_chatbook.TTS.request_admission
@@ -793,6 +795,7 @@ tldw_chatbook.Utils.path_validation
 tldw_chatbook.Utils.paths
 tldw_chatbook.Utils.persistent_diagnostics
 tldw_chatbook.Utils.private_paths
+tldw_chatbook.Utils.reasoning_config
 tldw_chatbook.Utils.secure_temp_files
 tldw_chatbook.Utils.sensitive_config_keys
 tldw_chatbook.Utils.sensitive_llm_logging
@@ -972,4 +975,3 @@ tldw_chatbook.tldw_api
 tldw_chatbook.tldw_api.exceptions
 tldw_chatbook.tldw_api.kanban_schemas
 tldw_chatbook.tldw_api.notes_workspace_limits
-tldw_chatbook.tldw_api.skills_schemas

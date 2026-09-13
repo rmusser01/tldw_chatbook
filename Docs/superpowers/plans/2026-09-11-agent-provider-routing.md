@@ -1203,6 +1203,111 @@ git commit -m "feat: spawn routing integration — resolver hook, child config, 
 
 ---
 
+### Task 6B: `_StreamingModelAdapter` honors per-call routing kwargs (PLAN AMENDMENT — added during execution, ledger R9)
+
+**Why this task exists:** Task 6's review confirmed with file:line evidence that the
+production send path discarded everything Task 6 emits: `_StreamingModelAdapter.chat_call`
+(`tldw_chatbook/Chat/console_agent_bridge.py:1983`, class at :1798, wired at :3951)
+accepts `api_endpoint` but never references it, drops `api_base_url` and all 13 sampling
+kwargs into `**_ignored` (:1992), and always streams via `self._resolution` — the parent's
+fixed `ConsoleProviderResolution` (:2064-2066). Without this task the entire routing
+feature is inert in production: children record a resolved_* snapshot while actually
+streaming from the parent's provider. The capturing-stub tests in Task 6 could not see
+this; the brief's known-unknown trace found it.
+
+**Files:**
+- Modify: `tldw_chatbook/Chat/console_agent_bridge.py` (`_StreamingModelAdapter.chat_call`:1983-2177; resolution construction sites :3173/:3397/:3704 show how `ConsoleProviderResolution` is built)
+- Test: `Tests/Chat/test_console_agent_bridge.py` (exists — extend; mirror its adapter/gateway fixture patterns)
+
+**Interfaces:**
+- Consumes: Task 6's per-call kwargs at `chat_call`: `api_endpoint` (resolved provider id, possibly `custom-ep:<slug>`), `model`, `api_base_url`, and the 13 `_CHAT_CALL_PARAM_MAP` kwargs (`temp`, `topp`, `minp`, `topk`, `max_tokens`, `seed`, `presence_penalty`, `frequency_penalty`, `reasoning_effort`, `reasoning_summary`, `verbosity`, `thinking_effort`, `thinking_budget_tokens`).
+- Produces: when a call carries routing kwargs that differ from the parent resolution, the bytes stream from the CHILD's provider/model/base_url with the child's sampling params; when no routing kwargs are present (plain parent/child-inherit calls), behavior is byte-identical to today.
+
+- [ ] **Step 1: Write the failing tests**
+
+Build the adapter with a capturing fake gateway (mirror the existing fixtures in
+`Tests/Chat/test_console_agent_bridge.py`). Cases:
+
+```python
+def test_per_call_routing_kwargs_re_resolve_and_forward():
+    # adapter built with parent resolution moonshot/kimi-k2;
+    # chat_call(api_endpoint="custom-ep:qwen-local", model="qwen3.8-27b",
+    #           api_base_url="http://127.0.0.1:8080", temp=0.2, topk=40, ...)
+    # => gateway.stream_chat receives a resolution for the custom-ep child
+    #    (provider identity + base_url + model), and temp/topk reach the
+    #    gateway call — assert on the captured call, not on internals.
+
+def test_no_routing_kwargs_uses_parent_resolution_unchanged():
+    # chat_call() with only today's kwargs (messages_payload, model, tools)
+    # => stream_chat receives self._resolution (identity assert) and no
+    #    sampling kwargs appear that were not already forwarded before.
+
+def test_per_call_sampling_only_reroutes_params_not_provider():
+    # chat_call(temp=0.2) with api_endpoint == parent provider (or unset but
+    # model == parent model): provider resolution stays the parent's,
+    # params forward. (This is the inherit-with-own-params case.)
+
+def test_unknown_per_call_provider_is_a_loud_error_not_silent_parent_fallback():
+    # api_endpoint="not-a-provider" => error surfaced to the run loop,
+    # NOT a silent stream from the parent.
+```
+
+(Names/shape are indicative — match the existing test file's real fixtures and
+assertion style. The contract being pinned is the four behaviors, not the names.)
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest Tests/Chat/test_console_agent_bridge.py -k routing -v`
+Expected: FAIL (kwargs swallowed today)
+
+- [ ] **Step 3: Implement**
+
+- `_StreamingModelAdapter.chat_call`: stop dropping the routing kwargs. Detect
+  "routed call": `api_endpoint` present AND (`api_endpoint`, `model or resolution
+  model`, `api_base_url`) differs from `self._resolution`'s identity — OR any of
+  the 13 sampling kwargs present.
+- For a routed call, build a per-call `ConsoleProviderResolution` reusing the SAME
+  builder the bridge uses for the parent (`resolve_console_provider_identity` /
+  the gateway's resolution seam at :3173/:3397/:3704 — locate by symbol, these line
+  numbers are approximate), passing the per-call provider id, model, and base_url.
+  The builder must handle `custom-ep:<slug>` ids (the gateway is custom-ep aware per
+  ADR-146; the Task 5 `_default_readiness` adaptation at agent_routing.py:119-153
+  shows the exact `entry_for` → `family_execution_key` → identity chain to mirror).
+- NEVER mutate `self._resolution` — the adapter is shared across concurrent
+  children; build the per-call resolution as a local. If construction is expensive,
+  cache keyed by `(api_endpoint, model, api_base_url)` in an instance dict —
+  measure-keeping-simple first: only add the cache if construction touches I/O.
+- Forward the 13 sampling kwargs (those actually provided) into
+  `gateway.stream_chat(...)` — first READ what `stream_chat` does with **kwargs:
+  trace until the values reach `chat_api_call` (Chat/Chat_Functions.py:899+) whose
+  kwarg names Task 6's `_CHAT_CALL_PARAM_MAP` already matches. If `stream_chat`
+  filters kwargs, extend ITS forwarding minimally rather than renaming here.
+- Unknown/unready per-call provider: surface a loud error through the adapter's
+  existing error channel (the same one stream failures use) — never fall back to
+  the parent resolution silently.
+- Usage-accounting labels (:2160/:2166) must reflect the per-call model when routed.
+
+- [ ] **Step 4: Run bridge + agent suites**
+
+Run: `python -m pytest Tests/Chat/test_console_agent_bridge.py Tests/Chat/test_console_agent_bridge_local.py Tests/Agents/test_agent_routing_integration.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tldw_chatbook/Chat/console_agent_bridge.py Tests/Chat/test_console_agent_bridge.py
+git commit -m "feat: streaming adapter honors per-call routing kwargs (TASK-32477)"
+```
+
+**Out of scope (documented, not done):** the headless path (`_default_chat_call` →
+`chat_api_call`) dispatches per-call kwargs natively but raises
+`ValueError("Unsupported API endpoint")` on `custom-ep:` ids (Chat_Functions.py:1018) —
+headless custom-ep routing is a documented limitation for this PR (console is the
+routing surface per ADR-147); a follow-up may teach `chat_api_call` registry
+resolution. Builtin-provider per-call routing on the headless path already works.
+
+---
+
 ### Task 7: Spawn schema gating + master visibility
 
 **Files:**

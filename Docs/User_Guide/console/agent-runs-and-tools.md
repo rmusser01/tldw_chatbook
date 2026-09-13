@@ -1,5 +1,23 @@
 # Agent runs & tools — what happens when a reply uses tools, skills, and sub-agents
 
+## Running the Watchlists workflow from Console
+
+You can ask the Console agent to create feeds, group them into a Watchlist, check the sources, generate a briefing, save a recurrence, and read a completed briefing. The agent discovers and loads the required local tools, while each approval remains explicit and auditable.
+
+A useful first request is:
+
+> Create a Watchlist from these RSS feeds, check every source, generate a briefing, schedule it every 24 hours, then open the completed briefing and summarize it for me.
+
+Long-running checks and briefings return receipt IDs. The agent should follow each exact receipt until it reaches a terminal state instead of treating “accepted” as “finished.” Keep the receipts when you need an audit trail or want to ask for status later.
+
+The agent can list and open completed briefings on your behalf. Full briefing and item bodies remain Console-local; an external MCP client receives only the limited metadata and receipt surface described in the MCP guide.
+
+“Use the existing model” means the collection's saved briefing provider/model
+preset first. Without one, Chatbook reads the saved `chat_defaults` provider and
+model at briefing run time; if that model is empty, it uses the saved model for
+that same provider. It never means “silently copy the model selected for this
+Console conversation.”
+
 ## What this page covers
 
 When a Console reply needs more than plain text — running a tool, spawning a
@@ -74,7 +92,7 @@ is the wait for the model's first response of the turn. The elapsed figure
 advances while you watch. The line is live-only — it vanishes the moment
 the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. A sub-agent's work never appears here;
-it belongs to the **Sub-agents** panel in the left rail.
+it belongs to the Inspect rail's **Agents** section.
 
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
@@ -88,10 +106,9 @@ reply:
 
 - Status line: `Agent: idle`, or `Agent: running · step N` while working.
 - One `·`-prefixed line per step.
-- A **Sub-agents** panel appears once the reply has spawned at least one
-  sub-agent — see [The fleet panel](#the-fleet-panel--three-states) below
-  for its three states (collapsed summary, expanded rows, drilled into one
-  child), how to cancel a child, and how its token spend shows up.
+- The drilled-into view of a single sub-agent (`Sub-agent · <status>
+  (Back)`) and the **Cancel all agents** button, both reached from the
+  Inspect rail's **Agents** section — see below.
 - **View full log** opens the "Full run log — <run id>" window: the complete,
   untruncated record ("what the model actually saw, before the Console's
   display cap trimmed it"). **Close** or **Esc** dismisses it.
@@ -99,16 +116,119 @@ reply:
 **In the Inspector** (right rail) — the "Status:" line tracks the run
 (`Status: Ready` / `Status: Generating…` / `Status: Needs approval` /
 `Status: Source blocked` / `Status: Blocked`), and the "Run recipe" row summarizes provider / model /
-sources / tools / approvals for the next send.
+sources / tools / approvals for the next send. The **Agents** section near
+the top of this rail is the sub-agent list itself — it appears once the
+reply has spawned at least one sub-agent; see
+[The fleet panel](#the-fleet-panel--three-states) below for its three
+states (collapsed summary, expanded rows, drilled into one child), how to
+cancel a child, and how its token spend shows up. The list used to live in
+the left rail's Agent section; only the list moved, and everything about
+its rows and actions is unchanged.
 
 **In the status chips** (above the composer) — "Tools: N ready" counts the
 tools available to the agent (the chip stays hidden until tools are counted,
 which happens after your first send), and
 "Approvals: N pending" counts tool calls waiting on you. The Approvals chip is
 clickable: it jumps you to the pending approval card (with nothing pending it
-just says "No approval is pending.").
+just says "No approval is pending."). A mutation already in **Finishing** is
+status, not a pending decision, so it no longer contributes to this count.
 
 ## Features & controls
+
+### Planning is not model thinking
+
+Console may show a **Planning** activity while it prepares a run. That is a
+safe, session-only application preamble: it is not provider reasoning, is not
+saved as model thinking, and is not replayed into later model history. When an
+adapter reports an actual Thinking block for the same model round, the Planning
+preamble is suppressed so the two are not presented as duplicate evidence.
+
+Model **Thinking** rows have a stricter rule: they exist only for actual
+adapter-reported displayable or proprietary evidence. Tool use, a reasoning-
+capable model, or a long pause does not create one. Proprietary evidence never
+contains private text; its expanded notice is
+`Proprietary thinking obfuscated - not available`. This distinction describes
+observable provider events and does not promise hidden chain-of-thought.
+
+### Task panel — the agent's task list stays in view
+
+When the agent keeps a task list (the `todo_create` / `todo_update` tools),
+a **Tasks** panel sits pinned above the transcript for as long as the list
+has entries:
+
+```
+▾ Tasks · 3 of 7 done · Writing the migration
+[x] Read the schema
+[x] Draft the migration plan
+[x] Add the version bump
+[~] Writing the migration
+[ ] Run the DB tests
+[ ] Update the docs
+[ ] Open the PR
+```
+
+- The header always shows how many tasks are done and what the agent is
+  working on right now. `[~]` marks the in-progress task, `[x]` a finished
+  one, `[ ]` one still waiting.
+- The panel updates the instant the agent changes the list. The transcript
+  still gets its `☰ Tasks` marker on every change, so the history stays
+  intact; the panel is the copy that does not scroll away.
+- Click the header to collapse the panel to its one-line summary, and click
+  again to expand it. Each tab remembers its own collapsed state.
+- Long lists scroll inside the panel rather than pushing the transcript
+  down.
+- The list belongs to the tab: switching tabs switches the panel, and a tab
+  with no tasks shows no panel at all. Like the rest of a run, the list
+  lives only while Console stays open.
+
+The panel is read-only — it shows the agent's plan; it is not a place to
+edit it.
+
+### Questions from the agent
+
+An agent can stop and ask you up to four multiple-choice questions. The
+questions appear on a card above the transcript, in the same slot as
+approvals, and the run waits until you answer:
+
+```
+The agent has 2 questions for you:
+Database   Which database should the migration target?
+  ( ) Postgres — managed, relational
+  (•) SQLite — embedded
+  Other…
+Region     Which regions? (pick any)
+  [x] eu
+  [ ] us
+  Other…
+                                                    [ Submit ]
+```
+
+- Pick an option per question, or type your own answer in **Other…** — it
+  is always there, whatever the agent offered. `1`–`4` pick an option in the
+  question you are on, `Tab` moves between questions, `Enter` submits.
+- You can submit with questions left blank; the agent sees them as
+  unanswered and decides what to do.
+- You can also just type your answer and send it. While a question card is
+  up, a plain message answers the questions you have not picked an option
+  for (it becomes their **Other…** text) and is not sent to the agent as a
+  new message. Two exceptions: a `/` command runs as usual, and a message
+  with a staged attachment or staged Library evidence is sent as a normal
+  turn, leaving the question up for you to answer on the card.
+- The card never grabs focus from something you are typing. If you need to
+  reach it from the keyboard, the inspector's **Review approval** action
+  focuses the question card when no approval is pending.
+- By default the question waits as long as it takes. To make an unanswered
+  question expire instead, set `ask_user_timeout_seconds` under `[console]`
+  in your config; the card then shows *Auto-continues in m:ss* and the run
+  carries on without an answer when it reaches zero. The clock advances only
+  while the question can be answered in the visible conversation.
+- A question for a tab you are not looking at lights that tab's badge and
+  shows a toast; visit the tab to answer it. Stopping the run clears the card.
+- Every answered round leaves one line per question in the transcript, so
+  the exchange stays in the record.
+
+The tool is on by default. To remove it from every agent, set
+`ask_user_enabled = false` under `[tools]`.
 
 ### Approvals — tools ask before they run
 
@@ -467,7 +587,6 @@ is no project-scoped hook file; and only the two blocking events can
 change what happens — the other four are observe-and-notify, with their
 output logged and dropped.
 
->>>>>>> 31da72f8a5 (feat: agent chat fork & spawn tools (fork_chat / new_chat) — rebased onto dev)
 ### Interrupted provider tool runs — Resume, Take over, or Discard
 
 For a provider integration that has opted into exact tool continuation, Console
@@ -559,7 +678,9 @@ already streaming.
 - The run log durably records which definition ran, for future audit tooling
   — `agent_runs.agent_definition` (the definition's name) and
   `definition_fingerprint` (a content hash of its instructions, tools, and
-  model at spawn time) are written on every named-agent spawn. Neither is
+  model at spawn time, plus provider and params when the definition sets
+  them — a legacy provider-less preset keeps its pre-routing fingerprint
+  shape) are written on every named-agent spawn. Neither is
   currently surfaced in **View full log** or anywhere else in the UI.
 
 ### Change review — reviewing a turn's file changes
@@ -1246,7 +1367,6 @@ in a conversation you were not watching, that session's tab shows the
 finished-and-unvisited `✓` instead. Both mean "there is something here
 you haven't seen"; viewing the conversation clears either.
 
-<<<<<<< HEAD
 ### Local file authority
 
 Every live Console Chat owns an independent private temporary scratch space.
@@ -1452,7 +1572,131 @@ is currently unavailable and fails closed—Chatbook ships no `pywinpty`, legacy
 winpty, or ordinary-pipe fallback. A future Windows implementation requires a
 new or superseding ADR and passing native qualification.
 
-=======
+### Routing sub-agents to other providers/models
+
+By default a sub-agent runs on the same provider and model as the reply
+that spawned it. Routing lets a child run somewhere else — the classic
+split is a strong cloud model supervising while cheap local children do
+the legwork, e.g. the supervisor on the Kimi API spawning implementation
+children onto a local `qwen3.8-27b` served by llama.cpp. Four places can
+steer a spawn, each filling only the blanks the levels above left:
+
+1. **Ad-hoc spawn args** — `provider` / `model` passed by the supervisor
+   model on the `spawn_subagent` call. Honored only when
+   `[agents] spawn_override_enabled = true`; while the flag is off (the
+   default) the args aren't in the tool schema at all, so the model
+   cannot attempt them. A `provider` arg must match the allowlist
+   (below); a model-only arg swaps the model on whatever provider the
+   lower levels resolve, with a final guard — when any ad-hoc arg is
+   present, the resolved provider/model must match the allowlist or the
+   provider must be the parent's own, otherwise the spawn is refused
+   (`provider_not_allowlisted`).
+2. **Preset routing fields** — the spawned [named agent
+   definition](#named-agents)'s `provider` and `model`, set per
+   definition in **Settings ▸ Agents**. A definition's `model` set
+   *without* `provider` keeps the pre-routing behavior exactly (same
+   endpoint, different model), so existing definitions are unaffected.
+3. **The sub-agent default** — `[agents] subagent_default_provider` /
+   `subagent_default_model` in `config.toml`; empty means unset.
+4. **Inherit the parent** — the parent's provider and model (never its
+   sampling params; see below).
+
+A provider is named by its built-in id (`llama_cpp`, `moonshot`, …) or by
+a [custom endpoint](../settings.md#custom-endpoints) id
+(`custom-ep:<slug>`); the endpoint's URL and credentials come from its
+registry entry, never from the preset or from spawn args.
+
+**The `[agents]` keys.** All four ship commented-out in the config
+template — the defaults live in code, so uncomment to override:
+
+- `subagent_default_provider` / `subagent_default_model` — where a child
+  runs when neither the spawn call nor a preset routes it; empty inherits
+  the parent's.
+- `spawn_override_enabled` (default `false`) — whether the supervisor
+  model may pass ad-hoc provider/model args at all.
+- `spawn_override_allowlist` (default empty) — the ad-hoc targets the
+  supervisor may pick, one entry per list item: a bare provider id
+  (`llama_cpp`, `custom-ep:qwen-local`) matches any model on that
+  provider; a `provider/model-glob` entry (`llama_cpp/qwen3.8-*`) matches
+  the model case-insensitively via glob. Presets are user-authored and
+  never gated by the allowlist. Ad-hoc args can carry no URLs and no
+  sampling params, so a prompt-injected supervisor can neither point a
+  child at an arbitrary endpoint nor crank a paid provider's reasoning
+  budget.
+
+**Params are rebuilt, never inherited.** A child gets none of the
+parent's sampling/API params (temperature, top_p, max_tokens, seed,
+reasoning knobs, …). Its params are built fresh for its resolved
+provider+model through the same layering a brand-new Console session to
+that provider would get, highest precedence first:
+
+1. the preset's `params` (only when the spawn names a preset that sets
+   them),
+2. the per-model profile
+   `[api_settings.<provider>].model_defaults.<model>`,
+3. Console's saved per-provider defaults
+   `[console.provider_defaults.<provider>]`,
+4. the endpoint entry's `[custom_endpoints.<slug>.params]`
+   (custom-endpoint targets only),
+5. the global `[chat_defaults]`,
+6. raw `[api_settings.<provider>]` scalars, then the built-in fallbacks.
+
+Provider-specific knobs (e.g. a Kimi `reasoning_effort`) apply only to
+models that support them, same as a direct send. **Behavior change for
+plain spawns:** before routing shipped, a plain same-provider spawn sent
+no sampling params at all and the provider call silently fell back to its
+own config resolution; now every child's params are resolved explicitly
+through the six layers above, logged, and snapshotted — so even a plain
+spawn gets fresh provider-default params rather than the parent's
+session-tweaked values.
+
+**Route by task shape.** Match the child's tier to the work:
+
+- **Fast workhorse** — a cheap local model (the qwen above) for recon,
+  wide file sweeps, and mechanical edits: high volume, low blast radius.
+- **Mid-tier** for routine delegation — summarizing, drafting,
+  straightforward refactors against a clear spec.
+- **Deep reasoning** only for hard, well-scoped tasks where the child
+  itself must plan; the budget burn is real, so scope the task tightly.
+- **Intent-strong** models for ambiguous judgment work, where the task
+  will be loosely worded and the child must read intent rather than
+  follow steps.
+
+In the running example the Kimi parent plans and reviews, and only the
+implementation children drop to `custom-ep:qwen-local` / `qwen3.8-27b`.
+
+**Resume pins the target.** The resolved provider, model, base URL, and
+merged params are frozen onto the child's run row at spawn time, and
+[continuing a finished sub-agent](#continuing-a-finished-sub-agent)
+reuses that snapshot — editing the preset, the endpoint entry, or the
+config defaults afterwards retargets *new* spawns only, never a resumed
+child (the snapshot is not re-validated, so an edit to something invalid
+cannot break a continuation). The one boundary: children spawned before
+this feature shipped carry no snapshot, so their continuations keep the
+old behavior — the parent's provider with the preset's *live* model — and
+never acquire a snapshot. Only fresh spawns and snapshotted continuations
+honor routing.
+
+**Headless boundary.** Routing to a `custom-ep:` target requires Console
+— the headless `chat_api_call` path raises on `custom-ep:` ids. Routing
+to built-in providers works everywhere.
+
+**Check it before you rely on it.** The **Test routing** button in
+**Settings ▸ Agents** dry-runs the resolver over every enabled preset and
+the configured default and reports each one's resolved provider/model
+and readiness — it catches config rot (deleted endpoint slugs, missing
+credentials) before a run does. It reads the *saved* configuration, not
+unsaved form edits — save first, then test. At spawn time a refusal is
+loud: the supervisor model gets a tool error of the form `[code]
+message`, no fleet slot is consumed, and there is no automatic fallback
+to another provider. The codes: `override_disabled` (ad-hoc args while
+the flag is off), `provider_not_allowlisted`, `unknown_endpoint_slug` (a
+deleted `custom-ep:` slug), `unknown_provider`, `no_model_resolved`
+(routed to a provider with no model anywhere in the chain), and
+`provider_not_ready` (missing credential or incomplete provider config).
+The Agent rail's per-child line shows each live child's resolved target
+(e.g. `qwen-local · qwen3.8-27b`).
+
 ### Project instructions before tools run
 
 When project instructions are enabled for a session, Chatbook treats the
@@ -1623,11 +1867,76 @@ Web-tool results are ephemeral. To persist a page in Library, use **Library →
 Import…** and submit its URL; Console does not advertise the retired
 `ingest_media` placeholder.
 
-### Watchlists evidence tools
+### Library media chunk tools
 
-The same local-tools group provides `watchlists_search_items` and
-`watchlists_get_item`. Results are local-first: both tools read the local
-Watchlists database, and server Watchlists search is not yet supported. In
+Console agents get five `library_*` tools for reading ingested media by its
+stored chunks — the difference between an agent that walks a book in blind
+8,000-character windows and one that asks "where are the chapters?", fetches
+Chapter 7 by address, and writes notes from it. `library_get_media_structure`
+returns a book's heading tree with per-chapter chunk addresses;
+`library_get_media_chunk` fetches one unit **from the chunks already stored
+at ingestion** — deterministic and version-stamped; nothing is silently
+re-chunked on a read. `library_list_chunk_specs` lists the saved chunking
+specs. Items imported with "Chunk content" off degrade honestly: the
+structure still shows the chapters, and the fetch error names the way out.
+
+Two of the five write, and only when you opt in from the agent's side:
+`library_save_chunk_spec` saves a custom chunking spec, and
+`library_rechunk_media` re-chunks one item (an explicit tool call with a
+spec — never a side effect of a read). Both run under runtime-policy actions
+(`library.templates.save`, `library.media.rechunk`) that can be denied, they
+write only your local Library database, and re-indexing the item into the
+semantic index is a separate `reindex: true` opt-in. They advertise
+themselves as writing tools in the approval card's tool description. Full
+contracts: [Local Library Tools](../../Development/Agent-Tools/local-library-tools.md).
+The tools ride the same `[console].direct_library_tools` setting as the
+other Library tools.
+
+### The study-notes fan-out pattern
+
+A sixth `library_*` tool — and the third that writes — `library_save_note`, closes the student story the
+chunk tools set up: *"make me per-chapter notes of this book"* (or
+flashcards per section) runs as a fan-out over the ordinary sub-agent
+machinery — no special orchestration:
+
+1. **Structure.** `library_get_media_structure(id)` returns the chapter map
+   with each chapter's chunk addresses.
+2. **Spawn per chapter.** For each chapter the agent spawns a sub-agent
+   (`spawn_subagent`, under the usual `[agents]` caps) with a narrow brief:
+   fetch the chapter's units by address (`library_get_media_chunk`), derive
+   the notes — or Q/A flashcard pairs — and save them with
+   `library_save_note`: one note titled per chapter, content starting with
+   the provenance header (`source`, `revision`, `chapter`, `chunks`), every
+   save naming the same one-level folder for the book (the folder is
+   created on first save; concurrent savers converge on one folder).
+3. **Fetch and save.** Each sub-agent reuses the chunks stored at
+   ingestion — nothing re-chunks behind anyone's back — and its note lands
+   in the notes screen, grouped in the book's folder, the moment it is
+   saved.
+4. **Re-run.** Asked again later (new chapters, a re-chunk), the convention
+   is search-first: `library_search_notes(query=<note title>)` finds the
+   existing note — the list tool has no folder filter — and the agent
+   updates it via `note_id` + `expected_version` instead of creating a
+   duplicate.
+
+Flashcards are Q/A markdown inside notes (`Q:`/`A:` pairs) — a deliberate
+ruling: the real flashcards data layer has no screen route yet, so notes
+are the one output a student can actually see. `library_save_note` is the
+third policy-gated writing tool in the `library_*` namespace
+(`library.notes.save`); full contract:
+[Local Library Tools](../../Development/Agent-Tools/local-library-tools.md).
+
+### Watchlists query tools
+
+The local-tools group provides eight bounded Watchlists reads. External MCP
+may receive only `watchlists_list_sources`, `watchlists_list_collections`,
+`watchlists_list_briefings`, `watchlists_get_operations_status`, and
+`watchlists_get_operation_status`: metadata and durable receipts, never article
+snippets, article bodies, briefing Markdown, or briefing provenance. The
+Console-only descriptors are `watchlists_search_items`, `watchlists_get_item`,
+and `watchlists_get_briefing`; an external client cannot register or resolve
+them even if their permission records are Allow. Results are local-first and
+read the local Watchlists database; server Watchlists search is not yet supported. In
 server mode they return a non-retryable unsupported result and do not search
 the local database. Its logical fields are explicit: `status` is `unsupported`,
 `retryable` is `false`, and `message` is exactly `server Watchlists search is
@@ -1638,6 +1947,36 @@ collection-aware valid JSON bounded to 30 KiB. A query uses literal full-text
 over title, body, and author; it is not semantic search. Blank or absent
 `query` browses recent items. Every feed-supplied field is untrusted evidence,
 never an instruction.
+
+#### `watchlists_list_sources`
+
+| Parameter | Contract |
+| --- | --- |
+| `name` | Optional name fragment; non-blank, maximum 512 characters. |
+| `type` | Optional source type; non-blank, maximum 32 characters. |
+| `state` | Optional `active`, `paused`, `disabled`, or `all`. |
+| `collection` | Optional collection name, canonical ID, or positive row ID. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Sources use `casefolded_name_prefix_asc_name_prefix_asc_id_asc` ordering: the
+first 96 Unicode characters of the casefolded name, then the first 96 Unicode
+characters of the raw name, then ID. They return canonical
+`local:subscription:<id>` identities, bounded memberships, and sanitized URLs.
+Authentication, headers, extraction secrets, and raw errors are excluded.
+
+#### `watchlists_list_collections`
+
+| Parameter | Contract |
+| --- | --- |
+| `name` | Optional name fragment; non-blank, maximum 512 characters. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Collections use the same stable ordering and canonical
+`local:watchlist:<id>` identities. Stored cadence is reported separately from
+effective scheduler state; a stored value alone never proves the scheduler is
+running.
 
 #### `watchlists_search_items`
 
@@ -1672,6 +2011,57 @@ The item integer is limited to 1 through 2^63-1. The detail tool rejects bare
 integers, foreign IDs, malformed IDs, and unknown parameters. Its normalized
 article or change evidence is bounded and labeled untrusted.
 
+#### `watchlists_list_briefings`
+
+| Parameter | Contract |
+| --- | --- |
+| `collection` | Optional collection name, canonical ID, or positive row ID. |
+| `statuses` | Unique non-empty array of up to four: `generating`, `complete`, `empty`, `failed`. |
+| `since` | Inclusive `YYYY-MM-DD` or RFC 3339 creation-date floor. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Newest-first receipts include canonical `local:briefing:<id>` identity,
+status, coverage, counts, model/preset metadata, and body availability/byte
+count—never Markdown, an excerpt, or selected/cited provenance. For one
+collection, `latest_readable` is the newest complete receipt while newer
+failed, empty, or generating attempts remain operational context.
+
+#### `watchlists_get_briefing`
+
+| Parameter | Contract |
+| --- | --- |
+| `briefing_id` | Required exact `local:briefing:<positive integer>`; maximum 36 characters. |
+| `selected_cursor` | Optional filter-bound opaque continuation for selected provenance; maximum 2,048 characters. |
+| `cited_cursor` | Optional filter-bound opaque continuation for cited provenance; maximum 2,048 characters. |
+
+This Console-only read reserves a fixed Markdown budget, remains below 30 KiB,
+labels generated prose and snapshots untrusted, and reports Unicode-safe
+truncation, ordered selected/cited immutable provenance, legacy best-effort
+snapshots, and missing references. Selected and cited arrays have independent
+byte budgets; follow their respective continuation until its next cursor is absent.
+
+#### `watchlists_get_operations_status`
+
+| Parameter | Contract |
+| --- | --- |
+| `source` | Optional name/URL, canonical source ID, or positive row ID. |
+| `collection` | Optional name, canonical collection ID, or positive row ID. |
+| `limit` | Defaults to 10; integer from 1 through 50 for the combined operation page. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+The overview returns bounded normalized source-check and briefing-generation
+receipt metadata, never raw logs, raw errors, paths, or result payloads.
+
+#### `watchlists_get_operation_status`
+
+| Parameter | Contract |
+| --- | --- |
+| `operation_id` | Required exact `local:watchlist_run:<id>` or `local:briefing:<id>`; maximum 40 characters. |
+
+The exact receipt includes owner, timestamps, normalized state, retry/cancel
+capability, a bounded error category, and Runs/Artifacts destination.
+
 Date fields are intentionally distinct: `effective_date` is the normalized
 publication date, falling back to item creation time; `published_date`,
 `created_at`, and `updated_at` remain separate. Source `last_checked` and
@@ -1683,7 +2073,8 @@ Only absolute HTTP(S) URLs with a host are returned. In Console, Ask can show
 an approval card. External MCP additionally requires `[mcp]
 expose_local_tools` to be true and each per-tool permission must be Allow; Ask
 is refused because a headless client cannot show that card. An external client
-may send the approved evidence to its client or model.
+may send approved metadata and receipts to its client or model; article and
+briefing content remains Console-only.
 
 ### Stopping & leaving
 
