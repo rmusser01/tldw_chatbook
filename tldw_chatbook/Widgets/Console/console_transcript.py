@@ -7563,8 +7563,20 @@ class ConsoleTranscript(VerticalScroll):
                 getattr(disclosure, "_console_detail_signature", None)
                 != components.detail_signature
             ):
-                self._cancel_selection_if_row_removed(disclosure.detail_stack)
-                await disclosure.replace_detail_widgets(components.detail_widgets)
+                current_detail = tuple(disclosure.detail_stack.children)
+                if (
+                    isinstance(activity, ConsoleThinkingActivityRef)
+                    and len(current_detail) == len(components.detail_widgets) == 1
+                    and isinstance(current_detail[0], Static)
+                    and isinstance(components.detail_widgets[0], Static)
+                ):
+                    # Keep the live body mounted: remove/mount can paint an
+                    # empty frame between deltas. Static.update also reflows
+                    # the retained body as its wrapped text grows.
+                    current_detail[0].update(components.detail_widgets[0].content)
+                else:
+                    self._cancel_selection_if_row_removed(disclosure.detail_stack)
+                    await disclosure.replace_detail_widgets(components.detail_widgets)
                 disclosure._console_detail_signature = components.detail_signature
             disclosure._has_actions = bool(components.action_widgets)
             disclosure.detail_available = components.detail_available

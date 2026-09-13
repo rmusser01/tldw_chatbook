@@ -1,16 +1,15 @@
 """Settings ▸ Agents: category registration + panel CRUD (fleet spec §4)."""
 
-from pathlib import Path
 
 import pytest
 from textual.app import App
 from textual.widgets import ListView
 
-import tldw_chatbook
 from Tests.UI.test_destination_shells import _static_text
 from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.settings_agents_panel import AgentsSettingsPanel
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 BULK_READER_NAME = "bulk-reader"
 BULK_READER_DESCRIPTION = (
@@ -45,9 +44,7 @@ class PanelHarness(App):
 
 
 class ProductionCssPanelHarness(PanelHarness):
-    CSS_PATH = str(
-        Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 @pytest.mark.asyncio

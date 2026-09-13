@@ -2771,28 +2771,30 @@ class NotesSyncRuntimeOwner:
                 root_id, ("passive", "open_active_process", None)
             )
             return NotesSyncControlResult(False, current[0], current[1])
-        try:
-            plan = await self._review_candidate(root)
-        except Exception:
-            self._blocked_roots.add(root_id)
-            await self._publish(root_id, "failed", "review_changes")
-            return NotesSyncControlResult(False, "failed", "review_changes")
-        blocked = self._blocked_plan_status(plan)
-        executable = tuple(
-            action for action in plan.safe_actions if action.kind in _EXECUTABLE_ACTIONS
-        )
-        if blocked is not None or executable:
-            self._reviews[root_id] = plan
-            self._blocked_roots.add(root_id)
-            await self._publish(root_id, "changes_available", "review_changes")
-            return NotesSyncControlResult(False, "changes_available", "review_changes")
+        # task-32519: re-activate BEFORE reviewing. pause_root's store
+        # transition cascades every binding to 'paused', and observe_root
+        # refuses any binding that is not active/candidate with
+        # binding_review_required -- so a review taken while the root is
+        # still paused could never succeed, and every Resume landed in
+        # "failed" with the root left paused. The ACTIVE transition is the
+        # store's own inverse cascade (paused bindings -> active); the root
+        # then takes exactly the mutation-free manual check an active
+        # root's Check changes takes, so clean, safe-change, attention and
+        # failed outcomes all read the way they do for any other active root.
         active = await self._maintenance_offload(
             self._store.transition_root, root_id, NotesSyncRootState.ACTIVE
         )
         self._blocked_roots.discard(root_id)
-        await self._publish(active.root_id, "up_to_date", "sync_now")
+        self._durably_blocked_roots.discard(root_id)
+        try:
+            await self._reconcile(active, automatic=False)
+        except Exception:
+            self._blocked_roots.add(root_id)
+            await self._publish(root_id, "failed", "review_changes")
+            return NotesSyncControlResult(False, "failed", "review_changes")
+        current = self._root_status[root_id]
         self._start_watcher()
-        return NotesSyncControlResult(True, "up_to_date", "sync_now")
+        return NotesSyncControlResult(True, current.status, current.next_action)
 
     @producer_call
     async def activate_root(

@@ -31,7 +31,7 @@ from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.containers import HorizontalScroll
 from textual.widgets import Button
 
@@ -53,7 +53,7 @@ BUNDLE = ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
 class StyledConsoleHarness(ConsoleHarness):
     """ConsoleHarness with the shipped stylesheet so app-tier rules apply."""
 
-    CSS_PATH = str(BUNDLE)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 def _rendered_button_line(button: Button) -> str:
@@ -212,7 +212,7 @@ async def test_many_tabs_scroll_and_keep_all_controls_reachable() -> None:
 class StyledTabStripHost(ConsolidatedCSSApp):
     """Bare session surface with the shipped stylesheet (app-tier rules)."""
 
-    CSS_PATH = str(BUNDLE)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
         yield ConsoleSessionSurface(SimpleNamespace(notify=MagicMock()))

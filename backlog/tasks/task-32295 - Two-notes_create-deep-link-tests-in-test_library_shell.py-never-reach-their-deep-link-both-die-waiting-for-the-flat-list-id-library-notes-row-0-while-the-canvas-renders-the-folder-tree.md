@@ -4,9 +4,10 @@ title: >-
   Two notes_create deep-link tests in test_library_shell.py never reach their
   deep link: both die waiting for the flat-list id #library-notes-row-0 while
   the canvas renders the folder tree
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-10 20:03'
+updated_date: '2026-09-11 10:45'
 labels:
   - library
   - notes
@@ -55,7 +56,38 @@ or deeplink or notes_create or entry_focus"` -> 7 passed, 2 failed on dev.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Both node ids pass on dev without weakening what they assert -- each still drives its notes_create deep link and checks the state it names
-- [ ] #2 The note the helper opens is selected through an id or marker that is correct in BOTH the flat list and the folder tree, so the pair cannot silently stop running again when the presentation changes
-- [ ] #3 Any other Tests/ site waiting on #library-notes-row-0 while the tree can be active is reconciled in the same pass
+- [x] #1 Both node ids pass on dev without weakening what they assert -- each still drives its notes_create deep link and checks the state it names
+- [x] #2 The note the helper opens is selected through an id or marker that is correct in BOTH the flat list and the folder tree, so the pair cannot silently stop running again when the presentation changes
+- [x] #3 Any other Tests/ site waiting on #library-notes-row-0 while the tree can be active is reconciled in the same pass
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Run both node ids on the branch and on a detached `origin/dev` worktree.
+2. If they are already green, prove WHY and check AC#3's sweep; do not
+   re-repair what is repaired.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Already repaired on dev; verified rather than re-fixed.
+
+Both node ids pass on `origin/dev` ff2dc03145 in a detached worktree (2 passed,
+8.9 s) and on this branch (2 passed, 7.0 s). The repair landed with task-32175:
+`_open_note_editor` waits on `.library-notes-row` (the class BOTH presentations
+carry) and then selects by identity through `_wait_for_note_row(note_id)`, which
+matches a row's `note_id` attribute rather than a position or a
+`#library-notes-row-N` id -- which is exactly what AC#2 asks for, in both the
+flat list and the folder tree.
+
+AC#3 sweep: the only remaining `#library-notes-row-0` wait under `Tests/` is
+`Tests/UI/test_library_notes_wave_list.py::test_flat_rows_render_the_same_single_
+line_age`, which builds a `_CanvasApp` with NO tree projection on purpose -- the
+flat fallback is the thing under test there, so the flat id is correct and the
+tree cannot be active. (`Tests/UI/test_library_canvas_scoped_sync.py:153` is a
+comment recording the same trap.) Nothing to reconcile.
+
+No code change. Files: none.
+<!-- SECTION:NOTES:END -->

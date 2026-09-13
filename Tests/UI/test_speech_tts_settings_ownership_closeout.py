@@ -65,6 +65,7 @@ from tldw_chatbook.TTS.TTS_Generation import (
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 pytestmark = pytest.mark.asyncio
 
@@ -77,7 +78,7 @@ _BUNDLE = (
 
 
 class _StyledStudioHost(_Host):
-    CSS_PATH = _BUNDLE
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 class _AccessiblePanelHarness(_StyledPanelHarness):

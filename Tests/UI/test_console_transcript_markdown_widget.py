@@ -36,6 +36,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleAssistantTurnWidget,
 )
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 
 def _assistant_header(
@@ -64,7 +65,7 @@ _BUNDLE = (
 
 
 class StyledMarkdownHarness(MarkdownHarness):
-    CSS_PATH = str(_BUNDLE)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 def _painted_style_of_text(app: App, region, needle: str):

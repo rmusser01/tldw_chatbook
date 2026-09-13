@@ -72,3 +72,10 @@ explicit final rediscovery nested inside capture; payload authority stays unchan
 passes plaintext73.29s, encrypted75.27s and encrypted-with-credentials91.37s, after
 mapping the existing legacy persona-assets destination in the test. The newer dev
 Console delta and exact published Linux/Windows verification remain.
+
+The first conflict resolution is committed as `d914a76a2`. The subsequent merge
+incorporates dev `5fd502dba`, preserving its Console and Notes behavior. The new
+resumed-character worker uses the existing native ownership context; four real
+SQLite lifetime regressions pass after reproducing three leaks. Diagnostic
+inventory changes were reviewed statement by statement: six upstream diagnostic
+calls, no new persistent destination. Final published platform runs are pending.

@@ -1,7 +1,7 @@
 # Cross-platform backup verification — 2026-09-12
 
 TASK-32496; PR2642 targets dev. The published cross-platform correction has the
-platform evidence recorded below. Integration with dev `a3142cb35` is in progress;
+platform evidence recorded below. Integration includes dev `5fd502dba`; final native reruns are in progress;
 those earlier receipts do not qualify the merged implementation. The requester
 has supplied the PR's human-written Change summary. Resolving the conflicts does
 not authorize merging the PR into dev.
@@ -45,8 +45,11 @@ Actual installed F9 backup, inspection, isolated restore and fresh reopening pas
 in all three modes: plaintext 73.29s, encrypted 75.27s, and encrypted with explicit
 credential review 91.37s. No temporary inventory tracing is present in these runs.
 The test maps the existing legacy persona-assets tree to its actual profile-relative
-destination. Newer Console changes from dev and final Linux/Windows verification
-remain before the merged PR is declared complete.
+destination. The subsequent dev integration preserves Console persona templates, project-setup
+refusals and stable thinking rendering, plus Notes Resume and list refresh fixes.
+The new resumed-character lookup retires its worker-owned SQLite connection; all
+four native success/failure/cancellation/borrower tests pass after reproducing
+the three fresh-worker leaks. Final Linux/Windows verification remains pending.
 
 Final [Windows run 34734023282](https://github.com/rmusser01/tldw_chatbook/actions/runs/34734023282)
 at `a5a5365656cfabc9ccf247d16a3b97c91bb5794f` passes **117/117 support tests**

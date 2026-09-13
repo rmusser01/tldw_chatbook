@@ -16,7 +16,7 @@ from textual import events
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.geometry import Region
@@ -396,12 +396,7 @@ def _typed_ready_unverified_readiness() -> ConsoleSettingsReadiness:
 
 
 class StyledModalHarness(ModalHarness):
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 class StyledConsoleHarness(ConsoleHarness):
@@ -10290,7 +10285,7 @@ def test_console_control_state_reads_persona_label_without_storing_it_on_session
     assert session.assistant_authority_id is None
     assert "assistant_kind" in session.__dataclass_fields__
     assert "assistant_id" in session.__dataclass_fields__
-    assert "assistant_name" not in session.__dataclass_fields__
+    assert session.assistant_name is None
 
 
 def test_console_saved_openai_with_key_shows_ready_readiness() -> None:

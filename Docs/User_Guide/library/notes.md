@@ -358,7 +358,7 @@ both stay closed until you choose to reopen one.
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
 
 With no notes at all, the list reads "No notes yet. Create your first note."
 above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
@@ -489,6 +489,8 @@ footer names where focus is; task-32247: Ctrl+End reaches the end of a
 longer selects it; task-32268: the delete prompt renders inside the Info
 box under Delete).*
 
+*Verified against fix/library-notes-w3-test-health — 2026-09-12 (task-32185 AC#5: entering select mode beside an open note now re-applies that note's work-pane state, so the read-only preview and its disabled actions appear as described above — before this they never did — and leaving it by any route (Done, Escape, a filter submit or clear) hands the editor back).*
+
 ### New note view
 
 **Ctrl+N** (and the bare **n**) do not open this view at all: they create the
@@ -607,19 +609,22 @@ configured sync folder.
 recovery, stopped, and migrated-candidate states. Use **Check changes** to scan
 an available root. **Review** appears when its changes need attention;
 legacy candidates use **Review migration**. **Pause** and **Resume** control an
-active root — though today **Resume** does not bring a paused root back at
-all, whether or not anything changed while it was paused: its row reads
-"✕ Failed · Next: Review changes", **Check changes** answers "Manual check
-failed", and **Review** says the folder is still paused. A restart does not
-recover it either: the row comes back as "Ⅱ Paused · Next: Resume", Check
-changes fails while it is paused, Resume fails the same way, and a file
-edited on disk after the restart never syncs — so pause only if you can live
-with the root staying paused; nothing in this release resumes it
-(task-32519). (Was "so pause only when you can live with a restart" —
-superseded by task-32271 below: the restart was asserted, then walked.)
-**Retarget** and **Disconnect**
-remain visibly disabled with an unavailable-in-this-release reason; no files
-or notes change.
+active root. **Resume** re-activates the root and runs the same check as
+**Check changes**: a root with nothing changed returns to "✓ Up to date · Next:
+Check changes", and edits made while it was paused surface as "◌ Changes
+available" or "⚠ Needs attention · Next: Review changes" (task-32519). (Was
+"though today **Resume** does not bring a paused root back at all, whether or
+not anything changed while it was paused: its row reads '✕ Failed · Next:
+Review changes', **Check changes** answers 'Manual check failed', and
+**Review** says the folder is still paused. A restart does not recover it
+either: the row comes back as 'Ⅱ Paused · Next: Resume', Check changes fails
+while it is paused, Resume fails the same way, and a file edited on disk after
+the restart never syncs — so pause only if you can live with the root staying
+paused; nothing in this release resumes it" — fixed by task-32519 below. Before
+that it was "so pause only when you can live with a restart" — superseded by
+task-32271 below: the restart was asserted, then walked.)
+**Retarget** and **Disconnect** remain visibly disabled with an
+unavailable-in-this-release reason; no files or notes change.
 
 ### Import once
 
@@ -851,11 +856,14 @@ stayed as text and are not counted.
    and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead. **Manage sync folders** appears in the notes toolbar once
-   a root is active. The synced notes and their **⇄ Sync managed** folder are
-   in the database as soon as the receipt says "N applied", but on a profile
-   that already held notes the list beside you does not pick them up — its
-   count and tree stay as they were, through a manual check and a source
-   round trip — until you restart the app (task-32518).
+   a root is active. Choosing **Back** returns to a Notes list that already
+   counts the synced notes and shows them under a **⇄ Sync managed** folder
+   named after the display name — no restart needed (task-32518). (Was "the
+   synced notes and their **⇄ Sync managed** folder are in the database as soon
+   as the receipt says 'N applied', but on a profile that already held notes
+   the list beside you does not pick them up — its count and tree stay as they
+   were, through a manual check and a source round trip — until you restart
+   the app" — fixed by task-32518 below.)
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
@@ -1310,7 +1318,7 @@ the profile → **Choose folder…** → the `$HOME` vault → 60 safe · 0 atte
 receipt recorded" → the notes appear under a **⇄ Sync managed** folder (on
 that fresh profile; on a seeded profile the list stays at its old count with
 no such folder until the app restarts — superseded by task-32271 below,
-rider task-32518) →
+rider task-32518; fixed by task-32518 below) →
 **Manage sync folders** (which only exists once a root is active) → **Check
 changes** → "Manual check finished."
 
@@ -1326,7 +1334,7 @@ throughout, as this chapter says. (The Resume step was recorded as done, but
 that walk's own capture ends on "✕ Failed · Next: Review changes", and the
 docs sweep reproduced it with nothing changed on either side: Resume leaves
 the root paused and every later Check changes fails — superseded by
-task-32271 below, rider task-32519.)
+task-32271 below, rider task-32519; fixed by task-32519 below.)
 
 Added in this pass: what a folder and its files have to be before they can be
 checked, and the named refusals. Known gap, not fixed here: the root row in
@@ -1428,3 +1436,28 @@ undo, the `.git` skip, the collision default, the receipt's two
 denominators, the export destination refusal, the ingest browser opening at
 `[notes] sync_directory`, and Capture as note's Open note landing in this
 editor.)*
+
+*Verified against fix/library-notes-w3-sync-tail — 2026-09-12 (task-32519, at
+235x52 and 100x30, scratch profile with a 58-file vault): **Pause** →
+"Ⅱ Paused · Next: Resume" → **Resume** → "✓ Up to date · Next: Check changes"
+→ **Check changes** → "Manual check finished. Review exact effects."
+(`wave3-caps/sync-tail/09-paused`, `10-resumed`, `11-check-after-resume`).
+With the same note edited in Chatbook and on disk while paused, **Resume** →
+"⚠ Needs attention · Next: Review changes" → **Review** → "59 safe · 1 need
+attention", no "That folder is paused" (`12-resume-with-two-sided-edit`,
+`13-review-after-resume`; `23-paused`/`24-resumed` at 100x30). Resume used
+to review the root before re-activating it, so the pause cascade's paused
+bindings refused every review and every Resume read "✕ Failed"; it now
+re-activates first and runs the ordinary check. A profile already holding
+the broken paused-on-disk state resumes cleanly too.)*
+
+*Verified against fix/library-notes-w3-sync-tail — 2026-09-12 (task-32518, at
+235x52 and 100x30 on a profile with 10 existing notes): **Activate reviewed
+root** → "60 applied · durable receipt recorded" → **Back** → "Notes (70)"
+with "▸ t13 sync ⇄ Sync managed" in the list at once
+(`wave3-caps/sync-tail/06-root-activated`, `07-list-after-activate`); a
+second 5-file root at 100x30 → "Notes (75)" and "▸ t13 second ⇄ Sync managed"
+(`26-second-root-activated`, `27-list-after-second-activate`). Activation
+and **Apply reviewed** now refresh the list through the same path an import
+does; before this the list kept its old count and folder rows until
+restart.)*

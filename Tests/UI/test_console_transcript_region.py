@@ -37,7 +37,6 @@ wrong:
 """
 
 import inspect
-from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
@@ -45,7 +44,7 @@ from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -67,12 +66,7 @@ from tldw_chatbook.UI.Console_Modules.transcript import ConsoleTranscriptRegion
 class _SpeechHeaderHarness(App):
     """Mount completed assistant rows without selecting either one."""
 
-    CSS_PATH = (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self) -> None:
         super().__init__()

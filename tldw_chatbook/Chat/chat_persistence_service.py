@@ -2362,7 +2362,8 @@ class ChatPersistenceService:
         conversation_id: str,
         user_name_override: str | None,
         character_system_template: str | None,
-        character_name_snapshot: str | None,
+        character_name_snapshot: str | None = None,
+        persona_system_template: str | None = None,
     ) -> bool:
         """Merge Console-owned roleplay identity context with one retry.
 
@@ -2376,6 +2377,7 @@ class ChatPersistenceService:
             user_name_override: Optional saved user display-name override.
             character_system_template: Optional saved character prompt template.
             character_name_snapshot: Optional historical character display name.
+            persona_system_template: Optional saved persona prompt template.
 
         Returns:
             True when the roleplay context was persisted; False when the
@@ -2391,6 +2393,7 @@ class ChatPersistenceService:
                     user_name_override=user_name_override,
                     character_system_template=character_system_template,
                     character_name_snapshot=character_name_snapshot,
+                    persona_system_template=persona_system_template,
                 ),
             )
             try:

@@ -10,7 +10,7 @@ import pytest
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.color import Color
 from textual.events import Key
 from textual.widgets import Button, Input, Static
@@ -146,7 +146,7 @@ class _StagedPromptConsoleHarness(ConsolidatedCSSApp):
 
 
 class _RawCliComposerHarness(ConsolidatedCSSApp):
-    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
         yield ConsoleComposerBar(id="console-native-composer")

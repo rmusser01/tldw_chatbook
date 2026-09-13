@@ -235,6 +235,7 @@ from ...Chat.console_roleplay_identity import (
     normalize_chat_display_name,
     normalize_console_transcript_style,
     resolve_console_message_presentation,
+    resolve_send_system_prompt,
 )
 from ...Chat.prompt_history import PromptHistory
 from ...Backup_Recovery import raw_participants as raw
@@ -9731,7 +9732,7 @@ class ChatScreen(BaseAppScreen):
             and endpoint_policy.provider == selection_settings.provider
             and endpoint_policy.model == selection_settings.model
         )
-        return ConsoleProviderSelection(
+        selection = ConsoleProviderSelection(
             provider=provider,
             base_url=base_url,
             configured_endpoint_fallback_allowed=(not endpoint_policy_owns_selection),
@@ -9759,6 +9760,48 @@ class ChatScreen(BaseAppScreen):
             system_prompt=selection_settings.system_prompt,
             workspace_context=workspace_context,
         )
+        # task-32484: the controller's per-send identity re-expansion never
+        # reached this production path (its persona/character branch only
+        # fires for bare controllers without a wired turn-context provider),
+        # so sends here reused the settings' last materialized projection.
+        # Apply the same shared resolver: a named persona/character session
+        # with a trusted template sends a fresh expansion against the current
+        # effective display name; anything else keeps the settings prompt.
+        if target_session_id is not None:
+            identity_session = next(
+                (item for item in store.sessions() if item.id == target_session_id),
+                None,
+            )
+            if (
+                identity_session is not None
+                and identity_session.assistant_kind in {"persona", "character"}
+            ):
+                is_persona = identity_session.assistant_kind == "persona"
+                try:
+                    global_default = self._global_chat_display_name()
+                except Exception:
+                    global_default = "User"
+                selection = replace(
+                    selection,
+                    system_prompt=resolve_send_system_prompt(
+                        identity_name=(
+                            identity_session.assistant_name
+                            if is_persona
+                            else identity_session.character_name
+                        ),
+                        identity_template=(
+                            identity_session.persona_system_template
+                            if is_persona
+                            else identity_session.character_system_template
+                        ),
+                        user_name_override=(
+                            identity_session.user_display_name_override
+                        ),
+                        global_default=global_default,
+                        fallback=selection.system_prompt,
+                    ),
+                )
+        return selection
 
     def _active_console_provider_model_display(
         self,
@@ -12683,6 +12726,68 @@ class ChatScreen(BaseAppScreen):
         Controller`'s `messages_from_conversation_tree_accessor`) now
         points at `self._message` directly, bypassing this delegation."""
         return self._message._console_messages_from_conversation_tree(tree)
+
+    async def _resolve_resumed_character_name(self, character_id: int) -> str:
+        """Return a resumed character's display name from its card, or ``""``.
+
+        Args:
+            character_id: The persisted conversation's character id.
+
+        Returns:
+            The character card's name, or an empty string when the DB is
+            unavailable, the card is missing, or the fetch fails (best-effort:
+            the caller keeps ``character_id`` set regardless).
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return ""
+
+        def _read_card() -> dict[str, Any] | None:
+            from tldw_chatbook.DB.base_db import operation_owned_connection
+
+            with operation_owned_connection(db):
+                return db.get_character_card_by_id(character_id)
+
+        try:
+            card = await asyncio.to_thread(_read_card)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Resume: character card fetch failed; identity row falls back."
+            )
+            return ""
+        if not card:
+            return ""
+        return str(card.get("name") or "").strip()
+
+    async def _resolve_resumed_persona_name(
+        self, persona_id: str, runtime_backend: str
+    ) -> str:
+        """Return a resumed persona's display name from its profile, or ``""``.
+
+        Best-effort mirror of ``_resolve_resumed_character_name``: any
+        failure (missing scope service, missing profile, fetch error)
+        returns an empty string and the caller keeps the session unlabeled.
+        """
+        scope_service = getattr(
+            self.app_instance, "character_persona_scope_service", None
+        )
+        get_persona_profile = getattr(scope_service, "get_persona_profile", None)
+        if not callable(get_persona_profile):
+            return ""
+        try:
+            profile = await get_persona_profile(persona_id, mode=runtime_backend)
+            if hasattr(profile, "model_dump"):
+                profile = profile.model_dump(mode="json")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Resume: persona profile fetch failed; identity row falls back."
+            )
+            return ""
+        if not isinstance(profile, Mapping):
+            return ""
+        return str(profile.get("name") or "").strip()
 
     def _set_console_conversation_row_loading(
         self, conversation_id: str, loading: bool
@@ -17256,14 +17361,17 @@ class ChatScreen(BaseAppScreen):
         try:
             payload = claim.value
 
-            # The native Console composes no legacy tab surface. A
-            # Personas Start-Chat character handoff gets a dedicated
-            # character-bound session with its greeting seeded
-            # (task-427); anything else -- or a character session that
-            # failed to build -- stages into the Console live-work lane
-            # so the context lands in Staged Context instead of being
-            # dropped with a warning.
+            # The native Console composes no legacy tab surface. Personas
+            # Start-Chat handoffs get a dedicated identity-bound session:
+            # character cards seed a greeting (task-427); persona cards bind
+            # name + system template without one (task-32481). Anything else
+            # -- or an identity session that failed to build -- stages into
+            # the Console live-work lane so the context lands in Staged
+            # Context instead of being dropped with a warning.
             if await self._session._start_character_console_session(payload):
+                store.acknowledge(claim)
+                return
+            if await self._session._start_persona_console_session(payload):
                 store.acknowledge(claim)
                 return
             self._stage_handoff_as_console_live_work(payload)

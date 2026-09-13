@@ -504,6 +504,8 @@ class ConsoleWorkspaceController:
         mark_conversation_row_broken: Callable[[str], None] | None = None,
         rail_body_height_accessor: Callable[[], int | None] | None = None,
         notify_character_navigation: Callable[..., None] | None = None,
+        resolve_resumed_character_name: Callable[[int], Any] | None = None,
+        resolve_resumed_persona_name: Callable[[str, str], Any] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -565,6 +567,12 @@ class ConsoleWorkspaceController:
             notify_character_navigation: Report a character-conversation
                 activation result to the user; defaults to the app-level
                 ``notify`` when not supplied.
+            resolve_resumed_character_name: Optionally resolve a resumed
+                character's display name from its live card (bare-controller/
+                test construction keeps the persisted snapshot label).
+            resolve_resumed_persona_name: Optionally resolve a resumed persona's
+                display name from its live profile (bare-controller/test
+                construction leaves the session unlabeled).
         """
         self._screen = screen
         self._notify_character_navigation = notify_character_navigation
@@ -587,6 +595,8 @@ class ConsoleWorkspaceController:
         self._session_settings_for_resume_accessor = (
             session_settings_for_resume_accessor
         )
+        self._resolve_resumed_character_name_fn = resolve_resumed_character_name
+        self._resolve_resumed_persona_name_fn = resolve_resumed_persona_name
         self._inject_resume_agent_markers_accessor = (
             inject_resume_agent_markers_accessor
         )
@@ -1234,6 +1244,30 @@ class ConsoleWorkspaceController:
     @property
     def _console_session_settings_for_resume(self) -> Any:
         return self._session_settings_for_resume_accessor
+
+    @property
+    def _resolve_resumed_character_name(self) -> Any:
+        resolver = self._resolve_resumed_character_name_fn
+        if resolver is None:
+            # Bare-controller/test construction: live re-resolution is
+            # unavailable, so the persisted snapshot label stands.
+            async def _unresolved(_character_id: int) -> str:
+                return ""
+
+            return _unresolved
+        return resolver
+
+    @property
+    def _resolve_resumed_persona_name(self) -> Any:
+        resolver = self._resolve_resumed_persona_name_fn
+        if resolver is None:
+            # Bare-controller/test construction: best-effort resume simply
+            # leaves the session unlabeled.
+            async def _unresolved(_persona_id: str, _runtime_backend: str) -> str:
+                return ""
+
+            return _unresolved
+        return resolver
 
     @property
     def _inject_resume_agent_markers(self) -> Any:
@@ -5945,6 +5979,41 @@ class ConsoleWorkspaceController:
                     store.messages_for_session(session.id), target
                 ),
             )
+            # Live identity re-resolution on resume (task-32481, ADR-149):
+            # refresh the display name from the live card/profile. Dev's
+            # hydration already set the label from the persisted snapshot,
+            # which stays as the fallback when live resolution fails.
+            if (
+                session.runtime_backend == "local"
+                and session.assistant_kind == "character"
+                and session.character_id is not None
+            ):
+                resolved_character_name = await self._resolve_resumed_character_name(
+                    session.character_id
+                )
+                if resolved_character_name:
+                    session.character_name = resolved_character_name
+                    if session.settings is not None:
+                        session.settings = replace(
+                            session.settings,
+                            character_label=resolved_character_name,
+                        )
+            elif session.assistant_kind == "persona" and session.assistant_id:
+                # Persona sessions carry no local projection; the display name
+                # is re-resolved from the live profile on every resume
+                # (ADR-149), for local and server backends alike.
+                persona_name = await self._resolve_resumed_persona_name(
+                    session.assistant_id, session.runtime_backend
+                )
+                session.assistant_name = persona_name or None
+                if persona_name:
+                    # One-name invariant: a persona session never shows a
+                    # stale character label.
+                    session.character_name = None
+                if session.settings is not None:
+                    session.settings = replace(session.settings, character_label="")
+            elif session.settings is not None:
+                session.settings = replace(session.settings, character_label="")
             # Warm the effective conversation/workspace scope before the final
             # activation commit so any failure leaves the prior session active.
             await self._resolve_console_effective_scope_state(session)

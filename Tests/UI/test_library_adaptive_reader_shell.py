@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import time
+
 import pytest
 from textual import on
 from textual.containers import Vertical
@@ -12,7 +14,7 @@ from textual.css.styles import StylesBase
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Library.library_media_reader_state import (
     MEDIA_READER_LAYOUT_PROFILE,
 )
@@ -29,7 +31,6 @@ from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
     LibraryAdaptiveReaderShell,
     PaneToggleRequested,
 )
-from tldw_chatbook.app import TldwCli
 
 
 CSS_SOURCE = (
@@ -55,7 +56,7 @@ def _layout(
 
 
 class _ProbeApp(ConsolidatedCSSApp):
-    CSS_PATH = TldwCli.CSS_PATH
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(
         self,
@@ -254,6 +255,22 @@ async def test_grips_emit_correct_toggle_for_enter_space_and_pointer_click():
         await pilot.press("enter")
         shell.items_grip.focus()
         await pilot.press("space")
+        # task-32204: `Button._on_click` DROPS a click while the button still
+        # carries `-active` from its previous press (Textual's 0.2 s press
+        # animation). Whether that window has closed by the time the click is
+        # handled is pure timing -- loading the Library sheet this harness was
+        # missing shifted it, and the same click that pressed on the unstyled
+        # harness was swallowed on the styled one. Waiting the window out
+        # keeps the assertion (three toggles, in order) intact while testing
+        # the grip rather than Textual's debounce.
+        deadline = time.monotonic() + 2.0
+        while shell.library_grip.has_class("-active") and time.monotonic() < deadline:
+            await pilot.pause()
+        assert not shell.library_grip.has_class("-active"), (
+            "the library grip never left its press animation -- a click now "
+            "cannot reach Button.press() and the assertion below would be "
+            "measuring Textual's debounce"
+        )
         await pilot.click("#probe-library-grip")
 
         assert app.toggles == ["library", "items", "library"]
