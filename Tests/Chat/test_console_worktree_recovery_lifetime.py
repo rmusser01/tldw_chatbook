@@ -363,3 +363,122 @@ async def test_unaccepted_close_preserves_manual_cancel_signal(refusal, monkeypa
         runtime._voice_promotion_owner = None
         bridge.release.set()
         await runtime.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("submission", ["rejected", "queued", "entered"])
+async def test_manual_submission_failure_hands_off_exact_owner(
+    tmp_path, monkeypatch, submission
+):
+    """Submit can raise before enqueue, after enqueue, or after engine entry."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    import tldw_chatbook.Chat.console_worktree_recovery as module
+    from tldw_chatbook.Agents.agent_worktree_recovery import WorktreeRecoveryOutcome
+    from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+    loop = asyncio.get_running_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+    queued_release = threading.Event()
+    worker_release = threading.Event()
+    entered = threading.Event()
+    submitted = asyncio.Event()
+    futures = []
+    owners = []
+    engine_owners = []
+    capacity = RuntimeCapacity()
+    real_begin = capacity.begin_execution
+
+    def begin(**kwargs):
+        owner = real_begin(**kwargs)
+        owners.append(owner)
+        return owner
+
+    monkeypatch.setattr(capacity, "begin_execution", begin)
+    helper = module.ConsoleWorktreeRecovery(
+        SimpleNamespace(
+            capture_worktree_recovery_intent=lambda sid: SimpleNamespace(
+                persisted_conversation_id="conv"
+            ),
+            request_worktree_merge_confirm=lambda *a, **kw: {"allow": True},
+        ),
+        SimpleNamespace(
+            runs_db=SimpleNamespace(db_path_str=str(tmp_path / "runs.db")),
+            runtime_capacity=capacity,
+        ),
+    )
+    monkeypatch.setattr(module, "validate_intent", lambda *a: object())
+
+    def recover(*args, **kwargs):
+        engine_owners.append(current_execution_owner())
+        entered.set()
+        assert worker_release.wait(5)
+        return WorktreeRecoveryOutcome("apply", "finished", "unresolved")
+
+    monkeypatch.setattr(module, "recover_agent_worktree", recover)
+    if submission == "rejected":
+        executor.shutdown(wait=True)
+    elif submission == "queued":
+        futures.append(executor.submit(queued_release.wait, 5))
+    real_submit = executor.submit
+
+    def submit(*args, **kwargs):
+        try:
+            future = real_submit(*args, **kwargs)
+            futures.append(future)
+            if submission == "entered":
+                assert entered.wait(3), "worker did not enter before submission error"
+            raise RuntimeError("submission raised after enqueue")
+        finally:
+            submitted.set()
+
+    monkeypatch.setattr(executor, "submit", submit)
+    real_run_in_executor = loop.run_in_executor
+
+    def route_executor(default, func, *args):
+        assert default is None
+        return real_run_in_executor(executor, func, *args)
+
+    monkeypatch.setattr(loop, "run_in_executor", route_executor)
+    waiter = asyncio.create_task(helper.start("session", "run", "apply"))
+    try:
+        await asyncio.wait_for(submitted.wait(), 3)
+        await asyncio.sleep(0)
+        assert len(owners) == 1
+        if submission == "entered":
+            assert engine_owners == owners
+            assert not waiter.done(), (
+                "submit error abandoned an admitted physical worker"
+            )
+            assert "session" in helper.operations
+            assert [item.execution_id for item in capacity.snapshot().executions] == [
+                owners[0].execution_id
+            ]
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+            assert "session" in helper.operations
+        else:
+            with pytest.raises(RuntimeError):
+                await waiter
+            assert not entered.is_set()
+            assert not capacity.snapshot().executions, "unstarted owner leaked"
+            assert not helper.operations
+        queued_release.set()
+        worker_release.set()
+        await helper.close()
+        for future in futures:
+            future.result(timeout=3)
+        assert engine_owners == (owners if submission == "entered" else [])
+        assert (tmp_path / "runs.db").exists() is (submission == "entered")
+        assert not capacity.snapshot().executions
+        assert not helper.operations
+        assert helper.receipts["conv"].reason_code == "recovery_failed"
+    finally:
+        queued_release.set()
+        worker_release.set()
+        await helper.close()
+        if not waiter.done():
+            await asyncio.gather(waiter, return_exceptions=True)
+        executor.shutdown(wait=True)
+        capacity.close()
