@@ -129,8 +129,18 @@ conflict-free and its tree differs from the verified candidate only by the three
 upstream Backlog documentation files; production, tests and generated sources
 are identical. The branch contains all current dev commits.
 
-All confirmed local review findings are addressed. Publication, review-thread
-replies and remote checks are pending. This record is not a merge claim.
+All confirmed local review findings are addressed and published. All 13 original
+Qodo threads have individual evidence-backed replies and are resolved: Qodo
+resolved 12 automatically; the accepted conservative-retention policy was
+explicitly explained and the final thread closed after review. Qodo's updated
+review identifies head `3f0dd2038a`. No new findings were posted.
+
+On that head, UI latency, Backlog/CSS guards and all six GGUF platform jobs pass,
+including Windows. The earlier published-head Windows checkout failures are
+explained below. The superseded derived-artifacts run 34764839180 was cancelled
+to release its queue for the corrected head; cancellation is not a passing
+result. The required derived-artifacts gate and merge remain pending. This
+record closes implementation/review work, not the merge operation.
 
 
 ### Windows checkout correction
@@ -140,3 +150,11 @@ The first published-head Windows GGUF jobs failed before Python setup in runs
 checkout path limit. Shortened only the filenames for TASK32540 and TASK32555;
 task IDs, titles, statuses and bodies are byte-identical. Their actual Library
 work remains To Do. No workflow gate or long-path setting was bypassed.
+
+
+Remote evidence: [UI latency](https://github.com/rmusser01/tldw_chatbook/actions/runs/34764991578),
+[GGUF import on Linux/macOS/Windows](https://github.com/rmusser01/tldw_chatbook/actions/runs/34764991583),
+[GGUF source on Linux/macOS/Windows](https://github.com/rmusser01/tldw_chatbook/actions/runs/34764991580).
+These platform jobs cover their GGUF scope; they do not certify Windows worktree
+recovery or external-provider behavior. Production and test bytes have not
+changed since the verified code commit `a51812e5c6`.

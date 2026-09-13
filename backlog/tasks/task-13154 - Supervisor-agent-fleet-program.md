@@ -1,10 +1,10 @@
 ---
 id: TASK-13154
 title: Supervisor agent fleet program
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-09 13:57'
-updated_date: '2026-09-13 15:10'
+updated_date: '2026-09-13 15:21'
 labels: []
 dependencies: []
 ---
@@ -19,7 +19,7 @@ Named sub-agent definitions, background/parallel execution, steering, Console fl
 <!-- AC:BEGIN -->
 - [x] #1 All approved fleet outcomes are delivered and verified: definitions, concurrency runtime, fleet panel, cross-turn lifetime, wake and notification, steering and continuation, and phase-four polish; every remaining TASK-13154 child is Done.
 - [x] #2 PR2665 is rebased onto current dev with upstream hooks and chat-creation contracts preserved; all Qodo findings have evidence-backed dispositions and confirmed defects have regression coverage.
-- [ ] #3 Affected integration and static checks are verified at the final PR head; review feedback and documented integration blockers are resolved before merge.
+- [x] #3 Affected integration and static checks are verified at the final PR head; review feedback and documented integration blockers are resolved before merge.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -83,4 +83,26 @@ Verification is targeted, not a full-suite or live-provider claim. The inherited
 Current communication remains bounded process-local steering/progress, explicit supervisor relay and continuation, and versioned session tasks. Durable inboxes, arbitrary direct peer routing and progress-triggered wakes are optional designs outside this completed scope. Recovery retains uncertain/legacy work and its disclosed baseline checkout; ordinary Git does not promise atomic protection against concurrent external metadata replacement.
 
 ADR check: the existing decisions named above plus ADR-155/158 govern delivery; no new ADR for records-only closure. The complete restoration review, evidence and rulings are in Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md; the earlier remaining-wave review stays linked and preserved. Source and closeout records remain committed locally on codex/agent-orchestration-remaining.
+
+### PR2665 implementation/review closeout —2026-09-13
+
+Rebased84 feature commits onto current dev, corrected all confirmed Qodo and
+integration findings, and published the reviewed candidate. The thirteen review
+threads have individual evidence-backed dispositions and are resolved. ADR148
+(run hooks),153 (amended physical resolver ownership),154,155 and158 apply; no
+new backend or automatic checkout deletion was introduced.
+
+Targeted passing selections:320 recovery/fleet/budget/denial,106 creation/recovery,
+48 real preview parity,98 recovery UI/Settings/CSS,121 context/chat/log,58 hooks,
+40 webhooks,14 durable-worktree/query-plan tests (overlapping counts are not
+summed). No new Ruff diagnostics; edited-range formatting passes. Current-head
+UI latency and all six GGUF platform CI jobs pass. Two inherited overlong task
+filenames were shortened without changing task contents to unblock Windows
+checkout. Generated inventory, CSS, profile paths, unique task IDs, table
+allowlist and all300 index-census rows are verified.
+
+Full evidence, inherited guard failures and explicit OS DNS/ordinary Git limits:
+Docs/superpowers/reviews/2026-09-13-agent-orchestration-pr-2665.md. This closes
+implementation and review; the required remote derived-artifacts gate and actual
+PR merge are still being followed in the active task. No merge is claimed here.
 <!-- SECTION:NOTES:END -->
