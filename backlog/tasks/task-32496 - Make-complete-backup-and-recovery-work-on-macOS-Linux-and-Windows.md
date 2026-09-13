@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 02:02
+updated_date: 2026-09-13 02:05
 ---
 
 ## Description
@@ -119,6 +119,7 @@ Owner corrections verified: retained eval manifest uses facade fstat/geteuid; Ag
 Revision e733d34d0043bd4dee54914ae2cede3a4a8e11af: actual Linux reader/admission/owner suite passes129 tests in33.54s, zero skips. Source archive SHA256 aa663897d5b3fbb50386f496007be8fa48f40ec92f5e60c93febe96dfc9889f4. Artifacts: artifacts-platform-private-e733d34d0043bd4dee54914ae2cede3a4a8e11af-20260912-184508. Linux combined and macOS combined are active; Windows full run34731218691 is active.
 Windows e733 full run: replacement, roundtrip, and all three backup modes passed; rollback still active. Expanded support has 11 failures: three script topology fixture cases interpolate native Windows paths into TOML without escaping; eight actual TTS lock inventory cases fail during repository.open before capture. Correct fixture quoting and collect bounded original TTS exception metadata before deciding any runtime change.
 e733 actual macOS combined PASS171.53s; supplied Linux host129 reader tests PASS33.54s and combined PASS284.85s (source SHA256 aa663897d5b3fbb50386f496007be8fa48f40ec92f5e60c93febe96dfc9889f4). Corrected three script fixture path strings with json.dumps; added bounded test-only TTS mapper exception metadata retaining original behavior. Affected14 tests PASS7.91s; Ruff and Bandit clean. Windows e733 replacement/roundtrip/three backup modes PASS; rollback still active. No runtime TTS fix yet.
+Add a fixed support-diagnostic workflow choice to isolate current support failures without repeating six successful/ongoing expensive product groups. Preserve full qualification selection and existing timeout/concurrency contracts. Existing e733 later rollback run remains undisturbed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
