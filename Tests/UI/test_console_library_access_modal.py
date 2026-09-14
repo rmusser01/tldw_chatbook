@@ -10,12 +10,6 @@ import pytest
 from textual.widgets import Button, RadioButton, RadioSet, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from tldw_chatbook.Library.library_shell_state import (
-    LIBRARY_GLYPH_RADIO_SELECTED,
-    LIBRARY_GLYPH_RADIO_UNSELECTED,
-    LIBRARY_GLYPH_SELECTED,
-    LIBRARY_GLYPH_UNSELECTED,
-)
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleLibraryPolicyDisplayState,
 )
@@ -24,6 +18,12 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicySnapshot,
+)
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_RADIO_SELECTED,
+    LIBRARY_GLYPH_RADIO_UNSELECTED,
+    LIBRARY_GLYPH_SELECTED,
+    LIBRARY_GLYPH_UNSELECTED,
 )
 from tldw_chatbook.Widgets.Console import console_library_access_modal
 from tldw_chatbook.Widgets.Console.console_library_access_modal import (
@@ -366,5 +366,7 @@ def test_the_access_radio_glyphs_are_not_local_literals() -> None:
     surface by, which is exactly how this defect survived task-32303.
     """
     source = inspect.getsource(console_library_access_modal)
-    assert '"●"' not in source, "the selected radio glyph is a local literal"
-    assert '"○"' not in source, "the unselected radio glyph is a local literal"
+    # Review F-7: quote-agnostic, because '●' and f"{'●'}" would both slip past
+    # a double-quote-only check and the painted pin cannot see the difference.
+    assert "●" not in source, "the selected radio glyph is a local literal"
+    assert "○" not in source, "the unselected radio glyph is a local literal"

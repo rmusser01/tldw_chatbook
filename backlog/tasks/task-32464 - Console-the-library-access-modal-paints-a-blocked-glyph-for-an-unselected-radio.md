@@ -64,10 +64,30 @@ glyph pin was mutation-tested by pointing the modal at the checkbox pair
 (1 failed, 9 passed). Value equality alone cannot catch AC#2 here — the ruling
 keeps the same two characters — which is why one pin reads the module source.
 
-Not fixed here, filed as a rider instead: `SetupRadioButton`
-(`UI/Wizards/FirstRunSetupWizard.py:146`) is the same widget with the same two
-literals, and paints the same pair live (capture
-`00-wizard-radios.txt`: "▐●▌ Quick setup" / "▐○▌ Full setup").
+### Fix round 1 (task review, 2026-09-14)
+
+`SetupRadioButton` (`UI/Wizards/FirstRunSetupWizard.py`) is folded in rather
+than filed: it is the same widget with the same two literals, and it paints the
+same pair live (`captures/00-wizard-radios.txt`: "▐●▌ Quick setup" / "▐○▌ Full
+setup"). It now reads the shared constants, and the wizard's existing glyph pin
+(`test_selected_and_unselected_glyphs_differ_structurally`) additionally asserts
+the constants and that the class source carries no literal. Re-swept after the
+change: `grep '"●"\|"○"' --include="*.py"` over `tldw_chatbook/` returns only
+the two definitions in `library_shell_state.py` — no radio hardcodes the pair
+anywhere any more.
+
+Still outstanding, and now stated in the legend rather than implied away
+(review F-2): every OTHER radio group in the app uses stock
+`textual.widgets.RadioButton`, whose `BUTTON_INNER` is `"●"` for BOTH states, so
+those surfaces (Console capture-policy / export / share dialogs, the Chatbook
+wizards, the conversation selection dialog) distinguish the chosen option by
+colour alone — the WCAG 1.4.1 problem these two subclasses exist to fix. That is
+a separate job: ~8 surfaces, and the right shape is one shared structural
+subclass instead of a third copy of this one. Needs an id.
+
+The AC#2 source pin is now quote-agnostic (review F-7): `assert "●" not in
+source` rather than `'"●"'`, since the painted pin cannot tell a re-introduced
+literal from the constant when the characters are the same.
 
 Modified: `tldw_chatbook/Library/library_shell_state.py`,
 `tldw_chatbook/Widgets/Console/console_library_access_modal.py`,

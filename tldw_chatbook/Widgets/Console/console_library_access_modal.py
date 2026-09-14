@@ -15,15 +15,15 @@ from textual.widgets import Button, RadioButton, RadioSet, Static
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleLibraryPolicyDisplayState,
 )
-from tldw_chatbook.Library.library_shell_state import (
-    LIBRARY_GLYPH_RADIO_SELECTED,
-    LIBRARY_GLYPH_RADIO_UNSELECTED,
-)
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicySnapshot,
+)
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_RADIO_SELECTED,
+    LIBRARY_GLYPH_RADIO_UNSELECTED,
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
