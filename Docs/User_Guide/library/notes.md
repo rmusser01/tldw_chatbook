@@ -1787,5 +1787,5 @@ its field (typed text lands there) and still rails its focused button
 chooser's and the sync-roots list's own `‹ Notes` buttons are pinned in
 `Tests/UI/test_library_notes_w4_import_keyboard.py` rather than walked in this
 set. The profile log carried no `unhandled_exception` across the whole walk;
-its only `app_stopping` lines are the INFO records of the deliberate Ctrl+Q
-quits that ended each session.)*
+it holds four `app_started` records against two `app_stopping` lines, and both
+of those are the INFO records of a deliberate Ctrl+Q quit.)*

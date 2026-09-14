@@ -2358,7 +2358,8 @@ async def test_action_controls_fit_from_visible_label_cells_and_recompute() -> N
 
         # The status render un-stacks at 32 because its own action rows are
         # short, but it also SHOWS `#file-notes-git-bulk-toggle`, whose label
-        # is 35 cells wide -- nothing fits 32 columns then, stacked or not.
+        # ("Show bulk · 1 stage · 1 unstage") is 31 cells wide -- nothing fits
+        # 32 columns then, stacked or not.
         # Fit is asserted at a width the panel can actually serve; the
         # narrowest supported one is covered by
         # `test_focused_controls_keep_complete_labels_and_fit[(40, 20)]`.
