@@ -3,11 +3,11 @@ id: TASK-32464
 title: >-
   Console: the library-access modal paints a blocked glyph for an unselected
   radio
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-12 00:16'
-updated_date: '2026-09-14 14:25'
+updated_date: '2026-09-14 15:28'
 labels:
   - console
   - ux
@@ -32,27 +32,6 @@ A radio is not a checkbox, and ●/○ is the standard pair for one — so this 
 - [x] #3 A test pins the painted radio glyphs so a future legend change cannot silently pass this surface by
 - [x] #4 The Library glyph legend's own documentation states where radios sit, so the next audit finds the answer instead of the counterexample
 <!-- AC:END -->
-
-## Decision
-
-**AC#1 — radios keep ●/○ and the Library legend carves them out** (the
-controller's call, recorded verbatim; revisitable):
-
-> RULING on AC#1 (mine — record it verbatim under `## Decision` in the task,
-> attributed as the controller's call, and say in the docs that it can be
-> revisited): **radios keep ●/○ and the Library legend carves them out
-> explicitly.** A radio is a single-choice control; painting it ☑/☐ would
-> promise multi-select it does not offer, which is a worse lie than the glyph
-> collision. So: selection glyphs are ☑/☐ for a multi-select list, ●/○ for a
-> radio group (exactly one sibling is ● at all times, which is what tells the
-> reader it is a chooser), and a bare ○ outside a radio group keeps its
-> blocked/disabled meaning.
-
-What ships matches: the pair lives beside `LIBRARY_GLYPH_SELECTED` /
-`LIBRARY_GLYPH_UNSELECTED` in `Library/library_shell_state.py` as
-`LIBRARY_GLYPH_RADIO_SELECTED` / `LIBRARY_GLYPH_RADIO_UNSELECTED`, the modal
-reads them instead of its own literals, and `Docs/User_Guide/library.md`'s
-legend states the carve-out and says it can be revisited.
 
 ## Implementation Plan
 
@@ -95,3 +74,24 @@ Modified: `tldw_chatbook/Library/library_shell_state.py`,
 `Tests/UI/test_console_library_access_modal.py`,
 `Docs/User_Guide/library.md`, `Docs/User_Guide/console/context-and-rag.md`.
 <!-- SECTION:NOTES:END -->
+
+## Decision
+
+**AC#1 — radios keep ●/○ and the Library legend carves them out** (the
+controller's call, recorded verbatim; revisitable):
+
+> RULING on AC#1 (mine — record it verbatim under `## Decision` in the task,
+> attributed as the controller's call, and say in the docs that it can be
+> revisited): **radios keep ●/○ and the Library legend carves them out
+> explicitly.** A radio is a single-choice control; painting it ☑/☐ would
+> promise multi-select it does not offer, which is a worse lie than the glyph
+> collision. So: selection glyphs are ☑/☐ for a multi-select list, ●/○ for a
+> radio group (exactly one sibling is ● at all times, which is what tells the
+> reader it is a chooser), and a bare ○ outside a radio group keeps its
+> blocked/disabled meaning.
+
+What ships matches: the pair lives beside `LIBRARY_GLYPH_SELECTED` /
+`LIBRARY_GLYPH_UNSELECTED` in `Library/library_shell_state.py` as
+`LIBRARY_GLYPH_RADIO_SELECTED` / `LIBRARY_GLYPH_RADIO_UNSELECTED`, the modal
+reads them instead of its own literals, and `Docs/User_Guide/library.md`'s
+legend states the carve-out and says it can be revisited.
