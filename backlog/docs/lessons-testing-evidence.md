@@ -13883,6 +13883,32 @@ especially suspicious of a report whose stated mechanism ("404 is the length
 of a title") does not survive being checked: "Markdown showcase" is 17
 characters.
 
+
+## Two worktrees running the same app-booting suite at once DEADLOCK, and it reads as "slow"
+
+**task-32536 / task-32555, 2026-09-14.** The branch-vs-dev-baseline comparison
+is normally two pytest runs fired together, one per worktree. For
+`Tests/UI/test_first_run_wizard_live_contract.py` — 95 node ids, each booting a
+real app under `run_test` — that pair sat at **one completed test each for over
+fifteen minutes**, burning 18 s of CPU in ten minutes of wall clock. It looked
+exactly like CPU starvation (the box genuinely was loaded: another session was
+running the `tldw_Server_API` suite at 99 %), so the first instinct was to wait
+it out. Twice. Killing one side and running the first six of the same node ids
+alone finished them in **8.68 s**. Separate worktrees are not separate
+environments here: these tests share a per-user data directory and its instance
+lock, so two app boots serialise on each other and the wait is invisible in
+pytest's dot output.
+
+**What to do.** Run the branch side and the baseline side **sequentially** for
+any suite that boots the app, never as a parallel pair — the whole comparison
+is still faster. Diagnose an apparently-stalled pytest by CPU time, not wall
+clock (`ps -o pid,etime,time`): near-zero CPU accumulation means blocked, not
+starved, and no amount of waiting fixes blocked. And before concluding a long
+file cannot be run, check whether the change is even reachable from it: a
+repo-wide scan showed the new test was the only test anywhere that pressed
+Enter in `#setup-provider-api-key`, which bounded the risk far better than the
+full file would have.
+
 ## A pin that mounts a fresh host per state never exercises the UPDATE path
 
 **task-32535, 2026-09-14.** `test_sync_setup_offers_the_obsidian_toggle_on_for_a_vault`
