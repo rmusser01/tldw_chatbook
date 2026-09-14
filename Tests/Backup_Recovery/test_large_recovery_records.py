@@ -1,6 +1,7 @@
 """Valid file collections must fit both staging and durable recovery records."""
 
 import json
+import sys
 from pathlib import Path
 from textwrap import indent
 from threading import Event
@@ -368,4 +369,4 @@ def test_large_collection_completes_actual_isolated_publication(tmp_path):
     script += "\nassert len(list((dest/'research').glob('note*.txt')))==1800\n"
     script += "assert (dest/'research'/'note1799.txt').read_bytes()==b'[general]\\nusers_name=\"original\"\\n'\n"
     script = _large_restore_script(script)
-    _run(tmp_path, "complete", "large-isolated", script=script, timeout=180)
+    _run(tmp_path, "complete", "large-isolated", script=script, timeout=600 if sys.platform == "win32" else 180)

@@ -1,7 +1,5 @@
 """Installed sibling owners use their bound config without parent authority."""
 
-import sys
-
 import pytest
 
 from Tests.Backup_Recovery.test_bound_config_companions import _SCRIPT
@@ -79,13 +77,38 @@ if case=='arbitrary':
    except bootstrap.RecoveryRequired:pass
    else:raise AssertionError('unselected sibling or directory admitted')
 elif case=='unsafe_parent':
+ from tldw_chatbook.Utils.platform_files import os as native_os
+ def preserved_files():
+  return {p.relative_to(parent):(native_os.stat(p).st_dev,native_os.stat(p).st_ino,p.read_bytes()) for p in parent.rglob('*') if p.is_file()}
  with raw._scope(source,route,writing=True) as operation:
-  parent.chmod(0o755)
+  parent_before=native_os.stat(parent)
+  assert parent_before.st_mode & 0o077 == 0
+  preserved=preserved_files()
+  if sys.platform=='win32':
+   import subprocess
+   saved_acl=home/'sibling-parent-before.acl'
+   checked_acl=home/'sibling-parent-after.acl'
+   def acl(*arguments):
+    subprocess.run(['icacls',*arguments],cwd=parent.parent,check=True,capture_output=True)
+   acl(parent.name,'/save',str(saved_acl))
   try:
+   if sys.platform=='win32':acl(parent.name,'/grant','*S-1-1-0:(R)')
+   else:parent.chmod(0o755)
+   assert native_os.stat(parent).st_mode & 0o044
    try:raw._check(operation,path,writing=True)
    except bootstrap.RecoveryRequired:pass
    else:raise AssertionError('unsafe parent admitted')
-  finally:parent.chmod(0o700)
+   assert native_os.stat(parent).st_mode & 0o044
+  finally:
+   if sys.platform=='win32':
+    acl(str(parent.parent),'/restore',str(saved_acl))
+    acl(parent.name,'/save',str(checked_acl))
+    assert checked_acl.read_bytes()==saved_acl.read_bytes()
+   else:parent.chmod(0o700)
+  restored=native_os.stat(parent)
+  assert (restored.st_dev,restored.st_ino,restored.st_mode)==(parent_before.st_dev,parent_before.st_ino,parent_before.st_mode)
+ assert not path.exists() and not any(parent.glob('*.tmp'))
+ assert preserved_files()==preserved
 elif case=='foreign':
  path.write_bytes(b'foreign');path.chmod(0o600)
  authority.register('foreign',(path,))
@@ -123,10 +146,6 @@ print('retired and reopened')
 def test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner(
     tmp_path, owner, case
 ):
-    if case == "unsafe_parent" and sys.platform == "win32":
-        pytest.skip(
-            "chmod posture transition is POSIX-only; owner IO remains cross-platform"
-        )
     _run(tmp_path, owner, case, script=_GUARDS, timeout=35)
 
 

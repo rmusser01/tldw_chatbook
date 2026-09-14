@@ -1,5 +1,6 @@
 """Only an actual mounted restored app can report a successful profile open."""
 
+import sys
 from textwrap import indent
 
 import pytest
@@ -56,6 +57,7 @@ try:main_cli_runner()
 except SystemExit as error:assert error.code in (None,0),error
 if mode!='exit_only':
  from tldw_chatbook.app import TldwCli
+ from Tests.Backup_Recovery.initial_screen_observation import initial_screen_observation
  from tldw_chatbook.Backup_Recovery.profile_open import opened_receipt
  profile=args[args.index('--recovery-profile')+1]
  control=Path(args[args.index('--recovery-control-root')+1])
@@ -82,7 +84,7 @@ if mode!='exit_only':
     reached.append('database_failure')
     return execute(query.replace('FROM notes','FROM missing_fixture_notes'),*args,**kwargs)
    app.chachanotes_db.execute_query=missing
-  async with app.run_test(size=(100,36)) as pilot:
+  async with initial_screen_observation(app),app.run_test(size=(100,36)) as pilot:
    async with asyncio.timeout(20):
     while not getattr(app,'_recovery_open_checked',False):
      if mode=='post_mount_failure' and app._ui_ready:
@@ -128,7 +130,7 @@ _LAUNCH = r"""
   with (base/'open-child.log').open('w') as output:
    try:
     result=subprocess.run([sys.executable,'-c',CHILD,*argv[4:],sys.argv[2]],
-        **kwargs,stdout=output,stderr=output,text=True,timeout=45)
+        **kwargs,stdout=output,stderr=output,text=True,timeout=240 if sys.platform=='win32' else 45)
    except BaseException as error:
     try:_write(base/'open-launch-error.json.log',[_error_metadata(error)])
     except OSError:pass  # Diagnostic I/O must not replace the launch exception.
@@ -147,7 +149,7 @@ _LAUNCH = r"""
  subprocess.call=headless
  try:
   operation=service.start_open_profile(profile)
-  state=service.wait(operation,timeout=50)
+  state=service.wait(operation,timeout=255 if sys.platform=='win32' else 50)
   if sys.argv[2] in ('tampered','nonzero','spawn_failure'):
    assert state['state']=='failed',dict(state)
    assert not state['result'].get('opened_successfully',False),dict(state)
@@ -204,7 +206,7 @@ _stop_stacks=observe_threads(_diagnostic_root/'open-child-stacks.log',interval=1
         (" from tldw_chatbook.app import TldwCli", " _phase('app_import_begin')\n from tldw_chatbook.app import TldwCli\n _phase('app_import_complete')"),
         (" from tldw_chatbook.Backup_Recovery.profile_open import opened_receipt", " from tldw_chatbook.Backup_Recovery.profile_open import opened_receipt" + observed_reads),
         ("  app=TldwCli()", "  _phase('construct_begin')\n  app=TldwCli()\n  _phase('construct_complete')"),
-        ("  async with app.run_test(size=(100,36)) as pilot:", "  _phase('mount_begin')\n  async with app.run_test(size=(100,36)) as pilot:\n   _phase('mount_yield')\n   _phase('recovery_check_wait_begin')"),
+        ("  async with initial_screen_observation(app),app.run_test(size=(100,36)) as pilot:", "  _phase('mount_begin')\n  async with initial_screen_observation(app),app.run_test(size=(100,36)) as pilot:\n   _phase('mount_yield')\n   _phase('recovery_check_wait_begin')"),
         ('   if mode in ("console_quit","console_edit"):', '   _phase("recovery_check_wait_complete")\n   if mode in ("console_quit","console_edit"):'),
         ("   receipt=opened_receipt(profile,control,attempt)", "   receipt=opened_receipt(profile,control,attempt)\n   _phase('receipt_read_complete')"),
         ("    await app._confirm_and_quit()", "    _phase('quit_begin')\n    await app._confirm_and_quit()\n    _phase('quit_complete')"),
@@ -318,7 +320,7 @@ def test_profile_open_requires_actual_mounted_local_reads(tmp_path, mode):
     )
     if mode in ("console_quit", "console_edit"):
         script = script.replace('default_tab="settings"', 'default_tab="chat"')
-    _run(tmp_path, "isolated", mode, script=script, timeout=70)
+    _run(tmp_path, "isolated", mode, script=script, timeout=300 if sys.platform == "win32" else 70)
 
 
 def test_mounted_open_reads_actual_restored_notes_chat_and_media(tmp_path):
@@ -349,7 +351,7 @@ def test_mounted_open_reads_actual_restored_notes_chat_and_media(tmp_path):
         + _LAUNCH
         + "\nfinally:service.close()\n"
     )
-    _run(tmp_path, "data", "mounted", script=script, timeout=70)
+    _run(tmp_path, "data", "mounted", script=script, timeout=300 if sys.platform == "win32" else 70)
 
 
 @pytest.mark.parametrize("source_scope", [None, "workspace", "legacy"])

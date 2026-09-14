@@ -10,7 +10,7 @@ from Tests.Backup_Recovery.native_package import (
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 _SCRIPT = r'''
-import asyncio,json,os,sys,threading,zipfile
+import asyncio,json,os,sys,threading,time,zipfile
 from pathlib import Path
 from contextlib import ExitStack
 from Tests.network_guard import install,blocked_attempts
@@ -25,7 +25,13 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
 from tldw_chatbook.Backup_Recovery import archive_reader,storage_admission
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
-from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures,observe_startup_refusals,observe_capture_review,observe_runtime_settlement
+from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures,observe_startup_refusals,observe_capture_review,observe_runtime_settlement,_write
+from Tests.Backup_Recovery.initial_screen_observation import initial_screen_observation
+phase_start=time.monotonic();phases=[]
+def phase(name):
+ phases.append({'phase':name,'elapsed':round(time.monotonic()-phase_start,3)})
+ try:_write(Path.home()/'mounted-entry-phases.json.log',phases)
+ except OSError:pass  # Observation failures must not change the native outcome.
 diagnostics=ExitStack()
 diagnostics.callback(observe_threads(Path.home()/'mounted-stacks.log',interval=30))
 diagnostics.callback(observe_recovery_failures(Path.home()/'mounted-recovery-failures.log'))
@@ -35,12 +41,16 @@ diagnostics.callback(observe_runtime_settlement(Path.home()/'mounted-runtime-set
 import tldw_chatbook
 assert Path(tldw_chatbook.__file__).resolve()==Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])/'tldw_chatbook'/'__init__.py'
 async def main():
+ phase('construct_begin')
  app=TldwCli()
+ phase('construct_complete')
  service=RecoveryService(default_control_root())
  async def no_local_discovery(_config):return ()
  app.console_local_server_discovery=no_local_discovery
  try:
-  async with app.run_test(size=(120,42)) as pilot:
+  phase('mount_begin')
+  async with initial_screen_observation(app),app.run_test(size=(120,42)) as pilot:
+   phase('mount_yield')
    async with asyncio.timeout(90):
     while not app._ui_ready:await asyncio.sleep(.05)
    async with asyncio.timeout(90):
