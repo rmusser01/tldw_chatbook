@@ -1,9 +1,10 @@
 ---
 id: TASK-31500
-title: Pay down the boot-CSS byte ratchet breach (821,753 B over the 806,000 B limit)
+title: 'Pay down the boot-CSS byte ratchet breach (821,753 B over the 806,000 B limit)'
 status: To Do
 assignee: []
 created_date: '2026-09-04 19:30'
+updated_date: '2026-09-14 22:52'
 labels:
   - performance
   - css
@@ -31,3 +32,9 @@ before first paint (ADR-097). Evidence:
 - [ ] `test_boot_parsed_css_bytes_stay_within_budget` passes on dev without raising `MAX_BOOT_PARSED_CSS_BYTES` (defer/shed, per ADR-097; any exception needs an owner ledger row)
 - [ ] `features/_scheduling.tcss` boot-parsed weight is materially reduced (screen-scoped CSS_PATH or demotion of non-first-paint rules), or an owner note records why it must stay
 - [ ] Modal-only widget defaults added in this window (tool-pack import/review modals at minimum) do not sit on the first-paint parse leg
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-09-14 TASK-32532 branch paydown: boot CSS is 609,446 B against the tightened 634,050 B limit; the canonical snapshot and byte guard are green without an exception. This is branch evidence, not a claim that dev is updated. The separate modal-default deferral AC remains unimplemented here, so this task stays To Do. See Docs/superpowers/reports/2026-09-14-component-pattern-library-closeout.md.
+<!-- SECTION:NOTES:END -->

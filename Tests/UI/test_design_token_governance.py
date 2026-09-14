@@ -18,7 +18,12 @@ Mechanical enforcement of the design-token system:
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
+
+import pytest
+
+from tldw_chatbook.css.build_css import CSS_MODULES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CSS_ROOT = REPO_ROOT / "tldw_chatbook/css"
@@ -85,13 +90,11 @@ def _strip_comments(css: str) -> str:
 
 
 def _source_modules() -> list[Path]:
-    """All TCSS source modules, excluding generated bundles and themes."""
-    modules: list[Path] = []
+    """Active manifest sources and owned TCSS sheets, excluding generated output."""
+    modules = {CSS_ROOT / relative for relative in CSS_MODULES}
     for subdir in ("core", "layout", "components", "features", "utilities"):
-        directory = CSS_ROOT / subdir
-        if directory.is_dir():
-            modules.extend(sorted(directory.glob("*.tcss")))
-    return modules
+        modules.update((CSS_ROOT / subdir).glob("*.tcss"))
+    return sorted(modules)
 
 
 def _defined_tokens() -> set[str]:
@@ -199,3 +202,45 @@ def test_new_sheets_must_use_spacing_tokens() -> None:
             f"{relative} is a post-ADR-150 sheet and must use the "
             "$ds-space-* scale instead of raw numeric padding/margin."
         )
+
+
+def test_active_css_extension_is_in_hex_floor(tmp_path, monkeypatch):
+    sheet = tmp_path / "components" / "active.css"
+    sheet.parent.mkdir()
+    sheet.write_text("Widget { color: #abcdef; }")
+    unused = sheet.parent / "unused.css"
+    unused.write_text("Widget { color: #123456; }")
+    monkeypatch.setattr(sys.modules[__name__], "CSS_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "CSS_MODULES", ["components/active.css"])
+    assert sheet in _source_modules()
+    assert unused not in _source_modules()
+    with pytest.raises(AssertionError, match="components/active.css"):
+        test_hex_literals_are_ratcheted_outside_token_definitions()
+
+
+@pytest.mark.asyncio
+async def test_section_header_preserves_global_and_stats_computed_geometry():
+    """The former Stats duplicate contributes the same global header geometry."""
+    from textual.app import App, ComposeResult
+    from textual.containers import Vertical
+    from textual.widgets import Label
+
+    source = "\n".join((CSS_ROOT / name).read_text() for name in CSS_MODULES)
+
+    class HeaderProbe(App):
+        CSS = source
+
+        def compose(self) -> ComposeResult:
+            yield Label("Global", id="global-header", classes="section-header")
+            with Vertical(id="stats-container"):
+                yield Label("Stats", id="stats-header", classes="section-header")
+
+    async with HeaderProbe().run_test() as pilot:
+        await pilot.pause()
+        for widget_id in ("global-header", "stats-header"):
+            header = pilot.app.query_one(f"#{widget_id}")
+            assert tuple(header.styles.padding) == (0, 0, 0, 1)
+            # Screen .section-header in _chat.tcss overrides the generic margin.
+            assert tuple(header.styles.margin) == (1, 0, 1, 0)
+            assert header.styles.border_left[0] == "thick"
+            assert header.styles.border_left[1] == header.styles.color

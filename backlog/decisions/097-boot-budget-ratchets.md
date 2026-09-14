@@ -184,3 +184,17 @@ The `boot_import_modules.txt` snapshot was pinned at the `c6218918d1` set so
 the guard's failure message kept naming exactly these modules until the debt
 was cleared; it is now re-pinned at the post-repayment 646-module set. The
 repayment is **TASK-23112** (see above).
+
+## Component-pattern migration paydown — 2026-09-14
+
+TASK-32532's resumed tree measured 841,903 boot CSS bytes against the 768,000
+limit. Generated module payloads now omit authoring comments while editable
+sources retain their rationale and generated MODULE markers retain provenance.
+Quoted strings, token values and selector whitespace are covered by regressions.
+The initial census was **609,050 B**, tightening the limit to **634,050 B**
+(measured + 25,000 B standard slack). Completing the active Statistics source
+migration brings the final census to **609,446 B**; the tightened limit stays
+unchanged with 24,604 B headroom. The snapshot was refreshed by
+`scripts/update_boot_budget_snapshots.py --only css`. No exception or budget
+increase was used. This pays the CSS-byte debt; it does not claim a measured
+startup-time improvement or complete TASK-31500's separate modal deferrals.

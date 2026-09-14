@@ -28,6 +28,8 @@ if len(sys.argv) != 1:
 ROOT = Path(__file__).resolve().parents[2]
 CSS = ROOT / "tldw_chatbook/css"
 PKG = ROOT / "tldw_chatbook"
+# Bind the manifest to this checkout, including isolated pin-command tests.
+sys.path.insert(0, str(ROOT))
 
 _COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _DIM = re.compile(
@@ -36,10 +38,12 @@ _DIM = re.compile(
 
 
 def sheets() -> list[Path]:
-    out: list[Path] = []
+    from tldw_chatbook.css.build_css import CSS_MODULES
+
+    sources = {CSS / relative for relative in CSS_MODULES}
     for sub in ("core", "layout", "components", "features", "utilities"):
-        out += sorted((CSS / sub).glob("*.tcss"))
-    return out
+        sources.update((CSS / sub).glob("*.tcss"))
+    return sorted(sources)
 
 
 # Dimension guard (ADR-161 task 11 close-out): refuse to write a baseline

@@ -137,6 +137,11 @@ def test_pin_refuses_ast_violations_without_rewriting_baseline(tmp_path):
         shutil.copyfile(Path(__file__).parent / filename, script_dir / filename)
     package = tmp_path / "tldw_chatbook"
     package.mkdir()
+    (package / "__init__.py").write_text("")
+    css = package / "css"
+    css.mkdir()
+    (css / "__init__.py").write_text("")
+    (css / "build_css.py").write_text("CSS_MODULES = []\n")
     (package / "widget.py").write_text("w.set_styles(height=3)\n")
     baseline = script_dir / "pattern_ratchet_baseline.json"
     original = '{"python_styles": {"widget.py": 99}}\n'

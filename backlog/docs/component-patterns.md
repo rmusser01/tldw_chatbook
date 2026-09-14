@@ -736,13 +736,14 @@ on widget instances at runtime.
 **When-not-to-use.** When a semantic class already encodes the geometry
 (e.g. `action-button` carries `$ds-control-height`, `status-area` carries
 `$ds-width-full`) — reach for the utility only for the bare dimension itself.
-Runtime-computed geometry (measured widths, adaptive row counts) is NOT a
-class: those sites keep a runtime assignment through `set_styles(...)`, the
-inline-precedence escape hatch, which the `.styles` ratchet deliberately
-still allows — the ratchet targets constant literals, not computed layout.
-A site that must override an id-scoped rule also uses `set_styles(...)`
-(utilities win equal-specificity ties as the bundle's last sheet, but never
-beat id selectors where inline styles used to).
+Runtime-computed geometry (measured widths and adaptive row counts) and
+user-selected preview colors remain runtime data, with a specific `ds-runtime`
+reason at each write. Fixed values and finite state switches use token-backed
+classes. Explicit sizing/color utilities use `!important` to preserve their
+former inline precedence over ID selectors. Keep one active override per
+property and remove it before returning to measured inline values or the
+normal stylesheet cascade. The AST governance check covers assignment,
+`set_styles`, and `setattr` forms; changing syntax cannot bypass the policy.
 
 **Class inventory.**
 
@@ -772,3 +773,45 @@ them; grow the set one entry at a time as new consumers appear.
 
 **Lifecycle.** All Canonical since ADR-161 task 12 (2026-09-13); the classes
 replaced 574 ratcheted runtime assignments across the UI layer.
+
+Additional explicit override classes (same precedence contract):
+
+- `w-1` — `width: $ds-size-1`.
+- `w-3` — `width: $ds-size-3`.
+- `w-4` — `width: $ds-size-4`.
+- `w-5` — `width: $ds-size-5`.
+- `w-9` — `width: $ds-size-9`.
+- `w-11` — `width: $ds-size-11`.
+- `w-12` — `width: $ds-size-12`.
+- `w-13` — `width: $ds-size-13`.
+- `w-17` — `width: $ds-size-17`.
+- `w-18` — `width: $ds-size-18`.
+- `w-20` — `width: $ds-size-20`.
+- `w-21` — `width: $ds-size-21`.
+- `w-23` — `width: $ds-size-23`.
+- `w-24` — `width: $ds-size-24`.
+- `w-28` — `width: $ds-size-28`.
+- `w-3fr` — `width: $ds-fr-3`.
+- `w-4fr` — `width: $ds-fr-4`.
+- `w-13fr` — `width: $ds-fr-13`.
+- `h-4` — `height: $ds-size-4`.
+- `h-5` — `height: $ds-size-5`.
+- `h-6` — `height: $ds-size-6`.
+- `h-7` — `height: $ds-size-7`.
+- `h-8` — `height: $ds-size-8`.
+- `h-9` — `height: $ds-size-9`.
+- `p-inline-1` — `padding: $ds-space-0 $ds-space-1`.
+- `m-left-2` — `margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-2`.
+- `m-left-3` — `margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-3`.
+- `ds-text-error` — `color: $ds-status-error-readable`.
+- `ds-text-warning` — `color: $ds-status-warning`.
+- `ds-text-ready` — `color: $ds-status-ready`.
+- `ds-text-primary` — `color: $ds-text-primary`.
+- `ds-text-muted` — `color: $ds-text-muted`.
+- `w-6` — `width: $ds-size-6`.
+- `w-8` — `width: $ds-size-8`.
+- `w-10` — `width: $ds-size-10`.
+- `w-16` — `width: $ds-size-16`.
+- `h-10` — `height: $ds-size-10`.
+- `p-left-1` — `padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1`.
+- `w-7` — `width: $ds-size-7`.

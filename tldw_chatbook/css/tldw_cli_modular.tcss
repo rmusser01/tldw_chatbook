@@ -1689,7 +1689,11 @@ Switch:focus {
 .section-header {
     text-style: $ds-text-strong;
     color: $primary;
-    padding: $ds-space-1 $ds-space-0;
+
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    margin-top: $ds-space-2;
+    margin-bottom: $ds-space-1;
+    border-left: thick $primary;
 }
 
 .subsection-title {
@@ -4364,9 +4368,9 @@ ChatbooksWindowImproved .search-input:focus {
 
 #stats-container {
     background: $surface;
-    height: 100%;
-    width: 100%;
-    padding: 1;
+    height: $ds-height-full;
+    width: $ds-width-full;
+    padding: $ds-space-1;
 }
 
 
@@ -4375,36 +4379,29 @@ ChatbooksWindowImproved .search-input:focus {
     text-style: bold;
     background: $primary-background-lighten-2;
     color: $text;
-    padding: 1 2;
-    margin-bottom: 1;
+    padding: $ds-space-1 $ds-space-2;
+    margin-bottom: $ds-space-1;
     border: solid $primary;
 }
 
 
 #stats-scroll {
-    height: 100%;
+    height: $ds-height-full;
     background: $surface;
 }
 
 #stats-content {
-    padding: 0 2;
+    padding: $ds-space-0 $ds-space-2;
     height: auto;
 }
 
 
-.section-header {
-    text-style: bold;
-    color: $primary;
-    margin-top: 2;
-    margin-bottom: 1;
-    padding-left: 1;
-    border-left: thick $primary;
-}
+
 
 .subsection-header {
     color: $text-muted;
-    margin: 1 0;
-    padding-left: 2;
+    margin: $ds-space-1 $ds-space-0;
+    padding-left: $ds-space-2;
 }
 
 
@@ -4412,7 +4409,7 @@ ChatbooksWindowImproved .search-input:focus {
     layout: grid;
     grid-size: 2 2;
     grid-gutter: 1 1;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     height: auto;
     grid-rows: auto;
 }
@@ -4442,8 +4439,8 @@ StatCard {
     background: $panel;
     border: solid $border;
     height: auto;
-    min-height: 6;
-    padding: 1;
+    min-height: $ds-size-6;
+    padding: $ds-space-1;
 }
 
 StatCard:hover {
@@ -4454,60 +4451,60 @@ StatCard:hover {
 .stat-card-inner {
     layout: vertical;
     align: center middle;
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
 .stat-card-icon {
     text-align: center;
     text-style: none;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 .stat-card-title {
     text-align: center;
     color: $text-muted;
     text-style: none;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 .stat-card-value {
     text-align: center;
     text-style: bold;
     color: $primary;
-    margin: 0;
+    margin: $ds-space-0;
 }
 
 .stat-card-subtitle {
     text-align: center;
     color: $text-disabled;
     text-style: italic;
-    margin-top: 0;
+    margin-top: $ds-space-0;
 }
 
 
 .topic-bar-container {
-    width: 100%;
-    height: 3;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
     align: left middle;
 }
 
 .topic-label {
-    min-width: 20;
+    min-width: $ds-size-20;
     text-align: left;
     color: $text;
 }
 
 .topic-bar-bg {
-    width: 1fr;
-    height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
     background: $surface-lighten-1;
-    margin-left: 1;
+    margin-left: $ds-space-1;
 }
 
 .topic-bar-fill {
-    height: 1;
+    height: $ds-size-1;
     background: $primary;
     transition: width 500ms;
 }
@@ -4516,15 +4513,15 @@ StatCard:hover {
 .topics-container {
     background: $panel;
     border: solid $border;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     height: auto;
 }
 
 
 .topic-range-card {
     height: auto;
-    min-height: 4;
+    min-height: $ds-size-4;
 }
 
 .topic-range-card .stat-card-value {
@@ -4535,20 +4532,20 @@ StatCard:hover {
 .character-stats-container {
     background: $panel;
     border: solid $border;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     height: auto;
 }
 
 .character-total {
     text-style: bold;
     color: $primary;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .character-item {
-    padding: 0 1;
-    margin-bottom: 1;
+    padding: $ds-space-0 $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 .character-name {
@@ -4559,41 +4556,41 @@ StatCard:hover {
 .character-stats {
     color: $text-muted;
     text-style: italic;
-    padding-left: 2;
+    padding-left: $ds-space-2;
 }
 
 
 .loading-container {
     align: center middle;
-    height: 20;
+    height: $ds-size-20;
 }
 
 .loading-text {
-    margin-top: 2;
+    margin-top: $ds-space-2;
     color: $text-muted;
 }
 
 
 .error-container {
     align: center middle;
-    padding: 4;
+    padding: $ds-size-4;
 }
 
 .error-message {
     color: $error;
     text-style: bold;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 .retry-button {
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 
 .no-data-message {
     text-align: center;
     color: $text-muted;
-    padding: 4;
+    padding: $ds-size-4;
 }
 
 

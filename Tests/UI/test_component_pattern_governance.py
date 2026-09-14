@@ -83,13 +83,13 @@ FALLBACK_ALLOWED: frozenset[str] = frozenset()
 def _sheet_sources() -> dict[str, str]:
     """Comment-stripped text of every hand-written source sheet, by its
     path relative to ``tldw_chatbook/css``."""
-    out: dict[str, str] = {}
+    sources = {CSS / relative for relative in CSS_MODULES}
     for sub in ("core", "layout", "components", "features", "utilities"):
-        for p in sorted((CSS / sub).glob("*.tcss")):
-            out[str(p.relative_to(CSS))] = _COMMENT.sub(
-                "", p.read_text(encoding="utf-8")
-            )
-    return out
+        sources.update((CSS / sub).glob("*.tcss"))
+    return {
+        str(path.relative_to(CSS)): _COMMENT.sub("", path.read_text(encoding="utf-8"))
+        for path in sorted(sources)
+    }
 
 
 def _bundled_sources() -> dict[str, str]:
@@ -372,6 +372,10 @@ def test_dimension_floor_and_pin_reject_every_numeric_slot(
     sheet = tmp_path / "tldw_chatbook" / "css" / "features" / "_probe.tcss"
     sheet.parent.mkdir(parents=True)
     sheet.write_text(source)
+    package = tmp_path / "tldw_chatbook"
+    (package / "__init__.py").write_text("")
+    (package / "css" / "__init__.py").write_text("")
+    (package / "css" / "build_css.py").write_text("CSS_MODULES = []\n")
     result = subprocess.run(
         [sys.executable, str(test_dir / "pin_pattern_ratchets.py")],
         capture_output=True,
@@ -396,3 +400,40 @@ def test_dimension_floor_ignores_tokens_and_token_definitions(monkeypatch):
         },
     )
     test_dimension_literal_ratchet()
+
+
+def test_active_css_extension_is_in_dimension_floor(tmp_path, monkeypatch):
+    sheet = tmp_path / "components" / "active.css"
+    sheet.parent.mkdir()
+    sheet.write_text("Widget { padding: 1; }")
+    (sheet.parent / "unused.css").write_text("Widget { margin: 2; }")
+    monkeypatch.setattr(sys.modules[__name__], "CSS", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "CSS_MODULES", ["components/active.css"])
+    assert "components/active.css" in _sheet_sources()
+    assert "components/unused.css" not in _sheet_sources()
+    with pytest.raises(AssertionError, match="components/active.css"):
+        test_dimension_literal_ratchet()
+
+
+def test_pin_rejects_active_css_extension_without_writing_baseline(tmp_path):
+    test_dir = tmp_path / "Tests" / "UI"
+    test_dir.mkdir(parents=True)
+    for name in ("pin_pattern_ratchets.py", "python_style_inventory.py"):
+        shutil.copy(Path(__file__).parent / name, test_dir / name)
+    package = tmp_path / "tldw_chatbook"
+    css = package / "css"
+    (css / "components").mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (css / "__init__.py").write_text("")
+    (css / "build_css.py").write_text('CSS_MODULES = ["components/active.css"]\n')
+    (css / "components" / "active.css").write_text("Widget { margin: $ds-space-0 1; }")
+    result = subprocess.run(
+        [sys.executable, str(test_dir / "pin_pattern_ratchets.py")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "components/active.css" in result.stderr
+    assert "refusing to pin: raw numeric dimension literals" in result.stderr
+    assert not (test_dir / "pattern_ratchet_baseline.json").exists()

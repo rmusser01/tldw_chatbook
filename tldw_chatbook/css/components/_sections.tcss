@@ -13,7 +13,13 @@
 .section-header {
     text-style: $ds-text-strong;
     color: $primary;
-    padding: $ds-space-1 $ds-space-0;
+    /* Former stats_screen.css global defaults; its separate padding-left
+       rule reset the other edges to zero in Textual. Preserve that computed
+       geometry when consolidating the final duplicate into this owner. */
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    margin-top: $ds-space-2;
+    margin-bottom: $ds-space-1;
+    border-left: thick $primary;
 }
 
 .subsection-title {

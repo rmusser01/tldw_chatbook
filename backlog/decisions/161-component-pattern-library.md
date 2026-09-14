@@ -38,5 +38,19 @@ The design system gains a component-pattern layer above ADR-150's tokens:
 
 - `_variables.tcss` grows feature-scoped `$ds-<feature>-*` tokens (append-mostly).
 - Bundle bytes grow from tokenization; sequencing coordinates with TASK-31500.
-- `_agentic_terminal.tcss` is dissolved (absorbs TASK-24451); ≤2,000
-  comment-stripped lines per sheet enforced on completion.
+- The `_agentic_terminal.tcss` monolith is decomposed into owning sheets
+  (absorbs TASK-24451); a bounded core-chrome sheet remains under that name.
+  ≤2,000 comment-stripped lines per sheet are enforced on completion.
+
+## Completion clarification — 2026-09-14
+
+The zero floor covers the visual property set named by plan Task 12:
+`background`, `color`, `border*`, `width`, `height`, `padding*`, `margin*`, and
+`opacity*`. Fixed values and finite state choices use token-backed classes.
+Measured geometry, caller-supplied layout profile dimensions and user-entered
+preview colors remain runtime data, with adjacent specific `ds-runtime` reasons;
+`None` resets release inline precedence. The AST inventory retains these writes
+for review and rejects static literals disguised as runtime exceptions.
+Min/max dimensions and display/layout properties remain outside that plan scope.
+See `backlog/docs/design-language.md` §6 and the completion evidence in
+`Docs/superpowers/reports/2026-09-14-component-pattern-library-closeout.md`.

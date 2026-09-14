@@ -9,6 +9,41 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A zero regex count can hide an unchanged visual write
+
+**TASK-32532, 2026-09-14 recovery.** The interrupted Python migration had an
+empty regex baseline, but AST inspection found 567 new `set_styles` calls
+containing 579 covered visual writes. Changing assignment syntax had bypassed
+the test. The dimension matcher also missed five declarations whose first value
+was a token and later values were numeric. Inventory each supported write form,
+scan every shorthand slot, and prove the guard rejects deliberate violations.
+Final review also found 43 declarations in active `components/stats_screen.css`
+missed by the `*.tcss` filename filter; include the build manifest in the source
+inventory regardless of extension.
+Runtime exceptions stay visible with specific reasons; an empty allowance is not
+proof that the inventory is complete.
+
+## Class migration must release retained inline geometry
+
+**TASK-32532, 2026-09-14.** Mounted Console Settings transitions retained widths
+12/27 when switching to a full-width class, even with `!important`. Inline values
+still won. Library emergency resizing retained fractional classes in the reverse
+transition, and its one-cell navigation handle inherited an eleven-cell class.
+Test the same widget across fixed → measured → fixed states with the production
+stylesheets. Clear the old inline property with `None`, or remove the previous
+dimension class, according to which source now owns it. A lightweight host that
+loads consolidated defaults alone does not load the app-tier utility sheet.
+
+## Removing CSS comments can alter selector meaning
+
+**TASK-32532, 2026-09-14 byte-budget paydown.** Replacing comments with spaces
+changed `Button/* note */.active` into a descendant selector. A token comparison
+that discarded all whitespace missed the error. Remove only comment bytes,
+preserve quoted strings and original whitespace boundaries, and compare parsed
+selector structure. The regression now covers all source modules as well as
+compound/descendant selector examples.
+
+
 ## Retaining a disclosure does not prove its streaming body stays mounted
 
 **TASK-32522, thinking flicker, 2026-09-12.** The existing same-widget test

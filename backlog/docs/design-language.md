@@ -165,19 +165,38 @@ stacked form (`$ds-space-stack`) of `.form-input` fields, actions row at
 5. Changing an **existing token's value** is a visual-breaking change:
    expect to verify live (`backlog/docs/lessons-live-verification.md`).
 
-## 6. What is deliberately NOT tokenized yet
+## 6. Literal policy (ADR-161)
 
-- ~~The ~7,000 legacy dimension literals in feature sheets~~ **Done
-  (ADR-161 task 11): the floor is a HARD ZERO** — no sheet may carry a raw
-  numeric padding/margin/width/height literal, enforced by the governance
-  test; raw dimension values are legal only in token definitions
-  (`core/_variables.tcss`, exempt from the ban just like raw hex).
-  Feature-specific geometry lives in `$ds-<feature>-<name>` tokens there.
-  **Migration reference:** `features/_chat.tcss` (TASK-32480, completed by
-  ADR-161 §3.10).
-- Python-side `styles.*` mutations (~250 call sites) — new code assigns
-  token-backed classes instead of ad-hoc literals.
-- Multi-value composite tokens (e.g. `border: round $border` as one token)
-  — blocked on verified Textual substitution semantics (ADR-150).
-- Feature-scoped geometry tokens already in `_variables.tcss` (`$ds-home-*`,
-  `$ds-library-*`, …) — promote to layout laws when reused.
+Fixed visual values belong in `core/_variables.tcss`, as shared or
+feature-scoped `$ds-*` tokens. Hand-written sheets carry no raw hex colors or
+numeric padding, margin, width, or height declarations. Feature-scoped tokens
+promote to shared layout laws when a second consumer appears.
+
+Python applies fixed visual values and finite visual states with token-backed
+classes. Explicit override utilities retain the old inline precedence against
+ID rules. Keep their states mutually exclusive; clear an existing inline value
+with `None` before applying a class, and remove an override class before
+returning to measured inline geometry. Component-owned states (such as Console
+frame edges and focus) stay in their owning stylesheet.
+
+Measured content/image sizes, caller-supplied layout profiles, and user-selected
+preview colors are runtime data. Document such writes with an adjacent
+`# ds-runtime: <specific reason>` comment. The inventory retains these cases for
+review; a comment cannot exempt a literal, finite literal switch, or known
+constant. `None` remains a legal reset to the stylesheet cascade.
+
+The Python hard floor in `Tests/UI/test_component_pattern_governance.py` covers
+background, color, border, width, height, padding, margin, and opacity writes,
+including direct assignments, `set_styles`, and `setattr`. It preserves the
+approved migration's property scope: min/max constraints and display/layout
+properties are outside this mechanical check. This is not a claim that every
+Python style property has a zero-literal checker. All new UI still follows the
+token rules in this constitution.
+
+Source comments retain their defect and design rationale. The generated app
+bundle omits those comments to avoid parsing source prose before first paint;
+module banners still identify the editable source. Generated output must
+reproduce and preserve the CSS token stream.
+
+Multi-value composite tokens remain deferred until Textual substitution
+semantics are verified (ADR-150).

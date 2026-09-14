@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Completion record:** `Docs/superpowers/reports/2026-09-14-component-pattern-library-closeout.md` records final evidence and justified deviations from the original recipes below.
+
 **Goal:** Turn ADR-150's token system into a full design system: a governed catalog of canonical component patterns, one winning CSS vocabulary per family, the `_agentic_terminal.tcss` monolith carved up (absorbing TASK-24451), and every legacy literal — sheet dimensions and Python `styles.*` — migrated to tokens with zero-literal end state.
 
 **Architecture:** CSS-class catalog + mechanical governance (no Python builders). A registry (`css/patterns.json`) is the single machine-readable source for governance tests, the catalog doc, and a snapshot-tested pattern gallery. Consolidation proceeds measure → rename → verify, per family, one PR per task. Moves stay within the bundle/per-screen track split; moved and migrated rules arrive fully tokenized.
