@@ -785,7 +785,7 @@ class RunLogWriter:
         Args:
             run_id: Identifier of the parent or child run.
             kind: Run kind, such as ``primary`` or ``subagent``.
-            type: Record type, such as ``model`` or ``tool_result``.
+            type: Record type, such as ``model``, ``tool_result``, or ``error``.
             content: Full record content before the configured byte cap.
             tool: Tool name when the record describes a tool operation.
             status: Tool or run status when applicable.
@@ -832,7 +832,7 @@ class RunLogWriter:
         Args:
             run_id: Id of the run this record belongs to (parent or child).
             kind: ``primary`` or ``subagent``.
-            type: ``model``, ``tool_call``, ``tool_result``, or ``spawn``.
+            type: ``model``, ``tool_call``, ``tool_result``, ``spawn``, or ``error``.
             content: Full, untruncated text.
             tool: Tool name, when applicable.
             status: ``ok`` / ``error``, when applicable.

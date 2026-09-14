@@ -1,0 +1,19 @@
+=== uat2 FINAL isolation proof Sun Sep 13 09:33:38 PDT 2026 ===
+real config fingerprint before: 6c2577fb39ab993eb01fa7c6a69900e36e9d59db
+6c2577fb39ab993eb01fa7c6a69900e36e9d59db  /Users/macbook-dev/.config/tldw_cli/config.toml
+
+real data dir files newer than pre-session marker /tmp/uat2-t0-marker (unfiltered):
+       0
+(other-agent processes 3986/89764 use separate scratchpad TLDW_CONFIG_PATHs, not the real profile)
+
+app (pid 18703) handles on real profile paths:
+NONE
+
+app cwd + sample data handles:
+cwd: /private/tmp/uat2-dev
+python3.1 18703 macbook-dev  txt      REG               1,13      32768           183372212 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_ChaChaNotes.db-shm
+python3.1 18703 macbook-dev  txt      REG               1,13      32768           183372275 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_library_collections.db-shm
+python3.1 18703 macbook-dev  txt      REG               1,13      32768           183372279 /private/tmp/uat2-scratch/data/uat_ce2/tldw_chatbook_workspaces.db-shm
+
+post-scenario scratch TOML validation:
+TOML OK

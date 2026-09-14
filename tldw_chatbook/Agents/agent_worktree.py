@@ -11,7 +11,9 @@ Typed results, no logging (results carry the information).
 from __future__ import annotations
 
 import os
+import re
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +32,12 @@ _BRANCH_PREFIX = "agent/"
 # messages, and log-friendly identifiers.
 _MAX_GIT_ERROR_CHARS = 200
 _RUN_ID_ABBREV_CHARS = 8
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+UNSUPPORTED_EXECUTION_BOUNDARY = "unsupported_execution_boundary"
+UNSUPPORTED_EXECUTION_MESSAGE = (
+    "Safe agent worktree execution is unavailable. Existing work is retained "
+    "for manual review; it was not merged, discarded, or automatically recovered."
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,14 @@ class WorktreeRefusal:
 
     reason_code: str
     message: str
+
+
+def unsupported_execution_boundary() -> WorktreeRefusal:
+    """Return the uniform refusal for automatic agent worktree operations."""
+    return WorktreeRefusal(
+        reason_code=UNSUPPORTED_EXECUTION_BOUNDARY,
+        message=UNSUPPORTED_EXECUTION_MESSAGE,
+    )
 
 
 def _worktrees_base() -> Path:
@@ -86,6 +102,11 @@ def create_agent_worktree(repo_root: Path, run_id: str) -> AgentWorktree | Workt
     Returns:
         The created worktree, or a reason-coded refusal (never raises).
     """
+    if not isinstance(run_id, str) or _RUN_ID_RE.fullmatch(run_id) is None:
+        return WorktreeRefusal(
+            "invalid_run_id",
+            "worktree isolation requires a valid generated run identifier",
+        )
     refusal = _detect(repo_root)
     if refusal is not None:
         return refusal
@@ -98,14 +119,29 @@ def create_agent_worktree(repo_root: Path, run_id: str) -> AgentWorktree | Workt
         )
     base_sha = out.strip()
     branch = f"{_BRANCH_PREFIX}{run_id}"
-    dest = _worktrees_base() / f"agent-{run_id[:_RUN_ID_ABBREV_CHARS]}"
+    dest = _worktrees_base() / (
+        f"agent-{run_id[:_RUN_ID_ABBREV_CHARS]}-{uuid.uuid4().hex}"
+    )
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
+        # Canonicalize only this app-owned allocation, never loaded ownership
+        # or selected authority. Host temp directories may have symlink aliases.
+        dest = dest.parent.resolve(strict=True) / dest.name
     except OSError as exc:
         return WorktreeRefusal(
             "worktree_create_failed", f"cannot create worktree base: {exc}"
         )
-    code, out, err = _git(repo_root, "worktree", "add", str(dest), "-b", branch, "HEAD")
+    code, out, err = _git(
+        repo_root,
+        "-c",
+        f"core.hooksPath={os.devnull}",
+        "worktree",
+        "add",
+        str(dest),
+        "-b",
+        branch,
+        base_sha,
+    )
     if code != 0:
         return WorktreeRefusal(
             "worktree_create_failed", f"git worktree add failed: {err.strip()[:_MAX_GIT_ERROR_CHARS]}"
@@ -126,6 +162,21 @@ def _worktree_root_identity(path: Path) -> tuple[tuple[str, int, int, int], ...]
         value = os.lstat(component)
         identities.append((str(component), value.st_dev, value.st_ino, value.st_mode))
     return tuple(identities)
+
+
+def _git_common_directory_identity(
+    checkout: Path,
+) -> tuple[Path, tuple[tuple[str, int, int, int], ...]]:
+    """Resolve and capture the fixed Git common-directory structure."""
+    checkout = Path(checkout).resolve()
+    code, out, _err = _git(checkout, "rev-parse", "--git-common-dir")
+    if code != 0 or not out.strip():
+        raise RuntimeError("could not resolve Git common directory")
+    common_dir = Path(out.strip())
+    if not common_dir.is_absolute():
+        common_dir = checkout / common_dir
+    common_dir = common_dir.resolve(strict=True)
+    return common_dir, _worktree_root_identity(common_dir)
 
 
 def discard_agent_worktree(

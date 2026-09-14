@@ -1,0 +1,18 @@
+# Crash 2 (this session): selecting 'Local llama' in Conversation settings provider list
+# App exited; tmux server died with the pane. Captured via stderr tee (pane render preserved).
+
+/private/tmp/uat-dev/tldw_chatbook/Widgets/Console/console_settings_modal.py:5198 in _provider_picker_selected
+/private/tmp/uat-dev/tldw_chatbook/Widgets/Console/console_settings_modal.py:5250 in _switch_provider
+/private/tmp/uat-dev/tldw_chatbook/Widgets/Console/console_settings_modal.py:5074 in _rebase_to
+/private/tmp/uat-dev/tldw_chatbook/Widgets/Console/console_settings_modal.py:5102 in _apply_rebased_state
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:594 in _validate_value
+
+──────────────────────────────────────────────────────╯ │
+│                                                                                                                                                                                                                                         │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:594 in _validate_value                                                                                                  │
+│                                                                                                                                                                                                                                         │
+│   591 │   │   │   # so we provide a helpful message to catch this mistake in case people didn' ╭──────────────────────────────────────── locals ────────────────────────────────────────╮                                               │
+│   592 │   │   │   # realise we use a special value to flag "no selection".                     │ help_text = ''                                                                         │                                               │
+│   593 │   │   │   help_text = " Did you mean to use Select.clear()?" if value is None else ""  │      self = Select(id='console-settings-provider', classes='console-settings-control') │                                               │
+│ ❱ 594 │   │   │   raise InvalidSelectValueError(                                               │     value = 'custom_ep:local_llama'                                                    │                                               │
+│   595 │   │   │   │   f"Illegal select value {value!r}." + help_text                    

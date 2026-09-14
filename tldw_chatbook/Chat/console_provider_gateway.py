@@ -138,6 +138,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     custom_endpoint_provider_settings,
     entry_for,
     family_execution_key,
+    split_custom_endpoint_id,
     CustomEndpointEntry,
 )
 from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkSplitter
@@ -1632,6 +1633,13 @@ class ConsoleProviderResolution:
         visible_copy: User-visible blocker or recovery copy.
         readiness_key: Normalized key used for readiness checks.
         execution_key: Provider key passed to ``chat_api_call``.
+        selected_provider: Raw selection id before any family flattening —
+            ``custom-ep:<slug>`` when the selection named a registry
+            endpoint, else ``""`` (plain and alias selections keep the
+            execution/display keys as their only identity). Spawn routing
+            and the streaming adapter's same-target decision read this so a
+            child of ``custom-ep:<slug>`` is never conflated with the
+            built-in family the endpoint executes through.
         api_key: Resolved API key, omitted from repr output.
         api_key_source: Human-readable source of the resolved API key.
         temperature: Optional sampling temperature.
@@ -1654,6 +1662,7 @@ class ConsoleProviderResolution:
     visible_copy: str = ""
     readiness_key: str = ""
     execution_key: str = ""
+    selected_provider: str = ""
     api_key: str | None = field(default=None, repr=False)
     api_key_source: str | None = None
     temperature: float | None = None
@@ -3867,7 +3876,7 @@ class ConsoleProviderGateway:
                     execution_key=identity.execution_key,
                     api_key_source=readiness.api_key_source,
                 )
-            if custom_entry is not None:
+            if custom_entry is not None and not selection.base_url_is_pinned:
                 # ADR-146: the entry's base_url is the endpoint authority
                 # for a custom-ep provider -- an edited entry re-resolves
                 # on the next send, so a stale session-pinned URL never
@@ -3915,6 +3924,11 @@ class ConsoleProviderGateway:
                     provider=identity.execution_key,
                     readiness_key=identity.readiness_key,
                     execution_key=identity.execution_key,
+                    selected_provider=(
+                        selection.provider
+                        if split_custom_endpoint_id(selection.provider)
+                        else ""
+                    ),
                 ),
                 app_config,
             )
@@ -4065,7 +4079,7 @@ class ConsoleProviderGateway:
             effective_base_url = effective_provider_endpoint(
                 identity.readiness_key,
                 custom_entry.base_url
-                if custom_entry is not None
+                if custom_entry is not None and not selection.base_url_is_pinned
                 else selection.base_url,
                 provider_settings,
             )
@@ -4175,6 +4189,11 @@ class ConsoleProviderGateway:
             ready=True,
             readiness_key=identity.readiness_key,
             execution_key=identity.execution_key,
+            selected_provider=(
+                selection.provider
+                if split_custom_endpoint_id(selection.provider)
+                else ""
+            ),
             api_key=(
                 entry_api_key if entry_api_key is not None else readiness.api_key
             ),
@@ -5062,6 +5081,7 @@ class ConsoleProviderGateway:
         dispatch_purpose: ConsoleProviderCallPurpose = ConsoleProviderCallPurpose.CONVERSATION,
         provisional_trace_attempt: ProvisionalTraceAttempt | None = None,
         before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
+        emission_observer: Callable[[bool], None] | None = None,
     ) -> AsyncIterator[ProviderStreamItem]:
         """Dispatch streaming for a resolved Console provider.
 
@@ -5076,6 +5096,8 @@ class ConsoleProviderGateway:
                 returned native tool-calls, the final item is a
                 ``ProviderToolCalls`` instead of a str.
             signals: Optional out-of-band stream provenance signals.
+            emission_observer: Optional internal callback receiving the exact
+                synthetic flag immediately before each yielded item.
 
         Yields:
             Assistant-visible content chunks, and -- only when ``tools`` was
@@ -5085,6 +5107,18 @@ class ConsoleProviderGateway:
         from tldw_chatbook.Chat.console_voice_trace_gateway import (
             ProvisionalTraceAttempt,
         )
+
+        emission_observer_failed = False
+
+        def observe_emission(synthetic: bool) -> None:
+            nonlocal emission_observer_failed
+            if emission_observer is None or emission_observer_failed:
+                return
+            try:
+                emission_observer(synthetic)
+            except BaseException:  # noqa: BLE001 - observational callback is isolated
+                emission_observer_failed = True
+                logger.warning("provider stream emission observer failed")
         require_durable_capture_admission(
             capture_mode=capture_mode,
             ephemeral=ephemeral,
@@ -5679,6 +5713,7 @@ class ConsoleProviderGateway:
                             chunk,
                             synthetic=synthetic,
                         )
+                        observe_emission(synthetic)
                         yield chunk
                 except Exception:
                     # Only real provider/HTTP failures land here -- a
@@ -5705,6 +5740,7 @@ class ConsoleProviderGateway:
                         dispatch_purpose=dispatch_purpose,
                     ):
                         observe_response(emission.item, synthetic=emission.synthetic)
+                        observe_emission(emission.synthetic)
                         yield emission.item
                 completed = True
                 return

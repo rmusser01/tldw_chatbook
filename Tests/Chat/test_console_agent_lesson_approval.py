@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.agent_models import ToolCall, normalize_tool_review
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor
 from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
@@ -145,8 +145,10 @@ def test_primary_lesson_save_uses_exact_per_call_rows_and_approve_once_only():
         ).call_digest,
     }
     assert "content" not in seen[0].arguments
-    assert verdicts["call-a"] == "proceed"
-    assert verdicts["call-b"].startswith("foreground approval denied")
+    assert normalize_tool_review(verdicts["call-a"]).verdict == "proceed"
+    assert normalize_tool_review(verdicts["call-b"]).verdict.startswith(
+        "foreground approval denied"
+    )
     approved = provider.peek_agent_lesson_approval(
         "run-1", "call-a", seen[0].arguments["call_digest"]
     )
@@ -173,7 +175,9 @@ def test_rejected_exact_preview_never_dispatches_or_issues_authority():
 
     assert len(seen) == 1
     assert seen[0].options == ("approve_once", "deny")
-    assert verdicts["call-reject"].startswith("foreground approval denied")
+    assert normalize_tool_review(verdicts["call-reject"]).verdict.startswith(
+        "foreground approval denied"
+    )
     assert service.calls == []
     assert provider.agent_lesson_approval_count("run-reject") == 0
 
@@ -216,7 +220,7 @@ def test_lesson_call_id_collision_with_builtin_fails_lesson_closed():
     assert [(row.server_label, row.call_id) for row in seen] == [
         ("Built-in", "shared-call")
     ]
-    assert verdicts["shared-call"] == "approval_required"
+    assert normalize_tool_review(verdicts["shared-call"]).verdict == "approval_required"
     assert provider.agent_lesson_approval_count("run-1") == 0
 
 
@@ -230,7 +234,9 @@ def test_non_foreground_actor_is_refused_without_card_or_stamp(kind):
             [_save_call("call-child")], "child-1"
         )
 
-    assert verdicts == {"call-child": "foreground_required"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"call-child": "foreground_required"}
     assert requested == []
     assert provider.agent_lesson_approval_count("child-1") == 0
 
@@ -243,7 +249,9 @@ def test_unbound_classified_save_is_refused_without_card_or_stamp():
         [_save_call("call-direct")], "run-1"
     )
 
-    assert verdicts == {"call-direct": "approval_required"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"call-direct": "approval_required"}
     assert requested == []
     assert provider.agent_lesson_approval_count("run-1") == 0
 
@@ -272,7 +280,7 @@ def test_current_marker_and_actual_receipt_states_force_review(payload, reason):
             provider, lambda rows: seen.extend(rows) or {"call-update": "approve_once"}
         )([call], "run-1")
 
-    assert verdicts["call-update"] == "proceed"
+    assert normalize_tool_review(verdicts["call-update"]).verdict == "proceed"
     assert seen[0].arguments["classification"] == reason
 
 
@@ -353,7 +361,9 @@ def test_case_variant_and_ordinary_note_do_not_enter_lesson_review():
             [call], "run-1"
         )
 
-    assert verdicts == {}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {}
     assert requested == []
 
 
@@ -374,7 +384,9 @@ def test_classification_failure_is_content_free_and_fails_closed():
             [call], "run-1"
         )
 
-    assert verdicts == {"call-fail": "approval_required"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"call-fail": "approval_required"}
     assert requested == []
     assert "PRIVATE CONTENT" not in repr(verdicts)
     assert provider.agent_lesson_approval_count("run-1") == 0
@@ -385,7 +397,9 @@ def test_hook_entry_and_raising_approval_round_clear_this_runs_stamps():
     call = _save_call("call-a")
     with use_run_actor(CurrentRunActor("primary", "run-1", None)):
         first = _hook(provider, lambda _rows: {"call-a": "approve_once"})
-        assert first([call], "run-1")["call-a"] == "proceed"
+        assert (
+            normalize_tool_review(first([call], "run-1")["call-a"]).verdict == "proceed"
+        )
         assert provider.agent_lesson_approval_count("run-1") == 1
 
         def fail(_rows):

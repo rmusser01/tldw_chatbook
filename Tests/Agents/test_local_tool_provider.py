@@ -1,4 +1,5 @@
 import copy
+import dataclasses
 import json
 import logging
 import os
@@ -4276,6 +4277,56 @@ def test_lock_contention_is_not_relabeled_stale_write(tmp_path):
     assert "target is being modified" in str(result.error)
 
 
+def test_cleanup_unproven_notifies_exact_admitted_root_before_refusal(tmp_path):
+    """A cleanup failure poisons ownership before its refusal is returned."""
+    observed = []
+    authority = _agent_authority(tmp_path)
+    object.__setattr__(
+        authority, "on_cleanup_unproven", lambda: observed.append("seen")
+    )
+    provider = _guard_provider(tmp_path)
+    provider.admit_run_workspace_root(RUN, authority)
+    spec = provider._path_specs_by_alias[authority.alias]["fs_read"]
+
+    def fail(_args):
+        raise WorkspaceToolExecutionError("cleanup_unproven", "private/path leaked")
+
+    provider._path_specs_by_alias[authority.alias]["fs_read"] = dataclasses.replace(
+        spec, handler=fail
+    )
+    result = provider.invoke("local:fs_read", {"path": "note.txt"})
+
+    assert observed == ["seen"]
+    assert not result.ok
+    assert "private/path leaked" not in str(result.error)
+
+
+def test_cleanup_unproven_observer_failure_preserves_original_refusal(tmp_path, capsys):
+    """Observer failure stays bounded and cannot replace the cleanup refusal."""
+    authority = _agent_authority(tmp_path)
+
+    def observer():
+        raise RuntimeError("private/path leaked")
+
+    object.__setattr__(authority, "on_cleanup_unproven", observer)
+    provider = _guard_provider(tmp_path)
+    provider.admit_run_workspace_root(RUN, authority)
+    spec = provider._path_specs_by_alias[authority.alias]["fs_read"]
+
+    def fail(_args):
+        raise WorkspaceToolExecutionError("cleanup_unproven")
+
+    provider._path_specs_by_alias[authority.alias]["fs_read"] = dataclasses.replace(
+        spec, handler=fail
+    )
+    result = provider.invoke("local:fs_read", {"path": "note.txt"})
+    captured = capsys.readouterr()
+
+    assert not result.ok
+    assert result.error == "Private scratch space is unavailable; the tool was not run."
+    assert "private/path leaked" not in captured.err
+
+
 def test_fs_write_dry_run_previews_even_with_stale_stamp(tmp_path):
     """M4: dry_run must preview, not stale-refuse -- nothing is written so
     there is no clobber risk.
@@ -4527,3 +4578,102 @@ def test_vanished_agent_alias_cache_returns_honest_refusal_not_crash(tmp_path):
         )
     assert not result.ok
     assert not (worktree / "out.txt").exists()
+
+
+@pytest.mark.parametrize(
+    "raw,unanswered,expected",
+    [
+        ("deny", False, "denied"),
+        ("deny", True, None),
+        ("approve_once", False, "approved"),
+        ("timeout", False, None),
+        (None, False, None),
+        ({}, False, None),
+    ],
+)
+def test_local_direct_callback_answer_authority(tmp_path, raw, unanswered, expected):
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    decisions = ApprovalDecisions({"fs_list": raw})
+    if unanswered:
+        decisions.unresolved_keys = frozenset({"fs_list"})
+    provider = make_provider(
+        state=ASK, root=tmp_path, approval_callback=lambda rows: decisions
+    )
+    result = provider.invoke("local:fs_list", {"path": "."})
+    assert result.approval_decision == expected
+    assert result.ok == (raw == "approve_once")
+
+
+@pytest.mark.parametrize(
+    "state,callback,expected", [(DENY, None, "denied"), (ASK, None, None)]
+)
+def test_local_actual_off_vs_missing_callback(tmp_path, state, callback, expected):
+    provider = make_provider(state=state, root=tmp_path, approval_callback=callback)
+    result = provider.invoke_detailed("local:fs_list", {"path": "."})
+    assert not result.result.ok and result.result.outcome == "blocked"
+    assert result.result.approval_decision == expected
+    assert result.dispatch_started is False
+
+
+@pytest.mark.parametrize("unanswered,expected", [(False, "denied"), (True, None)])
+def test_local_stamped_answer_scope_and_clear(tmp_path, unanswered, expected):
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    provider = make_provider(state=ASK, root=tmp_path)
+    decisions = ApprovalDecisions({"fs_list": "deny"})
+    if unanswered:
+        decisions.unresolved_keys = frozenset({"fs_list"})
+    provider.apply_batch_decisions(RUN, decisions)
+    with provider.stamp_scope(RUN):
+        provider.apply_batch_decisions(RUN, {"fs_list": "approve_once"})
+    assert provider.invoke("local:fs_list", {"path": "."}).approval_decision == expected
+    with use_run_id("other"):
+        assert provider.invoke("local:fs_list", {"path": "."}).approval_decision is None
+    provider.apply_batch_decisions(RUN, {})
+    assert provider.invoke("local:fs_list", {"path": "."}).approval_decision is None
+
+
+@pytest.mark.parametrize(
+    "failure,expected",
+    [
+        ("tool_failure", "approved"),
+        ("root_pin_failed", None),
+        ("protocol_failure", None),
+    ],
+)
+def test_local_approved_execution_failure_preserves_only_valid_fact(
+    tmp_path, failure, expected
+):
+    provider = make_provider(
+        state=ASK,
+        root=tmp_path,
+        workspace_executor=RecordingWorkspaceExecutor(error=failure),
+    )
+    provider.apply_batch_decisions(RUN, {"fs_list": "approve_once"})
+    result = provider.invoke_detailed("local:fs_list", {"path": "."})
+    assert not result.result.ok
+    assert result.result.approval_decision == expected
+    assert result.dispatch_started is True
+
+
+@pytest.mark.parametrize("unanswered,expected", [(False, "denied"), (True, None)])
+def test_local_builder_preserves_selected_name_fallback_fact(
+    tmp_path, unanswered, expected
+):
+    from tldw_chatbook.Agents.agent_models import ToolCall, normalize_tool_review
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ApprovalDecisions,
+        build_local_review_hook,
+    )
+
+    provider = make_provider(state=ASK, root=tmp_path)
+    decisions = ApprovalDecisions({"fs_list": "deny"})
+    if unanswered:
+        decisions.unresolved_keys = frozenset({"fs_list"})
+    review = build_local_review_hook(provider, lambda rows: decisions)
+    value = normalize_tool_review(
+        review([ToolCall("fs_list", {"path": "."}, "c1")], RUN)["c1"]
+    )
+    assert value.approval_decision == expected
+    assert provider.invoke("local:fs_list", {"path": "."}).approval_decision == expected

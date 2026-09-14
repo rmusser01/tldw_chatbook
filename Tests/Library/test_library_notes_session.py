@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import importlib.util
+import time
 from collections import deque
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -1062,3 +1063,37 @@ async def test_explicit_noop_save_removes_discard_eligibility():
 
     assert outcome.kind is DestructiveAdmissionOutcomeKind.NOT_ELIGIBLE
     assert coordinator.destructive_admission is None
+
+
+# --- task-32542: the saved-status clock is the reader's, not UTC -------------
+
+
+@pytest.fixture
+def los_angeles_zone(monkeypatch):
+    if not hasattr(time, "tzset"):
+        pytest.skip("time.tzset is unavailable on this platform")
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    yield
+    monkeypatch.delenv("TZ", raising=False)
+    time.tzset()
+
+
+@pytest.mark.asyncio
+async def test_saved_time_is_rendered_in_local_time(los_angeles_zone):
+    """Critique #3 (A 07/18, B 09): "Saved 05:48" at 22:48 PDT. The clock is
+    UTC by design (the persisted ``modified_at`` stays ISO/UTC); only the
+    status line's rendering changes zone."""
+    port = FakeDatabaseNotePort()
+    port.save_replies.append(DatabaseNotePortSaveReply.saved(version=2))
+    coordinator = _coordinator(
+        port, clock=lambda: datetime(2026, 9, 13, 5, 48, tzinfo=timezone.utc)
+    )
+    await coordinator.open_session("n-1")
+    coordinator.mutate(body="edited")
+
+    outcome = await coordinator.request_save(explicit=False)
+
+    assert outcome.kind is NoteSaveOutcomeKind.SAVED
+    assert coordinator.snapshot.status_message == "Saved 22:48"
+    assert coordinator.snapshot.baseline.modified_at == "2026-09-13T05:48:00+00:00"

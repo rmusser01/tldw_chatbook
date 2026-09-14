@@ -108,6 +108,8 @@ def test_v17_to_v18_migration_preserves_history_and_does_not_recover(
     context = context_for(db)
     assert db.automatic_work.complete_wake("attempt", owner_id="owner")
     with db.transaction() as conn:
+        conn.execute("DROP TABLE agent_worktrees")
+        conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
         conn.execute("DROP TABLE IF EXISTS automatic_work_runtime_owner")
         conn.execute("DELETE FROM schema_version WHERE version>=18")
     db.close()
@@ -129,7 +131,16 @@ def test_v17_to_v18_migration_preserves_history_and_does_not_recover(
         with reopened.connection() as conn:
             assert (
                 conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-                == 18
+                == AgentRunsDB._CURRENT_SCHEMA_VERSION
+            )
+            assert (
+                conn.execute("SELECT COUNT(*) FROM agent_worktrees").fetchone()[0] == 0
+            )
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM agent_definitions WHERE max_wall_seconds IS NOT NULL"
+                ).fetchone()[0]
+                == 0
             )
             assert (
                 conn.execute(

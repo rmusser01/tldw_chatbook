@@ -25,6 +25,7 @@ from tldw_chatbook.Library.library_shell_state import (
 from tldw_chatbook.Notes.note_import_plan_models import (
     NON_IMPORTABLE_CLASSIFICATIONS,
     REVIEW_CLASSIFICATION_ORDER,
+    ImportClassification,
 )
 from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -51,6 +52,8 @@ _CLASSIFICATION_LABELS = {
 _NON_IMPORTABLE = frozenset(
     classification.value for classification in NON_IMPORTABLE_CLASSIFICATIONS
 )
+
+_UNCHANGED_REPEAT = ImportClassification.UNCHANGED_REPEAT.value
 
 _REVIEW_ORDER = tuple(
     classification.value for classification in REVIEW_CLASSIFICATION_ORDER
@@ -843,7 +846,13 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                     ),
                     compact=True,
                 )
-                if classification not in _NON_IMPORTABLE:
+                # task-32541: an unchanged repeat has nothing to create -- its
+                # header offered "Create all" anyway, one press from
+                # re-creating every note on the page.
+                if (
+                    classification not in _NON_IMPORTABLE
+                    and classification != _UNCHANGED_REPEAT
+                ):
                     yield Button(
                         "Create all on this page",
                         id=f"note-import-group-{classification}-create",
