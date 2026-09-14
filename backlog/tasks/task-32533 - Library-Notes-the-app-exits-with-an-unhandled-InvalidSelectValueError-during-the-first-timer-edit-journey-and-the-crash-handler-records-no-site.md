@@ -3,11 +3,11 @@ id: TASK-32533
 title: >-
   Library Notes: the app exits with an unhandled InvalidSelectValueError during
   the first-timer edit journey, and the crash handler records no site
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-13 06:45'
-updated_date: '2026-09-14 08:40'
+updated_date: '2026-09-14 08:50'
 labels:
   - library
   - notes
@@ -35,7 +35,7 @@ Do not fix by catching the exception at the site alone: the app-level exit and t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No provider Select reachable on a no-provider profile can be handed a value outside its options -- the Console model popover (a no-provider or unknown-provider draft mounts with a blank selection, the same guard its model select already has), the Settings Providers pane (#settings-provider-value) and the Settings Speech pane (#settings-speech-configure-provider), the last two keeping their current selection instead of raising when the catalog they read disagrees with the options they were built from
+- [x] #1 No provider Select reachable on a no-provider profile can be handed a value outside its options -- the Console model popover (a no-provider or unknown-provider draft mounts with a blank selection, the same guard its model select already has), the Settings Providers pane (#settings-provider-value) and the Settings Speech pane (#settings-speech-configure-provider), the last two keeping their current selection instead of raising when the catalog they read disagrees with the options they were built from
 - [x] #2 An unhandled exception raised from a widget handler no longer exits the app: the screen stays alive and a notification names what failed and where to look
 - [x] #3 The persisted unhandled_exception diagnostic carries the raising frame (module:function:line, never the message) so the site of the next crash is recoverable from the profile log; the diagnostic inventory is updated
 - [x] #4 A regression test mounts the popover with a provider value absent from its options and a second one with an empty provider, and asserts no InvalidSelectValueError
@@ -147,4 +147,29 @@ has two failures that are identical on a detached `origin/dev` baseline
 `Tests/ProductionApp/test_app_unhandled_exception_keepalive.py`,
 `Tests/UI/test_settings_provider_select_out_of_options.py`, plus two cases in
 `Tests/Widgets/Library/test_library_note_folder_dialog.py`.
+**Review round 1.** Two Importants, both accepted. (1) AC#1 was ticked and
+false: the popover's *mount* was guarded and the same Select's *update* path was
+not, so a blank popover -- the state this very fix creates -- was two user
+actions from the identical crash (**Custom ID** is ungated on provider; the first
+keystroke rebases the draft to `provider=""` and reaches
+`_sync_controls_from_draft`). Fixed, pinned on the real widgets, and the three
+guard spellings that had accumulated are now one module,
+`Widgets/select_values.py` (`select_value_or_blank` for the compose-time form,
+`assign_select_value` for every assignment), used by all four sites. The folder
+dialog keeps its literal `Select.NULL`: that blank is a value the dialog picks
+itself, not one handed in, so there is nothing to check it against. (2) The
+keep-alive had no `pump is not self` clause, so an exception from a handler the
+App itself dispatches broke the *application* loop with no return code and no
+`panic()` -- the app would vanish on exit 0 with nothing in the log, the P0's
+symptom with less evidence than before. Without the clause the new pin does not
+fail, it hangs the pilot. Minors fixed with them: the notification now says the
+panel may "stop responding or disappear" (Textual prunes the widget on the
+handler path); the keep-alive covers `_flush_next_callbacks` and the inline
+`on_idle` dispatch as well as `_dispatch_message`; `_safe_identifier` keeps
+`<lambda>`/`<module>` instead of mapping them to "invalid"; and a refused
+provider assignment falls back to the manual spelling rather than leaving the
+select and the row beneath it describing different providers. Declined, with the
+reason: no `console.md` stamp -- the popover's change is not reachable on any
+profile that can be driven live, and a stamp for a state nobody saw is the
+failure those stamps prevent.
 <!-- SECTION:NOTES:END -->
