@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import json
+
 # Synthetic subprocess results/errors only; the launch is monkeypatched.
 import subprocess  # nosec B404
 
@@ -42,10 +43,11 @@ def test_parent_records_immediate_later_child_failure(tmp_path, monkeypatch, kin
 
 
 @pytest.mark.parametrize("write_fails", [False, True])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_actual_child_entry_guard_retains_original_exception(
-    tmp_path, monkeypatch, write_fails
+    tmp_path, monkeypatch, write_fails, cleanup_fails
 ):
-    from Tests.Backup_Recovery import thread_diagnostics
+    from Tests.Backup_Recovery import admission_diagnostics, thread_diagnostics
     from Tests.Backup_Recovery.test_later_rollback_credential_ui import _LATER
 
     error = RuntimeError("private-child-message")
@@ -53,6 +55,19 @@ def test_actual_child_entry_guard_retains_original_exception(
     async def main():
         raise error
 
+    stopped = []
+
+    def observe(kind):
+        def start(*args, **kwargs):
+            def stop():
+                stopped.append(kind)
+                if cleanup_fails:
+                    raise OSError("private-cleanup-message")
+            return stop
+        return start
+
+    monkeypatch.setattr(thread_diagnostics, "observe_threads", observe("threads"))
+    monkeypatch.setattr(admission_diagnostics, "observe_admission", observe("admission"))
     if write_fails:
 
         def broken(*args):
@@ -61,7 +76,8 @@ def test_actual_child_entry_guard_retains_original_exception(
         monkeypatch.setattr(thread_diagnostics, "_write", broken)
     blocks = [node for node in ast.parse(_LATER).body if isinstance(node, ast.Try)]
     assert len(blocks) == 1, "the actual child entry needs an immediate exception guard"
-    namespace = {"asyncio": asyncio, "main": main, "home": tmp_path}
+    namespace = {"asyncio": asyncio, "main": main, "home": tmp_path,
+                 "retain": lambda *args, **kwargs: None}
     with pytest.raises(RuntimeError) as caught:
         # Fixed test-driver AST; no external code.
         exec(  # noqa: S102  # nosec B102
@@ -71,12 +87,37 @@ def test_actual_child_entry_guard_retains_original_exception(
             namespace,
         )
     assert caught.value is error
+    assert stopped == ["admission", "threads"]
 
     path = tmp_path / "later-child-failure.json.log"
     if not write_fails:
         data = json.loads(path.read_text())
         assert data["error"]["error_class"] == "RuntimeError"
         assert "private-" not in json.dumps(data)
+
+
+def test_later_phase_timing_is_bounded_and_excludes_checkpoint_values(tmp_path):
+    import time
+
+    from Tests.Backup_Recovery.test_later_rollback_credential_ui import _LATER
+    from Tests.Backup_Recovery.thread_diagnostics import _write
+
+    retain = next(node for node in ast.parse(_LATER).body
+                  if isinstance(node, ast.FunctionDef) and node.name == "retain")
+    namespace = {"home": tmp_path, "time": time, "json": json,
+                 "phase_times": [], "_write": _write}
+    exec(  # noqa: S102  # nosec B102 - exact test-driver function, no external code.
+        compile(ast.Module(body=[retain], type_ignores=[]), "later-phase", "exec"),
+        namespace,
+    )
+    for index in range(40):
+        namespace["retain"]("verified_copy_listed", value="private-value", index=index)
+    text = (tmp_path / "later-phase-timing.log").read_text()
+    rows = json.loads(text)
+    assert len(rows) == 32 and "private-value" not in text
+    assert all(set(row) == {"checkpoint", "monotonic_seconds"} for row in rows)
+    assert all(row["checkpoint"] == "verified_copy_listed" for row in rows)
+    assert rows[0]["monotonic_seconds"] <= rows[-1]["monotonic_seconds"]
 
 
 def test_failure_record_is_collected_before_pytest_finalization(tmp_path):

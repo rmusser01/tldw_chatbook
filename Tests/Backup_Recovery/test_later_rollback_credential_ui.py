@@ -37,11 +37,16 @@ assert installed == Path(saved["package"])
 assert Path(tldw_chatbook.__file__).resolve() == installed / "tldw_chatbook" / "__init__.py"
 from textual.widgets import Button, Input, Checkbox, Static
 from tldw_chatbook.Backup_Recovery.launcher import recovery_app
+from Tests.Backup_Recovery.thread_diagnostics import _write
 
 assert "tldw_chatbook.app" not in sys.modules
 assert "tldw_chatbook.config" not in sys.modules
 
+phase_times = []
 def retain(checkpoint, **values):
+    phase_times.append({"checkpoint": checkpoint, "monotonic_seconds": time.monotonic()})
+    del phase_times[:-32]
+    _write(home / "later-phase-timing.log", phase_times)
     record = {"checkpoint": checkpoint, "time": time.time(), **values}
     (home / "later-ui-probe-result.json").write_text(
         json.dumps(record, default=str)
@@ -201,25 +206,41 @@ async def main():
         state=await asyncio.to_thread(app.recovery_service.wait,accepted['operation_id'],timeout=360 if sys.platform == "win32" else 120)
         retain('later_rollback_complete',state=state['state'],result=dict(state['result']))
         assert state['state']=='succeeded' and state['result']['restoration_validated'],dict(state)
+        retain('later_copy_catalog_begin')
         copies=await asyncio.to_thread(app.recovery_service.recovery_copies)
+        retain('later_copy_catalog_complete')
         assert any(row.operation_id==state['result']['journal_operation_id'] and row.status=='verified' for row in copies)
         assert any(row.operation_id==operation and row.status=='verified' for row in copies)
         new_copy=state['result']['journal_operation_id']
         async with asyncio.timeout(90 if sys.platform == "win32" else 15):
             while not [b for b in screen.query('.backup-review-rollback') if b.name==new_copy]:await asyncio.sleep(.03)
         next_copy=next(b for b in screen.query('.backup-review-rollback') if b.name==new_copy)
+        retain('next_copy_selection_begin')
         next_copy.focus();await pilot.press('enter')
+        retain('next_copy_selection_complete')
         assert screen._rollback_copy_id==new_copy and screen._rollback_plan is None
         assert not screen._later_review_codes_seen and not any(box.value for box in boxes)
+        retain('new_safety_copy_inspection_begin')
         inspected=app.recovery_service.start_copy_inspection(new_copy,password=b'test-only-later-safety-password')
         checked=await asyncio.to_thread(app.recovery_service.wait,inspected,timeout=180 if sys.platform == "win32" else 20)
+        retain('new_safety_copy_inspection_complete')
         assert checked['state']=='succeeded' and checked['result']['archive_verified'],dict(checked)
         from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
         assert verify_sealed(app.recovery_service.inspection(inspected)).credential_policy=='rollback'
+        retain('later_body_complete')
+    retain('later_app_closed')
     assert not blocked_attempts(), blocked_attempts()
 
 try:
-    asyncio.run(main())
+    from contextlib import ExitStack
+    from Tests.Backup_Recovery.thread_diagnostics import observe_threads, stop_observer
+    from Tests.Backup_Recovery.admission_diagnostics import observe_admission
+    with ExitStack() as diagnostics:
+        diagnostics.callback(stop_observer, observe_threads(home / "later-stacks.log", interval=10))
+        diagnostics.callback(stop_observer, observe_admission(home / "later-admission-timing.log", native_calls=False))
+        retain('later_child_begin')
+        asyncio.run(main())
+        retain('later_loop_closed')
 except BaseException as error:
     from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
     record_failure(home / "later-child-failure.json.log", error=error)
