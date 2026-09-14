@@ -651,3 +651,23 @@ and the compact Folder-files work pane's return control reads **‹ Files** at
 60x24 (`import-25-files-60x24`) — both were "Back to navigator". The Notes
 editor keeps its own task-32139 wording ("‹ Notes" wide, "‹ Back to list"
 compact), so the grammar is now one cue plus the destination everywhere.)*
+
+*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
+wave-4 guide sweep). Two chapters on this page were stating copy the app
+stopped rendering and nobody re-read. The **Session Git** chapter's heading,
+scope line and keyboard guide were all three rewritten by task-15122 on
+2026-08-11 and are only now corrected — they now read "Review session
+changes", "Review and commit only notes changed during this Chatbook
+session." and "Up/Down select · Tab actions · Enter run · Esc back", read off
+`library_file_notes_git_panel.py:1271-1289`; "Repository: not checked",
+"Status: NOT CHECKED" and "No current-session Git changes." were checked in
+the same pass and are unchanged. The **Chunking Lab** quirk described a
+header strip task-32064 removed; the pair lives in the rail's Details ▸
+Actions group now and the Lab has its own Escape route. "Getting there"
+gained the note that a brand-new profile has no Browse section — see
+[Library notes](notes.md). Per-file caps re-read from
+`Notes/file_notes_service.py` (`MAX_FILE_BYTES = 8_000_000`,
+`MAX_FILE_CHARS = 2_000_000`, `INTERACTIVE_FILE_CHARS = 200_000`) and
+unchanged. Not re-walked live: this page's Git chapter was corrected against
+the widget's own compose, not a capture, and says so rather than carrying a
+capture it does not have.)*

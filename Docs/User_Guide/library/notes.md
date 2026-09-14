@@ -740,6 +740,15 @@ repeated", which it is not — superseded by task-32558 below.)
 A paused folder keeps its receipts: reading them is a read, so pausing one
 folder never blanks the list for the others (task-32534).
 
+**Every root here is titled "Sync folder (name unavailable before
+cutover)"**, whatever display name you gave it and however many roots you
+have — the row's title is a hard-coded string, not the name (task-32451,
+still open). The row carries no path either, so with two roots connected
+the only things telling their rows apart are their status lines and their
+order. What still names them is the Notes list: each root's managed folder
+there is named after its display name. This is a labelling defect only —
+each row's controls act on the root they belong to.
+
 **Receipts**, under the root list, is where the writes lasting sync performs
 on its own show up: the newest 20 across every listed root, newest first, as
 "when · what happened · file · note" — "2026-09-14 07:34 · Wrote note to file ·
@@ -1405,9 +1414,10 @@ no longer sits at 38 columns beside an empty work area, and its action
 groups stack rather than clip in a narrow pane; task-32137: rows
 carry an age, and same-folder duplicate titles name their folder;
 task-32128: the tree's title order is the database's, so Sort is not
-offered there — superseded by task-32172 below; task-32123: the delete
-receipt's Undo/Dismiss actions are no longer composed off the pane;
-task-32124: Undo returns the row to the folder tree, not only the count.)*
+offered there — superseded by task-32172 below. Its task-32123 and
+task-32124 clauses said the same thing in the same words as the stamp
+beside "Undo a deleted note" above, and are kept only there, next to the
+copy they verify (task-32558).)*
 
 *Verified against fix/library-notes-editor-keys — 2026-09-09 (task-32131: `/`
 no longer types itself into the filter it focuses; a same-round controller
@@ -1962,3 +1972,52 @@ chooser's and the sync-roots list's own `‹ Notes` buttons are pinned in
 set. The profile log carried no `unhandled_exception` across the whole walk;
 it holds four `app_started` records against two `app_stopping` lines, and both
 of those are the INFO records of a deliberate Ctrl+Q quit.)*
+
+*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
+wave-4 guide sweep, at 235x52 and 100x30 on two scratch profiles — one with
+every Library source empty, one with ten seeded notes). This stamp records
+what was **checked**, including the claims that held, because a stamp that
+records only the fixes is how a false sentence survives five of them.
+
+Contradicted and corrected here: **"Getting there"** named the rail's
+Browse ▸ Notes row as the only route, and an empty profile has no Browse
+section — its rail is three rows, `Import…` / `New note` / `Explore all
+tools` (`wave4-caps/docs-sweep/docs-01-empty-rail-235x52`), and
+`Explore all tools` is what grows the full Browse section with a
+`Notes (0)` row on an empty Library (`docs-02`, `docs-03`). The
+**duplicate-title tie-break** was claimed "in Edit, Preview and Info alike"
+with no width: at 235x52 the heading reads "Reading list · #d3d7"
+(`docs-05-editor-tiebreak-235x52`), but at 100x30 the strip carries the back
+cue and the source name either side of the title and the heading ellipsizes
+to "‹ Back to list    Reading … Library notes", tie-break gone, in Preview
+and Edit alike (`docs-08-preview-100x30`, `docs-09-edit-heading-clip-100x30`).
+The **toolbar Tab counts** were said to turn on the filter alone; `Select` is
+disabled while the list is empty and `New`/`Sort`/`Select` while an operation
+runs (`library_notes_canvas.py:1747`, and "○ Select" live in `docs-03`).
+**Retarget/Disconnect**'s line under the root list is one combined sentence
+naming both, not "the same line repeated". **Preview's Escape chip** is
+"esc back to notes" wide and "esc notes" compact
+(`LIBRARY_NOTES_PREVIEW_SHORTCUTS(_COMPACT)`). Every **Manage sync folders**
+row is titled "Sync folder (name unavailable before cutover)" and carries no
+path (task-32451, open) — recorded in the body rather than left for a reader
+to discover.
+
+Checked and TRUE, so left alone: the duplicate rows read
+"Reading list · Unfiled · 4m · #d3d7" / "#f24b" (`docs-04`); the chrome strip
+reads "29 words · 1:1" under the body and appears only in Edit at 80 columns
+or wider (`docs-05`, `NOTE_CHROME_FACTS_MIN_WIDTH = 80`); in **Preview** Tab
+walks exactly six controls and the footer names each one — "enter back to
+list", "enter edit note", "enter preview note", "enter show info",
+"enter save note", "enter use in Console", and nothing on the seventh
+(`docs-07-preview-tab-footers-235x52`); the empty list reads "No notes yet.
+Create your first note." over the glossed `Agent_Lessons` row (`docs-03`);
+Preview's status line names **Edit**, not "keep editing" (`docs-06`); "Saved"
+is rendered through `astimezone()` and a naive instant is refused, so the
+status clock cannot drift from Info again. Read off the source rather than
+walked: the receipts cap (20) and row shape, the tree and Trash page sizes
+(20), the backlink display cap (50), the eight template rows, the 2,000,000
+character note cap, `Ctrl+3`, `Ctrl+S` in the file picker, and the import
+pager's "Previous page unavailable — this is the first page".
+
+The profile logs hold no `unhandled_exception` for either walk; each holds
+one `app_stopping`, the INFO record of a deliberate Ctrl+Q.)*

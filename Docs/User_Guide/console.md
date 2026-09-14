@@ -757,3 +757,12 @@ state. With no provider configured, **Alt+M** is refused by the setup gate
 ("Typing is locked until setup finishes — press Enter to continue setup"); with
 one configured, the draft always names a provider the picker lists. The evidence
 is the three headless pins, not a capture.
+
+*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
+wave-4 guide sweep). The Get started card's body said "Both actions" while
+this page's own task-32555 stamp, four paragraphs below, named three: a
+detected loopback server adds "Use detected \<provider\> (\<host:port\>)"
+(`Chat/console_onboarding_state.py:101-153`, loopback-only, scheme and
+credentials stripped). Corrected from the source, not from a capture — this
+sweep drove no Console profile with a local server running, and does not
+claim to have seen the third button.)*
