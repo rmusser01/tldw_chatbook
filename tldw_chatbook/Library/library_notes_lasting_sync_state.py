@@ -626,7 +626,7 @@ def set_setup_value(
         message = f"Choose {', '.join(missing)}."
         can_check = False
     elif not snapshot.lasting_available:
-        message = "Lasting folder sync is unavailable until the reviewed cutover."
+        message = "Keeping a folder synced isn't ready on this profile yet."
         can_check = False
     else:
         message = ""

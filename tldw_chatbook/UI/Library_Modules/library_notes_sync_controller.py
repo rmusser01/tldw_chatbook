@@ -634,7 +634,7 @@ class LibraryNotesSyncController:
             )
         if runtime.status == "failed":
             return "Lasting folder sync could not start. Review settings and restart."
-        return "Lasting folder sync is unavailable until the reviewed cutover."
+        return "Keeping a folder synced isn't ready on this profile yet."
 
     @property
     def snapshot(self) -> LibraryNotesLastingSyncSnapshot:
