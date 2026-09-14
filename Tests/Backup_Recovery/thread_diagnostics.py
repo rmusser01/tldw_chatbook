@@ -125,6 +125,64 @@ def _error_metadata(error: BaseException) -> dict:
     return record
 
 
+def _snapshot_change(error: BaseException, code) -> dict | None:
+    """Name proven differences in a failed copy's existing locals, never values."""
+    if (
+        type(error) is not ValueError or len(error.args) != 1
+        or type(error.args[0]) is not str
+        or error.args[0] != "preview_sqlite_changed"
+    ):
+        return None
+    trace = error.__traceback__
+    for _ in range(64):
+        if trace is None:
+            return None
+        if trace.tb_next is None:
+            break
+        trace = trace.tb_next
+    else:
+        return None
+    if trace.tb_frame.f_code is not code:
+        return None  # A helper failure must not use stale caller locals.
+    local = trace.tb_frame.f_locals
+    suffix, expected, opened = (
+        local.get("suffix"), local.get("expected"), local.get("opened")
+    )
+    if (
+        type(suffix) is not str or suffix not in {"", "-wal"}
+        or type(expected) is not tuple or len(expected) != 5
+        or any(type(value) is not int for value in expected)
+        or type(opened) is not os.stat_result
+    ):
+        return None
+    actual = (
+        opened.st_dev, opened.st_ino, opened.st_size,
+        opened.st_mtime_ns, opened.st_ctime_ns,
+    )
+    fields = ("device", "inode", "size", "mtime_ns", "ctime_ns")
+    phase = "opened_state"
+    changed = [field for field, old, new in zip(fields, expected, actual) if old != new]
+    if not changed:
+        count, observed = local.get("count"), local.get("observed")
+        if type(count) is int and count > expected[2]:
+            phase, changed = "copy_growth", ["size"]
+        elif (
+            type(count) is int
+            and type(observed) is tuple and len(observed) == 5
+            and all(type(value) is int for value in observed)
+        ):
+            phase = "copied_state"
+            changed = [field for field, old, new in zip(fields, expected, observed) if old != new]
+            if count != expected[2] and "size" not in changed:
+                changed.append("size")
+    if not changed:
+        return None  # Reuse/final-source checks have no retained unequal pair.
+    return {
+        "member": "main" if suffix == "" else "wal",
+        "phase": phase, "changed_fields": changed,
+    }
+
+
 def observe_inventory_failures(path: Path) -> Callable[[], None]:
     """Observe exceptions caught in discovery on only its calling worker thread."""
     from tldw_chatbook.Backup_Recovery import inventory, recovery_service
@@ -398,6 +456,7 @@ def observe_capture_review(path: Path) -> Callable[[], None]:
                 records.append({
                     "event": "preview_sqlite_failure",
                     "error": _error_metadata(error), "reason": reason,
+                    "source_change": _snapshot_change(error, original_snapshot.__code__),
                 })
                 del records[:-8]
                 _write(Path(path), records)

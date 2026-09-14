@@ -805,7 +805,7 @@ def test_native_stage_observer_metadata_failure_preserves_original(tmp_path, met
     assert runtime._settle_stage is original
 
 
-@pytest.mark.parametrize("kind", ("changed", "unavailable", "private_error", "cancelled"))
+@pytest.mark.parametrize("kind", ("changed", "unavailable", "private_error", "cancelled", "invalid_arg"))
 def test_capture_snapshot_observer_preserves_error_and_bounds_private_metadata(
     tmp_path, monkeypatch, kind
 ):
@@ -814,11 +814,19 @@ def test_capture_snapshot_observer_preserves_error_and_bounds_private_metadata(
     from Tests.Backup_Recovery.thread_diagnostics import observe_capture_review
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
+    comparisons = []
+
+    class InvalidArgument:
+        def __eq__(self, other):
+            comparisons.append(True)
+            return False
+
     errors = {
         "changed": ValueError("preview_sqlite_changed"),
         "unavailable": ValueError("preview_sqlite_unavailable"),
         "private_error": OSError(13, "synthetic-private-error", "synthetic-private-path"),
         "cancelled": asyncio.CancelledError("synthetic-private-cancellation"),
+        "invalid_arg": ValueError(InvalidArgument()),
     }
     error = errors[kind]
     result = object()
@@ -845,6 +853,7 @@ def test_capture_snapshot_observer_preserves_error_and_bounds_private_metadata(
     finally:
         stop()
     assert storage._PreviewScope.sqlite_target is original
+    assert not comparisons
     rows = json.loads(path.read_text())
     assert len(rows) == 8
     assert all(row["event"] == "preview_sqlite_failure" for row in rows)
@@ -856,7 +865,7 @@ def test_capture_snapshot_observer_preserves_error_and_bounds_private_metadata(
     assert "synthetic-private" not in path.read_text()
 
 
-@pytest.mark.parametrize("failure_point", ("metadata", "write"))
+@pytest.mark.parametrize("failure_point", ("metadata", "source_change", "write"))
 @pytest.mark.parametrize("failure_type", (OSError, RuntimeError, KeyboardInterrupt))
 def test_capture_snapshot_diagnostic_failure_cannot_replace_original_error(
     tmp_path, monkeypatch, failure_point, failure_type
@@ -874,7 +883,9 @@ def test_capture_snapshot_diagnostic_failure_cannot_replace_original_error(
 
     monkeypatch.setattr(storage._PreviewScope, "sqlite_target", original)
     monkeypatch.setattr(
-        diagnostic, "_error_metadata" if failure_point == "metadata" else "_write", fail
+        diagnostic,
+        {"metadata": "_error_metadata", "source_change": "_snapshot_change", "write": "_write"}[failure_point],
+        fail,
     )
     stop = diagnostic.observe_capture_review(tmp_path / "snapshot.log")
     try:
@@ -906,10 +917,92 @@ stop_snapshot=observe_capture_review(snapshot_log)
     assert len(rows) == 1
     assert rows[0]["event"] == "preview_sqlite_failure"
     assert rows[0]["reason"] == "preview_sqlite_changed"
+    assert rows[0]["source_change"] is None  # Final recheck has no retained unequal pair.
     assert rows[0]["error"]["error_class"] == "ValueError"
     summary = json.loads((tmp_path / "home" / "dependency-discovery.json.log").read_text())
     assert summary["core_status"] == "unavailable"
     assert summary["validation_issues"][0] == ["core_validation_unavailable"]
+
+
+@pytest.mark.parametrize("member", ("main", "wal"))
+@pytest.mark.parametrize("phase", ("opened_state", "copy_growth", "copied_state"))
+def test_snapshot_observer_identifies_native_changed_member_without_values(
+    tmp_path, monkeypatch, member, phase
+):
+    import os
+    import sqlite3
+    from contextlib import closing
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_capture_review
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.native_files import create_private_file
+
+    source = tmp_path / "private-database-name.db"
+    with create_private_file(source):
+        pass
+    suffix = "" if member == "main" else "-wal"
+    watched = source.with_name(source.name + suffix)
+    changed = False
+    original_state = storage._PreviewScope._source_state
+    original_read = storage.os.read
+    with closing(sqlite3.connect(source)) as writer:
+        if member == "wal":
+            writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("CREATE TABLE fixture(value)")
+        writer.execute("INSERT INTO fixture VALUES ('original')")
+        writer.commit()
+        identity = storage.os.stat(watched).st_ino
+
+        def change():
+            nonlocal changed
+            changed = True
+            if phase == "copied_state":
+                info = watched.stat()
+                # A real metadata change after EOF exercises the post-copy check.
+                os.utime(watched, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000000))
+            else:
+                writer.execute("INSERT INTO fixture VALUES (?)", ("private-row" * 2048,))
+                writer.commit()
+
+        def state(path):
+            result = original_state(path)
+            if phase == "opened_state" and not changed:
+                change()
+            return result
+
+        def read(fd, size):
+            data = original_read(fd, size)
+            if (
+                phase != "opened_state" and not changed
+                and storage.os.fstat(fd).st_ino == identity
+                and (phase == "copy_growth" and data or phase == "copied_state" and not data)
+            ):
+                change()
+            return data
+
+        monkeypatch.setattr(storage._PreviewScope, "_source_state", staticmethod(state))
+        monkeypatch.setattr(storage.os, "read", read)
+        path = tmp_path / "snapshot-metadata.log"
+        stop = observe_capture_review(path)
+        try:
+            with storage._preview_reads():
+                scope = storage._local.preview_scope
+                with pytest.raises(ValueError, match="^preview_sqlite_changed$"):
+                    scope.sqlite_target(source)
+                assert not list(scope.directory.iterdir())
+            assert not scope.directory
+        finally:
+            stop()
+    assert changed
+    rows = json.loads(path.read_text())
+    detail = rows[-1]["source_change"]
+    assert detail["member"] == member
+    assert detail["phase"] == phase
+    expected_field = "mtime_ns" if phase == "copied_state" else "size"
+    assert expected_field in detail["changed_fields"]
+    assert set(detail) == {"member", "phase", "changed_fields"}
+    assert set(detail["changed_fields"]) <= {"device", "inode", "size", "mtime_ns", "ctime_ns"}
+    assert "private-" not in path.read_text()
 
 
 @pytest.mark.parametrize(
