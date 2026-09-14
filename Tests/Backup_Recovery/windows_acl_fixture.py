@@ -36,11 +36,10 @@ def _security(native, handle):
 
 @contextmanager
 def _preserve_dacl(native, handle):
-    """Restore only the changed DACL, then require exact native state equality."""
+    """Establish native inheritance bookkeeping, then restore its exact state."""
     with _security(native, handle) as (dacl, original):
-        try:
-            yield
-        finally:
+
+        def restore():
             # Preserve the original protection flag; do not replace owner/SACL.
             protection = 0x80000000 if original[1] & 0x1000 else 0x20000000
             result = native.advapi.SetSecurityInfo(
@@ -48,18 +47,40 @@ def _preserve_dacl(native, handle):
             )
             if result:
                 raise OSError(result, "SetSecurityInfo failed")
-            with _security(native, handle) as (_, restored):
-                if restored != original:
+
+        # SetSecurityInfo adopts Windows' current inheritance model, which may
+        # set SE_DACL_AUTO_INHERITED without changing any ACE. Establish that
+        # fixture baseline before the body; final cleanup still compares exactly.
+        # https://learn.microsoft.com/windows/win32/secauthz/automatic-propagation-of-inheritable-aces
+        restore()
+        baseline = None
+        try:
+            with _security(native, handle) as (_, observed):
+                if (
+                    observed[0] != original[0]
+                    or observed[1] not in (original[1], original[1] | 0x0400)
+                    or observed[2:] != original[2:]
+                ):
                     raise AssertionError(
-                        "original native security not restored: "
-                        f"owner_equal={original[0] == restored[0]} "
-                        f"original_control={original[1]} restored_control={restored[1]} "
-                        f"control_xor={original[1] ^ restored[1]} "
-                        f"original_revision={original[2]} restored_revision={restored[2]} "
-                        f"original_acl_length={len(original[3] or b'')} "
-                        f"restored_acl_length={len(restored[3] or b'')} "
-                        f"acl_equal={original[3] == restored[3]}"
+                        "fixture security initialization changed security"
                     )
+                baseline = observed
+            yield
+        finally:
+            restore()
+            if baseline is not None:
+                with _security(native, handle) as (_, restored):
+                    if restored != baseline:
+                        raise AssertionError(
+                            "original native security not restored: "
+                            f"owner_equal={baseline[0] == restored[0]} "
+                            f"original_control={baseline[1]} restored_control={restored[1]} "
+                            f"control_xor={baseline[1] ^ restored[1]} "
+                            f"original_revision={baseline[2]} restored_revision={restored[2]} "
+                            f"original_acl_length={len(baseline[3] or b'')} "
+                            f"restored_acl_length={len(restored[3] or b'')} "
+                            f"acl_equal={baseline[3] == restored[3]}"
+                        )
 
 
 @contextmanager

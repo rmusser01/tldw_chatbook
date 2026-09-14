@@ -1,0 +1,227 @@
+[
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[..]",
+    "status": "passed",
+    "seconds": 0.002
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[.]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[a/b]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[a\\\\b]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[x:y]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[x\\x00y]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[file.]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[file ]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[CON]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[nul.txt]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_simple_component_is_preserved",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_other_user_read_grant_is_not_private",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_other_user_delete_child_grant_is_not_trusted_parent",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_inherit_only_public_grant_requires_private_leaf_hardening",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_unknown_ace_fails_closed",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_private_relative_file_and_exclusive_rename",
+    "status": "passed",
+    "seconds": 0.045
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_independent_native_handles_contend_on_shared_and_exclusive_locks",
+    "status": "passed",
+    "seconds": 0.014
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_directory_junction_is_refused",
+    "status": "passed",
+    "seconds": 0.014
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_pinned_directory_retains_identity_after_native_publication",
+    "status": "passed",
+    "seconds": 0.031
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_native_timestamp_and_alternate_stream_detection",
+    "status": "passed",
+    "seconds": 0.015
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_actual_public_acl_is_detected_then_hardened",
+    "status": "passed",
+    "seconds": 0.029
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_local_facade_operation_identity_is_stable",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_native_stat_keeps_stdlib_type_and_nanoseconds",
+    "status": "passed",
+    "seconds": 0.015
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_inherit_only_public_acl_hardened_before_ordinary_children",
+    "status": "passed",
+    "seconds": 0.439
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_directory_namespace_barriers_after_empty_create_rename_and_remove",
+    "status": "passed",
+    "seconds": 0.021
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_owner_rights_resolves_only_to_measured_current_owner[True]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_owner_rights_resolves_only_to_measured_current_owner[False]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_owner_rights_does_not_trust_an_unknown_or_different_owner[None]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_owner_rights_does_not_trust_an_unknown_or_different_owner[another-user]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_owner_rights_does_not_mask_other_public_inheritance",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_stdlib_private_mkdir_and_ordinary_children_are_private",
+    "status": "passed",
+    "seconds": 0.138
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_native_replace_updates_existing_target_without_changing_noreplace",
+    "status": "passed",
+    "seconds": 0.037
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_atomic_private_write_replaces_existing_config",
+    "status": "passed",
+    "seconds": 0.267
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[38]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[5]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[87]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[234]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_native_directory_stream_enumeration_detects_named_data[empty]",
+    "status": "passed",
+    "seconds": 0.015
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_native_directory_stream_enumeration_detects_named_data[populated]",
+    "status": "passed",
+    "seconds": 0.019
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_readonly_open_does_not_require_regular_file",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_nested_directory_publication_and_installed_metadata",
+    "status": "passed",
+    "seconds": 0.196
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_f9_replacement_workflow::test_full_f9_replacement_after_explicit_safety_and_credential_review",
+    "status": "passed",
+    "seconds": null
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_default_service_replacement::test_default_profile_service_replacement_and_later_rollback",
+    "status": "failed",
+    "seconds": null
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_nested_persona_pack_survives_reopen_and_later_rollback",
+    "status": "failed",
+    "seconds": null
+  }
+]

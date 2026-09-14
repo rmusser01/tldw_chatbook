@@ -153,7 +153,7 @@ async def run():
   assert notes['Original source']=='Before replacement for source' and 'Original target' not in notes
   app.chachanotes_db.add_note('After nested pack replacement','New current data must enter the later safety copy.')
   pack=Path(json.loads((Path.home()/'operation.json').read_text())['pack'])
-  files={str(path.relative_to(pack)):hashlib.sha256(path.read_bytes()).hexdigest() for path in pack.rglob('*') if path.is_file()}
+  files={path.relative_to(pack).as_posix():hashlib.sha256(path.read_bytes()).hexdigest() for path in pack.rglob('*') if path.is_file()}
   (Path.home()/'current-persona.json').write_text(json.dumps(files))
   app.exit()
 asyncio.run(run())
