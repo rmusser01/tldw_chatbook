@@ -842,21 +842,9 @@ _CredentialClearModal {
     align: center middle;
 }
 
-/* ADR-161 task 9: the .ds-panel / .ds-approval-card /
-   .ds-destination-header members of these density rules moved to
-   components/_ds_primitives.tcss with the family; these halves style the
-   shell classes that still live here. */
-.density-compact .ds-inspector,
-.density-compact .ds-recovery-callout {
-    padding: 0 1;
-    margin: 0 0 1 0;
-}
-
-.density-comfortable .ds-inspector,
-.density-comfortable .ds-recovery-callout {
-    padding: 1 2;
-    margin: 1 1;
-}
+/* ADR-161 task 9 split these density rules by family; task 10 moved the
+   ds-inspector / ds-recovery-callout halves to components/
+   _ds_primitives.tcss with their classes, so no member remains here. */
 
 .is-active {
     border: round $ds-action-focus;

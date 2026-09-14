@@ -21,9 +21,19 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
-CONSOLE_SCREEN = ROOT / "tldw_chatbook/css/screen_agentic_console.tcss"
+_CSS_ROOT = ROOT / "tldw_chatbook" / "css"
+# ADR-161 task 10: the console-owned chip rules live in the console
+# source sheets (union: each rule exists in exactly one of the pair) and
+# ride the boot bundle.
+CONSOLE_SOURCES = (
+    _CSS_ROOT / "features" / "_console.tcss",
+    _CSS_ROOT / "features" / "_console_panels.tcss",
+)
+BUNDLE = _CSS_ROOT / "tldw_cli_modular.tcss"
+
+
+def _console_sources_text() -> str:
+    return "\n".join(p.read_text(encoding="utf-8") for p in CONSOLE_SOURCES)
 
 
 def _control_state(**overrides) -> ConsoleControlState:
@@ -82,7 +92,10 @@ class _ProductionChipsApp(_ChipsApp):
     """Status-chip harness using the shipped stylesheet and hierarchy."""
 
     CSS = ""
-    CSS_PATH = [str(BUNDLE), str(CONSOLE_SCREEN)]
+    # ADR-161 task 10: the console vocabulary rides the boot bundle via
+    # features/_console{,_panels}.tcss (the always-boot-parsed console
+    # split sheet was dissolved), so the bundle alone is the app-tier set.
+    CSS_PATH = [str(BUNDLE)]
 
 
 @pytest.mark.asyncio
@@ -409,8 +422,16 @@ def _chip_cold_body(css_text: str) -> str:
 
 
 def test_console_chip_cold_css_exists_in_source_and_generated_screen_sheet():
-    """The source rule must be regenerated into dev's split Console sheet."""
-    for css_path in (AGENTIC, CONSOLE_SCREEN):
-        body = _chip_cold_body(css_path.read_text(encoding="utf-8"))
-        assert body, f"{css_path.name}: no .console-chip-cold rule"
+    """The chip rule exists in the console sources and the shipped bundle.
+
+    ADR-161 task 10: the TASK-25812 console split sheet was dissolved --
+    the console vocabulary rides the boot bundle via the console source
+    sheets -- so the pair is (console sources union, bundle).
+    """
+    for label, css_text in (
+        ("console sources", _console_sources_text()),
+        ("bundle", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        body = _chip_cold_body(css_text)
+        assert body, f"{label}: no .console-chip-cold rule"
         assert "$ds-status-info" in body or "color" in body

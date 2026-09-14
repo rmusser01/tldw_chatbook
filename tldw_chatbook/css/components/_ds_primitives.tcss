@@ -4,21 +4,25 @@
  * The token-native primitive containers that grew up inside the
  * agentic-terminal monolith and form the base layer other families
  * compose from: panels, toolbars, field rows, callouts, approval cards,
- * and the destination header. Family reference:
+ * the destination header, and the six app-wide shell primitives task 10
+ * added (inspector, status badge, recovery callout, source role, event
+ * row, shortcut bar). Family reference:
  * backlog/docs/component-patterns.md (ADR-161).
  *
- * ADR-161 task 9: extracted from components/_agentic_terminal.tcss and
- * tokenized on arrival; FIRST among the component sheets so later
- * component/feature sheets override at equal specificity exactly as they
- * did when these rules sat later in the manifest. The move is
- * bundle-internal only (two-track rule): the per-screen
- * screen_agentic_*.tcss sources are untouched, and no local $ds-*
- * fallbacks live here.
+ * ADR-161 task 9: the first six classes were extracted from
+ * components/_agentic_terminal.tcss, tokenized on arrival, and placed
+ * FIRST among the component sheets as the atomic layer. Tie semantics of
+ * that move (task-9 review correction): sheets between this entry and
+ * the old monolith position could NOT override these rules at equal
+ * specificity before the move and now can -- neutral in practice only
+ * because single-definition governance keeps conflicting definitions
+ * from existing, not because ordering is unchanged. The move is
+ * bundle-internal only (two-track rule): no local $ds-* fallbacks live
+ * here.
  *
- * Density variants: the .density-compact/.density-comfortable halves that
- * touch THIS family's classes ride with the family; the ds-inspector /
- * ds-recovery-callout halves of the same comma rules stay in the monolith
- * (those classes are not family members -- task 10 decides their home).
+ * Density variants: every .density-compact/.density-comfortable half
+ * that touches a class in this sheet rides with it here (task 10 moved
+ * the ds-inspector / ds-recovery-callout halves in with their classes).
  * ======================================== */
 
 .ds-destination-header {
@@ -97,12 +101,14 @@
     padding: $ds-space-1 $ds-space-2;
 }
 
-/* ADR-161 task 10: the six leftover shell primitives (.ds-inspector/.ds-status-badge/.ds-recovery-callout/.ds-source-role/.ds-event-row/.ds-shortcut-bar + their density companions) moved in from components/_agentic_terminal.tcss, tokenized; three are composed app-wide (MCP/Evals/Personas/ACP/Schedules/Settings/Skills/Workbench audited 2026-09-14), which is the components home. */
-/* ADR-161 task 9: the ds-primitives family (.ds-panel, .ds-toolbar,
- * .ds-field-row, .ds-info-callout, .ds-approval-card,
- * .ds-destination-header + their .density-* variants) moved to
- * components/_ds_primitives.tcss, tokenized. The remaining ds-* shell
- * classes below stay here until the task-10 feature carve. */
+/* ADR-161 task 10: the six app-wide shell primitives below
+ * (.ds-inspector, .ds-status-badge, .ds-recovery-callout, .ds-source-role,
+ * .ds-event-row, .ds-shortcut-bar) live in this sheet -- moved in
+ * tokenized from components/_agentic_terminal.tcss because three of them
+ * are composed across surfaces (MCP/Evals/Personas/ACP/Schedules/
+ * Settings/Skills/Workbench audited 2026-09-14), which is the components
+ * home. They are not registry classes until a catalog pass documents
+ * them. */
 
 .ds-inspector {
     height: auto;
@@ -153,4 +159,16 @@
     padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-inspector;
     color: $ds-text-muted;
+}
+
+.density-compact .ds-inspector,
+.density-compact .ds-recovery-callout {
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.density-comfortable .ds-inspector,
+.density-comfortable .ds-recovery-callout {
+    padding: $ds-space-1 $ds-space-2;
+    margin: $ds-space-1 $ds-space-1;
 }

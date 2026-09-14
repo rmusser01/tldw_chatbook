@@ -10,11 +10,46 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-# TASK-25812: the console-owned chip rules were split out of the boot
-# bundle into the console screen sheet; the source+generated integrity
-# pair is now (source module, console sheet).
-BUNDLE = ROOT / "tldw_chatbook/css/screen_agentic_console.tcss"
+_CSS_ROOT = ROOT / "tldw_chatbook" / "css"
+# ADR-161 task 10: the console-owned chip rules live in the console
+# source sheets (union: each rule exists in exactly one of the pair) and
+# ride the boot bundle. The source+generated integrity pair is now
+# (console sources, bundle).
+CONSOLE_SOURCES = (
+    _CSS_ROOT / "features" / "_console.tcss",
+    _CSS_ROOT / "features" / "_console_panels.tcss",
+)
+BUNDLE = _CSS_ROOT / "tldw_cli_modular.tcss"
+
+
+def _detok(value: str) -> str:
+    """Resolve the ADR-161 sizing-scale tokens to their literal values."""
+    resolved = value
+    for pattern, repl in (
+        (r"\$ds-space-(\d+)", r"\1"),
+        (r"\$ds-size-(\d+)", r"\1"),
+        (r"\$ds-percent-(\d+)", r"\1%"),
+        (r"\$ds-fr-(\d+)", r"\1fr"),
+        (r"\$ds-width-full", "100%"),
+        (r"\$ds-height-full", "100%"),
+        (r"\$ds-width-fill", "1fr"),
+        (r"\$ds-height-fill", "1fr"),
+    ):
+        resolved = re.sub(pattern, repl, resolved)
+    return resolved
+
+
+def _contract_arms() -> list[tuple[str, str]]:
+    """(label, detokenized text) per integrity arm."""
+    return [
+        (
+            " + ".join(p.name for p in CONSOLE_SOURCES),
+            _detok(
+                "\n".join(p.read_text(encoding="utf-8") for p in CONSOLE_SOURCES)
+            ),
+        ),
+        (BUNDLE.name, _detok(BUNDLE.read_text(encoding="utf-8"))),
+    ]
 
 
 def _chip_focus_body(css_text: str) -> str:
@@ -43,33 +78,33 @@ def test_chip_hit_target_min_width_and_padding_are_widened():
     ``min-width`` raised 7 -> 12 and horizontal ``padding`` raised ``0 1`` ->
     ``0 2`` (source + regenerated bundle) to widen both the box and its
     clickable interior."""
-    for css_path in (AGENTIC, BUNDLE):
-        body = _chip_base_body(css_path.read_text(encoding="utf-8"))
-        assert body, f"{css_path.name}: no base .console-control-chip rule"
+    for label, css_text in _contract_arms():
+        body = _chip_base_body(css_text)
+        assert body, f"{label}: no base .console-control-chip rule"
 
         min_width = re.search(r"\bmin-width\s*:\s*([^;]+);", body)
-        assert min_width, f"{css_path.name}: chip must set min-width"
+        assert min_width, f"{label}: chip must set min-width"
         assert min_width.group(1).strip() == "12", (
-            f"{css_path.name}: chip min-width must be raised to 12"
+            f"{label}: chip min-width must be raised to 12"
         )
 
         padding = re.search(r"\bpadding\s*:\s*([^;]+);", body)
-        assert padding, f"{css_path.name}: chip must set padding"
+        assert padding, f"{label}: chip must set padding"
         assert padding.group(1).strip() == "0 2", (
-            f"{css_path.name}: chip padding must be raised to 0 2"
+            f"{label}: chip padding must be raised to 0 2"
         )
 
 
 def test_focused_chip_suppresses_the_obscuring_outline_but_keeps_the_cue():
     """The chip focus rule drops the outline while keeping the readable cue."""
-    for css_path in (AGENTIC, BUNDLE):
-        body = _chip_focus_body(css_path.read_text(encoding="utf-8"))
-        assert body, f"{css_path.name}: no .console-control-chip:focus rule"
+    for label, css_text in _contract_arms():
+        body = _chip_focus_body(css_text)
+        assert body, f"{label}: no .console-control-chip:focus rule"
 
         outline = re.search(r"\boutline\s*:\s*([^;]+);", body)
-        assert outline, f"{css_path.name}: chip focus must set outline"
+        assert outline, f"{label}: chip focus must set outline"
         assert outline.group(1).strip() == "none", (
-            f"{css_path.name}: chip focus must suppress the box-drawing outline"
+            f"{label}: chip focus must suppress the box-drawing outline"
         )
 
         # The non-obscuring focus cue that replaces it stays intact.

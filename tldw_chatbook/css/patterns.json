@@ -34,7 +34,7 @@
         },
         "settings-input-row": {
           "status": "draft",
-          "note": "ADR-161 task 9 probe: genuinely different from form-row (fixed height 1 + min-height 1 + margin 0 vs auto height + bottom stack margin). Settings-screen-only consumer set (settings_screen + settings_* panels) -- STAYS in components/_agentic_terminal.tcss (rides the lazy settings screen sheet) for the task-10 feature carve per the one-feature-one-sheet rule.",
+          "note": "ADR-161 task 9 probe: genuinely different from form-row (fixed height 1 + min-height 1 + margin 0 vs auto height + bottom stack margin). Settings-screen-only consumer set (settings_screen + settings_* panels). Landed in features/_settings.tcss with the ADR-161 task-10 carve: that sheet is the settings split's source, so the pure rule rides the lazy settings screen sheet exactly as before.",
           "owning_sheet": "features/_settings.tcss"
         },
         "settings-select-row": {
