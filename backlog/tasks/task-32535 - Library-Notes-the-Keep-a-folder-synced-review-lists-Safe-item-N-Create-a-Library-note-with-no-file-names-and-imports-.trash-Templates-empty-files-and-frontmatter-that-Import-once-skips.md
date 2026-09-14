@@ -29,11 +29,11 @@ Critique #3 (dev 5fd502dbac), both assessors, persona Alex (Obsidian sync) and J
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each sync review row names the file path, the effect and the destination folder, using the Import once row grammar (path · what will happen · where)
-- [ ] #2 Groups carry per-group counts and a uniform run collapses to one summary row with a disclosure, as the Import once review does
-- [ ] #3 The Obsidian toggle (skip .obsidian/.trash/Templates, frontmatter → title and keywords; the frontmatter block stays byte-exact in the synced note body — controller ruling, wave 4: lasting sync is bidirectional and UPDATE_FILE writes the note body back to disk, so stripping it would delete the user's Obsidian properties on the next Chatbook edit; Folder files keeps the block the same way, task-32264) is offered default-on for a vault in the sync setup, and empty or whitespace-only files are skipped with a reason
+- [x] #1 Each sync review row names the file path, the effect and the destination folder, using the Import once row grammar (path · what will happen · where)
+- [x] #2 Groups carry per-group counts and a uniform run collapses to one summary row with a disclosure, as the Import once review does
+- [x] #3 The Obsidian toggle (skip .obsidian/.trash/Templates, frontmatter → title and keywords; the frontmatter block stays byte-exact in the synced note body — controller ruling, wave 4: lasting sync is bidirectional and UPDATE_FILE writes the note body back to disk, so stripping it would delete the user's Obsidian properties on the next Chatbook edit; Folder files keeps the block the same way, task-32264) is offered default-on for a vault in the sync setup, and empty or whitespace-only files are skipped with a reason
 - [ ] #4 Synced notes keep the vault's folder structure under the sync-managed folder — NOT DELIVERED, blocked in the folder layer and reverted (wave 4): `note_folders` refuses a manual child of any subtree that already holds a managed placement (`_require_manual_folder_subtree`, reason `sync_managed_folder`), so only the first operation's folder can be created; and a subfolder that was created then reads as managed-owned, which the sync authority's verify path rejects as `folder_authority_changed` on the next run — the tree would collapse back to flat on the following sync. Both refusals reproduced against the live profile's database. Sync needs its own folder-creation door (a sync-owned create that the manual guard does not apply to) before this AC can be met; controller decision requested
-- [ ] #5 notes.md states what differs between Import once and Keep a folder synced on the same folder, or that nothing does; stamp updated
+- [x] #5 notes.md states what differs between Import once and Keep a folder synced on the same folder, or that nothing does; stamp updated
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,3 +45,85 @@ Critique #3 (dev 5fd502dbac), both assessors, persona Alex (Obsidian sync) and J
 4. Obsidian pass: NotesSyncRootSetup.obsidian_mode persisted as an obsidian_mode:<root_id> store setting; reconciler item_skips; setup checkbox; executor CREATE_NOTE keeps the vault folder chain under the root folder and lifts title/keywords
 5. GREEN + live captures at 235x52 and 100x30; guide notes.md updated and stamped
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Four of the five ACs are delivered and live-verified at 235x52 and 100x30 on a
+fresh scratch profile against a 59-file Obsidian vault. **AC#4 is not delivered
+and is blocked below the sync layer — a controller decision is needed.**
+
+**What the review does now (AC#1/#2).** A plan carries only opaque ids, so the
+review had nothing to name a row with. `RuntimeBindingLabel` +
+`NotesSyncRuntime.binding_labels(root_id, binding_ids)` are the seam that
+carries the path; the controller fetches one label per bound row,
+`build_reconciliation_review(labels=...)` fills them in, and the canvas renders
+Import once's grammar under a heading per effect with its count, collapsing a
+uniform run behind a disclosure. Live: "56 safe · 0 need attention · 4 skipped",
+"Create a Library note (56)", "▶ Archive · 45 files · Create a Library note ·
+PowerVault", "Daily/2026-09-06.md · Create a Library note · PowerVault".
+
+Two defects only the live run found, both now pinned on the real route:
+- the canvas patches the configure form in place instead of recomposing, so the
+  Obsidian checkbox (a widget that exists only for a vault) never appeared
+  however correct the state was;
+- a plan orders actions by binding id — a digest — so the vault's 45 Archive
+  files arrived shuffled and `uniform_runs`, which only collapses CONSECUTIVE
+  members, produced no run at all. Each group is now sorted by path.
+
+**The Obsidian pass (AC#3).** `ReconciliationInput.obsidian_mode` drops the
+vault's own root folders from the plan and records `item_skips` with Import
+once's own reason table (now public — one source of truth). An empty or
+whitespace-only file is skipped whatever the toggle says, because Import once
+refuses an empty source in any folder. The frontmatter lift reuses Import
+once's parser: `title` and `tags`/`aliases` become the note's title and
+keywords while the block stays byte-exact in the body (controller ruling:
+`UPDATE_FILE` writes the body back to disk).
+
+The flag is NOT persisted. `notes_sync_store_settings` CHECK-constrains
+`setting_key` to two literal keys, so the store-setting approach a previous
+implementer took raised `IntegrityError` on every activation (and hung one
+path for 300 s); persisting there needs a device-schema version and a table
+rebuild, because the schema module byte-compares each table's DDL. It is
+resolved per observation from the vault marker the discovery walk already
+reports — no extra filesystem read, and a folder that stops being a vault stops
+being treated as one. Ceiling: a user who declines the toggle at setup gets the
+pass back after a restart; the pass only ever leaves NEVER-BOUND files alone,
+so nothing already synced changes.
+
+**AC#4 — blocked, reverted whole.** Live activation ended "⚠ Partial ·
+Activation needs attention" with `folder_mutation_failed` after three notes.
+Reproduced against the live profile's own database:
+`note_folders.create_folder` refuses a manual child of a subtree that already
+holds a managed placement (`_require_manual_folder_subtree`, reason
+`sync_managed_folder`), so only the first operation can create its folder; and
+the folder that did get made then reads `has_managed_folder_ownership`, which
+the authority's verify path rejects as `folder_authority_changed` — on the next
+run even the existing folder stops resolving and the placements collapse back
+to the root. A half-nested tree that flattens itself on the next sync is worse
+than the flat tree the critique filed, so the chain was reverted whole
+(`_derived_folder_id`, `_sync_folder_id`, `ensure_sync_subfolder`,
+`active_binding_placements`). The runtime pin now holds the flat placement so
+no half version can ship, the review's destination says the root folder for
+every row rather than promising a folder that is never created, and the guide
+states the difference. Sync needs a folder-creation door of its own (a
+sync-owned create the manual guard does not apply to) before this AC can be
+met.
+
+**Files.** `Notes/notes_sync_runtime.py`, `notes_sync_reconciler.py`,
+`notes_sync_executor.py`, `notes_sync_authority.py`, `notes_scope_service.py`,
+`note_import_discovery.py`; `Library/library_notes_lasting_sync_state.py`;
+`UI/Library_Modules/library_notes_sync_controller.py`;
+`Widgets/Library/library_notes_add_from_files_canvas.py`,
+`library_note_import_canvas.py` (three helpers made public, old names aliased);
+`Docs/User_Guide/library/notes.md`; pins in `Tests/UI/test_library_notes_w4_sync_review.py`
+(new), `Tests/Notes/test_notes_sync_{runtime,reconciler,executor}.py`,
+`Tests/Library/test_library_notes_lasting_sync_state.py`.
+
+Tests vs a detached `origin/dev` worktree: Notes sync suites 1073 passed /
+1 failed vs 1069 / 1; Library-UI suites 255 / 1 vs 245 / 1. Both failures are
+the same pre-existing names on dev
+(`test_legacy_sync_config_is_read_only_and_only_the_migrator_reads_it`,
+`test_database_notes_import_once_journey_is_painted_focused_and_retained[size1]`).
+Captures under `wave4-caps/sync-review/`. `./scripts/preflight.sh` green.
+<!-- SECTION:NOTES:END -->
