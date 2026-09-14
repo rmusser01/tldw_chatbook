@@ -290,6 +290,13 @@ async def test_sync_setup_offers_the_obsidian_toggle_on_for_a_vault(
         toggle = app.query_one("#notes-sync-obsidian", Checkbox)
         assert toggle.value is True
         assert str(toggle.label) == "Obsidian vault"
+        # The choice is not stored (durability needs a device-schema version),
+        # so the copy beside it may not imply that turning it off sticks.
+        blurb = [
+            str(item.renderable)
+            for item in app.query(".destination-purpose").results(Static)
+        ]
+        assert any("lasts until you quit Chatbook" in text for text in blurb), blurb
 
     controller.set_setup("obsidian_mode", "off")
     await controller.check_setup()

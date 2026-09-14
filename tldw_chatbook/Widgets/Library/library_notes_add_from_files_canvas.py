@@ -384,7 +384,9 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 )
                 yield Static(
                     "Skips .obsidian/, .trash/ and Templates/, and empty files. "
-                    "Note properties become the title and keywords and stay in the note.",
+                    "Note properties become the title and keywords and stay in "
+                    "the note. Turning it off lasts until you quit Chatbook: a "
+                    "vault is offered it again, on, on the next start.",
                     classes="destination-purpose",
                     markup=False,
                 )

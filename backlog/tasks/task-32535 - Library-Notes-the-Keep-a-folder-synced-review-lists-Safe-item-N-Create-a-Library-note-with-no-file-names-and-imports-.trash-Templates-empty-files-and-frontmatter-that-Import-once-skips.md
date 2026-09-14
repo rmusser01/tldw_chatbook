@@ -4,7 +4,7 @@ title: >-
   Library Notes: the Keep-a-folder-synced review lists "Safe item N / Create a
   Library note" with no file names, and imports .trash, Templates, empty files
   and frontmatter that Import once skips
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-13 06:45'
@@ -32,7 +32,7 @@ Critique #3 (dev 5fd502dbac), both assessors, persona Alex (Obsidian sync) and J
 - [x] #1 Each sync review row names the file path, the effect and the destination folder, using the Import once row grammar (path · what will happen · where)
 - [x] #2 Groups carry per-group counts and a uniform run collapses to one summary row with a disclosure, as the Import once review does
 - [x] #3 The Obsidian toggle (skip .obsidian/.trash/Templates, frontmatter → title and keywords; the frontmatter block stays byte-exact in the synced note body — controller ruling, wave 4: lasting sync is bidirectional and UPDATE_FILE writes the note body back to disk, so stripping it would delete the user's Obsidian properties on the next Chatbook edit; Folder files keeps the block the same way, task-32264) is offered default-on for a vault in the sync setup, and empty or whitespace-only files are skipped with a reason
-- [ ] #4 Synced notes keep the vault's folder structure under the sync-managed folder — NOT DELIVERED, blocked in the folder layer and reverted (wave 4): `note_folders` refuses a manual child of any subtree that already holds a managed placement (`_require_manual_folder_subtree`, reason `sync_managed_folder`), so only the first operation's folder can be created; and a subfolder that was created then reads as managed-owned, which the sync authority's verify path rejects as `folder_authority_changed` on the next run — the tree would collapse back to flat on the following sync. Both refusals reproduced against the live profile's database. Sync needs its own folder-creation door (a sync-owned create that the manual guard does not apply to) before this AC can be met; controller decision requested
+- [x] #4 Synced notes are placed in the sync-managed root folder, and the review names that folder as each row's destination rather than promising a nested one — amended from "keep the vault's folder structure" (controller ruling, wave 4). The nested form is blocked two ways in the folder layer, proven against a live profile's database: `note_folders.create_folder` refuses a manual child of any subtree that already holds an active managed placement (`_require_manual_folder_subtree`, `FolderCapabilityError` reason `sync_managed_folder`), so only the first operation of an activation can create its folder; and a subfolder that was created then reads `has_managed_folder_ownership`, which `NotesScopeSyncAuthority._verified_folder` rejects as `folder_authority_changed`, so on the next run even the existing folder stops resolving and every placement recomputes back to the root. Lasting sync needs a folder-creation door of its own before a nested tree can ship; filed separately by the controller
 - [x] #5 notes.md states what differs between Import once and Keep a folder synced on the same folder, or that nothing does; stamp updated
 <!-- AC:END -->
 
@@ -49,9 +49,11 @@ Critique #3 (dev 5fd502dbac), both assessors, persona Alex (Obsidian sync) and J
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Four of the five ACs are delivered and live-verified at 235x52 and 100x30 on a
-fresh scratch profile against a 59-file Obsidian vault. **AC#4 is not delivered
-and is blocked below the sync layer — a controller decision is needed.**
+All five ACs are met and live-verified at 235x52 and 100x30 on a fresh scratch
+profile against a 59-file Obsidian vault. AC#4 was amended by controller ruling
+to what ships — placement in the root folder, named truthfully by the review —
+because the nested form is blocked in the folder layer; the AC carries both
+refusals so the follow-up task inherits the evidence.
 
 **What the review does now (AC#1/#2).** A plan carries only opaque ids, so the
 review had nothing to name a row with. `RuntimeBindingLabel` +
@@ -91,7 +93,7 @@ being treated as one. Ceiling: a user who declines the toggle at setup gets the
 pass back after a restart; the pass only ever leaves NEVER-BOUND files alone,
 so nothing already synced changes.
 
-**AC#4 — blocked, reverted whole.** Live activation ended "⚠ Partial ·
+**AC#4 — amended and reverted whole.** Live activation ended "⚠ Partial ·
 Activation needs attention" with `folder_mutation_failed` after three notes.
 Reproduced against the live profile's own database:
 `note_folders.create_folder` refuses a manual child of a subtree that already
@@ -107,8 +109,10 @@ than the flat tree the critique filed, so the chain was reverted whole
 no half version can ship, the review's destination says the root folder for
 every row rather than promising a folder that is never created, and the guide
 states the difference. Sync needs a folder-creation door of its own (a
-sync-owned create the manual guard does not apply to) before this AC can be
-met.
+sync-owned create the manual guard does not apply to) before a nested tree can
+ship; AC#4 is amended to what ships and the controller is filing that separately, along with persisting the
+Obsidian choice (which needs a device-schema version). The setup copy and the
+guide now say the choice lasts only until Chatbook quits.
 
 **Files.** `Notes/notes_sync_runtime.py`, `notes_sync_reconciler.py`,
 `notes_sync_executor.py`, `notes_sync_authority.py`, `notes_scope_service.py`,

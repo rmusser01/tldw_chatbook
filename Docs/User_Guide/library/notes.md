@@ -813,7 +813,11 @@ With it on:
 Keep a folder synced offers the same **Obsidian vault** toggle, default-on,
 once the folder you chose holds an `.obsidian/` directory — see "Import once
 vs Keep a folder synced on the same folder" below for the one thing the two
-paths do differently with it.
+paths do differently with it. There, turning the toggle **off** lasts only
+until you quit Chatbook: the choice is not stored, so a vault is offered the
+toggle again, on, on the next start, and a later check of that root skips the
+three folders again. Nothing already synced changes when it comes back on —
+the pass only ever leaves files the sync has never taken alone.
 
 Turn the toggle off to import the vault exactly as any other folder — every
 directory walked, frontmatter left in the body, links left as text. The config
@@ -886,7 +890,8 @@ stayed as text and are not counted.
 Run over the same Obsidian vault, the two paths now skip the same files for
 the same reasons: `.obsidian/`, `.trash/` and `Templates/` while the
 **Obsidian vault** toggle is on, and an empty or whitespace-only file
-whatever the toggle says. Both read the frontmatter, so `title` becomes the
+whatever the toggle says. (Keep a folder synced does not remember the toggle
+across a restart — see "Obsidian vaults" above.) Both read the frontmatter, so `title` becomes the
 note's title and `tags`/`aliases` become its keywords.
 
 Two things still differ:
