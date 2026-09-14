@@ -1930,16 +1930,37 @@ Select.-textual-compact:focus > SelectCurrent {
 }
 
 /* ADR-161 task 8b: the `NavigationButton.active` / `:focus` /
-   `.active:focus` rules that used to sit here were dead: they were moved
-   here (TASK-16811) from the DEFAULT_CSS of the base_components
-   NavigationButton deleted with Widgets/base_components.py in ADR-161
-   task 2. The surviving UI/Navigation/main_navigation.py NavigationButton
-   shares the CSS type name but never receives an `active` class (only
-   `is-active`) and always carries `nav-button`, whose scoped BUNDLED_CSS
-   rules (`MainNavigationBar .nav-button:focus` etc.) outrank a bare type
-   selector on every property those rules set -- probe-verified on the
-   real mounted bar: focused plain and is-active+focused buttons computed
-   byte-identical before and after the deletion. */
+   `.active:focus` rules that used to sit here were deleted as dead (fix
+   round 1: the deletion is safe, and this comment now states the REAL
+   mechanism -- the original "the scoped bar rules outrank the type
+   selector" rationale was experimentally disproved and is wrong in
+   direction). They had been moved here (TASK-16811) from the DEFAULT_CSS
+   of the base_components NavigationButton deleted with
+   Widgets/base_components.py in ADR-161 task 2. The surviving
+   UI/Navigation/main_navigation.py NavigationButton shares the CSS type
+   name, and the rules were dead against it for two independent reasons:
+
+   1. It NEVER receives an `active` class (only `is-active`), so
+      `NavigationButton.active` / `.active:focus` matched nothing live.
+   2. Value-identity for `NavigationButton:focus`: its declarations are
+      identical to the app-tier `Button:focus` / `Button:hover:focus`
+      rules in components/_buttons.tcss (background: $ds-focus-bg;
+      color: $ds-focus-fg; text-style: bold underline; outline: none),
+      and every NavigationButton is a Button -- deleting a same-value
+      duplicate cannot change computed styles.
+
+   WARNING (why nobody should "restore" these rules on an out-ranking
+   belief): tier beats specificity in Textual -- this bundle (App.CSS_PATH)
+   outranks widget-default-tier sources regardless of specificity or
+   `!important`, exactly as the task-3200 comment above and
+   main_navigation.py's own tier note document. The bar's scoped
+   `.nav-button:focus` rules are lifted BUNDLED_CSS, i.e. widget-defaults
+   tier, so they could NEVER neutralize an app-tier type selector; an
+   app-tier `NavigationButton:focus` rule here would win every shared
+   property against them (verified: re-inserting the deleted rule's shape
+   with a red background at this tier paints red). Probe evidence for the
+   deletion itself: focused plain and is-active+focused buttons on the
+   real mounted bar computed byte-identical before and after. */
 
 /* ===== MODULE: components/_change_review.tcss ===== */
 /* Agent Change Review screen (TASK-1973). A pushed overlay: header with the

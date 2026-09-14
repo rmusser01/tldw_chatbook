@@ -451,16 +451,26 @@ def compose_sidebar(self):
 - `nav-button` — destination button in the main navigation strip; owning
   sheet `components/_navigation.tcss` (per-class override — the
   `.nav-button-clip-ghost` scroll-edge override lives there; base geometry
-  and the focus/active states come from `MainNavigationBar`'s scoped
-  `BUNDLED_CSS` rules, `.nav-button:focus` / `.nav-button.is-active`,
-  which migrate per the BUNDLED_CSS rule). The TASK-16811
-  `NavigationButton.active`/`:focus` type-selector rules that sat in the
-  owning sheet were deleted as dead in ADR-161 task 8b: they were moved
-  there from the DEFAULT_CSS of the base_components NavigationButton that
-  task 2 deleted, and the surviving `UI/Navigation/main_navigation.py`
-  NavigationButton (same CSS type name) never receives an `active` class
-  and carries the higher-specificity scoped rules for every property they
-  set — probe-verified computed-identical on the mounted bar.
+  and resting chrome come from `MainNavigationBar`'s scoped `BUNDLED_CSS`
+  rules, `.nav-button` / `:hover` / `.is-active`, which migrate per the
+  BUNDLED_CSS rule). The TASK-16811 `NavigationButton.active`/`:focus`
+  type-selector rules that sat in the owning sheet were deleted as dead in
+  ADR-161 task 8b, for two independent reasons (fix round 1 corrected the
+  rationale): the surviving `UI/Navigation/main_navigation.py`
+  NavigationButton (same CSS type name as the deleted base_components
+  widget those rules came with) never receives an `active` class (only
+  `is-active`), so `.active`/`.active:focus` matched nothing; and the
+  `:focus` rule's declarations were value-identical to the app-tier
+  `Button:focus` / `Button:hover:focus` contract in
+  `components/_buttons.tcss`, which matches every NavigationButton —
+  deleting a same-value duplicate cannot change computed styles
+  (probe-verified computed-identical on the mounted bar). Do NOT restore
+  the rules on a "scoped rules out-rank the type selector" belief: tier
+  beats specificity in Textual — app-CSS (`CSS_PATH`) sources beat
+  widget-default-tier sources regardless of specificity, so the bar's
+  lifted-BUNDLED_CSS scoped rules can never neutralize an app-tier type
+  selector (experimentally confirmed by re-inserting the rule's shape with
+  a red background at app tier: it paints).
 
 **States.** §2.7 for the interactive classes (buttons take the Button type
 contract; `sidebar-section-collapsible` carries the `:focus-within` recolour).
