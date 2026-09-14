@@ -13918,3 +13918,19 @@ again without being edited.
 - Assert on the mounted regions, not on the string you passed in: the instrument
   that found the first defect live was `region.right > canvas.region.right`, and
   the one that found the second was a name-set diff, not a pass/fail count.
+
+**And a third incident in the same group, for the same discipline.** task-32557's
+first fix made a width-shaped widget decide its shape from its OWN measured width
+instead of the width the screen had resolved for it. Instrumenting `on_resize`
+over one 60 → 170 → 60 round trip logged widths of 110, 106, 46, 48, 68, 40, **1**
+and 72 — a resize delivers a run of MID-LAYOUT numbers, and deciding anything from
+them recomposed the widget on transients. A widget's own `region.width` is the
+truth about what it can PAINT this instant; it is not a stable input to a policy
+decision. Take the settled number from whoever computed the layout.
+
+The pin for that fix also had to be written twice: the first version poked the
+canvas's `styles.width` directly and **passed with the fix disabled**, because in
+that harness the canvas had never been told a pane width at all and fell back to
+measuring itself — not the state the defect lives in. Always run a would-be
+regression pin with the fix disabled, not only against unpatched `dev`: a pin that
+never enters the defective state is green for the wrong reason.
