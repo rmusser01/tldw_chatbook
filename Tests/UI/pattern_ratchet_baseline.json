@@ -1,6 +1,5 @@
 {
   "dimensions": {
-    "components/_buttons.tcss": 5,
     "components/_dialogs.tcss": 4,
     "components/_lists.tcss": 1,
     "core/_base.tcss": 5,

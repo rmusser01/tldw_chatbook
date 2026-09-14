@@ -3,6 +3,10 @@
  * ======================================== 
  * All button variants and states
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* Base button style with enhanced UX */
 Button {
@@ -53,7 +57,7 @@ Button:disabled:hover {
 }
 
 .sidebar-toggle {
-    width: 1fr;              /* Equal flexible width */
+    width: $ds-width-fill;              /* Equal flexible width */
     height: $ds-control-height;
     /* margin-right: 1; Removed default margin, apply specific below */
     border: none;
@@ -66,7 +70,7 @@ Button:disabled:hover {
 
 .action-button {
     margin-right: $ds-space-inline;
-    min-width: 12;
+    min-width: $ds-size-12;
 }
 
 .action-button.primary {
@@ -75,13 +79,13 @@ Button:disabled:hover {
 }
 
 .action-button.primary.large {
-    min-width: 20;
-    height: 3;
+    min-width: $ds-size-20;
+    height: $ds-size-3;
     text-style: $ds-text-strong;
 }
 
 .button-group {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin: $ds-space-section $ds-space-0;
 }
