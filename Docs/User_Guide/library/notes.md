@@ -351,7 +351,7 @@ both stay closed until you choose to reopen one.
 | "New" | Opens the **New note** view — the same destination as the rail's **New note** row: **Blank note**, or **From a template…**. (**Ctrl+N** skips the view and makes the blank note itself.) Disabled while another notes operation is running. |
 | "New folder" | Creates a folder in the tree beneath the toolbar. Disabled, with the reason in its tooltip, when the selected folder is sync-managed ("This folder is managed by sync; change its sync root instead.") or its branch is stale ("This branch may be out of date; retry it before changing it."). |
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
-| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
+| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. The folder picker opens with nothing selected, and **Choose** does nothing until you pick a folder. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
 | "Restore folder" | Appears after a folder removal, to put it back. |
 | "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). Disabled while a filter is showing, with "Filter results keep their own order. Clear the filter to sort." |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
@@ -1609,3 +1609,22 @@ closed-gate press claimed "Linked to" — the gate is profile-wide, so that was
 the common case, not an edge. The two hand-off FAILURE paths changed in this
 round (the Console seam missing, and the seam raising) cannot be induced from
 the UI — they are pinned by tests, not walked.)*
+
+*Verified against fix/library-notes-w4-crash — 2026-09-14 (task-32533, at
+235x52 and 100x30 on a fresh no-provider scratch profile): a note selected →
+**Add to folder** opens "Add note to folder" with the picker reading its blank
+prompt, and **Choose** with nothing picked leaves the dialog open
+(`wave4-caps/crash/crash-02-add-to-folder-dialog-survives`,
+`crash-03-choose-with-nothing-selected-stays-open`,
+`crash-07-add-to-folder-dialog-100x30`). Opening that dialog used to exit the
+whole app: its blank value was spelled `Select.BLANK`, which is not a `Select`
+attribute on this Textual version, and **Choose** with nothing picked filed the
+note under a folder id of "Select.NULL". An unhandled error inside a panel no
+longer closes the app either — the screen stays open, the failure and where it
+happened go to the log file, and the panel that failed may stop responding or
+disappear until it is reopened. The app surviving is stamped: the same profile
+log holds a real crash that ended the app and, after the fix, the same crash
+carrying its site with the app still logging five minutes later. The error
+notification itself is **not** stamped — no capture in this set shows it
+rendering, and when the pump that raised is the screen it may never render at
+all; the log record is the reliable signal.)*
