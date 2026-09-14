@@ -2868,3 +2868,19 @@ Zero new lines is the pass, not a live app. Cite the grep in the report the way
 captures are cited. A surviving `unhandled_exception` line now carries
 `raise_*`/`site_*` and `widget_type`/`widget_id`, so it names the site in one
 read — but only if someone looks.
+
+**Which frames mean "a pump's own handler raised".** The keep-alive that creates
+this blind spot is deliberately narrow, and getting the frame list right took
+reading `textual/message_pump.py` rather than guessing: `on_idle` handlers are
+invoked inline in `_process_messages_loop` with no frame of their own, and
+`_pre_process` mount failures — the P0's own path, a `Select` that dies while
+mounting — carry `_dispatch_message` *without* `_process_messages_loop`. So all
+three of `_dispatch_message`, `_flush_next_callbacks` and
+`_process_messages_loop` are needed and none is redundant; matching only
+`_dispatch_message` (the first version) was an accident of which path the P0
+happened to hit, and it silently left `call_after_refresh` and `on_idle`
+failures exiting the app. The App's own pump is excluded (`pump is not self`):
+skipping `super()` there breaks the *application* loop with no return code and
+no `panic()`. Evidence for that one is sharper than the reasoning was — with the
+clause removed, the pin does not fail an assertion, it hangs the pilot for 35 s
+and dies on `WaitForScreenTimeout`, which is the silent vanish itself.
