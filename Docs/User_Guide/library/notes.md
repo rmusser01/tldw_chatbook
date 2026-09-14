@@ -1778,7 +1778,7 @@ preceded by "1 folder selected." — `import-01-selected`), and no review row
 opens with "Content:" (`import-16-review-no-content-prefix`, against
 `import-02-copy`). Back cues: `‹ Notes` on the editor at 235x52
 (`import-19-back-cue-editor`), `‹ Back to list` on the editor at 100x30
-(`import-22-files-100x30` shows the same run's 100x30 layout), `‹ Notes` on
+(`import-26-editor-back-cue-100x30`), `‹ Notes` on
 the import stepper (`import-15-…`), `‹ Files` on the Session Git panel
 (`import-21-back-cue-files`) and `‹ Files` on the compact Folder-files work
 pane at 60x24 (`import-25-files-60x24`). At 100x30 the picker still opens on
@@ -1786,5 +1786,6 @@ its field (typed text lands there) and still rails its focused button
 (`import-23-picker-100x30`, `import-24-picker-focus-100x30`). The lasting-sync
 chooser's and the sync-roots list's own `‹ Notes` buttons are pinned in
 `Tests/UI/test_library_notes_w4_import_keyboard.py` rather than walked in this
-set. The profile log carried no `unhandled_exception` or `app_stopping` for
-the whole walk.)*
+set. The profile log carried no `unhandled_exception` across the whole walk;
+its only `app_stopping` lines are the INFO records of the deliberate Ctrl+Q
+quits that ended each session.)*
