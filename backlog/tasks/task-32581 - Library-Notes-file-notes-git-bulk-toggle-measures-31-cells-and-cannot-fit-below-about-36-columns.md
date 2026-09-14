@@ -22,7 +22,7 @@ Recorded by wave-4 group 7, and corrected in the same round: the comment shipped
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The 35-cell comment is corrected to the measured 31 wherever it appears in source or task notes
+- [ ] #1 Every width this control's source comments and task notes state is the measured width (the shipped "35 cells" is 31), and a pin measures it so the next drift fails a test rather than a reader
 - [ ] #2 Below the fit width the panel states that bulk actions need more room rather than silently omitting the control
 - [ ] #3 Measured at 40, 36 and 32 columns with a capture each
 <!-- AC:END -->

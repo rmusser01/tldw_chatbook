@@ -2952,22 +2952,40 @@ directory_is_forgotten_not_recently_deleted`).
 readers the Session Git panel is headed "Prepare session for commit", with
 the scope line "Session paths only · stages complete file state" and the
 keyboard guide "Up/Down Select | Tab Actions | Enter Run | Esc Back". All
-three were true once. All three were rewritten by task-15122 on **2026-08-11**
-and the page was never touched. Between then and the sweep this page received
-**five** "Verified against" stamps — two of them from live walks against a
-real git-backed vault that drove that very panel through trust, staging and a
-real commit. Each stamp was honest: each verified the claim it named. None
-re-read the chapter it sat in. The false sentences survived every one of
-them, and a `grep -rF "Prepare session for commit" tldw_chatbook/` — no hits
-at all — would have found them in one second on any of those five days.
+three were true once. All three were rewritten by commit `67fec3f350`
+(task-15122) on **2026-08-11** and the page was never touched. Between then
+and the sweep this page received **fifteen** "Verified against" stamps,
+across **six** dates. Counted, not remembered: the pre-sweep file carries 17
+stamps and 2 of them predate the rewrite (both 2026-08-07), so 15 fall in the
+window —
+
+```
+git show <pre-sweep-rev>:Docs/User_Guide/library/file-notes.md \
+  | grep -o '^\*Verified against [^(]*— 20[0-9-]*' | sed 's/.*— //' \
+  | sort | uniq -c
+```
+
+**Three** of the fifteen named this panel. Two of those three were live walks
+against a real git-backed vault that drove it end to end —
+`fix/library-notes-w3-pickers-git` (2026-09-11, "keyboard staging and a real
+commit") and `fix/library-notes-wave3-docs` (2026-09-12, "Trust and check
+status → … → committed"). The third, `fix/library-notes-w4-import-kbd`
+(2026-09-14), **captured the panel's own header control** and cited the
+capture — and the false heading is three lines above the control it
+captured. Each stamp was honest: each verified the claim it named. None
+re-read the chapter it sat in. The false sentences survived all fifteen, and
+`grep -rF "Prepare session for commit" tldw_chatbook/` — no hits at all —
+would have found them in one second on any of those six days.
 
 Same sweep, same disease elsewhere: `file-notes.md` described a "Chunking
 Lab | Try selected text" strip under every Library canvas that task-32064 had
 already removed (and said its removal was "tracked as task-32064", which was
-Done); `console.md` said the Get started card has two actions, four
-paragraphs above its own task-32555 stamp naming three. Eight
-authoritative-sounding false guide sentences in one wave, and none of them
-was found by the stamp process.
+Done); `console.md` said the Get started card has two actions, while its own
+task-32555 stamp, in the page's own stamp section, names three. The wave had
+already found eight authoritative-sounding false guide sentences before this
+sweep started; the sweep itself found nine more, on pages that between them
+carried dozens of stamps. None of the seventeen was found by the stamp
+process.
 
 **What to do.**
 
@@ -2976,6 +2994,12 @@ was found by the stamp process.
    every quoted string on a page you are stamping and `grep -rF` each against
    `tldw_chatbook/`; composed lines (f-strings) need the longest literal run.
    Most hits are noise; the misses are the list worth reading.
+   `scripts/check_guide_claim_strings.py <page>` does exactly this and is in
+   the tree — run it before you stamp anything. It prints a read-list and
+   exits 0 on purpose, because a guide legitimately quotes strings no source
+   emits (historical "(Was …)" clauses, composed examples, the reader's own
+   input). Making it a `Tests/Docs/` gate, with those exceptions in a
+   reviewed allowlist, is **task-32589**.
 2. **A stamp should say what was CHECKED, not only what was fixed.** Listing
    the claims that HELD is what makes the next sweep cheaper and what stops a
    reader assuming an unstamped paragraph was looked at. The task-32558
