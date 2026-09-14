@@ -707,11 +707,30 @@ class LibraryNotesSyncController:
         self.refresh_roots(publish=False)
         return f"{failure}. Next: {_ACTION_LABELS.get(next_action, 'Check changes')}."
 
-    def _clear_root_failure(self, root_id: str) -> None:
+    def _clear_root_failure(self, root_id: str) -> bool:
         """Drop a root's refusal overlay once an action on it succeeds."""
 
-        if self._root_failures.pop(root_id, None) is not None:
-            self.refresh_roots(publish=False)
+        if self._root_failures.pop(root_id, None) is None:
+            return False
+        self.refresh_roots(publish=False)
+        return True
+
+    def _restate_root(self, root_id: str) -> None:
+        """Replace a cleared refusal's status line with the row's own truth.
+
+        Fix round 1: pause/resume set no line of their own, so a Resume that
+        cleared "Check failed — folder is paused. Next: Resume." left that
+        sentence standing beside a row reading "✓ Up to date" -- the AC#1
+        contradiction, inverted. No new copy: the line restates the row.
+        """
+
+        row = next((r for r in self._state.roots if r.root_id == root_id), None)
+        if row is None:
+            return
+        self._state = replace(
+            self._state,
+            status_line=f"{row.status_label} · Next: {row.next_action_label}.",
+        )
 
     async def refresh_receipts(self) -> None:
         """Project the newest completed writes across the visible roots.
@@ -1246,6 +1265,8 @@ class LibraryNotesSyncController:
                 ),
                 receipt_line=f"{applied} applied · listed under Receipts",
             )
+        # Fix round 1: an apply that ran supersedes the last refusal too.
+        self._clear_root_failure(root_id)
         self.refresh_roots(publish=False)
         self._publish()
 
@@ -1312,6 +1333,11 @@ class LibraryNotesSyncController:
             return
         if not self._lifecycle_is_current(root_id, epoch):
             return
+        # Fix round 1: `_CHECK_FAILURE_ROW` sends a recovery refusal here, so
+        # this is exactly the route whose success has to drop the overlay --
+        # otherwise the row keeps saying "Next: Resolve recovery" beside a
+        # status line reporting the recovery was reviewed.
+        self._clear_root_failure(root_id)
         self._state = replace(
             self._state,
             phase="roots",
@@ -2134,7 +2160,8 @@ class LibraryNotesSyncController:
         # this root and the last refusal is history -- keeping the overlay
         # left "Next: Resume" on the row beside a status line naming a
         # different action (the live walk's Resume-after-a-failed-Check).
-        self._clear_root_failure(root_id)
+        if self._clear_root_failure(root_id) and result.accepted:
+            self._restate_root(root_id)
         if result.accepted is False:
             self._state = replace(
                 self._state,

@@ -3339,18 +3339,26 @@ def test_every_row_reason_code_has_user_copy() -> None:
     assert set(state._CHECK_FAILURE_ROW) <= set(state._CHECK_REFUSAL_COPY)
 
 
-async def test_a_control_that_runs_clears_the_previous_check_failure() -> None:
+@pytest.mark.parametrize(
+    "route",
+    ("sync_now", "resume_root", "resolve_cleanup", "apply_reviewed"),
+)
+async def test_a_route_that_runs_clears_the_previous_check_failure(route: str) -> None:
     """task-32534 AC#1: the row must not keep naming a superseded next action.
 
-    Live: a failed Check left "Next: Resume" on the row; the Resume that
-    followed returned needs-attention and set its own status line, but the
-    stale overlay kept pointing at Resume beside it.
+    Fix round 1: only `sync_now` and the control path cleared the overlay, so
+    the canonical sequence `_CHECK_FAILURE_ROW` itself prescribes -- Check
+    refuses with `sync_recovery_unresolved`, the row says "Next: Resolve
+    recovery", the user runs it, it succeeds -- left the superseded action on
+    the row beside a status line reporting the recovery was reviewed. Same
+    for an apply.
     """
     runtime = _Runtime()
 
     async def fail(_root_id: str):
-        raise RuntimeError("sync_root_not_active")
+        raise RuntimeError("sync_recovery_unresolved")
 
+    working_sync_now = _Runtime.request_sync_now.__get__(runtime)
     runtime.request_sync_now = fail
     controller = LibraryNotesSyncController(
         runtime=runtime,
