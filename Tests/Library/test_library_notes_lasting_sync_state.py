@@ -728,3 +728,40 @@ def test_item_skips_project_as_skipped_rows_with_reason_copy_and_count() -> None
     assert all("/" not in row.item_id for row in skipped)
     # A per-file skip is not a root skip: it never blocks applying the rest.
     assert review.can_apply is True
+
+
+def test_no_refusal_table_defines_a_key_twice() -> None:
+    """Fix round 1: a duplicate literal key silently replaced shipped copy.
+
+    task-32534 added `root_offline`, `root_unavailable` and
+    `root_lease_unavailable` to `_CHECK_REFUSAL_COPY` without noticing they
+    were already there. Python keeps the LAST literal, so
+    `root_lease_unavailable` lost "Close any other Chatbook window using it"
+    and started sending the reader to a Reconnect that cannot help. The dict
+    object cannot show this -- the duplicate is gone by the time it exists --
+    so the source is what has to be asserted.
+    """
+    import ast
+    import inspect
+    from collections import Counter
+
+    module = ast.parse(inspect.getsource(lasting_state))
+    duplicates = {}
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Dict):
+            continue
+        keys = [k.value for k in node.keys if isinstance(k, ast.Constant)]
+        repeated = sorted(key for key, count in Counter(keys).items() if count > 1)
+        if repeated:
+            duplicates[node.lineno] = repeated
+    assert duplicates == {}, duplicates
+
+
+def test_the_lease_refusal_still_names_the_other_window() -> None:
+    """The copy the duplicate key destroyed. `root_lease_unavailable` is the
+    "another Chatbook holds this folder" case; Reconnect cannot fix that."""
+    copy = lasting_state._CHECK_REFUSAL_COPY["root_lease_unavailable"]
+    assert "Close any other Chatbook window using it" in copy
+    assert lasting_state._CHECK_REFUSAL_COPY["root_unavailable"].startswith(
+        "That folder can't be read right now. Check that it still exists"
+    )

@@ -406,6 +406,42 @@ def _bounded_label(value: str) -> str:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RuntimeReceiptLabel:
+    """Path and title for one binding a completed write refers to.
+
+    task-32534 AC#3. Deliberately NOT :class:`RuntimeBindingLabel`, which is
+    task-32535's review-row type: that one carries the Library folder the
+    reviewed note will land in, and a receipt has no review to read it from.
+    Inventing a folder to satisfy that field would put a guess on the row.
+    """
+
+    binding_id: str
+    relative_path: str
+    note_title: str
+
+    def __repr__(self) -> str:
+        return "RuntimeReceiptLabel(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RuntimeWriteReceipt:
+    """One completed lasting-sync write, labelled for Manage sync folders.
+
+    task-32534 AC#3. ``completed_at`` is epoch nanoseconds; the path and
+    title are display labels, kept out of ``repr`` like every other label.
+    """
+
+    operation_id: str
+    kind: str
+    completed_at: int
+    relative_path: str
+    note_title: str
+
+    def __repr__(self) -> str:
+        return "RuntimeWriteReceipt(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RuntimeConflictHistoryRow:
     """Fresh, bounded display projection for one durable history row."""
 
@@ -562,6 +598,12 @@ class _RuntimeAdapter(Protocol):
         *,
         root_name: str | None = None,
     ) -> tuple[RuntimeBindingLabel, ...]: ...
+
+    async def build_receipt_labels(
+        self,
+        root: NotesSyncRootRecord,
+        binding_ids: tuple[str, ...],
+    ) -> tuple[RuntimeReceiptLabel, ...]: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -959,7 +1001,14 @@ class _ProductionRuntimeAdapter:
         if len(self._bundles) >= _OBSERVATION_BUNDLE_LIMIT:
             raise RuntimeError("observation_capacity_exceeded")
         self._bundles[token] = MappingProxyType(bundle)
-        self._root_signatures[root.root_id] = self._discovery_signature(discovery)
+        # task-32534 AC#4: SEED the watcher's change baseline, never advance
+        # it. This pass used to overwrite it, so a manual Check right after a
+        # disk edit consumed the change -- `changed_root_ids` then saw no
+        # delta, the automatic pass that applies edits never ran, and the
+        # note stayed stale behind a "✓ Up to date" row.
+        self._root_signatures.setdefault(
+            root.root_id, self._discovery_signature(discovery)
+        )
         # TASK-23027: rebuild the reuse cache from this pass's observations,
         # only on success -- a failed pass leaves the previous entries, which
         # stay safe because every entry is revalidated before reuse. The
@@ -1285,6 +1334,46 @@ class _ProductionRuntimeAdapter:
                     relative_path,
                     _bounded_label(title),
                     _destination_folder(root_name),
+                )
+            )
+        return tuple(labels)
+
+    async def build_receipt_labels(
+        self, root: NotesSyncRootRecord, binding_ids: tuple[str, ...]
+    ) -> tuple[RuntimeReceiptLabel, ...]:
+        """Label bindings for completed writes, from the store and the notes.
+
+        task-32534 AC#3. A receipt names a write that already happened, so
+        there is no plan, no observation bundle and no reviewed root to read
+        -- which is exactly what :meth:`build_binding_labels` needs. This
+        reads the binding rows instead, and tolerates a note that has since
+        been deleted rather than refusing the whole root's receipts.
+        """
+
+        bindings = {
+            binding.binding_id: binding
+            for binding in await asyncio.to_thread(
+                self._store.list_bindings, root.root_id
+            )
+        }
+        notes = self._notes(root)
+        labels: list[RuntimeReceiptLabel] = []
+        for binding_id in binding_ids:
+            binding = bindings.get(binding_id)
+            if binding is None:
+                raise RuntimeError("private_label_authority_missing")
+            try:
+                note = await notes.observe(binding.note_id)
+                title = _bounded_label(note.title)
+            except NotesSyncAuthorityError as error:
+                if error.reason_code != "note_missing":
+                    raise
+                title = "(note removed)"
+            labels.append(
+                RuntimeReceiptLabel(
+                    binding_id,
+                    binding.normalized_relative_path,
+                    title,
                 )
             )
         return tuple(labels)
@@ -2339,6 +2428,67 @@ class NotesSyncRuntimeOwner:
                 if callable(release):
                     release(observed_token)
             self._finish_task(root_id, task)
+
+    async def _read_receipt_labels(
+        self, root_id: str, binding_ids: tuple[str, ...]
+    ) -> tuple[RuntimeReceiptLabel, ...]:
+        """Label a root's completed writes without gating on admission.
+
+        task-32534 AC#3 (fix round 1): ``pause_root`` closes a root's
+        admission, so reading its receipts through ``_admit_task`` raised
+        ``root_admission_closed`` and a single paused root blanked the whole
+        Receipts section. This reads only -- ``_register_task`` keeps the
+        store work visible to ``settle()``/shutdown, which is the reason
+        admission gating exists here, without refusing a closed root.
+        """
+
+        self._require_cutover(root_id)
+        task = self._register_task(root_id)
+        try:
+            root = await asyncio.to_thread(self._store.get_root, root_id)
+            if root.root_id != root_id:
+                raise RuntimeError("root_authority_mismatch")
+            return await self._adapter.build_receipt_labels(root, binding_ids)
+        finally:
+            self._finish_task(root_id, task)
+
+    async def write_receipts(
+        self, root_id: str, *, limit: int = 20
+    ) -> tuple[RuntimeWriteReceipt, ...]:
+        """Return one root's newest completed writes, labelled (task-32534 AC#3)."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        completed = await asyncio.to_thread(
+            self._store.list_completed_operations, root_id, limit=limit
+        )
+        binding_ids = tuple(
+            dict.fromkeys(
+                operation.binding_id
+                for operation in completed
+                if operation.binding_id is not None
+            )
+        )
+        labels = {
+            label.binding_id: label
+            for label in (
+                await self._read_receipt_labels(root_id, binding_ids)
+                if binding_ids
+                else ()
+            )
+        }
+        return tuple(
+            RuntimeWriteReceipt(
+                operation.operation_id,
+                operation.kind,
+                operation.completed_at,
+                labels[operation.binding_id].relative_path,
+                labels[operation.binding_id].note_title,
+            )
+            for operation in completed
+            if operation.binding_id in labels
+        )
 
     async def compare_conflict(
         self,
@@ -3481,6 +3631,7 @@ __all__ = [
     "RuntimeConflictHistoryRow",
     "RuntimeConflictLabel",
     "RuntimeConflictReceipt",
+    "RuntimeWriteReceipt",
     "NotesSyncRuntimeOwner",
     "NotesSyncRuntimeSnapshot",
     "build_notes_sync_legacy_migrator",

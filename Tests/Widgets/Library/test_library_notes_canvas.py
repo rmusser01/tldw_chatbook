@@ -346,7 +346,8 @@ async def test_lasting_setup_retained_wrapper_preserves_input_and_pins_action_at
         await pilot.pause()
         assert primary in app.screen._compositor.visible_widgets
         hint = app.query_one("#notes-sync-fold-hint", Static)
-        assert "Additional setup content is scrollable" in str(hint.renderable)
+        # task-32545 AC#3: was "Additional setup content is scrollable."
+        assert "More below — scroll." in str(hint.renderable)
         assert hint in app.screen._compositor.visible_widgets
         assert canvas.region.right <= 60 and canvas.region.bottom <= 20
 

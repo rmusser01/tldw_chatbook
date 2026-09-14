@@ -286,12 +286,14 @@ async def test_receipt_keeps_durable_status_and_back_visible() -> None:
         initial_lasting_sync_snapshot(lasting_available=True),
         phase="receipt",
         status_line="Finished.",
-        receipt_line="1 applied · durable receipt recorded",
+        # task-32545 AC#3: was "1 applied · durable receipt recorded", a string
+        # no producer emits any more -- so the substring below asserted nothing.
+        receipt_line="1 applied · listed under Receipts",
     )
     app = _Host(snapshot)
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
-        assert "durable receipt" in _frame(app)
+        assert "1 applied · listed under Receipts" in _frame(app)
         assert app.query_one("#notes-sync-back", Button)
 
 
@@ -1694,5 +1696,6 @@ async def test_configure_canvas_is_contained_and_initial_focus_is_safe_at_60x20(
         assert region.right <= 60 and region.bottom <= 20
         assert "Keep a folder synced" in _frame(app)
         hint = app.query_one("#notes-sync-fold-hint", Static)
-        assert "Additional setup content is scrollable" in str(hint.renderable)
+        # task-32545 AC#3: was "Additional setup content is scrollable."
+        assert "More below — scroll." in str(hint.renderable)
         assert "above" not in str(hint.renderable).casefold()

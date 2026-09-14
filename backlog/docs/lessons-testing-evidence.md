@@ -13947,6 +13947,49 @@ then assert. Also grep the widget's update method for early `return`s before
 the recompose: each one is a shape the snapshot cannot change, and each is
 invisible to a compose-once test.
 
+## A pin that CONSTRUCTS the state it asserts proves the renderer, never the producer (task-32545, 2026-09-14)
+
+**task-32545, 2026-09-14.** `test_sync_copy_uses_no_engineering_terms` rendered
+the lasting-sync receipt phase from a hand-built snapshot
+(`replace(base, phase="receipt", receipt_line="60 applied · listed under
+Receipts")`) and asserted no engineering terms were painted. It passed. The
+live walk's very first activation then printed "60 applied · durable receipt
+recorded": the copy had been fixed at `apply_reviewed`'s site and missed at
+`activate_root`'s, and the test could never have caught it, because the test
+supplied the string it was checking. Two sibling defects surfaced the same way
+and only live — a row-reason table whose keys a filter upstream could never
+return, and a button set keyed on a status the fix itself rewrites.
+
+**What to do.** When a fix changes a string or a state a PRODUCER computes,
+at least one pin must drive the producer's route (here: `await
+controller.activate_root(...)`, then assert `snapshot.receipt_line`), not
+construct the snapshot. A canvas-level render pin is still worth having for
+layout, but it is evidence about the widget only. Corollary from the same
+task: `git grep` the exact old string across `tldw_chatbook/` after the edit —
+two call sites producing the same line is the normal case, not the odd one.
+
+## A duplicate dict key is a silent overwrite, and only the SOURCE can show it (task-32534, 2026-09-14)
+
+**task-32534 fix round 1, 2026-09-14.** Three reason codes were added to
+`_CHECK_REFUSAL_COPY` after a live walk showed them unclassified. They were
+already defined 60 lines above. Python keeps the last literal, so three shipped
+user-facing strings were replaced — `root_lease_unavailable`, the "another
+Chatbook is holding this folder" case, lost "Close any other Chatbook window
+using it" and began sending the reader to a Reconnect that cannot help. The
+diff read as pure addition, no test pinned the old strings, and a test that
+inspects the dict OBJECT cannot see it: by then the duplicate is gone.
+
+**What to do.** When appending to a keyed table, grep the table for the key
+first — a table long enough to need appending is long enough to hide the key.
+Pin it with an `ast` scan over the module source (`ast.Dict`, count
+`ast.Constant` keys) rather than a per-string assertion, so the guard covers
+every future row instead of the three you happened to notice. Same round, same
+disease in a different organ: a sibling suite asserted `"unavailable" in
+status_line.casefold()` as a proxy for "the line is truthful", so rewording the
+line turned that pin red with no clue why — proxy substring assertions on copy
+decay into tripwires. Assert the sentence, and find these by diffing the
+FAILED-name SET over whole files against a detached `origin/dev`, not by
+running your own new ids.
 
 ## A pane's `content_region.width` is not the width its text wraps at — measure `wrap_width`, and stamp only what you measured
 
