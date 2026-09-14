@@ -234,6 +234,30 @@ class FileNotesService:
         if replica is not None:
             replica.close()
 
+    def _forget_hidden_tombstones(self) -> str | None:
+        """Drop tombstones naming paths under a dot-directory (task-32552).
+
+        The reconcile below forgets a hidden file the walk stops reporting,
+        but only while the replica still lists it as active: ``old_files`` is
+        ``list_active_files``, so a row a build without the dot-directory
+        rule had already tombstoned is never revisited and "Recently deleted"
+        names it forever -- for a file that is still on disk, which Restore
+        would then refuse as "exists". Both read seams sweep those rows.
+
+        Returns:
+            A replica warning, or ``None``.
+        """
+        replica = self._replica
+        if replica is None:
+            return None
+        try:
+            for relative_path in replica.list_deleted(self.root_key):
+                if _under_hidden_directory(relative_path):
+                    replica.forget_file(self.root_key, relative_path)
+        except Exception as error:
+            return _replica_warning(error)
+        return None
+
     @_serialized
     def scan(
         self,
@@ -262,7 +286,7 @@ class FileNotesService:
             return ScanResult(status="offline", offline=True)
 
         entries: list[FileNoteEntry] = []
-        warning: str | None = None
+        warning: str | None = self._forget_hidden_tombstones()
         observed, uncertain_paths, _ = self._walk_candidates(
             should_cancel=should_cancel,
             on_progress=on_progress,
@@ -1012,7 +1036,7 @@ class FileNotesService:
             return ReconcileResult(status="offline", offline=True)
 
         old_files: dict[str, ReplicaFileInfo] | None = None
-        warning: str | None = None
+        warning: str | None = self._forget_hidden_tombstones()
         if self._replica is not None:
             try:
                 old_files = {
@@ -1020,9 +1044,9 @@ class FileNotesService:
                     for item in self._replica.list_active_files(self.root_key)
                 }
             except Exception as error:
-                warning = _replica_warning(error)
+                warning = _merge_warnings(warning, _replica_warning(error))
         else:
-            warning = "Replica unavailable"
+            warning = _merge_warnings(warning, "Replica unavailable")
 
         observed, uncertain_paths, had_walk_error = self._walk_candidates()
         pending_move_entries: dict[str, OpenedFileNote] = {}

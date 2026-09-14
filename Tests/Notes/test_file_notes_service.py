@@ -323,6 +323,44 @@ def test_a_file_indexed_under_a_dot_directory_is_forgotten_not_recently_deleted(
     assert replica.search(service.root_key, "idea") == []
 
 
+def test_a_tombstone_left_under_a_dot_directory_is_swept_on_the_next_scan(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32552 AC#2, the other half of the upgrade path.
+
+    Forgetting a hidden file at reconcile only covers rows the walk still
+    reported last time: ``old_files`` is ``list_active_files``, so a row
+    already tombstoned by a build without the dot-directory rule is never
+    revisited, and "Recently deleted" names it forever. The live wave-4
+    profile was in exactly that state (``.trash/Old idea.md`` tombstoned at
+    15:25Z on 2026-09-13). Both read seams sweep it.
+    """
+    root = tmp_path / "vault"
+    (root / ".trash").mkdir(parents=True)
+    (root / ".trash" / "Old idea.md").write_text("old idea body", encoding="utf-8")
+    (root / "visible.md").write_text("visible", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    raw = b"old idea body"
+    replica.upsert_file(
+        service.root_key,
+        ".trash/Old idea.md",
+        raw,
+        content_hash=_digest(raw),
+        decoded_text="old idea body",
+        size=len(raw),
+        mtime_ns=0,
+    )
+    assert replica.mark_deleted(service.root_key, ".trash/Old idea.md")
+    assert replica.list_deleted(service.root_key) == [".trash/Old idea.md"]
+
+    assert service.scan().status == "ok"
+
+    assert replica.list_deleted(service.root_key) == []
+    assert replica.get_restore_bytes(service.root_key, ".trash/Old idea.md") is None
+    assert service.reconcile().deleted == ()
+
+
 def test_service_uses_shared_path_confinement(
     tmp_path: Path,
     replica: FileNotesReplica,
