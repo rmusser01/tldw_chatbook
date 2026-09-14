@@ -82,4 +82,9 @@ Modified: `tldw_chatbook/UI/Screens/library_screen.py`, the pin file,
 needed the new shared helper bound, the same way it already binds
 `_notes_footer_tier` and `_library_focus_enter_label`),
 `Docs/User_Guide/library/notes.md`.
+**Review round (Minor 5): the stamp now claims only what the captures show.**
+It listed all six chips and said "at both sizes"; each saved capture is the
+LAST stop of the Tab walk ("enter use in Console"), at 235x52 and at 100x30.
+The stamp says so and names
+`::test_preview_tier_names_every_tab_stop` for the other five stops.
 <!-- SECTION:NOTES:END -->

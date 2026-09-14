@@ -91,4 +91,26 @@ and one Enter restored the note.
 Modified: `tldw_chatbook/UI/Screens/library_screen.py`,
 `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`,
 `tldw_chatbook/UI/Library_Modules/canvas_sync.py`, the pin file, the guide.
+**Review round (Minors 1-3): the seam COMPOSES, it does not skip.** The first
+shape of (a) skipped the default follow-up whenever a callback was already
+pending, which also dropped task-32106's Items-pane scroll restore (the notes
+editor-owned default, which touches no focus at all) and — since only
+`recompose()` clears `_post_recompose_callback` — let a pending callback that
+never got a recompose suppress every later default for that canvas.
+`PostRecomposeCallback.queue_default_after_recompose` now folds the default in
+AHEAD of whatever is pending, the same way `preserve_same_id_focus_after_
+recompose` already did, so the default's non-focus work runs and the pending
+intent still runs last and wins on focus. The media branch's local skip
+(`canvas_sync.py:885`) was the same rule spelled twice and is deleted; its
+restore no-ops unless focus is missing or on a pane grip, and
+`test_media_focus_restore_never_clobbers_a_queued_follow_up` still passes at
+both sizes. Pinned by `::test_a_pending_follow_up_does_not_cost_the_list_its_
+scroll_offset` and `::test_a_stuck_pending_callback_does_not_suppress_later_
+defaults`, both RED against the skip shape.
+
+**AC#1's second branch is unreachable.** "If the receipt is absent, focus the
+next list row" cannot happen: the focus intent rides the branch guarded by
+`view == "list" and delete_receipt is not None`, so a successful delete always
+has a receipt. Recorded rather than implemented — code for a state production
+cannot produce is untestable by construction.
 <!-- SECTION:NOTES:END -->
