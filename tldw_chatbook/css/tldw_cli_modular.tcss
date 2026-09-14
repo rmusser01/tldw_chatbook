@@ -346,6 +346,9 @@ $ds-new-ingest-card-desc-leading: 1.2;
 /* Dead web-CSS residue in the same sheet (::-webkit-scrollbar) -- tokenized
    for the zero-literal ratchet, not an endorsement. */
 $ds-new-ingest-scrollbar-gutter: 6px;
+/* task 11 (ADR-161 §3.10): the Conversations character-editor AI-generate
+   button's narrow fill (single consumer). */
+$ds-conversations-ai-generate-share: 12%;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
  * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
@@ -12122,21 +12125,26 @@ WatchlistsOperationCard {
  * Conversations, Characters, and Prompts tab
  * Single sidebar design following best practices
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales + named
+   $ds-conversations-ai-generate-share), transcribed value-identically from
+   the raw literals; comments stay load-bearing. */
+
 
 /* --- Main container layout --- */
 #conversations_characters_prompts-window {
     layout: horizontal;
-    height: 100%;
+    height: $ds-height-full;
 }
 
 /* --- Sidebar Styling (Single, unified sidebar) --- */
 .ccp-sidebar {
-    width: 30%;
-    min-width: 25;
-    max-width: 40%;
-    height: 100%;
+    width: $ds-percent-30;
+    min-width: $ds-size-25;
+    max-width: $ds-percent-40;
+    height: $ds-height-full;
     background: $boost;
-    padding: 1;
+    padding: $ds-space-1;
     border-right: thick $background-darken-1;
     overflow-y: auto;
     overflow-x: hidden;
@@ -12144,10 +12152,10 @@ WatchlistsOperationCard {
 
 /* Collapsed state for sidebar */
 .ccp-sidebar.collapsed {
-    width: 0 !important;
-    min-width: 0 !important;
+    width: $ds-size-0 !important;
+    min-width: $ds-size-0 !important;
     border-right: none !important;
-    padding: 0 !important;
+    padding: $ds-space-0 !important;
     overflow: hidden !important;
     display: none !important;
 }
@@ -12155,11 +12163,11 @@ WatchlistsOperationCard {
 
 /* --- View Areas within Content --- */
 .ccp-view-area {
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* Hidden class for view switching */
@@ -12174,44 +12182,44 @@ WatchlistsOperationCard {
 /* --- Title Styling --- */
 .pane-title {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     text-align: center;
-    width: 100%;
+    width: $ds-width-full;
     background: $primary-background-darken-1;
-    padding: 0 1;
-    height: 3;
+    padding: $ds-space-0 $ds-space-1;
+    height: $ds-size-3;
 }
 
 .sidebar-title {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     text-align: center;
     color: $primary;
 }
 
 /* --- Sidebar Components --- */
 .sidebar-label {
-    margin-top: 1;
-    margin-bottom: 0;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-0;
     color: $text-muted;
 }
 
 .sidebar-input {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
     border: solid $primary-lighten-2;
     border-bottom: solid $primary-lighten-2;
 }
 
 .sidebar-textarea {
-    width: 100%;
-    height: 5;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    height: $ds-size-5;
+    margin-bottom: $ds-space-1;
     border: round $surface;
 }
 
 .sidebar-textarea.small {
-    height: 3;
+    height: $ds-size-3;
 }
 
 /* ADR-161 task 6: the bare .sidebar-button/.sidebar-listview duplicates
@@ -12219,8 +12227,8 @@ WatchlistsOperationCard {
  * layout/_sidebars.tcss (same computed values); only feature-specific
  * compounds remain in this sheet. */
 .sidebar-button.small {
-    width: 45%;
-    margin-right: 1;
+    width: $ds-percent-45;
+    margin-right: $ds-space-1;
 }
 
 .sidebar-button.danger {
@@ -12234,73 +12242,73 @@ WatchlistsOperationCard {
 /* Export buttons container */
 .export-buttons {
     layout: horizontal;
-    height: 3;
-    width: 100%;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 .export-buttons Button {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 .export-buttons Button:last-child {
-    margin-right: 0;
+    margin-right: $ds-space-0;
 }
 
 /* --- Editor Styling --- */
 .editor-scroll {
-    width: 100%;
-    height: 1fr;
+    width: $ds-width-full;
+    height: $ds-height-fill;
     overflow-y: auto;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 .field-value {
-    margin-bottom: 1;
-    padding: 0 1;
+    margin-bottom: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .field-textarea {
-    width: 100%;
-    height: 8;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    height: $ds-size-8;
+    margin-bottom: $ds-space-1;
     border: round $surface;
 }
 
 .editor-input {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 .editor-textarea {
-    width: 100%;
-    height: 10;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    height: $ds-size-10;
+    margin-bottom: $ds-space-1;
     border: round $surface;
 }
 
 .editor-textarea.small {
-    height: 5;
+    height: $ds-size-5;
 }
 
 /* AI Generation buttons */
 .field-with-ai {
     layout: horizontal;
     height: auto;
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 .field-with-ai TextArea {
-    width: 85%;
-    margin-right: 1;
+    width: $ds-percent-85;
+    margin-right: $ds-space-1;
 }
 
 .ai-generate-button {
-    width: 12%;
-    height: 3;
-    margin-top: 0;
+    width: $ds-conversations-ai-generate-share;
+    height: $ds-size-3;
+    margin-top: $ds-space-0;
     background: $primary;
 }
 
@@ -12309,38 +12317,38 @@ WatchlistsOperationCard {
 }
 
 .ai-generate-button.full-width {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 /* Image controls */
 .image-controls {
     layout: horizontal;
-    height: 3;
-    width: 100%;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 .image-controls Button {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 .image-controls Button:last-child {
-    margin-right: 0;
+    margin-right: $ds-space-0;
 }
 
 .image-status {
-    margin-bottom: 1;
-    padding: 0 1;
+    margin-bottom: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $text-muted;
 }
 
 .character-image {
-    width: 100%;
-    height: 15;
+    width: $ds-width-full;
+    height: $ds-size-15;
     border: round $surface;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     align: center middle;
     background: $surface-darken-1;
 }
@@ -12348,19 +12356,19 @@ WatchlistsOperationCard {
 /* Editor action buttons */
 .editor-actions {
     layout: horizontal;
-    height: 3;
-    width: 100%;
-    margin-top: 2;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    width: $ds-width-full;
+    margin-top: $ds-space-2;
+    margin-bottom: $ds-space-1;
 }
 
 .editor-actions Button {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 .editor-actions Button:last-child {
-    margin-right: 0;
+    margin-right: $ds-space-0;
 }
 
 .primary-button {
@@ -12381,38 +12389,38 @@ WatchlistsOperationCard {
 
 /* Dictionary specific styles */
 .dict-entries-list {
-    height: 12;
-    margin-bottom: 1;
+    height: $ds-size-12;
+    margin-bottom: $ds-space-1;
     border: round $surface;
 }
 
 .dict-entry-controls {
     layout: horizontal;
-    height: 3;
-    width: 100%;
-    margin-top: 1;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    width: $ds-width-full;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 .dict-entry-controls Button {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 .dict-entry-controls Button:last-child {
-    margin-right: 0;
+    margin-right: $ds-space-0;
 }
 
 /* Collapsible styling enhancements */
 Collapsible {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 Collapsible > CollapsibleTitle {
     background: $primary-background-darken-1;
     color: $text;
-    padding: 0 1;
-    height: 3;
+    padding: $ds-space-0 $ds-space-1;
+    height: $ds-size-3;
 }
 
 Collapsible.-active > CollapsibleTitle {
@@ -12424,8 +12432,8 @@ Collapsible.-active > CollapsibleTitle {
 
 /* Select widget styling */
 Select {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 /* Checkbox styling -- RETIRED (TASK-18960).
@@ -12480,7 +12488,7 @@ Select {
 
 /* Message display area */
 #ccp-conversation-messages-view {
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* Scrollbar styling is now an app-wide default in core/_base.tcss (TASK-394):

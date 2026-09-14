@@ -190,6 +190,7 @@ $ds-new-ingest-activity-panel-share: 35%;
 $ds-new-ingest-file-panel-share: 55%;
 $ds-new-ingest-card-desc-leading: 1.2;
 $ds-new-ingest-scrollbar-gutter: 6px;
+$ds-conversations-ai-generate-share: 12%;
 $ds-console-frame: #6f7782;
 
 $ds-duration-fast: 0.2s;

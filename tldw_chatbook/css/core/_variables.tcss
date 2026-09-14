@@ -334,6 +334,9 @@ $ds-new-ingest-card-desc-leading: 1.2;
 /* Dead web-CSS residue in the same sheet (::-webkit-scrollbar) -- tokenized
    for the zero-literal ratchet, not an endorsement. */
 $ds-new-ingest-scrollbar-gutter: 6px;
+/* task 11 (ADR-161 §3.10): the Conversations character-editor AI-generate
+   button's narrow fill (single consumer). */
+$ds-conversations-ai-generate-share: 12%;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
  * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
