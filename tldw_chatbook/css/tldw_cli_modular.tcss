@@ -1108,6 +1108,40 @@ Button:disabled:hover {
 }
 .sidebar-toggle:hover { background: $ds-surface-raised; }
 
+.action-button {
+    margin-right: $ds-space-inline;
+    min-width: 12;
+}
+
+.action-button.primary {
+    background: $primary;
+    color: $text;
+}
+
+.action-button.primary.large {
+    min-width: 20;
+    height: 3;
+    text-style: $ds-text-strong;
+}
+
+.button-group {
+    width: 100%;
+    height: auto;
+    margin: $ds-space-section $ds-space-0;
+}
+
+.button-group-left {
+    align: left top;
+}
+
+.button-group-center {
+    align: center top;
+}
+
+.button-group-right {
+    align: right top;
+}
+
 /* ===== MODULE: components/_forms.tcss ===== */
 /* ========================================
  * COMPONENTS: Forms
@@ -1151,11 +1185,6 @@ Button:disabled:hover {
 }
 
 /* Standardized form components */
-.form-input {
-    width: 100%;
-    margin-bottom: $ds-space-stack;
-}
-
 .form-textarea {
     width: 100%;
     height: auto;
@@ -1191,25 +1220,6 @@ Button:disabled:hover {
 /* Form sections */
 .form-section-collapsible {
     margin: $ds-space-stack 0;
-}
-
-/* Button groups */
-.button-group {
-    width: 100%;
-    height: auto;
-    margin: $ds-space-section 0;
-}
-
-.button-group-left {
-    align: left top;
-}
-
-.button-group-center {
-    align: center top;
-}
-
-.button-group-right {
-    align: right top;
 }
 
 .form-button {
@@ -1560,6 +1570,32 @@ Switch:focus {
 /* Note: Textual doesn't support @media queries
    Responsive behavior must be handled programmatically
    in the Python code using terminal size detection */
+
+/* ===== MODULE: components/_sections.tcss ===== */
+/* COMPONENTS: Sections — canonical .section-title/.section-header/
+ * .subsection-title, usage-weight winners tokenized on arrival
+ * (ADR-161 task 4). */
+
+.section-title {
+    text-style: $ds-text-strong;
+    color: $primary;
+    text-align: center;
+    height: auto;
+    margin-bottom: $ds-space-section;
+}
+
+.section-header {
+    text-style: $ds-text-strong;
+    color: $primary;
+    padding: $ds-space-1 $ds-space-0;
+}
+
+.subsection-title {
+    text-style: $ds-text-strong;
+    color: $secondary;
+    /* 4 values: Textual rejects 3 */
+    margin: $ds-space-section $ds-space-0 $ds-space-stack $ds-space-0;
+}
 
 /* ===== MODULE: components/_lists.tcss ===== */
 /* ========================================
@@ -2300,6 +2336,23 @@ EnhancedFileDialog InputBar Select {
    the dialog's right edge, clipped out of view -- the dialog looked
    buttonless. The type selector matches EnhancedFileOpen/
    EnhancedFileSave/EnhancedSelectDirectory via the CSS type-name MRO. */
+
+.dialog-title {
+    text-align: center;
+    text-style: $ds-text-strong;
+    margin-bottom: $ds-space-stack;
+}
+
+.dialog-buttons {
+    layout: horizontal;
+    height: 3;
+    align: center middle;
+}
+
+.dialog-buttons Button {
+    margin: $ds-space-0 $ds-space-inline;
+    min-width: 12;
+}
 
 /* ===== MODULE: components/_status.tcss ===== */
 /* ========================================
@@ -6835,12 +6888,6 @@ PersonalContextLinkModal {
     margin-right: 1;
 }
 
-.section-header {
-    text-style: bold;
-    color: $primary;
-    padding: 1 0;
-}
-
 .help-text {
     text-style: italic;
     color: $text-muted;
@@ -8531,12 +8578,6 @@ MediaDetailsWidget {
     padding: 2;
 }
 
-.dialog-title {
-    text-align: center;
-    text-style: bold;
-    margin-bottom: 1;
-}
-
 .dialog-subtitle {
     text-align: center;
     color: $text-muted;
@@ -8546,17 +8587,6 @@ MediaDetailsWidget {
 .dialog-message {
     text-align: center;
     margin-bottom: 2;
-}
-
-.dialog-buttons {
-    layout: horizontal;
-    height: 3;
-    align: center middle;
-}
-
-.dialog-buttons Button {
-    margin: 0 1;
-    min-width: 12;
 }
 
 /* --- End of Media Tab --- */
@@ -9176,26 +9206,12 @@ MediaDetailsWidget {
 }
 
 /* Settings form styling */
-.section-title {
-    text-style: bold;
-    color: $primary;
-    margin-bottom: 1;
-    text-align: center;
-    height: auto;
-}
-
 .section-description {
     color: $text-muted;
     margin-bottom: 2;
     text-align: center;
     text-style: italic;
     height: auto;
-}
-
-.subsection-title {
-    text-style: bold;
-    color: $secondary;
-    margin: 2 0 1 0;
 }
 
 .settings-group {
@@ -9275,19 +9291,6 @@ MediaDetailsWidget {
     padding: 1 2;
     width: 100%;
     height: 100%;
-}
-
-.section-title {
-    text-style: bold;
-    text-align: center;
-    margin-bottom: 2;
-    color: $primary;
-}
-
-.subsection-title {
-    text-style: bold;
-    margin: 2 0 1 0;
-    color: $secondary;
 }
 
 .settings-group {
@@ -10157,29 +10160,7 @@ Collapsible.-collapsed {
     align: center middle;
 }
 
-.action-button {
-    margin-right: 1;
-    min-width: 12;
-}
-
-.action-button.primary {
-    background: $primary;
-    color: $text;
-}
-
-.action-button.primary.large {
-    min-width: 20;
-    height: 3;
-    text-style: bold;
-}
-
 /* Results Dashboard */
-.section-title {
-    text-style: bold;
-    color: $primary;
-    margin-bottom: 1;
-}
-
 .results-header {
     layout: horizontal;
     height: 3;
@@ -10243,12 +10224,6 @@ Collapsible.-collapsed {
 /* Utility Classes */
 .hidden {
     display: none;
-}
-
-.subsection-title {
-    text-style: bold;
-    color: $secondary;
-    margin: 1 0;
 }
 
 .help-text {

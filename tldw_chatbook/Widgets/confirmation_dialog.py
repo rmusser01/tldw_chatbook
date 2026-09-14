@@ -47,14 +47,13 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         background: $surface;
         padding: 1 2;
     }
-    
-    ConfirmationDialog .dialog-title {
-        text-style: bold;
-        margin-bottom: 1;
-        width: 100%;
-        text-align: center;
-    }
-    
+
+    /* (.dialog-title rule removed, ADR-161 task 4: the app bundle's
+       canonical .dialog-title in components/_dialogs.tcss supplies the
+       centered/bold/margin styling -- app CSS outranks this DEFAULT_CSS --
+       and the removed copy's lone extra declaration, width: 100%, is
+       Static's default box model in a container, measured fill either way.) */
+
     ConfirmationDialog .dialog-message {
         margin-bottom: 2;
         width: 100%;

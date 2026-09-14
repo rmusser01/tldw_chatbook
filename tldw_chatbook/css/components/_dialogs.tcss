@@ -42,3 +42,20 @@ EnhancedFileDialog InputBar Select {
    the dialog's right edge, clipped out of view -- the dialog looked
    buttonless. The type selector matches EnhancedFileOpen/
    EnhancedFileSave/EnhancedSelectDirectory via the CSS type-name MRO. */
+
+.dialog-title {
+    text-align: center;
+    text-style: $ds-text-strong;
+    margin-bottom: $ds-space-stack;
+}
+
+.dialog-buttons {
+    layout: horizontal;
+    height: 3;
+    align: center middle;
+}
+
+.dialog-buttons Button {
+    margin: $ds-space-0 $ds-space-inline;
+    min-width: 12;
+}

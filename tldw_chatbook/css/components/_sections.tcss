@@ -1,0 +1,24 @@
+/* COMPONENTS: Sections — canonical .section-title/.section-header/
+ * .subsection-title, usage-weight winners tokenized on arrival
+ * (ADR-161 task 4). */
+
+.section-title {
+    text-style: $ds-text-strong;
+    color: $primary;
+    text-align: center;
+    height: auto;
+    margin-bottom: $ds-space-section;
+}
+
+.section-header {
+    text-style: $ds-text-strong;
+    color: $primary;
+    padding: $ds-space-1 $ds-space-0;
+}
+
+.subsection-title {
+    text-style: $ds-text-strong;
+    color: $secondary;
+    /* 4 values: Textual rejects 3 */
+    margin: $ds-space-section $ds-space-0 $ds-space-stack $ds-space-0;
+}

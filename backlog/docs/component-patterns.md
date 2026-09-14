@@ -77,9 +77,9 @@ Notes on the schema:
 | Family | Owning sheet | Classes (status) |
 |---|---|---|
 | forms | `components/_forms.tcss` | form-label, form-row, form-col, form-input, form-textarea, form-select, form-checkbox, form-button, form-section-title, form-section-collapsible, form-actions (all Canonical) |
-| buttons | `components/_buttons.tcss` | button-group, button-group-left, button-group-center, button-group-right, sidebar-toggle (all Canonical) |
+| buttons | `components/_buttons.tcss` | action-button, button-group, button-group-left, button-group-center, button-group-right, sidebar-toggle (all Canonical) |
 | lists | `components/_lists.tcss` | none — widget contract (ListView/DataTable/OptionList cursor-hover-selected type selectors) |
-| dialogs | `components/_dialogs.tcss` | none yet — vocabulary promotes in with the consolidation task |
+| dialogs | `components/_dialogs.tcss` | dialog-title, dialog-buttons (all Canonical) |
 | status | `components/_status.tcss` | none yet — vocabulary promotes in with the consolidation task |
 | navigation | `layout/_sidebars.tcss` | sidebar, sidebar-button, sidebar-header, sidebar-listview, sidebar-section-collapsible (Canonical); nav-button (Canonical, owning sheet `components/_navigation.tcss`) |
 | sections | `components/_sections.tcss` | section-title, section-header, subsection-title (all Canonical) |
@@ -194,6 +194,12 @@ def compose_actions(self):
 
 **Class inventory.**
 
+- `action-button` — a `Button` in a trailing/toolbar action row;
+  `$ds-space-inline` right margin, `min-width: 12`. `.primary` modifier
+  recolours to `$primary`/`$text`; `.primary.large` bumps to `min-width: 20`,
+  height 3, `$ds-text-strong`. Hover/focus/disabled come from the Button type
+  contract. Promoted from `features/_evaluation_unified.tcss` (ADR-161
+  task 4; cascade-neutral — it was the sole surviving bare definition).
 - `button-group` — full-width group container; margins from
   `$ds-space-section`.
 - `button-group-left` / `button-group-center` / `button-group-right` —
@@ -210,14 +216,16 @@ def compose_actions(self):
 **Tokens consumed.** `$ds-hover-bg`, `$ds-hover-fg`, `$ds-focus-bg`,
 `$ds-focus-fg`, `$ds-text-strong`, `$ds-disabled-bg`,
 `$ds-text-disabled-readable`, `$ds-control-height`, `$ds-surface-sunken`,
-`$ds-surface-raised`, `$ds-text-primary`, `$ds-space-section`.
+`$ds-surface-raised`, `$ds-text-primary`, `$ds-space-section`,
+`$ds-space-inline`, `$ds-space-0`.
 
 **Python idiom.** none — hand-compose class strings. (`create_button_group`
 in `Widgets/form_components.py` exists but is optional, not canonical.)
 
-**Lifecycle.** All Canonical. Note: the `button-group*` definitions currently
-sit in `components/_forms.tcss`; they move to the owning sheet
-`components/_buttons.tcss` during consolidation (no rename, so no Deprecated
+**Lifecycle.** All Canonical. The `button-group*` definitions moved from
+`components/_forms.tcss` and `.action-button` from
+`features/_evaluation_unified.tcss` into the owning sheet
+`components/_buttons.tcss` (ADR-161 task 4; no rename, so no Deprecated
 entry).
 
 ---
@@ -284,31 +292,39 @@ class RenameDialog(SafeModalDismissMixin, ModalScreen[None]):
                 yield Button("Rename", id="confirm", variant="primary")
 ```
 
-**Class inventory.** (Registry classes land here when the vocabulary promotes
-into `components/_dialogs.tcss`; today the definitions live in
-`features/_media.tcss` and `ConfirmationDialog.DEFAULT_CSS`.)
+**Class inventory.**
 
-- `dialog-title` — centered bold heading.
-- `dialog-subtitle` — muted secondary line.
-- `dialog-message` — body copy above the buttons.
-- `dialog-buttons` — horizontal action row; compose with
-  `button-group button-group-right` for the standard right-aligned layout.
+- `dialog-title` — centered bold heading (`$ds-text-strong`,
+  `$ds-space-stack` bottom margin). Canonical definition in the owning sheet
+  since ADR-161 task 4 (promoted from `features/_media.tcss`;
+  `ConfirmationDialog.DEFAULT_CSS`'s latent copy deleted with the move).
+- `dialog-subtitle` — muted secondary line (still defined in
+  `features/_media.tcss`; promotes in a later task).
+- `dialog-message` — body copy above the buttons (still defined in
+  `features/_media.tcss`; promotes in a later task).
+- `dialog-buttons` — horizontal action row at height 3, `align: center
+  middle`; each `Button` takes `$ds-space-inline` side margins and
+  `min-width: 12`. Compose with `button-group button-group-right` for the
+  standard right-aligned layout.
 
-**States.** Per §2.7 — the dialog itself has no states; the buttons in the
-row follow the Button type contract (`$ds-hover-*` / `$ds-focus-*` /
+**States.** Per §2.7 — the dialog itself has no states; the buttons in
+the row follow the Button type contract (`$ds-hover-*` / `$ds-focus-*` /
 `$ds-disabled-*`).
 
-**Tokens consumed.** None directly today — the vocabulary is structural
-(layout, alignment, `text-style: bold`). On promotion the margins tokenize
-onto `$ds-space-*`; action states come from the buttons family.
+**Tokens consumed.** `$ds-text-strong`, `$ds-space-stack`,
+`$ds-space-inline`, `$ds-space-0`; action states come from the buttons
+family.
 
 **Python idiom.** `ConfirmationDialog` (`Widgets/confirmation_dialog.py`, 36
 importers) for confirm flows; `SafeModalDismissMixin`
 (`Widgets/modal_dismissal.py`, 58 of 66 modals) for every modal's
 escape/click dismissal contract.
 
-**Lifecycle.** Canonical family (owning sheet `components/_dialogs.tcss`);
-registry `"classes"` fills when the promotion lands.
+**Lifecycle.** Canonical family (owning sheet `components/_dialogs.tcss`;
+`dialog-title`/`dialog-buttons` promoted and registered in ADR-161 task 4 —
+the move is cascade-neutral: every competing rule is id- or widget-scoped
+and wins by specificity). `dialog-subtitle`/`dialog-message` join the
+registry when they promote.
 
 ---
 
@@ -445,24 +461,29 @@ def compose_sections(self):
 - `section-header` — major region heading, underlined variant.
 - `subsection-title` — secondary heading within a section.
 
-Today these have four competing definitions across feature sheets
-(`features/_chat.tcss`, `features/_evaluation_unified.tcss`,
-`features/_tools-settings.tcss` ×2, `components/_shared_components.tcss`);
-the consolidation task dissolves them into one definition each in the owning
-sheet `components/_sections.tcss` (which is why the registry already points
-there).
+`section-title` and `subsection-title` each have exactly one bare definition
+now, in the owning sheet `components/_sections.tcss` (ADR-161 task 4
+dissolved the `features/_tools-settings.tcss` ×2 and
+`features/_evaluation_unified.tcss` duplicates; the winners are the
+tools-settings pair by usage weight, tokenized on arrival). `.section-header`'s
+canonical definition also lives there, moved from
+`components/_shared_components.tcss` — two later-in-cascade copies remain as
+documented follow-up, not part of the family: `features/_chat.tcss`'s bare
+bold-underline variant (still wins text-style/margins app-wide) and
+`components/stats_screen.css`'s screen-sheet copy (still supplies its
+`border-left` and, now that it follows the owning sheet in the manifest,
+`padding-left: $ds-space-1`).
 
 **States.** Static text — no interactive states.
 
-**Tokens consumed.** The tokenized exemplar definition (`features/_chat.tcss`)
-uses `$ds-space-stack` and `$ds-text-strong`; the losing definitions' raw
-literals tokenize on promotion (margins → `$ds-space-*`, colours → text/surface
-tokens).
+**Tokens consumed.** `$ds-text-strong`, `$primary`/`$secondary` theme
+colours, `$ds-space-section`, `$ds-space-stack`, `$ds-space-1`,
+`$ds-space-0`.
 
 **Python idiom.** none — hand-compose class strings.
 
 **Lifecycle.** All Canonical (owning sheet `components/_sections.tcss`,
-created by the consolidation task).
+created by ADR-161 task 4).
 
 ---
 

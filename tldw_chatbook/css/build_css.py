@@ -207,6 +207,15 @@ CSS_MODULES = [
     # 3. Components - Reusable UI (depends on core + layout)
     "components/_buttons.tcss",
     "components/_forms.tcss",
+    # ADR-161 task 4: the titled-section vocabulary's owning sheet
+    # (.section-title/.section-header/.subsection-title winners). Inserted
+    # directly after _forms.tcss per the consolidation plan; the rules it
+    # carries moved OUT of later sheets (_shared_components and three
+    # feature-sheet duplicates), so the surviving copies still later in
+    # this manifest (features/_chat.tcss's .section-header variant,
+    # stats_screen.css's screen copy) keep winning their shared properties
+    # exactly as before the move.
+    "components/_sections.tcss",
     "components/_lists.tcss",
     "components/_navigation.tcss",
     "components/_change_review.tcss",

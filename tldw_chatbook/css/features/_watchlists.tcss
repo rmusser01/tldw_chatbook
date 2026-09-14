@@ -980,7 +980,8 @@ WatchlistPickerDialog {
     padding: 1 0;
 }
 
-/* `.dialog-buttons` (features/_media.tcss) supplies the side-by-side pair
+/* `.dialog-buttons` (components/_dialogs.tcss since ADR-161 task 4)
+ * supplies the side-by-side pair
  * itself -- `layout: horizontal`, and `margin: 0 1; min-width: 12` on each
  * Button -- so this form and `WatchlistNameDialog` pair their Create/Cancel
  * the same way rather than stacking them.

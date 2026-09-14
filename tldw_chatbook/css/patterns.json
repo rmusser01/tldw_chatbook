@@ -20,6 +20,7 @@
     "buttons": {
       "owning_sheet": "components/_buttons.tcss",
       "classes": {
+        "action-button": { "status": "canonical" },
         "button-group": { "status": "canonical" },
         "button-group-left": { "status": "canonical" },
         "button-group-center": { "status": "canonical" },
@@ -34,7 +35,10 @@
     },
     "dialogs": {
       "owning_sheet": "components/_dialogs.tcss",
-      "classes": {}
+      "classes": {
+        "dialog-title": { "status": "canonical" },
+        "dialog-buttons": { "status": "canonical" }
+      }
     },
     "status": {
       "owning_sheet": "components/_status.tcss",

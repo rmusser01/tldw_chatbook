@@ -100,29 +100,7 @@ Collapsible.-collapsed {
     align: center middle;
 }
 
-.action-button {
-    margin-right: 1;
-    min-width: 12;
-}
-
-.action-button.primary {
-    background: $primary;
-    color: $text;
-}
-
-.action-button.primary.large {
-    min-width: 20;
-    height: 3;
-    text-style: bold;
-}
-
 /* Results Dashboard */
-.section-title {
-    text-style: bold;
-    color: $primary;
-    margin-bottom: 1;
-}
-
 .results-header {
     layout: horizontal;
     height: 3;
@@ -186,12 +164,6 @@ Collapsible.-collapsed {
 /* Utility Classes */
 .hidden {
     display: none;
-}
-
-.subsection-title {
-    text-style: bold;
-    color: $secondary;
-    margin: 1 0;
 }
 
 .help-text {

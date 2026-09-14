@@ -718,12 +718,6 @@ MediaDetailsWidget {
     padding: 2;
 }
 
-.dialog-title {
-    text-align: center;
-    text-style: bold;
-    margin-bottom: 1;
-}
-
 .dialog-subtitle {
     text-align: center;
     color: $text-muted;
@@ -733,17 +727,6 @@ MediaDetailsWidget {
 .dialog-message {
     text-align: center;
     margin-bottom: 2;
-}
-
-.dialog-buttons {
-    layout: horizontal;
-    height: 3;
-    align: center middle;
-}
-
-.dialog-buttons Button {
-    margin: 0 1;
-    min-width: 12;
 }
 
 /* --- End of Media Tab --- */

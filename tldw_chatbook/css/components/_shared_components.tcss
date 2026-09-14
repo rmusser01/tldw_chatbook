@@ -51,12 +51,6 @@
     margin-right: 1;
 }
 
-.section-header {
-    text-style: bold;
-    color: $primary;
-    padding: 1 0;
-}
-
 .help-text {
     text-style: italic;
     color: $text-muted;

@@ -40,11 +40,6 @@
 }
 
 /* Standardized form components */
-.form-input {
-    width: 100%;
-    margin-bottom: $ds-space-stack;
-}
-
 .form-textarea {
     width: 100%;
     height: auto;
@@ -80,25 +75,6 @@
 /* Form sections */
 .form-section-collapsible {
     margin: $ds-space-stack 0;
-}
-
-/* Button groups */
-.button-group {
-    width: 100%;
-    height: auto;
-    margin: $ds-space-section 0;
-}
-
-.button-group-left {
-    align: left top;
-}
-
-.button-group-center {
-    align: center top;
-}
-
-.button-group-right {
-    align: right top;
 }
 
 .form-button {

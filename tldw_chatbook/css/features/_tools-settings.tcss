@@ -93,26 +93,12 @@
 }
 
 /* Settings form styling */
-.section-title {
-    text-style: bold;
-    color: $primary;
-    margin-bottom: 1;
-    text-align: center;
-    height: auto;
-}
-
 .section-description {
     color: $text-muted;
     margin-bottom: 2;
     text-align: center;
     text-style: italic;
     height: auto;
-}
-
-.subsection-title {
-    text-style: bold;
-    color: $secondary;
-    margin: 2 0 1 0;
 }
 
 .settings-group {
@@ -192,19 +178,6 @@
     padding: 1 2;
     width: 100%;
     height: 100%;
-}
-
-.section-title {
-    text-style: bold;
-    text-align: center;
-    margin-bottom: 2;
-    color: $primary;
-}
-
-.subsection-title {
-    text-style: bold;
-    margin: 2 0 1 0;
-    color: $secondary;
 }
 
 .settings-group {
