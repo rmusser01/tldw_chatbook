@@ -6380,6 +6380,16 @@ class LibraryFileNotesWorkspace(Vertical):
         return None
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Gate Escape to the focused editor so it falls through elsewhere.
+
+        Args:
+            action: The action name Textual is about to run.
+            parameters: The action's arguments (unused here).
+
+        Returns:
+            ``False`` to let the key reach the screen's own Escape binding,
+            otherwise ``True``.
+        """
         if action == "focus_tree":
             return self.editor_returns_to_tree
         return True
