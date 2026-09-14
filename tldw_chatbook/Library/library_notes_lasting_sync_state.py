@@ -947,15 +947,6 @@ _CHECK_REFUSAL_COPY: dict[str, str] = {
     "root_admission_closed": (
         "That folder is paused. Resume it, then Check again."
     ),
-    "root_offline": (
-        "That folder isn't reachable right now. Reconnect it, then Check again."
-    ),
-    "root_unavailable": (
-        "That folder can't be read right now. Reconnect it, then Check again."
-    ),
-    "root_lease_unavailable": (
-        "That folder isn't available right now. Reconnect it, then Check again."
-    ),
     "stale_review": "Something changed during the check. Check again.",
     "root_observation_mismatch": (
         "The folder changed while it was being checked. Check again."
