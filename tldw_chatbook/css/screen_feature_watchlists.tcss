@@ -137,6 +137,7 @@ $ds-size-40: 40;
 $ds-size-42: 42;
 $ds-size-44: 44;
 $ds-size-45: 45;
+$ds-size-46: 46;
 $ds-size-48: 48;
 $ds-size-50: 50;
 $ds-size-52: 52;

@@ -1,7 +1,6 @@
 {
   "dimensions": {
     "components/_buttons.tcss": 5,
-    "components/_change_review.tcss": 56,
     "components/_dialogs.tcss": 4,
     "components/_forms.tcss": 28,
     "components/_lists.tcss": 1,

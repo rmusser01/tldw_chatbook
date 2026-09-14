@@ -250,6 +250,9 @@ $ds-size-40: 40;
 $ds-size-42: 42;
 $ds-size-44: 44;
 $ds-size-45: 45;
+/* task 11 (ADR-161 §3.10): 46 joins the size scale -- cross-sheet recurring
+   (change-review tree pane, base chat gutter). */
+$ds-size-46: 46;
 $ds-size-48: 48;
 $ds-size-50: 50;
 /* task 11 (ADR-161 §3.10): 52 joins the size scale -- cross-sheet recurring
