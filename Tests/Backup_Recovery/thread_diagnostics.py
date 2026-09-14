@@ -424,6 +424,112 @@ def observe_runtime_settlement(path: Path) -> Callable[[], None]:
     original_settle = runtime.RuntimeMaintenance.settle_producers
     original_retire = runtime.RuntimeMaintenance.retire_local_caches
     original_resume = runtime.RuntimeMaintenance.resume
+    original_initializing = storage._Acquisition.initializing
+    admission_originals = (
+        (storage, "_scope", "scope", storage._scope),
+        (storage.bootstrap, "startup_permission", "permission", storage.bootstrap.startup_permission),
+        (storage, "admission_authority", "authority_open", storage.admission_authority),
+    )
+    phase_local = threading.local()
+    phase_slots, phase_errors = {}, []
+    phase_truncated = False
+    phase_labels = ("initializing_enter", "initializing_body", "initializing_exit", "scope", "permission", "authority_open")
+
+    def phase_begin(label):
+        nonlocal phase_truncated
+        try:
+            state = getattr(phase_local, "state", None)
+            if state is None:
+                candidate = {
+                    "thread": threading.get_ident(), "stack": [], "truncated": False,
+                    "calls": {name: {"started": 0, "completed": 0, "errors": 0, "elapsed_seconds": 0.0, "max_seconds": 0.0} for name in phase_labels},
+                }
+                # Fixed slot keys bound concurrent registration without a lock.
+                for index in range(32):
+                    if phase_slots.setdefault(index, candidate) is candidate:
+                        state = phase_local.state = candidate
+                        break
+                if state is None:
+                    phase_truncated = True
+                    return None
+            if len(state["stack"]) == 8:
+                state["truncated"] = True
+                return None
+            frame = (label, time.monotonic())
+            state["stack"].append(frame)
+            state["calls"][label]["started"] += 1
+            return state, frame
+        except BaseException:  # noqa: BLE001 - optional metadata cannot prevent admission.
+            return None
+
+    def phase_end(token, error=None):
+        if token is None:
+            return
+        try:
+            state, frame = token
+            if state["stack"] and state["stack"][-1] is frame:
+                state["stack"].pop()
+            row = state["calls"][frame[0]]
+            row["completed"] += 1
+            row["errors"] += error is not None
+            elapsed = max(0.0, time.monotonic() - frame[1])
+            row["elapsed_seconds"] += elapsed
+            row["max_seconds"] = max(row["max_seconds"], elapsed)
+            if error is not None:
+                phase_errors.append({"thread": state["thread"], "phase": frame[0], "error": _error_metadata(error)})
+                del phase_errors[:-8]
+        except BaseException:  # noqa: BLE001, S110 - retain the original result or error.  # nosec B110
+            pass
+
+    def phase_call(label, original, *args, **kwargs):
+        token = phase_begin(label)
+        try:
+            result = original(*args, **kwargs)
+        except BaseException as error:
+            phase_end(token, error)
+            raise
+        phase_end(token)
+        return result
+
+    class InitializingObservation:
+        def __init__(self, context):
+            self.context, self.body = context, None
+
+        def __enter__(self):
+            result = phase_call("initializing_enter", type(self.context).__enter__, self.context)
+            self.body = phase_begin("initializing_body")
+            return result
+
+        def __exit__(self, *triple):
+            phase_end(self.body)
+            return phase_call("initializing_exit", type(self.context).__exit__, self.context, *triple)
+
+    def observed_initializing(*args, **kwargs):
+        return InitializingObservation(original_initializing(*args, **kwargs))
+
+    def admission_wrapper(label, original):
+        def observed(*args, **kwargs):
+            return phase_call(label, original, *args, **kwargs)
+        return observed
+
+    def phase_snapshot():
+        try:
+            now = time.monotonic()
+            states = tuple(phase_slots.copy().values())
+            return {
+                "available": True,
+                "truncated": phase_truncated or any(state["truncated"] for state in states),
+                "threads": [
+                    {"thread": state["thread"],
+                     "active": [{"phase": label, "elapsed_seconds": max(0.0, now - started)} for label, started in tuple(state["stack"])],
+                     "calls": {name: row.copy() for name, row in state["calls"].items()}}
+                    for state in states
+                ],
+                "errors": phase_errors[-8:],
+            }
+        except BaseException:  # noqa: BLE001 - a concurrent/failed sample is not authority.
+            return {"available": False}
+
     policies = {id(policy): owner for owner, policy in SQLITE_OWNER_REGISTRY.items()}
     records, failures = [], []
     issues = {
@@ -521,7 +627,7 @@ def observe_runtime_settlement(path: Path) -> Callable[[], None]:
         return "unrecognized_runtime_issue"
 
     def record(event, error=None, **values):
-        row = {"event": event, "storage": snapshot(), **values}
+        row = {"event": event, "storage": snapshot(), "admission": phase_snapshot(), **values}
         if error is not None:
             row.update(error=_error_metadata(error), issue=issue(error))
         records.append(row)
@@ -538,6 +644,10 @@ def observe_runtime_settlement(path: Path) -> Callable[[], None]:
             started = time.monotonic()
         except Exception as metadata_error:  # noqa: BLE001 - optional diagnostic setup.
             failures.append(type(metadata_error).__name__[:80])
+        try:
+            record("settle_stage_begin")
+        except BaseException:  # noqa: BLE001, S110 - observation cannot prevent original settlement.  # nosec B110
+            pass
         try:
             return await original_stage(hooks, closed, deadline)
         except BaseException as error:
@@ -599,12 +709,18 @@ def observe_runtime_settlement(path: Path) -> Callable[[], None]:
     runtime.RuntimeMaintenance.settle_producers = observed_settle
     runtime.RuntimeMaintenance.retire_local_caches = observed_retire
     runtime.RuntimeMaintenance.resume = observed_resume
+    storage._Acquisition.initializing = observed_initializing
+    for module, name, label, original in admission_originals:
+        setattr(module, name, admission_wrapper(label, original))
 
     def stop():
         runtime._settle_stage = original_stage
         runtime.RuntimeMaintenance.settle_producers = original_settle
         runtime.RuntimeMaintenance.retire_local_caches = original_retire
         runtime.RuntimeMaintenance.resume = original_resume
+        storage._Acquisition.initializing = original_initializing
+        for module, name, _label, original in admission_originals:
+            setattr(module, name, original)
         if failures:
             raise RuntimeError("runtime_diagnostic_write_failed")
 

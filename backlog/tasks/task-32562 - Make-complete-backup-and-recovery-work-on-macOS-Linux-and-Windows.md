@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-14 12:56
+updated_date: 2026-09-14 13:07
 ---
 
 ## Description
@@ -272,6 +272,8 @@ Reviewed Windows profile-open observation correction complete locally: actual Co
 2026-09-14 continuation: macOS b534370982 completed 74/74 passing (1196.024s), 109 artifact hashes and four installed receipts verified; source freeze released. Applying independently reproduced later credential checkbox clipping fix (existing backup-form class) with keyboard RED/GREEN regression. Windows 081 support is 126/130: Settings scheduler drain, Library scope recheck, and two prior profile-open observation failures retained. Replacement run still pending. No deadlines, admission guards or backup scope will be relaxed.
 Later credential layout correction independently approved: targeted RED1 fail, GREEN1 pass2.79s, independent1 pass2.82s; real Tab/Space full-region checks retain disabled confirmation. Full UI baseline reproduces the same9 failures/1 setup error as candidate (raw_source_selection_changed fixture imports), with only new clipping regression changing fail→pass. Ruff passes; Bandit69→77 test assertions only. Current report/plan updated with exact Mac74/74, Windows081126/130 and preserved keyboard18f clipping stop. No final acceptance or merge.
 Snapshot failure diagnostic independently approved. Existing observer now retains only bounded class/code/traceframe metadata plus four fixed SQLite preview reason strings before original adapter conversion; all outcomes/errors/restoration preserved. Root41 passes2.39s (both diagnostic modules), agent33 passes2.32s, independent33 passes2.23s; native concurrent ordinary-note probe proves mechanism but not exact Windows cause. Ruff clean, Bandit assertions only new. Fresh keyboard4a50 wheel verified5349files/2474Python, walkthrough underway. Reconnected authorized Linux host; no diagnostic logs read.
+Fresh4a50 CI Fast Lane passed. Root combined core-owner+backup UI selection85/85 passed72.64s. Standalone UI9fail/1setup error traced to late imports of its existing replacement_case fixture after per-test HOME/config retargeting; test_core_owners explicitly requires its conversion module before that retargeting. Moving the already-used fixture import to collection time is a test-only ordering correction, with standalone RED preserved and same cases to rerun. Product storage selection untouched.
+Standalone backup UI fixture ordering fixed: same23 tests now pass39.88s (prior9fail/1error), after moving existing replacement_case import before per-test HOME/config retargeting; AST otherwise unchanged. Independent review approved pending only whitespace, now corrected; Ruff clean. Bounded admission-phase observer independently approved: root54pass2.74s, independent46pass2.59s, native contention and120-acquisition overhead probes; fixed32thread lifetimes/8stack/8error bounds, no per-call writes/product locks/paths/locals/caches/deadline changes. Existing focused Windows selection collects154 without runner edits. Next push and native support repeat.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

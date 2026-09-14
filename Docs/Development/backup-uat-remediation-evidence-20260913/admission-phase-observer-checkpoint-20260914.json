@@ -1,0 +1,32 @@
+{
+  "base": "4773628967",
+  "scope": "Existing runtime settlement diagnostic only; exact call and context delegation with bounded numeric phase observations",
+  "source_sha256": {
+    "Tests/Backup_Recovery/thread_diagnostics.py": "ad12fe0e51b91bfb456cb0ace40f07619aa3dd8f51ebf2b8921ba81df6b9e045",
+    "Tests/Backup_Recovery/test_thread_diagnostics.py": "ff100f2908402c4f245bbcfec818d7e3992cd0f81da265f54e35e5ed37349c1d"
+  },
+  "root": {
+    "passed": 54,
+    "seconds": 2.74
+  },
+  "independent": {
+    "passed": 46,
+    "seconds": 2.59
+  },
+  "existing_support_selection_collected": 154,
+  "limits": [
+    "first32 observed thread lifetimes",
+    "eight nested phases and recent errors",
+    "non-atomic diagnostic snapshots",
+    "candidate initializer IDs do not identify a proven blocker",
+    "no native-ready timing inference"
+  ],
+  "product_changes": false,
+  "runner_changes": false,
+  "macos_overhead_sample": {
+    "native_acquisitions": 120,
+    "baseline_median_ms_per20": 55.43,
+    "observed_median_ms_per20": 54.9,
+    "interpretation": "No measurable increase within this sample noise; no Windows overhead claim."
+  }
+}

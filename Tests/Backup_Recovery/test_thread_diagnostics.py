@@ -544,6 +544,7 @@ def test_runtime_observer_never_waits_for_storage_owner(tmp_path, monkeypatch):
         instance = SimpleNamespace(pause=None, app=SimpleNamespace(_backup_maintenance_error=None))
         assert asyncio.run(runtime.RuntimeMaintenance.resume(instance)) == 'unchanged'
         assert json.loads(path.read_text())[-1]['storage'] == {'available': False}
+        assert json.loads(path.read_text())[-1]['admission']['available'] is True
     finally:
         release.set()
         worker.join(5)
@@ -830,3 +831,252 @@ stop_snapshot=observe_capture_review(snapshot_log)
     summary = json.loads((tmp_path / "home" / "dependency-discovery.json.log").read_text())
     assert summary["core_status"] == "unavailable"
     assert summary["validation_issues"][0] == ["core_validation_unavailable"]
+
+
+@pytest.mark.parametrize(
+    "outcome", ("success", "entry_error", "body_error", "suppressed", "exit_error", "cancelled")
+)
+def test_settlement_admission_context_delegates_exact_protocol(tmp_path, monkeypatch, outcome):
+    import asyncio
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    value, suppressed = object(), object()
+    error = asyncio.CancelledError("private-cancel") if outcome == "cancelled" else ValueError("private-context")
+    calls = []
+
+    class Context:
+        def __enter__(self):
+            calls.append("enter")
+            if outcome == "entry_error":
+                raise error
+            return value
+
+        def __exit__(self, *triple):
+            calls.append(triple)
+            if outcome == "exit_error":
+                raise error
+            return suppressed if outcome == "suppressed" else False
+
+    def original(*args, **kwargs):
+        return Context()
+
+    monkeypatch.setattr(storage._Acquisition, "initializing", original)
+    path = tmp_path / "phase.log"
+    stop = observe_runtime_settlement(path)
+    try:
+        context = storage._Acquisition.initializing(None, "private-root", "private-path")
+        if outcome == "entry_error":
+            with pytest.raises(ValueError) as caught:
+                context.__enter__()
+            assert caught.value is error and calls == ["enter"]
+        else:
+            assert context.__enter__() is value
+            asyncio.run(runtime._settle_stage([], [], 1))
+            active = json.loads(path.read_text())[-1]["admission"]["threads"][0]["active"]
+            assert active[-1]["phase"] == "initializing_body"
+            triple = (type(error), error, error.__traceback__) if outcome in {"body_error", "suppressed", "cancelled"} else (None, None, None)
+            if outcome == "exit_error":
+                with pytest.raises(ValueError) as caught:
+                    context.__exit__(*triple)
+                assert caught.value is error
+            else:
+                assert context.__exit__(*triple) is (suppressed if outcome == "suppressed" else False)
+            assert calls[-1] == triple
+        asyncio.run(runtime._settle_stage([], [], 1))
+    finally:
+        stop()
+    assert storage._Acquisition.initializing is original
+    rows = json.loads(path.read_text())
+    assert rows[-1]["admission"]["threads"][0]["active"] == []
+    assert "private-" not in path.read_text()
+
+
+def test_settlement_admission_nested_calls_have_no_per_call_writes(tmp_path, monkeypatch):
+    import asyncio
+    from contextlib import contextmanager
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    result = object()
+    path = tmp_path / "phase.log"
+
+    def permission(*args):
+        asyncio.run(runtime._settle_stage([], [], 1))
+        return result
+
+    def scope(*args, **kwargs):
+        return bootstrap.startup_permission(None, None)
+
+    @contextmanager
+    def initializing(*args):
+        yield result
+
+    monkeypatch.setattr(bootstrap, "startup_permission", permission)
+    monkeypatch.setattr(storage, "_scope", scope)
+    monkeypatch.setattr(storage._Acquisition, "initializing", initializing)
+    originals = (storage._scope, bootstrap.startup_permission, storage.admission_authority)
+    stop = observe_runtime_settlement(path)
+    try:
+        with storage._Acquisition.initializing(None, None, None):
+            assert not path.exists()
+            assert storage._scope(None) is result
+            row = json.loads(path.read_text())[-1]["admission"]["threads"][0]
+            assert [item["phase"] for item in row["active"]] == ["initializing_body", "scope", "permission"]
+        before = path.read_bytes()
+        with storage._Acquisition.initializing(None, None, None):
+            pass
+        assert path.read_bytes() == before
+        asyncio.run(runtime._settle_stage([], [], 1))
+    finally:
+        stop()
+    assert (storage._scope, bootstrap.startup_permission, storage.admission_authority) == originals
+    row = json.loads(path.read_text())[-1]["admission"]["threads"][0]
+    assert row["active"] == []
+    assert row["calls"]["scope"]["completed"] == 1
+    assert row["calls"]["initializing_enter"]["completed"] == 2
+    assert row["calls"]["permission"]["elapsed_seconds"] >= 0
+
+
+@pytest.mark.parametrize("failure_point", ("clock", "metadata"))
+@pytest.mark.parametrize("failed", (False, True))
+def test_settlement_admission_optional_metadata_preserves_outcome(
+    tmp_path, monkeypatch, failure_point, failed
+):
+    import asyncio
+
+    from Tests.Backup_Recovery import thread_diagnostics as diagnostic
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+
+    result = object()
+    error = ValueError("private-native-error")
+
+    def permission(*args):
+        if failed:
+            raise error
+        return result
+
+    def metadata_failure(*args):
+        raise KeyboardInterrupt("private-observer-failure")
+
+    monkeypatch.setattr(bootstrap, "startup_permission", permission)
+    path = tmp_path / "phase.log"
+    stop = diagnostic.observe_runtime_settlement(path)
+    try:
+        with monkeypatch.context() as fault:
+            fault.setattr(time if failure_point == "clock" else diagnostic,
+                          "monotonic" if failure_point == "clock" else "_error_metadata",
+                          metadata_failure)
+            if failed:
+                with pytest.raises(ValueError) as caught:
+                    bootstrap.startup_permission(None, None)
+                assert caught.value is error
+            else:
+                assert bootstrap.startup_permission(None, None) is result
+        assert not path.exists()
+        asyncio.run(runtime._settle_stage([], [], 1))
+    finally:
+        stop()
+    assert bootstrap.startup_permission is permission
+    rows = json.loads(path.read_text())[-1]["admission"]["threads"]
+    assert all(not row["active"] for row in rows)
+    assert "private-" not in path.read_text()
+
+
+def test_settlement_admission_bounds_threads_nesting_and_errors(tmp_path, monkeypatch):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+
+    error = ValueError("private-error")
+    arrived = threading.Barrier(35)
+
+    def permission(depth):
+        if depth:
+            return bootstrap.startup_permission(depth - 1)
+        raise error
+
+    def worker(index):
+        arrived.wait(timeout=5)
+        try:
+            bootstrap.startup_permission(10)
+        except ValueError:
+            return threading.get_ident()
+
+    monkeypatch.setattr(bootstrap, "startup_permission", permission)
+    path = tmp_path / "phase.log"
+    stop = observe_runtime_settlement(path)
+    try:
+        with ThreadPoolExecutor(max_workers=35) as pool:
+            identifiers = set(pool.map(worker, range(35)))
+        assert len(identifiers) == 35
+        assert not path.exists()
+        asyncio.run(runtime._settle_stage([], [], 1))
+    finally:
+        stop()
+    observed = json.loads(path.read_text())[-1]["admission"]
+    assert len(observed["threads"]) == 32 and observed["truncated"]
+    assert len(observed["errors"]) == 8
+    assert all(not row["active"] for row in observed["threads"])
+    assert "private-error" not in path.read_text()
+
+
+def test_settlement_admission_native_initializing_wait_is_observable(tmp_path):
+    from Tests.Backup_Recovery.test_bound_config_companions import _SCRIPT
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    script = _SCRIPT.split("assert config.get_cli_setting")[0] + r'''
+import asyncio,json,threading,time
+from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+from tldw_chatbook.Backup_Recovery import storage_admission as storage,runtime_maintenance as runtime
+root=storage.bootstrap.default_bootstrap_root()
+path=home/'admission-phase.json.log'
+entered,release,waiting=threading.Event(),threading.Event(),threading.Event()
+errors=[];done=[]
+def worker(leader):
+ attempt=storage._Acquisition()
+ try:
+  if not leader:waiting.set()
+  with attempt.initializing(root,selected):
+   if leader:
+    entered.set();assert release.wait(5)
+   assert storage.bootstrap.startup_permission(selected,root)==(True,'startup_allowed')
+   authority=storage.admission_authority(root)
+   assert authority._identity
+   assert storage._scope(root,selected,selected)
+  done.append(leader)
+ except BaseException as error:errors.append(type(error).__name__)
+ finally:attempt.close()
+stop=observe_runtime_settlement(path)
+leader=threading.Thread(target=worker,args=(True,));follower=threading.Thread(target=worker,args=(False,))
+try:
+ leader.start();assert entered.wait(5)
+ follower.start();assert waiting.wait(5)
+ deadline=time.monotonic()+2
+ while True:
+  asyncio.run(runtime._settle_stage([],[],deadline))
+  rows=json.loads(path.read_text())[-1]['admission']['threads']
+  phases={row['thread']:[item['phase'] for item in row['active']] for row in rows}
+  if phases.get(follower.ident)==['initializing_enter']:break
+  assert time.monotonic()<deadline
+  time.sleep(.01)
+ assert phases[leader.ident]==['initializing_body']
+ assert not done
+finally:
+ release.set();leader.join(5)
+ if follower.ident is not None:follower.join(5)
+ stop()
+assert not leader.is_alive() and not follower.is_alive()
+assert not errors and sorted(done)==[False,True],errors
+print('retired and reopened')
+'''
+    _run(tmp_path, "native", "phase-observation", script=script, timeout=20)

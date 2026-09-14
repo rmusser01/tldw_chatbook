@@ -5,6 +5,9 @@ import pytest
 from Tests.Backup_Recovery.conftest import (
     helper_resource_root as helper_resource_root,  # noqa: PLC0414 - pytest fixture re-export
 )
+
+# Load shared owner fixtures before per-test HOME/config retargeting.
+from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
 from Tests.Backup_Recovery.test_launcher import (
     pre_safety_recovery as pre_safety_recovery,  # noqa: PLC0414 - shared actual native fixture
 )
@@ -210,7 +213,6 @@ async def test_actual_recovery_copy_requires_confirmation_and_displays_tombstone
     from textual.app import App
     from textual.widgets import Button, Checkbox, Static
 
-    from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
     from tldw_chatbook.Backup_Recovery import crypto, replacement
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
@@ -553,7 +555,6 @@ async def test_replacement_omissions_require_explicit_review_after_untouched_abo
     from textual.app import App
     from textual.widgets import Button, Input, Select
 
-    from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
     from tldw_chatbook.Backup_Recovery import crypto
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
