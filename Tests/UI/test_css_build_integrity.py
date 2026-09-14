@@ -3,6 +3,7 @@
 import ast
 from contextlib import suppress
 from pathlib import Path
+import json
 import re
 
 import pytest
@@ -14,7 +15,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CSS_ROOT = _REPO_ROOT / "tldw_chatbook/css"
 _AGENTIC_SOURCE = _CSS_ROOT / "components/_agentic_terminal.tcss"
 _SETTINGS_SOURCE = _CSS_ROOT / "components/_settings_splash_theme.tcss"
-_SHARED_SOURCE = _CSS_ROOT / "components/_shared_components.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 
 # TASK-25812/TASK-24459: the build now emits the bundle PLUS per-screen
@@ -571,17 +571,53 @@ def test_splash_theme_module_has_no_bare_or_generic_component_selectors() -> Non
         )
 
 
+def _registry_class_owning_sheets() -> dict[str, str]:
+    """Map each registered class selector to its ``patterns.json`` owning sheet.
+
+    ADR-161: ``css/patterns.json`` is the single source of truth for where a
+    catalog class is defined (family ``owning_sheet``, optionally overridden
+    per class). Consolidation tasks keep relocating classes between sheets, so
+    consumers resolve homes from the registry instead of hardcoding one shared
+    sheet and going stale on the next move.
+    """
+    registry = json.loads(
+        (_CSS_ROOT / "patterns.json").read_text(encoding="utf-8")
+    )
+    owning: dict[str, str] = {}
+    for family in registry["families"].values():
+        for cls, meta in family["classes"].items():
+            owning[f".{cls}"] = meta.get("owning_sheet") or family["owning_sheet"]
+    return owning
+
+
 def test_relocated_shared_component_rules_are_present() -> None:
-    """The moved generic rules live in _shared_components and reach the bundle."""
-    shared = _SHARED_SOURCE.read_text(encoding="utf-8")
+    """Relocated generic rules live in their owning sheet and reach the bundle.
+
+    TASK-394's guarantee is unchanged: every rule moved out of a feature
+    module must EXIST in the generated output (the silent-unstyled regression
+    this locks). Where each class's definition lives is resolved from
+    ``css/patterns.json`` (ADR-161 task 4 moved ``.section-header`` from
+    ``_shared_components.tcss`` to the sections family's owning sheet;
+    later consolidation tasks keep moving classes, so this test follows the
+    registry rather than chasing edits). Classes not yet registered default
+    to the legacy shared module.
+    """
     bundle = _generated_css_text()
+    owning_sheets = _registry_class_owning_sheets()
     for selector in (
         ".setting-label",
         ".section-header",
         ".preview-panel",
         ".action-buttons",
     ):
-        assert selector in shared
+        sheet_name = owning_sheets.get(selector, "components/_shared_components.tcss")
+        sheet = _CSS_ROOT / sheet_name
+        assert sheet.is_file(), (
+            f"{selector}: registry owning sheet {sheet_name} does not exist"
+        )
+        assert selector in sheet.read_text(encoding="utf-8"), (
+            f"{selector} must live in its owning sheet {sheet_name}"
+        )
         assert selector in bundle
     # The app-wide scrollbar default now lives in core, not a feature module.
     core_base = (_CSS_ROOT / "core/_base.tcss").read_text(encoding="utf-8")
