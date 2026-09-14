@@ -358,7 +358,7 @@ both stay closed until you choose to reopen one.
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. With nothing checked, "Export selected" is blocked, and the line under the row says why: "Export selected unavailable — nothing selected" (task-32549). The reason is on that line rather than in the button, because this row is measured to the cell; it appears and disappears as you check and uncheck rows. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. With nothing checked, "Export selected" is blocked, and the count line under the row names it: "0 selected — Export selected unavailable" (task-32549). The reason is on that line rather than in the button, because this row is measured to the cell and a line of its own would cost the list a row; it reverts to the plain count the moment you check something. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
 
 With no notes at all, the list reads "No notes yet. Create your first note."
 above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
@@ -1542,7 +1542,10 @@ contract width, which lags a resize by one sync, instead of from the width
 it was being painted at (`layout-19-resize-60-after`). task-32549: the
 three blocked controls state their reason on screen. The label spelling was
 tried first and clipped at 100x30 — "○ Sort unavailable — clear the"
-against the grip (`layout-21-100x30-sort-reason`) — so all three use the
-shared reason line instead, and the Sort one is absent in select mode where
-its control is not on screen (`layout-22`, `layout-23`, `layout-24`,
-`layout-25`, `layout-14`).)*
+against the grip (`layout-21-100x30-sort-reason`) — so the reasons went to lines instead:
+Sort's own line under the toolbar (absent in select mode, where its control
+is not on screen), Export selected's on the count line that was already
+there — a dedicated line for it cost the tree a row at 60x20, which
+`test_library_note_60x20_navigator_state_allocation[selection]` caught —
+and Resolution history's above the sync canvas's pinned bar (`layout-22`,
+`layout-23`, `layout-24`, `layout-25`, `layout-14`).)*

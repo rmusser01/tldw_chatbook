@@ -3,10 +3,10 @@ id: TASK-32557
 title: >-
   Library Notes: "Add from files…" is painted "Add from" beside the grip at
   60x24
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:48'
-updated_date: '2026-09-14 16:58'
+updated_date: '2026-09-14 17:06'
 labels:
   - library
   - notes

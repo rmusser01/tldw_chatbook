@@ -3,10 +3,10 @@ id: TASK-32547
 title: >-
   Library Notes: at 60x24 pressing "New" leaves the list on stage and never
   shows the New note view
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:47'
-updated_date: '2026-09-14 16:58'
+updated_date: '2026-09-14 17:06'
 labels:
   - library
   - notes

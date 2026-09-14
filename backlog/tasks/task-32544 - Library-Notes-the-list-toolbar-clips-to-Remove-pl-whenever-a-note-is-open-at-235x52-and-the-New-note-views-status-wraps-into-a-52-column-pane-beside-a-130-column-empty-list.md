@@ -4,10 +4,10 @@ title: >-
   Library Notes: the list toolbar clips to "Remove pl" whenever a note is open
   at 235x52, and the New note view's status wraps into a 52-column pane beside a
   130-column empty list
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:46'
-updated_date: '2026-09-14 16:57'
+updated_date: '2026-09-14 17:06'
 labels:
   - library
   - notes

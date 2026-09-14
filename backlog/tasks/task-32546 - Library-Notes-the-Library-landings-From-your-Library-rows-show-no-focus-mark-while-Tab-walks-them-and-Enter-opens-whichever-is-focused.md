@@ -3,10 +3,10 @@ id: TASK-32546
 title: >-
   Library Notes: the Library landing's "From your Library" rows show no focus
   mark while Tab walks them, and Enter opens whichever is focused
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:47'
-updated_date: '2026-09-14 16:58'
+updated_date: '2026-09-14 17:06'
 labels:
   - library
   - notes

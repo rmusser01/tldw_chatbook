@@ -3,10 +3,10 @@ id: TASK-32549
 title: >-
   Library Notes: "○ Sort", "○ Export selected" and "○ Resolution history" carry
   their disabled reason only in a tooltip that never renders
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:47'
-updated_date: '2026-09-14 16:58'
+updated_date: '2026-09-14 17:06'
 labels:
   - library
   - notes
@@ -27,7 +27,7 @@ Critique #3 (dev 5fd502dbac), assessor B, persona Sam. D13. Task-32257 fixed Imp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Each of the three controls states its disabled reason as on-screen text at the control, through one shared reason-sentence seam in library_shell_state.py (the `.library-disabled-reason` line rather than the label: measured live, the label spelling clipped at 100x30, and two of the three rows are already width-starved by task-32261 and a max-height-3 pinned bar)
+- [x] #1 Each of the three controls states its disabled reason as on-screen text at the control, through shared sentence builders in library_shell_state.py (on a line beside the control rather than inside its label: measured live, the label spelling clipped at 100x30, and all three rows are width-starved -- task-32261's select strip, the merge-threshold budget, and a max-height-3 pinned bar)
 - [x] #2 A test pins the three reasons in their disabled states
 <!-- AC:END -->
 
@@ -43,15 +43,19 @@ Critique #3 (dev 5fd502dbac), assessor B, persona Sam. D13. Task-32257 fixed Imp
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-All three reasons are on screen now, through ONE seam -- but the seam is the shared `.library-disabled-reason` line, not the button label, and that choice was MEASURED rather than argued.
+All three reasons are on screen now, and where each one goes was MEASURED rather than argued.
 
-The label spelling was implemented first and walked live. At 100x30 the Notes list pane is 42 cells; '○ Sort unavailable — clear the filter' costs 41 with its button chrome, and beside 'New' it painted '○ Sort unavailable — clear the' against the grip (wave4-caps/layout/layout-21-100x30-sort-reason) -- re-creating, in this very wave, the defect task-32544 and task-32557 fix. Export selected is worse: task-32261 already had to hide the select strip's own counter to keep it on a 42-column pane, so the compact row has at most three spare characters. The sync canvas's opener sits in a `max-height: 3` pinned action bar. So all three take the line that '○ Server notes' has carried in this codebase since task-32257, and AC#1's 'through the shared _disabled_action_label seam' is honoured as one shared sentence builder rather than one shared label: `library_disabled_reason_line(label, reason)` in `library_shell_state.py`, with `library_disabled_action_label(..., reason=...)` composing the same sentence into a label for any future control whose row has the cells. **AC#1 was updated to say so before the change landed.**
+The label spelling (`library_disabled_action_label(..., reason=...)`) was implemented first and walked live. At 100x30 the Notes list pane is 42 cells; "○ Sort unavailable — clear the filter" costs 41 with its button chrome, and beside "New" it painted "○ Sort unavailable — clear the" against the grip (`wave4-caps/layout/layout-21-100x30-sort-reason`) — re-creating, inside this very wave, the defect task-32544 and task-32557 fix. It would also have invalidated `_TOOLBAR_MERGE_MIN_WIDTH`, a measured constant derived from the widest browse composition. So the reasons live on lines beside their controls, which is the treatment "○ Server notes" has had in this codebase since task-32257:
 
-The three lines: 'Sort unavailable — clear the filter' (under the toolbar, only while the Sort control is on screen -- select mode replaces the toolbar, and a reason for an invisible control is the same dishonesty in the other direction), 'Export selected unavailable — nothing selected' (under the select strip, flipped in place by `_apply_library_row_toggle` so it clears the moment a row is checked), 'Resolution history unavailable — it starts after this root is activated' (above the sync canvas's pinned bar). Two hand-spelled '○ Resolution history' literals now go through the shared marker helper.
+- **Sort** — its own `.library-disabled-reason` line under the toolbar, and only while the Sort control is on screen: select mode replaces the whole toolbar, and a reason for a control nobody can see is the same dishonesty in the other direction (spotted live at 100x30, `layout-23`).
+- **Export selected** — on the count line that was already under the strip: "0 selected — Export selected unavailable", reverting to the plain count on the first check. A dedicated line was tried first and cost the tree a row at 60x20 — `test_library_note_60x20_navigator_state_allocation[selection]` is green on dev and went red on the branch, which is exactly what a full-file comparison against a detached dev baseline is for. Compose and `_apply_library_row_toggle` build that string through one function, and the action's compact/full spelling comes from the base the canvas already stashes on the button, so the two cannot drift (task-32272's rule).
+- **Resolution history** — a `.library-disabled-reason` line above the sync canvas's pinned action bar, which is a single `max-height: 3` row. Its two hand-spelled "○ Resolution history" literals now go through the shared marker helper.
 
-Live at 235x52 and 100x30: both list reasons paint whole, the Sort one disappears in select mode, and the Export one disappears on the first check (layout-22, layout-23, layout-24, layout-25, layout-14).
+Seams added to `library_shell_state.py`: `library_disabled_reason_line(label, reason)` (the sentence), `library_selection_count_line(count, action_label)` (the count-line spelling of it), and a `reason=` keyword on `library_disabled_action_label` for any future control whose row does have the cells. **AC#1 was updated before the change landed** to name what was actually built.
 
-Files: Library/library_shell_state.py, Widgets/Library/library_notes_canvas.py, Widgets/Library/library_notes_add_from_files_canvas.py, UI/Library_Modules/canvas_sync.py, Tests/Library/test_library_shell_state.py, Tests/UI/test_library_notes_w4_layout.py.
+Live at 235x52 and 100x30: both list reasons paint whole, the Sort one disappears in select mode, the Export one on the first check (`layout-22`, `layout-23`, `layout-24`, `layout-25`, `layout-14`).
+
+Files: Library/library_shell_state.py, Widgets/Library/library_notes_canvas.py, Widgets/Library/library_notes_add_from_files_canvas.py, UI/Library_Modules/canvas_sync.py, Tests/Library/test_library_shell_state.py, Tests/UI/test_library_notes_w4_layout.py, Docs/User_Guide/library/notes.md.
 
 NOT done, deliberately: the brief's relocation of `_disabled_action_label` out of `library_note_import_canvas.py`. The sibling `sync-roots` branch is already written against it and does not switch, so relocating would break an unlanded branch for no behaviour change; the reason grammar is identical in both.
 <!-- SECTION:NOTES:END -->
