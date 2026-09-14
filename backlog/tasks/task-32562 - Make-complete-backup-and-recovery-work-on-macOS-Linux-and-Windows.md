@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-14 13:07
+updated_date: 2026-09-14 14:12
 ---
 
 ## Description
@@ -274,6 +274,7 @@ Later credential layout correction independently approved: targeted RED1 fail, G
 Snapshot failure diagnostic independently approved. Existing observer now retains only bounded class/code/traceframe metadata plus four fixed SQLite preview reason strings before original adapter conversion; all outcomes/errors/restoration preserved. Root41 passes2.39s (both diagnostic modules), agent33 passes2.32s, independent33 passes2.23s; native concurrent ordinary-note probe proves mechanism but not exact Windows cause. Ruff clean, Bandit assertions only new. Fresh keyboard4a50 wheel verified5349files/2474Python, walkthrough underway. Reconnected authorized Linux host; no diagnostic logs read.
 Fresh4a50 CI Fast Lane passed. Root combined core-owner+backup UI selection85/85 passed72.64s. Standalone UI9fail/1setup error traced to late imports of its existing replacement_case fixture after per-test HOME/config retargeting; test_core_owners explicitly requires its conversion module before that retargeting. Moving the already-used fixture import to collection time is a test-only ordering correction, with standalone RED preserved and same cases to rerun. Product storage selection untouched.
 Standalone backup UI fixture ordering fixed: same23 tests now pass39.88s (prior9fail/1error), after moving existing replacement_case import before per-test HOME/config retargeting; AST otherwise unchanged. Independent review approved pending only whitespace, now corrected; Ruff clean. Bounded admission-phase observer independently approved: root54pass2.74s, independent46pass2.59s, native contention and120-acquisition overhead probes; fixed32thread lifetimes/8stack/8error bounds, no per-call writes/product locks/paths/locals/caches/deadline changes. Existing focused Windows selection collects154 without runner edits. Next push and native support repeat.
+2026-09-14 14:05UTC status: Linux exact4a50 status-only repeat completed77pass/1fail/0skip/0unfinished across78; no diagnostic logs read. Windows b560 support154 completed native42pass, product152pass/2fail (Settings/Library admission_timeout; both inventories Complete and unchanged),102artifact hashes verified. Both profileOpen cases pass. Windows081 replacement80-minute phase timeout:2pass(explicit, Persona lifecycle),1fail(default later parent TimeoutExpired),28withoutterminaloutcomes, no productJUnit;62artifact hashes verified. Review agents stopped at account usage limit. Current4a50 keyboard fixture preserved at unfinished final review traversal with visible status aborted; no laterrollback acceptance claim. PR updated, task remains In Progress. Linux diagnostic disclosure approval still pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
