@@ -539,7 +539,18 @@ that was the toolbar button's label, never the heading's.)
   folder, direction, and local Library destination, then choose **Check
   changes**. Checking is mutation-free. Review safe actions, attention items,
   skips, filesystem effects, and deletion-like effects before **Activate
-  reviewed root** is enabled.
+  reviewed root** is enabled. Each row reads the same way an Import once row
+  does — the file's path, what will happen to it, and the Library folder it
+  lands in ("Daily/2026-09-06.md · Create a Library note · PowerVault") —
+  under a heading per effect carrying its count ("Create a Library note
+  (56)"). A folder whose files all get the same effect collapses to one
+  summary row you can open ("▶ Archive · 45 files · Create a Library note ·
+  PowerVault"). Files the check leaves alone appear under **Skipped (N)**
+  with the reason on the row (".trash/Old idea.md · Obsidian trash —
+  skipped", "Inbox/Untitled.md · Empty file — nothing to import"). *(This
+  page previously described these rows only as "safe actions, attention
+  items, skips" — superseded by task-32535: before it they read "Safe item
+  N / Create a Library note" with no file name at all.)*
 
 Both folder pickers remember where you were. Each reopens at the directory it
 last picked in *that* flow, so Import once and Keep a folder synced never move
@@ -799,6 +810,11 @@ With it on:
   file is still a working Obsidian link, and importing that file again
   recovers the same link rather than stacking a second identifier on it.
 
+Keep a folder synced offers the same **Obsidian vault** toggle, default-on,
+once the folder you chose holds an `.obsidian/` directory — see "Import once
+vs Keep a folder synced on the same folder" below for the one thing the two
+paths do differently with it.
+
 Turn the toggle off to import the vault exactly as any other folder — every
 directory walked, frontmatter left in the body, links left as text. The config
 files inside are then listed one by one, still as **Skipped** ("Not a note file
@@ -864,6 +880,36 @@ stayed as text and are not counted.
    the list beside you does not pick them up — its count and tree stay as they
    were, through a manual check and a source round trip — until you restart
    the app" — fixed by task-32518 below.)
+
+#### Import once vs Keep a folder synced on the same folder
+
+Run over the same Obsidian vault, the two paths now skip the same files for
+the same reasons: `.obsidian/`, `.trash/` and `Templates/` while the
+**Obsidian vault** toggle is on, and an empty or whitespace-only file
+whatever the toggle says. Both read the frontmatter, so `title` becomes the
+note's title and `tags`/`aliases` become its keywords.
+
+Two things still differ:
+
+- **The frontmatter block stays in a synced note's body**, byte for byte,
+  where Import once removes it. Keeping a folder synced is two-way: editing
+  the note in Chatbook writes the body back to the file on disk, so a
+  stripped block would delete the properties out of your vault on your next
+  edit. **Folder files** keeps the block for the same reason.
+- **Synced notes do not keep the vault's folder tree.** Every synced note
+  sits directly in the sync-managed folder, and the review says so — each
+  row's destination is that folder. Import once reproduces the folder
+  hierarchy. The file's own folder is still visible on every review row, in
+  its path, and in the note's title where the frontmatter names one.
+
+*Verified against fix/library-notes-w4-sync-review — 2026-09-14 at 235x52
+and 100x30 (task-32535: review rows name the file, the effect and the
+destination; a 45-file folder collapses to one summary row; the Obsidian
+toggle appears for a vault and its four skips carry reasons; the frontmatter
+title and keywords are lifted while the block stays in the note body.
+Keeping the vault's folder tree — AC#4 — is NOT delivered: the folder layer
+refuses a manual child of a sync-managed subtree, so every synced note sits
+in the root folder, as this section now says).*
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
