@@ -4,7 +4,7 @@
 
 ## Current checkpoint
 
-PR #2642 remains open against `dev`, unmerged. Acceptance remains in progress because native Windows failures and one Linux failure are unresolved. The completed macOS keyboard journey below is a platform-specific acceptance result.
+PR #2642 remains open against `dev`, unmerged. Acceptance remains in progress because native Windows failures and two failures in the latest Linux repeat are unresolved. The completed macOS keyboard journey below is a platform-specific acceptance result.
 
 The immutable `4a50a22cff` keyboard UAT completed the ordinary first-time and experienced-user workflows: onboarding, original-note creation, Complete backup, untouched credential Abort, reviewed replacement, incoming-note readback, new-note save, fresh later-copy handoff, explicit credential omissions, validated later rollback, original-note readback, encrypted new safety-copy inspection, and another Complete backup. All sessions quit normally. The saved-evidence audit verified three archives, 457 payload hashes, seven note-state relationships and all 5,349 installed-file hashes. Recorder/navigation mistakes and the narrowed password-recording assurance remain documented. No installed source or configuration repair was used. [Keyboard report](backup-uat-remediation-evidence-20260913/keyboard-4a50-completion-20260914.md), [audit](backup-uat-remediation-evidence-20260913/keyboard-4a50-evidence-audit-20260914.json).
 
@@ -18,7 +18,11 @@ Earlier failures remain evidence: [b560 Windows support](https://github.com/rmus
 
 The exact `b534370982` macOS selection passed all 74 product checks in 1196.024 seconds, with no failures or skips; all 109 artifact hashes and four installed receipts verify. Subsequent changes and their narrower repetitions are identified above rather than attributed to that earlier run. [Mac verification](backup-uat-remediation-evidence-20260913/macos-b534370-verification-20260914.json).
 
-Linux exact `4a50a22cff` completed 77/78 with one failure, no skips or unfinished cases. A newly authorized fresh run returns only numeric failed-test positions from pytest hooks, without reading diagnostic logs. The separate diagnostic-log disclosure request remains pending after prior automatic-review rejections. Windows' separate 60-second startup check is also unresolved. Measured startup/admission proposals that lost fresh identity or authority checks were rejected; no permission cache or timeout increase was introduced.
+The fresh Linux `4a50a22cff` repeat completed **76/78**, with two failures, no skips or unfinished cases. Zero-based public positions36 and49 identify Console capture/resumed writes and nested Persona reopen/later rollback. Encrypted/unencrypted restore, explicit replacement and the default later-rollback workflow passed. Only numeric pytest-hook status was read; failure causes remain unknown and the separate diagnostic-log disclosure request remains pending after prior automatic-review rejections. A repeat against current product `86ad9993dc` is active. [Numeric receipt](backup-uat-remediation-evidence-20260913/linux-4a50-numeric-repeat-20260914.json).
+
+Windows startup [34864871343](https://github.com/rmusser01/tldw_chatbook/actions/runs/34864871343), exact `86ad9993dc`, still failed all four cases at the unchanged60-second limit. Terminal stacks show native backup-authority work in LLM/discovery and deferred Collections paths. They do not prove a single slow call, deadlock, or Windows benefit from the local9→1 acquisition correction. [Causal review](backup-uat-remediation-evidence-20260913/windows-startup-86ad-causal-review-20260914.md). Measured proposals that lost fresh identity or authority checks remain rejected; no permission cache or timeout increase was introduced.
+
+A real native process probe showed the handoff test could leave its restarted child running after timeout. The test now uses file output and the existing PID/create-time observer under the original70-second deadline. On parent failure it retires only an already identified matching child and preserves the primary error; an absent or mismatched receipt grants no cleanup authority. Root and independent11-case runs pass, including timeout/nonzero/mismatch/cleanup-error cases. Actual installed handoff/later and related checks passed7/7 in45.25seconds before the final exception-only cleanup adjustment; all2,474 installed Python sources match and all2,866 installed files remain unchanged. Ruff is clean and Bandit adds only test assertions. Production launcher behavior is unchanged, and native Windows acceptance remains pending. [Checkpoint](backup-uat-remediation-evidence-20260913/handoff-file-observation-checkpoint-20260914.json), [independent review](backup-uat-remediation-evidence-20260913/handoff-file-independent-review-20260914.md).
 
 ### Earlier checkpoint history — retained
 
@@ -133,9 +137,9 @@ Earlier Linux native capture, encrypted controls, replacement, and later rollbac
 
 ## Remaining acceptance work
 
-- Complete final native Windows verification of the corrected settings-write continuity.
-- Complete the immutable keyboard replacement/later-rollback repeat, including normal startup after replacement and rollback; the fresh Abort/restart/readback path has passed.
-- Complete affected native Linux/Windows checks and publish final evidence with the PR.
+- Resolve and verify the remaining native Windows backup-workflow and startup failures.
+- Verify the latest product corrections on Linux and diagnose any remaining failures within the approved diagnostic access.
+- Publish final native evidence with the PR. The immutable macOS keyboard replacement/later-rollback journey is complete; its exact-revision receipt and limitations are above.
 
 The requester subsequently approved the two exact path-inventory comparison entries, the two-file Linux diagnostic transfer, and configuration-write binding continuity for both default and restored profiles. Their execution and verification are recorded below.
 

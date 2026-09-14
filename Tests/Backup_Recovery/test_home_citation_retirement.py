@@ -3,6 +3,8 @@
 import os
 import subprocess
 import sys
+import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -265,6 +267,7 @@ def _run(
     script=_SCRIPT,
     timeout=45,
     installed_package=None,
+    expect_restart=False,
 ):
     root = tmp_path.resolve()
     test_root = Path(__file__).resolve().parents[2]
@@ -289,14 +292,44 @@ def _run(
             TLDW_TEST_INSTALLED_PACKAGE=str(installed),
         )
         cwd = root
-    result = subprocess.run(
-        [sys.executable, "-c", script, route, outcome],
-        cwd=cwd,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
-    assert "retired and reopened" in result.stdout
+    log = root / "restart-output.log"
+    deadline = time.monotonic() + timeout
+    # A fresh Windows process inherits the old process's output handles. Files
+    # let the original process exit without waiting for EOF from its descendant.
+    if expect_restart:
+        from Tests.Backup_Recovery.restart_observation import wait_for_restart
+
+        receipt = root / "home" / "restart-process.json"
+    try:
+        with log.open("w") if expect_restart else nullcontext() as output:
+            result = subprocess.run(
+                [sys.executable, "-c", script, route, outcome],
+                cwd=cwd,
+                env=environment,
+                stdout=output,
+                stderr=subprocess.STDOUT if expect_restart else None,
+                capture_output=not expect_restart,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            if expect_restart:
+                assert result.returncode == 0, log.read_text()[-7000:]
+                fresh_code = wait_for_restart(receipt, deadline)
+                assert fresh_code in (None, 0), log.read_text()[-7000:]
+    except BaseException as primary:
+        if expect_restart:
+            try:
+                # A parent may fail after spawning and before its normal exit.
+                # Never wait for a missing receipt or signal an unproved PID.
+                if receipt.exists():
+                    wait_for_restart(receipt, time.monotonic())
+            except TimeoutError:
+                pass  # The observer retires the verified child at this deadline.
+            except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+        raise
+    stdout = log.read_text() if expect_restart else result.stdout
+    stderr = "" if expect_restart else result.stderr
+    assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+    assert "retired and reopened" in stdout

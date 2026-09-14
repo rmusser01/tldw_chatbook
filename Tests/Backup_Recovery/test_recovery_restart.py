@@ -216,6 +216,14 @@ def test_actual_normal_app_guarded_recovery_handoff(tmp_path, mode):
 
 
 _EXEC_DRIVER = r"""
+import json
+from pathlib import Path
+import psutil
+process=psutil.Process()
+receipt=Path.home()/'restart-process.json'
+pending=receipt.with_suffix('.tmp')
+pending.write_text(json.dumps({'pid':process.pid,'create_time':process.create_time()}))
+pending.replace(receipt)
 import runpy
 _guard=runpy.run_path(NETWORK_GUARD)
 _guard["install"]()
@@ -307,6 +315,7 @@ def test_actual_handoff_execs_fresh_recovery_ui(tmp_path, mode, native_package):
         + body,
         timeout=70,
         installed_package=native_package,
+        expect_restart=True,
     )
 
 
