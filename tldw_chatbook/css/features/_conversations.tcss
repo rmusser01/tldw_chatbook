@@ -96,12 +96,10 @@
     height: 3;
 }
 
-.sidebar-button {
-    width: 100%;
-    margin-bottom: 1;
-    height: 3;
-}
-
+/* ADR-161 task 6: the bare .sidebar-button/.sidebar-listview duplicates
+ * that used to live here were folded into their owning sheet
+ * layout/_sidebars.tcss (same computed values); only feature-specific
+ * compounds remain in this sheet. */
 .sidebar-button.small {
     width: 45%;
     margin-right: 1;
@@ -113,12 +111,6 @@
 
 .sidebar-button.danger:hover {
     background: $error;
-}
-
-.sidebar-listview {
-    height: 10;
-    margin-bottom: 1;
-    border: round $surface;
 }
 
 /* Export buttons container */

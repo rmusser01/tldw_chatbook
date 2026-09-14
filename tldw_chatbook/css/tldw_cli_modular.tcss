@@ -713,11 +713,16 @@ Tabs:focus .-active {
     color: $text !important;
 }
 
-/* General sidebar button styling */
+/* General sidebar button styling.
+ * ADR-161 task 6: margin-bottom replaces the old `margin: 1 0` shorthand --
+ * features/_conversations.tcss's deleted duplicate overrode it with a bare
+ * `margin-bottom: 1`, and Textual applies a cross-rule longhand as a
+ * full-group replacement, so the computed margin was already (0, 0, 1, 0).
+ * The folded form reproduces exactly that. */
 .sidebar-button {
     width: 100%;
     height: 3;
-    margin: 1 0;
+    margin-bottom: $ds-space-1;
     padding: 0 2;
     text-align: center;
 }
@@ -744,9 +749,13 @@ Tabs:focus .-active {
     background: $primary-background;
 }
 
+/* ADR-161 task 6: folded the winning declarations of the deleted
+ * features/_conversations.tcss duplicate (margin, border color); the
+ * computed styles are unchanged. */
 .sidebar-listview {
     height: 10; /* Example height for listviews in sidebars */
-    border: round $primary-lighten-2;
+    margin-bottom: $ds-space-1;
+    border: round $surface;
     background: $primary-background;
 }
 
@@ -1149,17 +1158,23 @@ Button:disabled:hover {
  * Form elements: inputs, textareas, selects
  * ======================================== */
 
+/* ADR-161 task 6: the winning declarations of the former
+ * features/_tools-settings.tcss bare duplicates were folded here
+ * (tokenized on arrival) so this owning sheet carries the single
+ * definition with unchanged computed styles. */
 .form-label {
-    margin-bottom: $ds-space-stack;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-0;
     text-style: $ds-text-strong;
+    color: $text-muted;
 }
 
 .form-section-title {
     text-style: $ds-text-strong;
-    color: $secondary;
-    margin: $ds-space-section 0 $ds-space-stack 0;
-    border-bottom: solid $primary-background;
-    padding-bottom: $ds-space-stack;
+    color: $primary;
+    margin: $ds-space-section $ds-space-0 $ds-space-stack $ds-space-0;
+    border-bottom: solid $primary;
+    padding-bottom: $ds-space-0;
 }
 
 .form-description {
@@ -1171,7 +1186,8 @@ Button:disabled:hover {
 .form-actions {
     margin-top: $ds-space-section;
     layout: horizontal;
-    height: auto;
+    height: $ds-control-height;
+    width: 100%;
     align: center middle;
 }
 
@@ -7180,8 +7196,18 @@ PersonalContextLinkModal {
     width: 50%;
 }
 
-/* Section headers */
-.section-header {
+/* Section headers.
+ * ADR-161 task 6: this rule was a bare `.section-header` redefinition
+ * that task 4's consolidation deliberately left as the cascade's global
+ * winner (see the manifest note in build_css.py); the single-definition
+ * rule (spec 3.7) now requires the bare selector to live only in the
+ * owning sheet components/_sections.tcss. It is scoped here to `Screen`
+ * -- composition, legal anywhere -- which preserves the computed styles
+ * exactly: the (0,1,1) compound wins the properties it declares by
+ * specificity where it used to win by bundle order (stats_screen.css's
+ * screen copy still interposes between the two sheets, so folding into
+ * the owner would have changed text-style and margin-top). */
+Screen .section-header {
     text-style: bold underline;
     color: $primary;
     margin-bottom: $ds-space-stack;
@@ -7544,12 +7570,10 @@ WatchlistsOperationCard {
     height: 3;
 }
 
-.sidebar-button {
-    width: 100%;
-    margin-bottom: 1;
-    height: 3;
-}
-
+/* ADR-161 task 6: the bare .sidebar-button/.sidebar-listview duplicates
+ * that used to live here were folded into their owning sheet
+ * layout/_sidebars.tcss (same computed values); only feature-specific
+ * compounds remain in this sheet. */
 .sidebar-button.small {
     width: 45%;
     margin-right: 1;
@@ -7561,12 +7585,6 @@ WatchlistsOperationCard {
 
 .sidebar-button.danger:hover {
     background: $error;
-}
-
-.sidebar-listview {
-    height: 10;
-    margin-bottom: 1;
-    border: round $surface;
 }
 
 /* Export buttons container */
@@ -9360,12 +9378,10 @@ MediaDetailsWidget {
     overflow-y: auto;
 }
 
-.form-label {
-    margin-top: 1;
-    margin-bottom: 0;
-    text-style: bold;
-    color: $text-muted;
-}
+/* ADR-161 task 6: the bare .form-label/.form-section-title/.form-actions
+ * duplicates that used to live here were folded into their owning sheet
+ * components/_forms.tcss (same computed values, tokenized); only
+ * feature-specific compounds remain in this sheet. */
 
 .form-description {
     color: $text-muted;
@@ -9373,26 +9389,10 @@ MediaDetailsWidget {
     text-style: italic;
 }
 
-.form-section-title {
-    text-style: bold;
-    color: $primary;
-    margin: 2 0 1 0;
-    border-bottom: solid $primary;
-    padding-bottom: 0;
-}
-
 .form-subsection-title {
     text-style: bold;
     color: $secondary;
     margin: 1 0 1 0;
-}
-
-.form-actions {
-    layout: horizontal;
-    margin-top: 2;
-    height: 3;
-    width: 100%;
-    align: center middle;
 }
 
 .form-actions Button {

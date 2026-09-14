@@ -4,17 +4,23 @@
  * Form elements: inputs, textareas, selects
  * ======================================== */
 
+/* ADR-161 task 6: the winning declarations of the former
+ * features/_tools-settings.tcss bare duplicates were folded here
+ * (tokenized on arrival) so this owning sheet carries the single
+ * definition with unchanged computed styles. */
 .form-label {
-    margin-bottom: $ds-space-stack;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-0;
     text-style: $ds-text-strong;
+    color: $text-muted;
 }
 
 .form-section-title {
     text-style: $ds-text-strong;
-    color: $secondary;
-    margin: $ds-space-section 0 $ds-space-stack 0;
-    border-bottom: solid $primary-background;
-    padding-bottom: $ds-space-stack;
+    color: $primary;
+    margin: $ds-space-section $ds-space-0 $ds-space-stack $ds-space-0;
+    border-bottom: solid $primary;
+    padding-bottom: $ds-space-0;
 }
 
 .form-description {
@@ -26,7 +32,8 @@
 .form-actions {
     margin-top: $ds-space-section;
     layout: horizontal;
-    height: auto;
+    height: $ds-control-height;
+    width: 100%;
     align: center middle;
 }
 

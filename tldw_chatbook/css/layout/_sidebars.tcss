@@ -250,11 +250,16 @@
     color: $text !important;
 }
 
-/* General sidebar button styling */
+/* General sidebar button styling.
+ * ADR-161 task 6: margin-bottom replaces the old `margin: 1 0` shorthand --
+ * features/_conversations.tcss's deleted duplicate overrode it with a bare
+ * `margin-bottom: 1`, and Textual applies a cross-rule longhand as a
+ * full-group replacement, so the computed margin was already (0, 0, 1, 0).
+ * The folded form reproduces exactly that. */
 .sidebar-button {
     width: 100%;
     height: 3;
-    margin: 1 0;
+    margin-bottom: $ds-space-1;
     padding: 0 2;
     text-align: center;
 }
@@ -281,9 +286,13 @@
     background: $primary-background;
 }
 
+/* ADR-161 task 6: folded the winning declarations of the deleted
+ * features/_conversations.tcss duplicate (margin, border color); the
+ * computed styles are unchanged. */
 .sidebar-listview {
     height: 10; /* Example height for listviews in sidebars */
-    border: round $primary-lighten-2;
+    margin-bottom: $ds-space-1;
+    border: round $surface;
     background: $primary-background;
 }
 

@@ -247,12 +247,10 @@
     overflow-y: auto;
 }
 
-.form-label {
-    margin-top: 1;
-    margin-bottom: 0;
-    text-style: bold;
-    color: $text-muted;
-}
+/* ADR-161 task 6: the bare .form-label/.form-section-title/.form-actions
+ * duplicates that used to live here were folded into their owning sheet
+ * components/_forms.tcss (same computed values, tokenized); only
+ * feature-specific compounds remain in this sheet. */
 
 .form-description {
     color: $text-muted;
@@ -260,26 +258,10 @@
     text-style: italic;
 }
 
-.form-section-title {
-    text-style: bold;
-    color: $primary;
-    margin: 2 0 1 0;
-    border-bottom: solid $primary;
-    padding-bottom: 0;
-}
-
 .form-subsection-title {
     text-style: bold;
     color: $secondary;
     margin: 1 0 1 0;
-}
-
-.form-actions {
-    layout: horizontal;
-    margin-top: 2;
-    height: 3;
-    width: 100%;
-    align: center middle;
 }
 
 .form-actions Button {

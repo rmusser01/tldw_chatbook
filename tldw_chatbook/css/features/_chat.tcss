@@ -242,8 +242,18 @@
     width: 50%;
 }
 
-/* Section headers */
-.section-header {
+/* Section headers.
+ * ADR-161 task 6: this rule was a bare `.section-header` redefinition
+ * that task 4's consolidation deliberately left as the cascade's global
+ * winner (see the manifest note in build_css.py); the single-definition
+ * rule (spec 3.7) now requires the bare selector to live only in the
+ * owning sheet components/_sections.tcss. It is scoped here to `Screen`
+ * -- composition, legal anywhere -- which preserves the computed styles
+ * exactly: the (0,1,1) compound wins the properties it declares by
+ * specificity where it used to win by bundle order (stats_screen.css's
+ * screen copy still interposes between the two sheets, so folding into
+ * the owner would have changed text-style and margin-top). */
+Screen .section-header {
     text-style: bold underline;
     color: $primary;
     margin-bottom: $ds-space-stack;
