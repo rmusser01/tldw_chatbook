@@ -1862,6 +1862,10 @@ class LibraryNotesController:
             "load-retry": "#library-note-load-retry",
             "conflict-callout": "#library-note-conflict-copy",
             "delete-cancel": "#library-note-delete-cancel",
+            # task-32539: see the matching pair in
+            # ``_library_notes_semantic_role``.
+            "delete-undo": "#library-notes-delete-undo",
+            "delete-dismiss": "#library-notes-delete-receipt-dismiss",
             "lasting-display-name": "#notes-sync-display-name",
             "lasting-folder-choose": "#notes-sync-folder-choose",
             "lasting-check": "#notes-sync-check",
@@ -3249,15 +3253,6 @@ class LibraryNotesController:
     def _library_notes_canvas_kwargs(self) -> dict[str, Any]:
         """Return every compose input for the mounted Database Notes canvas."""
         tree_projection = self._build_library_notes_tree_projection()
-        # task-32548: resolved HERE, where the list's own projection has just
-        # been built, rather than inside ``_library_note_presentation_state``
-        # -- that runs on every keystroke in the body, and rebuilding the tree
-        # projection per character is work the editor does not need. The
-        # suffix only changes when the list does, which is exactly when this
-        # runs.
-        self._notes_state.open_note_title_suffix = note_title_tiebreak_suffix(
-            tree_projection, self._selected_note_id
-        )
         # task-32172 narrowed task-32128's "the tree arriving closes the
         # chooser" pass: the tree composes Sort itself now, so only the one
         # case the canvas still refuses to paint -- a filter window, whose
@@ -3318,6 +3313,17 @@ class LibraryNotesController:
                 values["mode"] = "loading"
             else:
                 values["mode"] = "editor"
+                # task-32548: resolved HERE, where the list's own projection
+                # has just been built, rather than inside
+                # ``_library_note_presentation_state`` -- that runs on every
+                # keystroke in the body, and rebuilding the tree projection
+                # per character is work the editor does not need. The suffix
+                # only changes when the list does, which is when this runs.
+                self._notes_state.open_note_title_suffix = (
+                    note_title_tiebreak_suffix(
+                        tree_projection, self._selected_note_id
+                    )
+                )
                 values["presentation_state"] = self._library_note_presentation_state()
                 values["title_placeholder_only"] = (
                     self._library_note_pending_blank_gc_id is not None

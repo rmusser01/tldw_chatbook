@@ -4966,6 +4966,14 @@ class LibraryScreen(BaseAppScreen):
             "library-note-load-retry": "load-retry",
             "library-note-conflict-copy": "conflict-callout",
             "library-note-delete-cancel": "delete-cancel",
+            # task-32539: the delete receipt's two controls had no portable
+            # identity, so ANY later target-less sync of the notes canvas
+            # (the Trash reload that rides every delete is one) recomposed
+            # them and focus was simply gone -- reproduced live at 235x52,
+            # where focus on Undo survived the delete's own sync and not the
+            # trash worker's.
+            "library-notes-delete-undo": "delete-undo",
+            "library-notes-delete-receipt-dismiss": "delete-dismiss",
             "notes-sync-display-name": "lasting-display-name",
             "notes-sync-folder-choose": "lasting-folder-choose",
             "notes-sync-check": "lasting-check",

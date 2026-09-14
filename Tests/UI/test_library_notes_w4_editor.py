@@ -531,3 +531,51 @@ async def test_the_list_never_paints_a_row_for_a_note_being_discarded():
                 f"The discarded note {blank_id!r} is still projected as a row"
             )
             await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_a_background_sync_does_not_evict_the_post_delete_focus_intent():
+    """task-32539: the fix above only holds while nothing else re-syncs the
+    canvas first.
+
+    In production every delete also starts a Trash reload worker, which ends
+    in a target-less ``_sync_library_canvas``. ``queue_after_recompose``
+    REPLACES, so that background sync used to evict "focus the receipt's
+    Undo" and install its own default identity restore -- captured when
+    nothing was focused. Reproduced live at 235x52 (the harness fake carries
+    no ``list_deleted_notes``, so the worker never ran there and the bug was
+    invisible in tests); this pin gives the fake that seam for one test so
+    the race is on the real route.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        service = screen.app_instance.notes_scope_service
+
+        async def list_deleted_notes(**kwargs):
+            return {
+                "items": [
+                    {"id": note_id, "title": note.get("title"), "version": 2}
+                    for note_id, note in service.deleted_notes.items()
+                ],
+                "total": len(service.deleted_notes),
+            }
+
+        service.list_deleted_notes = list_deleted_notes
+
+        await _open_first_note(screen, pilot)
+        await _confirm_delete_of_the_open_note(screen, pilot)
+
+        undo = screen.query_one("#library-notes-delete-undo", Button)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is undo,
+            message=lambda: (
+                "The Trash reload evicted the post-delete focus intent; "
+                f"focus is {getattr(screen.focused, 'id', None)!r}"
+            ),
+        )
+        # The reload really did land -- otherwise this pins nothing.
+        assert screen._notes_state.trash is not None
+        assert _chips(screen).get("enter") == "undo delete"

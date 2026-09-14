@@ -919,7 +919,21 @@ def _sync_library_canvas(
             or skill_work_kwargs.get("import_open")
         ):
             follow_up_canvas = skill_work
-        if follow_up is not None:
+        if follow_up is not None and not (
+            then is None and follow_up_canvas.has_pending_recompose_callback
+        ):
+            # task-32539: a sync with NO ``then`` of its own is carrying only
+            # a DEFAULT restore (the notes/media identity guards above), and
+            # ``queue_after_recompose`` REPLACES -- so a background sync that
+            # rides a mutation evicted the intent an action queued a moment
+            # earlier. Live at 235x52: the trash reload every delete starts
+            # landed between the delete's own sync and its recompose, and
+            # "focus the receipt's Undo" was silently dropped; the default
+            # restore that took its place had captured "nothing focused".
+            # The media branch has guarded its own default this way since
+            # task-31567; this generalises that rule to the one place every
+            # kind queues through. An EXPLICIT ``then`` still supersedes, as
+            # it always did.
             follow_up_canvas.queue_after_recompose(follow_up)
         canvas.sync_state(*sync_args, **sync_kwargs)
         if prompt_work is not None:
