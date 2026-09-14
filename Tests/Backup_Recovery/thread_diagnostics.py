@@ -261,8 +261,47 @@ def observe_capture_review(path: Path) -> Callable[[], None]:
     def observed_discover(original, *args, **kwargs):
         nonlocal previous
         result = original(*args, **kwargs)
+        observed_items = result.items[:4096]
+        by_id = {item.logical_id: item for item in observed_items}
+        unavailable = []
+        dependency_truncated = len(result.items) > 4096
+        for item in observed_items:
+            if item.status in {"unused", "intentionally_excluded"}:
+                continue
+            dependency_truncated |= len(item.dependencies) > 64
+            for dependency in item.dependencies[:64]:
+                target = by_id.get(dependency)
+                if target is None and len(result.items) > 4096:
+                    continue  # An unobserved tail is not evidence of absence.
+                if (
+                    target is None
+                    or target.status
+                    in inventory.BLOCKING | {"unused", "intentionally_excluded"}
+                    or target.status == "intentionally_deleted"
+                    and not target.deletion_validated
+                ):
+                    if len(unavailable) == 64:
+                        dependency_truncated = True
+                        continue
+                    unavailable.append(
+                        {
+                            "owner": item.owner[:128],
+                            "logical_id_sha256": hashlib.sha256(
+                                item.logical_id.encode()
+                            ).hexdigest(),
+                            "dependency_sha256": hashlib.sha256(
+                                dependency.encode()
+                            ).hexdigest(),
+                            "target_owner": None
+                            if target is None
+                            else target.owner[:128],
+                            "target_status": None
+                            if target is None
+                            else target.status[:64],
+                        }
+                    )
         current = {}
-        for item in result.items[:4096]:
+        for item in observed_items:
             # Paths, dependency IDs and metadata remain comparison-only. The
             # output identifies logical IDs by hash because IDs may contain paths.
             identifier = hashlib.sha256(item.logical_id.encode()).hexdigest()
@@ -304,6 +343,8 @@ def observe_capture_review(path: Path) -> Callable[[], None]:
                 "delta": delta[:64],
                 "delta_truncated": len(delta) > 64,
                 "inventory_truncated": len(result.items) > 4096,
+                "unavailable_dependencies": unavailable,
+                "dependencies_truncated": dependency_truncated,
             }
         )
         previous = result.scope_digest, current

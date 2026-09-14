@@ -18376,6 +18376,8 @@ class ChatScreen(BaseAppScreen):
         if not getattr(self, "_console_sync_maintenance_paused", False):
             return
         self._console_sync_maintenance_paused = False
+        if getattr(self, "_console_control_bar_replay_whole_sync", False):
+            return  # Its coalesced timer already owns the fresh replay.
         if self._console_sync_requested and not self._console_sync_in_progress:
             self._console_sync_requested = False
             if not _console_screen_is_torn_down(self):
@@ -18417,6 +18419,7 @@ class ChatScreen(BaseAppScreen):
         if (
             getattr(self, "_console_sync_maintenance_paused", False)
             or self._console_sync_in_progress
+            or getattr(self, "_console_control_bar_replay_whole_sync", False)
         ):
             self._console_sync_requested = True
             return
@@ -18492,7 +18495,9 @@ class ChatScreen(BaseAppScreen):
             with self._workspace.tick_workspace_build_scope():
                 rail_state = self._current_console_rail_state()
                 self._sync_console_settings_summary()
-                self._sync_console_control_bar(rail_state)
+                if self._sync_console_control_bar(rail_state) is False:
+                    self._console_control_bar_replay_whole_sync = True
+                    return
                 # Settings failures may arrive after Apply has returned:
                 # ordinary first persistence and temporary-chat promotion
                 # both update the session ledger on their own later path.
@@ -18533,8 +18538,10 @@ class ChatScreen(BaseAppScreen):
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
-            if self._console_sync_requested and not getattr(
-                self, "_console_sync_maintenance_paused", False
+            if (
+                self._console_sync_requested
+                and not getattr(self, "_console_sync_maintenance_paused", False)
+                and not getattr(self, "_console_control_bar_replay_whole_sync", False)
             ):
                 self._console_sync_requested = False
                 # A dead screen must not re-arm itself: `run_worker` here
@@ -21379,7 +21386,7 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return None
 
-    def _request_console_control_bar_sync(self) -> None:
+    def _request_console_control_bar_sync(self, *, delayed: bool = False) -> None:
         """Coalesce control-bar syncs into one trailing run (task-3010).
 
         Every direct caller of `_sync_console_control_bar` was individually
@@ -21390,10 +21397,15 @@ class ChatScreen(BaseAppScreen):
         run always computes fresh state, so the last-writer semantics every
         caller relied on are preserved.
         """
-        if getattr(self, "_console_control_bar_sync_scheduled", False):
+        if _console_screen_is_torn_down(self) or getattr(
+            self, "_console_control_bar_sync_scheduled", False
+        ):
             return
         self._console_control_bar_sync_scheduled = True
-        self.call_after_refresh(self._run_coalesced_control_bar_sync)
+        if delayed:
+            self.set_timer(0.2, self._run_coalesced_control_bar_sync)
+        else:
+            self.call_after_refresh(self._run_coalesced_control_bar_sync)
 
     @on(ConsoleAutoSpeakChanged)
     def on_console_auto_speak_changed(self, event: ConsoleAutoSpeakChanged) -> None:
@@ -21432,12 +21444,27 @@ class ChatScreen(BaseAppScreen):
     def _run_coalesced_control_bar_sync(self) -> None:
         """Execute one coalesced control-bar sync (task-3010)."""
         self._console_control_bar_sync_scheduled = False
-        self._sync_console_control_bar()
+        if _console_screen_is_torn_down(self):
+            self._console_control_bar_replay_whole_sync = False
+            return
+        if getattr(self, "_console_control_bar_replay_whole_sync", False):
+            if self._console_sync_in_progress or getattr(
+                self, "_console_sync_maintenance_paused", False
+            ):
+                self._request_console_control_bar_sync(delayed=True)
+                return
+            self._console_control_bar_replay_whole_sync = False
+            self._console_sync_requested = False
+            self.run_worker(
+                self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            )
+        else:
+            self._sync_console_control_bar()
 
     def _sync_console_control_bar(
         self,
         rail_state: Optional[ConsoleRailState] = None,
-    ) -> None:
+    ) -> bool:
         """Refresh Console-owned control labels from current selection state.
 
         Args:
@@ -21447,15 +21474,25 @@ class ChatScreen(BaseAppScreen):
                 recomputing it -- which itself rebuilds workspace-context
                 and inspector state). Other callers may omit it; it is
                 computed on demand when not given.
+
+        Returns:
+            True after rendering; False when entry was deferred and a fresh
+            coalesced replay owns the unfinished refresh.
         """
         from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
         from tldw_chatbook.Backup_Recovery.config_participants import operation
 
+        if getattr(self, "_console_sync_maintenance_paused", False):
+            self._request_console_control_bar_sync(delayed=True)
+            return False
         # Nested readers still check the current source; keep its native
         # lifetime continuous for this synchronous refresh, never an await.
         failure: BaseException | None = None
+        entered = False
         try:
             with operation(config):
+                entered = True
                 try:
                     self._sync_console_control_bar_under_config(rail_state)
                 except BaseException as error:  # noqa: BLE001 - re-raised after native owner exit.
@@ -21463,11 +21500,21 @@ class ChatScreen(BaseAppScreen):
                     # Nested config failures retain their own failure state.
                     failure = error
         except BaseException as error:
+            if (
+                not entered
+                and type(error) is RecoveryRequired
+                and error.args == ("storage_locally_paused",)
+            ):
+                # Native intent can precede the local monitor. Recompute on
+                # one trailing timer even if that intent is canceled unseen.
+                self._request_console_control_bar_sync(delayed=True)
+                return False
             if failure is not None and error is not failure:
                 raise error from failure
             raise
         if failure is not None:
             raise failure
+        return True
 
     def _sync_console_control_bar_under_config(
         self, rail_state: ConsoleRailState | None = None

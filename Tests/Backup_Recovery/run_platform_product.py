@@ -75,6 +75,7 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_startup_readmission_continuity.py",
     "Tests/Backup_Recovery/test_startup_pending_readmission.py::test_initial_pending_fence_waits_for_live_scheduler_and_native_pause",
     "Tests/Backup_Recovery/test_recovery_restart_windows.py",
+    "Tests/Backup_Recovery/test_recovery_restart.py::test_actual_restart_keeps_launching_package_ahead_of_shadow_cwd",
     "Tests/Backup_Recovery/test_database_default_spelling.py",
     "Tests/Backup_Recovery/test_restart_observation.py",
     "Tests/Backup_Recovery/test_console_resume_character_lifetime.py",
@@ -118,6 +119,8 @@ _RESTORE_DIAGNOSTIC_TESTS = (
     ),
 )
 _SUPPORT_DIAGNOSTIC_TESTS = (
+    "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
+    "Tests/Backup_Recovery/test_recovery_restart.py::test_actual_restart_keeps_launching_package_ahead_of_shadow_cwd",
     "Tests/Backup_Recovery/test_mounted_console_backup.py",
     "Tests/Backup_Recovery/test_profile_open.py::test_profile_open_requires_actual_mounted_local_reads[console_quit]",
     "Tests/Backup_Recovery/test_profile_open.py::test_profile_open_requires_actual_mounted_local_reads[console_edit]",

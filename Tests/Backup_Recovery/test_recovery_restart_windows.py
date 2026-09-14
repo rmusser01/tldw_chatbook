@@ -51,7 +51,7 @@ def test_windows_restart_spawns_with_filtered_environment_before_exit(
         assert events[-1] == ("exit", 0)
     _, argv, options = events[0]
     assert argv == [
-        sys.executable, "-c", recovery_restart._ENTRY,
+        sys.executable, "-P", "-c", recovery_restart._ENTRY,
         str(request.archive), str(request.target_config),
     ]
     assert options.keys() == {"env", "stdin", "stdout", "stderr", "close_fds"}

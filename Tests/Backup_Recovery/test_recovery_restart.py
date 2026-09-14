@@ -39,11 +39,53 @@ def test_restart_exec_uses_fixed_fresh_interpreter_and_filtered_environment(
     restart(request)
     executable, argv, environment = calls[0]
     assert executable == sys.executable
-    assert argv[1] == "-c"
+    assert argv[1:3] == ["-P", "-c"]
     assert argv[-2:] == [str(request.archive), str(request.target_config)]
     assert "TEST_PROVIDER_API_KEY" not in environment
     assert environment["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
     assert "private-fixture-key" not in repr(calls)
+
+
+def test_actual_restart_keeps_launching_package_ahead_of_shadow_cwd(tmp_path):
+    """An inherited working directory cannot substitute the recovery package."""
+    import os
+    import subprocess  # nosec B404 - fixed interpreter and harmless test probe.
+    import sys
+
+    import tldw_chatbook
+
+    trusted_package = Path(tldw_chatbook.__file__).resolve()
+    shadow = tmp_path / "tldw_chatbook"
+    shadow.mkdir()
+    (shadow / "__init__.py").write_text("# Harmless competing package.\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    environment = os.environ.copy()
+    environment.update(
+        HOME=str(home), USERPROFILE=str(home),
+        PYTHONPATH=str(trusted_package.parent.parent),
+    )
+    # The first interpreter loads the trusted restart implementation. Only its
+    # UI entry is replaced; restart's real exec/CreateProcess and env stay live.
+    script = """
+import sys
+from pathlib import Path
+import tldw_chatbook
+from tldw_chatbook.Backup_Recovery import recovery_restart
+assert Path(tldw_chatbook.__file__).resolve() == Path(sys.argv[1])
+recovery_restart._ENTRY = (
+    'from pathlib import Path; import tldw_chatbook; '
+    'print(Path(tldw_chatbook.__file__).resolve(), flush=True)'
+)
+recovery_restart.restart(recovery_restart.RecoveryRestart(None, Path(sys.argv[2])))
+"""
+    result = subprocess.run(  # nosec B603 - fixed code and fixture paths, no shell.
+        [sys.executable, "-P", "-c", script, str(trusted_package), str(home / "config.toml")],
+        cwd=tmp_path, env=environment, stdin=subprocess.DEVNULL,
+        capture_output=True, text=True, timeout=20, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == trusted_package
 
 
 _MINIMAL = r"""

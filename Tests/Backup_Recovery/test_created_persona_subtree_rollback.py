@@ -10,12 +10,53 @@ _SEED_PERSONA = _SEED.replace(
     "print('NATIVE_SEED_COMPLETE',flush=True)",
     """
 from Tests.Persona_Visual.test_persona_visual_publication import _snapshot
-from tldw_chatbook.Persona_Visual.publication import publish_persona_visual
+from tldw_chatbook.Persona_Visual.publication import _cleanup_marker, _repository_asset_row, _validate_snapshot
 from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
+from tldw_chatbook.Backup_Recovery.native_files import create_private_directory, create_private_file
+from tldw_chatbook.Utils.platform_files import os as native_os
 from tldw_chatbook.config import get_user_data_dir
 from dataclasses import replace
+from uuid import uuid4
+import hashlib
 source=Path.home()/'persona-input';source.mkdir(mode=0o700)
-publish_persona_visual(PersonaVisualRepository(app.chachanotes_db),replace(_snapshot(source),persona_id='persona-'+Path.home().name),source_root=source,profile_root=get_user_data_dir(),authority_guard=lambda:True)
+# Seed legitimate existing artwork in the publisher's format. Its publication
+# API is POSIX-only; backup must also handle such existing data on Windows.
+snapshot=replace(_snapshot(source),persona_id='persona-'+Path.home().name)
+manifest,context,assets=_validate_snapshot(snapshot)
+profile=get_user_data_dir()
+pack=uuid4().hex;version=uuid4().hex
+relative=f'persona_visual/packs/{pack}/versions/{version}'
+directory=profile
+for part in relative.split('/')+['assets']:
+ directory=directory/part
+ if not directory.exists():create_private_directory(directory)
+version_path=profile/relative
+identity=native_os.stat(version_path,follow_symlinks=False)
+payloads={
+ 'manifest.json':snapshot.manifest_json.encode('utf-8'),
+ '.persona-visual-cleanup':_cleanup_marker(os.urandom(32).hex(),relative,(identity.st_dev,identity.st_ino)),
+}
+asset_rows=[]
+for index,(source_key,metadata) in enumerate(assets):
+ leaf=f'assets/{index:03d}.png'
+ payload=(source/source_key).read_bytes()
+ assert metadata.mime_type=='image/png'
+ assert len(payload)==metadata.byte_count and hashlib.sha256(payload).hexdigest()==metadata.sha256
+ payloads[leaf]=payload
+ asset_rows.append(_repository_asset_row(metadata,storage_relpath=f'{relative}/{leaf}'))
+for leaf,payload in payloads.items():
+ with create_private_file(version_path/leaf) as descriptor:
+  assert native_os.write(descriptor,payload)==len(payload)
+ assert (version_path/leaf).read_bytes()==payload
+repository=PersonaVisualRepository(app.chachanotes_db)
+graph=repository.activate_new_pack(
+ persona_id=snapshot.persona_id,title=snapshot.title,description=snapshot.description,
+ source_kind=snapshot.source_kind,source_context=context,manifest=manifest,
+ manifest_storage_relpath=f'{relative}/manifest.json',assets=asset_rows,
+ expected_persona_revision=snapshot.persona_revision,authority_guard=lambda:True,
+)
+assert repository.get_active_persona_pack(snapshot.persona_id)==graph
+assert graph.version.manifest_sha256==hashlib.sha256(payloads['manifest.json']).hexdigest()
 app.chachanotes_db.add_note('Original '+Path.home().name,'Before replacement for '+Path.home().name)
 print('NATIVE_PERSONA_SEED_COMPLETE',flush=True)
 """,

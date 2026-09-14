@@ -44,6 +44,7 @@ def restart(request: RecoveryRestart) -> None:
     # Fixed interpreter and code; reviewed path hints are separate argv values.
     argv = [
         sys.executable,
+        "-P",
         "-c",
         _ENTRY,
         str(request.archive) if request.archive else "",

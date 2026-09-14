@@ -331,6 +331,41 @@ def test_capture_observer_bounds_deltas_and_retained_records(tmp_path, monkeypat
     assert records[-1]["delta_truncated"] is True
 
 
+def test_capture_observer_names_unavailable_dependency_without_private_ids(
+    tmp_path, monkeypatch
+):
+    from Tests.Backup_Recovery.thread_diagnostics import observe_capture_review
+    from tldw_chatbook.Backup_Recovery import capture, capture_service, inventory
+    from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
+
+    source = StorageItem(
+        "persona.assets",
+        "private-source-id",
+        None,
+        "included",
+        ("private-target-id",),
+    )
+    target = StorageItem("persona.core", "private-target-id", None, "unused", ())
+    result = Inventory((source, target), False, "digest", ("dependency_unavailable",))
+    for module in (capture_service, capture, inventory):
+        monkeypatch.setattr(module, "discover", lambda *a, **k: result)
+    path = tmp_path / "capture.log"
+    stop = observe_capture_review(path)
+    try:
+        assert capture_service.discover(()) is result
+    finally:
+        stop()
+    record = json.loads(path.read_text())[-1]
+    dependency = record["unavailable_dependencies"][0]
+    assert dependency["owner"] == "persona.assets"
+    assert dependency["target_owner"] == "persona.core"
+    assert dependency["target_status"] == "unused"
+    assert len(dependency["logical_id_sha256"]) == 64
+    assert len(dependency["dependency_sha256"]) == 64
+    assert "private-source-id" not in path.read_text()
+    assert "private-target-id" not in path.read_text()
+
+
 def test_runtime_observer_preserves_false_drain_and_reports_candidate_hook(tmp_path):
     import asyncio
 

@@ -1,0 +1,16 @@
+{
+  "product_scope": "Console native pause correction",
+  "installed_python_files_matching_frozen_source": 2474,
+  "wheel_sha256": "5c9cd162d520394acb6ef7a17f9e4e1a4965caa18b1012787f6d9337b25ab714",
+  "passed": 3,
+  "failed": 0,
+  "skipped": 0,
+  "seconds": 126.33,
+  "routes": [
+    "console",
+    "settings",
+    "library"
+  ],
+  "console_sha256": "b831c80ff48b278b5e1e63eb7a8d2a9658308df54935e73dd48c1389eb305179",
+  "log_sha256": "c8ed973c43dda7c30616eac667c02e2e294d8cba86cb0f0b3ae0274adbc98f78"
+}
