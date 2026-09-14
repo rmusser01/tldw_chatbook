@@ -930,14 +930,13 @@ stayed as text and are not counted.
 No step needs the mouse (task-32540). From the notes list:
 
 1. **Tab** to **Add from files…**, **Enter**.
-2. **Tab** to **Import once**, **Enter**.
+2. The chooser opens with **Import once** focused — **Enter**.
 3. The picker opens on its path field — **type the folder path** (the listing
    follows you as you type), then **Tab**, **Tab** to **Select folder** and
    **Enter**. (**Ctrl+S** does the same thing from anywhere in the dialog.)
 4. Focus lands on the confirmation. **Tab**, **Tab**, **Tab** to **Check
    selection**, **Enter**.
-5. In the review, **Shift+Tab**, **Shift+Tab** reaches **Import selected
-   items** without walking every row's controls; **Enter**.
+5. The review opens with **Import selected items** already focused — **Enter**.
 
 The receipt is then on screen. Tab stays inside Import once throughout —
 **F6** moves between panes and **Esc** leaves.
@@ -1747,3 +1746,45 @@ that already holds its folder never re-checks the path — reaching `offline`
 needs the folder to be gone at the moment the folder is claimed, i.e. a
 restart. (A second Chatbook holding the folder is the different `passive`
 state, whose Check is disabled for its own reason.))*
+
+*Verified against fix/library-notes-w4-import-kbd — 2026-09-14 (task-32540,
+task-32553, task-32554, at 235x52 and 100x30 on a scratch power profile with
+the 65-file Obsidian vault): Import once now runs end to end on the keyboard
+alone. Tab reaches **Add from files…** in the notes list
+(`wave4-caps/import-kbd/import-10-add-from-files-focused`); the chooser opens
+with **Import once** focused; the picker opens on its path field, and typing
+`/Users/…/w4-import-kbd/vault` lands in the field rather than in the listing
+(`import-11-picker-field-focused`, `import-12-typed-path-in-field`) — before
+this, the same keystrokes went into the directory listing's type-ahead and
+Enter opened `..` (`import-00-tree-focused`). Its three actions carry heavy
+`┃` rails on focus, visible in a plain-text capture, where before they differed
+only in foreground colour and a label underline
+(`import-13-select-folder-focus-rails`, `import-00b-buttons-colour-only`); the
+breadcrumb reads `/ / … / tldw-crit / w4-import-kbd / vault` on one line. After
+**Select folder**, focus lands on the confirmation and Tab walks **Change
+selection** → **Clear** → **Check selection** → **‹ Notes** and back round
+without reaching the rail's "Search Library…" box
+(`import-14-confirmation`, `import-15-tab-cycle-check-selection`); before this
+the same six Tabs marked none of the three and ended in the rail
+(`import-01-tab-leak`). The review then opens with **Import selected items**
+focused, and Enter there reached the receipt "Import completed. · 54 notes
+created · 11 files skipped · 54 links resolved" (`import-16-…`, `import-17-…`,
+`import-18-receipt`). Copy: the confirmation reads
+`1 folder selected: /Users/macbook-dev/.cache/tldw-crit/w4-import-kbd/vault`
+whole in the wide pane, with the status line above it saying "Check the
+selection to see what will be imported." instead of repeating the count
+(`import-14-confirmation`; before, the line was elided at 48 characters AND
+preceded by "1 folder selected." — `import-01-selected`), and no review row
+opens with "Content:" (`import-16-review-no-content-prefix`, against
+`import-02-copy`). Back cues: `‹ Notes` on the editor at 235x52
+(`import-19-back-cue-editor`), `‹ Back to list` on the editor at 100x30
+(`import-22-files-100x30` shows the same run's 100x30 layout), `‹ Notes` on
+the import stepper (`import-15-…`), `‹ Files` on the Session Git panel
+(`import-21-back-cue-files`) and `‹ Files` on the compact Folder-files work
+pane at 60x24 (`import-25-files-60x24`). At 100x30 the picker still opens on
+its field (typed text lands there) and still rails its focused button
+(`import-23-picker-100x30`, `import-24-picker-focus-100x30`). The lasting-sync
+chooser's and the sync-roots list's own `‹ Notes` buttons are pinned in
+`Tests/UI/test_library_notes_w4_import_keyboard.py` rather than walked in this
+set. The profile log carried no `unhandled_exception` or `app_stopping` for
+the whole walk.)*

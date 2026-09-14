@@ -629,3 +629,11 @@ splits across two rows there. Nothing can render it on one row at that width,
 which is why task-32552 AC#4 is qualified to lines the pane can hold; every
 such line in that note does render on one row, and the wider layouts show the
 embed whole.)*
+
+*Verified against fix/library-notes-w4-import-kbd — 2026-09-14 (task-32553, at
+235x52 and 60x24 on a scratch power profile): the Session Git panel's header
+control reads **‹ Files** (`wave4-caps/import-kbd/import-21-back-cue-files`),
+and the compact Folder-files work pane's return control reads **‹ Files** at
+60x24 (`import-25-files-60x24`) — both were "Back to navigator". The Notes
+editor keeps its own task-32139 wording ("‹ Notes" wide, "‹ Back to list"
+compact), so the grammar is now one cue plus the destination everywhere.)*

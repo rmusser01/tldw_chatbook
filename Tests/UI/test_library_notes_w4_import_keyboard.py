@@ -374,7 +374,11 @@ async def test_import_once_completes_by_keyboard_alone(tmp_path) -> None:
             await pilot.press("enter")
             await _wait_for_selector(screen, pilot, "#note-import-import")
 
-            await _press_until_focused(pilot, "note-import-import")
+            # The review's own primary action holds focus the moment the
+            # review renders -- the guide's recipe says "Enter" here, not
+            # "Tab past sixty row controls first".
+            assert host.focused is not None
+            assert host.focused.id == "note-import-import", host.focused.id
             await pilot.press("enter")
             await _wait_for_selector(screen, pilot, "#note-import-receipt")
             await _wait_for_condition(
