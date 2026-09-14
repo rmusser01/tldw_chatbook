@@ -5,7 +5,9 @@
 On your first launch, chatbook offers a guided setup. It is entirely optional —
 most steps can be skipped (Next moves on without configuring it; the one
 exception is a cloud provider you've picked, which needs its API key before
-Next continues), Escape asks before closing, and anything you configure (or
+Next continues — press **Enter** in the empty key field instead and the
+provider step is skipped outright, which the field's own hint says), Escape
+asks before closing, and anything you configure (or
 don't) can be changed later in Settings.
 
 If a step can't save what you entered, the reason appears just above the
@@ -14,7 +16,8 @@ navigation buttons — fix it and press Next again, or go Back.
 ## Keyboard
 
 - **Enter** continues to the next step (from a choice list or a text field;
-  in the API-key field it first tests the key). **Ctrl+N** / **Ctrl+B** also
+  in the API-key field it first tests a key you typed, and with the field
+  empty it skips the provider step). **Ctrl+N** / **Ctrl+B** also
   move next/back, and **Escape** asks before leaving setup.
 - **Arrow keys select** as they move through a choice list — what you land on
   is what you get; no extra keypress needed.

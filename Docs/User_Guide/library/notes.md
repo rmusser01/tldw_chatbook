@@ -872,9 +872,21 @@ automatic-sync setting.
 
 ### Use a note in Console
 1. Open the note and click **Use in Console**.
-2. You land in the Console with the note staged as context and the
+2. The note is linked to your active workspace on the way — a new note
+   belongs to no workspace, and that is what the hand-off needs — so the
+   status line reads "Use in Console complete — Linked to *workspace* ·
+   staged in Console."
+3. You land in the Console with the note staged as context and the
    prompt "Use this note as context and help me work with it." ready to
-   send or rewrite.
+   send or rewrite. On a profile with no provider set up yet, the note is
+   still staged and the Console shows its own setup card; add a provider
+   from there and the staged note is waiting.
+
+If the hand-off cannot be made, the editor's status line is the only
+message, and it names what stopped it and what to do — for example
+"Can't use this note in Console — the workspace registry is unavailable.
+Next: restart Chatbook, then try again." Opening another note, or saving
+this one, clears it.
 
 ### Capture a Console answer as a note
 The return leg of **Use in Console**. In the Console, select an assistant

@@ -80,9 +80,11 @@ choice independently of which rail sections are open. While the expanded
 Library is still authoritatively empty, **Back to Get started** is available.
 Adding any usable content permanently graduates the profile to the full
 Library; deleting that content later does not hide tools again. Graduation
-announces itself once, as the toast "Library tools are now available." — the
-rail growing is the durable evidence, so nothing is added to the canvas, and
-whatever you were reading or typing is left alone.
+is silent: the rail growing is the evidence, nothing is added to the canvas,
+and whatever you were reading or typing is left alone. (Graduation was
+announced by the toast "Library tools are now available." — superseded by
+task-32555, which dropped it: the words described the rail rather than what
+the reader had just done.)
 
 Compact presentation never blocks navigation. Deep links and command-palette
 routes, including **Tab Navigation: Library — Skills**, can open a tool that is

@@ -271,12 +271,16 @@ they are, the empty transcript reads "Ready — type a message to begin."
 A second action, **Write a note in Library**, stays available beside it for
 as long as the card is showing — it needs no provider, and opens Library's
 New note view directly. A local-first user who came for notes is not stuck
-behind a provider-only card.
+behind a provider-only card. Both actions are drawn as buttons with a
+rounded edge, one under the other; Tab moves between them and the focused
+one grows heavy side rails, so which one Enter will press is visible
+without reading the text.
 
 If you land here with a handoff already staged — e.g. from Library's
-**Use in Console** on a Search/RAG result while a provider isn't set up
-yet — the card shows an extra line under "Get started" naming what's
-staged and that finishing setup is what unlocks it (for example,
+**Use in Console** on a Search/RAG result or on an open note while a
+provider isn't set up yet — the card shows an extra line under
+"Get started" naming what's staged and that finishing setup is what
+unlocks it (for example,
 "Library Search/RAG evidence staged — finish provider setup to use it.").
 The handoff itself is never lost: it's the same staged context the
 composer-level strip below shows once setup completes.
