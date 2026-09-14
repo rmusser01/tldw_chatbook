@@ -214,6 +214,8 @@ class FileNotesService:
         self._session_binding = session_binding
         self._entry_cache: dict[str, FileNoteEntry] = {}
         self._pending_replica_moves: dict[str, str] = {}
+        # task-32552: the dot-directory migration runs once per service.
+        self._hidden_tombstones_swept = False
 
     @property
     @_serialized
@@ -234,8 +236,36 @@ class FileNotesService:
         if replica is not None:
             replica.close()
 
+    def _hidden_file_still_on_disk(self, relative_path: str) -> bool:
+        """Whether the dot-directory rule merely HID this path (task-32552).
+
+        The one question both forget sites ask, because forgetting a row is
+        destructive: a tombstone row is where a deleted file's ``raw_bytes``
+        live (``FileNotesReplica.mark_deleted`` retains them and
+        ``get_restore_bytes`` is their only reader), so dropping it destroys
+        the user's only way back through **Restore**. A hidden path that is
+        STILL ON DISK was never deleted -- the new rule just stopped visiting
+        it, and its row is stale index, not a recovery copy. A hidden path
+        that is gone was genuinely deleted, and its tombstone is the last
+        copy there is. Anything unresolvable (``_safe_path`` rejects ``.git``
+        and symlink traversal) counts as "cannot confirm", which keeps it.
+
+        Args:
+            relative_path: File path relative to the notes root.
+
+        Returns:
+            ``True`` only for a path under a dot-directory that is still
+            present on disk.
+        """
+        if not _under_hidden_directory(relative_path):
+            return False
+        try:
+            return os.path.lexists(self._safe_path(relative_path))
+        except (ValueError, OSError):
+            return False
+
     def _forget_hidden_tombstones(self) -> str | None:
-        """Drop tombstones naming paths under a dot-directory (task-32552).
+        """Drop tombstones for files the dot-directory rule hid (task-32552).
 
         The reconcile below forgets a hidden file the walk stops reporting,
         but only while the replica still lists it as active: ``old_files`` is
@@ -244,15 +274,22 @@ class FileNotesService:
         names it forever -- for a file that is still on disk, which Restore
         would then refuse as "exists". Both read seams sweep those rows.
 
+        A one-shot migration, not a standing pass: after it runs, the only
+        hidden tombstones this build creates are the ones it deliberately
+        KEPT (a hidden file genuinely deleted -- see
+        ``_hidden_file_still_on_disk``), and re-examining those forever would
+        be a `lexists` per row per scan for no possible change.
+
         Returns:
             A replica warning, or ``None``.
         """
         replica = self._replica
-        if replica is None:
+        if replica is None or self._hidden_tombstones_swept:
             return None
+        self._hidden_tombstones_swept = True
         try:
             for relative_path in replica.list_deleted(self.root_key):
-                if _under_hidden_directory(relative_path):
+                if self._hidden_file_still_on_disk(relative_path):
                     replica.forget_file(self.root_key, relative_path)
         except Exception as error:
             return _replica_warning(error)
@@ -1182,10 +1219,12 @@ class FileNotesService:
             for relative_path in missing:
                 try:
                     assert self._replica is not None
-                    if _under_hidden_directory(relative_path):
+                    if self._hidden_file_still_on_disk(relative_path):
                         # task-32552: indexed before dot-directories were
-                        # hidden; the file is still on disk, so it is
-                        # forgotten, not tombstoned as "Recently deleted".
+                        # hidden, and STILL ON DISK -- so it is forgotten,
+                        # not tombstoned as "Recently deleted". A hidden
+                        # path that is gone falls through and is tombstoned
+                        # as before: that row is the user's only copy.
                         self._replica.forget_file(self.root_key, relative_path)
                         continue
                     self._replica.mark_deleted(self.root_key, relative_path)

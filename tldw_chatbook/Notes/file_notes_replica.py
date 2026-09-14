@@ -331,7 +331,8 @@ class FileNotesReplica:
                 """,
                 (root, relative_path),
             )
-            return cursor.rowcount > 0
+            removed = cursor.rowcount > 0
+        return removed
 
     def list_deleted(self, root: str) -> list[str]:
         """List tombstoned paths for one canonical root.

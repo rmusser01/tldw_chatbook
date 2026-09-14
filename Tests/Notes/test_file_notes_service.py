@@ -361,6 +361,86 @@ def test_a_tombstone_left_under_a_dot_directory_is_swept_on_the_next_scan(
     assert service.reconcile().deleted == ()
 
 
+def test_a_tombstone_for_a_hidden_file_that_is_really_gone_still_restores(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32552 review, Important: the sweep must not eat the last copy.
+
+    A tombstone row is where a deleted file's ``raw_bytes`` live, and
+    ``restore_file`` is the only way back. The sweep above targets a file the
+    dot-directory rule merely HID -- one still on disk. It cannot be allowed
+    to also drop the tombstone of a file the user genuinely deleted under an
+    older build: for that user the row, the "Recently deleted" entry and the
+    only recoverable bytes would all vanish on the first scan after
+    upgrading. Driven end to end: sweep, then restore, then read the file.
+    """
+    root = tmp_path / "vault"
+    (root / ".trash").mkdir(parents=True)
+    (root / "visible.md").write_text("visible", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    raw = b"the only copy of a deleted idea"
+    replica.upsert_file(
+        service.root_key,
+        ".trash/Deleted for real.md",
+        raw,
+        content_hash=_digest(raw),
+        decoded_text=raw.decode(),
+        size=len(raw),
+        mtime_ns=0,
+    )
+    assert replica.mark_deleted(service.root_key, ".trash/Deleted for real.md")
+    # The defining difference from the sweep case: nothing on disk.
+    assert not (root / ".trash" / "Deleted for real.md").exists()
+
+    assert service.scan().status == "ok"
+    assert service.reconcile().status == "ok"
+
+    assert replica.list_deleted(service.root_key) == [".trash/Deleted for real.md"]
+    result = service.restore_file(".trash/Deleted for real.md")
+    assert result.status == "ok", result
+    assert (root / ".trash" / "Deleted for real.md").read_bytes() == raw
+
+
+def test_reconcile_tombstones_a_hidden_file_that_left_the_disk(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32552 review, Important: the SIBLING forget site, same exposure.
+
+    The sweep reads tombstones; reconcile reads ``list_active_files``. A
+    replica built before the dot-directory rule holds an ACTIVE row for a
+    hidden path, and if the user deleted that file on disk before upgrading,
+    reconcile is the site that decides its fate. Forgetting it there destroys
+    the bytes just as surely -- ``mark_deleted`` is what retains them. So the
+    guard is one predicate both sites call, and this pins the reconcile half:
+    gone from disk means tombstone (and restore), not forget.
+    """
+    root = tmp_path / "vault"
+    (root / ".trash").mkdir(parents=True)
+    (root / "visible.md").write_text("visible", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    raw = b"deleted before the upgrade"
+    replica.upsert_file(
+        service.root_key,
+        ".trash/Gone.md",
+        raw,
+        content_hash=_digest(raw),
+        decoded_text=raw.decode(),
+        size=len(raw),
+        mtime_ns=0,
+    )
+    assert replica.list_active_files(service.root_key)
+    assert not (root / ".trash" / "Gone.md").exists()
+
+    result = service.reconcile()
+
+    assert result.deleted == (".trash/Gone.md",)
+    assert replica.list_deleted(service.root_key) == [".trash/Gone.md"]
+    assert service.restore_file(".trash/Gone.md").status == "ok"
+    assert (root / ".trash" / "Gone.md").read_bytes() == raw
+
+
 def test_service_uses_shared_path_confinement(
     tmp_path: Path,
     replica: FileNotesReplica,
