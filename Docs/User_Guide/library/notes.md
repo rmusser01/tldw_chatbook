@@ -623,7 +623,18 @@ legacy candidates use **Review migration**. **Pause** and **Resume** control an
 active root. **Resume** re-activates the root and runs the same check as
 **Check changes**: a root with nothing changed returns to "✓ Up to date · Next:
 Check changes", and edits made while it was paused surface as "◌ Changes
-available" or "⚠ Needs attention · Next: Review changes" (task-32519). (Was
+available" or "⚠ Needs attention · Next: Review changes" (task-32519). A check
+the app cannot run says so on the row itself: the row flips to "⚠ Needs
+attention · Check failed — <reason> · Next: <action>" and offers that action's
+control — Check changes on a paused root reads "Check failed — folder is
+paused · Next: Resume" and puts **Resume** first. The reason is never the
+exception text; where the cause cannot be named, the row states its category.
+A failure changes only what the row SAYS, never what it is: a disconnected or
+externally-held folder keeps its Check disabled with its own reason, and never
+grows a Pause it should not have. The next action you run on that root clears
+the failure and the line goes back to restating the row (task-32534). (Was
+"Manual check failed. Review root status, then try again." beside a row still
+reading "✓ Up to date" — superseded by task-32534 below.) (Was
 "though today **Resume** does not bring a paused root back at all, whether or
 not anything changed while it was paused: its row reads '✕ Failed · Next:
 Review changes', **Check changes** answers 'Manual check failed', and
@@ -634,8 +645,25 @@ the restart never syncs — so pause only if you can live with the root staying
 paused; nothing in this release resumes it" — fixed by task-32519 below. Before
 that it was "so pause only when you can live with a restart" — superseded by
 task-32271 below: the restart was asserted, then walked.)
-**Retarget** and **Disconnect** remain visibly disabled with an
-unavailable-in-this-release reason; no files or notes change.
+**Retarget** and **Disconnect** carry their reason in the control's own label
+— "○ Retarget unavailable — not in this release" — with the same line repeated
+under the list; no files or notes change (task-32545). (Was a bare grey "○"
+whose reason only appeared in a tooltip — superseded by task-32545 below.)
+
+A paused folder keeps its receipts: reading them is a read, so pausing one
+folder never blanks the list for the others (task-32534).
+
+**Receipts**, under the root list, is where the writes lasting sync performs
+on its own show up: the newest 20 across every listed root, newest first, as
+"when · what happened · file · note" — "2026-09-14 07:34 · Wrote note to file ·
+People/Sam.md · Sam" for a note you edited in Chatbook, "Updated note from
+file" for a file you edited on disk (task-32534). Before this a completed
+write left no trace anywhere in the app.
+
+Tab moves through the root controls; the footer names the one you are on
+("enter check changes", "enter pause") instead of a generic "run action", and
+disabled controls keep the generic chip because Enter does nothing there
+(task-32545).
 
 ### Import once
 
@@ -891,7 +919,9 @@ stayed as text and are not counted.
    and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead. **Manage sync folders** appears in the notes toolbar once
-   a root is active. Choosing **Back** returns to a Notes list that already
+   a root is active. The receipt reads "N applied · listed under Receipts" and
+   names where to see them (task-32545; was "N applied · durable receipt
+   recorded"). Choosing **Back** returns to a Notes list that already
    counts the synced notes and shows them under a **⇄ Sync managed** folder
    named after the display name — no restart needed (task-32518). (Was "the
    synced notes and their **⇄ Sync managed** folder are in the database as soon
@@ -1628,3 +1658,49 @@ carrying its site with the app still logging five minutes later. The error
 notification itself is **not** stamped — no capture in this set shows it
 rendering, and when the pump that raised is the screen it may never render at
 all; the log record is the reliable signal.)*
+
+*Verified against fix/library-notes-w4-sync-roots — 2026-09-14 (task-32534,
+task-32545, at 235x52 and 100x30, scratch profile + a 60-file git vault under
+`$HOME/.cache/tldw-crit`): **Activate reviewed root** → "3 applied · listed
+under Receipts" (`wave4-caps/sync-roots/roots-18-second-root-activated`); the
+setup review reads "60 safe · 0 need attention · 0 skipped · 0 folder moves"
+and its scroll cue "More below — scroll." (`roots-21-review-folder-moves`,
+`roots-20-setup-scroll-cue`). Editing the synced note "Sam" in Chatbook and
+then appending to `Daily/2026-09-06.md` on disk leaves two receipt rows —
+"Wrote note to file · People/Sam.md · Sam" and "Updated note from file ·
+Daily/2026-09-06.md · 2026-09-06" — and the note reaches version 2 with the
+disk text (`roots-11-disk-edit-review`, `roots-12-note-version`). A disk
+append followed immediately by **Check changes** now also lands in the note
+(`roots-14-race-check-applied`): the manual pass used to consume the watcher's
+change baseline, so the automatic pass that applies the edit never ran.
+**Check changes** on a paused root reads "⚠ Needs attention · Check failed —
+folder is paused · Next: Resume" with **Resume** offered first
+(`roots-13-failed-row`; `roots-13-failed-row-before-reasoncode-fix` is the same
+walk before the reason code was classified), and the log records only
+`reason=` / `error_type=` / `root_id=`. **Retarget** and **Disconnect** state
+their reason at the control, and Tab makes the footer read "enter check
+changes" / "enter pause" at both sizes (`roots-15-focus-check-footer`,
+`roots-16-roots-100x30`, `roots-17-focus-100x30`).)*
+
+*Verified against fix/library-notes-w4-sync-roots — 2026-09-14 (task-32534,
+task-32545 fix round 1, at 235x52 on the same profile and vault): with two
+roots listed, pausing the first leaves BOTH roots' writes in **Receipts**
+across a full re-entry of the list
+(`wave4-caps/sync-roots/roots-30-paused-root-receipts-survive`) — reading
+receipts no longer goes through the admission gate that a pause closes.
+**Check changes** on the paused root reads "⚠ Needs attention · Check failed —
+folder is paused · Next: Resume", offers **Resume** first and does NOT grow a
+Recovery button, while the second root's row is untouched
+(`roots-31-paused-check-failed-row`); **Resume** then clears the failure and
+the status line restates the row as "✓ Up to date · Next: Check changes."
+(`roots-32-resume-clears-overlay`), where it used to leave the failure
+sentence standing beside it. The chooser's unavailable line and the setup
+validation message now read "Keeping a folder synced isn't ready on this
+profile yet." The offline-root case (a refused Check keeping its Check
+disabled and growing no Pause) is pinned end-to-end through the controller and
+canvas rather than walked: a folder that goes missing while Chatbook is
+already holding it does not flip to `offline` in that session, because a root
+that already holds its folder never re-checks the path — reaching `offline`
+needs the folder to be gone at the moment the folder is claimed, i.e. a
+restart. (A second Chatbook holding the folder is the different `passive`
+state, whose Check is disabled for its own reason.))*

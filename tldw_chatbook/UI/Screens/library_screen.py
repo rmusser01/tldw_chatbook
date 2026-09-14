@@ -952,6 +952,22 @@ _LIBRARY_NOTE_EDITOR_ENTER_LABELS = {
     "library-note-context-delete": "delete note",
 }
 
+#: task-32545 AC#2: the Manage sync folders rows all render as Buttons, so
+#: every Tab used to leave the footer saying "enter run action" -- true of
+#: any of them and therefore of none. Keyed on the action token in
+#: ``notes-sync-root-<action>-<index>``; an empty label is a disabled
+#: control, where Enter does nothing and the generic chip stays.
+_LIBRARY_SYNC_ROOTS_ENTER_LABELS = {
+    "check": "check changes",
+    "review": "review changes",
+    "migration": "review migration",
+    "resume": "resume",
+    "pause": "pause",
+    "recover": "open recovery",
+    "retarget": "",
+    "disconnect": "",
+}
+
 
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
@@ -4479,6 +4495,9 @@ class LibraryScreen(BaseAppScreen):
         # characters cannot land visibly there, so the footer names the
         # control instead -- the AC's other branch, in the grammar the two
         # surfaces above already use.
+        if widget_id.startswith("notes-sync-root-"):
+            action = widget_id.removeprefix("notes-sync-root-").rsplit("-", 1)[0]
+            return _LIBRARY_SYNC_ROOTS_ENTER_LABELS.get(action, "")
         return _LIBRARY_NOTE_EDITOR_ENTER_LABELS.get(widget_id, "")
 
     @staticmethod
@@ -8136,9 +8155,20 @@ class LibraryScreen(BaseAppScreen):
             phase = self._library_notes_sync_controller.snapshot.phase
             if phase in {"checking", "activating"}:
                 return (("wait", "current step"),)
-            return self._notes_footer_tier(
+            tier = self._notes_footer_tier(
                 (("enter", "run action"), ("esc", "back to notes")),
                 (("enter", "act"), ("esc", "notes")),
+            )
+            # task-32545 AC#2: name the focused control, in place -- the
+            # editor tier appends its chip, but this tier already spends the
+            # narrow budget on "enter", so replacing the generic label costs
+            # nothing and keeps the exit.
+            enter_label = self._library_focus_enter_label()
+            if not enter_label:
+                return tier
+            return tuple(
+                (key, enter_label if key == "enter" else label)
+                for key, label in tier
             )
         if region == "trash":
             # Only what this view answers: no Enter chip, because entry focus
@@ -26779,6 +26809,17 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.view = "lasting_roots"
         self._apply_library_notes_footer_context()
         _sync_library_canvas(self, "notes")
+        # task-32534 AC#3: the Receipts section is the only trace of the
+        # writes lasting sync performs on its own, and this is the route the
+        # reader takes to it. Opportunistic: a runtime that cannot answer
+        # leaves the section empty rather than closing the list.
+        try:
+            await self._library_notes_sync_controller.refresh_receipts()
+        except Exception as error:  # noqa: BLE001 - bounded, metadata only
+            logger.warning(
+                "notes sync receipts unavailable; error_type={}",
+                type(error).__name__,
+            )
 
     @on(LibraryNotesAddFromFilesCanvas.RelationshipRequested)
     def handle_library_notes_relationship_choice(self, event: LibraryNotesAddFromFilesCanvas.RelationshipRequested) -> None:
