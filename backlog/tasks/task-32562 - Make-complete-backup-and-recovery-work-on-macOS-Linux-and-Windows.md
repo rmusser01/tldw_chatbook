@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-14 19:03
+updated_date: 2026-09-14 19:10
 ---
 
 ## Description
@@ -309,6 +309,7 @@ dev 2f97 File Notes merge: isolated native Git probe regression now has valid RE
 dev2f97 resolution verification complete: 33 focused native backup/File Notes PASS44.39s, independent new8 PASS9.28s, seven unchanged upstream hidden-folder/Git header bodies PASS in fixed private profiles. Narrow pairing/maintenance fixes reviewed with exact source hashes. Product static4files: zero new Ruff or Bandit findings; tests add only assertions. Recorded dev-2f97-merge-checkpoint/review and Scheduler/startup causal evidence. Those probes do not resolve Windows timing or justify speculative product changes. Completing merge commit/push; no all-platform acceptance or dev merge requested.
 Pushed conflict-free merge043d2cb639 (PR remains open againstdev). Fresh installed macOS Library backup/readback/resumed writes PASS108.42s; 2475sourcePython hashes match,2867installedfiles preserved. Windows e4f8 default/Evals terminal all42native+10productPASS with37artifact hashes/source receipt verified; independent final artifact review underway. Add only the eight new File Notes merge regression cases to existing native full/support diagnostic selections before the next current-head run; no new workflow/mode or timing change.
 Independent Windows e4f8 default/Evals review APPROVED actual complete success: 42native+10product allPASS,37hashes,2475Python blobs/2867installed files verified. Default1541.985s; later checkpoint interval781.016s; actual child passes unchanged900s and outer2400s. Retire unapproved budget-sharing proposal without implementing it; prior timeout cause remains unknown. Current043d installed Library PASS108.42s. New8File Notes native regression inclusion independently reviewed: AST differs only four literals,283support cases collect,19existingworkflow contracts pass, Ruff/Bandit0. Recorded exact results; pending Persona/support and Linux metadata approval remain.
+Current043d Windows startup run34883779948:31nonUI PASS,4original full-app60s timeouts; pinneddev diagnosticPASS52.89 vs candidate timeout,8source-matched profiles/noobservererrors. Independent review corrects prior false cache premise: load_settings itself guarded, even cache hits acquire. Updated previous committed review explicitly and recorded current evidence. Actual failing mixed store/session/Canvas lifetime has no proved safe correction; nearby two-read default helper not measured in failing path. No speculative grouping/caches/deadline edits. Linux metadata-only request re-presented because still pending after prior automatic-review rejection. Windows Persona/support continue.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
