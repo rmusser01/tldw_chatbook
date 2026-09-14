@@ -437,7 +437,17 @@ class DatabaseNoteSessionCoordinator:
         The clock is UTC and the persisted ``modified_at`` stays UTC; only
         this rendering converts (task-32542: "Saved 05:48" at 22:48 PDT,
         beside Info's local "Modified 2026-09-12 22:54").
+
+        Raises:
+            ValueError: When ``saved_at`` is naive. ``astimezone()`` would
+                assume *local* time and silently re-create task-32542 for a
+                caller whose clock hands over a naive UTC instant.
         """
+        if saved_at.tzinfo is None or saved_at.tzinfo.utcoffset(saved_at) is None:
+            raise ValueError(
+                "saved_at must be timezone-aware; a naive instant renders in "
+                "the wrong zone (task-32542)."
+            )
         return f"Saved {saved_at.astimezone().strftime('%H:%M')}"
 
     def mutate(

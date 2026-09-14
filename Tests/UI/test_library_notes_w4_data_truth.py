@@ -171,3 +171,13 @@ def test_status_line_and_info_agree_on_the_save_instant(los_angeles_zone):
     assert status == "Saved 22:48"
     assert info.startswith("Modified 2026-09-12 22:48 · ")
     assert re.search(r"\b05:48\b", status + info) is None
+
+
+def test_a_naive_save_instant_is_refused_rather_than_guessed(los_angeles_zone):
+    """``astimezone()`` on a naive value assumes *local* time, so a future
+    caller handing this a naive UTC clock would re-create task-32542 exactly,
+    with no test failing. The seam refuses the input instead of guessing."""
+    with pytest.raises(ValueError, match="timezone-aware"):
+        DatabaseNoteSessionCoordinator.saved_status_message(
+            SAVE_INSTANT.replace(tzinfo=None)
+        )
