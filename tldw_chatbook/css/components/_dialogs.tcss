@@ -3,6 +3,10 @@
  * ========================================
  * Modal dialogs and popup styles
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* FileSave/FileOpen (vendored Third_Party/textual_fspicker) input bar --
    the filename Input + file-type filter Select row shared by every
@@ -27,8 +31,8 @@
 FileSave InputBar Select,
 FileOpen InputBar Select,
 EnhancedFileDialog InputBar Select {
-    width: 24;
-    margin-bottom: 0;
+    width: $ds-size-24;
+    margin-bottom: $ds-space-0;
 }
 
 /* The EnhancedFileDialog selector above (TASK-16478) also defends the
@@ -51,11 +55,11 @@ EnhancedFileDialog InputBar Select {
 
 .dialog-buttons {
     layout: horizontal;
-    height: 3;
+    height: $ds-size-3;
     align: center middle;
 }
 
 .dialog-buttons Button {
     margin: $ds-space-0 $ds-space-inline;
-    min-width: 12;
+    min-width: $ds-size-12;
 }
