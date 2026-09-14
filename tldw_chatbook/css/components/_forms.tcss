@@ -3,6 +3,10 @@
  * ======================================== 
  * Form elements: inputs, textareas, selects
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* ADR-161 task 6: the winning declarations of the former
  * features/_tools-settings.tcss bare duplicates were folded here
@@ -33,12 +37,12 @@
     margin-top: $ds-space-section;
     layout: horizontal;
     height: $ds-control-height;
-    width: 100%;
+    width: $ds-width-full;
     align: center middle;
 }
 
 .form-actions Button {
-    margin: 0 $ds-space-inline 0 0;
+    margin: $ds-space-0 $ds-space-inline $ds-space-0 $ds-space-0;
 }
 
 .provider-models-textarea {
@@ -48,7 +52,7 @@
 
 /* Standardized form components */
 .form-textarea {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     min-height: $ds-textarea-min-height;
     margin-bottom: $ds-space-stack;
@@ -61,22 +65,22 @@
 
 /* Form layout helpers */
 .form-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-stack;
 }
 
 .form-col {
-    width: 1fr;
-    padding: 0 $ds-space-inline;
+    width: $ds-width-fill;
+    padding: $ds-space-0 $ds-space-inline;
 }
 
 .form-col:first-child {
-    padding-left: 0;
+    padding-left: $ds-space-0;
 }
 
 .form-col:last-child {
-    padding-right: 0;
+    padding-right: $ds-space-0;
 }
 
 /* Form sections */
@@ -85,7 +89,7 @@
 }
 
 .form-button {
-    margin: 0 $ds-space-inline;
+    margin: $ds-space-0 $ds-space-inline;
 }
 
 /* ADR-161 task 8a: .status-label/.status-area moved to their family's
@@ -94,7 +98,7 @@
 /* Title/Author input fields fix */
 .title-author-row Input {
     height: $ds-control-height;
-    width: 100%;
+    width: $ds-width-full;
     margin-bottom: $ds-space-stack;
 }
 
@@ -276,10 +280,10 @@ Switch:focus {
 /* New base media ingestion form styling */
 .form-input {
     height: $ds-control-height;
-    width: 100%;
+    width: $ds-width-full;
     margin-bottom: $ds-space-stack;
     border: solid $primary;
-    padding: 0 $ds-space-inline;
+    padding: $ds-space-0 $ds-space-inline;
 }
 
 .form-input:focus {
@@ -296,7 +300,7 @@ Switch:focus {
 
 .form-select {
     height: $ds-control-height;
-    width: 100%;
+    width: $ds-width-full;
     margin-bottom: $ds-space-stack;
 }
 
@@ -307,19 +311,19 @@ Switch:focus {
 /* Responsive metadata columns */
 .metadata-row {
     layout: horizontal;
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-stack;
 }
 
 .metadata-col {
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
 }
 
 /* Mode toggle section - CRITICAL for visibility */
 .mode-toggle-container {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-stack;
     padding: $ds-space-inset;
@@ -332,34 +336,34 @@ Switch:focus {
 }
 
 .mode-toggle {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-stack;
 }
 
 /* Essential container sections - CRITICAL for Input widget visibility */
 .essential-section {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;        /* Allow container to size to content */
     margin-bottom: $ds-space-section;
     padding: $ds-space-inset;
 }
 
 .media-options-section {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-section;
 }
 
 .options-section {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-section;
     padding: $ds-space-inset;
 }
 
 .process-button-section {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-top: $ds-space-section;
     padding: $ds-space-inset;
@@ -368,23 +372,23 @@ Switch:focus {
 
 /* Time range inputs layout */
 .time-range-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-stack;
 }
 
 .time-col {
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
-    padding: 0 $ds-space-inline;
+    padding: $ds-space-0 $ds-space-inline;
 }
 
 .time-col:first-child {
-    padding-left: 0;
+    padding-left: $ds-space-0;
 }
 
 .time-col:last-child {
-    padding-right: 0;
+    padding-right: $ds-space-0;
 }
 
 /* Advanced mode visibility controls */
@@ -402,9 +406,9 @@ Switch:focus {
 
 /* Form textarea styling */
 .form-textarea {
-    width: 100%;
+    width: $ds-width-full;
     min-height: $ds-textarea-min-height;
-    max-height: 10;
+    max-height: $ds-size-10;
     margin-bottom: $ds-space-stack;
     border: solid $primary;
     padding: $ds-space-inset;

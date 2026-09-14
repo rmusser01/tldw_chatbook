@@ -2,7 +2,6 @@
   "dimensions": {
     "components/_buttons.tcss": 5,
     "components/_dialogs.tcss": 4,
-    "components/_forms.tcss": 28,
     "components/_lists.tcss": 1,
     "components/_messages.tcss": 16,
     "components/_shared_components.tcss": 17,
