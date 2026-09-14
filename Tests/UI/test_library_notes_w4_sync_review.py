@@ -59,7 +59,7 @@ def _safe_row(index: int, *, folder: str = "Archive") -> LastingSyncReviewRow:
         "Create a Library note",
         action_id=f"act-{index}",
         relative_path=f"{folder}/Archived note {index:03d}.md",
-        destination=f"Vault / {folder}",
+        destination="Vault",
     )
 
 
@@ -87,7 +87,7 @@ async def test_review_row_reads_path_effect_and_where() -> None:
         "Create a Library note",
         action_id="act-1",
         relative_path="Daily/2026-09-06.md",
-        destination="Vault / Daily",
+        destination="Vault",
     )
     app = _Host(_review_snapshot((row,), safe_count=1))
 
@@ -96,7 +96,7 @@ async def test_review_row_reads_path_effect_and_where() -> None:
         line = app.query_one("#notes-sync-review-row-0 .notes-sync-review-line", Static)
         assert (
             str(line.renderable)
-            == "Daily/2026-09-06.md · Create a Library note · Vault / Daily"
+            == "Daily/2026-09-06.md · Create a Library note · Vault"
         )
         heading = app.query_one(".notes-sync-review-group-heading", Static)
         assert str(heading.renderable) == "Create a Library note (1)"
@@ -128,7 +128,7 @@ async def test_sixty_creates_collapse_to_one_summary_row_with_a_disclosure() -> 
         assert "Archive" in title
         assert "60 files" in title
         assert "Create a Library note" in title
-        assert "Vault / Archive" in title
+        assert "Vault" in title
         assert runs[0].collapsed is True
         # Nothing is hidden: every row is one press away.
         assert len(runs[0].query(".library-notes-sync-review-row")) == 60

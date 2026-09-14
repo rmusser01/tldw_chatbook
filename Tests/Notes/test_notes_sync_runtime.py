@@ -3487,8 +3487,12 @@ async def test_binding_labels_returns_relative_path_and_destination_per_binding(
     assert all(type(label) is RuntimeBindingLabel for label in labels)
     assert tuple(label.binding_id for label in labels) == requested
     by_path = {label.relative_path: label for label in labels}
-    assert by_path["Daily/2026-09-06.md"].destination_folder == "Vault / Daily"
-    assert by_path["People/Sam.md"].destination_folder == "Vault / People"
+    # The destination is where the note actually lands: the root folder, for
+    # every file. Keeping the vault's folder chain is refused by the folder
+    # layer (task-32535 AC#4), and a label that promised "Vault / Daily" for
+    # a note arriving in "Vault" would be the defect this task fixes.
+    assert by_path["Daily/2026-09-06.md"].destination_folder == "Vault"
+    assert by_path["People/Sam.md"].destination_folder == "Vault"
     assert by_path["top.md"].destination_folder == "Vault"
     assert by_path["People/Sam.md"].note_title == "Sam"
     assert by_path["top.md"].note_title == "top"

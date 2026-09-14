@@ -327,9 +327,19 @@ class RuntimeBindingLabel:
 
 
 def _destination_folder(root_name: str, relative_path: str) -> str:
-    """Return "<root> / <dir> / <sub>" for a file, or the root name alone."""
+    """Return the Library folder this file's note will actually land in.
 
-    return " / ".join((root_name, *PurePosixPath(relative_path).parent.parts))
+    task-32535: the root folder, whatever the file's own folder chain says.
+    A synced note is placed directly in the root folder -- keeping the vault's
+    structure is refused by the folder layer (`sync_managed_folder`), see the
+    task's AC#4 -- and a review row that promised "PowerVault / Archive" while
+    the note arrived in "PowerVault" would be exactly the kind of row this
+    task exists to stop. The file's own folder is already on the row, in its
+    path.
+    """
+
+    del relative_path
+    return root_name
 
 
 _FRONTMATTER_BOUNDS = ImportBounds(
