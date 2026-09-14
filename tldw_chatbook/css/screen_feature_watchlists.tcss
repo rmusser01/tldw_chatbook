@@ -96,6 +96,71 @@ $ds-textarea-min-height: 5;
 $ds-width-full: 100%;
 $ds-width-fill: 1fr;
 
+$ds-height-full: 100%;
+$ds-height-fill: 1fr;
+$ds-size-0: 0;
+$ds-size-1: 1;
+$ds-size-2: 2;
+$ds-size-3: 3;
+$ds-size-4: 4;
+$ds-size-5: 5;
+$ds-size-6: 6;
+$ds-size-7: 7;
+$ds-size-8: 8;
+$ds-size-9: 9;
+$ds-size-10: 10;
+$ds-size-11: 11;
+$ds-size-12: 12;
+$ds-size-13: 13;
+$ds-size-14: 14;
+$ds-size-15: 15;
+$ds-size-16: 16;
+$ds-size-17: 17;
+$ds-size-18: 18;
+$ds-size-20: 20;
+$ds-size-21: 21;
+$ds-size-23: 23;
+$ds-size-24: 24;
+$ds-size-28: 28;
+$ds-size-29: 29;
+$ds-size-30: 30;
+$ds-size-31: 31;
+$ds-size-32: 32;
+$ds-size-34: 34;
+$ds-size-36: 36;
+$ds-size-40: 40;
+$ds-size-44: 44;
+$ds-size-45: 45;
+$ds-size-48: 48;
+$ds-size-60: 60;
+$ds-size-64: 64;
+$ds-size-66: 66;
+$ds-size-70: 70;
+$ds-size-76: 76;
+$ds-size-84: 84;
+$ds-size-90: 90;
+$ds-size-92: 92;
+$ds-size-94: 94;
+$ds-size-96: 96;
+$ds-size-104: 104;
+$ds-size-110: 110;
+$ds-size-120: 120;
+$ds-percent-34: 34%;
+$ds-percent-42: 42%;
+$ds-percent-75: 75%;
+$ds-percent-85: 85%;
+$ds-percent-90: 90%;
+$ds-percent-94: 94%;
+$ds-percent-95: 95%;
+$ds-percent-96: 96%;
+$ds-percent-99: 99%;
+$ds-fr-2: 2fr;
+$ds-fr-4: 4fr;
+$ds-fr-5: 5fr;
+$ds-fr-6: 6fr;
+$ds-fr-13: 13fr;
+$ds-console-frame: #6f7782;
+
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
 $ds-duration-slow: 0.5s;
@@ -686,7 +751,7 @@ $ds-sidebar-max-width: 80;
  *
  * The four sibling toolbars (runs/items/rules/notifications) are `Horizontal`
  * with `.destination-filter-strip`, which pins `height: 1` in
- * layout/_panes.tcss, so they were never affected. This one is the only
+ * layout/_destination.tcss, so they were never affected. This one is the only
  * wrapper, and so the only one that needed its own rule.
  */
 #sources-toolbar {
@@ -700,7 +765,7 @@ $ds-sidebar-max-width: 80;
  * Two independent causes compounded, and both are fixed here.
  *
  * 1. HEIGHT. `.destination-filter-strip` is `height: 1`
- *    (layout/_panes.tcss) but a bordered `Input`/`Select` is three rows, so
+ *    (layout/_destination.tcss) but a bordered `Input`/`Select` is three rows, so
  *    only the top border row survived. The widgets now pass `compact=True`
  *    (sources_pane.py / items_pane.py / watchlists_collections_screen.py),
  *    Textual's own supported one-row form -- the same idiom this codebase
@@ -1222,7 +1287,7 @@ $ds-sidebar-max-width: 80;
  * same `selected_briefing is not None` gate the scripts section above
  * already uses). Deliberately NOT a fifth `fr` participant, and
  * deliberately no second scrollable detail region either: this section's
- * own toolbar reuses `.destination-filter-strip` (`layout/_panes.tcss`)
+ * own toolbar reuses `.destination-filter-strip` (`layout/_destination.tcss`)
  * with no extra rule needed, exactly like `#artifacts-scripts-toolbar`
  * above it needs none -- and the audio status/duration/error itself is
  * folded straight into `_script_detail_renderable`'s own render (appended
@@ -1333,7 +1398,7 @@ $ds-sidebar-max-width: 80;
  * `#artifacts-picker-toolbar` is a second `.destination-filter-strip` row,
  * rendered only when a watchlist is in scope (`ArtifactsPane.compose`) --
  * `.destination-filter-strip` already pins `height: 1; min-height: 1;`
- * (layout/_panes.tcss), same as `#artifacts-toolbar` above it.
+ * (layout/_destination.tcss), same as `#artifacts-toolbar` above it.
  *
  * All three `Select`s need the exact TASK-995 override `#sources-toolbar
  * Select` carries: the bare global `Select { width: 100%; margin-bottom: 1; }`

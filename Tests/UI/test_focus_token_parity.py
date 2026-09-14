@@ -28,12 +28,13 @@ _SCOPED, _SELF = build_css.screen_css_paths(_CSS_DIR)
 class ParityHost(App):
     """Real-CSS-stack host: scoped sheet, app bundle, then self sheet."""
 
-    # TASK-25812: the split screen sheets carry the console/library/settings
-    # rules; the running app loads them after the bundle, so the harness does.
+    # TASK-25812 + ADR-161 task 10: the lazily-loaded split sheets carry the
+    # library/settings rules; the console vocabulary rides the bundle itself
+    # (its always-boot-parsed sheet was dissolved). The running app loads
+    # the split sheets after the bundle, so the harness does too.
     CSS_PATH = [
         str(_SCOPED),
         str(_CSS_DIR / "tldw_cli_modular.tcss"),
-        str(_CSS_DIR / "screen_agentic_console.tcss"),
         str(_CSS_DIR / "screen_agentic_library.tcss"),
         str(_CSS_DIR / "screen_agentic_settings.tcss"),
         str(_SELF),

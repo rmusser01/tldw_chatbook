@@ -1181,38 +1181,41 @@ async def test_console_workspace_context_search_controls_keep_stable_ids() -> No
 
 
 def test_console_workspace_context_grouped_browser_styles_are_declared() -> None:
-    # TASK-25812: the console-owned browser rules were split out of the
-    # boot bundle into the console screen sheet.
-    for css_path in (
-        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
-        Path("tldw_chatbook/css/screen_agentic_console.tcss"),
-    ):
-        css = css_path.read_text(encoding="utf-8")
+    # ADR-161 task 10: the console-owned browser rules live in the console
+    # source sheets (union: each rule exists in exactly one of the pair),
+    # which ride the boot bundle.
+    css = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            Path("tldw_chatbook/css/features/_console.tcss"),
+            Path("tldw_chatbook/css/features/_console_panels.tcss"),
+        )
+    )
 
-        assert ".console-conversation-browser-section-header {" in css
-        assert ".console-conversation-browser-section-title {" in css
-        assert ".console-conversation-browser-group-header {" in css
-        assert ".console-conversation-browser-group-title {" in css
-        assert ".console-conversation-browser-row-line {" in css
-        assert ".console-conversation-star {" in css
-        list_selector = "#console-workspace-conversations {"
-        assert list_selector in css
-        list_block = css.split(list_selector, 1)[1].split("}", 1)[0]
-        assert "overflow-y: auto" not in list_block
-        assert "scrollbar-size:" not in list_block
-        assert "#console-workspace-conversations:focus {" in css
+    assert ".console-conversation-browser-section-header {" in css
+    assert ".console-conversation-browser-section-title {" in css
+    assert ".console-conversation-browser-group-header {" in css
+    assert ".console-conversation-browser-group-title {" in css
+    assert ".console-conversation-browser-row-line {" in css
+    assert ".console-conversation-star {" in css
+    list_selector = "#console-workspace-conversations {"
+    assert list_selector in css
+    list_block = css.split(list_selector, 1)[1].split("}", 1)[0]
+    assert "overflow-y: auto" not in list_block
+    assert "scrollbar-size:" not in list_block
+    assert "#console-workspace-conversations:focus {" in css
 
-        # Row lines must size to their explicitly-heighted buttons; Textual's
-        # Horizontal defaults to `height: 1fr`, which divides the list height
-        # equally and breaks mixed wrapped/badge row heights.
-        row_line_block = css.split(".console-conversation-browser-row-line {", 1)[
-            1
-        ].split("}", 1)[0]
-        assert "height: auto" in row_line_block
-        # Reserve the scrollbar cell permanently so row-wrap width does not
-        # depend on scroll state (scrollbar toggle <-> rewrap feedback loop).
-        rail_body_block = css.split("#console-left-rail-body {", 1)[1].split("}", 1)[0]
-        assert "scrollbar-gutter: stable" in rail_body_block
+    # Row lines must size to their explicitly-heighted buttons; Textual's
+    # Horizontal defaults to `height: 1fr`, which divides the list height
+    # equally and breaks mixed wrapped/badge row heights.
+    row_line_block = css.split(".console-conversation-browser-row-line {", 1)[
+        1
+    ].split("}", 1)[0]
+    assert "height: auto" in row_line_block
+    # Reserve the scrollbar cell permanently so row-wrap width does not
+    # depend on scroll state (scrollbar toggle <-> rewrap feedback loop).
+    rail_body_block = css.split("#console-left-rail-body {", 1)[1].split("}", 1)[0]
+    assert "scrollbar-gutter: stable" in rail_body_block
 
 
 def test_console_workspace_conversation_visible_rows_are_clamped() -> None:
@@ -1976,8 +1979,13 @@ async def test_console_change_workspace_switches_active_context_and_conversation
 
 
 def test_console_workspace_conversation_subsection_styles_are_declared() -> None:
-    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
-        encoding="utf-8"
+    # ADR-161 task 10: the console vocabulary lives in the console sheets.
+    css = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            Path("tldw_chatbook/css/features/_console.tcss"),
+            Path("tldw_chatbook/css/features/_console_panels.tcss"),
+        )
     )
 
     assert "#console-workspace-conversations-header {" in css
@@ -2109,13 +2117,13 @@ def test_conversation_search_input_is_tall_enough_to_show_its_value() -> None:
     a mounted harness resolves the widget default (height 3) and stays green
     even when the shipped rule is broken.
     """
-    css = (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "components"
-        / "_agentic_terminal.tcss"
-    ).read_text()
+    css = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            Path("tldw_chatbook/css/features/_console.tcss"),
+            Path("tldw_chatbook/css/features/_console_panels.tcss"),
+        )
+    )
 
     block_start = css.index("#console-workspace-conversation-search {")
     block = css[block_start : css.index("}", block_start)]
@@ -2126,8 +2134,9 @@ def test_conversation_search_input_is_tall_enough_to_show_its_value() -> None:
     ]
 
     assert heights, "search input declares no height"
-    # A bordered Input needs 3 rows: border, content, border.
-    assert heights[0] == "3", (
+    # A bordered Input needs 3 rows: border, content, border. The rule was
+    # tokenized on arrival (ADR-161 task 10): $ds-size-3 resolves to 3.
+    assert heights[0] in ("3", "$ds-size-3"), (
         f"search input height {heights[0]!r} leaves no content row for its value"
     )
 

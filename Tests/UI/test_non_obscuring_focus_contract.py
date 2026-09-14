@@ -13,7 +13,51 @@ RESET = ROOT / "tldw_chatbook/css/core/_reset.tcss"
 BUTTONS = ROOT / "tldw_chatbook/css/components/_buttons.tcss"
 FORMS = ROOT / "tldw_chatbook/css/components/_forms.tcss"
 LISTS = ROOT / "tldw_chatbook/css/components/_lists.tcss"
-AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+
+
+def _detok(value: str) -> str:
+    """Resolve the ADR-161 sizing-scale tokens to their literal values."""
+    resolved = value
+    for pattern, repl in (
+        (r"\$ds-space-(\d+)", r"\1"),
+        (r"\$ds-size-(\d+)", r"\1"),
+        (r"\$ds-percent-(\d+)", r"\1%"),
+        (r"\$ds-fr-(\d+)", r"\1fr"),
+        (r"\$ds-width-full", "100%"),
+        (r"\$ds-height-full", "100%"),
+        (r"\$ds-width-fill", "1fr"),
+        (r"\$ds-height-fill", "1fr"),
+    ):
+        resolved = re.sub(pattern, repl, resolved)
+    return resolved
+
+
+class _AgenticFamilySources:
+    """ADR-161 task 10: the agentic terminal's vocabulary was carved into
+    per-purpose source sheets (console/library/settings/home/destination,
+    plus the ds-primitives family and the shared-shell chrome that stayed
+    in the monolith). Contracts that read "the source" read the union --
+    every rule exists in exactly one of these sheets."""
+
+    _PATHS = (
+        ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss",
+        ROOT / "tldw_chatbook/css/components/_ds_primitives.tcss",
+        ROOT / "tldw_chatbook/css/features/_console.tcss",
+        ROOT / "tldw_chatbook/css/features/_console_panels.tcss",
+        ROOT / "tldw_chatbook/css/features/_library.tcss",
+        ROOT / "tldw_chatbook/css/features/_library_panels.tcss",
+        ROOT / "tldw_chatbook/css/features/_settings.tcss",
+        ROOT / "tldw_chatbook/css/features/_home.tcss",
+        ROOT / "tldw_chatbook/css/layout/_destination.tcss",
+    )
+
+    def read_text(self, encoding: str = "utf-8") -> str:
+        return _detok(
+            "\n".join(p.read_text(encoding=encoding) for p in self._PATHS)
+        )
+
+
+AGENTIC = _AgenticFamilySources()
 WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
@@ -22,13 +66,13 @@ SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
 LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
-# TASK-25812: the console/library/settings-owned rules were split out of the
-# boot bundle into per-screen sheets the app loads lazily. Contracts that
+# TASK-25812 + ADR-161 task 10: the library/settings-owned rules were split
+# out of the boot bundle into per-screen sheets the app loads lazily (the
+# console sheet was dissolved -- its rules ride the bundle). Contracts that
 # read "the generated CSS" read the union.
 _SPLIT_SHEETS = tuple(
     ROOT / "tldw_chatbook/css" / name
     for name in (
-        "screen_agentic_console.tcss",
         "screen_agentic_library.tcss",
         "screen_agentic_settings.tcss",
     )
@@ -36,8 +80,10 @@ _SPLIT_SHEETS = tuple(
 
 
 def _bundle_union_text() -> str:
-    return "\n".join(
-        path.read_text(encoding="utf-8") for path in (BUNDLE, *_SPLIT_SHEETS)
+    return _detok(
+        "\n".join(
+            path.read_text(encoding="utf-8") for path in (BUNDLE, *_SPLIT_SHEETS)
+        )
     )
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
@@ -649,7 +695,7 @@ def test_library_list_row_focus_uses_readable_non_obscuring_contract():
     ``.library-media-row-selected`` already uses, never an outline.
     """
     for label, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         for selector in (
@@ -877,7 +923,7 @@ def test_console_structural_separators_use_visible_column_line_token():
 @pytest.mark.unit
 def test_console_settings_modal_select_uses_compact_focus_outline():
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "ConsoleSettingsModal Select")
@@ -902,7 +948,7 @@ def test_console_settings_modal_select_uses_compact_focus_outline():
 def test_console_settings_modal_focused_inputs_keep_value_row_visible():
     """Focused settings inputs must keep Textual's editable value row visible."""
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "ConsoleSettingsModal Input")
@@ -920,7 +966,7 @@ def test_console_settings_modal_focused_inputs_keep_value_row_visible():
 @pytest.mark.unit
 def test_console_settings_modal_select_current_preserves_visible_value_row():
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         current = css_block(text, "ConsoleSettingsModal Select > SelectCurrent")
@@ -943,7 +989,7 @@ def test_console_settings_modal_select_current_preserves_visible_value_row():
 @pytest.mark.unit
 def test_console_settings_modal_select_overlay_is_readable():
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         overlay = css_block(text, "ConsoleSettingsModal Select > SelectOverlay")
@@ -982,7 +1028,7 @@ def test_console_transcript_focus_uses_stable_border_geometry():
     flattening reclaimed.
     """
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "#console-native-transcript")
@@ -1003,7 +1049,7 @@ def test_console_transcript_focus_uses_stable_border_geometry():
 @pytest.mark.unit
 def test_console_transcript_selected_message_uses_selected_contract_without_geometry():
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         selected = css_block(text, ".console-transcript-message-selected")
@@ -1801,7 +1847,7 @@ def test_library_rag_result_card_focus_uses_stable_border_geometry():
     background/color, so "keyboard is here" never reads as "this evidence
     is selected"."""
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, ".library-rag-result-card")

@@ -32,7 +32,7 @@ tldw_chatbook/css/
 │   ├── _tabs.tcss               # Tab system (#tabs, tab buttons)
 │   ├── _windows.tcss            # Window base styles
 │   ├── _sidebars.tcss           # All sidebar patterns
-│   ├── _panes.tcss              # Multi-pane layouts
+│   ├── _destination.tcss        # Destination workbench wrappers
 │   └── _containers.tcss         # Container patterns
 │
 ├── components/
@@ -122,7 +122,7 @@ Estimated duplication found:
 @import "./layout/_windows.tcss";
 @import "./layout/_tabs.tcss";
 @import "./layout/_sidebars.tcss";
-@import "./layout/_panes.tcss";
+@import "./layout/_destination.tcss";
 @import "./layout/_containers.tcss";
 
 /* 3. Components - Reusable UI (depends on core + layout) */
@@ -172,7 +172,7 @@ Estimated duplication found:
 1. Extract tab system styles → `_tabs.tcss`
 2. Extract window base classes → `_windows.tcss`
 3. Extract all sidebar patterns (generic + specific) → `_sidebars.tcss`
-4. Extract multi-pane layouts → `_panes.tcss`
+4. Destination workbench wrappers → `_destination.tcss` (ADR-161 task 10)
 5. Extract container patterns → `_containers.tcss`
 
 ### Phase 4: Component Extraction

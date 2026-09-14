@@ -90,9 +90,11 @@ async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) 
 
 def test_library_source_actions_use_console_text_control_style() -> None:
     variables = _text(Path("tldw_chatbook/css/core/_variables.tcss"))
+    # ADR-161 task 10: the library vocabulary lives in the carved source
+    # sheets (union: each rule exists in exactly one of the pair).
     agentic_terminal = _text(
-        Path("tldw_chatbook/css/components/_agentic_terminal.tcss")
-    )
+        Path("tldw_chatbook/css/features/_library.tcss")
+    ) + _text(Path("tldw_chatbook/css/features/_library_panels.tcss"))
     # TASK-25812: the library-owned rules (and the variables preamble that
     # carries the $ds-library-* defs) live in the split library sheet.
     bundled_stylesheet = _text(

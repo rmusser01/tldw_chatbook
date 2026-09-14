@@ -76,7 +76,7 @@ Notes on the schema:
 
 | Family | Owning sheet | Classes (status) |
 |---|---|---|
-| forms | `components/_forms.tcss` | form-label, form-row, form-col, form-input, form-textarea, form-select, form-checkbox, form-button, form-section-title, form-section-collapsible, form-actions (all Canonical); settings-input-label (Canonical variant of form-label, owning sheet `components/_agentic_terminal.tcss`); settings-compact-input (Canonical variant of form-input), settings-detail-row (Canonical variant of form-row) — both task 9; settings-input-row, settings-select-row, settings-status-row, settings-compact-select, settings-focus-card (Draft — Settings-screen-only, stay in the monolith for task 10) |
+| forms | `components/_forms.tcss` | form-label, form-row, form-col, form-input, form-textarea, form-select, form-checkbox, form-button, form-section-title, form-section-collapsible, form-actions (all Canonical); settings-input-label (Canonical variant of form-label, owning sheet `features/_settings.tcss`, bundle-resident via the settings split's pinned token); settings-compact-input (Canonical variant of form-input), settings-detail-row (Canonical variant of form-row) — both task 9; settings-input-row, settings-select-row, settings-status-row, settings-compact-select, settings-focus-card (Draft — Settings-screen-only, landed in features/_settings.tcss with the task-10 carve) |
 | buttons | `components/_buttons.tcss` | action-button, button-group, button-group-left, button-group-center, button-group-right, sidebar-toggle (all Canonical) |
 | lists | `components/_lists.tcss` | none — widget contract (ListView/DataTable/OptionList cursor-hover-selected type selectors) |
 | dialogs | `components/_dialogs.tcss` | dialog-title, dialog-buttons (all Canonical) |
@@ -195,14 +195,15 @@ optional, not canonical. Hand-compose.
 
 **Lifecycle.** All Canonical (owning sheet `components/_forms.tcss`), plus
 the `settings-input-label` variant (Canonical, owning sheet
-`components/_agentic_terminal.tcss`), the `settings-compact-input` variant of
+`features/_settings.tcss` — task 10), the `settings-compact-input` variant of
 `form-input` and the `settings-detail-row` variant of `form-row` (Canonical,
 this owning sheet — task 9). The Settings-screen-only field classes
 (`settings-input-row`, `settings-select-row`, `settings-status-row`,
 `settings-compact-select`, `settings-focus-card`) are Draft: probe-measured
 genuinely different from the forms family but consumed only by the Settings
-workbench, so they stay in the agentic monolith (riding the lazily-loaded
-settings screen sheet) for the task-10 feature carve.
+workbench, so they landed in `features/_settings.tcss` with the task-10
+carve (that sheet is the settings split's source; the pure rules ride the
+lazily-loaded settings screen sheet exactly as before).
 
 **Consolidation record (ADR-161 task 9, 2026-09-13).** The remaining
 settings field vocabulary was probed against the forms family on the
@@ -646,7 +647,8 @@ findings recorded rather than forced:
 3. Console transcript rows are **not** shared vocabulary: every console
    transcript class is `console-*`-prefixed feature-local chrome
    (`console-transcript-message-*`, `console-message-header`, …) in
-   `components/_agentic_terminal.tcss` — they stay put.
+   `features/_console{,_panels}.tcss` since the task-10 carve — they stay
+   feature-local.
 Also deleted as dead: `features/_chat.tcss`'s `.chat-message.user` /
 `.chat-message.assistant` (zero compose sites). Known dead artifact left
 for a later sweep: `Constants.css_content` — an unreferenced legacy
@@ -697,9 +699,12 @@ def compose_panel(self):
 Defined in `components/_ds_primitives.tcss` (the bundle's FIRST component
 sheet — the atomic layer) since ADR-161 task 9, extracted tokenized from
 `components/_agentic_terminal.tcss`; their `.density-compact` /
-`.density-comfortable` variants ride with the family (the
-`ds-inspector`/`ds-recovery-callout` halves of those comma rules stay in the
-monolith until task 10 decides those classes' home). Rest-state geometry
+`.density-comfortable` variants ride with the family. ADR-161 task 10
+moved the six leftover shell primitives in tokenized as well
+(`.ds-inspector`, `.ds-status-badge`, `.ds-recovery-callout`,
+`.ds-source-role`, `.ds-event-row`, `.ds-shortcut-bar`, with their density
+companions) — three are composed app-wide, the components home; they are
+not registry classes until a catalog pass documents them. Rest-state geometry
 lives in tokens (`$ds-panel-min-height`, `$ds-destination-header-min-height`
 and its density variants, `$ds-field-row-min-height`, `$ds-toolbar-min-height`).
 

@@ -1,187 +1,22 @@
 /* ========================================
- * GENERATED FILE - DO NOT EDIT DIRECTLY
+ * FEATURES: Settings workbench
  * ========================================
- * settings-owned rules split out of features/_settings.tcss
- * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
- * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit features/_settings.tcss and re-run build_css.py.
+ * ADR-161 task 10: the settings-* workbench vocabulary, extracted from
+ * components/_agentic_terminal.tcss and tokenized on arrival. This sheet
+ * is the SOURCE for the screen-owned split: all-settings-token rules move
+ * to the lazily-loaded screen_agentic_settings.tcss (TASK-25812), while
+ * pinned/mixed rules (settings-input-label, destination-section scoped
+ * overrides) ride the bundle here. Distinct from features/
+ * _tools-settings.tcss (the deprecated legacy Tools/Settings window).
+ * Never add local $ds-* fallbacks here (two-track rule).
  * ======================================== */
 
-$ds-surface-panel: $panel;
-$ds-surface-raised: $surface;
-$ds-surface-inspector: $surface;
-$ds-grid-line: $surface-lighten-1;
-$ds-column-line: $surface-lighten-2;
-$ds-text-primary: $text;
-$ds-text-muted: $text-muted;
-$ds-text-disabled: $text-disabled;
-$ds-action-focus: $primary;
-$ds-focus-fg: $ds-text-primary;
-$ds-focus-bg: $block-cursor-blurred-background;
-$ds-focus-accent: $primary;
-$ds-input-focus-border: $primary;
-$ds-input-focus-bg: $ds-focus-bg;
-$ds-input-focus-accent: $primary;
-$ds-control-edge: $surface-lighten-2;
-$ds-status-ready: $success;
-$ds-status-running: $primary;
-$ds-status-info: $accent;
-$ds-status-warning: $warning;
-$ds-status-approval-required: $warning;
-$ds-status-blocked: $error;
-$ds-status-error: $error;
-$ds-status-error-readable: $text-error;
-$ds-text-placeholder: $text-muted;
-$ds-text-disabled-readable: $text-muted;
-$ds-status-paused: $warning;
-$ds-status-unsaved: $warning;
-$ds-status-recovered: $success;
-$ds-authority-local: $success;
-$ds-authority-server: $primary;
-$ds-authority-workspace: $accent;
-$ds-authority-remote-only: $warning;
-$ds-source-role-context: $accent;
-$ds-source-role-evidence: $accent;
-$ds-source-role-editable-target: $warning;
-$ds-source-role-output-seed: $secondary;
-$ds-active-fg: $text-primary;
-$ds-value-fg: $text-accent;
-
-$ds-chat-user-accent: $text-primary;
-$ds-chat-user-accent-dark: #8bd5ff;
-$ds-chat-user-accent-light: #004d6d;
-$ds-chat-assistant-accent-dark: #ffc473;
-$ds-chat-assistant-accent-light: #704000;
-$ds-chat-rp-speech-dark: #8bd5ff;
-$ds-chat-rp-speech-light: #004d6d;
-$ds-chat-rp-thought-dark: #2dd4bf;
-$ds-chat-rp-thought-light: #0b5d4a;
-$ds-chat-rp-action-dark: #d7b2ff;
-$ds-chat-rp-action-light: #5e3578;
-$ds-chat-rp-strong-dark: #fff0a6;
-$ds-chat-rp-strong-light: #665000;
-$ds-destination-header-height: 1;
-$ds-destination-compact-strip-height: 1;
-$ds-panel-min-height: 3;
-$ds-destination-header-min-height: 3;
-$ds-destination-header-compact-min-height: 2;
-$ds-destination-header-comfortable-min-height: 4;
-$ds-field-row-min-height: 2;
-$ds-toolbar-min-height: 1;
-$ds-home-dashboard-grid-height: 18;
-$ds-home-control-button-height: 1;
-$ds-home-compact-row-height: 1;
-$ds-home-followup-row-height: 6;
-$ds-console-workspace-grid-height: 1fr;
-$ds-console-composer-height: 1;
-$ds-library-mode-chip-height: 1;
-$ds-library-mode-chip-min-width: 10;
-$ds-library-source-action-width: auto;
-$ds-library-source-action-min-width: 0;
-$ds-library-source-action-height: 1;
-$ds-library-source-browser-width: 31;
-
-$ds-space-0: 0;
-$ds-space-1: 1;
-$ds-space-2: 2;
-$ds-space-3: 3;
-$ds-space-inline: $ds-space-1;
-$ds-space-stack: $ds-space-1;
-$ds-space-section: $ds-space-2;
-$ds-space-inset: $ds-space-1;
-
-$ds-control-height: 3;
-$ds-control-height-compact: 1;
-$ds-textarea-min-height: 5;
-$ds-width-full: 100%;
-$ds-width-fill: 1fr;
-
-$ds-height-full: 100%;
-$ds-height-fill: 1fr;
-$ds-size-0: 0;
-$ds-size-1: 1;
-$ds-size-2: 2;
-$ds-size-3: 3;
-$ds-size-4: 4;
-$ds-size-5: 5;
-$ds-size-6: 6;
-$ds-size-7: 7;
-$ds-size-8: 8;
-$ds-size-9: 9;
-$ds-size-10: 10;
-$ds-size-11: 11;
-$ds-size-12: 12;
-$ds-size-13: 13;
-$ds-size-14: 14;
-$ds-size-15: 15;
-$ds-size-16: 16;
-$ds-size-17: 17;
-$ds-size-18: 18;
-$ds-size-20: 20;
-$ds-size-21: 21;
-$ds-size-23: 23;
-$ds-size-24: 24;
-$ds-size-28: 28;
-$ds-size-29: 29;
-$ds-size-30: 30;
-$ds-size-31: 31;
-$ds-size-32: 32;
-$ds-size-34: 34;
-$ds-size-36: 36;
-$ds-size-40: 40;
-$ds-size-44: 44;
-$ds-size-45: 45;
-$ds-size-48: 48;
-$ds-size-60: 60;
-$ds-size-64: 64;
-$ds-size-66: 66;
-$ds-size-70: 70;
-$ds-size-76: 76;
-$ds-size-84: 84;
-$ds-size-90: 90;
-$ds-size-92: 92;
-$ds-size-94: 94;
-$ds-size-96: 96;
-$ds-size-104: 104;
-$ds-size-110: 110;
-$ds-size-120: 120;
-$ds-percent-34: 34%;
-$ds-percent-42: 42%;
-$ds-percent-75: 75%;
-$ds-percent-85: 85%;
-$ds-percent-90: 90%;
-$ds-percent-94: 94%;
-$ds-percent-95: 95%;
-$ds-percent-96: 96%;
-$ds-percent-99: 99%;
-$ds-fr-2: 2fr;
-$ds-fr-4: 4fr;
-$ds-fr-5: 5fr;
-$ds-fr-6: 6fr;
-$ds-fr-13: 13fr;
-$ds-console-frame: #6f7782;
-
-$ds-duration-fast: 0.2s;
-$ds-duration-medium: 0.3s;
-$ds-duration-slow: 0.5s;
-
-$ds-opacity-dim: 70%;
-
-$ds-text-strong: bold;
-$ds-text-emphasis: italic;
-
-$ds-hover-bg: $surface-lighten-1;
-$ds-hover-fg: $ds-text-primary;
-$ds-disabled-bg: $surface-darken-1;
-$ds-surface-sunken: $surface-darken-1;
-
-$ds-sidebar-width: 25%;
-$ds-sidebar-min-width: 35;
-$ds-sidebar-max-width: 80;
-
-
-.tldw-agentic-split-preamble-end { }
-
+/* Header sentinel: unit-splitting attaches leading comments to the
+ * next rule, so without this no-op the provenance essay above would
+ * travel with the first moved rule into the generated screen sheet
+ * (same trick as the split preamble's sentinel). Stays in the bundle:
+ * its token matches no split owner. */
+.tldw-split-source-header-end { }
 
 
 #settings-category-pane {
@@ -442,6 +277,20 @@ Button.settings-category-group-toggle:focus {
     text-style: bold;
 }
 
+/* Section headers inside the settings detail pane get a raised bar and a
+   blank line above, so each content block reads as a distinct section.
+   (The class itself is shared; scope stays inside settings.) */
+#settings-detail-pane .destination-section {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
 .settings-state-banner {
     width: $ds-width-full;
     min-height: $ds-size-1;
@@ -498,6 +347,42 @@ Button.settings-category-group-toggle:focus {
     height: $ds-size-3;
     min-height: $ds-size-3;
     margin: $ds-space-0;
+}
+
+.settings-input-label {
+    /* task-1713: 12 cells truncated most labels ("Palette limit" ->
+       "Palette", "Tool result display cap" -> "Tool result"), which read
+       as unit-less mystery numerics in the critique. */
+    width: $ds-size-24;
+    min-width: $ds-size-12;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.settings-select-row .settings-input-label {
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    content-align: left middle;
+}
+
+/* The Library/RAG detail card (Search/Embedding/Chunking/Vector store/
+ * Reranking groups) has the longest field labels in Settings ("Default
+ * results", "Embedding model ⚠", "Distance metric ⚠", "Rerank results", ...).
+ * The generic 12-column label width clips them to their first wrapped word
+ * (Static wraps at the column width but the row stays height:1, so only
+ * that first line paints) -- e.g. "Default results" rendered as just
+ * "Default", and "Reranker model"/"Reranker top-k" (pre UX-review-2026-07
+ * naming) both rendered as the identical "Reranker". Widen the column for
+ * this card only so every RAG label fits on one line unambiguously; other
+ * Settings categories keep the base 12-column rhythm.
+ */
+#settings-library-rag-card .settings-input-label {
+    width: $ds-size-20;
+    min-width: $ds-size-20;
 }
 
 /* ADR-161 task 9: the .settings-compact-input definitions (base, :focus,
@@ -578,6 +463,13 @@ Button.settings-category-group-toggle:focus {
 .settings-compact-select > SelectOverlay Option:hover {
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
+}
+
+.settings-compact-select > SelectOverlay Option.-selected {
+    padding: $ds-space-0 $ds-space-2;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .settings-provider-manual-hidden {
@@ -1072,6 +964,15 @@ Button.settings-category-group-toggle:focus {
     margin-bottom: $ds-space-1;
 }
 
+.settings-speech-stacked .settings-speech-input-row .settings-input-label,
+.settings-speech-stacked .settings-speech-input-row .settings-speech-control-stack,
+.settings-speech-stacked .settings-speech-input-row > Input,
+.settings-speech-stacked .settings-speech-input-row > Select,
+.settings-speech-stacked .settings-speech-input-row > Switch {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+}
+
 .settings-speech-stacked #settings-speech-actions {
     layout: vertical;
     height: $ds-size-4;
@@ -1227,4 +1128,18 @@ Button.settings-category-group-toggle:focus {
    source line must not read as an error like the four remote API keys. */
 .settings-imagegen-key-source-neutral {
     color: $ds-text-muted;
+}
+
+
+/* task-1624: the Checkbox glyph paints "X" in BOTH states, distinguishing
+   them by color alone -- it read as checked either way in the critique.
+   Hide the glyph while off so its presence carries the state; the On/Off
+   word beside it (switch_word) stays the text carrier. */
+/* task-1713 counterweight: the widened shared label column (24) does not
+   fit the Image Gen backend rows' five controls at 120 cols -- the
+   geometry guard test pins that width. Backend-row labels are short
+   backend names; 12 never truncated them. */
+.settings-imagegen-backend-row .settings-input-label {
+    width: $ds-size-12;
+    min-width: $ds-size-12;
 }

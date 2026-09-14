@@ -96,3 +96,61 @@
     min-height: $ds-destination-header-comfortable-min-height;
     padding: $ds-space-1 $ds-space-2;
 }
+
+/* ADR-161 task 10: the six leftover shell primitives (.ds-inspector/.ds-status-badge/.ds-recovery-callout/.ds-source-role/.ds-event-row/.ds-shortcut-bar + their density companions) moved in from components/_agentic_terminal.tcss, tokenized; three are composed app-wide (MCP/Evals/Personas/ACP/Schedules/Settings/Skills/Workbench audited 2026-09-14), which is the components home. */
+/* ADR-161 task 9: the ds-primitives family (.ds-panel, .ds-toolbar,
+ * .ds-field-row, .ds-info-callout, .ds-approval-card,
+ * .ds-destination-header + their .density-* variants) moved to
+ * components/_ds_primitives.tcss, tokenized. The remaining ds-* shell
+ * classes below stay here until the task-10 feature carve. */
+
+.ds-inspector {
+    height: auto;
+    min-width: $ds-size-24;
+    padding: $ds-space-1;
+    border: round $ds-grid-line;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.ds-status-badge {
+    width: auto;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    text-style: bold;
+    color: $ds-text-primary;
+    background: $ds-surface-raised;
+}
+
+.ds-recovery-callout {
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: round $ds-status-warning;
+    background: $ds-status-warning 10%;
+    color: $ds-text-primary;
+}
+
+.ds-source-role {
+    width: auto;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    border: round $ds-source-role-context;
+    color: $ds-text-primary;
+    background: $ds-surface-raised;
+}
+
+.ds-event-row {
+    height: auto;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    border-bottom: solid $ds-grid-line;
+    color: $ds-text-primary;
+}
+
+.ds-shortcut-bar {
+    dock: bottom;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-inspector;
+    color: $ds-text-muted;
+}

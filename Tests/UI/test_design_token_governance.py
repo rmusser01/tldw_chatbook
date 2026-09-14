@@ -38,9 +38,11 @@ _RAW_SPACING_RE = re.compile(
 # stripped before counting, so documented measurements never consume
 # allowance and removing one never creates allowance for a real literal.
 # Active counts verified 2026-09-11 (_lists.tcss has comment-only hexes).
-_HEX_GRANDFATHERED: dict[str, int] = {
-    "components/_agentic_terminal.tcss": 1,
-}
+# ADR-161 task 10 (2026-09-14): the agentic monolith's single grandfathered
+# hex (#6f7782, the Console frame border) was tokenized to $ds-console-frame
+# when the console vocabulary moved to features/_console{,_panels}.tcss, so
+# the allowance is gone -- no sheet carries an active hex today.
+_HEX_GRANDFATHERED: dict[str, int] = {}
 
 # Every sheet that existed when ADR-150 landed (2026-09-11), including the
 # legacy files not in the build manifest (_unified_sidebar, _new_ingest,

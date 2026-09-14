@@ -25,9 +25,10 @@ class ComposerApp(App):
 class ProductionCssComposerApp(ComposerApp):
     """Mount the composer with the generated production stylesheet."""
 
+    # ADR-161 task 10: the console vocabulary rides the bundle itself.
     CSS_PATH = [
         str(Path(__file__).resolve().parents[2] / "tldw_chatbook/css" / name)
-        for name in ("tldw_cli_modular.tcss", "screen_agentic_console.tcss")
+        for name in ("tldw_cli_modular.tcss",)
     ]
 
 

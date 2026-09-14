@@ -269,6 +269,36 @@ def test_python_style_ratchet() -> None:
         )
 
 
+#: Spec 3.5's size ceiling for hand-authored source sheets. Load-bearing
+#: comment essays are not punished (comments stripped before counting), so
+#: the ceiling measures the rules a sheet carries, not its documentation.
+#: Data at the pin: next-largest sheet after the task-10 carve is
+#: features/_wizards.tcss at ~1,090 active lines -- the ceiling has real
+#: headroom by design, it exists to stop the next _agentic_terminal.tcss
+#: (12,240 total lines, ~8,700 active, TASK-24451).
+SHEET_ACTIVE_LINE_CEILING = 2_000
+
+
+def test_sheet_size_ceiling() -> None:
+    """No CSS_MODULES sheet exceeds 2,000 comment-stripped active lines.
+
+    TASK-24451 close-out (ADR-161 spec 3.5): the ceiling ships in the same
+    PR that completed the agentic-terminal carve-up -- no temporary
+    allowance that can outlive the project. A sheet over the ceiling must
+    split by vocabulary, exactly as the task-10 carve did.
+    """
+    for rel in CSS_MODULES:
+        source = CSS / rel
+        assert source.is_file(), f"{rel} missing from css/"
+        text = _COMMENT.sub("", source.read_text(encoding="utf-8"))
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        assert len(lines) <= SHEET_ACTIVE_LINE_CEILING, (
+            f"{rel}: {len(lines)} active lines > "
+            f"{SHEET_ACTIVE_LINE_CEILING} (spec 3.5 size ceiling, "
+            "TASK-24451). Split the sheet by vocabulary."
+        )
+
+
 def test_ratchet_regexes_match_pin_script() -> None:
     """The counting regexes must stay byte-identical to the pin script's."""
     pin_source = (Path(__file__).parent / "pin_pattern_ratchets.py").read_text(

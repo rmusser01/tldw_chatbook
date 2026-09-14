@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 from textual import on
@@ -32,13 +33,25 @@ from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
 from tldw_chatbook.app import TldwCli
 
 
-CSS_SOURCE = (
-    Path(__file__).parents[2]
-    / "tldw_chatbook"
-    / "css"
-    / "components"
-    / "_agentic_terminal.tcss"
+#: ADR-161 task 10: the library vocabulary's source sheets (carved out of
+#: the agentic-terminal monolith). CSS_SOURCE keeps a Path-like interface
+#: via the LIBRARY_SOURCES tuple; readers use _library_sources_text().
+_CSS_DIR = Path(__file__).parents[2] / "tldw_chatbook" / "css"
+LIBRARY_SOURCES = (
+    _CSS_DIR / "features" / "_library.tcss",
+    _CSS_DIR / "features" / "_library_panels.tcss",
 )
+
+
+def _library_sources_text() -> str:
+    return "\n".join(p.read_text(encoding="utf-8") for p in LIBRARY_SOURCES)
+
+
+class _ParamSheet(NamedTuple):
+    """A (label, text) pair for parametrized source contracts."""
+
+    name: str
+    text: str
 
 
 def _layout(
@@ -562,7 +575,7 @@ async def test_all_five_regions_remain_inside_representative_media_widths(width)
 
 
 def test_shared_shell_structure_is_owned_by_shared_tcss_selectors():
-    source = CSS_SOURCE.read_text(encoding="utf-8")
+    source = _library_sources_text()
 
     assert ".library-adaptive-reader-shell {" in source
     assert ".library-adaptive-reader-shell > .library-adaptive-reader-work {" in source
@@ -575,15 +588,21 @@ def test_shared_shell_structure_is_owned_by_shared_tcss_selectors():
 @pytest.mark.parametrize(
     "sheet",
     [
-        CSS_SOURCE,
         # The rebuilt sheet: `build_css` routes this screen-scoped rule here
         # rather than into `tldw_cli_modular.tcss`, which carries only the
-        # grip's :hover/.-active pair.
-        CSS_SOURCE.parents[1] / "screen_agentic_library.tcss",
+        # grip's :hover/.-active pair. The component-source arm is the
+        # carved library sheet pair read as one text (the rule lives in
+        # exactly one of them; ADR-161 task 10).
+        _ParamSheet("component-source", _library_sources_text()),
+        _ParamSheet(
+            "generated-screen-sheet",
+            (_CSS_DIR / "screen_agentic_library.tcss").read_text(encoding="utf-8"),
+        ),
     ],
-    ids=["component-source", "generated-screen-sheet"],
 )
-def test_no_sheet_declares_a_grip_width_beside_the_inline_one(sheet: Path) -> None:
+def test_no_sheet_declares_a_grip_width_beside_the_inline_one(
+    sheet: "_ParamSheet",
+) -> None:
     """task-31952 AC#1: the five-column fallback is gone everywhere.
 
     Every mounted grip sets its width inline from the layout the resolver
@@ -591,7 +610,7 @@ def test_no_sheet_declares_a_grip_width_beside_the_inline_one(sheet: Path) -> No
     dead for Media, dead for the three siblings task-31951 narrowed, and a
     second (stale) answer to a question the resolver already settles.
     """
-    grip_block = sheet.read_text(encoding="utf-8").split(
+    grip_block = sheet.text.split(
         ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {",
         1,
     )[1].split("}", 1)[0]
@@ -600,8 +619,9 @@ def test_no_sheet_declares_a_grip_width_beside_the_inline_one(sheet: Path) -> No
         assert declaration not in grip_block, (sheet.name, declaration)
 
 
+
 def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
-    source = CSS_SOURCE.read_text(encoding="utf-8")
+    source = _library_sources_text()
     shared_grip = source.split(
         ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {",
         1,

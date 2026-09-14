@@ -5,7 +5,7 @@
  * Shared design-system classes -- .ds-panel, .destination-workbench,
  * .destination-workbench-pane, .ds-inspector, .density-compact/comfortable
  * -- are already defined in components/_agentic_terminal.tcss and
- * layout/_panes.tcss; this file only adds Evals-specific rail/pane rules.
+ * layout/_destination.tcss; this file only adds Evals-specific rail/pane rules.
  * ======================================== */
 
 #evals-shell {

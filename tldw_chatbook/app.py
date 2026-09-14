@@ -7438,19 +7438,12 @@ class TldwCli(
     CSS_PATH = [
         str(build_css.screen_css_paths(Path(__file__).parent / "css")[0]),
         str(Path(__file__).parent / "css/tldw_cli_modular.tcss"),
-        # TASK-25812: the CONSOLE sheet split from the agentic-terminal
-        # module rides the boot parse deliberately, unlike its library and
-        # settings siblings (those load lazily via their screens'
-        # `CSS_PATH`). The Console is the initial tab: loading its sheet at
-        # first ChatScreen mount instead put a one-time parse + full-app
-        # `stylesheet.update` (~100 ms) on the mount leg for every user, and
-        # on splashless boots that leg precedes `_ui_ready`, where it
-        # dragged deferred-family imports across the module-census line
-        # (972 -> 979 locally, 981 on the slower CI runner). Boot-parsing it
-        # costs ~30 ms against the ~85 ms the split saves and keeps the
-        # first Console mount free of restyle work -- `_load_screen_css`
-        # sees `has_source` and does nothing.
-        str(Path(__file__).parent / "css/screen_agentic_console.tcss"),
+        # ADR-161 task 10: the console vocabulary (previously the
+        # TASK-25812 console sheet, which always rode this boot parse
+        # because the Console is the initial tab) now rides the bundle
+        # itself via features/_console{,_panels}.tcss -- one fewer boot
+        # source, no duplicated variable preamble, and the first Console
+        # mount stays free of restyle work exactly as before.
         str(build_css.screen_css_paths(Path(__file__).parent / "css")[1]),
     ]
 

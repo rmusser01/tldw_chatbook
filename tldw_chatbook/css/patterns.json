@@ -4,16 +4,24 @@
     "forms": {
       "owning_sheet": "components/_forms.tcss",
       "classes": {
-        "form-label": { "status": "canonical" },
+        "form-label": {
+          "status": "canonical"
+        },
         "settings-input-label": {
           "status": "canonical",
-          "owning_sheet": "components/_agentic_terminal.tcss",
+          "owning_sheet": "features/_settings.tcss",
           "variant_of": "form-label",
-          "note": "Documented variant (ADR-161 task 7 probe, 2026-09-13): fixed 24-col width (min 12), height 1, panel background, primary-text color -- the settings grid-row label column. NOT equivalent to form-label (auto width, muted, margin-top 1); do not force-merge. Compounds (#settings-library-rag-card width 20, .settings-imagegen-backend-row width 12, stacked rows width 100%) compose on top."
+          "note": "Documented variant (ADR-161 task 7 probe, 2026-09-13): fixed 24-col width (min 12), height 1, panel background, primary-text color -- the settings grid-row label column. NOT equivalent to form-label (auto width, muted, margin-top 1); do not force-merge. Compounds (#settings-library-rag-card width 20, .settings-imagegen-backend-row width 12, stacked rows width 100%) compose on top. ADR-161 task 10: owning sheet moved components/_agentic_terminal.tcss -> features/_settings.tcss with the settings vocabulary carve; still bundle-resident (the settings split's pinned token -- composed by personas_policy_rules_editor.py app-wide), so its rule rides the boot bundle, not the lazy settings screen sheet."
         },
-        "form-row": { "status": "canonical" },
-        "form-col": { "status": "canonical" },
-        "form-input": { "status": "canonical" },
+        "form-row": {
+          "status": "canonical"
+        },
+        "form-col": {
+          "status": "canonical"
+        },
+        "form-input": {
+          "status": "canonical"
+        },
         "settings-compact-input": {
           "status": "canonical",
           "variant_of": "form-input",
@@ -26,42 +34,73 @@
         },
         "settings-input-row": {
           "status": "draft",
-          "note": "ADR-161 task 9 probe: genuinely different from form-row (fixed height 1 + min-height 1 + margin 0 vs auto height + bottom stack margin). Settings-screen-only consumer set (settings_screen + settings_* panels) -- STAYS in components/_agentic_terminal.tcss (rides the lazy settings screen sheet) for the task-10 feature carve per the one-feature-one-sheet rule."
+          "note": "ADR-161 task 9 probe: genuinely different from form-row (fixed height 1 + min-height 1 + margin 0 vs auto height + bottom stack margin). Settings-screen-only consumer set (settings_screen + settings_* panels) -- STAYS in components/_agentic_terminal.tcss (rides the lazy settings screen sheet) for the task-10 feature carve per the one-feature-one-sheet rule.",
+          "owning_sheet": "features/_settings.tcss"
         },
         "settings-select-row": {
           "status": "draft",
-          "note": "ADR-161 task 9 probe: genuinely different from form-row (fixed height 3/min 3, margin 0). Settings-screen-only -- stays in the monolith for the task-10 carve."
+          "note": "ADR-161 task 9 probe: genuinely different from form-row (fixed height 3/min 3, margin 0). Settings-screen-only -- landed in features/_settings.tcss with the ADR-161 task-10 carve.",
+          "owning_sheet": "features/_settings.tcss"
         },
         "settings-status-row": {
           "status": "draft",
-          "note": "ADR-161 task 9 probe: genuinely different from the forms family (inspector fill, muted text, padding 0 1, one-row min). Settings-screen-only -- stays in the monolith for the task-10 carve."
+          "note": "ADR-161 task 9 probe: genuinely different from the forms family (inspector fill, muted text, padding 0 1, one-row min). Settings-screen-only -- landed in features/_settings.tcss with the ADR-161 task-10 carve.",
+          "owning_sheet": "features/_settings.tcss"
         },
         "settings-compact-select": {
           "status": "draft",
-          "note": "ADR-161 task 9 probe: genuinely different from form-select (grid-line border, inspector fill, 1fr width, SelectCurrent/SelectOverlay shape rules). Settings-screen-only -- stays in the monolith for the task-10 carve."
+          "note": "ADR-161 task 9 probe: genuinely different from form-select (grid-line border, inspector fill, 1fr width, SelectCurrent/SelectOverlay shape rules). Settings-screen-only -- landed in features/_settings.tcss with the ADR-161 task-10 carve.",
+          "owning_sheet": "features/_settings.tcss"
         },
         "settings-focus-card": {
           "status": "draft",
-          "note": "ADR-161 task 9 probe: genuinely different from the forms family (bordered panel card, padding 0 1, bottom margin 1). Settings-screen-only -- stays in the monolith for the task-10 carve."
+          "note": "ADR-161 task 9 probe: genuinely different from the forms family (bordered panel card, padding 0 1, bottom margin 1). Settings-screen-only -- landed in features/_settings.tcss with the ADR-161 task-10 carve.",
+          "owning_sheet": "features/_settings.tcss"
         },
-        "form-textarea": { "status": "canonical" },
-        "form-select": { "status": "canonical" },
-        "form-checkbox": { "status": "canonical" },
-        "form-button": { "status": "canonical" },
-        "form-section-title": { "status": "canonical" },
-        "form-section-collapsible": { "status": "canonical" },
-        "form-actions": { "status": "canonical" }
+        "form-textarea": {
+          "status": "canonical"
+        },
+        "form-select": {
+          "status": "canonical"
+        },
+        "form-checkbox": {
+          "status": "canonical"
+        },
+        "form-button": {
+          "status": "canonical"
+        },
+        "form-section-title": {
+          "status": "canonical"
+        },
+        "form-section-collapsible": {
+          "status": "canonical"
+        },
+        "form-actions": {
+          "status": "canonical"
+        }
       }
     },
     "buttons": {
       "owning_sheet": "components/_buttons.tcss",
       "classes": {
-        "action-button": { "status": "canonical" },
-        "button-group": { "status": "canonical" },
-        "button-group-left": { "status": "canonical" },
-        "button-group-center": { "status": "canonical" },
-        "button-group-right": { "status": "canonical" },
-        "sidebar-toggle": { "status": "canonical" }
+        "action-button": {
+          "status": "canonical"
+        },
+        "button-group": {
+          "status": "canonical"
+        },
+        "button-group-left": {
+          "status": "canonical"
+        },
+        "button-group-center": {
+          "status": "canonical"
+        },
+        "button-group-right": {
+          "status": "canonical"
+        },
+        "sidebar-toggle": {
+          "status": "canonical"
+        }
       }
     },
     "lists": {
@@ -72,15 +111,23 @@
     "dialogs": {
       "owning_sheet": "components/_dialogs.tcss",
       "classes": {
-        "dialog-title": { "status": "canonical" },
-        "dialog-buttons": { "status": "canonical" }
+        "dialog-title": {
+          "status": "canonical"
+        },
+        "dialog-buttons": {
+          "status": "canonical"
+        }
       }
     },
     "status": {
       "owning_sheet": "components/_status.tcss",
       "classes": {
-        "status-label": { "status": "canonical" },
-        "status-area": { "status": "canonical" },
+        "status-label": {
+          "status": "canonical"
+        },
+        "status-area": {
+          "status": "canonical"
+        },
         "status-item": {
           "status": "canonical",
           "note": "ADR-161 task 8a (2026-09-13): promoted bare from the two declaration-identical scoped sets (ProgressStep/ImportProgressStep in features/_wizards.tcss); probe-verified computed-identical in both step contexts. The Import-only warning state stays scoped in the wizard sheet (task-19734)."
@@ -90,11 +137,21 @@
     "navigation": {
       "owning_sheet": "layout/_sidebars.tcss",
       "classes": {
-        "sidebar": { "status": "canonical" },
-        "sidebar-button": { "status": "canonical" },
-        "sidebar-header": { "status": "canonical" },
-        "sidebar-listview": { "status": "canonical" },
-        "sidebar-section-collapsible": { "status": "canonical" },
+        "sidebar": {
+          "status": "canonical"
+        },
+        "sidebar-button": {
+          "status": "canonical"
+        },
+        "sidebar-header": {
+          "status": "canonical"
+        },
+        "sidebar-listview": {
+          "status": "canonical"
+        },
+        "sidebar-section-collapsible": {
+          "status": "canonical"
+        },
         "nav-button": {
           "status": "canonical",
           "owning_sheet": "components/_navigation.tcss"
@@ -104,16 +161,26 @@
     "sections": {
       "owning_sheet": "components/_sections.tcss",
       "classes": {
-        "section-title": { "status": "canonical" },
-        "section-header": { "status": "canonical" },
-        "subsection-title": { "status": "canonical" }
+        "section-title": {
+          "status": "canonical"
+        },
+        "section-header": {
+          "status": "canonical"
+        },
+        "subsection-title": {
+          "status": "canonical"
+        }
       }
     },
     "messages": {
       "owning_sheet": "components/_messages.tcss",
       "classes": {
-        "message-header": { "status": "canonical" },
-        "message-text": { "status": "canonical" },
+        "message-header": {
+          "status": "canonical"
+        },
+        "message-text": {
+          "status": "canonical"
+        },
         "message-actions": {
           "status": "canonical",
           "note": "ADR-161 task 8c (2026-09-13): the shared grammar of ChatMessage (Console transcripts + tool widgets) and ChatMessageEnhanced (Chat window). The widgets' DEFAULT_CSS copies deleted (ChatMessage's entirely); the strip's Button states and the .delete-button hover live in the owning sheet. The .tts-generating modifier diverges (bundle: thick border + opacity; enhanced widget-local copy adds padding-left) -- documented variant, not merged. Console transcript rows use console-* prefixed feature-local classes, not this family."
@@ -123,20 +190,45 @@
     "ds_primitives": {
       "owning_sheet": "components/_ds_primitives.tcss",
       "classes": {
-        "ds-panel": { "status": "canonical" },
-        "ds-toolbar": { "status": "canonical" },
-        "ds-field-row": { "status": "canonical" },
-        "ds-info-callout": { "status": "canonical" },
-        "ds-approval-card": { "status": "canonical" },
-        "ds-destination-header": { "status": "canonical" }
+        "ds-panel": {
+          "status": "canonical"
+        },
+        "ds-toolbar": {
+          "status": "canonical"
+        },
+        "ds-field-row": {
+          "status": "canonical"
+        },
+        "ds-info-callout": {
+          "status": "canonical"
+        },
+        "ds-approval-card": {
+          "status": "canonical"
+        },
+        "ds-destination-header": {
+          "status": "canonical"
+        }
       },
-      "note": "ADR-161 task 9 (2026-09-13): extracted tokenized from components/_agentic_terminal.tcss (base rules + .density-compact/.density-comfortable member halves; the ds-inspector/ds-recovery-callout halves of those comma rules stay in the monolith until task 10). FIRST among component sheets in CSS_MODULES (atomic layer). Probe-verified computed-style-neutral (generic + density + height-1 geometry) and byte-identical SVG A/B on Home/Console/Settings/Library."
+      "note": "ADR-161 task 9 (2026-09-13): extracted tokenized from components/_agentic_terminal.tcss (base rules + .density-compact/.density-comfortable member halves; the ds-inspector/ds-recovery-callout halves of those comma rules joined in task 10). FIRST among component sheets in CSS_MODULES (atomic layer). Probe-verified computed-style-neutral (generic + density + height-1 geometry) and byte-identical SVG A/B on Home/Console/Settings/Library. ADR-161 task 10: the six leftover shell primitives (.ds-inspector, .ds-status-badge, .ds-recovery-callout, .ds-source-role, .ds-event-row, .ds-shortcut-bar + their density companions) moved in tokenized from the monolith -- ds-inspector/ds-status-badge/ds-recovery-callout are composed app-wide (MCP/Evals/Personas/ACP/Schedules/Settings/Skills/Workbench audited 2026-09-14), which is the components home. Not registry classes: they stay outside the family's canonical set until a catalog pass documents them."
     }
   },
   "deprecated": {
-    "setting-label": { "renamed_to": "form-label", "ceiling": 0 },
-    "settings-label": { "renamed_to": "form-label", "ceiling": 0 },
-    "field-label": { "renamed_to": "form-label", "ceiling": 1, "note": "single remaining count is prose: the 'Title Case field-label convention' comment in UI/Screens/settings_screen.py (about label wording, not the CSS class)" },
-    "form-field-label": { "renamed_to": "form-label", "ceiling": 0 }
+    "setting-label": {
+      "renamed_to": "form-label",
+      "ceiling": 0
+    },
+    "settings-label": {
+      "renamed_to": "form-label",
+      "ceiling": 0
+    },
+    "field-label": {
+      "renamed_to": "form-label",
+      "ceiling": 1,
+      "note": "single remaining count is prose: the 'Title Case field-label convention' comment in UI/Screens/settings_screen.py (about label wording, not the CSS class)"
+    },
+    "form-field-label": {
+      "renamed_to": "form-label",
+      "ceiling": 0
+    }
   }
 }

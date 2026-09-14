@@ -22,13 +22,13 @@ from Tests.UI.app_factory import _build_test_app
 
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
-CONSOLE_SHEET = ROOT / "tldw_chatbook" / "css" / "screen_agentic_console.tcss"
 
 
 class StyledConsoleHarness(ConsoleHarness):
     """ConsoleHarness with the shipped stylesheet so app-tier rules apply."""
 
-    CSS_PATH = [str(BUNDLE), str(CONSOLE_SHEET)]
+    # ADR-161 task 10: the console vocabulary rides the bundle itself.
+    CSS_PATH = [str(BUNDLE)]
 
 
 @pytest.mark.asyncio

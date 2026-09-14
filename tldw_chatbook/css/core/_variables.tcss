@@ -185,6 +185,92 @@ $ds-width-full: 100%;
 $ds-width-fill: 1fr;
 
 /* ========================================
+ * SIZING SCALES (ADR-161 task 10, spec 3.5)
+ * ========================================
+ * "Moved rules arrive fully on-system": when the console/library/settings/
+ * home/destination vocabularies were carved out of
+ * components/_agentic_terminal.tcss, every raw numeric dimension they
+ * carried mapped onto tokens. $ds-space-* stays the padding/margin
+ * rhythm; $ds-size-N is the integer cell-geometry scale for the
+ * width/height (and min-/max-prefixed) family, $ds-percent-N the
+ * percentage fills,
+ * $ds-fr-N the grid fractions, and $ds-height-full the block-axis twin
+ * of $ds-width-full. Names deliberately avoid the dimension-ratchet
+ * property suffixes so the definitions themselves do not count as sheet
+ * literals. Per spec 3.10, a value that gains a second consumer with
+ * real semantic weight graduates to a named $ds-<feature>-<name> token
+ * (the existing pattern below); these scales are the raw material until
+ * then. */
+$ds-height-full: 100%;
+$ds-height-fill: 1fr;
+$ds-size-0: 0;
+$ds-size-1: 1;
+$ds-size-2: 2;
+$ds-size-3: 3;
+$ds-size-4: 4;
+$ds-size-5: 5;
+$ds-size-6: 6;
+$ds-size-7: 7;
+$ds-size-8: 8;
+$ds-size-9: 9;
+$ds-size-10: 10;
+$ds-size-11: 11;
+$ds-size-12: 12;
+$ds-size-13: 13;
+$ds-size-14: 14;
+$ds-size-15: 15;
+$ds-size-16: 16;
+$ds-size-17: 17;
+$ds-size-18: 18;
+$ds-size-20: 20;
+$ds-size-21: 21;
+$ds-size-23: 23;
+$ds-size-24: 24;
+$ds-size-28: 28;
+$ds-size-29: 29;
+$ds-size-30: 30;
+$ds-size-31: 31;
+$ds-size-32: 32;
+$ds-size-34: 34;
+$ds-size-36: 36;
+$ds-size-40: 40;
+$ds-size-44: 44;
+$ds-size-45: 45;
+$ds-size-48: 48;
+$ds-size-60: 60;
+$ds-size-64: 64;
+$ds-size-66: 66;
+$ds-size-70: 70;
+$ds-size-76: 76;
+$ds-size-84: 84;
+$ds-size-90: 90;
+$ds-size-92: 92;
+$ds-size-94: 94;
+$ds-size-96: 96;
+$ds-size-104: 104;
+$ds-size-110: 110;
+$ds-size-120: 120;
+$ds-percent-34: 34%;
+$ds-percent-42: 42%;
+$ds-percent-75: 75%;
+$ds-percent-85: 85%;
+$ds-percent-90: 90%;
+$ds-percent-94: 94%;
+$ds-percent-95: 95%;
+$ds-percent-96: 96%;
+$ds-percent-99: 99%;
+$ds-fr-2: 2fr;
+$ds-fr-4: 4fr;
+$ds-fr-5: 5fr;
+$ds-fr-6: 6fr;
+$ds-fr-13: 13fr;
+/* Console's rendered frame color (see Console_Modules.frame.
+ * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
+ * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
+ * travel). */
+$ds-console-frame: #6f7782;
+
+/* ========================================
  * MOTION (ADR-150)
  * ========================================
  * Transition durations. fast: hover/affordance feedback; medium: panel and

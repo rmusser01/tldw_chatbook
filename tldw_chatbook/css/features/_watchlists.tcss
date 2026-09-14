@@ -676,7 +676,7 @@ WatchlistPickerDialog {
  *
  * The four sibling toolbars (runs/items/rules/notifications) are `Horizontal`
  * with `.destination-filter-strip`, which pins `height: 1` in
- * layout/_panes.tcss, so they were never affected. This one is the only
+ * layout/_destination.tcss, so they were never affected. This one is the only
  * wrapper, and so the only one that needed its own rule.
  */
 #sources-toolbar {
@@ -690,7 +690,7 @@ WatchlistPickerDialog {
  * Two independent causes compounded, and both are fixed here.
  *
  * 1. HEIGHT. `.destination-filter-strip` is `height: 1`
- *    (layout/_panes.tcss) but a bordered `Input`/`Select` is three rows, so
+ *    (layout/_destination.tcss) but a bordered `Input`/`Select` is three rows, so
  *    only the top border row survived. The widgets now pass `compact=True`
  *    (sources_pane.py / items_pane.py / watchlists_collections_screen.py),
  *    Textual's own supported one-row form -- the same idiom this codebase
@@ -1212,7 +1212,7 @@ WatchlistPickerDialog {
  * same `selected_briefing is not None` gate the scripts section above
  * already uses). Deliberately NOT a fifth `fr` participant, and
  * deliberately no second scrollable detail region either: this section's
- * own toolbar reuses `.destination-filter-strip` (`layout/_panes.tcss`)
+ * own toolbar reuses `.destination-filter-strip` (`layout/_destination.tcss`)
  * with no extra rule needed, exactly like `#artifacts-scripts-toolbar`
  * above it needs none -- and the audio status/duration/error itself is
  * folded straight into `_script_detail_renderable`'s own render (appended
@@ -1323,7 +1323,7 @@ WatchlistPickerDialog {
  * `#artifacts-picker-toolbar` is a second `.destination-filter-strip` row,
  * rendered only when a watchlist is in scope (`ArtifactsPane.compose`) --
  * `.destination-filter-strip` already pins `height: 1; min-height: 1;`
- * (layout/_panes.tcss), same as `#artifacts-toolbar` above it.
+ * (layout/_destination.tcss), same as `#artifacts-toolbar` above it.
  *
  * All three `Select`s need the exact TASK-995 override `#sources-toolbar
  * Select` carries: the bare global `Select { width: 100%; margin-bottom: 1; }`

@@ -1,6 +1,6 @@
 {
   "dimensions": {
-    "components/_agentic_terminal.tcss": 2668,
+    "components/_agentic_terminal.tcss": 308,
     "components/_buttons.tcss": 5,
     "components/_change_review.tcss": 56,
     "components/_dialogs.tcss": 4,
@@ -43,7 +43,6 @@
     "features/config_search.tcss": 23,
     "features/feature_alerts.tcss": 12,
     "layout/_containers.tcss": 16,
-    "layout/_panes.tcss": 13,
     "layout/_sidebars.tcss": 96,
     "layout/_tabs.tcss": 21,
     "layout/_windows.tcss": 2,

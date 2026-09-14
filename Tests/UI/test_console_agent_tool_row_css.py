@@ -10,17 +10,16 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscriptMessage
 
 
-# TASK-25812: the console-owned transcript rules were split out of the boot
-# bundle into the console screen sheet -- but blocks whose selectors carry a
-# non-console token (`.-dark-mode .console-assistant-turn`) stay in the
-# bundle. The generated arm of this contract is therefore the UNION of the
-# bundle and the console sheet: "the styling the running app loads".
-_GENERATED = (
-    Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
-    Path("tldw_chatbook/css/screen_agentic_console.tcss"),
-)
+# ADR-161 task 10: the console-owned transcript rules ride the boot bundle
+# via features/_console{,_panels}.tcss (the TASK-25812 console screen sheet
+# was dissolved -- it always rode the boot parse anyway). The generated arm
+# of this contract is the bundle itself: "the styling the running app loads".
+_GENERATED = (Path("tldw_chatbook/css/tldw_cli_modular.tcss"),)
 _STYLESHEETS = (
-    Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+    (
+        Path("tldw_chatbook/css/features/_console.tcss"),
+        Path("tldw_chatbook/css/features/_console_panels.tcss"),
+    ),
     _GENERATED,
 )
 
@@ -33,6 +32,23 @@ def _stylesheet_text(entry) -> tuple[str, str]:
         " + ".join(p.name for p in entry),
         "\n".join(p.read_text(encoding="utf-8") for p in entry),
     )
+
+
+def _detok(value: str) -> str:
+    """Resolve the ADR-161 sizing-scale tokens to their literal values."""
+    resolved = value
+    for pattern, repl in (
+        (r"\$ds-space-(\d+)", r"\1"),
+        (r"\$ds-size-(\d+)", r"\1"),
+        (r"\$ds-percent-(\d+)", r"\1%"),
+        (r"\$ds-fr-(\d+)", r"\1fr"),
+        (r"\$ds-width-full", "100%"),
+        (r"\$ds-height-full", "100%"),
+        (r"\$ds-width-fill", "1fr"),
+        (r"\$ds-height-fill", "1fr"),
+    ):
+        resolved = re.sub(pattern, repl, resolved)
+    return resolved
 
 
 def _css_block(text: str, selector: str) -> str:
@@ -152,11 +168,15 @@ def test_assistant_turn_stylesheet_contract_in_source_and_bundle() -> None:
     }
 
     for entry in _STYLESHEETS:
-        _, text = _stylesheet_text(entry)
+        label, text = _stylesheet_text(entry)
+        # ADR-161 task 10: the console sources were tokenized on arrival;
+        # resolve the sizing-scale tokens so the contract stays written in
+        # its canonical literal geometry.
+        text = _detok(text)
         for selector, declarations in contract.items():
             block = _css_block(text, selector)
             for declaration in declarations:
-                assert declaration in block, f"{path}: {selector} lacks {declaration}"
+                assert declaration in block, f"{label}: {selector} lacks {declaration}"
         for selector, token in status_contract.items():
             block = _css_block(text, selector)
             assert f"background: {token};" in block
