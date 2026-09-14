@@ -2,7 +2,6 @@
   "dimensions": {
     "components/_dialogs.tcss": 4,
     "components/_lists.tcss": 1,
-    "core/_base.tcss": 5,
     "core/_variables.tcss": 24,
     "features/_writing.tcss": 3,
     "layout/_windows.tcss": 2,

@@ -461,11 +461,15 @@ $ds-sidebar-max-width: 80;
  * Root elements: Screen, Header, Footer
  * Foundation for the entire application
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 Screen { layout: vertical; }
-Header { dock: top; height: 1; background: $panel; }
-Footer { dock: bottom; height: 1; background: $panel; }
-#content { height: 1fr; width: 100%; }
+Header { dock: top; height: $ds-size-1; background: $panel; }
+Footer { dock: bottom; height: $ds-size-1; background: $panel; }
+#content { height: $ds-height-fill; width: $ds-width-full; }
 
 /* App-wide scrollbar defaults (TASK-394). Consolidated here -- a deliberate
  * foundation rule -- from the two bare `VerticalScroll` selectors that had
@@ -492,7 +496,7 @@ Toast {
      * its own margins resist app-tier overrides, but a margin on the
      * Toast itself reliably offsets it from that anchor; 46 cells clears
      * the inspector column at supported widths. */
-    margin-right: 46;
+    margin-right: $ds-size-46;
     /* task-1625: full tinted border per severity instead of the stock
        side-stripe -- DESIGN.md's Don'ts prohibit side-stripe-only
        callouts (>1-cell colored border-left). */
