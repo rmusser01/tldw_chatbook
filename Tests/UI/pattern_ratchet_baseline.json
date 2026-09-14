@@ -23,7 +23,6 @@
     "features/_embeddings.tcss": 145,
     "features/_evals.tcss": 98,
     "features/_evaluation_unified.tcss": 28,
-    "features/_ingest.tcss": 165,
     "features/_llm-management.tcss": 122,
     "features/_logs.tcss": 15,
     "features/_metrics.tcss": 7,

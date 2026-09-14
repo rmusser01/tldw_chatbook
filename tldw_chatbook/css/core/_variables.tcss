@@ -269,15 +269,18 @@ $ds-size-104: 104;
 $ds-size-110: 110;
 $ds-size-120: 120;
 $ds-percent-34: 34%;
-/* task 11 (ADR-161 §3.10): 30%/40% join the scale -- cross-sheet recurring
-   fills/caps (conversations/sidebars/research run-list; widgets/
-   conversations/lab/media per the spread census). */
+/* task 11 (ADR-161 §3.10): 25%/30%/40%/50% join the scale -- cross-sheet
+   recurring fills/caps (coding/embeddings/ingest, conversations/sidebars/
+   research run-list, widgets/conversations/lab/media, chat/code-repo/
+   embeddings/ingest per the spread census). */
+$ds-percent-25: 25%;
 $ds-percent-30: 30%;
 $ds-percent-40: 40%;
 $ds-percent-42: 42%;
 /* task 11 (ADR-161 §3.10): 45% joins the scale -- cross-sheet recurring
    fill (sidebars/settings-splash/conversations/new-ingest). */
 $ds-percent-45: 45%;
+$ds-percent-50: 50%;
 $ds-percent-75: 75%;
 /* task 11 (ADR-161 §3.10): 80% joins the scale -- cross-sheet recurring fill
    (wizards progress/summary, widgets, splash, watchlists per the spread

@@ -281,15 +281,18 @@ $ds-size-104: 104;
 $ds-size-110: 110;
 $ds-size-120: 120;
 $ds-percent-34: 34%;
-/* task 11 (ADR-161 §3.10): 30%/40% join the scale -- cross-sheet recurring
-   fills/caps (conversations/sidebars/research run-list; widgets/
-   conversations/lab/media per the spread census). */
+/* task 11 (ADR-161 §3.10): 25%/30%/40%/50% join the scale -- cross-sheet
+   recurring fills/caps (coding/embeddings/ingest, conversations/sidebars/
+   research run-list, widgets/conversations/lab/media, chat/code-repo/
+   embeddings/ingest per the spread census). */
+$ds-percent-25: 25%;
 $ds-percent-30: 30%;
 $ds-percent-40: 40%;
 $ds-percent-42: 42%;
 /* task 11 (ADR-161 §3.10): 45% joins the scale -- cross-sheet recurring
    fill (sidebars/settings-splash/conversations/new-ingest). */
 $ds-percent-45: 45%;
+$ds-percent-50: 50%;
 $ds-percent-75: 75%;
 /* task 11 (ADR-161 §3.10): 80% joins the scale -- cross-sheet recurring fill
    (wizards progress/summary, widgets, splash, watchlists per the spread
@@ -14066,12 +14069,16 @@ MediaDetailsWidget {
  * ======================================== 
  * Media ingestion tab styles
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* --- Ingest Content Tab --- */
 #ingest-window { /* Matches TAB_INGEST */
     layout: vertical !important; /* Override .window class */
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
 }
 
 /* Override the horizontal layout from .window class */
@@ -14079,10 +14086,10 @@ MediaDetailsWidget {
     layout: vertical !important;
 }
 .tldw-api-media-specific-options { /* Common class for specific option blocks */
-    padding: 1;
+    padding: $ds-space-1;
     border: round $surface;
-    margin-top: 1;
-    margin-bottom: 1;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 /* Added to ensure initially hidden specific options are indeed hidden */
@@ -14092,21 +14099,21 @@ MediaDetailsWidget {
 
 .ingest-nav-pane { /* Style for the left navigation pane */
     dock: left;
-    width: 25%;
-    min-width: 20;
-    max-width: 40;
-    height: 100%;
+    width: $ds-percent-25;
+    min-width: $ds-size-20;
+    max-width: $ds-size-40;
+    height: $ds-height-full;
     background: $boost; /* Or a slightly different shade */
-    padding: 1;
+    padding: $ds-space-1;
     border-right: thick $background-darken-1;
     /* Removed overflow properties - let VerticalScroll handle scrolling */
 }
 
 .ingest-nav-pane .ingest-nav-button { /* Style for navigation buttons */
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
     border: none;
-    height: 3;
+    height: $ds-size-3;
 }
 .ingest-nav-pane .ingest-nav-button:hover {
     background: $surface-lighten-1;
@@ -14121,29 +14128,29 @@ MediaDetailsWidget {
 
 /* Collapsible sidebar styles */
 .ingest-nav-pane.collapsed {
-    width: 4;
-    min-width: 4;
-    padding: 1 0;
+    width: $ds-size-4;
+    min-width: $ds-size-4;
+    padding: $ds-space-1 $ds-space-0;
 }
 
 .nav-header {
-    width: 100%;
-    height: 3;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
 }
 
 .nav-toggle-button {
-    width: 3;
-    height: 3;
-    min-width: 3;
-    padding: 0;
+    width: $ds-size-3;
+    height: $ds-size-3;
+    min-width: $ds-size-3;
+    padding: $ds-space-0;
     text-align: center;
 }
 
 /* Adjust button appearance when collapsed */
 .ingest-nav-pane.collapsed .ingest-nav-button {
-    width: 3;
-    padding: 0;
+    width: $ds-size-3;
+    padding: $ds-space-0;
     /* Show only first letter or icon */
     overflow: hidden;
 }
@@ -14152,9 +14159,9 @@ MediaDetailsWidget {
 .ingest-nav-pane .sidebar-title {
     text-style: bold;
     color: $primary;
-    margin-top: 2;
-    margin-bottom: 1;
-    padding-left: 1;
+    margin-top: $ds-space-2;
+    margin-bottom: $ds-space-1;
+    padding-left: $ds-space-1;
     border-left: thick $accent;
 }
 /* Active state for selected ingest nav button (optional) */
@@ -14164,60 +14171,60 @@ MediaDetailsWidget {
 } */
 
 .ingest-content-pane { /* Style for the right content display area */
-    width: 1fr;
-    height: 100%;
-    padding: 1 2;
+    width: $ds-width-fill;
+    height: $ds-height-full;
+    padding: $ds-space-1 $ds-space-2;
     /* Removed overflow - let child VerticalScroll widgets handle scrolling */
 }
 
 .ingest-view-area { /* Common class for individual content areas */
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
 }
 .ingest-label {
-    margin-top: 1;
-    margin-bottom: 0;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-0;
 }
 .ingest-selected-files-list {
-    min-height: 5;
-    max-height: 10;
+    min-height: $ds-size-5;
+    max-height: $ds-size-10;
     height: auto;
     border: round $ds-focus-accent;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     background: $surface;
 }
 .LocalIngestionPanel .file-selection-container {
-    height: 1fr;
-    min-height: 15;
+    height: $ds-height-fill;
+    min-height: $ds-size-15;
     border: solid $primary;
-    margin-bottom: 1;
-    padding: 1;
+    margin-bottom: $ds-space-1;
+    padding: $ds-space-1;
 }
 .ingest-preview-area {
-    height: 1fr;
-    min-height: 10;
+    height: $ds-height-fill;
+    min-height: $ds-size-10;
     border: round $primary-lighten-2;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     background: $surface;
 }
 .ingest-preview-area > Static#ingest-prompts-preview-placeholder {
     color: $text-muted;
-    width: 100%;
+    width: $ds-width-full;
     text-align: center;
-    padding: 2 0;
+    padding: $ds-space-2 $ds-space-0;
 }
 .ingest-status-area {
-    min-height: 5;
-    max-height: 15;
+    min-height: $ds-size-5;
+    max-height: $ds-size-15;
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .prompt-preview-item {
     border: panel $background-lighten-2;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 .prompt-preview-item .prompt-title {
     text-style: bold;
@@ -14228,44 +14235,44 @@ MediaDetailsWidget {
 }
 .prompt-preview-item Markdown {
     background: $surface-darken-1;
-    padding: 0 1;
-    margin-top: 1;
-    margin-bottom: 1;
+    padding: $ds-space-0 $ds-space-1;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-1;
     border: solid $primary-darken-1; /* Use 'solid' instead of 'narrow' */
-    max-height: 10;
+    max-height: $ds-size-10;
     overflow-y: auto;
 }
 .prompt-preview-item .prompt-details-text {
-    max-height: 5;
+    max-height: $ds-size-5;
     overflow-y: auto;
     background: $surface;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     border: dashed $primary-darken-2; /* Use 'dashed' instead of 'dotted' */
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* Ensure VerticalScroll containers fill their parent */
 .ingest-view-area VerticalScroll {
-    height: 1fr;
-    width: 100%;
+    height: $ds-height-fill;
+    width: $ds-width-full;
 }
 
 /* Ensure VerticalScroll containers fill available space */
 VerticalScroll.ingest-view-area {
-    height: 1fr;
-    width: 100%;
+    height: $ds-height-fill;
+    width: $ds-width-full;
 }
 
 VerticalScroll.ingest-form-scrollable {
-    height: 1fr;
-    width: 100%;
+    height: $ds-height-fill;
+    width: $ds-width-full;
 }
 
 /* Scrollable form container needs padding to prevent content cutoff */
 .ingest-form-scrollable {
-    height: 100%;
+    height: $ds-height-full;
     overflow-y: auto;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* Removed .ingest-media-tab-content - no longer needed since parent is VerticalScroll */
@@ -14274,45 +14281,45 @@ VerticalScroll.ingest-form-scrollable {
 
 
 .ingest-form-row {
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .ingest-form-col {
-    width: 50%;
-    padding-right: 1;
+    width: $ds-percent-50;
+    padding-right: $ds-space-1;
 }
 
 .title-author-row {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* Ensure title/author input boxes are visible */
 .title-author-row Input {
-    height: 3;
-    width: 100%;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 .ingest-textarea-small {
-    min-height: 3;
-    max-height: 8;
+    min-height: $ds-size-3;
+    max-height: $ds-size-8;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .ingest-textarea-medium {
-    min-height: 10;
-    max-height: 20;
+    min-height: $ds-size-10;
+    max-height: $ds-size-20;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 
 /* All ingest views are controlled programmatically */
 .ingest-view-area {
     /* display controlled by app.py watcher */
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
 }
 
 /* --- Visibility styles for ingest views --- */
@@ -14321,56 +14328,56 @@ VerticalScroll.ingest-form-scrollable {
 
 /* Ensure the IngestWindowTabbed container fills available space */
 IngestWindowTabbed {
-    height: 1fr;
-    width: 100%;
+    height: $ds-height-fill;
+    width: $ds-width-full;
     layout: vertical;
 }
 
 /* Ensure TabbedContent in ingest window displays properly */
 #ingest-window TabbedContent {
-    height: 1fr;  /* Use fr unit for flexible sizing */
-    width: 100%;
+    height: $ds-height-fill;  /* Use fr unit for flexible sizing */
+    width: $ds-width-full;
 }
 
 .media-tab-container {
-    height: 1fr;  /* Use fr unit instead of 100% */
-    padding: 1;
+    height: $ds-height-fill;  /* Use fr unit instead of 100% */
+    padding: $ds-space-1;
 }
 
 .source-toggle-container {
     dock: top;
     height: auto;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     border-bottom: solid $primary;
 }
 
 .tab-title {
     text-style: bold;
 
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .source-toggle {
     layout: horizontal;
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .source-toggle RadioButton {
-    margin-right: 2;
+    margin-right: $ds-space-2;
 }
 
 .source-content {
-    height: 1fr;
-    width: 100%;
+    height: $ds-height-fill;
+    width: $ds-width-full;
     overflow-y: auto;
 }
 
 /* Ensure content areas within tabs fill space */
 .ingest-form-scrollable {
-    height: 1fr;
-    width: 100%;
+    height: $ds-height-fill;
+    width: $ds-width-full;
 }
 
 
@@ -14382,24 +14389,24 @@ IngestWindowTabbed {
 
 /* Compact file lists for better space usage */
 .ingest-selected-files-list {
-    min-height: 3;
-    max-height: 8;
+    min-height: $ds-size-3;
+    max-height: $ds-size-8;
     height: auto;
     border: round $ds-focus-accent;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     background: $surface;
 }
 
 /* Status section at top of forms */
 .status-dashboard {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 8;      /* Prevent status from taking too much space */
-    min-height: 3;
+    max-height: $ds-size-8;      /* Prevent status from taking too much space */
+    min-height: $ds-size-3;
     background: $surface;
     border: round $primary;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 /* Mode-specific visibility controls */
@@ -14414,8 +14421,8 @@ IngestWindowTabbed {
 /* URL input always visible */
 .url-input-section {
     display: block;
-    margin-top: 1;
-    padding: 1;
+    margin-top: $ds-space-1;
+    padding: $ds-space-1;
     border: round $primary;
     background: $surface;
 }
@@ -14423,8 +14430,8 @@ IngestWindowTabbed {
 /* Simplified form sections */
 .essential-fields {
     border: round $accent;
-    padding: 1;
-    margin-bottom: 2;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-2;
     background: $surface-lighten-1;
 }
 
@@ -14432,14 +14439,14 @@ IngestWindowTabbed {
 .placeholder-text {
     color: $text-muted;
     text-align: center;
-    padding: 4;
+    padding: $ds-size-4;
 }
 
 /* Mode toggle styles */
 .mode-toggle-container {
     dock: top;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 .mode-toggle {
@@ -14448,49 +14455,49 @@ IngestWindowTabbed {
 }
 
 .mode-toggle RadioButton {
-    margin-right: 2;
+    margin-right: $ds-space-2;
 }
 
 /* File selection row */
 .file-selection-row {
-    height: 3;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
 }
 
 .file-selection-row Button {
-    margin-right: 1;
+    margin-right: $ds-space-1;
 }
 
 /* Enhanced file list with metadata */
 .file-list-with-metadata {
-    min-height: 5;
-    max-height: 10;
+    min-height: $ds-size-5;
+    max-height: $ds-size-10;
     border: round $primary;
     background: $surface;
 }
 
 /* Metadata row */
 .metadata-row {
-    margin-top: 1;
-    margin-bottom: 1;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 .metadata-col {
-    width: 50%;
-    padding-right: 1;
+    width: $ds-percent-50;
+    padding-right: $ds-space-1;
 }
 
 /* Process button */
 .process-button {
-    width: 100%;
-    height: 4;
-    margin-top: 2;
+    width: $ds-width-full;
+    height: $ds-size-4;
+    margin-top: $ds-space-2;
     text-style: bold;
 }
 
 /* Advanced options container */
 .advanced-options-container {
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .advanced-options-container.hidden {
@@ -14499,51 +14506,51 @@ IngestWindowTabbed {
 
 /* Time range row */
 .time-range-row {
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .time-col {
-    width: 50%;
-    padding-right: 1;
+    width: $ds-percent-50;
+    padding-right: $ds-space-1;
 }
 
 /* Chunk settings row */
 .chunk-settings-row {
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .chunk-col {
-    width: 50%;
-    padding-right: 1;
+    width: $ds-percent-50;
+    padding-right: $ds-space-1;
 }
 
 /* Status Dashboard Styles */
 .status-dashboard-container {
     border: round $primary;
     background: $surface;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 .status-main-row {
-    height: 3;
+    height: $ds-size-3;
     align: left middle;
 }
 
 .status-message {
-    width: 1fr;
+    width: $ds-width-fill;
     text-style: bold;
 }
 
 .file-counter {
     width: auto;
-    margin-left: 2;
+    margin-left: $ds-space-2;
     color: $text-muted;
 }
 
 .time-display {
     width: auto;
-    margin-left: 2;
+    margin-left: $ds-space-2;
     color: $text-muted;
 }
 
@@ -14558,9 +14565,9 @@ IngestWindowTabbed {
 }
 
 .small-button {
-    height: 3;
-    min-width: 8;
-    margin-left: 1;
+    height: $ds-size-3;
+    min-width: $ds-size-8;
+    margin-left: $ds-space-1;
 }
 
 .small-button.hidden {
@@ -14569,8 +14576,8 @@ IngestWindowTabbed {
 
 /* Progress bar in dashboard */
 .status-dashboard-container ProgressBar {
-    margin-top: 1;
-    height: 1;
+    margin-top: $ds-space-1;
+    height: $ds-size-1;
 }
 
 .status-dashboard-container ProgressBar.hidden {
@@ -14579,8 +14586,8 @@ IngestWindowTabbed {
 
 /* Alert container */
 .alert-container {
-    margin-top: 1;
-    padding: 1;
+    margin-top: $ds-space-1;
+    padding: $ds-space-1;
     border: round $error;
     background: $error 10%;
 }
@@ -14591,7 +14598,7 @@ IngestWindowTabbed {
 
 .alert-messages {
     color: $text;
-    max-height: 6;
+    max-height: $ds-size-6;
     overflow-y: auto;
 }
 
@@ -14599,18 +14606,18 @@ IngestWindowTabbed {
 .file-list-enhanced {
     border: round $primary;
     background: $surface;
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 .file-items-container {
-    max-height: 10;
+    max-height: $ds-size-10;
     overflow-y: auto;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 .file-list-item-container {
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     border: round $surface-lighten-2;
     background: $surface-lighten-1;
     height: auto;
@@ -14622,21 +14629,21 @@ IngestWindowTabbed {
 }
 
 .file-info-main {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .file-name-row {
     height: auto;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 .file-icon {
-    width: 3;
+    width: $ds-size-3;
     text-align: center;
 }
 
 .file-name {
-    width: 1fr;
+    width: $ds-width-fill;
     text-style: bold;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -14645,28 +14652,28 @@ IngestWindowTabbed {
 .file-metadata {
     color: $text-muted;
 
-    margin-left: 3;
+    margin-left: $ds-space-3;
 }
 
 .file-remove-button {
-    width: 3;
-    height: 3;
-    min-width: 3;
-    margin: 0;
-    padding: 0;
+    width: $ds-size-3;
+    height: $ds-size-3;
+    min-width: $ds-size-3;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
     text-align: center;
 }
 
 .no-files-message {
     text-align: center;
     color: $text-muted;
-    padding: 3;
+    padding: $ds-space-3;
 }
 
 .file-list-summary {
     dock: bottom;
-    height: 3;
-    padding: 1;
+    height: $ds-size-3;
+    padding: $ds-space-1;
     border-top: solid $primary;
     background: $surface-darken-1;
     text-align: center;
