@@ -287,6 +287,49 @@ async def test_a_hand_off_that_raises_rolls_back_the_link_it_wrote():
 
 
 @pytest.mark.asyncio
+async def test_the_rollback_unlinks_the_note_it_linked_not_the_selected_one():
+    """Fix round 2: the inverse takes the id it wrote, not a re-read selection.
+
+    ``open_chat_with_handoff`` only stages and posts a message today, so the
+    selection cannot move under this call -- but the rollback must not depend
+    on a seam it does not own. Re-reading ``_selected_note_id`` deleted a
+    different note's membership and stranded the one it had just written.
+    """
+    host, app = _notes_host(_two_notes())
+    _link_library_items_to_active_workspace(app, (("note", "n-2", "Reading list"),))
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot, "n-1")
+        assert (
+            screen._library_workspace_depth_state(refresh=True).context_handoff_enabled
+            is False
+        ), "control: the gate is closed, so this press is what links n-1"
+
+        def seam_that_moves_the_selection(payload, **kwargs):
+            # The selection the rollback used to re-read lives on the notes
+            # controller, which is the object the hand-off runs on.
+            screen._notes_controller._selected_note_id = "n-2"
+            raise RuntimeError("Console unavailable")
+
+        app.open_chat_with_handoff = seam_that_moves_the_selection
+        screen.query_one("#library-note-use-in-console").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _transfer_status(screen) == (
+            "Can't use this note in Console — Console could not take it. "
+            "Next: try again."
+        )
+
+    assert _note_memberships(app, "n-1") == [], "the note it linked is unlinked"
+    assert [
+        membership.item_id for membership in _note_memberships(app, "n-2")
+    ] == ["n-2"], "the note it never linked keeps its membership"
+
+
+@pytest.mark.asyncio
 async def test_the_status_says_already_linked_when_it_made_no_link():
     """Fix round 1: the gate is profile-wide, so an already-linked note takes
     the same branch -- and used to be reported as freshly "Linked to"."""

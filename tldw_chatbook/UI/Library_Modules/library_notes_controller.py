@@ -4244,7 +4244,7 @@ class LibraryNotesController:
                 "keywords": keywords,
             },
         )
-    def _link_open_note_to_active_workspace(self) -> tuple[str, str]:
+    def _link_open_note_to_active_workspace(self) -> tuple[str, str, str]:
         """Link the open note into the active workspace (task-32536 AC#1).
 
         The remedy the refusal used to name without offering -- the
@@ -4252,13 +4252,14 @@ class LibraryNotesController:
         the receipt: the hand-off's own status line reports the link.
 
         Returns:
-            ``(workspace_name, written_workspace_id)``. ``workspace_name`` is
-            the active workspace the note belongs to once this returns, or
-            ``""`` when nothing could be linked (no registry, no active
-            workspace, no open note, or the write failed) -- the hand-off
-            stages nothing on ``""``. ``written_workspace_id`` is set only
-            when THIS call inserted the membership, so the caller can roll
-            that insert back when the hand-off then fails and can say what
+            ``(workspace_name, written_workspace_id, written_note_id)``.
+            ``workspace_name`` is the active workspace the note belongs to
+            once this returns, or ``""`` when nothing could be linked (no
+            registry, no active workspace, no open note, or the write
+            failed) -- the hand-off stages nothing on ``""``. The two
+            ``written_*`` ids are set only when THIS call inserted the
+            membership, and together they name the exact row to roll back
+            when the hand-off then fails; they also let the caller say what
             actually happened -- the gate is profile-wide (any unlinked
             source row closes it), so an already-linked note takes this
             branch too and used to be announced as a fresh link.
@@ -4266,12 +4267,13 @@ class LibraryNotesController:
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         note_id = str(self._selected_note_id or "").strip()
         if registry is None or not note_id:
-            return "", ""
+            return "", "", ""
         written_workspace_id = ""
+        written_note_id = ""
         try:
             active = registry.get_active_workspace()
             if active is None:
-                return "", ""
+                return "", "", ""
             # ``link_membership`` is INSERT OR IGNORE; read first so a stale
             # cached gate never writes a membership that is already there.
             already_linked = any(
@@ -4290,19 +4292,21 @@ class LibraryNotesController:
                     title=title or "Untitled Note",
                 )
                 written_workspace_id = active.workspace_id
+                written_note_id = note_id
         except Exception as error:
             logger.warning(
                 "Library note could not be linked to the active workspace",
                 error_type=type(error).__name__,
             )
-            return "", ""
+            return "", "", ""
         self._invalidate_library_workspace_depth_state()
         return (
             self._library_workspace_depth_state().workspace_name,
             written_workspace_id,
+            written_note_id,
         )
 
-    def _unlink_open_note_from_workspace(self, workspace_id: str) -> bool:
+    def _unlink_note_from_workspace(self, workspace_id: str, note_id: str) -> bool:
         """Undo the membership this hand-off just wrote.
 
         No surface in the app removes an ``item_type="note"`` membership --
@@ -4311,14 +4315,20 @@ class LibraryNotesController:
         media -- so a hand-off that fails after linking has to undo its own
         write rather than strand one the user can neither see nor remove.
 
+        Both ids are the ones the insert used, passed in rather than re-read
+        from ``self._selected_note_id``: the inverse must not depend on a
+        seam it does not control leaving the selection alone, or a future
+        hand-off that changes the open note would unlink a different one.
+
         Args:
-            workspace_id: Workspace this hand-off linked the open note into.
+            workspace_id: Workspace this hand-off linked the note into.
+            note_id: Note whose membership this hand-off inserted.
 
         Returns:
             Whether the membership is gone.
         """
         registry = getattr(self.app_instance, "workspace_registry_service", None)
-        note_id = str(self._selected_note_id or "").strip()
+        note_id = str(note_id or "").strip()
         if registry is None or not note_id:
             return False
         try:
@@ -4365,8 +4375,9 @@ class LibraryNotesController:
         completion = "Staged in Console"
         workspace = ""
         written_workspace_id = ""
+        written_note_id = ""
         if not self._library_workspace_depth_state().context_handoff_enabled:
-            workspace, written_workspace_id = (
+            workspace, written_workspace_id, written_note_id = (
                 self._link_open_note_to_active_workspace()
             )
             if not workspace:
@@ -4395,8 +4406,8 @@ class LibraryNotesController:
                 "Library note Console handoff failed",
                 error_type=type(error).__name__,
             )
-            if written_workspace_id and not self._unlink_open_note_from_workspace(
-                written_workspace_id
+            if written_workspace_id and not self._unlink_note_from_workspace(
+                written_workspace_id, written_note_id
             ):
                 return (
                     "Can't use this note in Console — Console could not take "
