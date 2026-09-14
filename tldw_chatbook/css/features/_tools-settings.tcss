@@ -3,6 +3,10 @@
  * ======================================== 
  * Tools and Settings tab
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* --- Tools & Settings Tab --- */
 #tools_settings-window { /* Matches TAB_TOOLS_SETTINGS */
@@ -12,21 +16,21 @@
 .tools-nav-pane {
     dock: left;
     width: auto; /* Changed from 25% */
-    min-width: 25; /* Example min-width */
-    max-width: 60; /* Example max-width */
-    height: 100%;
+    min-width: $ds-size-25; /* Example min-width */
+    max-width: $ds-size-60; /* Example max-width */
+    height: $ds-height-full;
     background: $boost; /* Or $surface-lighten-1 */
-    padding: 1;
+    padding: $ds-space-1;
     border-right: thick $background-darken-1;
     overflow-y: auto;
     overflow-x: hidden;
 }
 
 .tools-nav-pane .ts-nav-button { /* Style for navigation buttons */
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
     border: none; /* Cleaner look for nav buttons */
-    height: 3;
+    height: $ds-size-3;
 }
 .tools-nav-pane .ts-nav-button:hover {
     background: $surface-lighten-1;
@@ -40,200 +44,200 @@
 }
 
 .tools-content-pane {
-    width: 1fr; /* Takes remaining horizontal space */
-    height: 100%;
-    padding: 1 2; /* Padding for the content area */
+    width: $ds-width-fill; /* Takes remaining horizontal space */
+    height: $ds-height-full;
+    padding: $ds-space-1 $ds-space-2; /* Padding for the content area */
     overflow-y: auto; /* If content within sub-views might scroll */
 }
 
 /* Ensure ContentSwitcher fills the pane */
 .tools-content-pane ContentSwitcher {
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
 }
 
 .ts-view-area { /* Class for individual content areas */
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
     overflow-y: auto;
     overflow-x: hidden;
     /* Let ContentSwitcher handle visibility */
 }
 
 .config-file-settings-container {
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
     overflow-y: auto;
     overflow-x: hidden;
 }
 
 /* Ensure TabbedContent fills container */
 .config-file-settings-container TabbedContent {
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
 }
 
 .config-file-settings-container TabPane {
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
 }
 
 /* Specific config tabs styling */
 #config-tabs {
-    height: 100%;
-    width: 100%;
-    min-height: 30;
+    height: $ds-height-full;
+    width: $ds-width-full;
+    min-height: $ds-size-30;
 }
 
 /* Inner container for config file settings */
 .config-file-settings-inner {
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
     layout: vertical;
 }
 
 /* Settings form styling */
 .section-description {
     color: $text-muted;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     text-align: center;
     text-style: italic;
     height: auto;
 }
 
 .settings-group {
-    margin-bottom: 2;
-    padding: 1;
+    margin-bottom: $ds-space-2;
+    padding: $ds-space-1;
     background: $surface;
     border: round $primary-background;
     height: auto;
 }
 
 .settings-select, .settings-input {
-    width: 100%;
-    margin-bottom: 1;
-    min-height: 3;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
+    min-height: $ds-size-3;
     height: auto;
 }
 
 .checkbox-group {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .warning-text {
     color: $warning;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     text-style: italic;
 }
 
 .settings-actions {
-    margin-top: 2;
+    margin-top: $ds-space-2;
     layout: horizontal;
     height: auto;
     align: center middle;
 }
 
 .settings-actions Button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* Configuration file settings specific */
 .config-file-settings-container {
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
 }
 
 .config-editor {
-    height: 20;
-    min-height: 20;
+    height: $ds-size-20;
+    min-height: $ds-size-20;
     border: round $primary;
     background: $panel;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .config-button-container {
     layout: horizontal;
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
     align: center middle;
 }
 
 .config-button-container Button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 .tab-description {
     color: $text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     text-style: italic;
 }
 
 /* --- Core Settings Styles --- */
 .core-settings-container {
-    padding: 1 2;
-    width: 100%;
-    height: 100%;
+    padding: $ds-space-1 $ds-space-2;
+    width: $ds-width-full;
+    height: $ds-height-full;
 }
 
 .settings-group {
     background: $surface;
-    padding: 1;
-    margin-bottom: 2;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-2;
     border: round $primary-background;
 }
 
 .settings-input {
-    width: 100%;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .settings-select {
-    width: 100%;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .settings-subsection-title {
     color: $text;
     text-style: bold;
-    margin-top: 1;
-    margin-bottom: 1;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 .settings-note {
     color: $text-muted;
     text-style: italic;
-    margin-top: 1;
-    margin-bottom: 1;
-    padding: 0 1;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .checkbox-group {
     layout: horizontal;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .checkbox-group Checkbox {
-    margin-right: 2;
+    margin-right: $ds-space-2;
 }
 
 .settings-actions {
     layout: horizontal;
-    margin-top: 2;
+    margin-top: $ds-space-2;
     align: center middle;
 }
 
 .settings-actions Button {
-    margin: 0 1;
-    min-width: 15;
+    margin: $ds-space-0 $ds-space-1;
+    min-width: $ds-size-15;
 }
 
 /* --- End Core Settings Styles ---*/
 
 /* --- Config Form Styles --- */
 .config-form {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     overflow-y: auto;
 }
 
@@ -244,59 +248,59 @@
 
 .form-description {
     color: $text-muted;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     text-style: italic;
 }
 
 .form-subsection-title {
     text-style: bold;
     color: $secondary;
-    margin: 1 0 1 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .form-actions Button {
-    margin: 0 1 0 0;
-    min-width: 15;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    min-width: $ds-size-15;
 }
 
 /* TextArea styling for config forms */
 .config-form TextArea {
-    width: 100%;
-    height: 10;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    height: $ds-size-10;
+    margin-bottom: $ds-space-1;
     border: round $primary;
     background: $panel;
 }
 
 .system-prompt-textarea {
-    height: 15;
+    height: $ds-size-15;
 }
 
 .provider-models-textarea {
-    height: 5;
+    height: $ds-size-5;
 }
 
 /* Collapsible styling in config forms */
 .config-form Collapsible {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     border: round $primary-background;
     background: $surface;
 }
 
 .config-form Collapsible > CollapsibleTitle {
     background: $boost;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Help text */
 .help-text {
     color: $text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     text-style: italic;
 }
 
 /* Database status */
 .db-status {
     color: $text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
