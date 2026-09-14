@@ -407,7 +407,7 @@ class ConsoleStatusChips(Horizontal):
         self._cost_state = cost_state
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
         self._collapsed = bool(collapsed)
-        self.styles.height = 1
+        self.set_styles(height=1)
         self.styles.min_height = 1
         self.styles.max_height = 1
 
@@ -442,13 +442,13 @@ class ConsoleStatusChips(Horizontal):
                 compact=True,
             )
             collapse_button.tooltip = "Collapse status details."
-            collapse_button.styles.width = 9
+            collapse_button.set_styles(width=9)
             collapse_button.styles.min_width = 9
             collapse_button.styles.max_width = 9
             collapse_button.styles.line_pad = 0
             yield collapse_button
             chip_scroll = HorizontalScroll(id="console-status-chip-scroll")
-            chip_scroll.styles.height = 1
+            chip_scroll.set_styles(height=1)
             chip_scroll.styles.min_height = 1
             chip_scroll.styles.max_height = 1
             chip_scroll.styles.scrollbar_size_horizontal = 0
@@ -530,7 +530,7 @@ class ConsoleStatusChips(Horizontal):
                 compact=True,
             )
             expand_button.tooltip = "Expand status details."
-            expand_button.styles.width = 9
+            expand_button.set_styles(width=9)
             expand_button.styles.min_width = 9
             expand_button.styles.max_width = 9
             expand_button.styles.line_pad = 0

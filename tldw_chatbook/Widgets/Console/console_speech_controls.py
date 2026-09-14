@@ -67,21 +67,21 @@ class ConsoleSpeechControls(Horizontal):
         self.auto_speak_enabled = False
         self.auto_speak_paused = False
         self.hands_free_active = False
-        self.styles.width = "auto"
-        self.styles.height = 1
+        self.set_styles(width="auto")
+        self.set_styles(height=1)
         self.styles.min_height = 1
         self.styles.max_height = 1
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="console-auto-speak-control") as auto_speak_control:
-            auto_speak_control.styles.width = "auto"
-            auto_speak_control.styles.height = 1
+            auto_speak_control.set_styles(width="auto")
+            auto_speak_control.set_styles(height=1)
             auto_speak_label = Static(
                 "Speak replies",
                 id="console-auto-speak-label",
                 markup=False,
             )
-            auto_speak_label.styles.width = "auto"
+            auto_speak_label.set_styles(width="auto")
             yield auto_speak_label
             auto_speak_switch = Switch(
                 False,
@@ -92,14 +92,14 @@ class ConsoleSpeechControls(Horizontal):
             self._size_switch(auto_speak_switch)
             yield auto_speak_switch
         with Horizontal(id="console-hands-free-control") as hands_free_control:
-            hands_free_control.styles.width = "auto"
-            hands_free_control.styles.height = 1
+            hands_free_control.set_styles(width="auto")
+            hands_free_control.set_styles(height=1)
             hands_free_label = Static(
                 "Hands-free",
                 id="console-hands-free-label",
                 markup=False,
             )
-            hands_free_label.styles.width = "auto"
+            hands_free_label.set_styles(width="auto")
             yield hands_free_label
             hands_free_switch = Switch(
                 False,
@@ -113,12 +113,12 @@ class ConsoleSpeechControls(Horizontal):
     @staticmethod
     def _size_switch(switch: Switch) -> None:
         """Keep a switch to one terminal row in every stylesheet host."""
-        switch.styles.width = 5
-        switch.styles.height = 1
+        switch.set_styles(width=5)
+        switch.set_styles(height=1)
         switch.styles.min_height = 1
         switch.styles.max_height = 1
-        switch.styles.padding = 0
-        switch.styles.border = ("none", "transparent")
+        switch.set_styles(padding=0)
+        switch.set_styles(border=("none", "transparent"))
 
     def on_mount(self) -> None:
         """Apply state received before the composed children were mounted."""

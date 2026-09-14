@@ -222,7 +222,7 @@ class ConsoleSendAuthoritySummary(Static):
     @staticmethod
     def _row(copy: str, widget_id: str, *, hidden: bool = False) -> Static:
         row = Static(Text(copy), id=widget_id, classes="console-send-authority-row")
-        row.styles.height = 1
+        row.set_styles(height=1)
         row.styles.min_height = 1
         row.styles.max_height = 1
         row.styles.text_wrap = "nowrap"
@@ -273,7 +273,7 @@ class ConsoleSendAuthoritySummary(Static):
         # its own geometry (a bare harness loads no bundle), and inline wins
         # over CSS in Textual, so the class flip below would be cosmetic on
         # its own. Both halves are kept in step deliberately.
-        self.styles.height = height
+        self.set_styles(height=height)
         self.styles.min_height = height
         self.styles.max_height = height
         self.set_class(self.compact, CONSOLE_AUTHORITY_SUMMARY_COMPACT_CLASS)

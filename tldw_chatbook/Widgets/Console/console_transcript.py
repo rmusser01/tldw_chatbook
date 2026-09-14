@@ -7636,8 +7636,8 @@ class ConsoleTranscript(VerticalScroll):
                 w_cells, h_cells = fit_image_cell_size(
                     spec.pil.width, spec.pil.height, PIXELS_MAX_COLS, PIXELS_MAX_LINES
                 )
-                widget.styles.width = w_cells
-                widget.styles.height = h_cells
+                widget.set_styles(width=w_cells)
+                widget.set_styles(height=h_cells)
             except Exception:
                 logger.opt(exception=True).warning(
                     "textual-image unavailable; falling back to pixels row."

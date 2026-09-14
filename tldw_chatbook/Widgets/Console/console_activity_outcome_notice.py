@@ -83,7 +83,7 @@ class ConsoleActivityOutcomeNotice(Horizontal):
         self._presentation: ConsoleActivityOutcomePresentation | None = None
         self._presentation_generation = 0
         self._retry_all_generation: int | None = None
-        self.styles.height = 1
+        self.set_styles(height=1)
         self.styles.min_height = 1
         self.styles.max_height = 1
         self.styles.display = "none"
@@ -100,25 +100,25 @@ class ConsoleActivityOutcomeNotice(Horizontal):
 
     def compose(self) -> ComposeResult:
         content = Static("", id="console-activity-outcome-copy", markup=False)
-        content.styles.width = "1fr"
-        content.styles.height = 1
+        content.set_styles(width="1fr")
+        content.set_styles(height=1)
         yield content
         mark_seen = Button(
             "Mark seen",
             id="console-activity-outcome-mark-seen",
             compact=True,
         )
-        mark_seen.styles.width = 11
+        mark_seen.set_styles(width=11)
         mark_seen.styles.min_width = 11
-        mark_seen.styles.height = 1
+        mark_seen.set_styles(height=1)
         mark_seen.styles.min_height = 1
         yield mark_seen
         dismiss = Button(
             "×", id="console-activity-outcome-dismiss", compact=True
         )
-        dismiss.styles.width = 3
+        dismiss.set_styles(width=3)
         dismiss.styles.min_width = 3
-        dismiss.styles.height = 1
+        dismiss.set_styles(height=1)
         dismiss.styles.min_height = 1
         yield dismiss
 

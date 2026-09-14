@@ -143,8 +143,8 @@ class ConsoleAgentSteeringBar(Vertical):
         super().__init__(**kwargs)
         self._state = state if state is not None else STEERING_STATE_HIDDEN
         # Explicit sizing (module docstring): never inherit a 1fr default.
-        self.styles.width = "100%"
-        self.styles.height = "auto"
+        self.set_styles(width="100%")
+        self.set_styles(height="auto")
         self.styles.display = "block" if self._state.visible else "none"
 
     def compose(self) -> ComposeResult:
@@ -152,21 +152,21 @@ class ConsoleAgentSteeringBar(Vertical):
             placeholder="Steer this sub-agent…",
             id=STEERING_INPUT_ID,
         )
-        steer_input.styles.width = "100%"
-        steer_input.styles.height = 3
+        steer_input.set_styles(width="100%")
+        steer_input.set_styles(height=3)
         yield steer_input
         queued = Static(
             _queued_text(self._state.queued),
             id=STEERING_QUEUED_ID,
             markup=False,
         )
-        queued.styles.width = "100%"
-        queued.styles.height = "auto"
+        queued.set_styles(width="100%")
+        queued.set_styles(height="auto")
         queued.styles.display = "block" if self._state.queued > 0 else "none"
         yield queued
         note = Static("", id=STEERING_NOTE_ID, markup=False)
-        note.styles.width = "100%"
-        note.styles.height = "auto"
+        note.set_styles(width="100%")
+        note.set_styles(height="auto")
         note.styles.display = "none"
         yield note
 
