@@ -1088,22 +1088,26 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def _effective_pane_width(self) -> int:
         """The width the toolbar shapes itself to.
 
-        This widget's OWN rendered width wins, because it is the only
-        number that is true about what this frame can paint. ``pane_width``
-        is the screen's contract -- the Items pane width the reader layout
-        resolved -- and it LAGS: the screen re-resolves on a resize, but the
-        canvas keeps the previous value until a later state sync pushes a
-        new one. task-32557 measured that lag live -- a 235-column list
-        merged its two action groups (pane 138), the terminal was resized to
-        60, and the canvas re-decided its shape from the stale 138 and
-        stayed merged inside a 50-column pane, painting "Add from files…" as
-        "Add from" against the grip. ``pane_width`` stays the fallback for
-        the frames that have no rendered width yet: the first frame of a
-        visit, composed before the shell it lives in exists, and the narrow
-        route task-32360 AC#2 measured, where no sync ever carried a real
-        width.
+        ``pane_width`` is the screen's contract -- the Items pane width the
+        reader layout resolved -- and wins whenever it has arrived. It is
+        ``0`` on a canvas composed before its shell exists, and task-32360
+        AC#2 measured a narrow route where no later sync ever carried the
+        real one, leaving the width-aware toolbar (task-32127) permanently
+        on its "not measured yet" shape. This widget's OWN rendered width
+        is the honest fallback for exactly that case.
+
+        Deliberately NOT the measured width first (task-32557, tried and
+        reverted): a resize delivers this canvas a run of MID-LAYOUT widths
+        -- 110, 106, 46, 48, 68, 40, 1, 72 were logged for one 60 -> 170 ->
+        60 round trip -- and every one of them is a real number this method
+        would have to answer with. Deciding the toolbar's shape from them
+        recomposed the canvas on transients, which cost the in-place
+        breakpoint path its widget identity
+        (``test_library_note_compact_labels_round_trip_without_recompose``).
+        The contract's staleness is cured at its source instead, by
+        ``apply_pane_width`` below.
         """
-        return self._measured_width or self.pane_width
+        return self.pane_width or self._measured_width
 
     def _toolbar_decisions(self, width: int) -> tuple[bool, bool, bool]:
         """The three width-driven shape answers for one pane width."""
@@ -1134,6 +1138,38 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         before = self._toolbar_decisions(self._effective_pane_width())
         self._measured_width = width
         if before != self._toolbar_decisions(self._effective_pane_width()):
+            self.refresh(recompose=True)
+
+    def apply_pane_width(self, pane_width: int) -> None:
+        """Take a freshly resolved Items width, and re-shape if it shrank.
+
+        task-32557: ``pane_width`` used to arrive only with a state sync, so
+        after a resize the toolbar kept deciding its shape from the width it
+        had at its last compose. Live, a 235-column list merged its two
+        action groups (pane 138), the terminal was narrowed to 60, and the
+        merged row stayed -- painting "Add from files…" as "Add from"
+        against the grip of a 50-column pane. The screen now hands the
+        resolved width straight over.
+
+        SHRINKING only, and that asymmetry is the point: a shape too wide
+        for its pane paints half words, which is a correctness defect and
+        has to be answered this frame; a shape too narrow for its pane only
+        leaves space, and can wait for the ordinary sync that recomposes
+        this canvas anyway (compose always reads the current width). Acting
+        on growth too would re-shape on every breakpoint crossing and cost
+        the in-place responsive path its widget identity -- pinned by
+        ``test_library_note_compact_labels_round_trip_without_recompose``.
+
+        Args:
+            pane_width: The Items width the reader layout just resolved.
+        """
+        if pane_width <= 0 or self.pane_width and pane_width >= self.pane_width:
+            return
+        before = self._toolbar_decisions(self._effective_pane_width())
+        self.pane_width = pane_width
+        if self.mode == "list" and before != self._toolbar_decisions(
+            self._effective_pane_width()
+        ):
             self.refresh(recompose=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

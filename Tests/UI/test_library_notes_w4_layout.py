@@ -279,33 +279,58 @@ async def test_new_at_60x24_promotes_the_create_view_with_blank_note_focused() -
 async def test_notes_toolbar_labels_paint_whole_or_elided_at_sixty_columns() -> None:
     """task-32557 AC#1/AC#2: a narrowed pane re-shapes before it paints.
 
-    Live, resizing a merged 235-column list down to 60 painted
-    "New  Sort: Newest  Select  Add from   s": the canvas kept the wide
-    ``pane_width`` the screen had pushed at 235 and never re-decided.
+    Driven through the real screen and a real resize, because that is where
+    the defect lived: the canvas learned its pane width only from the next
+    state sync, so live, narrowing a merged 235-column list to 60 painted
+    "New  Sort: Newest  Select  Add from   s" -- the merged row still in a
+    50-column pane.
     """
-    wide_pane = _items_width(WIDE[0], reader_has_item=False)
-    narrow_pane = _items_width(COMPACT[0], reader_has_item=False)
-    app = _CanvasApp(
-        pane_width=wide_pane,
-        list_state=_list_state(),
-        import_receipt_available=True,
-    )
-    async with app.run_test(size=WIDE) as pilot:
-        await pilot.pause()
-        canvas = app.query_one("#library-notes-canvas", LibraryNotesCanvas)
-        assert app.query("#library-notes-action-rows"), "not merged at the wide pane"
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
 
-        # Only the pane narrows; the stale contract width stays behind, the
-        # way it does between a resize and the next canvas sync.
-        canvas.styles.width = narrow_pane
-        canvas.styles.max_width = narrow_pane
-        await pilot.pause()
-        await pilot.pause()
+    async with host.run_test(size=WIDE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        assert screen.query("#library-notes-action-rows"), "not merged at 235"
+        # One ordinary state sync at the wide size, which is what stamps the
+        # screen's contract width onto the canvas -- and what made the live
+        # walk's toolbar keep 138 cells' worth of shape at 50 cells. Without
+        # it this canvas has never been told a width at all and falls back
+        # to measuring itself, which is not the state the defect lives in.
+        screen.query_one("#library-notes-select-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-select-all")
+        screen.query_one("#library-notes-select-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        await _wait_for_condition(
+            pilot,
+            lambda: canvas.pane_width > COMPACT[0],
+            message="the wide pane width never reached the canvas",
+        )
 
-        assert_every_action_fits(app)
-        add_from = app.query_one("#library-notes-add-from-files", Button)
-        label = str(add_from.label)
-        assert label.endswith(("files…", "…")), label
+        # No state sync is provoked here on purpose: in the live app
+        # nothing syncs this canvas after a resize, so the merged row stayed
+        # on screen until an unrelated interaction. Settle the frames the
+        # resize itself produces and read what is painted.
+        await pilot.resize_terminal(*COMPACT)
+        for _ in range(3):
+            await pilot.pause()
+
+        add_from = screen.query_one("#library-notes-add-from-files", Button)
+        assert str(add_from.label).endswith(("files…", "…")), str(add_from.label)
+        offenders = [
+            (widget.id, widget.region)
+            for widget in screen.query(".library-canvas-action")
+            if widget.region.width
+            and widget.region.right > canvas.region.right
+        ]
+        assert not offenders, (
+            f"actions painted off the {canvas.region.width}-column canvas: "
+            f"{offenders}"
+        )
 
 
 # -- task-32546: the landing's "From your Library" rows ------------------

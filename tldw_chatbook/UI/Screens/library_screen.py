@@ -6517,6 +6517,14 @@ class LibraryScreen(BaseAppScreen):
         )
         shell.sync_layout(layout, manual_reopen=manual_reopen)
         self._notes_state.reader_layout = layout
+        # task-32557: the canvas used to learn its pane width only from the
+        # next state sync, so after a resize its toolbar kept the shape the
+        # PREVIOUS width chose -- a merged row inside a pane 88 cells
+        # narrower, painting "Add from files…" as "Add from". Hand the
+        # resolved width straight over; the canvas re-shapes only when it
+        # shrank (see ``apply_pane_width``).
+        for canvas in self.query("#library-notes-canvas"):
+            canvas.apply_pane_width(layout.items_width)
 
     def _sync_library_file_notes_reader_layout_from_shell(self, priority: Literal['library', 'items'] | None=None, *, manual_reopen: PaneName | None=None, automatic_priority: bool=True) -> None:
         return self._notes_controller._sync_library_file_notes_reader_layout_from_shell(priority, manual_reopen=manual_reopen, automatic_priority=automatic_priority)

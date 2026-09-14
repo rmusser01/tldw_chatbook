@@ -19204,9 +19204,12 @@ async def test_library_shell_notes_multiselect_replaces_normal_action_groups():
         assert not screen.query("#library-notes-transfer-actions")
         assert len(list(screen.query("#library-notes-selection-actions"))) == 1
         assert len(list(screen.query("#library-notes-selection-status"))) == 1
+        # task-32549: with nothing checked this line carries the count AND
+        # the action that zero blocks, because "○ Export selected" beside it
+        # states no reason of its own and this strip has no cells for one.
         assert (
             str(screen.query_one("#library-notes-selection-status", Static).renderable)
-            == "0 selected"
+            == "0 selected — Export selected unavailable"
         )
 
 
