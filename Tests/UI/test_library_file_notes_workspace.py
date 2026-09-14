@@ -3372,8 +3372,9 @@ async def test_file_notes_navigation_and_key_guidance_use_one_phrase() -> None:
         git_back = workspace.query_one("#file-notes-git-back", Button)
         guide = _static_text(workspace, "#file-notes-git-guide")
 
-        assert str(editor_back.label) == "Back to navigator"
-        assert str(git_back.label) == "Back to navigator"
+        # task-32553: one back-cue grammar, "‹ <where it goes>".
+        assert str(editor_back.label) == "‹ Files"
+        assert str(git_back.label) == "‹ Files"
         assert guide == "Up/Down select · Tab actions · Enter run · Esc back"
         assert "|" not in guide
 
