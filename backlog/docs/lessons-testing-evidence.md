@@ -14013,6 +14013,59 @@ in a "Verified against" stamp that you did not read off a capture: this stamp
 asserted the opposite of what the terminal showed, and the pin agreed with it
 for a day.
 
+## A layout pin proves one width, and only that width — and a new row has a price
+
+**task-32549, 2026-09-14.** Wave-4's `layout` group added a disabled reason to
+three Library controls. The first shape put the reason in the button label
+("○ Sort unavailable — clear the filter") and shipped a pin that mounted the
+canvas at the pane a 235-column terminal gives the Notes list — 138 cells. Green.
+Live at **100x30**, where the same production resolver gives that list **42**
+cells, the label cost 41 with its button chrome and painted "○ Sort unavailable
+— clear the" against the grip: the exact half-word defect the two sibling tasks
+in the same group were fixing.
+
+The second shape moved the reason onto a `.library-disabled-reason` line of its
+own. Every pin in the group stayed green — and
+`test_library_note_60x20_navigator_state_allocation[selection]`, a geometry pin
+in `test_library_shell.py` that the branch never touched, went red: the new line
+cost `#library-notes-list` a row at 60x20 (height 7, expected 8). It is green on
+`origin/dev`. Nothing in the group's own suite could have caught it; what caught
+it was running the **full** touched files and diffing the FAILED-name **set**
+against a detached `origin/dev` worktree. The third shape put the reason on the
+count line that was already under the strip ("0 selected — Export selected
+unavailable") — same information, zero new rows, and the untouched pin went green
+again without being edited.
+
+**What to do.** For anything that changes what a pane paints:
+
+- Parametrise width pins over every width the control is reachable at (this repo:
+  235, 100, 60), and take the pane width from the production resolver rather than
+  typing a constant — `resolve_adaptive_reader_layout(...)` gave 138 / 42 / 50 for
+  the same list.
+- Treat a NEW ROW as a change with a cost, not as free chrome. A compact terminal
+  is 20-24 rows; look for a line that already exists and can carry the words
+  before adding one.
+- Assert on the mounted regions, not on the string you passed in: the instrument
+  that found the first defect live was `region.right > canvas.region.right`, and
+  the one that found the second was a name-set diff, not a pass/fail count.
+
+**And a third incident in the same group, for the same discipline.** task-32557's
+first fix made a width-shaped widget decide its shape from its OWN measured width
+instead of the width the screen had resolved for it. Instrumenting `on_resize`
+over one 60 → 170 → 60 round trip logged widths of 110, 106, 46, 48, 68, 40, **1**
+and 72 — a resize delivers a run of MID-LAYOUT numbers, and deciding anything from
+them recomposed the widget on transients. A widget's own `region.width` is the
+truth about what it can PAINT this instant; it is not a stable input to a policy
+decision. Take the settled number from whoever computed the layout.
+
+The pin for that fix also had to be written twice: the first version poked the
+canvas's `styles.width` directly and **passed with the fix disabled**, because in
+that harness the canvas had never been told a pane width at all and fell back to
+measuring itself — not the state the defect lives in. Always run a would-be
+regression pin with the fix disabled, not only against unpatched `dev`: a pin that
+never enters the defective state is green for the wrong reason.
+
+
 ## A seam the shared fake does not implement is a seam your pin cannot see (task-32539, 2026-09-14)
 
 **The incident.** After a confirmed Notes delete, focus was nowhere: the next

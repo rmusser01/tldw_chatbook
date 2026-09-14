@@ -4517,6 +4517,12 @@ class LibraryScreen(BaseAppScreen):
             return f"toggle {source.replace('-', ' ').capitalize()}"
         if widget_id.startswith("library-rag-result-card-"):
             return "select evidence"
+        # task-32546 AC#1: the landing's "From your Library" rows are the
+        # first thing Tab and F6 reach, and Enter opens whichever one has
+        # focus -- which the footer never said, so a walk that had no
+        # visible focus cue had no written one either.
+        if widget_id.startswith("library-hub-recent-"):
+            return f"open {widget_id.removeprefix('library-hub-recent-')}"
         if widget_id == "library-notes-create-blank" or widget_id.startswith(
             "library-notes-template-"
         ):
@@ -4623,13 +4629,21 @@ class LibraryScreen(BaseAppScreen):
         # "select evidence" everywhere -- in the query box (Enter runs the
         # search) and on a source toggle (Enter empties the results), the
         # two places the live walk actually pressed it.
+        enter_label = self._library_focus_enter_label()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
-            enter_label = self._library_focus_enter_label()
             shortcuts = tuple(
                 ("enter", enter_label) if pair[0] == "enter" else pair
                 for pair in shortcuts
                 if pair[0] != "enter" or enter_label
             )
+        elif enter_label and not any(pair[0] == "enter" for pair in shortcuts):
+            # task-32546 AC#1: the same honest-footer rule on a surface whose
+            # static set has no "enter" chip to replace -- the Library
+            # landing, where Enter opens the focused "From your Library"
+            # row. Appended, not prepended, for the reason task-32246 AC#2
+            # records: the narrow stage keeps only the leading chips that
+            # fit, and naming focus is the smaller promise of the two.
+            shortcuts = shortcuts + (("enter", enter_label),)
         # task-31223 (re-critique P1): while a text field holds focus, every
         # single printable key is INSERTED AS TEXT, so advertising "] next
         # in set" or "s select" is the footer lying -- live, a stray "]"
@@ -6581,10 +6595,33 @@ class LibraryScreen(BaseAppScreen):
             # task-32127: while the work pane holds only "Select a note to
             # edit it here.", its width belongs to the list. Opening a note
             # hands it straight back.
-            reader_has_item=self._notes_state.view != "list",
+            #
+            # task-32544/32547: the New note view is the OTHER thing that
+            # fills the work pane, and it is not a ``view`` at all -- the
+            # canvas switches to create mode on ``_library_selected_row_id``
+            # while ``_notes_state.view`` stays "list" (see
+            # ``_build_library_notes_state``'s mode ladder, and
+            # ``_library_notes_focus_region``'s first branch). Reading only
+            # ``view`` therefore told the resolver the work pane was empty:
+            # at 235 the empty list kept 138 columns while "Ready · Next:
+            # Press Blank note, or choose a template." wrapped inside 48,
+            # and at 60 the ``list_first_when_empty`` rule kept the list on
+            # the whole stage so Blank note never appeared at all.
+            reader_has_item=(
+                self._notes_state.view != "list"
+                or self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+            ),
         )
         shell.sync_layout(layout, manual_reopen=manual_reopen)
         self._notes_state.reader_layout = layout
+        # task-32557: the canvas used to learn its pane width only from the
+        # next state sync, so after a resize its toolbar kept the shape the
+        # PREVIOUS width chose -- a merged row inside a pane 88 cells
+        # narrower, painting "Add from files…" as "Add from". Hand the
+        # resolved width straight over; the canvas re-shapes only when it
+        # shrank (see ``apply_pane_width``).
+        for canvas in self.query("#library-notes-canvas"):
+            canvas.apply_pane_width(layout.items_width)
 
     def _sync_library_file_notes_reader_layout_from_shell(self, priority: Literal['library', 'items'] | None=None, *, manual_reopen: PaneName | None=None, automatic_priority: bool=True) -> None:
         return self._notes_controller._sync_library_file_notes_reader_layout_from_shell(priority, manual_reopen=manual_reopen, automatic_priority=automatic_priority)
