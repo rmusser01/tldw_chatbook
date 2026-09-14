@@ -1,13 +1,16 @@
 /* Wizard Framework Styles */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space, size, percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
 
 /* Base Wizard Container */
 
 .wizard-container {
     layout: vertical;
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
     background: $surface;
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 .wizard-title {
@@ -15,11 +18,11 @@
     text-align: center;
     background: $primary-darken-2;
     color: $text;
-    padding: 1 2;
-    margin-bottom: 0;
+    padding: $ds-space-1 $ds-space-2;
+    margin-bottom: $ds-space-0;
     border-bottom: thick $primary-darken-1;
-    width: 100%;
-    height: 3;
+    width: $ds-width-full;
+    height: $ds-size-3;
 }
 
 /* Progress Indicator */
@@ -29,7 +32,7 @@
     align: center middle;
     /* TASK-21148 (UAT Z-3): 1-row padding — the old 2 spent four rows of
        chrome before any step content at 40-row terminals. */
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     background: $panel;
     border-bottom: solid $primary-darken-2;
     height: auto;
@@ -38,16 +41,16 @@
 .step-indicator-container {
     layout: horizontal;
     align: center middle;
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .step-number {
-    width: 3;
-    height: 3;
+    width: $ds-size-3;
+    height: $ds-size-3;
     border: round $primary;
     background: $panel;
     align: center middle;
-    margin-right: 1;
+    margin-right: $ds-space-1;
     text-align: center;
 }
 
@@ -65,7 +68,7 @@
 }
 
 .step-title {
-    margin-right: 1;
+    margin-right: $ds-space-1;
     color: $text-muted;
 }
 
@@ -79,10 +82,10 @@
 }
 
 .step-connector {
-    height: 1;
-    width: 1fr;
+    height: $ds-size-1;
+    width: $ds-width-fill;
     background: $primary-darken-2;
-    margin: 0 1;
+    margin: $ds-space-0 $ds-space-1;
 }
 
 .step-connector.complete {
@@ -92,17 +95,17 @@
 /* Step Container */
 
 .wizard-steps-container {
-    height: 1fr;
-    width: 100%;
+    height: $ds-height-fill;
+    width: $ds-width-full;
     overflow-y: auto;
-    padding: 0;
+    padding: $ds-space-0;
     background: $surface;
 }
 
 .wizard-step {
-    width: 100%;
-    height: 100%;
-    padding: 1 2;
+    width: $ds-width-full;
+    height: $ds-height-full;
+    padding: $ds-space-1 $ds-space-2;
     display: block;
     visibility: hidden;
 }
@@ -122,10 +125,10 @@
 .wizard-navigation {
     layout: horizontal;
     align: center middle;
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     background: $panel;
     border-top: thick $primary-darken-2;
-    height: 5;
+    height: $ds-size-5;
 }
 
 /* TASK-21142 (UAT N-2): Textual focus order is VISUAL (y, x) order, so the
@@ -136,21 +139,21 @@
 .setup-navigation .wizard-progress-text {
     dock: left;
     width: auto;
-    height: 100%;
+    height: $ds-height-full;
     content-align: left middle;
-    padding: 0 2;
+    padding: $ds-space-0 $ds-space-2;
 }
-.setup-navigation #wizard-cancel { height: 3; min-width: 12; }
+.setup-navigation #wizard-cancel { height: $ds-size-3; min-width: $ds-size-12; }
 
 .wizard-progress-text {
-    width: 1fr;
+    width: $ds-width-fill;
     text-align: center;
     color: $text-muted;
 }
 
 #wizard-back, #wizard-next {
-    min-width: 15;
-    height: 3;
+    min-width: $ds-size-15;
+    height: $ds-size-3;
 }
 
 #wizard-back:disabled {
@@ -167,9 +170,9 @@
 .content-type-card {
     background: $panel;
     border: round $primary-darken-2;
-    padding: 2;
+    padding: $ds-space-2;
     align: center middle;
-    height: 15;
+    height: $ds-size-15;
 }
 
 .content-type-card:hover {
@@ -186,7 +189,7 @@
 
 .content-type-title {
     text-style: bold;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
     text-align: center;
 }
 
@@ -205,8 +208,8 @@
 
 
 .content-search-input {
-    width: 100%;
-    margin-bottom: 2;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-2;
 }
 
 .content-search-input.hidden {
@@ -216,18 +219,18 @@
 
 .preview-label {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     color: $primary;
 }
 
 .content-list {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 .content-item {
-    width: 100%;
-    padding: 1;
-    margin-bottom: 0;
+    width: $ds-width-full;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-0;
     border-bottom: dashed $primary-darken-3;
 }
 
@@ -241,40 +244,40 @@
 .placeholder-text {
     text-align: center;
     color: $text-muted;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 /* Quick Settings */
 
 .settings-section {
-    margin-bottom: 2;
-    padding: 1;
+    margin-bottom: $ds-space-2;
+    padding: $ds-space-1;
     background: $panel;
     border: round $primary-darken-3;
 }
 
 .settings-input {
-    width: 100%;
-    margin-bottom: 0;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-0;
 }
 
 .settings-help {
     color: $text-muted;
-    margin-top: 0;
+    margin-top: $ds-space-0;
 }
 
 .preset-cards-container {
     layout: horizontal;
-    margin-bottom: 2;
-    padding: 1;
+    margin-bottom: $ds-space-2;
+    padding: $ds-space-1;
 }
 
 .preset-card {
     background: $panel;
     border: round $primary-darken-2;
-    padding: 2;
-    margin-right: 1;
-    width: 1fr;
+    padding: $ds-space-2;
+    margin-right: $ds-space-1;
+    width: $ds-width-fill;
     height: auto;
 }
 
@@ -292,29 +295,29 @@
 
 .preset-icon {
     text-align: center;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .preset-name {
     text-style: bold;
     text-align: center;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 .preset-description {
     color: $text-muted;
     text-align: center;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .preset-details {
     border-top: dashed $primary-darken-3;
-    padding-top: 1;
+    padding-top: $ds-space-1;
 }
 
 .preset-detail {
     color: $text-muted;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 .preset-card.selected .preset-name,
@@ -326,11 +329,11 @@
 
 /* Advanced settings */
 .advanced-settings-container {
-    margin-top: 2;
+    margin-top: $ds-space-2;
 }
 
 .advanced-toggle {
-    width: 100%;
+    width: $ds-width-full;
     background: $surface;
     border: round $primary-darken-3;
     color: $text-muted;
@@ -343,8 +346,8 @@
 }
 
 .advanced-settings {
-    margin-top: 1;
-    padding: 2;
+    margin-top: $ds-space-1;
+    padding: $ds-space-2;
     background: $surface;
     border: round $primary-darken-3;
 }
@@ -354,13 +357,13 @@
 }
 
 .advanced-settings Label {
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .advanced-settings Select,
 .advanced-settings Input {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 /* Processing Step */
@@ -369,26 +372,26 @@
 .progress-text {
     text-align: center;
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     color: $primary;
 }
 
 .current-item {
     text-align: center;
     color: $text-muted;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     text-style: italic;
 }
 
 .progress-stats {
     layout: horizontal;
     align: center middle;
-    padding-top: 1;
+    padding-top: $ds-space-1;
     border-top: dashed $primary-darken-2;
 }
 
 .progress-stats Label {
-    width: 1fr;
+    width: $ds-width-fill;
     text-align: center;
     color: $text-muted;
 }
@@ -400,8 +403,8 @@
     color: $error;
     background: $error 10%;
     border: round $error;
-    padding: 1;
-    margin: 1;
+    padding: $ds-space-1;
+    margin: $ds-space-1;
     text-align: center;
 }
 
@@ -421,141 +424,141 @@
 /* Basic Info Step */
 BasicInfoStep {
     layout: vertical;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 BasicInfoStep .form-group {
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 BasicInfoStep .form-label {
     color: $text-muted;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 BasicInfoStep .form-input {
-    width: 100%;
-    margin-top: 0;
+    width: $ds-width-full;
+    margin-top: $ds-space-0;
 }
 
 BasicInfoStep #chatbook-description {
-    height: 6;
+    height: $ds-size-6;
 }
 
 BasicInfoStep .info-box {
-    padding: 1;
+    padding: $ds-space-1;
     background: $boost;
     border: round $primary;
-    margin-top: 2;
+    margin-top: $ds-space-2;
 }
 
 /* Content Selection Step */
 ContentSelectionStep {
     layout: vertical;
-    height: 100%;
+    height: $ds-height-full;
 }
 
 ContentSelectionStep .selection-header {
-    height: 3;
-    padding: 1;
+    height: $ds-size-3;
+    padding: $ds-space-1;
     background: $boost;
     border: round $background-darken-1;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 ContentSelectionStep .content-tree-container {
-    height: 1fr;
+    height: $ds-height-fill;
 }
 
 /* Export Options Step */
 ExportOptionsStep {
     layout: vertical;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 ExportOptionsStep .option-group {
-    margin-bottom: 2;
-    padding: 1;
+    margin-bottom: $ds-space-2;
+    padding: $ds-space-1;
     background: $boost;
     border: round $background-darken-1;
 }
 
 ExportOptionsStep .option-title {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 ExportOptionsStep .radio-option {
-    margin: 0 0 1 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 ExportOptionsStep .checkbox-option {
-    margin: 0 0 1 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 /* Preview Confirm Step */
 PreviewConfirmStep {
     layout: vertical;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 PreviewConfirmStep .preview-header {
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 PreviewConfirmStep .chatbook-title {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 PreviewConfirmStep .preview-section {
-    margin-bottom: 2;
-    padding: 1;
+    margin-bottom: $ds-space-2;
+    padding: $ds-space-1;
     background: $boost;
     border: round $background-darken-1;
 }
 
 PreviewConfirmStep .section-title {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 PreviewConfirmStep .content-list {
-    margin-left: 2;
+    margin-left: $ds-space-2;
     color: $text-muted;
 }
 
 PreviewConfirmStep .file-tree {
-    height: 12;
+    height: $ds-size-12;
     border: round $background-darken-1;
     background: $background;
-    padding: 1;
-    margin: 1 0;
+    padding: $ds-space-1;
+    margin: $ds-space-1 $ds-space-0;
 }
 
 PreviewConfirmStep .location-section {
-    margin-top: 2;
-    padding: 1;
+    margin-top: $ds-space-2;
+    padding: $ds-space-1;
     background: $panel;
     border: round $primary;
 }
 
 PreviewConfirmStep .location-path {
     color: $primary;
-    margin: 1 0;
+    margin: $ds-space-1 $ds-space-0;
 }
 
 /* Progress Step */
 ProgressStep {
     layout: vertical;
-    padding: 2;
+    padding: $ds-space-2;
     align: center middle;
 }
 
 ProgressStep .progress-container {
-    width: 100%;
-    max-width: 60;
-    padding: 2;
+    width: $ds-width-full;
+    max-width: $ds-size-60;
+    padding: $ds-space-2;
     background: $boost;
     border: round $background-darken-1;
 }
@@ -563,15 +566,15 @@ ProgressStep .progress-container {
 ProgressStep .progress-title {
     text-align: center;
     text-style: bold;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 ProgressStep #export-progress, ProgressStep #import-progress {
-    margin: 2 0;
+    margin: $ds-space-2 $ds-space-0;
 }
 
 ProgressStep .progress-status {
-    margin: 2 0;
+    margin: $ds-space-2 $ds-space-0;
 }
 
 /* ADR-161 task 8a: ProgressStep/ImportProgressStep status-item rules were
@@ -582,8 +585,8 @@ ProgressStep .progress-status {
 
 ProgressStep .completion-message {
     text-align: center;
-    padding: 2;
-    margin-top: 2;
+    padding: $ds-space-2;
+    margin-top: $ds-space-2;
     background: $success 20%;
     border: round $success;
 }
@@ -592,11 +595,11 @@ ProgressStep .completion-actions {
     layout: horizontal;
     height: auto;
     align: center middle;
-    margin-top: 2;
+    margin-top: $ds-space-2;
 }
 
 ProgressStep .completion-actions Button {
-    margin: 0 1;
+    margin: $ds-space-0 $ds-space-1;
 }
 
 ProgressStep .hidden {
@@ -608,22 +611,22 @@ ProgressStep .hidden {
 /* File Selection Step */
 FileSelectionStep {
     layout: vertical;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 FileSelectionStep .file-selection-container {
     layout: vertical;
-    height: 100%;
+    height: $ds-height-full;
     align: center middle;
 }
 
 FileSelectionStep .drop-zone {
-    width: 80%;
-    height: 20;
+    width: $ds-percent-80;
+    height: $ds-size-20;
     border: dashed $background-darken-2;
     background: $boost;
     align: center middle;
-    margin: 2 0;
+    margin: $ds-space-2 $ds-space-0;
 }
 
 FileSelectionStep .drop-zone.hover {
@@ -633,111 +636,111 @@ FileSelectionStep .drop-zone.hover {
 
 FileSelectionStep .drop-zone-content {
     text-align: center;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 FileSelectionStep .drop-zone-icon {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     color: $text-muted;
 }
 
 FileSelectionStep .drop-zone-text {
     color: $text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 FileSelectionStep .file-path-display {
-    width: 80%;
-    margin: 2 0;
-    padding: 1;
+    width: $ds-percent-80;
+    margin: $ds-space-2 $ds-space-0;
+    padding: $ds-space-1;
     background: $boost;
     border: round $background-darken-1;
 }
 
 FileSelectionStep .path-label {
     color: $text-muted;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 FileSelectionStep .path-value {
     color: $primary;
-    margin-top: 0;
+    margin-top: $ds-space-0;
 }
 
 FileSelectionStep .browse-button {
-    margin-top: 2;
+    margin-top: $ds-space-2;
 }
 
 /* Preview Validation Step */
 PreviewValidationStep {
     layout: vertical;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 PreviewValidationStep .preview-header {
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 PreviewValidationStep .chatbook-info {
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     background: $boost;
     border: round $background-darken-1;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 PreviewValidationStep .info-title {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 PreviewValidationStep .info-row {
     layout: horizontal;
     height: auto;
-    margin: 0 0 1 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 PreviewValidationStep .info-label {
-    width: 15;
+    width: $ds-size-15;
     color: $text-muted;
 }
 
 PreviewValidationStep .info-value {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 PreviewValidationStep .content-preview {
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     background: $boost;
     border: round $background-darken-1;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 PreviewValidationStep .preview-title {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     color: $primary;
 }
 
 PreviewValidationStep .content-tree {
-    height: 15;
+    height: $ds-size-15;
     background: $background;
     border: round $background-darken-1;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 PreviewValidationStep .validation-results {
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     background: $boost;
     border: round $background-darken-1;
 }
 
 PreviewValidationStep .validation-title {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 PreviewValidationStep .validation-item {
-    margin: 0 0 1 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 PreviewValidationStep .validation-success {
@@ -755,40 +758,40 @@ PreviewValidationStep .validation-error {
 /* Conflict Resolution Step */
 ConflictResolutionStep {
     layout: vertical;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 ConflictResolutionStep .resolution-header {
-    margin-bottom: 2;
-    padding: 1;
+    margin-bottom: $ds-space-2;
+    padding: $ds-space-1;
     background: $boost;
     border: round $background-darken-1;
 }
 
 ConflictResolutionStep .strategy-section {
-    margin-bottom: 2;
-    padding: 1 2;
+    margin-bottom: $ds-space-2;
+    padding: $ds-space-1 $ds-space-2;
     background: $boost;
     border: round $background-darken-1;
 }
 
 ConflictResolutionStep .strategy-title {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     color: $primary;
 }
 
 ConflictResolutionStep .radio-option {
-    margin: 0 0 1 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 ConflictResolutionStep .strategy-description {
-    margin: 0 0 1 3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-3;
     color: $text-muted;
 }
 
 ConflictResolutionStep .conflict-preview {
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     background: $boost;
     border: round $warning;
 }
@@ -796,59 +799,59 @@ ConflictResolutionStep .conflict-preview {
 ConflictResolutionStep .conflict-title {
     text-style: bold;
     color: $warning;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 ConflictResolutionStep .conflict-list {
-    margin-left: 2;
+    margin-left: $ds-space-2;
     color: $text-muted;
 }
 
 ConflictResolutionStep .no-conflicts {
     text-align: center;
-    padding: 3;
+    padding: $ds-space-3;
     color: $success;
 }
 
 /* Import Options Step */
 ImportOptionsStep {
     layout: vertical;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 ImportOptionsStep .options-section {
-    margin-bottom: 2;
-    padding: 1 2;
+    margin-bottom: $ds-space-2;
+    padding: $ds-space-1 $ds-space-2;
     background: $boost;
     border: round $background-darken-1;
 }
 
 ImportOptionsStep .section-title {
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     color: $primary;
 }
 
 ImportOptionsStep .checkbox-option {
-    margin: 0 0 1 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 ImportOptionsStep .option-description {
-    margin: 0 0 1 3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-3;
     color: $text-muted;
 }
 
 /* Import Progress Step */
 ImportProgressStep {
     layout: vertical;
-    padding: 2;
+    padding: $ds-space-2;
     align: center middle;
 }
 
 ImportProgressStep .progress-container {
-    width: 100%;
-    max-width: 60;
-    padding: 2;
+    width: $ds-width-full;
+    max-width: $ds-size-60;
+    padding: $ds-space-2;
     background: $boost;
     border: round $background-darken-1;
 }
@@ -856,15 +859,15 @@ ImportProgressStep .progress-container {
 ImportProgressStep .progress-title {
     text-align: center;
     text-style: bold;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 ImportProgressStep #import-progress {
-    margin: 2 0;
+    margin: $ds-space-2 $ds-space-0;
 }
 
 ImportProgressStep .progress-status {
-    margin: 2 0;
+    margin: $ds-space-2 $ds-space-0;
 }
 
 ImportProgressStep .status-item.warning {
@@ -875,8 +878,8 @@ ImportProgressStep .status-item.warning {
  * imported nothing cannot be framed in the success palette (task-19734). */
 ImportProgressStep .completion-message {
     text-align: center;
-    padding: 2;
-    margin-top: 2;
+    padding: $ds-space-2;
+    margin-top: $ds-space-2;
     background: $panel;
     border: round $background-darken-1;
 }
@@ -914,8 +917,8 @@ ImportProgressStep .completion-message.outcome-failed {
 }
 
 ImportProgressStep .completion-stats {
-    margin-top: 2;
-    padding: 1 2;
+    margin-top: $ds-space-2;
+    padding: $ds-space-1 $ds-space-2;
     background: $boost;
     border: round $background-darken-1;
 }
@@ -923,16 +926,16 @@ ImportProgressStep .completion-stats {
 ImportProgressStep .stat-row {
     layout: horizontal;
     height: auto;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 ImportProgressStep .stat-label {
-    width: 20;
+    width: $ds-size-20;
     color: $text-muted;
 }
 
 ImportProgressStep .stat-value {
-    width: 1fr;
+    width: $ds-width-fill;
     text-align: right;
 }
 
@@ -940,40 +943,40 @@ ImportProgressStep .stat-value {
 
 SmartContentTree {
     layout: vertical;
-    height: 100%;
+    height: $ds-height-full;
 }
 
 SmartContentTree .tree-controls {
     height: auto;
-    padding: 1;
+    padding: $ds-space-1;
     background: $boost;
     border: round $background-darken-1;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 SmartContentTree .search-row {
     layout: horizontal;
-    height: 3;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
 }
 
 SmartContentTree .search-input {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 SmartContentTree .filter-button {
-    min-width: 12;
+    min-width: $ds-size-12;
 }
 
 SmartContentTree .category-filters {
     layout: horizontal;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 SmartContentTree .category-checkbox {
-    margin-right: 2;
+    margin-right: $ds-space-2;
 }
 
 SmartContentTree .selection-controls {
@@ -982,20 +985,20 @@ SmartContentTree .selection-controls {
 }
 
 SmartContentTree .selection-button {
-    margin-right: 1;
-    min-width: 10;
+    margin-right: $ds-space-1;
+    min-width: $ds-size-10;
 }
 
 SmartContentTree .tree-container {
-    height: 1fr;
+    height: $ds-height-fill;
     border: round $background-darken-1;
     background: $boost;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 SmartContentTree .tree-stats {
-    height: 2;
-    padding: 0 1;
+    height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
     text-align: right;
     color: $text-muted;
 }
@@ -1020,24 +1023,24 @@ SmartContentTree Tree > .selected-node {
  * Provider step's API-key Input to fit on screen at 120x40 alongside its
  * (now-capped, see ".setup-choice-list" below) provider list -- see that
  * rule's own comment for the full row-budget accounting. */
-.setup-welcome { padding: 1 4; }
-.setup-provider { padding: 0 2; }
-.setup-title { text-style: bold; text-align: center; margin-bottom: 1; }
-.setup-subtitle { color: $text-muted; margin-bottom: 1; }
+.setup-welcome { padding: $ds-space-1 $ds-size-4; }
+.setup-provider { padding: $ds-space-0 $ds-space-2; }
+.setup-title { text-style: bold; text-align: center; margin-bottom: $ds-space-1; }
+.setup-subtitle { color: $text-muted; margin-bottom: $ds-space-1; }
 .setup-provider .setup-title,
-.setup-provider .setup-subtitle { margin-bottom: 0; }
+.setup-provider .setup-subtitle { margin-bottom: $ds-space-0; }
 .setup-step-error {
     color: $error;
     background: $error 15%;
     text-style: bold;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 /* TASK-21140 (UAT G-3): calm informational lines that previously borrowed
    the error class and rendered reassurance as a failure. */
-.setup-step-note { color: $text-muted; margin-top: 1; }
-.setup-field-label { margin-top: 1; }
-.setup-probe-status { color: $text-muted; margin-top: 1; }
-.setup-summary-row { height: 1; }
+.setup-step-note { color: $text-muted; margin-top: $ds-space-1; }
+.setup-field-label { margin-top: $ds-space-1; }
+.setup-probe-status { color: $text-muted; margin-top: $ds-space-1; }
+.setup-summary-row { height: $ds-size-1; }
 .setup-summary-ok { color: $success; }
 .setup-summary-missing { color: $error; }
 
@@ -1085,21 +1088,21 @@ SmartContentTree Tree > .selected-node {
 /* Task 2.7: Voice keeps a stable compact control rhythm while the shared
  * setup-step viewport owns scrolling at narrow and short terminal sizes. */
 .setup-voice {
-    padding: 0 2 1 2;
+    padding: $ds-space-0 $ds-space-2 $ds-space-1 $ds-space-2;
 }
 
 .setup-voice-segmented {
     layout: horizontal;
-    height: 3;
-    min-height: 3;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
     border: solid $primary;
     overflow: hidden hidden;
 }
 
 .setup-voice-segmented SetupRadioButton {
-    width: 1fr;
-    min-width: 0;
-    height: 3;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
 }
 
 .setup-voice-segmented SetupRadioButton.-on {
@@ -1109,36 +1112,36 @@ SmartContentTree Tree > .selected-node {
 }
 
 .setup-voice-output-row {
-    height: 5;
+    height: $ds-size-5;
 }
 
 .setup-voice-output-row > Vertical {
-    width: 1fr;
-    height: 5;
+    width: $ds-width-fill;
+    height: $ds-size-5;
 }
 
 #setup-voice-sample-count {
-    height: 1;
+    height: $ds-size-1;
     text-align: right;
     color: $text-muted;
 }
 
 #setup-voice-test {
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 #setup-voice-status {
     height: auto;
-    min-height: 1;
-    margin-top: 1;
+    min-height: $ds-size-1;
+    margin-top: $ds-space-1;
 }
 
 /* Design intent #2/#3: keep choice lists independently scrollable at 5–7 rows
  * so catalogs cannot displace the key field or footer. The containing step
  * remains the narrow-screen viewport; progress/navigation stay fixed. */
 .setup-choice-list {
-    min-height: 5;
-    max-height: 7;
+    min-height: $ds-size-5;
+    max-height: $ds-size-7;
     border: solid $primary;
 }
 
@@ -1156,16 +1159,16 @@ SmartContentTree Tree > .selected-node {
 .setup-summary-actions {
     dock: bottom;
     height: auto;
-    padding: 0 4 1 4;
+    padding: $ds-space-0 $ds-size-4 $ds-space-1 $ds-size-4;
 }
 /* task-32140 review: five buttons no longer fit one non-wrapping row at
  * 80x24 or 120x40 (Horizontal never wraps) -- two docked rows instead. */
 .setup-summary-actions-row {
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 .setup-summary-actions Button {
-    margin-right: 2;
+    margin-right: $ds-space-2;
 }
 
 /* TASK-1497: second structural cue for the selected radio row (the first is
@@ -1181,14 +1184,14 @@ SmartContentTree Tree > .selected-node {
  * explicit row height the unstyled Horizontals let successive switches'
  * borders collide into the next row's label. */
 .setup-tool-row {
-    height: 3;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
 }
 .setup-tool-row Switch {
-    margin-right: 2;
+    margin-right: $ds-space-2;
 }
 .setup-tool-text {
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
 }
 .setup-tool-name {
@@ -1206,10 +1209,10 @@ SmartContentTree Tree > .selected-node {
     border: none;
     color: $text-muted;
     text-style: underline;
-    height: 1;
-    min-width: 0;
-    padding: 0 1;
-    margin-top: 1;
+    height: $ds-size-1;
+    min-width: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+    margin-top: $ds-space-1;
 }
 .setup-tertiary-button:hover {
     color: $text;
@@ -1225,57 +1228,57 @@ SmartContentTree Tree > .selected-node {
 .setup-choice-header {
     color: $text-muted;
     text-style: bold;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 .setup-detected-banner {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #setup-provider-connection {
     height: auto;
-    min-height: 7;
+    min-height: $ds-size-7;
 }
 
 #setup-provider-endpoint {
-    width: 100%;
-    min-height: 3;
+    width: $ds-width-full;
+    min-height: $ds-size-3;
 }
 
 .setup-endpoint-value {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     text-wrap: wrap;
     color: $text-muted;
 }
 
 .setup-provider-connection-actions {
-    height: 3;
-    min-height: 3;
-    margin-top: 1;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin-top: $ds-space-1;
 }
 
 .setup-provider-connection-actions Button {
-    min-width: 12;
-    margin-right: 1;
+    min-width: $ds-size-12;
+    margin-right: $ds-space-1;
 }
 
 #setup-provider-auth-toggle {
     height: auto;
-    min-height: 3;
-    margin-top: 1;
+    min-height: $ds-size-3;
+    margin-top: $ds-space-1;
 }
 
 #setup-provider-api-key {
-    width: 100%;
-    min-height: 3;
+    width: $ds-width-full;
+    min-height: $ds-size-3;
 }
 
 .setup-detection-results {
     height: auto;
-    min-height: 3;
-    max-height: 8;
+    min-height: $ds-size-3;
+    max-height: $ds-size-8;
     border: solid $primary;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .setup-detection-results:focus {
@@ -1294,7 +1297,7 @@ SmartContentTree Tree > .selected-node {
 /* TASK-1505: persistent key-hints line docked under the wizard. */
 .setup-key-hints {
     dock: bottom;
-    height: 1;
+    height: $ds-size-1;
     color: $text-muted;
     text-align: center;
     background: $panel;
@@ -1305,15 +1308,15 @@ SmartContentTree Tree > .selected-node {
    themselves. The old fixed 4/3 caps clipped the stacked titles. */
 FirstRunSetupWizard SetupWizardContainer .wizard-progress {
     height: auto;
-    max-height: 5;
-    padding: 0 1;
-    margin: 0;
+    max-height: $ds-size-5;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
 }
 
 .setup-progress-item {
     height: auto;
-    min-width: 0;
-    margin: 0;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
 }
 
 .setup-progress-item.-active .step-number {
@@ -1363,14 +1366,14 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
 
 /* TASK-1506: key input and its Test button share one row. */
 .setup-key-row {
-    height: 3;
+    height: $ds-size-3;
 }
 .setup-key-row Input {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 .setup-key-row Button {
-    margin-left: 1;
-    min-width: 8;
+    margin-left: $ds-space-1;
+    min-width: $ds-size-8;
 }
 
 /* TASK-1505: with the key-hints line docked at the screen's bottom, the
@@ -1378,31 +1381,31 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
  * default) would push the navigation bar's last row off screen. Scoped to
  * the setup wizard's own screen. */
 FirstRunSetupWizard SetupWizardContainer {
-    height: 1fr;
+    height: $ds-height-fill;
 }
 
 FirstRunSetupWizard SetupWizardContainer .wizard-title {
-    height: 3;
-    padding: 0 2;
-    margin: 0;
+    height: $ds-size-3;
+    padding: $ds-space-0 $ds-space-2;
+    margin: $ds-space-0;
 }
 
 FirstRunSetupWizard SetupWizardContainer .wizard-steps-container {
-    height: 1fr;
-    padding: 0;
-    margin: 0;
+    height: $ds-height-fill;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
 }
 
 FirstRunSetupWizard SetupWizardContainer .wizard-navigation {
-    height: 4;
-    min-height: 4;
-    padding: 0 2;
-    margin: 0;
+    height: $ds-size-4;
+    min-height: $ds-size-4;
+    padding: $ds-space-0 $ds-space-2;
+    margin: $ds-space-0;
 }
 
 FirstRunSetupWizard .setup-key-hints {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 /* WizardProgress active-step states (TASK-16811): moved here from the
@@ -1423,7 +1426,7 @@ WizardProgress .step-title.active {
 /* TASK-21148 (UAT Z-2): sub-minimum terminal nudge in the wizard chrome. */
 .setup-size-hint {
     dock: bottom;
-    height: 1;
+    height: $ds-size-1;
     color: $warning;
     text-align: center;
 }
@@ -1441,17 +1444,17 @@ WizardProgress .step-title.active {
 }
 .setup-progress-item .step-number {
     width: auto;
-    min-width: 4;
-    margin-right: 0;
+    min-width: $ds-size-4;
+    margin-right: $ds-space-0;
 }
 .setup-progress-item .step-title {
-    margin-right: 0;
+    margin-right: $ds-space-0;
     text-align: center;
 }
 
 
 /* TASK-21148 (UAT P-1/Z-3): collapsible sections inside steps spent ~3
    blank rows before their first field. */
-.setup-step Collapsible > Contents { padding: 0 1; }
-.setup-step Collapsible > Contents .setup-field-label { margin-top: 0; }
-.setup-step Collapsible > Contents .setup-probe-status { margin-top: 0; }
+.setup-step Collapsible > Contents { padding: $ds-space-0 $ds-space-1; }
+.setup-step Collapsible > Contents .setup-field-label { margin-top: $ds-space-0; }
+.setup-step Collapsible > Contents .setup-probe-status { margin-top: $ds-space-0; }
