@@ -283,7 +283,39 @@ def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -
     return needed > pane_width - (_TOOLBAR_SPLIT_HYSTERESIS if already_split else 0)
 
 
-def render_preview_source(body: str) -> str:
+def _drop_leading_title_heading(body: str, title: str) -> str:
+    """Drop a body's opening H1 when it only repeats the note's own title.
+
+    task-32551: task-32142 put the title above the Preview body, so an
+    imported note whose Markdown starts with ``# <its own title>`` -- the
+    normal shape of a file exported from any notes app -- printed that
+    title twice, once as the pane's title line and once as the rendered H1.
+
+    Exact match only (case-sensitive, whitespace-stripped): a heading that
+    merely resembles the title is the author's own first section and stays.
+
+    Args:
+        body: The note's stored Markdown source.
+        title: The note's title.
+
+    Returns:
+        ``body`` with that one line removed, or ``body`` unchanged.
+    """
+    wanted = title.strip()
+    if not wanted:
+        return body
+    lines = body.split("\n")
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if line.strip() == f"# {wanted}":
+            del lines[index]
+            return "\n".join(lines)
+        return body
+    return body
+
+
+def render_preview_source(body: str, *, title: str = "") -> str:
     """Return the note body as the Markdown Preview should render it.
 
     ONE home for the order, because Preview renders from two places -- the
@@ -294,17 +326,23 @@ def render_preview_source(body: str) -> str:
 
     Args:
         body: The note's stored Markdown source.
+        title: The note's title, so a leading ``# <title>`` is not rendered
+            underneath the title line Preview already shows (task-32551).
+            Omitted callers keep the old behaviour.
 
     Returns:
         The source with imported `[[Title]](note://<id>)` links reduced to
-        their display text (task-32263) and Obsidian callout headers turned
-        into plain blockquote headers (task-32249).
+        their display text (task-32263), Obsidian callout headers turned
+        into plain blockquote headers (task-32249), and a redundant opening
+        H1 dropped (task-32551).
     """
     # Lazy, like the parser factory below it: this module is on the Library
     # route's pre-import path (Tests/Performance/test_screen_preimport_payload_budget.py).
     from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
 
-    return render_obsidian_callouts(render_note_links(body))
+    return render_obsidian_callouts(
+        render_note_links(_drop_leading_title_heading(body, title))
+    )
 
 
 def compose_note_row_label(
@@ -387,6 +425,53 @@ def note_row_tiebreak_labels(
         for row in group:
             tiebreakers[row.placement_id] = f"#{str(row.note_id or '')[:4]}"
     return tiebreakers
+
+
+def _library_note_heading_title(title: str, suffix: str, width: int) -> str:
+    """Ellipsize one note title, then re-attach its list-row tie-break.
+
+    task-32548: appended AFTER the ellipsis on purpose -- a title long
+    enough to be trimmed is exactly the one whose tie-break would be
+    trimmed away first, and the tie-break is the only part of the string
+    that identifies WHICH note is open.
+    """
+    ellipsized = ellipsize_note_title_cells(title, width)
+    return f"{ellipsized} · {suffix}" if suffix else ellipsized
+
+
+def note_title_tiebreak_suffix(
+    projection: LibraryNotesTreeProjection | None, note_id: str
+) -> str:
+    """Return the tie-break label one note's own list row carries.
+
+    task-32548: ``note_row_tiebreak_labels`` is a list-row projection, so a
+    reader who opened one of two "Reading list" notes lost the only thing
+    telling them apart the moment the editor filled the pane. The editor
+    header asks the SAME function the row asked, rather than inventing a
+    second discriminator that could disagree with the list beside it.
+
+    Args:
+        projection: The notes tree projection the list is drawn from, or
+            ``None`` when the tree has not loaded (a flat-list fallback,
+            where nothing is tie-broken either).
+        note_id: The open note's id.
+
+    Returns:
+        The row's third key (``"#8d61"``, ``"09:16"``), or ``""`` when the
+        note is absent, unknown, or does not collide with anything.
+    """
+    rows = projection.rows if projection is not None else ()
+    if not rows or not note_id:
+        return ""
+    labels = note_row_tiebreak_labels(rows)
+    if not labels:
+        return ""
+    for row in rows:
+        if row.kind == "note" and row.note_id == note_id:
+            label = labels.get(row.placement_id, "")
+            if label:
+                return label
+    return ""
 
 
 #: Backlink rows Info renders at most (task-32145). The loader asks for one
@@ -655,6 +740,12 @@ class LibraryNotePresentationState:
     #: The controller counts this for ``metadata_line`` anyway; carrying the
     #: number instead of the sentence keeps the strip off a second scan.
     word_count: int = 0
+    #: task-32548: the tie-break the open note's own LIST row carries when
+    #: its title collides with another visible note ("· #8d61" / "· 09:16"),
+    #: or ``""`` when nothing collides. Computed once per canvas sync from
+    #: the projection the list is drawn from, so the editor header and the
+    #: list row can never disagree about which note is open.
+    title_suffix: str = ""
 
 
 class _LibraryNotesTreePagerButton(Button):
@@ -2399,6 +2490,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # documents "‹ Back to list" (60x24). One label now, sized by
         # ``self.compact`` like the guide's own compact-vs-wide split.
         back_label = _library_note_back_label(self.compact)
+        # task-32548: the heading strip carries the same tie-break the note's
+        # list row carries, so two same-titled notes stay distinguishable once
+        # one of them is open. Appended AFTER the ellipsis so a long title
+        # cannot eat the identity.
+        heading_title = _library_note_heading_title(
+            title, presentation_state.title_suffix, 72
+        )
         with Horizontal(id="library-note-heading"):
             yield Button(
                 back_label,
@@ -2413,17 +2511,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 compact=True,
             )
             yield Static(
-                ellipsize_note_title_cells(title, 72),
+                heading_title,
                 id="library-note-editor-title",
                 markup=False,
             )
             yield Static(
-                ellipsize_note_title_cells(title, 72),
+                heading_title,
                 id="library-note-preview-title",
                 markup=False,
             )
             yield Static(
-                ellipsize_note_title_cells(title, 72),
+                heading_title,
                 id="library-note-context-title",
                 markup=False,
             )
@@ -2517,7 +2615,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             yield Markdown(
-                render_preview_source(content),
+                render_preview_source(content, title=title),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
@@ -2977,15 +3075,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         title_width = 52 if state.compact else 72
         title = ellipsize_note_title_cells(snapshot.title, title_width)
-        for selector in (
-            "#library-note-editor-title",
-            "#library-note-preview-title",
-            "#library-note-context-title",
-            "#library-note-preview-body-title",
+        # task-32548: the heading strip carries the tie-break; the Preview
+        # body's document heading does not -- it is the note's own title as
+        # the reader wrote it, not a list identity.
+        heading_title = _library_note_heading_title(
+            snapshot.title, state.title_suffix, title_width
+        )
+        for selector, copy in (
+            ("#library-note-editor-title", heading_title),
+            ("#library-note-preview-title", heading_title),
+            ("#library-note-context-title", heading_title),
+            ("#library-note-preview-body-title", title),
         ):
             widget = self.query_one(selector, Static)
-            if self._static_text(widget) != title:
-                widget.update(title)
+            if self._static_text(widget) != copy:
+                widget.update(copy)
 
         preview_body = self.query_one("#library-note-preview-body", Markdown)
         # Markdown.update() parses and remounts asynchronously. Keep the
@@ -3002,7 +3106,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # compose time too, so the staleness comparison below has to be
         # against the SAME rendered source -- comparing the raw body would
         # re-render every sync on any note carrying a link or a callout.
-        preview_source = render_preview_source(snapshot.body)
+        preview_source = render_preview_source(snapshot.body, title=snapshot.title)
         if show_preview and preview_body.source != preview_source:
             preview_body.update(preview_source)
         channels = state.status_channels or NotesStatusChannels(

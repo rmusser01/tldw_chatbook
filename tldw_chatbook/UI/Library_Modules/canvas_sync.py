@@ -900,20 +900,21 @@ def _sync_library_canvas(
                     _explicit()
                 screen._restore_library_media_focus(_previous)
 
-            if then is not None or not canvas.has_pending_recompose_callback:
-                # NEVER clobber a follow-up another sync already queued.
-                # ``queue_after_recompose`` REPLACES, and a media mutation
-                # queues its ``focus_identity`` follow-up (PR E's "land on
-                # Undo") from one sync while a second, target-less sync --
-                # the facet reload that rides the same completion -- lands
-                # before the canvas has recomposed. Installing this restore
-                # there dropped the Undo intent on the floor: live at 100x30
-                # the bulk-delete receipt came back with a pane grip focused
-                # and `Undo` unhighlighted, where dev focuses `┃ Undo ┃`.
-                # With nothing queued there is nothing to lose, and an
-                # explicit ``then`` replaces the pending callback here
-                # exactly as it did before this branch existed.
-                follow_up = _media_restore
+            # NEVER clobber a follow-up another sync already queued.
+            # ``queue_after_recompose`` REPLACES, and a media mutation queues
+            # its ``focus_identity`` follow-up (PR E's "land on Undo") from
+            # one sync while a second, target-less sync -- the facet reload
+            # that rides the same completion -- lands before the canvas has
+            # recomposed. Installing this restore there dropped the Undo
+            # intent on the floor: live at 100x30 the bulk-delete receipt
+            # came back with a pane grip focused and `Undo` unhighlighted,
+            # where dev focuses `┃ Undo ┃`. task-31567 enforced that here
+            # with a local skip; the rule now lives once, at the queue below
+            # (``queue_default_after_recompose``), which COMPOSES this
+            # restore ahead of the pending intent instead -- and
+            # ``_restore_library_media_focus`` already no-ops unless focus
+            # is still missing or on a grip, so the intent still wins.
+            follow_up = _media_restore
         if kind == "landing":
             canvas.set_deferred_sync_guard(deferred_guard)
         follow_up_canvas = canvas
@@ -938,7 +939,24 @@ def _sync_library_canvas(
         ):
             follow_up_canvas = skill_work
         if follow_up is not None:
-            follow_up_canvas.queue_after_recompose(follow_up)
+            # task-32539: a sync with NO ``then`` of its own is carrying only
+            # a DEFAULT restore (the notes/media identity guards above), and
+            # ``queue_after_recompose`` REPLACES -- so a background sync that
+            # rides a mutation evicted the intent an action queued a moment
+            # earlier. Live at 235x52: the trash reload every delete starts
+            # landed between the delete's own sync and its recompose, and
+            # "focus the receipt's Undo" was silently dropped; the default
+            # restore that took its place had captured "nothing focused".
+            # The media branch has guarded its own default this way since
+            # task-31567; this generalises that rule to the one place every
+            # kind queues through, and COMPOSES rather than skipping so the
+            # non-focus half of a default (the notes list's scroll offset)
+            # still runs. An EXPLICIT ``then`` still supersedes, as it
+            # always did.
+            if then is None:
+                follow_up_canvas.queue_default_after_recompose(follow_up)
+            else:
+                follow_up_canvas.queue_after_recompose(follow_up)
         canvas.sync_state(*sync_args, **sync_kwargs)
         if prompt_work is not None:
             try:
