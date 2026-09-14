@@ -13882,3 +13882,39 @@ the screen) rather than against the reporter's transcription, and be
 especially suspicious of a report whose stated mechanism ("404 is the length
 of a title") does not survive being checked: "Markdown showcase" is 17
 characters.
+
+## A layout pin proves one width, and only that width — and a new row has a price
+
+**task-32549, 2026-09-14.** Wave-4's `layout` group added a disabled reason to
+three Library controls. The first shape put the reason in the button label
+("○ Sort unavailable — clear the filter") and shipped a pin that mounted the
+canvas at the pane a 235-column terminal gives the Notes list — 138 cells. Green.
+Live at **100x30**, where the same production resolver gives that list **42**
+cells, the label cost 41 with its button chrome and painted "○ Sort unavailable
+— clear the" against the grip: the exact half-word defect the two sibling tasks
+in the same group were fixing.
+
+The second shape moved the reason onto a `.library-disabled-reason` line of its
+own. Every pin in the group stayed green — and
+`test_library_note_60x20_navigator_state_allocation[selection]`, a geometry pin
+in `test_library_shell.py` that the branch never touched, went red: the new line
+cost `#library-notes-list` a row at 60x20 (height 7, expected 8). It is green on
+`origin/dev`. Nothing in the group's own suite could have caught it; what caught
+it was running the **full** touched files and diffing the FAILED-name **set**
+against a detached `origin/dev` worktree. The third shape put the reason on the
+count line that was already under the strip ("0 selected — Export selected
+unavailable") — same information, zero new rows, and the untouched pin went green
+again without being edited.
+
+**What to do.** For anything that changes what a pane paints:
+
+- Parametrise width pins over every width the control is reachable at (this repo:
+  235, 100, 60), and take the pane width from the production resolver rather than
+  typing a constant — `resolve_adaptive_reader_layout(...)` gave 138 / 42 / 50 for
+  the same list.
+- Treat a NEW ROW as a change with a cost, not as free chrome. A compact terminal
+  is 20-24 rows; look for a line that already exists and can carry the words
+  before adding one.
+- Assert on the mounted regions, not on the string you passed in: the instrument
+  that found the first defect live was `region.right > canvas.region.right`, and
+  the one that found the second was a name-set diff, not a pass/fail count.
