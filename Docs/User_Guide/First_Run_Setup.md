@@ -122,3 +122,14 @@ settled the wizard had advanced, so the toast landed over the Protect step's
 buttons or the Summary's exit actions, "Write your first note" among them. The
 wizard's save no longer announces itself; the step that made it still reports
 every outcome in place.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
+AC#3, at 235x52): on the Provider step with OpenAI picked and no key, the key
+field's hint ends "No key yet? Enter skips this step — you can add a provider
+later in Settings." and Enter in the empty field moves from Step 2 of 6 to Step
+3 of 6; the Summary then reads "✗ Provider — no credentials or saved endpoint"
+(`wave4-caps/console-handoff/handoff-12a-wizard-key-hint`, `12-wizard-skip`,
+`12b-wizard-summary`). Enter used to do nothing there — no probe, no advance,
+no message. A provider that is already ready without a typed key (an exported
+environment variable, a local server) is not cleared by that Enter; the hint
+does not offer the skip in that state.*

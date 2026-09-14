@@ -987,3 +987,9 @@ column keeps its full copy and hangs its continuation lines two cells in, so
 the blocked Handoff row's reason and next step read as one row — live at
 235x52 on a seeded profile, and pinned on the painted lines at 235x52 and
 60x24.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
+AC#2, at 235x52 on a profile stamped `starter` with an empty notes database):
+creating and saving the first note grows the rail from the compact Get started
+list to the full Browse / Create / Study / Import-Export rail and raises no
+toast (`wave4-caps/console-handoff/handoff-13-no-toast`).*

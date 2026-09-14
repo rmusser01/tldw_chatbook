@@ -1473,3 +1473,20 @@ second 5-file root at 100x30 → "Notes (75)" and "▸ t13 second ⇄ Sync manag
 and **Apply reviewed** now refresh the list through the same path an import
 does; before this the list kept its old count and folder rows until
 restart.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32536,
+at 235x52 and 100x30 on a no-provider profile and on a 12-note profile): **Use
+in Console** on a note that belongs to no workspace links it to the active one
+and stages it — status "Use in Console complete — Linked to Local Default ·
+staged in Console." — and Console opens on its own Get started card reading
+"notes evidence staged — finish provider setup to use it."
+(`wave4-caps/console-handoff/handoff-10-console-card`,
+`14-fresh-status-after`, `10b`/`14b` at 100x30; `15`/`16` and `15b`/`16b` on
+the seeded profile). The membership write is in
+`tldw_chatbook_workspaces.db`. Opening another note ends the message: the next
+note's status reads "Saved · Next: Keep editing; changes save automatically."
+with an empty transfer row (`17-power-note-switch-clears`), and the list pane
+beside the editor never carried it. Before this the hand-off refused every
+fresh note with a toast about workspace linking AND a status line about
+Console readiness — two messages naming two different blockers, the second of
+which was not the real one.)*

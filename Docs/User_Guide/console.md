@@ -728,3 +728,13 @@ added the "Write a note in Library" action beside the Get started card's
 provider steps — needs no provider, opens Library's New note view, and
 stays available for the whole time the card is blocking. Widget-level
 check in `Tests/UI/test_library_notes_wave_onboarding.py`.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
+AC#1, at 235x52 and 100x30): the Get started card's actions render as bordered
+buttons — "Set up provider", "Write a note in Library" and, when one is found,
+"Use detected llama.cpp …" — and the focused one is marked by heavy left and
+right rails rather than by text styling
+(`wave4-caps/console-handoff/handoff-10-console-card`, `11-card-focus`,
+`10b-console-card-100x30`). They were `compact` Buttons before, which Textual
+renders with `border: none !important`, so all three read as plain text lines
+two rows apart.*
