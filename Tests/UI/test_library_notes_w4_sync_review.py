@@ -24,6 +24,7 @@ from Tests.Widgets.Library.test_library_notes_add_from_files_canvas import (
 )
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
+    build_reconciliation_review,
     LastingSyncReview,
     LastingSyncReviewRow,
     LastingSyncSetup,
@@ -132,6 +133,59 @@ async def test_sixty_creates_collapse_to_one_summary_row_with_a_disclosure() -> 
         assert runs[0].collapsed is True
         # Nothing is hidden: every row is one press away.
         assert len(runs[0].query(".library-notes-sync-review-row")) == 60
+
+
+async def test_a_group_heading_on_a_paged_review_names_the_groups_real_size() -> None:
+    """AC#2 beyond one page: the heading may not pass a page's count as the total.
+
+    Fix round 1, Important #2. `build_reconciliation_review` slices to
+    RECONCILIATION_PAGE_SIZE (100) while the sync walk admits 1 000 files, so a
+    240-note vault rendered "Create a Library note (100)" under a "240 safe"
+    counts line — the task-32250 defect `group_heading` exists to prevent,
+    inside the review this task makes truthful. The review here is production's
+    own: a real plan through the real builder, not a hand-set total.
+    """
+
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=tuple(
+            NotesSyncAction(
+                f"act-{index:03d}", NotesSyncActionKind.CREATE_NOTE, f"bind-{index:03d}"
+            )
+            for index in range(240)
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+    labels = {
+        f"bind-{index:03d}": RuntimeBindingLabel(
+            f"bind-{index:03d}",
+            f"Archive/Archived note {index:03d}.md",
+            f"Archived note {index:03d}",
+            "Vault",
+        )
+        for index in range(240)
+    }
+    review = build_reconciliation_review(plan, labels=labels)
+    assert (review.safe_count, len(review.rows), review.page_count) == (240, 100, 3)
+
+    app = _Host(
+        replace(
+            initial_lasting_sync_snapshot(lasting_available=True),
+            phase="review",
+            review=review,
+        )
+    )
+    async with app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        heading = app.query_one(".notes-sync-review-group-heading", Static)
+        assert str(heading.renderable) == (
+            "Create a Library note (100 of 240 on this page)"
+        )
+        assert "240 safe · 0 need attention · 0 skipped" in _frame(app)
 
 
 async def test_a_short_run_stays_as_rows() -> None:

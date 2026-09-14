@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -287,6 +288,18 @@ class LastingSyncReviewRow:
         return "LastingSyncReviewRow(<private>)"
 
 
+def review_group_key(row: LastingSyncReviewRow) -> tuple[str, str]:
+    """Return the heading one review row belongs under.
+
+    task-32535: every skipped row shares one "Skipped" heading whatever its
+    reason, and every other row groups by its effect. Defined here, beside the
+    row, because the canvas groups by it and the review counts by it -- two
+    copies of this rule is how a heading starts disagreeing with its group.
+    """
+
+    return (row.category, "" if row.category == "skipped" else row.effect)
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class LastingSyncReview:
     """One paged mutation-free reconciliation projection."""
@@ -298,6 +311,13 @@ class LastingSyncReview:
     skip_count: int = 0
     managed_count: int = 0
     rows: tuple[LastingSyncReviewRow, ...] = ()
+    group_totals: tuple[tuple[str, str, int], ...] = ()
+    """(category, effect, total) over EVERY page of this review (task-32535).
+
+    `rows` is one page, so a heading counted from it claims a page's count as
+    the group's size -- the task-32250 defect, in the review this task exists
+    to make truthful.
+    """
     page: int = 1
     page_count: int = 1
     stale: bool = False
@@ -332,6 +352,16 @@ class LastingSyncReview:
             raise TypeError("rows must be a tuple of review rows")
         if len(self.rows) > 100:
             raise ValueError("review rows must be bounded to one page")
+        if type(self.group_totals) is not tuple or any(
+            type(entry) is not tuple
+            or len(entry) != 3
+            or type(entry[0]) is not str
+            or type(entry[1]) is not str
+            or type(entry[2]) is not int
+            or entry[2] < 1
+            for entry in self.group_totals
+        ):
+            raise TypeError("group_totals must be (category, effect, count) triples")
         if type(self.stale) is not bool or type(self.activation) is not bool:
             raise TypeError("review flags must be booleans")
         if type(self.can_apply) is not bool:
@@ -824,6 +854,7 @@ def build_reconciliation_review(
             )
         )
 
+    group_totals = Counter(review_group_key(row) for row in rows)
     page_size = plan.page_size
     page_count = max(1, ceil(len(rows) / page_size))
     bounded_page = min(max(1, page), page_count)
@@ -846,6 +877,10 @@ def build_reconciliation_review(
         skip_count=len(plan.skips) + len(plan.item_skips),
         managed_count=len(plan.managed_placement_effects),
         rows=tuple(rows[start : start + page_size]),
+        group_totals=tuple(
+            (category, effect, total)
+            for (category, effect), total in group_totals.items()
+        ),
         page=bounded_page,
         page_count=page_count,
         stale=stale,

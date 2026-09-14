@@ -21,9 +21,11 @@ from tldw_chatbook.Library.library_note_import_state import UNIFORM_RUN_MIN
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
     LastingSyncHistoryRow,
+    LastingSyncReview,
     LastingSyncReviewRow,
     LastingSyncReviewSource,
     LibraryNotesLastingSyncSnapshot,
+    review_group_key,
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictComparison,
@@ -458,7 +460,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     classes="library-disabled-reason",
                     markup=False,
                 )
-            yield from self._compose_review_rows(review.rows)
+            yield from self._compose_review_rows(review)
             if review.page_count > 1:
                 yield Static(
                     f"Page {review.page} of {review.page_count}",
@@ -503,13 +505,18 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     # note" sixty times over. Rows now follow Import once's grammar (path ·
     # what happens · where), sit under a heading per effect with its count,
     # and a uniform run collapses to one summary row with a disclosure.
-    def _compose_review_rows(
-        self, rows: tuple[LastingSyncReviewRow, ...]
-    ) -> ComposeResult:
+    def _compose_review_rows(self, review: LastingSyncReview) -> ComposeResult:
         groups: dict[tuple[str, str], list[tuple[int, LastingSyncReviewRow]]] = {}
-        for index, row in enumerate(rows):
-            key = (row.category, "" if row.category == "skipped" else row.effect)
-            groups.setdefault(key, []).append((index, row))
+        for index, row in enumerate(review.rows):
+            groups.setdefault(review_group_key(row), []).append((index, row))
+        # `review.rows` is ONE page: counting the heading off it renders
+        # "Create a Library note (100)" under a "240 safe" counts line on a
+        # 240-file vault. `group_totals` is counted over every page, and
+        # `group_heading` says "N of M on this page" when they differ.
+        totals = {
+            (category, effect): total
+            for category, effect, total in review.group_totals
+        }
         for (category, effect), members in groups.items():
             # A plan orders its actions by binding id -- a digest -- so a
             # vault's forty-five Archive files arrive shuffled among the other
@@ -520,7 +527,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 group_heading(
                     "Skipped" if category == "skipped" else effect,
                     rendered=len(members),
-                    total=len(members),
+                    total=totals.get((category, effect), len(members)),
                 ),
                 classes="notes-sync-review-group-heading destination-section",
                 markup=False,
