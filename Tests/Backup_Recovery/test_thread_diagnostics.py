@@ -723,3 +723,110 @@ def test_native_stage_observer_metadata_failure_preserves_original(tmp_path, met
         with pytest.raises(RuntimeError, match="^runtime_diagnostic_write_failed$"):
             stop()
     assert runtime._settle_stage is original
+
+
+@pytest.mark.parametrize("kind", ("changed", "unavailable", "private_error", "cancelled"))
+def test_capture_snapshot_observer_preserves_error_and_bounds_private_metadata(
+    tmp_path, monkeypatch, kind
+):
+    import asyncio
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_capture_review
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    errors = {
+        "changed": ValueError("preview_sqlite_changed"),
+        "unavailable": ValueError("preview_sqlite_unavailable"),
+        "private_error": OSError(13, "synthetic-private-error", "synthetic-private-path"),
+        "cancelled": asyncio.CancelledError("synthetic-private-cancellation"),
+    }
+    error = errors[kind]
+    result = object()
+
+    def original(scope, source):
+        if source is result:
+            return result
+        raise error
+
+    monkeypatch.setattr(storage._PreviewScope, "sqlite_target", original)
+    path = tmp_path / "snapshot.log"
+    stop = observe_capture_review(path)
+    try:
+        assert storage._PreviewScope.sqlite_target(None, result) is result
+        assert not path.exists()
+        for _ in range(10):
+            with pytest.raises(type(error)) as caught:
+                storage._PreviewScope.sqlite_target(None, "synthetic-private-source")
+            assert caught.value is error
+            trace = error.__traceback__
+            while trace.tb_next is not None:
+                trace = trace.tb_next
+            assert trace.tb_frame.f_code is original.__code__
+    finally:
+        stop()
+    assert storage._PreviewScope.sqlite_target is original
+    rows = json.loads(path.read_text())
+    assert len(rows) == 8
+    assert all(row["event"] == "preview_sqlite_failure" for row in rows)
+    assert rows[-1]["reason"] == (
+        "preview_sqlite_" + kind if kind in {"changed", "unavailable"} else None
+    )
+    assert rows[-1]["error"]["error_class"] == type(error).__name__
+    assert rows[-1]["error"]["frames"][-1]["function"] == "original"
+    assert "synthetic-private" not in path.read_text()
+
+
+@pytest.mark.parametrize("failure_point", ("metadata", "write"))
+@pytest.mark.parametrize("failure_type", (OSError, RuntimeError, KeyboardInterrupt))
+def test_capture_snapshot_diagnostic_failure_cannot_replace_original_error(
+    tmp_path, monkeypatch, failure_point, failure_type
+):
+    from Tests.Backup_Recovery import thread_diagnostics as diagnostic
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    error = ValueError("preview_sqlite_changed")
+
+    def original(scope, source):
+        raise error
+
+    def fail(*args):
+        raise failure_type("synthetic-diagnostic-error")
+
+    monkeypatch.setattr(storage._PreviewScope, "sqlite_target", original)
+    monkeypatch.setattr(
+        diagnostic, "_error_metadata" if failure_point == "metadata" else "_write", fail
+    )
+    stop = diagnostic.observe_capture_review(tmp_path / "snapshot.log")
+    try:
+        with pytest.raises(ValueError) as caught:
+            storage._PreviewScope.sqlite_target(None, None)
+        assert caught.value is error
+    finally:
+        stop()
+    assert storage._PreviewScope.sqlite_target is original
+
+
+def test_capture_snapshot_observer_retains_native_concurrent_note_refusal(tmp_path):
+    from Tests.Backup_Recovery.test_core_dependency_discovery import _SCRIPT
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    setup = """
+from Tests.Backup_Recovery.thread_diagnostics import observe_capture_review
+snapshot_log=home/'snapshot-failure.json.log'
+stop_snapshot=observe_capture_review(snapshot_log)
+"""
+    script = _SCRIPT.replace("validations=[]", setup + "\nvalidations=[]", 1)
+    script = script.replace(
+        " storage._PreviewScope._source_state=staticmethod(original)",
+        " stop_snapshot()\n storage._PreviewScope._source_state=staticmethod(original)",
+        1,
+    )
+    _run(tmp_path, "native", "dependency-review", script=script, timeout=20)
+    rows = json.loads((tmp_path / "home" / "snapshot-failure.json.log").read_text())
+    assert len(rows) == 1
+    assert rows[0]["event"] == "preview_sqlite_failure"
+    assert rows[0]["reason"] == "preview_sqlite_changed"
+    assert rows[0]["error"]["error_class"] == "ValueError"
+    summary = json.loads((tmp_path / "home" / "dependency-discovery.json.log").read_text())
+    assert summary["core_status"] == "unavailable"
+    assert summary["validation_issues"][0] == ["core_validation_unavailable"]

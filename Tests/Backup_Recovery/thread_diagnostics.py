@@ -242,11 +242,13 @@ def observe_capture_review(path: Path) -> Callable[[], None]:
     import hashlib
 
     from tldw_chatbook.Backup_Recovery import capture, capture_service, inventory
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
     originals = [
         (module, module.discover) for module in (inventory, capture, capture_service)
     ]
     original_capture = capture_service.capture
+    original_snapshot = storage._PreviewScope.sqlite_target
     records, failures = [], []
     previous = None
 
@@ -363,14 +365,42 @@ def observe_capture_review(path: Path) -> Callable[[], None]:
             record({"event": "capture_review", "error": _error_metadata(error)})
             raise
 
+    def observed_snapshot(scope, source):
+        try:
+            return original_snapshot(scope, source)
+        except BaseException as error:
+            try:
+                reason = None
+                if (
+                    type(error) in (ValueError, OSError)
+                    and len(error.args) == 1
+                    and type(error.args[0]) is str
+                    and error.args[0] in {
+                        "preview_sqlite_changed", "preview_sqlite_unavailable",
+                        "preview_sqlite_limit", "preview_sqlite_write_failed",
+                    }
+                ):
+                    reason = error.args[0]
+                records.append({
+                    "event": "preview_sqlite_failure",
+                    "error": _error_metadata(error), "reason": reason,
+                })
+                del records[:-8]
+                _write(Path(path), records)
+            except BaseException:  # noqa: BLE001, S110 - diagnostic failure must not replace the source error.  # nosec B110
+                pass
+            raise
+
     for module, original in originals:
         module.discover = wrapper(original)
     capture_service.capture = observed_capture
+    storage._PreviewScope.sqlite_target = observed_snapshot
 
     def stop():
         for module, original in originals:
             module.discover = original
         capture_service.capture = original_capture
+        storage._PreviewScope.sqlite_target = original_snapshot
         if failures:
             raise RuntimeError("capture_diagnostic_write_failed")
 

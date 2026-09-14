@@ -14,6 +14,8 @@ The clipping correction adds the existing `backup-form` auto-height class to tha
 
 Settings and Library causes remain under investigation; no storage guard, timeout, permission cache or backup scope has been relaxed. The separate Windows 60-second startup check remains unresolved. The stale Fast Lane workflow expectation is corrected in `c3ad686072`; fresh CI verification remains pending. Linux encrypted-with-credentials diagnosis awaits the separately requested diagnostic-read approval after automatic review rejected it. Historical failed evidence remains below; no final cross-platform or keyboard acceptance is claimed.
 
+The next native repeat includes a test-only snapshot observer that preserves the exact underlying SQLite preview failure before adapter classification. Root41 and independent33 checks pass, including a real concurrent-note refusal and original-error preservation. This establishes diagnostic fidelity, not the Windows Library cause. The separate qualified scheduler probe confirms accepted heartbeat work is retained correctly; it establishes no scheduler deadlock or product fix. [Snapshot diagnostic receipt](backup-uat-remediation-evidence-20260913/capture-snapshot-diagnostic-checkpoint-20260914.json).
+
 ### Earlier checkpoint history — retained
 
 The PR remains open against dev, unmerged. The latest reviewed corrections address Console configuration lifetimes, later rollback of nested Persona artwork, and discovery of the canonical evaluation definition after rollback. All earlier requester-approved actions are applied. A separate measured startup module-count exception is awaiting an explicit decision under ADR-097; those limits remain unchanged.
