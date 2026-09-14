@@ -934,6 +934,25 @@ PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
 # catalog module (imported at the top) so Settings and Console match.
 
 
+def _assign_select_value_if_offered(select: Select, value: object) -> bool:
+    """Assign ``value`` only when the select currently offers it.
+
+    TASK-32533. Textual's ``Select`` raises ``InvalidSelectValueError`` for any
+    value outside its options, and an unhandled raise from a widget handler used
+    to take the whole app down with it (critique #3's P0). Every provider Select
+    on this screen is populated from a catalog that can disagree with the value a
+    config, a deep link or a stale draft carries -- a provider that is no longer
+    registered, or none at all. A stale selection is a better outcome than a
+    dead pane, so a value the select does not offer is skipped.
+
+    Returns True when the assignment happened.
+    """
+    if not any(option == value for _label, option in select._options):
+        return False
+    select.value = value
+    return True
+
+
 class _SettingsWorkspacePersonaOption(Option):
     """A persona row in the workspace "Default assistant" picker (Task 10).
 
@@ -12863,7 +12882,10 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_selection = True
         try:
             with provider_select.prevent(Select.Changed):
-                provider_select.value = select_value
+                # TASK-32533: the catalog this value comes from is read again
+                # here, after the select was composed -- registering or removing
+                # a custom endpoint moves one without the other.
+                _assign_select_value_if_offered(provider_select, select_value)
         finally:
             self._syncing_provider_selection = False
         self._syncing_provider_manual = True
@@ -21420,7 +21442,12 @@ class SettingsScreen(BaseAppScreen):
                 Select,
             )
             if provider_select.value != target.provider_id:
-                provider_select.value = target.provider_id
+                # TASK-32533: the target's provider id is validated against
+                # BUILT_IN_TTS_PROVIDER_IDS, but this select is built from the
+                # separate BUILT_IN_TTS_PROVIDER_ORDER display tuple -- the two
+                # are hand-maintained, and a value only one of them lists would
+                # raise InvalidSelectValueError here.
+                _assign_select_value_if_offered(provider_select, target.provider_id)
             focus_selector = (
                 "#settings-speech-audio_cpp-base-url"
                 if target.provider_id == "audio_cpp"

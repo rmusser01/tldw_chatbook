@@ -3,9 +3,11 @@ id: TASK-32533
 title: >-
   Library Notes: the app exits with an unhandled InvalidSelectValueError during
   the first-timer edit journey, and the crash handler records no site
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-13 06:45'
+updated_date: '2026-09-13 15:33'
 labels:
   - library
   - notes
@@ -33,8 +35,22 @@ Do not fix by catching the exception at the site alone: the app-level exit and t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The provider Select in the Console model popover cannot be handed a value outside its options: a no-provider or unknown-provider draft mounts with a blank selection, using the same guard its model select already has
+- [ ] #1 No provider Select reachable on a no-provider profile can be handed a value outside its options -- the Console model popover (a no-provider or unknown-provider draft mounts with a blank selection, the same guard its model select already has), the Settings Providers pane (#settings-provider-value) and the Settings Speech pane (#settings-speech-configure-provider), the last two keeping their current selection instead of raising when the catalog they read disagrees with the options they were built from
 - [ ] #2 An unhandled exception raised from a widget handler no longer exits the app: the screen stays alive and a notification names what failed and where to look
 - [ ] #3 The persisted unhandled_exception diagnostic carries the raising frame (module:function:line, never the message) so the site of the next crash is recoverable from the profile log; the diagnostic inventory is updated
 - [ ] #4 A regression test mounts the popover with a provider value absent from its options and a second one with an empty provider, and asserts no InvalidSelectValueError
+- [ ] #5 The Library Notes folder-target dialog (Add to folder / Move note, the site proven live on the fixed build: widget_id=library-note-folder-target) mounts with a blank selection instead of raising InvalidSelectValueError, and Choose with nothing selected does not dismiss with a bogus folder id
+- [ ] #6 The persisted unhandled_exception diagnostic also names the raising message pump (widget_type, widget_id) so a Textual widget that fails while mounting -- which leaves no Chatbook frame on the stack -- is still locatable from the profile log
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce both ways on a fresh no-provider profile: the assessor's recorded Notes key sequence (3 tries) and the inferred site driven directly (Console alt+m; headless popover mount with provider='' and provider outside its options).
+2. RED tests: Tests/UI/test_console_model_popover_no_provider.py (two drafts mount without InvalidSelectValueError) and Tests/ProductionApp/test_app_unhandled_exception_keepalive.py (handler exception keeps the screen alive + notifies + persists the raising frame; WorkerFailed still exits; headless default still raises).
+3. Guard the popover provider Select exactly like its model select (membership check, Select.NULL, allow_blank=True); confirm the read side tolerates NULL; record the settings_screen.py Select sites as guarded/unguarded.
+4. TldwCli._handle_exception: keep the WorkerFailed unwrap; walk the traceback for raise_*/site_* fields (module:function:line, never the message); keep-alive only for a message-pump _dispatch_message frame and only when not headless; bell + notify naming the site; else super() as before.
+5. Add the six frame fields to the persistent-diagnostics schema; re-pin the diagnostic inventory (--write); keep Tests/Architecture/test_persistent_diagnostic_inventory.py green.
+6. GREEN: the new tests, the three existing popover test files, Tests/App/test_unhandled_exception_event.py, sibling pins; FAILED-name comparison vs a detached origin/dev baseline. Live: alt+m opens with a blank provider select; the recorded Notes sequence at 235x52 and 100x30 survives.
+7. Guide stamp (console.md), Implementation Notes, Done.
+<!-- SECTION:PLAN:END -->
