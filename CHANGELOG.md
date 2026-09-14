@@ -28,6 +28,7 @@ the unpublished PyPI 0.2.0 release candidate.
   handoffs, plus media list sizing and selected-item export.
 - Local TTS lifecycle recovery, language routing, and provider defaults.
 - Console environment polling during teardown and shared search integration.
+- Queued Buddy notifications no longer access an empty screen stack during shutdown.
 - Console approval and agent orchestration handling, Linux voice playback,
   MCP Hub controls, and speech settings.
 

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 02:12'
-updated_date: '2026-09-13 23:52'
+updated_date: '2026-09-14 00:43'
 labels:
   - release
   - packaging
@@ -28,6 +28,7 @@ Publish the newer committed dev changes requested by the release owner while pre
 - [x] #6 All four runtime Canvas guide topics are required in both distributions; only the three fixed guide Markdown files are exempt from the development-document exclusion.
 - [x] #7 Application and native voice companion versions remain synchronized; release scope explicitly accounts for the unavailable physical voice qualification.
 - [x] #8 App-only distributions have no native AEC dependency; ordinary speech-recording dependencies remain and installed experimental duplex qualification stays false.
+- [x] #9 Queued Buddy screen-rebuild and change notifications after screen teardown do not crash the installed app; active-screen reconciliation remains intact.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -77,4 +78,8 @@ Owner approved app-only0.2.1 on2026-09-13, keeping experimental duplex disabled 
 Implemented the owner-approved app-only exception under the ADR-098 amendment. Removed the native companion from speech_recording while retaining ordinary recording dependencies; synchronized companion source version0.2.1. Explicit app-only validation rejects companion requirements across all groups (including direct URLs/case variants) and requires entirely unqualified packaged rollout. Default native release checks and runtime acoustic/qualification code remain unchanged. Fresh build/twine/manifest checks pass;193 focused tests pass. Independent review is complete. Local full distribution run aborted on ENOSPC, not a code assertion; removed only task-owned temporary installations and retained logs. The changed installed-runtime probe is running locally; complete installed-distribution regression remains a mandatory publishing-runner gate.
 
 Final local installed-runtime regression passed in44.31seconds: the app-only wheel omits every native companion requirement, retains pyaudio/sounddevice/webrtcvad under the normalized speech-recording extra, stays unqualified even with the development override, preserves immutable assets, and both CLI entry points work. Corrected the initial test oracle for PEP685 wheel extra-name normalization. App-only validation and193 focused tests pass; complete installed-distribution verification remains pending on the publishing runner.
+
+TestPyPI run34791909137 failed before upload:179 installed-distribution tests passed and the real installed-app lifecycle probe hit ScreenStackError in on_base_app_screen_contents_rebuilt after Textual emptied the screen stack. This is a timing-dependent shutdown defect despite the local probe passing. Add deterministic late-event regressions and guard empty-stack Buddy notifications under existing ADR-074; no new architecture or visual-token change.
+
+Shutdown repair: both late Buddy event regressions reproduced ScreenStackError before the empty-stack guards. All 29 Buddy lifecycle tests pass, and the installed app/immutable-assets/entry-point probe passes in 42.61 seconds. Independent review approved the bounded repair under ADR-074. The full hosted installed-distribution gate must pass again before publication.
 <!-- SECTION:NOTES:END -->
