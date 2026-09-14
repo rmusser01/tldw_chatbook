@@ -8,7 +8,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-13 06:47'
-updated_date: '2026-09-14 15:23'
+updated_date: '2026-09-14 16:28'
 labels:
   - library
   - notes
@@ -47,6 +47,7 @@ Critique #3 (dev 5fd502dbac), assessor A (B recorded the strings), personas Sam 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:NOTES:BEGIN -->
 All four ACs live at 235x52 and 100x30.
 
 **AC#1 — disabled controls state their reason.** Retarget and Disconnect were a bare grey "○" whose reason existed only in a tooltip. Both now go through `_disabled_action_label` (task-32257's grammar, reused from the import canvas): "○ Retarget unavailable — not in this release". The blocked Check on an offline/passive root gets the same treatment, and its tooltip became a "why" rather than an instruction ("the folder is disconnected" / "another Chatbook has this folder open"). The line under the list reads "Retarget/Disconnect unavailable — not in this release; nothing on disk or in Notes changes."
@@ -58,4 +59,15 @@ All four ACs live at 235x52 and 100x30.
 **AC#4 — guide.** `Docs/User_Guide/library/notes.md`: the Manage sync folders paragraph (disabled reasons, the Receipts section, the footer), the activation receipt wording, the failed-check copy, and a "Verified against" stamp quoting the new labels.
 
 Deviation worth recording: the brief expected these buttons to lack `library-canvas-action`. They had it; the critique's "no focus difference" was the footer, not the paint. Tests: `Tests/UI/test_library_notes_w4_sync_roots.py` (disabled labels, focus + footer, no engineering terms across roots/review/receipt/setup surfaces), plus the sibling pins that asserted the old strings.
+<!-- SECTION:NOTES:END -->
+
+## Fix round 1 (review 2026-09-14)
+
+**AC#3 was ticked while it was false.** "Lasting folder sync is unavailable until the reviewed cutover." was still rendered twice -- as the chooser's `status_line` and as the setup `validation_message` (painted under the pane heading and used as a tooltip). Both now use the sentence the neighbouring disabled reason already uses: "Keeping a folder synced isn't ready on this profile yet." The only "cutover" left on screen is the root row's placeholder name, which task-32451 owns. AC#3 is re-ticked on that basis.
+
+**The sweep pin that let it through.** `test_sync_copy_uses_no_engineering_terms` built its own snapshots and supplied its own `receipt_line`, so four of its six terms were unreachable: two are controller-produced, one renders only in the `review` phase it never rendered, and "cutover" needed a `validation_message` it never populated. It now drives the controller to each phase -- inert chooser, setup validation, review, receipt, refused roots -- and sweeps what production produced; it goes red if either cutover string comes back. The 32451 placeholder is excised by name, with an assertion that it is still there so the exclusion cannot rot silently.
+
+Also in this round (review Minor 4): "No writes yet. Sync writes appear here as they happen." was untrue -- `refresh_receipts` runs on the route that opens the list -- and now says when they are listed.
+
+A proxy assertion in a sibling suite (`"unavailable" in status_line.casefold()`) went red on the copy change and was tightened to the exact sentence rather than reworded around.
 <!-- SECTION:NOTES:END -->

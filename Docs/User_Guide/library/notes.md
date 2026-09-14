@@ -618,7 +618,10 @@ attention · Check failed — <reason> · Next: <action>" and offers that action
 control — Check changes on a paused root reads "Check failed — folder is
 paused · Next: Resume" and puts **Resume** first. The reason is never the
 exception text; where the cause cannot be named, the row states its category.
-The next action you run on that root clears the failure (task-32534). (Was
+A failure changes only what the row SAYS, never what it is: a disconnected or
+externally-held folder keeps its Check disabled with its own reason, and never
+grows a Pause it should not have. The next action you run on that root clears
+the failure and the line goes back to restating the row (task-32534). (Was
 "Manual check failed. Review root status, then try again." beside a row still
 reading "✓ Up to date" — superseded by task-32534 below.) (Was
 "though today **Resume** does not bring a paused root back at all, whether or
@@ -635,6 +638,9 @@ task-32271 below: the restart was asserted, then walked.)
 — "○ Retarget unavailable — not in this release" — with the same line repeated
 under the list; no files or notes change (task-32545). (Was a bare grey "○"
 whose reason only appeared in a tooltip — superseded by task-32545 below.)
+
+A paused folder keeps its receipts: reading them is a read, so pausing one
+folder never blanks the list for the others (task-32534).
 
 **Receipts**, under the root list, is where the writes lasting sync performs
 on its own show up: the newest 20 across every listed root, newest first, as
@@ -1508,3 +1514,22 @@ walk before the reason code was classified), and the log records only
 their reason at the control, and Tab makes the footer read "enter check
 changes" / "enter pause" at both sizes (`roots-15-focus-check-footer`,
 `roots-16-roots-100x30`, `roots-17-focus-100x30`).)*
+
+*Verified against fix/library-notes-w4-sync-roots — 2026-09-14 (task-32534,
+task-32545 fix round 1, at 235x52 on the same profile and vault): with two
+roots listed, pausing the first leaves BOTH roots' writes in **Receipts**
+across a full re-entry of the list
+(`wave4-caps/sync-roots/roots-30-paused-root-receipts-survive`) — reading
+receipts no longer goes through the admission gate that a pause closes.
+**Check changes** on the paused root reads "⚠ Needs attention · Check failed —
+folder is paused · Next: Resume", offers **Resume** first and does NOT grow a
+Recovery button, while the second root's row is untouched
+(`roots-31-paused-check-failed-row`); **Resume** then clears the failure and
+the status line restates the row as "✓ Up to date · Next: Check changes."
+(`roots-32-resume-clears-overlay`), where it used to leave the failure
+sentence standing beside it. The chooser's unavailable line and the setup
+validation message now read "Keeping a folder synced isn't ready on this
+profile yet." The offline-root case (a refused Check keeping its Check
+disabled and growing no Pause) is pinned end-to-end through the controller and
+canvas rather than walked: a missing folder does not make the runtime report
+`offline` — that needs a lease held by a second process.)*

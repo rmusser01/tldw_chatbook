@@ -13680,3 +13680,26 @@ construct the snapshot. A canvas-level render pin is still worth having for
 layout, but it is evidence about the widget only. Corollary from the same
 task: `git grep` the exact old string across `tldw_chatbook/` after the edit —
 two call sites producing the same line is the normal case, not the odd one.
+
+## A duplicate dict key is a silent overwrite, and only the SOURCE can show it (task-32534, 2026-09-14)
+
+**task-32534 fix round 1, 2026-09-14.** Three reason codes were added to
+`_CHECK_REFUSAL_COPY` after a live walk showed them unclassified. They were
+already defined 60 lines above. Python keeps the last literal, so three shipped
+user-facing strings were replaced — `root_lease_unavailable`, the "another
+Chatbook is holding this folder" case, lost "Close any other Chatbook window
+using it" and began sending the reader to a Reconnect that cannot help. The
+diff read as pure addition, no test pinned the old strings, and a test that
+inspects the dict OBJECT cannot see it: by then the duplicate is gone.
+
+**What to do.** When appending to a keyed table, grep the table for the key
+first — a table long enough to need appending is long enough to hide the key.
+Pin it with an `ast` scan over the module source (`ast.Dict`, count
+`ast.Constant` keys) rather than a per-string assertion, so the guard covers
+every future row instead of the three you happened to notice. Same round, same
+disease in a different organ: a sibling suite asserted `"unavailable" in
+status_line.casefold()` as a proxy for "the line is truthful", so rewording the
+line turned that pin red with no clue why — proxy substring assertions on copy
+decay into tripwires. Assert the sentence, and find these by diffing the
+FAILED-name SET over whole files against a detached `origin/dev`, not by
+running your own new ids.

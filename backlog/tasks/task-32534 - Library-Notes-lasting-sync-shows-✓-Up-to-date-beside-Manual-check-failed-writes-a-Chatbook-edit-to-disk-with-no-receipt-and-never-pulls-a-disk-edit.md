@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-13 06:45'
-updated_date: '2026-09-14 15:23'
+updated_date: '2026-09-14 16:28'
 labels:
   - library
   - notes
@@ -50,6 +50,7 @@ Adjacent open task: 32451 (the root row's placeholder name). Docs contradicted: 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:NOTES:BEGIN -->
 All five ACs live at 235x52 and 100x30 on a scratch profile + a 60-file git vault under $HOME.
 
 **AC#1/#2 — a refused action names itself.** The four bare `except Exception` branches on `LibraryNotesSyncController` (sync_now, apply_reviewed, resolve_cleanup, _run_root_control) set a generic line, left the row at its last projection and logged nothing, so "Manual check failed" stood beside "✓ Up to date". Each now routes through `check_failure_row`, which logs the refusal as metadata (`reason=` / `error_type=` / `root_id=`, never the message) and records a per-root overlay that `refresh_roots` projects: "⚠ Needs attention · <verb> failed — <reason> · Next: <action>". The next action you run on that root clears it.
@@ -63,4 +64,18 @@ Two things only the live walk found. `_refusal_reason` filters on `_CHECK_REFUSA
 **AC#5 — live.** Captures under `wave4-caps/sync-roots/`: `roots-11-disk-edit-review` (both receipt rows), `roots-12-note-version` (sqlite: both notes at version 2 carrying the other side's text; `git -C vault status` shows both files modified), `roots-14-race-check-applied`, `roots-13-failed-row` (+ `-before-reasoncode-fix`), `roots-18-second-root-activated`, `roots-19-two-roots-receipts`, `roots-16/17` at 100x30.
 
 Tests: `Tests/UI/Library_Modules/test_library_notes_sync_controller.py` (failed row + log category, receipts projection, paused-root reason, two-table key invariant, overlay clearing, activation receipt line), `Tests/Notes/test_notes_sync_runtime.py` (disk edit after activation, write_receipts labels), `Tests/Notes/test_notes_device_state_store.py` (completed operations newest-first bounded), `Tests/UI/test_library_notes_w4_sync_roots.py` (failed row offers the control it names). Sibling pins asserting the old copy were updated to the new strings. Guide `Docs/User_Guide/library/notes.md` gained the failed-check paragraph, the Receipts paragraph and a verification stamp.
+<!-- SECTION:NOTES:END -->
+
+## Fix round 1 (review 2026-09-14)
+
+Four of the five review Importants land here; the fifth is 32545's.
+
+- **Duplicate dict keys (finding 1).** Three entries added to `_CHECK_REFUSAL_COPY` were already defined above it, and Python keeps the last literal -- `root_lease_unavailable` lost "Close any other Chatbook window using it" and started pointing at a Reconnect that cannot help. Originals restored; the pin asserts the SOURCE via an `ast` scan that fails on any repeated constant key in the module, because the dict object cannot show a duplicate that is already gone.
+- **The overlay overwrote `status` (finding 2).** The canvas reads `status` for `check_blocked` and Pause suppression, so an offline root whose Check was lease-refused came back with an enabled Check and a Pause. The row now carries `failed_action` beside a truthful `status`; only the labels are overlaid, and the canvas prefers `failed_action` for the button set. Pinned through the controller with the real `NotesSyncRootRefused("root_lease_unavailable", reason_code="root_offline")`.
+- **A paused root blanked the Receipts section (finding 3).** `write_receipts` reached `_admit_task`, which `pause_root` closes. Fixed at the cause -- receipts are a read, so `_read_binding_labels` takes the `_register_task` path while still requiring cutover admission -- plus the per-root guard the review asked for. Task 2's `binding_labels` seam is untouched. Pinned on the real runtime.
+- **The overlay outlived its route (finding 4).** `resolve_cleanup` and `apply_reviewed` success now clear it; the pin is parametrised over all four routes. The live re-walk found the inverse: an accepted Resume cleared the row but left the failure sentence as the status line, so a cleared refusal now restates the row's own labels.
+
+Live (235x52, same profile + vault): `roots-30-paused-root-receipts-survive`, `roots-31-paused-check-failed-row`, `roots-32-resume-clears-overlay`. The offline case is pinned, not walked -- a missing folder does not make the runtime report `offline`; that needs a second process holding the lease.
+
+Cross-group check (coordinator's file-notes finding): every user-visible string this round adds, removes or rewords was grepped against the whole `Tests/` tree, and the FAILED-name SET was compared over full files against a detached `origin/dev`. That found one branch-red/dev-green name -- `test_import_back_retains_canvas_and_shows_truthful_lasting_availability`, which asserted `"unavailable" in status_line.casefold()`, a proxy any rewording breaks silently. Tightened to the exact sentence.
 <!-- SECTION:NOTES:END -->
