@@ -28,6 +28,9 @@ from Tests.UI.test_library_shell import (
 )
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
+from tldw_chatbook.UI.Screens.library_screen import (
+    _LIBRARY_NOTE_EDITOR_ENTER_LABELS,
+)
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_notes_canvas import render_preview_source
 
@@ -679,3 +682,35 @@ async def test_a_stuck_pending_callback_does_not_suppress_later_defaults():
     host.queue_after_recompose(lambda: ran.append("explicit"))
     await host.recompose()
     assert ran == ["explicit"], ran
+
+
+@pytest.mark.asyncio
+async def test_no_list_view_control_borrows_an_editor_enter_label():
+    """Review Minor 6: the navigator tier falls THROUGH to the editor table.
+
+    ``_library_focus_enter_label`` consults
+    ``_LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS`` first and then the editor's
+    table, so a list-view widget that ever took an id from the editor's
+    table would start advertising an editor action from the list. True
+    today by inspection; pinned here so it stays true by test.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+
+        editor_ids = set(_LIBRARY_NOTE_EDITOR_ENTER_LABELS)
+        borrowed = {
+            widget.id
+            for widget in screen.query("#library-notes-canvas *")
+            if widget.id and widget.focusable and widget.id in editor_ids
+        }
+        assert not borrowed, f"list-view controls borrowing an editor label: {borrowed}"
+
+        for selector in ("#library-notes-filter", ".library-notes-row"):
+            screen.query(selector).first().focus()
+            await pilot.pause()
+            assert _chips(screen).get("enter") is None, (
+                f"{selector} advertises an Enter action the list does not have"
+            )

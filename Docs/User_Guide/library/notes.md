@@ -1744,11 +1744,15 @@ state, whose Check is disabled for its own reason.))*
 100x30, captures under `wave4-caps/editor/`). **task-32537:** with Preview
 open, Tab across ‹ Notes, Edit, Preview, Info, Save and Use in Console adds
 "enter back to list" / "enter edit note" / "enter preview note" / "enter show
-info" / "enter save note" / "enter use in Console" beside "pgup/pgdn scroll",
-at both sizes (`editor-10-32537-preview-tab6-use-in-console-chip-235x52`,
-`editor-10-32537-preview-chips-100x30`) — before this the footer stayed frozen
-on "pgup/pgdn scroll | esc back to notes" through all six
-(`editor-00-32537-preview-tab6-footer-frozen-235x52`). Escape from Preview
+info" / "enter save note" / "enter use in Console" beside "pgup/pgdn scroll".
+The saved captures are the LAST stop of that walk at each size — "enter use in
+Console" beside "pgup/pgdn scroll | esc back to notes" at 235x52
+(`editor-10-32537-preview-tab6-use-in-console-chip-235x52`) and beside the
+compact "pgup/pgdn scroll | esc notes" at 100x30
+(`editor-10-32537-preview-chips-100x30`); all six stops are pinned by
+`Tests/UI/test_library_notes_w4_editor.py::test_preview_tier_names_every_tab_stop`.
+Before this the footer stayed frozen on "pgup/pgdn scroll | esc back to notes"
+through all six (`editor-00-32537-preview-tab6-footer-frozen-235x52`). Escape from Preview
 goes to the LIST, which the "Escape" row already described, so no correction
 was needed there. **task-32539:** after a confirmed delete focus lands on the
 receipt's ┃ Undo ┃ and the footer reads "enter undo delete"
