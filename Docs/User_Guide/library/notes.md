@@ -612,7 +612,15 @@ legacy candidates use **Review migration**. **Pause** and **Resume** control an
 active root. **Resume** re-activates the root and runs the same check as
 **Check changes**: a root with nothing changed returns to "✓ Up to date · Next:
 Check changes", and edits made while it was paused surface as "◌ Changes
-available" or "⚠ Needs attention · Next: Review changes" (task-32519). (Was
+available" or "⚠ Needs attention · Next: Review changes" (task-32519). A check
+the app cannot run says so on the row itself: the row flips to "⚠ Needs
+attention · Check failed — <reason> · Next: <action>" and offers that action's
+control — Check changes on a paused root reads "Check failed — folder is
+paused · Next: Resume" and puts **Resume** first. The reason is never the
+exception text; where the cause cannot be named, the row states its category.
+The next action you run on that root clears the failure (task-32534). (Was
+"Manual check failed. Review root status, then try again." beside a row still
+reading "✓ Up to date" — superseded by task-32534 below.) (Was
 "though today **Resume** does not bring a paused root back at all, whether or
 not anything changed while it was paused: its row reads '✕ Failed · Next:
 Review changes', **Check changes** answers 'Manual check failed', and
@@ -623,8 +631,22 @@ the restart never syncs — so pause only if you can live with the root staying
 paused; nothing in this release resumes it" — fixed by task-32519 below. Before
 that it was "so pause only when you can live with a restart" — superseded by
 task-32271 below: the restart was asserted, then walked.)
-**Retarget** and **Disconnect** remain visibly disabled with an
-unavailable-in-this-release reason; no files or notes change.
+**Retarget** and **Disconnect** carry their reason in the control's own label
+— "○ Retarget unavailable — not in this release" — with the same line repeated
+under the list; no files or notes change (task-32545). (Was a bare grey "○"
+whose reason only appeared in a tooltip — superseded by task-32545 below.)
+
+**Receipts**, under the root list, is where the writes lasting sync performs
+on its own show up: the newest 20 across every listed root, newest first, as
+"when · what happened · file · note" — "2026-09-14 07:34 · Wrote note to file ·
+People/Sam.md · Sam" for a note you edited in Chatbook, "Updated note from
+file" for a file you edited on disk (task-32534). Before this a completed
+write left no trace anywhere in the app.
+
+Tab moves through the root controls; the footer names the one you are on
+("enter check changes", "enter pause") instead of a generic "run action", and
+disabled controls keep the generic chip because Enter does nothing there
+(task-32545).
 
 ### Import once
 
@@ -856,7 +878,9 @@ stayed as text and are not counted.
    and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead. **Manage sync folders** appears in the notes toolbar once
-   a root is active. Choosing **Back** returns to a Notes list that already
+   a root is active. The receipt reads "N applied · listed under Receipts" and
+   names where to see them (task-32545; was "N applied · durable receipt
+   recorded"). Choosing **Back** returns to a Notes list that already
    counts the synced notes and shows them under a **⇄ Sync managed** folder
    named after the display name — no restart needed (task-32518). (Was "the
    synced notes and their **⇄ Sync managed** folder are in the database as soon
@@ -1461,3 +1485,26 @@ second 5-file root at 100x30 → "Notes (75)" and "▸ t13 second ⇄ Sync manag
 and **Apply reviewed** now refresh the list through the same path an import
 does; before this the list kept its old count and folder rows until
 restart.)*
+
+*Verified against fix/library-notes-w4-sync-roots — 2026-09-14 (task-32534,
+task-32545, at 235x52 and 100x30, scratch profile + a 60-file git vault under
+`$HOME/.cache/tldw-crit`): **Activate reviewed root** → "3 applied · listed
+under Receipts" (`wave4-caps/sync-roots/roots-18-second-root-activated`); the
+setup review reads "60 safe · 0 need attention · 0 skipped · 0 folder moves"
+and its scroll cue "More below — scroll." (`roots-21-review-folder-moves`,
+`roots-20-setup-scroll-cue`). Editing the synced note "Sam" in Chatbook and
+then appending to `Daily/2026-09-06.md` on disk leaves two receipt rows —
+"Wrote note to file · People/Sam.md · Sam" and "Updated note from file ·
+Daily/2026-09-06.md · 2026-09-06" — and the note reaches version 2 with the
+disk text (`roots-11-disk-edit-review`, `roots-12-note-version`). A disk
+append followed immediately by **Check changes** now also lands in the note
+(`roots-14-race-check-applied`): the manual pass used to consume the watcher's
+change baseline, so the automatic pass that applies the edit never ran.
+**Check changes** on a paused root reads "⚠ Needs attention · Check failed —
+folder is paused · Next: Resume" with **Resume** offered first
+(`roots-13-failed-row`; `roots-13-failed-row-before-reasoncode-fix` is the same
+walk before the reason code was classified), and the log records only
+`reason=` / `error_type=` / `root_id=`. **Retarget** and **Disconnect** state
+their reason at the control, and Tab makes the footer read "enter check
+changes" / "enter pause" at both sizes (`roots-15-focus-check-footer`,
+`roots-16-roots-100x30`, `roots-17-focus-100x30`).)*

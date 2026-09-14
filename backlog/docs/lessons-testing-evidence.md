@@ -13659,3 +13659,24 @@ which service method the current code calls and whether the fake has it —
 contract copy; when production moves to a new seam, the fake keeps passing
 whatever it still implements. And treat a production `if not callable(...):
 return` as a place where a missing seam becomes invisible, not as a safety net.
+
+## A pin that CONSTRUCTS the state it asserts proves the renderer, never the producer (task-32545, 2026-09-14)
+
+**task-32545, 2026-09-14.** `test_sync_copy_uses_no_engineering_terms` rendered
+the lasting-sync receipt phase from a hand-built snapshot
+(`replace(base, phase="receipt", receipt_line="60 applied · listed under
+Receipts")`) and asserted no engineering terms were painted. It passed. The
+live walk's very first activation then printed "60 applied · durable receipt
+recorded": the copy had been fixed at `apply_reviewed`'s site and missed at
+`activate_root`'s, and the test could never have caught it, because the test
+supplied the string it was checking. Two sibling defects surfaced the same way
+and only live — a row-reason table whose keys a filter upstream could never
+return, and a button set keyed on a status the fix itself rewrites.
+
+**What to do.** When a fix changes a string or a state a PRODUCER computes,
+at least one pin must drive the producer's route (here: `await
+controller.activate_root(...)`, then assert `snapshot.receipt_line`), not
+construct the snapshot. A canvas-level render pin is still worth having for
+layout, but it is evidence about the widget only. Corollary from the same
+task: `git grep` the exact old string across `tldw_chatbook/` after the edit —
+two call sites producing the same line is the normal case, not the odd one.
