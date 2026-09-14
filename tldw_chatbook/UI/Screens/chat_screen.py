@@ -2333,7 +2333,7 @@ class ChatScreen(BaseAppScreen):
             next_sibling = siblings[siblings.index(current) + 1]
         except (IndexError, ValueError):
             return
-        replacement.styles.width = current.styles.width
+        replacement.set_styles(width=current.styles.width)
         replacement.styles.min_width = current.styles.min_width
         replacement.styles.min_height = current.styles.min_height
         await current.remove()
@@ -12612,8 +12612,8 @@ class ChatScreen(BaseAppScreen):
                 # (2026-08-29 UX audit). Stay mounted so the id keeps
                 # resolving, but paint nothing.
                 blank = Static("", id="console-character-avatar-empty")
-                blank.styles.width = 0
-                blank.styles.height = 0
+                blank.set_styles(width=0)
+                blank.set_styles(height=0)
                 blank.styles.display = "none"
                 return blank
             # width auto, not the Static default 100%: the holder is
@@ -12621,12 +12621,12 @@ class ChatScreen(BaseAppScreen):
             # an auto container resolves to 0x0 under Textual 8.x -- the
             # placeholder would mount but paint nothing (task-3793).
             placeholder = Static("no avatar", id="console-character-avatar-empty")
-            placeholder.styles.width = "auto"
+            placeholder.set_styles(width="auto")
             return placeholder
         if box == (0, 0):
             hidden = Static("", id="console-character-avatar-image")
-            hidden.styles.width = 0
-            hidden.styles.height = 0
+            hidden.set_styles(width=0)
+            hidden.set_styles(height=0)
             hidden.styles.display = "none"
             return hidden
         resolved_box = box or character_avatar_box(
@@ -12656,8 +12656,8 @@ class ChatScreen(BaseAppScreen):
                     box_cols,
                     box_lines,
                 )
-                widget.styles.width = w
-                widget.styles.height = h
+                widget.set_styles(width=w)
+                widget.set_styles(height=h)
                 return widget
             except Exception:
                 logger.opt(exception=True).debug("avatar: graphics mount failed")
@@ -12693,17 +12693,17 @@ class ChatScreen(BaseAppScreen):
             # which is sized for the box anyway.
             grid_size = explicit_cell_size(pixels)
             if grid_size is not None:
-                widget.styles.width, widget.styles.height = grid_size
+                widget.set_styles(width=grid_size[0], height=grid_size[1])
             else:
-                widget.styles.width = box_cols
-                widget.styles.height = box_lines
+                widget.set_styles(width=box_cols)
+                widget.set_styles(height=box_lines)
             widget.styles.max_width = box_cols
             widget.styles.max_height = box_lines
             return widget
         except Exception:
             logger.opt(exception=True).debug("avatar: pixels build failed")
             placeholder = Static("no avatar", id="console-character-avatar-empty")
-            placeholder.styles.width = "auto"
+            placeholder.set_styles(width="auto")
             return placeholder
 
     def _console_messages_from_conversation_tree(
@@ -14782,7 +14782,7 @@ class ChatScreen(BaseAppScreen):
             id=card_state.container_id,
             classes=card_state.container_classes,
         )
-        container.styles.height = "auto"
+        container.set_styles(height="auto")
         container.styles.min_height = 0
         return container
 
@@ -14795,7 +14795,7 @@ class ChatScreen(BaseAppScreen):
             markup=False,
         )
         widget.styles.display = "none"
-        widget.styles.height = 0
+        widget.set_styles(height=0)
         widget.styles.min_height = 0
         widget.styles.max_height = 0
         return widget
@@ -14806,7 +14806,7 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleControlBar:
         """Keep the legacy Console control seam mounted without layout cost."""
         widget.styles.display = "none"
-        widget.styles.height = 0
+        widget.set_styles(height=0)
         widget.styles.min_height = 0
         widget.styles.max_height = 0
         return widget
@@ -14814,7 +14814,7 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _compact_console_workbench_widget(widget: Any, height: int = 1) -> Any:
         """Keep Console Workbench primitives visible without shrinking the grid."""
-        widget.styles.height = height
+        widget.set_styles(height=height)
         widget.styles.min_height = height
         widget.styles.max_height = height
         return widget
@@ -14823,7 +14823,7 @@ class ChatScreen(BaseAppScreen):
     def _hidden_console_workbench_widget(widget: Any) -> Any:
         """Keep Console Workbench compatibility seams mounted without layout cost."""
         widget.styles.display = "none"
-        widget.styles.height = 0
+        widget.set_styles(height=0)
         widget.styles.min_height = 0
         widget.styles.max_height = 0
         return widget
@@ -15076,12 +15076,12 @@ class ChatScreen(BaseAppScreen):
         if should_show:
             row_count = copy.count("\n") + 1
             widget.styles.display = "block"
-            widget.styles.height = row_count
+            widget.set_styles(height=row_count)
             widget.styles.min_height = row_count
             widget.styles.max_height = row_count
         else:
             widget.styles.display = "none"
-            widget.styles.height = 0
+            widget.set_styles(height=0)
             widget.styles.min_height = 0
             widget.styles.max_height = 0
         widget._console_copy_block_applied = cache_value
@@ -15550,7 +15550,7 @@ class ChatScreen(BaseAppScreen):
             id="console-library-search-region",
             classes="console-inspector-context-section",
         )
-        container.styles.height = "auto"
+        container.set_styles(height="auto")
         container.styles.min_height = 0
         return container
 
@@ -15600,7 +15600,7 @@ class ChatScreen(BaseAppScreen):
             id=readiness.container_id,
             classes=readiness.container_classes,
         )
-        container.styles.height = "auto"
+        container.set_styles(height="auto")
         container.styles.min_height = 0
         return container
 
@@ -16050,7 +16050,7 @@ class ChatScreen(BaseAppScreen):
                 left_handle_width = (
                     ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 13
                 )
-                left_handle.styles.width = left_handle_width
+                left_handle.set_styles(width=left_handle_width)
                 left_handle.styles.min_width = left_handle_width
                 left_handle.styles.max_width = left_handle_width
                 if rail_state.left_open or rail_state.single_pane:
@@ -16199,7 +16199,7 @@ class ChatScreen(BaseAppScreen):
                     default_durability_state=(self._console_default_durability_state()),
                 )
                 left_rail.can_focus = True
-                left_rail.styles.width = "3fr"
+                left_rail.set_styles(width="3fr")
                 # TASK-19639 (formerly TASK-18913) compact contract: at exactly 100 columns the
                 # workspace grid has all 100 application columns. Default
                 # horizontal-label geometry resolves as Context 30 + main
@@ -16221,7 +16221,7 @@ class ChatScreen(BaseAppScreen):
                 # sizing stays here because it describes this pane among its
                 # rail siblings (3fr / 13fr / 4fr).
                 main_column = self._build_console_center()
-                main_column.styles.width = "13fr"
+                main_column.set_styles(width="13fr")
                 # TASK-2154.1 (LY-09): below 84 the handles hide and the main
                 # minimum is waived. The default layout is transcript-only;
                 # budget-eligible explicit rails may still render from their
@@ -16310,7 +16310,7 @@ class ChatScreen(BaseAppScreen):
                     agent_fleet_section_state=agent_fleet_section_state,
                 )
                 right_rail.can_focus = True
-                right_rail.styles.width = "4fr"
+                right_rail.set_styles(width="4fr")
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
@@ -16328,7 +16328,7 @@ class ChatScreen(BaseAppScreen):
                 right_handle_width = (
                     ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 11
                 )
-                right_handle.styles.width = right_handle_width
+                right_handle.set_styles(width=right_handle_width)
                 right_handle.styles.min_width = right_handle_width
                 right_handle.styles.max_width = right_handle_width
                 if rail_state.right_open or rail_state.single_pane:

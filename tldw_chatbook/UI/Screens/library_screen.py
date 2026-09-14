@@ -5615,7 +5615,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_emergency_restore_receipt = None
             if bar is not None:
                 bar.display = False
-            canvas.styles.width = "13fr"
+            canvas.set_styles(width="13fr")
             canvas.styles.min_width = 40
             if receipt is not None:
                 self.call_after_refresh(
@@ -5640,7 +5640,7 @@ class LibraryScreen(BaseAppScreen):
             rail_handle.display = False
         rail.display = not canvas_only
         canvas.display = canvas_only
-        canvas.styles.width = "1fr"
+        canvas.set_styles(width="1fr")
         canvas.styles.min_width = 0
         if bar is not None:
             self._sync_library_emergency_return(bar)
@@ -14362,7 +14362,7 @@ class LibraryScreen(BaseAppScreen):
         # header) renders immediately after the truncated content, reading
         # as a visual collision. Hug the panel's real content height instead
         # so nothing below it is squeezed or overlapped.
-        depth_panel.styles.height = "auto"
+        depth_panel.set_styles(height="auto")
         widgets: list[Any] = [depth_panel]
         widgets.extend(
             self._workspace_action_widgets(
@@ -14489,7 +14489,7 @@ class LibraryScreen(BaseAppScreen):
         shell_grid = Horizontal(
             id="library-shell-grid", classes="ds-panel destination-workbench"
         )
-        shell_grid.styles.height = "1fr"
+        shell_grid.set_styles(height="1fr")
         shell_grid.styles.min_height = 12
         shell_grid.set_class(self._notes_state.compact, "library-notes-compact")
         self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
@@ -14866,7 +14866,7 @@ class LibraryScreen(BaseAppScreen):
             return
         with shell_grid:
             rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
-            rail_handle.styles.height = "100%"
+            rail_handle.set_styles(height="100%")
             rail_handle.display = (
                 self._library_rail_collapsed and not single_notes_stage
             )
@@ -14883,7 +14883,7 @@ class LibraryScreen(BaseAppScreen):
                 id="library-rail",
                 classes="destination-workbench-pane",
             )
-            rail.styles.height = "100%"
+            rail.set_styles(height="100%")
             rail.display = (
                 not single_notes_stage or self._notes_state.stage == "rail"
             ) and not (self._library_rail_collapsed and not single_notes_stage)
@@ -14891,9 +14891,9 @@ class LibraryScreen(BaseAppScreen):
             canvas_host = Vertical(
                 id="library-canvas", classes="destination-workbench-pane"
             )
-            canvas_host.styles.width = "13fr"
+            canvas_host.set_styles(width="13fr")
             canvas_host.styles.min_width = 40
-            canvas_host.styles.height = "100%"
+            canvas_host.set_styles(height="100%")
             canvas_host.set_class(self._notes_state.compact, "library-notes-compact")
             canvas_host.display = (
                 not single_notes_stage or self._notes_state.stage == "notes"
@@ -14901,7 +14901,7 @@ class LibraryScreen(BaseAppScreen):
             emergency_return = LibraryEmergencyReturn(id="library-emergency-return")
             emergency_return.display = False
             route_content = Vertical(id="library-canvas-route-content")
-            route_content.styles.height = "1fr"
+            route_content.set_styles(height="1fr")
             route_content.styles.min_height = 0
             with canvas_host:
                 yield emergency_return

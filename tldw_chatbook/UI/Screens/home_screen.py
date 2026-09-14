@@ -705,7 +705,7 @@ class HomeScreen(BaseAppScreen):
         triage_grid = Horizontal(
             id="home-triage-grid", classes="ds-panel destination-workbench"
         )
-        triage_grid.styles.height = "1fr"
+        triage_grid.set_styles(height="1fr")
         triage_grid.styles.min_height = 12
         with triage_grid:
             rail = HomeRail(
@@ -714,7 +714,7 @@ class HomeScreen(BaseAppScreen):
                 id="home-rail",
                 classes="destination-workbench-pane",
             )
-            rail.styles.height = "100%"
+            rail.set_styles(height="100%")
             yield rail
             canvas = HomeCanvas(
                 triage.canvas,
@@ -722,7 +722,7 @@ class HomeScreen(BaseAppScreen):
                 id="home-canvas",
                 classes="destination-workbench-pane",
             )
-            canvas.styles.height = "100%"
+            canvas.set_styles(height="100%")
             yield canvas
 
     def _home_action_button(

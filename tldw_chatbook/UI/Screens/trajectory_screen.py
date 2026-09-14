@@ -492,7 +492,7 @@ class TrajectoryScreen(ModalScreen[None]):
             timeline = self.query_one("#trajectory-timeline", TrajectoryTimeline)
         except Exception:  # noqa: BLE001 - resize can precede composition
             return
-        timeline.styles.height = 4 if self.size.height <= 18 else 6
+        timeline.set_styles(height=4 if self.size.height <= 18 else 6)
 
     @staticmethod
     def _tier_for_width(width: int) -> str:
@@ -1379,7 +1379,7 @@ class TrajectoryScreen(ModalScreen[None]):
         text = "\n".join(lines)
         try:
             hints = self.query_one("#trajectory-hints", Static)
-            hints.styles.height = len(lines)
+            hints.set_styles(height=len(lines))
             hints.update(text)
         except Exception:  # noqa: BLE001 - pre-mount refresh
             pass

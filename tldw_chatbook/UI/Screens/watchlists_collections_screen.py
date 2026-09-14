@@ -2832,7 +2832,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Consume only the remaining height so the fixed legend/pager
             # stay inside the permanent Feed Items column at every terminal
             # height; `100%` here would place that chrome below the viewport.
-            items_pane.styles.height = "1fr"
+            items_pane.set_styles(height="1fr")
             items_pane.styles.min_height = 0
             items_pane.set_reactive(ArticleListPane.items, self._loaded_items)
             # Seed the filter, the search box and the selection too
