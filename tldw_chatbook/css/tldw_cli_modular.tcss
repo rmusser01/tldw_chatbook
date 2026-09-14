@@ -242,6 +242,9 @@ $ds-size-21: 21;
 $ds-size-22: 22;
 $ds-size-23: 23;
 $ds-size-24: 24;
+/* task 11 (ADR-161 §3.10): 25/35 join the size scale -- cross-sheet
+   recurring geometry (chat/llm/tools sidebars, embeddings/new-ingest). */
+$ds-size-25: 25;
 $ds-size-26: 26;
 $ds-size-28: 28;
 $ds-size-29: 29;
@@ -249,6 +252,7 @@ $ds-size-30: 30;
 $ds-size-31: 31;
 $ds-size-32: 32;
 $ds-size-34: 34;
+$ds-size-35: 35;
 $ds-size-36: 36;
 /* task 11 (ADR-161 §3.10): 38/50 join the size scale -- cross-sheet
    recurring geometry at migration time (lab/research caps, embeddings/
@@ -283,6 +287,9 @@ $ds-percent-34: 34%;
 $ds-percent-30: 30%;
 $ds-percent-40: 40%;
 $ds-percent-42: 42%;
+/* task 11 (ADR-161 §3.10): 45% joins the scale -- cross-sheet recurring
+   fill (sidebars/settings-splash/conversations/new-ingest). */
+$ds-percent-45: 45%;
 $ds-percent-75: 75%;
 /* task 11 (ADR-161 §3.10): 80% joins the scale -- cross-sheet recurring fill
    (wizards progress/summary, widgets, splash, watchlists per the spread
@@ -321,6 +328,15 @@ $ds-agentic-mcp-compact-canvas-share: 7fr;
 /* task 11 (ADR-161 §3.10): the Research Workspace chat pane's minimum
    columns in its two fr-sharing layout modes (single consumer). */
 $ds-research-chat-pane-floor: 58;
+/* task 11 (ADR-161 §3.10): New Ingest wizard single-consumer geometry: the
+   two/three-pane layout shares and the card-description leading. */
+$ds-new-ingest-media-panel-share: 65%;
+$ds-new-ingest-activity-panel-share: 35%;
+$ds-new-ingest-file-panel-share: 55%;
+$ds-new-ingest-card-desc-leading: 1.2;
+/* Dead web-CSS residue in the same sheet (::-webkit-scrollbar) -- tokenized
+   for the zero-literal ratchet, not an endorsement. */
+$ds-new-ingest-scrollbar-gutter: 6px;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
  * single grandfathered hex, tokenized on arrival (spec 3.5: it does not

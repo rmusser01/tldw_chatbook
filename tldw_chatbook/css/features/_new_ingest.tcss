@@ -3,6 +3,11 @@
  * ======================================== 
  * Modern, card-based ingest UI with professional styling
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales + named
+   $ds-new-ingest-* single-consumer geometry), transcribed value-identically
+   from the raw literals; comments stay load-bearing. */
+
 
 /* ================================================
  * NEW INGEST WINDOW - Main Hub
@@ -11,31 +16,31 @@
 /* Main title and header */
 .main-title {
     dock: top;
-    height: 4;
+    height: $ds-size-4;
     text-align: center;
     text-style: bold;
     color: $primary;
     background: linear-gradient(90deg, $surface, $surface-lighten-1, $surface);
     border-bottom: thick $primary;
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .main-subtitle {
     dock: top;  
-    height: 3;
+    height: $ds-size-3;
     text-align: center;
     color: $text-muted;
     background: $surface-lighten-1;
-    padding: 1 2;
-    margin-bottom: 1;
+    padding: $ds-space-1 $ds-space-2;
+    margin-bottom: $ds-space-1;
     border-bottom: solid $surface-lighten-3;
 }
 
 /* Main content layout */
 .main-content {
-    height: 1fr;
-    width: 100%;
+    height: $ds-height-fill;
+    width: $ds-width-full;
 }
 
 /* ================================================
@@ -43,9 +48,9 @@
  * ================================================ */
 
 .media-selection-panel {
-    width: 65%;
-    height: 100%;
-    padding: 2;
+    width: $ds-new-ingest-media-panel-share;
+    height: $ds-height-full;
+    padding: $ds-space-2;
     background: $surface;
     border-right: thick $primary;
 }
@@ -53,9 +58,9 @@
 .panel-title {
     text-style: bold;
     color: $primary;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     border-bottom: thick $primary;
-    padding-bottom: 1;
+    padding-bottom: $ds-space-1;
     background: linear-gradient(90deg, transparent, $primary 5%, transparent 95%, transparent);
     background-size: 100% 2px;
     background-position: bottom;
@@ -76,10 +81,10 @@
  * ================================================ */
 
 .media-card {
-    height: 10;
+    height: $ds-size-10;
     background: linear-gradient(135deg, $surface, $surface-lighten-1);
     border: round $border;
-    padding: 2;
+    padding: $ds-space-2;
     cursor: pointer;
     transition: all 0.3s ease;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -99,20 +104,20 @@
 
 /* Card header with icon and title */
 .card-header {
-    height: 4;
+    height: $ds-size-4;
     align: left middle;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .card-icon {
-    width: 5;
+    width: $ds-size-5;
     text-align: center;
     text-style: bold;
     color: $primary;
     background: $surface-lighten-2;
     border: round $surface-lighten-3;
-    padding: 1;
-    margin-right: 1;
+    padding: $ds-space-1;
+    margin-right: $ds-space-1;
 }
 
 .media-card:hover .card-icon {
@@ -122,7 +127,7 @@
 }
 
 .card-title {
-    width: 1fr;
+    width: $ds-width-fill;
     text-style: bold;
     color: $text;
     font-size: 14px;
@@ -131,15 +136,15 @@
 /* Card description */
 .card-description {
     color: $text-muted;
-    height: 3;
-    margin-bottom: 2;
-    line-height: 1.2;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-2;
+    line-height: $ds-new-ingest-card-desc-leading;
 }
 
 /* Card action button */
 .card-button {
-    height: 3;
-    width: 100%;
+    height: $ds-size-3;
+    width: $ds-width-full;
     background: $primary;
     color: $text;
     border: none;
@@ -158,9 +163,9 @@
  * ================================================ */
 
 .activity-panel {
-    width: 35%;
-    height: 100%;
-    padding: 2;
+    width: $ds-new-ingest-activity-panel-share;
+    height: $ds-height-full;
+    padding: $ds-space-2;
     background: $surface-lighten-1;
 }
 
@@ -169,12 +174,12 @@
  * ================================================ */
 
 .drop-zone {
-    height: 14;
+    height: $ds-size-14;
     background: linear-gradient(135deg, $surface, $surface-lighten-2);
     border: thick dashed $primary;
     text-align: center;
-    padding: 3;
-    margin-bottom: 2;
+    padding: $ds-space-3;
+    margin-bottom: $ds-space-2;
     /* border-radius: 12px; - not supported in TCSS */
     border: round $surface-lighten-1;
     transition: all 0.3s ease;
@@ -187,8 +192,8 @@
     position: absolute;
     top: 0;
     left: -100%;
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
     background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
     transition: left 0.5s ease;
 }
@@ -207,7 +212,7 @@
 .drop-icon {
     color: $primary;
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     font-size: 24px;
 }
 
@@ -220,7 +225,7 @@
 .drop-message {
     color: $text;
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     font-size: 16px;
 }
 
@@ -229,7 +234,7 @@
     text-style: bold;
     background: $surface;
     border: round $accent;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     display: inline-block;
 }
 
@@ -238,19 +243,19 @@
  * ================================================ */
 
 .activity-feed {
-    height: 1fr;
+    height: $ds-height-fill;
     background: linear-gradient(180deg, $surface, $surface-lighten-1);
     border: round $primary;
-    padding: 2;
+    padding: $ds-space-2;
     box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 .feed-title {
     text-style: bold;
     color: $primary;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     border-bottom: thick $primary;
-    padding-bottom: 1;
+    padding-bottom: $ds-space-1;
     background: linear-gradient(90deg, transparent, $primary 10%, transparent 90%, transparent);
     background-size: 100% 1px;
     background-position: bottom;
@@ -258,18 +263,18 @@
 }
 
 .activity-list {
-    height: 1fr;
+    height: $ds-height-fill;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: $primary $surface;
 }
 
 .activity-item {
-    height: 5;
-    margin-bottom: 2;
+    height: $ds-size-5;
+    margin-bottom: $ds-space-2;
     background: linear-gradient(90deg, $surface-lighten-1, $surface);
     border: round $surface-lighten-2;
-    padding: 1;
+    padding: $ds-space-1;
     transition: all 0.2s ease;
     border-left: thick $primary;
 }
@@ -281,21 +286,21 @@
 }
 
 .activity-icon {
-    width: 4;
+    width: $ds-size-4;
     text-align: center;
     color: $primary;
     text-style: bold;
 }
 
 .activity-details {
-    width: 1fr;
-    padding-left: 1;
+    width: $ds-width-fill;
+    padding-left: $ds-space-1;
 }
 
 .activity-title {
     text-style: bold;
     color: $text;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .activity-time {
@@ -303,19 +308,19 @@
 }
 
 .activity-progress {
-    width: 24;
-    height: 2;
-    margin-left: 1;
+    width: $ds-size-24;
+    height: $ds-size-2;
+    margin-left: $ds-space-1;
 }
 
 .empty-message {
     text-align: center;
     color: $text-muted;
-    padding: 4;
+    padding: $ds-size-4;
     font-style: italic;
     background: $surface-darken-1;
     border: round $surface-darken-2;
-    margin: 2;
+    margin: $ds-space-2;
 }
 
 /* ================================================
@@ -324,18 +329,18 @@
 
 .quick-actions {
     dock: bottom;
-    height: 6;
+    height: $ds-size-6;
     background: linear-gradient(180deg, $surface-lighten-1, $surface);
     border-top: thick $primary;
-    padding: 2;
+    padding: $ds-space-2;
     align: center middle;
     box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .quick-actions Button {
-    margin-right: 3;
-    height: 4;
-    padding: 0 2;
+    margin-right: $ds-space-3;
+    height: $ds-size-4;
+    padding: $ds-space-0 $ds-space-2;
     background: $primary;
     color: $text;
     border: round $primary;
@@ -355,21 +360,21 @@
  * ================================================ */
 
 .smart-drop-zone {
-    height: 100%;
-    max-height: 15;
-    width: 100%;
+    height: $ds-height-full;
+    max-height: $ds-size-15;
+    width: $ds-width-full;
     layout: vertical;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* Enhanced drop area */
 .drop-area {
-    height: 8;
+    height: $ds-size-8;
     background: linear-gradient(135deg, $surface, $surface-lighten-2);
     border: thick dashed $primary;
     text-align: center;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     /* border-radius: 8px; - not supported in TCSS */
     border: round $surface;
     position: relative;
@@ -393,25 +398,25 @@
 
 /* File list container */
 .file-list-container {
-    height: 1fr;
+    height: $ds-height-fill;
     background: linear-gradient(180deg, $surface, $surface-lighten-1);
     border: round $primary;
-    padding: 2;
+    padding: $ds-space-2;
     box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.05);
 }
 
 .list-title {
     text-style: bold;
     color: $primary;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     border-bottom: thick $primary;
-    padding-bottom: 1;
+    padding-bottom: $ds-space-1;
 }
 
 .file-list {
-    height: 1fr;
+    height: $ds-height-fill;
     overflow-y: auto;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 /* ================================================
@@ -421,8 +426,8 @@
 .file-preview-item {
     background: linear-gradient(90deg, $surface-lighten-1, $surface);
     border: round $surface-lighten-2;
-    padding: 2;
-    margin-bottom: 2;
+    padding: $ds-space-2;
+    margin-bottom: $ds-space-2;
     height: auto;
     transition: all 0.2s ease;
     border-left: thick $accent;
@@ -441,20 +446,20 @@
 }
 
 .file-icon {
-    width: 5;
+    width: $ds-size-5;
     text-align: center;
     text-style: bold;
     background: $primary;
     color: $surface;
     border: round $primary;
-    padding: 1;
-    margin-right: 1;
+    padding: $ds-space-1;
+    margin-right: $ds-space-1;
 }
 
 .file-details {
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
-    padding-left: 1;
+    padding-left: $ds-space-1;
 }
 
 .file-name {
@@ -462,7 +467,7 @@
     color: $text;
     text-overflow: ellipsis;
     overflow: hidden;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .file-metadata {
@@ -471,11 +476,11 @@
 }
 
 .remove-button {
-    width: 4;
-    height: 4;
-    min-width: 4;
+    width: $ds-size-4;
+    height: $ds-size-4;
+    min-width: $ds-size-4;
     text-align: center;
-    padding: 0;
+    padding: $ds-space-0;
     background: $error;
     color: $surface;
     border: round $error;
@@ -493,42 +498,42 @@
  * ================================================ */
 
 .processor-container {
-    height: 100%;
-    width: 100%;
-    max-height: 35;
+    height: $ds-height-full;
+    width: $ds-width-full;
+    max-height: $ds-size-35;
     overflow: hidden;
 }
 
 .inline-title {
-    height: 2;
+    height: $ds-size-2;
     text-align: center;
     text-style: bold;
     color: $primary;
     background: $surface-lighten-1;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     border-bottom: thick $primary;
 }
 
 .processor-content {
-    height: 1fr;
-    width: 100%;
-    max-height: 32;
+    height: $ds-height-fill;
+    width: $ds-width-full;
+    max-height: $ds-size-32;
 }
 
 /* File panel styling */
 .file-panel {
-    width: 55%;
-    height: 100%;
-    max-height: 30;
-    padding: 1;
+    width: $ds-new-ingest-file-panel-share;
+    height: $ds-height-full;
+    max-height: $ds-size-30;
+    padding: $ds-space-1;
     border-right: thick $primary;
     background: $surface;
     overflow-y: auto;
 }
 
 .metadata-section {
-    margin-top: 1;
-    padding: 1;
+    margin-top: $ds-space-1;
+    padding: $ds-space-1;
     background: $surface-lighten-1;
     border: round $primary;
 }
@@ -538,68 +543,68 @@
     grid-columns: auto 1fr;
     grid-rows: auto;
     grid-gutter: 1;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .metadata-grid Input {
-    height: 2;
-    width: 100%;
+    height: $ds-size-2;
+    width: $ds-width-full;
     background: $surface;
     border: solid $border;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Options panel styling */
 .options-panel {
-    width: 45%;
-    height: 100%;
-    max-height: 30;
-    padding: 1;
+    width: $ds-percent-45;
+    height: $ds-height-full;
+    max-height: $ds-size-30;
+    padding: $ds-space-1;
     background: $surface-lighten-1;
 }
 
 /* Compact styles */
 .compact-mode-toggle {
-    height: 4;
+    height: $ds-size-4;
     background: $surface;
     border: round $primary;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 .compact-label {
     text-style: bold;
     color: $primary;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .compact-mode-selector {
     layout: horizontal;
-    height: 2;
+    height: $ds-size-2;
 }
 
 .compact-mode-selector RadioButton {
-    margin-right: 2;
-    height: 2;
+    margin-right: $ds-space-2;
+    height: $ds-size-2;
 }
 
 .compact-options {
-    height: 1fr;
-    max-height: 15;
+    height: $ds-height-fill;
+    max-height: $ds-size-15;
     background: $surface;
     border: round $primary;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     overflow-y: auto;
 }
 
 .compact-process-button {
-    width: 100%;
-    height: 3;
+    width: $ds-width-full;
+    height: $ds-size-3;
     text-style: bold;
     background: linear-gradient(135deg, $primary, $accent);
     color: $surface;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .compact-process-button:hover {
@@ -612,8 +617,8 @@
 }
 
 .compact-status {
-    height: 2;
-    min-height: 2;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
 }
 
 /* ================================================
@@ -623,31 +628,31 @@
 .mode-toggle {
     background: linear-gradient(135deg, $surface, $surface-lighten-1);
     border: round $primary;
-    padding: 2;
-    margin-bottom: 2;
+    padding: $ds-space-2;
+    margin-bottom: $ds-space-2;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .mode-label {
     text-style: bold;
     color: $primary;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     text-align: center;
 }
 
 #mode-selector {
     layout: horizontal;
     height: auto;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     align: center middle;
 }
 
 #mode-selector Button {
-    margin-right: 3;
+    margin-right: $ds-space-3;
     background: $surface;
     color: $text-muted;
     border: round $border;
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     transition: all 0.2s ease;
 }
 
@@ -670,7 +675,7 @@
     text-align: center;
     background: $surface-darken-1;
     border: round $surface-darken-2;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* ================================================
@@ -680,23 +685,23 @@
 .media-options {
     background: linear-gradient(180deg, $surface, $surface-lighten-1);
     border: round $primary;
-    padding: 2;
-    margin-bottom: 2;
-    height: 1fr;
+    padding: $ds-space-2;
+    margin-bottom: $ds-space-2;
+    height: $ds-height-fill;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .options-title {
     text-style: bold;
     color: $primary;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     border-bottom: thick $primary;
-    padding-bottom: 1;
+    padding-bottom: $ds-space-1;
     text-align: center;
 }
 
 .options-content {
-    height: 1fr;
+    height: $ds-height-fill;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: $primary $surface;
@@ -706,15 +711,15 @@
 .process-section {
     background: linear-gradient(135deg, $surface, $surface-lighten-2);
     border: round $primary;
-    padding: 2;
+    padding: $ds-space-2;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .process-button {
-    width: 100%;
-    height: 5;
+    width: $ds-width-full;
+    height: $ds-size-5;
     text-style: bold;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     background: linear-gradient(135deg, $primary, $accent);
     color: $surface;
     border: none;
@@ -743,37 +748,37 @@
 
 .dashboard-header {
     dock: top;
-    height: 6;
+    height: $ds-size-6;
     background: linear-gradient(135deg, $surface, $surface-lighten-2);
     border: round $primary;
-    padding: 2;
-    margin-bottom: 2;
+    padding: $ds-space-2;
+    margin-bottom: $ds-space-2;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .dashboard-title {
     text-style: bold;
     color: $primary;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     text-align: center;
     font-size: 18px;
 }
 
 .overall-status {
-    height: 3;
+    height: $ds-size-3;
     align: left middle;
 }
 
 .overall-message {
-    width: 1fr;
+    width: $ds-width-fill;
     color: $text;
     text-style: bold;
 }
 
 .overall-progress {
-    width: 25;
-    height: 2;
-    margin: 0 2;
+    width: $ds-size-25;
+    height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-2;
     background: $surface-lighten-3;
     border: round $primary;
 }
@@ -781,9 +786,9 @@
 .jobs-title {
     text-style: bold;
     color: $primary;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
     border-bottom: thick $primary;
-    padding-bottom: 1;
+    padding-bottom: $ds-space-1;
     background: linear-gradient(90deg, transparent, $primary 10%, transparent 90%, transparent);
     background-size: 100% 2px;
     background-position: bottom;
@@ -791,7 +796,7 @@
 }
 
 .jobs-container {
-    height: 1fr;
+    height: $ds-height-fill;
     overflow-y: auto;
     scrollbar-width: thin;
 }
@@ -803,8 +808,8 @@
 .job-status-widget {
     background: linear-gradient(135deg, $surface, $surface-lighten-1);
     border: round $primary;
-    padding: 2;
-    margin-bottom: 2;
+    padding: $ds-space-2;
+    margin-bottom: $ds-space-2;
     transition: all 0.2s ease;
     border-left: thick $accent;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
@@ -817,13 +822,13 @@
 }
 
 .job-header {
-    height: 4;
+    height: $ds-size-4;
     align: left middle;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 .job-title {
-    width: 1fr;
+    width: $ds-width-fill;
     text-style: bold;
     color: $text;
     font-size: 16px;
@@ -831,12 +836,12 @@
 
 .job-status {
     width: auto;
-    margin-right: 2;
+    margin-right: $ds-space-2;
     color: $accent;
     text-style: bold;
     background: $accent 20%;
     border: round $accent;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .job-controls {
@@ -845,10 +850,10 @@
 }
 
 .control-button {
-    width: 4;
-    height: 4;
-    margin-left: 1;
-    padding: 0;
+    width: $ds-size-4;
+    height: $ds-size-4;
+    margin-left: $ds-space-1;
+    padding: $ds-space-0;
     text-align: center;
     border: round;
     text-style: bold;
@@ -876,24 +881,24 @@
 }
 
 .job-progress {
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 .job-progress-bar {
-    height: 3;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
     background: $surface-lighten-3;
     border: round $primary;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .progress-details {
-    height: 3;
+    height: $ds-size-3;
     align: left middle;
 }
 
 .progress-message {
-    width: 1fr;
+    width: $ds-width-fill;
     color: $text;
 }
 
@@ -937,21 +942,21 @@
     color: $success;
     background: $success 20%;
     border: round $success;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .error {
     color: $error;
     background: $error 20%;
     border: round $error;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .warning {
     color: $warning;
     background: $warning 20%;
     border: round $warning;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .processing {
@@ -961,7 +966,7 @@
 
 /* Scrollbar styling for webkit browsers */
 ::-webkit-scrollbar {
-    width: 6px;
+    width: $ds-new-ingest-scrollbar-gutter;
 }
 
 ::-webkit-scrollbar-track {
