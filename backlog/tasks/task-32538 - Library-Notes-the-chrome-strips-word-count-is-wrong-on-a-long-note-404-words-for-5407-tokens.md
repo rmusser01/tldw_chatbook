@@ -3,9 +3,11 @@ id: TASK-32538
 title: >-
   Library Notes: the chrome strip's word count is wrong on a long note ("404
   words" for 5,407 tokens)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-13 06:46'
+updated_date: '2026-09-13 15:23'
 labels:
   - library
   - notes
@@ -29,3 +31,12 @@ Critique #3 (dev 5fd502dbac), assessor B, persona Alex, Edit workflow on the 35 
 - [ ] #1 The chrome strip's word count equals _note_word_count of the open note's body on load and after every edit, verified on the 35 KB fixture (≈5,400)
 - [ ] #2 A regression test opens a multi-thousand-word note through the production open path and asserts the strip value is the body's count, not the length of a list-row title
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live (power profile, 235x52) and headless through the row-press path with the strip feed instrumented.
+2. Compare the strip against _note_word_count of the loaded body and against assessor B's own captures 31/33.
+3. Pin the production open path in Tests/UI/test_library_notes_w4_data_truth.py (short note then a 5,400-word note; caret move keeps the long note's count).
+4. Fix only what the reproduction proves; update the guide stamp.
+<!-- SECTION:PLAN:END -->

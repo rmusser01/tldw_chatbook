@@ -4,9 +4,11 @@ title: >-
   Library Notes: importing the same vault twice re-creates every structured
   source (notes.csv → 2 duplicate notes), and the Unchanged repeat header still
   offers "Create all on this page"
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-13 06:46'
+updated_date: '2026-09-13 15:23'
 labels:
   - library
   - notes
@@ -31,3 +33,13 @@ Critique #3 (dev 5fd502dbac), both assessors, personas Riley and Jordan, Obsidia
 - [ ] #2 The Unchanged repeat group header offers no "Create all" action
 - [ ] #3 A test imports a CSV source twice through the review and asserts the second review classifies it as an unchanged repeat
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce: import the vault twice on a fresh profile; capture notes.csv/meta.yaml/scratch.txt under New and the Unchanged-repeat Create-all button.
+2. Trace: receipts turn a row into a PriorImportObservation only when outcome_count == 1 and payload_count == 1; the planner degrades any multi-payload source to UNCERTAIN.
+3. RED tests: planner (two-row CSV twice -> UNCHANGED_REPEAT, default SKIP), receipts (multi-payload source -> one source-level observation), canvas (Unchanged-repeat header has no Create-all).
+4. Fix: source-level fingerprint derived from the per-payload digests the ledger already stores (no schema change); planner compares it when the payload counts agree, keeps UNCERTAIN on a count mismatch; canvas drops Create-all for unchanged_repeat.
+5. GREEN, live second import, guide.
+<!-- SECTION:PLAN:END -->

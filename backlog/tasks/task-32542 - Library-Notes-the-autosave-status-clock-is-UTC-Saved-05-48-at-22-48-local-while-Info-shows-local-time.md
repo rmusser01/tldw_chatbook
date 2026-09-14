@@ -3,9 +3,11 @@ id: TASK-32542
 title: >-
   Library Notes: the autosave status clock is UTC ("Saved 05:48" at 22:48 local)
   while Info shows local time
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-13 06:46'
+updated_date: '2026-09-13 15:23'
 labels:
   - library
   - notes
@@ -30,3 +32,12 @@ Critique #3 (dev 5fd502dbac), assessor A (B recorded the same string), persona J
 - [ ] #2 The status line and Info agree on the same save (same instant, same zone)
 - [ ] #3 A test pins the rendering for a non-UTC zone
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live under TZ=America/Los_Angeles: create a note, compare the status 'Saved HH:MM' with Info's 'Modified …'.
+2. RED: session test under a TZ fixture with a fixed UTC clock -> 'Saved 22:48'; pin file test that the status line and Info render the same instant in one zone.
+3. Fix: render saved_at through astimezone() (display only; the persisted modified_at is unchanged).
+4. GREEN, live capture, guide.
+<!-- SECTION:PLAN:END -->
