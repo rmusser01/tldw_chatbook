@@ -323,12 +323,28 @@ thing, so nothing on the screen relies on colour alone:
 | `●` (inside a line) | not a state — it samples a colour | a highlight's colour swatch in the Media reader |
 | `▸` / `▾` | disclosure | trailing on a section header, leading on a folder-tree node |
 | `○` | a blocked or disabled action | any greyed action, always beside its reason or tooltip |
+| `●` / `○` (in a radio group) | the one option chosen out of a set | Console's per-conversation **Library access** modal and the first-run setup wizard — the two radio groups that paint the pair |
 | `✓` (leading, in a chooser) | the active value of a chooser | choice strips, kept toggles ("mode: ✓ Search ⇄ RAG Answer") |
 | `▸ ` (leading, on a rail row) | the destination you are on | the left rail |
 | `⇄` | press to switch between the two options either side of it | mode toggles |
 
 A rail row never expands and a tree node is never a rail row, so the two
 leading `▸` uses cannot collide on one control.
+
+Radio groups are deliberately carved out of the `☐`/`☑` pair rather than
+folded into it: a radio offers exactly one choice, and painting it as a
+checkbox would promise a multi-select it does not have. In the two groups
+named above, exactly one sibling is `●` and the rest are `○` — that is what
+tells you it is a chooser — so a `○` there means "not this one", not
+"blocked". Outside a radio group, `○` keeps its blocked/disabled meaning.
+(A decision, not a law of nature: it can be revisited if radios and disabled
+controls ever end up side by side often enough to confuse.)
+
+**Not yet everywhere.** Every other radio group in the app — the Console
+capture-policy, export and share dialogs, the Chatbook wizards — still uses
+the stock control, which paints `●` on *every* option and tells the two
+states apart by colour alone. Read those by which option is highlighted, not
+by the glyph; bringing them onto the pair above is outstanding work.
 
 ### Left rail
 
@@ -988,6 +1004,13 @@ column keeps its full copy and hangs its continuation lines two cells in, so
 the blocked Handoff row's reason and next step read as one row — live at
 235x52 on a seeded profile, and pinned on the painted lines at 235x52 and
 60x24.)*
+
+*Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32464,
+controller's decision, revisitable: radios are carved out of the selection
+pair. `☐`/`☑` stays the multi-select toggle, `●`/`○` is a radio group, and a
+bare `○` outside a group keeps its blocked/disabled meaning — the legend now
+says so rather than leaving Console's Library access modal as its
+counterexample.)*
 
 *Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
 AC#2, at 235x52 on a profile stamped `starter` with an empty notes database):

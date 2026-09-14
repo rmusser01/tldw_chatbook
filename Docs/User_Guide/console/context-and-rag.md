@@ -1077,3 +1077,10 @@ for the rest.*
 Library search modal's source toggles paint ☑/☐ from the shared constants
 instead of the ✓/○ pair. The per-conversation Library access modal's radio
 buttons still use ●/○ — a separate decision, task-32464.)*
+
+*Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32464,
+controller's decision, revisitable: the per-conversation Library access
+modal keeps `●`/`○`, and the Library legend now carves radio groups out
+explicitly instead of counting them as the `☑`/`☐` selection pair. The
+glyphs come from the same shared constants as the RAG modal's toggles, so a
+future legend change cannot pass this surface by.)*

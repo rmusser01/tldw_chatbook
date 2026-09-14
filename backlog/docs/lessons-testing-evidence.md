@@ -13883,6 +13883,24 @@ especially suspicious of a report whose stated mechanism ("404 is the length
 of a title") does not survive being checked: "Markdown showcase" is 17
 characters.
 
+## Three filed sites are three instances; the shared predicate's call sites are the defect
+
+**TASK-32461, fix round 1, 2026-09-14.** The task named three seams that read
+`_flush_library_prompt_save()` and refused in silence. All three were wired,
+pinned red-first and mutation-tested, and the task passed spec review. The
+review then grepped the predicate: **8** call sites, and the one the task did
+not name (`library_inspection_admission.py:230`, the barrier every navigation
+INTO Library crosses) was both silent AND the only one a user reaches by hand
+today — it returns before the deep-link seam the branch had spent its scope
+argument on, so the newly shipped line there was correct but dormant. It sat
+five lines above a skill veto that already spoke.
+
+**What to do.** When a defect is "callers of X do not do Y", the unit of work
+is `grep -n "X()" -r` and a disposition for every hit — speaks / deliberately
+silent / unreachable-with-this-state, each with its evidence — recorded in the
+task. The filed list of sites is a sample someone took by hand, not the
+population. That sweep costs one grep and would have caught this before review.
+
 
 ## Two worktrees running the same app-booting suite at once DEADLOCK, and it reads as "slow"
 
