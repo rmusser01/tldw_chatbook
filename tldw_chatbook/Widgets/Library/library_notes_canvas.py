@@ -1736,9 +1736,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 yield from self._compose_tree_actions(
                     operation_running=list_state.operation_running
                 )
-        if notes_sort_is_blocked(
+        if not select_mode and notes_sort_is_blocked(
             tree_projection=self.tree_projection, filter_value=self.filter_value
         ):
+            # Only while the Sort control is on screen: select mode replaces
+            # the whole toolbar, and a reason for a control nobody can see is
+            # the same dishonesty in the other direction (walked live at
+            # 100x30, `layout-23-100x30-export-reason`).
             # task-32549: "○ Sort: Newest" said that sorting was off and
             # nothing about why -- the reason was on a tooltip, which does
             # not render in a TUI. On the shared `.library-disabled-reason`

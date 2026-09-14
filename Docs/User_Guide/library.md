@@ -991,3 +991,13 @@ column keeps its full copy and hangs its continuation lines two cells in, so
 the blocked Handoff row's reason and next step read as one row — live at
 235x52 on a seeded profile, and pinned on the painted lines at 235x52 and
 60x24.)*
+
+*Verified against fix/library-notes-w4-layout — 2026-09-14 (task-32546: the
+landing's "From your Library" rows marked focus with a background colour
+alone — rgb(30,30,30) to rgb(28,70,102), decoded from an ANSI capture — and
+the footer never named them. They take the house left bar now, and F6 from
+the rail search field lands on "█ Notes · Import checklist" with the footer
+reading "enter open notes" (`wave4-caps/layout/layout-15-f6-after-2`; before,
+`layout-27-f6-2`). Note for anyone re-walking this: from a cold landing, Tab
+walks the top tab bar rather than the canvas, which is why the original
+twelve-Tab capture set differed only on the nav line.)*

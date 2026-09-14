@@ -413,6 +413,10 @@ async def test_export_selected_states_its_reason_with_nothing_selected() -> None
     app = _CanvasApp(
         pane_width=pane_width,
         list_state=_select_mode_state(),
+        # A filter that WOULD block Sort, so the absence asserted below is
+        # the select-mode guard and not a vacuous query.
+        filter_value="list",
+        tree_projection=_note_selected_projection(),
         import_receipt_available=True,
     )
     async with app.run_test(size=WIDE) as pilot:
@@ -424,6 +428,9 @@ async def test_export_selected_states_its_reason_with_nothing_selected() -> None
             "Export selected unavailable — nothing selected"
         )
         assert reason.display
+        # Select mode replaces the whole toolbar, so the Sort control is not
+        # on screen and neither is its reason.
+        assert not app.query("#library-notes-sort-disabled-reason")
         assert_every_action_fits(app)
 
 

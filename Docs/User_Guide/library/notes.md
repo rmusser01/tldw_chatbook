@@ -1521,3 +1521,28 @@ value after a resize to 100x30; critique #3's own captures read "5,404 words
 thousands separator dropped in the reading. The open path is pinned rather
 than changed (`data-20-strip-short-note-441`,
 `data-21-strip-long-note-235x52`, `data-22-strip-100x30`).)*
+
+*Verified against fix/library-notes-w4-layout — 2026-09-14 (wave-4 group
+`layout`. task-32544: with a note open at 235x52 the list pane is 64 cells
+and the folder actions needed 65, so "Remove placement" was laid out at
+x=48..68 and painted "Remove pl"; any action group wider than its pane now
+wraps, and the row reads "New folder  Add to folder  Move note" above
+"Remove placement" (`wave4-caps/layout/layout-10-remove-placement-after`).
+Also at 235x52, the New note view's status line wrapped inside a 52-column
+work pane while the empty list kept ~130 columns; the view is now the task
+in hand and the line fits on one row in ~122 columns
+(`layout-11-new-note-235-after`). task-32547: at 60x24 "New" left the list
+on stage and Blank note never appeared — the create view is carried by the
+selected rail row, not by the notes view, so the resolver thought the work
+pane was empty; it now takes the stage and Escape returns
+(`layout-17-60x24-new-after`, `layout-18-60x24-escape-back`). task-32557:
+narrowing an already-merged 235-column list to 60 painted "New  Sort:
+Newest  Select  Add from   s" — the canvas re-shaped from the screen's
+contract width, which lags a resize by one sync, instead of from the width
+it was being painted at (`layout-19-resize-60-after`). task-32549: the
+three blocked controls state their reason on screen. The label spelling was
+tried first and clipped at 100x30 — "○ Sort unavailable — clear the"
+against the grip (`layout-21-100x30-sort-reason`) — so all three use the
+shared reason line instead, and the Sort one is absent in select mode where
+its control is not on screen (`layout-22`, `layout-23`, `layout-24`,
+`layout-25`, `layout-14`).)*
