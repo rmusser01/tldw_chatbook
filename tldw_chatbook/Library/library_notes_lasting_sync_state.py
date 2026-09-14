@@ -452,6 +452,13 @@ class LastingSyncRootRow:
     #: action on this root, rendered beside the status so a failure is never
     #: shown next to a stale "✓ Up to date".
     failure: str = ""
+    #: The action that failure points at, or "". It rides ALONGSIDE
+    #: ``next_action`` rather than replacing it, and ``status`` stays the
+    #: runtime's own: fix round 1 -- an earlier version rewrote ``status`` to
+    #: "needs_attention", which destroyed the canvas's ``check_blocked`` and
+    #: Pause suppression for an offline or passive root, re-enabling a control
+    #: the canvas deliberately blocks. Only the LABELS are overlaid.
+    failed_action: str = ""
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
@@ -475,6 +482,8 @@ class LastingSyncRootRow:
             raise ValueError("root labels must be bounded single-line text")
         if type(self.failure) is not str or len(self.failure) > 160 or "\n" in self.failure:
             raise ValueError("failure must be bounded single-line text")
+        if self.failed_action and self.failed_action not in _ROOT_NEXT_ACTIONS:
+            raise ValueError("unknown root failed action")
 
 
 @dataclass(frozen=True, slots=True, repr=False)

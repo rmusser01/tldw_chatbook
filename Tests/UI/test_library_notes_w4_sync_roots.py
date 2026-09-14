@@ -156,61 +156,180 @@ async def test_focused_roots_buttons_carry_the_shape_cue_and_the_footer_names_th
 
 
 async def test_sync_copy_uses_no_engineering_terms() -> None:
-    """task-32545 AC#3: roots, review, receipt and setup surfaces are user-facing."""
+    """task-32545 AC#3: every surface these terms lived on, rendered from production.
+
+    Fix round 1: this test used to build its own snapshots and supply its own
+    `receipt_line`, so four of the six terms were unreachable from it --
+    "durable receipt" and "Review root status" are controller-produced,
+    "managed placements" only renders in the `review` phase it never
+    rendered, and "cutover" needed a `validation_message` it never populated.
+    It now drives the controller to each phase and paints what production
+    produced.
+    """
+    from Tests.UI.Library_Modules.test_library_notes_sync_controller import (
+        TOKEN,
+        _ImportController,
+        _Runtime,
+    )
+    from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
+        InertLastingSyncRuntime,
+        LibraryNotesSyncController,
+    )
+
     frames: list[str] = []
+
+    def paint(snapshot, canvas: str, size: tuple[int, int]) -> str:
+        return snapshot, canvas, size
+
+    async def render(snapshot, canvas: str, size: tuple[int, int]) -> None:
+        app = _Host(snapshot, canvas=canvas)
+        async with app.run_test(size=size) as pilot:
+            await pilot.pause()
+            frames.append(" ".join(_frame(app).split()))
+
+    # 1. The inert profile: "cutover" lived in both the status line and the
+    #    setup validation message.
+    inert = LibraryNotesSyncController(
+        runtime=InertLastingSyncRuntime(), import_controller=_ImportController()
+    )
+    assert inert.choose_relationship("keep_synced") == "choose"
+    await render(inert.snapshot, "add", (100, 30))
+    inert.set_setup("display_name", "Vault")
+    inert.set_setup("folder", "/tmp/vault")
+    assert "cutover" not in inert.snapshot.setup.validation_message
+    frames.append(inert.snapshot.setup.validation_message)
+    frames.append(inert.snapshot.status_line)
+
+    # 2. review -> receipt on a working runtime: "managed placements" and
+    #    "durable receipt recorded".
+    live = LibraryNotesSyncController(
+        runtime=_Runtime(), import_controller=_ImportController()
+    )
+    await live.check_root("root-1")
+    assert live.snapshot.phase == "review"
+    await render(live.snapshot, "add", (120, 40))
+    await live.apply_reviewed("root-1", TOKEN)
+    assert live.snapshot.phase == "receipt"
+    await render(live.snapshot, "add", (100, 30))
+    frames.append(live.snapshot.receipt_line)
+
+    # 3. A refused check on the roots surface: "Review root status".
+    failed = _failed_roots_controller(
+        RuntimeError("sync_recovery_unresolved"), "up_to_date", "sync_now"
+    )
+    await failed.sync_now("root-1")
+    await render(failed.snapshot, "roots", (120, 40))
+    frames.append(failed.snapshot.status_line)
+
+    # 4. The scroll cues are a pure widget concern: they need overflow at a
+    #    small size, which only a rendered canvas produces.
+    await render(
+        replace(initial_lasting_sync_snapshot(lasting_available=True), phase="configure"),
+        "add",
+        (60, 12),
+    )
+
+    # task-32451 owns the root row's placeholder name; it is the one
+    # remaining "cutover" on screen and is explicitly out of this task.
+    placeholder = "Sync folder (name unavailable before cutover)"
+    joined = "\n".join(frames)
+    assert placeholder in joined, "the placeholder moved -- re-check task-32451"
+    joined = joined.replace(placeholder, "<task-32451 placeholder>")
+    assert "Check failed — recovery still open" in joined
+    assert "listed under Receipts" in joined
+    for term in _ENGINEERING_TERMS:
+        assert term not in joined, term
+
+
+async def test_receipt_rows_render_what_the_projection_produced() -> None:
+    """The roots canvas paints a receipt row; the projection is pinned in the
+    controller suite, so this is the widget half only."""
     app = _Host(_roots_snapshot(failed=True))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         painted = " ".join(_frame(app).split())
-        frames.append(painted)
-        assert "Check failed — recovery still open" in painted
         assert "2026-09-13 15:20 · Wrote note to file · People/Sam.md · Sam" in painted
 
-    base = initial_lasting_sync_snapshot(lasting_available=False)
-    for phase, extra in (
-        ("choose", {}),
-        ("configure", {}),
-        (
-            "receipt",
-            {"status_line": "Sync root activated.", "receipt_line": "60 applied · listed under Receipts"},
-        ),
-    ):
-        snapshot = replace(base, phase=phase, **extra)
-        app = _Host(snapshot, canvas="add")
-        async with app.run_test(size=(60, 12)) as pilot:
-            await pilot.pause()
-            frames.append(" ".join(_frame(app).split()))
 
-    joined = "\n".join(frames)
-    for term in _ENGINEERING_TERMS:
-        assert term not in joined, term
+def _failed_roots_controller(error: BaseException, status: str, next_action: str):
+    """A controller whose only root is `status` and whose Check raises `error`."""
+    from Tests.UI.Library_Modules.test_library_notes_sync_controller import (
+        _ImportController,
+        _Runtime,
+    )
+    from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
+        LibraryNotesSyncController,
+    )
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (NotesSyncRootRuntimeSnapshot("root-1", status, next_action),),
+    )
+
+    async def fail(_root_id: str):
+        raise error
+
+    runtime.request_sync_now = fail
+    return LibraryNotesSyncController(
+        runtime=runtime, import_controller=_ImportController()
+    )
 
 
 async def test_a_failed_row_offers_the_control_it_names() -> None:
     """task-32534 AC#1: the named next action must be reachable at the row.
 
-    The failure overlay rewrites the row's status to "needs_attention", so a
-    button set keyed on status offered Pause and Recovery on a paused root
-    whose own row read "Next: Resume" -- and no Resume at all.
+    Driven through the controller, not a constructed row: the row shape is
+    exactly what production projects after a refused Check.
     """
-    row = LastingSyncRootRow(
-        "root-1",
-        "Vault",
-        "needs_attention",
-        "resume_sync",
-        "\u26a0 Needs attention",
-        "Resume",
-        failure="Check failed \u2014 folder is paused",
+    controller = _failed_roots_controller(
+        RuntimeError("sync_root_not_active"), "paused", "resume_sync"
     )
-    snapshot = replace(
-        initial_lasting_sync_snapshot(lasting_available=True),
-        phase="roots",
-        status_line="Check failed \u2014 folder is paused. Next: Resume.",
-        roots=(row,),
-    )
-    app = _Host(snapshot)
+    await controller.sync_now("root-1")
+
+    app = _Host(replace(controller.snapshot, write_receipts=()))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         assert app.query("#notes-sync-root-resume-0")
         assert not app.query("#notes-sync-root-pause-0")
         assert not app.query("#notes-sync-root-recover-0")
+        painted = " ".join(_frame(app).split())
+        assert "⚠ Needs attention · Check failed — folder is paused · Next: Resume" in painted
+
+
+async def test_a_failed_check_on_an_offline_root_keeps_the_blocked_controls_blocked() -> (
+    None
+):
+    """Fix round 1: the overlay must not re-enable what the canvas blocks.
+
+    An offline root's Check is refused by the lease gate. An earlier overlay
+    rewrote `status` to "needs_attention", which is what the canvas reads for
+    `check_blocked` and for Pause suppression -- so the row came back with an
+    ENABLED Check and a Pause button, on a folder that is disconnected.
+    """
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootRefused
+
+    controller = _failed_roots_controller(
+        NotesSyncRootRefused("root_lease_unavailable", reason_code="root_offline"),
+        "offline",
+        "reconnect_folder",
+    )
+    await controller.sync_now("root-1")
+
+    row = controller.snapshot.roots[0]
+    assert row.status == "offline"
+    assert row.status_label == "⚠ Needs attention"
+    assert row.failure == "Check failed — folder isn't available"
+    assert row.failed_action == "reconnect_folder"
+
+    app = _Host(replace(controller.snapshot, write_receipts=()))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        check = app.query_one("#notes-sync-root-check-0", Button)
+        assert check.disabled is True
+        assert check.label.plain == (
+            "○ Check changes unavailable — the folder is disconnected"
+        )
+        assert not app.query("#notes-sync-root-pause-0")
+        assert not app.query("#notes-sync-root-resume-0")

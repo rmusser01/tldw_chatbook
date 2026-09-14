@@ -807,7 +807,10 @@ async def test_control_failure_publishes_explicit_bounded_recovery_action() -> N
         "Action failed — RuntimeError. Next: Check changes."
     )
     assert controller.snapshot.roots[0].failure == "Action failed — RuntimeError"
-    assert controller.snapshot.roots[0].status == "needs_attention"
+    # Fix round 1: the overlay owns the LABEL, never the status -- rewriting
+    # `status` re-enabled controls the canvas blocks by status.
+    assert controller.snapshot.roots[0].status == "up_to_date"
+    assert controller.snapshot.roots[0].status_label == "⚠ Needs attention"
     assert "/private/root" not in controller.snapshot.status_line
     assert "/private/root" not in repr(controller.snapshot)
 
@@ -3210,7 +3213,8 @@ async def test_a_failed_manual_check_flips_the_row_and_logs_the_category() -> No
         "Check failed — recovery still open",
         "Resolve recovery",
     )
-    assert row.status == "needs_attention"
+    assert row.status == "up_to_date"  # truthful; only the label is overlaid
+    assert row.failed_action == "resolve_cleanup"
     assert controller.snapshot.phase == "roots"
     assert controller.snapshot.status_line.startswith("Check failed — ")
     assert "Up to date" not in controller.snapshot.status_line
