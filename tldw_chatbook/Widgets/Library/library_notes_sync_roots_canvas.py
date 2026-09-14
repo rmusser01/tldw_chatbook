@@ -10,6 +10,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Library.library_shell_state import back_cue_label
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncRootRow,
     LibraryNotesLastingSyncSnapshot,
@@ -59,7 +60,7 @@ class LibraryNotesSyncRootsCanvas(Vertical):
         with VerticalScroll(id="notes-sync-roots-body"):
             if not self.snapshot.roots:
                 yield Static(
-                    "No lasting sync folders. Nearest valid action: Back to Notes.",
+                    f"No lasting sync folders. Nearest valid action: {back_cue_label('Notes')}.",
                     classes="destination-purpose",
                     markup=False,
                 )
@@ -141,7 +142,7 @@ class LibraryNotesSyncRootsCanvas(Vertical):
         )
         with Horizontal(id="notes-sync-roots-pinned-actions", classes="ds-toolbar"):
             yield Button(
-                "Back to Notes",
+                back_cue_label("Notes"),
                 id="notes-sync-roots-back",
                 classes="library-canvas-action",
                 compact=True,

@@ -32,6 +32,7 @@ from textual.widgets import (
 
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
+    back_cue_label,
     library_disabled_action_label,
 )
 from tldw_chatbook.Notes.file_notes_git_commit import (
@@ -1253,7 +1254,7 @@ class LibraryFileNotesGitPanel(Vertical):
         with VerticalScroll(id="file-notes-git-list-surface"):
             with Horizontal(id="file-notes-git-header"):
                 yield Button(
-                    "Back to navigator",
+                    back_cue_label("Files"),
                     id="file-notes-git-back",
                     compact=True,
                 )

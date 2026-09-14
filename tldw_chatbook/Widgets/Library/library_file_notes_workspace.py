@@ -44,6 +44,7 @@ from tldw_chatbook.Library.library_structural_wait import (
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
+    back_cue_label,
     library_disabled_action_label,
 )
 from tldw_chatbook.Notes.file_notes_git_service import (
@@ -1415,7 +1416,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def _build_reader_work_pane(self) -> Widget:
         """Build the retained incumbent Folder work role once."""
         back = Button(
-            "Back to navigator",
+            back_cue_label("Files"),
             id="file-notes-back",
             compact=True,
         )

@@ -18,6 +18,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_note_import_state import UNIFORM_RUN_MIN
+from tldw_chatbook.Library.library_shell_state import back_cue_label
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
     LastingSyncHistoryRow,
@@ -906,7 +907,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         phase = self.snapshot.phase
         if phase == "choose":
             yield Button(
-                "Back to Notes",
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1027,7 +1028,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     ),
                 )
             yield Button(
-                "Back to Notes",
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
