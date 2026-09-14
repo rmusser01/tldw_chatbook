@@ -130,4 +130,23 @@ the same pre-existing names on dev
 (`test_legacy_sync_config_is_read_only_and_only_the_migrator_reads_it`,
 `test_database_notes_import_once_journey_is_painted_focused_and_retained[size1]`).
 Captures under `wave4-caps/sync-review/`. `./scripts/preflight.sh` green.
+**Fix round 1 (review).** Two Importants closed. (1) `_frontmatter_keywords`
+bounds a keyword at Import once's 512 while an execution request refuses one
+over 256, and the request is built inside a loop over every safe action — so
+one ordinary 300-character `aliases:` entry aborted the whole root's
+activation. The lift now reads the executor's own
+`MAX_SYNC_KEYWORD_LENGTH` and drops what it cannot carry (dropped, not
+truncated: half an alternate name is a name nothing has); pinned end to end.
+(2) The review's per-group heading counted the page it was handed, so a
+240-note vault read "Create a Library note (100)" under a "240 safe" counts
+line — the task-32250 defect inside the review this task makes truthful. The
+review now carries `group_totals` counted before the page slice, and
+`review_group_key` is the one definition of which heading a row belongs under.
+Ten Minors fixed (dead imports and a fake parameter left by the revert, the
+skip copy now DERIVED from Import once's own message maps, `_FRONTMATTER_BOUNDS`
+matched to Import once's real 100-keyword cap, a metadata-only trace on the
+swallowed label failure, a doubled conflict path, a pin that stat-ed the real
+home directory); one declined with evidence (merging `conflict_labels` and
+`binding_labels` would put three behaviour flags through an authority path
+where the two rules genuinely differ).
 <!-- SECTION:NOTES:END -->
