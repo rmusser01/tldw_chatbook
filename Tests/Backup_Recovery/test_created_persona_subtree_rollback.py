@@ -145,13 +145,15 @@ import keyring
 from keyring.backends.null import Keyring
 keyring.set_keyring(Keyring())
 from tldw_chatbook.app import TldwCli
+from Tests.Backup_Recovery.thread_diagnostics import observe_notes_write_failure
 async def run():
  app=TldwCli()
  from Tests.Backup_Recovery.initial_screen_observation import initial_screen_observation
  async with initial_screen_observation(app), app.run_test(size=(120,40)):
   notes={row['title']:row['content'] for row in app.chachanotes_db.list_notes()}
   assert notes['Original source']=='Before replacement for source' and 'Original target' not in notes
-  app.chachanotes_db.add_note('After nested pack replacement','New current data must enter the later safety copy.')
+  with observe_notes_write_failure(Path.home()/'persona-note-write.log',app.chachanotes_db):
+   app.chachanotes_db.add_note('After nested pack replacement','New current data must enter the later safety copy.')
   pack=Path(json.loads((Path.home()/'operation.json').read_text())['pack'])
   files={path.relative_to(pack).as_posix():hashlib.sha256(path.read_bytes()).hexdigest() for path in pack.rglob('*') if path.is_file()}
   (Path.home()/'current-persona.json').write_text(json.dumps(files))

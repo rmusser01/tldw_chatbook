@@ -1,0 +1,38 @@
+{
+  "base": "d4e1d0dff80fbabe92e3cc2f59dba7c2d10d599c",
+  "disposition": "approved",
+  "sha256": {
+    "Tests/Backup_Recovery/thread_diagnostics.py": "028cdbcce243990608eaa02856c3ba365825f9813eaaa5429ba31b8c0b0ed56a",
+    "Tests/Backup_Recovery/test_thread_diagnostics.py": "3eef4dc63a897cb93c2ab4ad0ffeccdf8621790949cd209838c6e886d2424483",
+    "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py": "a5328620ffffbb5f671440b40059fd678edf9c9a9f44f892dd62e71c0f40e0b0"
+  },
+  "independent_repository_cases": "20 passed, 63 deselected in 2.45s",
+  "independent_private_cases": "2 passed in 1.73s",
+  "logs": [
+    "/private/tmp/uat-notes-write-independent.log",
+    "/private/tmp/uat-notes-write-private2.log"
+  ],
+  "native_windows_acceptance": "not performed",
+  "author_test_result": "83 passed in 5.04s",
+  "author_log": "/private/tmp/uat-notes-write-final.log",
+  "author_junit": "/private/tmp/uat-notes-write-final.xml",
+  "static": {
+    "ruff_baseline": 0,
+    "ruff_current": 0,
+    "ruff_new": [],
+    "bandit_baseline": {
+      "B101": 188,
+      "B105": 1
+    },
+    "bandit_current": {
+      "B101": 206,
+      "B105": 1
+    },
+    "bandit_nonassert_added": {}
+  },
+  "limitations": [
+    "Test-only observer; no product behavior or limit changes.",
+    "Windows lock owner and native acceptance remain pending.",
+    "Initial independent private probe failed during environment setup; preserved, not product evidence."
+  ]
+}

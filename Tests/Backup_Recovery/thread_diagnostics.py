@@ -5,9 +5,11 @@ from __future__ import annotations
 import faulthandler
 import json
 import os
+import sqlite3
 import sys
 import threading
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -112,6 +114,24 @@ def _error_metadata(error: BaseException) -> dict:
     for key in ("errno", "winerror"):
         value = getattr(error, key, None)
         record[key] = value if type(value) is int else None
+    if type(error) in (
+        sqlite3.Error, sqlite3.DatabaseError, sqlite3.OperationalError,
+        sqlite3.IntegrityError, sqlite3.InternalError, sqlite3.ProgrammingError,
+        sqlite3.NotSupportedError, sqlite3.DataError, sqlite3.InterfaceError,
+    ):
+        code = getattr(error, "sqlite_errorcode", None)
+        code = code if type(code) is int and 0 < code <= 65535 else None
+        name = getattr(error, "sqlite_errorname", None)
+        names = (
+            "SQLITE_BUSY", "SQLITE_BUSY_SNAPSHOT", "SQLITE_BUSY_RECOVERY",
+            "SQLITE_BUSY_TIMEOUT", "SQLITE_LOCKED", "SQLITE_LOCKED_SHAREDCACHE",
+            "SQLITE_LOCKED_VTAB",
+        )
+        record["sqlite_errorcode"] = code
+        record["sqlite_errorname"] = (
+            name if type(name) is str and name in names and code is not None
+            and getattr(sqlite3, name, None) == code else None
+        )
     trace = error.__traceback__
     while trace is not None and len(record["frames"]) < 64:
         record["frames"].append(
@@ -123,6 +143,58 @@ def _error_metadata(error: BaseException) -> dict:
         )
         trace = trace.tb_next
     return record
+
+
+def _notes_transaction_entry(error: BaseException, database) -> dict | None:
+    """Read retained entry flags only after the exact native add body was entered."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import (
+        CharactersRAGDB,
+        TransactionContextManager,
+    )
+
+    if type(database) is not CharactersRAGDB:
+        return None
+    add_code = CharactersRAGDB.add_note.__code__
+    body_code = CharactersRAGDB._add_note_with_cursor.__code__
+    trace, manager = error.__traceback__, None
+    for _ in range(64):
+        if trace is None:
+            break
+        frame = trace.tb_frame
+        if frame.f_code is add_code and frame.f_locals.get("self") is database:
+            manager = frame.f_locals.get("transaction")
+        elif (
+            frame.f_code is body_code and frame.f_locals.get("self") is database
+            and type(manager) is TransactionContextManager
+        ):
+            state = vars(manager)
+            if state.get("db") is not database:
+                return None
+            values = tuple(state.get(key) for key in (
+                "is_outermost_transaction", "borrows_native_transaction", "immediate",
+            ))
+            if not all(type(value) is bool for value in values) or all(values[:2]):
+                return None
+            return dict(zip(("outermost", "borrowed", "immediate"), values))
+        trace = trace.tb_next
+    return None
+
+
+@contextmanager
+def observe_notes_write_failure(path: Path, database):
+    """Keep one bounded failed-write record without altering the original error."""
+    try:
+        yield
+    except sqlite3.Error as error:
+        try:
+            _write(path, {
+                "event": "notes_write_failure", "error": _error_metadata(error),
+                "transaction_entry": _notes_transaction_entry(error, database),
+                "threads": _snapshot(),
+            })
+        except BaseException:  # noqa: BLE001, S110 - optional metadata cannot replace the native failure.  # nosec B110
+            pass
+        raise
 
 
 def _snapshot_change(error: BaseException, code) -> dict | None:

@@ -1252,3 +1252,171 @@ assert not errors and sorted(done)==[False,True],errors
 print('retired and reopened')
 '''
     _run(tmp_path, "native", "phase-observation", script=script, timeout=20)
+
+
+@pytest.mark.parametrize("snapshot", [False, True])
+def test_native_sqlite_error_metadata_retains_extended_code(tmp_path, snapshot):
+    import sqlite3
+    from contextlib import closing
+
+    from Tests.Backup_Recovery.thread_diagnostics import _error_metadata
+
+    path = tmp_path / "error.sqlite"
+    with closing(sqlite3.connect(path, isolation_level=None, timeout=0)) as first, closing(
+        sqlite3.connect(path, isolation_level=None, timeout=0)
+    ) as other:
+        first.execute("PRAGMA journal_mode=WAL")
+        first.execute("CREATE TABLE sample(value INTEGER)")
+        if snapshot:
+            first.execute("BEGIN")
+            first.execute("SELECT * FROM sample").fetchall()
+            other.execute("INSERT INTO sample VALUES(1)")
+        else:
+            other.execute("BEGIN IMMEDIATE")
+        with pytest.raises(sqlite3.OperationalError) as caught:
+            first.execute("INSERT INTO sample VALUES(2)")
+        record = _error_metadata(caught.value)
+        assert record["sqlite_errorcode"] == (517 if snapshot else 5)
+        assert record["sqlite_errorname"] == (
+            "SQLITE_BUSY_SNAPSHOT" if snapshot else "SQLITE_BUSY"
+        )
+
+
+@pytest.mark.parametrize("code,name", [(True, "SQLITE_BUSY"), (-1, "SQLITE_BUSY"),
+    (65536, "SQLITE_BUSY"), (5, "SQLITE_PRIVATE_SECRET"), (5, object()),
+    (5, "SQLITE_BUSY_SNAPSHOT")])
+def test_sqlite_error_metadata_rejects_unproved_names(code, name):
+    import sqlite3
+
+    from Tests.Backup_Recovery.thread_diagnostics import _error_metadata
+
+    error = sqlite3.OperationalError("synthetic private detail")
+    error.sqlite_errorcode, error.sqlite_errorname = code, name
+    record = _error_metadata(error)
+    assert record["sqlite_errorcode"] == (5 if type(code) is int and code == 5 else None)
+    assert record["sqlite_errorname"] is None
+    assert "synthetic private detail" not in json.dumps(record)
+
+
+@pytest.mark.parametrize("branch", ["outer", "nested", "borrowed", "provided-cursor"])
+def test_notes_failed_write_reports_retained_entry_without_database_calls(
+    tmp_path, monkeypatch, branch
+):
+    import sqlite3
+    from contextlib import nullcontext
+
+    from Tests.Backup_Recovery import thread_diagnostics as diagnostics
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    database = CharactersRAGDB(":memory:", client_id="write-observer")
+    connection = database.get_connection()
+    connection.execute("CREATE TRIGGER diagnostic_failure BEFORE INSERT ON notes "
+                       "BEGIN SELECT missing_diagnostic_function(); END")
+    if branch == "borrowed":
+        connection.execute("BEGIN")
+    enclosing = database.transaction() if branch in ("nested", "provided-cursor") else nullcontext()
+    path = tmp_path / "notes-write.log"
+    try:
+        with enclosing as cursor:
+            with (
+                pytest.raises(sqlite3.OperationalError) as caught,
+                diagnostics.observe_notes_write_failure(path, database),
+            ):
+                database.add_note("synthetic-private-title", "synthetic-private-body",
+                    cursor=cursor if branch == "provided-cursor" else None)
+            error = caught.value
+            trace = error.__traceback__
+            def no_database_access(*args, **kwargs):
+                raise AssertionError("diagnostic attempted a database call")
+            with monkeypatch.context() as patch:
+                patch.setattr(database, "get_connection", no_database_access)
+                entry = diagnostics._notes_transaction_entry(error, database)
+            assert error.__traceback__ is trace
+            expected = None if branch == "provided-cursor" else {
+                "outermost": branch == "outer", "borrowed": branch == "borrowed",
+                "immediate": False,
+            }
+            assert entry == expected
+            record = json.loads(path.read_text())
+            assert record["transaction_entry"] == expected
+            assert record["error"]["sqlite_errorcode"] == 1
+            assert len(record["threads"]) <= 32
+            assert "synthetic-private" not in path.read_text()
+    finally:
+        if connection.in_transaction:
+            connection.rollback()
+        database.close_connection()
+
+
+@pytest.mark.parametrize("failure", ["metadata", "snapshot", "write"])
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_notes_write_observer_preserves_original_error(tmp_path, monkeypatch, failure, cancelled):
+    import asyncio
+    import sqlite3
+
+    from Tests.Backup_Recovery import thread_diagnostics as diagnostics
+
+    primary = sqlite3.OperationalError("original SQLite failure")
+    secondary = asyncio.CancelledError() if cancelled else OSError("observer failed")
+    def fail(*args, **kwargs):
+        raise secondary
+    function = {"metadata": "_error_metadata", "snapshot": "_snapshot", "write": "_write"}[failure]
+    monkeypatch.setattr(diagnostics, function, fail)
+    with (
+        pytest.raises(sqlite3.OperationalError) as caught,
+        diagnostics.observe_notes_write_failure(tmp_path / "failure.log", None),
+    ):
+        try:
+            raise primary
+        except sqlite3.OperationalError:
+            original_trace = primary.__traceback__
+            raise
+    assert caught.value is primary
+    assert primary.__traceback__ is original_trace
+
+
+def test_notes_write_observer_success_has_no_diagnostic_side_effect(tmp_path, monkeypatch):
+    import sqlite3
+    from contextlib import closing
+
+    from Tests.Backup_Recovery import thread_diagnostics as diagnostics
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("successful write requested failure diagnostics")
+    monkeypatch.setattr(diagnostics, "_error_metadata", forbidden)
+    monkeypatch.setattr(diagnostics, "_snapshot", forbidden)
+    monkeypatch.setattr(diagnostics, "_write", forbidden)
+    path = tmp_path / "success.log"
+    with closing(sqlite3.connect(":memory:")) as database:
+        database.execute("CREATE TABLE sample(value INTEGER)")
+        with diagnostics.observe_notes_write_failure(path, None):
+            database.execute("INSERT INTO sample VALUES(7)")
+        assert database.execute("SELECT value FROM sample").fetchall() == [(7,)]
+    assert not path.exists()
+
+
+def test_notes_write_observer_does_not_classify_failed_transaction_entry(tmp_path, monkeypatch):
+    import sqlite3
+
+    from Tests.Backup_Recovery import thread_diagnostics as diagnostics
+    from tldw_chatbook.DB import ChaChaNotes_DB as notes
+
+    database = notes.CharactersRAGDB(":memory:", client_id="entry-observer")
+    try:
+        with pytest.raises(sqlite3.OperationalError) as failure:
+            database.get_connection().execute("SELECT missing_diagnostic_function()")
+        primary = failure.value
+        def fail_entry(connection):
+            raise primary
+        monkeypatch.setattr(notes, "begin_managed_transaction", fail_entry)
+        path = tmp_path / "entry.log"
+        with (
+            pytest.raises(sqlite3.OperationalError) as caught,
+            diagnostics.observe_notes_write_failure(path, database),
+        ):
+            database.add_note("synthetic-private-title", "synthetic-private-body")
+        assert caught.value is primary
+        assert json.loads(path.read_text())["transaction_entry"] is None
+        assert not database.get_connection().in_transaction
+    finally:
+        database.close_connection()
