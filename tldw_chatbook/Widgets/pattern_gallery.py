@@ -190,6 +190,8 @@ class PatternGalleryScreen(Screen):
                 yield Static("h-auto", classes="h-auto")
                 yield Static("p-0", classes="p-0")
                 yield Static("m-0", classes="m-0")
+                yield Static("mt-1", classes="mt-1")
+                yield Static("mb-0", classes="mb-0")
                 yield Static("border-none", classes="border-none")
             with Container(classes="pg-frame-sizing-share"):
                 yield Static("h-full", classes="h-full")

@@ -55,10 +55,13 @@ def frame_console_region(
     """
     if variant == "quiet":
         widget.add_class("console-frame-quiet")
-        widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
+        # ADR-161 task 12: border-none (the tokenized `border: none` utility)
+        # replaces the inline quiet tuple; the per-edge solid frame below
+        # stays inline (setattr), which still overrides the class per edge.
+        widget.add_class("border-none")
         return widget
     widget.add_class("console-frame-solid")
-    widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
+    widget.add_class("border-none")
     if edges is None:
         edges = tuple(
             edge

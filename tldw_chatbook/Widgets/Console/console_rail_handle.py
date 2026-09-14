@@ -64,7 +64,9 @@ class ConsoleRailHandle(DestinationRailHandle):
             self.add_class("console-inspector-rail-handle")
         if self.vertical:
             self.add_class("console-rail-handle-vertical")
-            self.styles.width = self.VERTICAL_WIDTH
+            # ADR-161 task 12: inline via set_styles (identical semantics) --
+            # Console-tree widgets also mount in stylesheet-less test hosts.
+            self.set_styles(width=self.VERTICAL_WIDTH)
             self.styles.min_width = self.VERTICAL_WIDTH
             self.styles.max_width = self.VERTICAL_WIDTH
 
@@ -77,21 +79,19 @@ class ConsoleRailHandle(DestinationRailHandle):
         for child in super().compose():
             if self.vertical and isinstance(child, Button):
                 child.add_class("console-rail-handle-button-vertical")
-                child.styles.width = self.VERTICAL_CONTENT_WIDTH
+                child.set_styles(width=self.VERTICAL_CONTENT_WIDTH, height="1fr")
                 child.styles.max_width = self.VERTICAL_CONTENT_WIDTH
-                child.styles.height = "1fr"
                 child.styles.clear_rule("min_height")
                 child.styles.clear_rule("max_height")
                 child.styles.line_pad = 0
             elif self.vertical and isinstance(child, Static):
                 child.add_class("console-rail-handle-badge-vertical")
-                child.styles.width = self.VERTICAL_CONTENT_WIDTH
+                child.set_styles(width=self.VERTICAL_CONTENT_WIDTH)
                 child.styles.min_width = 0
                 child.styles.max_width = self.VERTICAL_CONTENT_WIDTH
             elif self.side == "right" and isinstance(child, Button):
-                child.styles.width = "100%"
+                child.set_styles(width="100%", height="1fr")
                 child.styles.max_width = "100%"
-                child.styles.height = "1fr"
                 child.styles.min_height = 0
                 child.styles.max_height = "100%"
                 child.styles.line_pad = 0

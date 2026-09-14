@@ -583,7 +583,11 @@ class ConsoleLeftRail(Vertical):
         # owning them here prevents a late allocator pass from collapsing the
         # default ``Horizontal`` 1fr height to zero and leaving the visible
         # toggle painted over by the first body row.
-        header.styles.height = "auto"
+        # ADR-161 task 12: this stays INLINE via ``set_styles`` (identical
+        # inline-style semantics to the legacy assignment) rather than a
+        # utility class -- a class rule needs the app stylesheet, and this
+        # block exists precisely for hosts that lack it.
+        header.set_styles(height="auto")
         header.styles.min_height = 2
         return header
 
@@ -604,7 +608,11 @@ class ConsoleLeftRail(Vertical):
             id=f"console-rail-section-body-{section_id}",
             classes=body_classes,
         )
-        body.styles.height = "auto"
+        # ADR-161 task 12: inline (`set_styles`) for the same
+        # lightweight-host reason as the section header above -- the
+        # production sheet duplicates these constraints, bare hosts do not
+        # load it.
+        body.set_styles(height="auto", margin_bottom=0)
         # Retire the legacy descendant body's independent 20% scroll owner
         # inline; Task 8 owns the stylesheet cleanup itself.
         # A viewport-relative ceiling defeats the legacy 20% selector without
@@ -612,7 +620,6 @@ class ConsoleLeftRail(Vertical):
         # cap: whether physical demand still exceeds 20 rows.
         body.styles.max_height = "100vh"
         body.styles.overflow_y = "hidden"
-        body.styles.margin_bottom = 0
         if not is_open:
             body.styles.display = "none"
         return body
@@ -1310,7 +1317,7 @@ class ConsoleLeftRail(Vertical):
                 section.max_content_lines = adaptive_budget
             section.set_allocation(None)
             if section.native_scroll_owner is None:
-                section.styles.height = "auto"
+                section.set_styles(height="auto")
             section.request_reconcile()
         self.call_after_refresh(self._run_allocation_reconcile)
 
@@ -1728,7 +1735,7 @@ class ConsoleLeftRail(Vertical):
 
         changed = False
         if not getattr(title, "_console_context_one_line", False):
-            title.styles.height = 1
+            title.set_styles(height=1)
             title.styles.min_height = 1
             title.styles.max_height = 1
             title.styles.text_wrap = "nowrap"
@@ -2016,7 +2023,7 @@ class ConsoleLeftRail(Vertical):
         workspace_context_state = self._workspace_context_state
 
         left_rail_header = Horizontal(classes="console-rail-header")
-        left_rail_header.styles.height = 1
+        left_rail_header.set_styles(height=1)
         left_rail_header.styles.min_height = 1
         left_rail_header.styles.max_height = 1
         with left_rail_header:
@@ -2037,7 +2044,7 @@ class ConsoleLeftRail(Vertical):
                 compact=True,
             )
             collapse_button.tooltip = "Collapse Console context rail"
-            collapse_button.styles.width = "100%"
+            collapse_button.set_styles(width="100%")
             collapse_button.styles.min_width = 0
             collapse_button.styles.max_width = "100%"
             collapse_button.styles.text_align = "right"
@@ -2059,7 +2066,7 @@ class ConsoleLeftRail(Vertical):
             classes="console-agent-section-fleet-summary",
             markup=False,
         )
-        fleet_summary.styles.height = "auto"
+        fleet_summary.set_styles(height="auto")
         fleet_summary.styles.display = "block" if self._fleet_line else "none"
         yield fleet_summary
 
@@ -2091,9 +2098,9 @@ class ConsoleLeftRail(Vertical):
                 id="console-workspaces-context",
                 classes="console-left-rail-section",
             )
-            workspace_context_tray.styles.width = "100%"
+            workspace_context_tray.set_styles(width="100%")
             workspace_context_tray.styles.min_width = 0
-            workspace_context_tray.styles.height = "auto"
+            workspace_context_tray.set_styles(height="auto")
             workspace_context_tray.styles.max_height = 12
             workspace_context_tray.styles.overflow_y = "hidden"
             workspace_tree = ConsoleWorkspaceTree(id="console-workspace-tree")
@@ -2148,7 +2155,7 @@ class ConsoleLeftRail(Vertical):
                 id="console-workspace-context",
                 classes="console-left-rail-section",
             )
-            conversation_context_tray.styles.width = "100%"
+            conversation_context_tray.set_styles(width="100%")
             conversation_context_tray.styles.min_width = 0
             conversations_body = self._section_body(
                 "conversations",
@@ -2188,13 +2195,13 @@ class ConsoleLeftRail(Vertical):
                 *avatar_children,
                 id="console-character-avatar",
             )
-            avatar_holder.styles.width = "auto"
-            avatar_holder.styles.height = "auto"
+            avatar_holder.set_styles(width="auto")
+            avatar_holder.set_styles(height="auto")
             avatar_frame = Horizontal(
                 avatar_holder, id="console-character-avatar-frame"
             )
-            avatar_frame.styles.width = "100%"
-            avatar_frame.styles.height = "auto"
+            avatar_frame.set_styles(width="100%")
+            avatar_frame.set_styles(height="auto")
             avatar_frame.styles.align_horizontal = "center"
             if not self._show_character_avatar:
                 avatar_frame.styles.display = "none"
@@ -2253,7 +2260,7 @@ class ConsoleLeftRail(Vertical):
                     Static("No character chats yet", markup=False),
                     id="console-character-context",
                 )
-            character_content.styles.height = "auto"
+            character_content.set_styles(height="auto")
             character_content.styles.min_height = 0
             character_body = self._section_body(
                 "character",
@@ -2519,7 +2526,7 @@ class ConsoleLeftRail(Vertical):
                 id="console-workspace-details",
                 classes="console-left-rail-section",
             )
-            details_tray.styles.width = "100%"
+            details_tray.set_styles(width="100%")
             details_tray.styles.min_width = 0
             details_body = self._section_body(
                 "details",
@@ -2539,7 +2546,7 @@ class ConsoleLeftRail(Vertical):
             markup=False,
         )
         outer_hint.can_focus = False
-        outer_hint.styles.height = 1
+        outer_hint.set_styles(height=1)
         outer_hint.styles.min_height = 1
         outer_hint.styles.max_height = 1
         outer_hint.styles.display = "none"

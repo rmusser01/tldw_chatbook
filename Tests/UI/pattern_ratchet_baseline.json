@@ -1,9 +1,6 @@
 {
   "python_styles": {
     "Event_Handlers/ingest_status_helper.py": 3,
-    "UI/Console_Modules/frame.py": 2,
-    "UI/Console_Modules/left_rail.py": 18,
-    "UI/Console_Modules/right_rail.py": 12,
     "UI/Screens/chat_screen.py": 26,
     "UI/Screens/home_screen.py": 3,
     "UI/Screens/library_screen.py": 9,
@@ -33,7 +30,6 @@
     "Widgets/Console/console_generation_card.py": 3,
     "Widgets/Console/console_image_viewer_modal.py": 10,
     "Widgets/Console/console_inspector_section.py": 17,
-    "Widgets/Console/console_rail_handle.py": 6,
     "Widgets/Console/console_retrieval_scope_row.py": 2,
     "Widgets/Console/console_run_inspector.py": 4,
     "Widgets/Console/console_send_authority_summary.py": 2,
@@ -46,8 +42,6 @@
     "Widgets/Console/console_status_chips.py": 4,
     "Widgets/Console/console_transcript.py": 2,
     "Widgets/Console/console_video_card.py": 1,
-    "Widgets/Console/console_workspace_context.py": 19,
-    "Widgets/Console/console_workspace_details.py": 1,
     "Widgets/Home/home_canvas.py": 3,
     "Widgets/Home/home_rail.py": 4,
     "Widgets/Library/library_adaptive_reader_shell.py": 8,

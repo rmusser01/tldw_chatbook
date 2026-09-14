@@ -85,7 +85,7 @@ Notes on the schema:
 | sections | `components/_sections.tcss` | section-title, section-header, subsection-title (all Canonical) |
 | messages | `components/_messages.tcss` | message-header, message-text, message-actions (all Canonical) |
 | ds_primitives | `components/_ds_primitives.tcss` | ds-panel, ds-toolbar, ds-field-row, ds-info-callout, ds-approval-card, ds-destination-header (all Canonical; extracted from the agentic monolith in task 9) |
-| sizing | `utilities/_helpers.tcss` | w-auto, w-full, w-fill, w-0, h-auto, h-full, h-fill, h-0, h-1, h-2, h-3, p-0, m-0, border-none (all Canonical; the tokenized replacements for runtime `.styles.*` literals, task 12) |
+| sizing | `utilities/_helpers.tcss` | w-auto, w-full, w-fill, w-0, h-auto, h-full, h-fill, h-0, h-1, h-2, h-3, p-0, m-0, mt-1, mb-0, border-none (all Canonical; the tokenized replacements for runtime `.styles.*` literals, task 12) |
 
 ## Entry template
 
@@ -751,7 +751,8 @@ beat id selectors where inline styles used to).
 - `w-fill` / `h-fill` — one grid share (`$ds-width-fill` / `$ds-height-fill`).
 - `w-0` / `h-0` — collapsed axis (`$ds-size-0`).
 - `h-1` / `h-2` / `h-3` — fixed row heights (`$ds-size-1/2/3`).
-- `p-0` / `m-0` — zero padding / margin (`$ds-space-0`).
+- `p-0` / `m-0` — zero padding / margin (`$ds-space-0`); `mt-1` / `mb-0`
+  the single-edge variants (`$ds-space-1` top / `$ds-space-0` bottom).
 - `border-none` — border suppression (keyword `none`; the legacy
   `("none", "transparent")` tuple in disguise).
 

@@ -253,6 +253,12 @@
         "m-0": {
           "status": "canonical"
         },
+        "mt-1": {
+          "status": "canonical"
+        },
+        "mb-0": {
+          "status": "canonical"
+        },
         "border-none": {
           "status": "canonical"
         }

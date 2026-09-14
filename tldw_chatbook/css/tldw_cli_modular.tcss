@@ -21716,6 +21716,12 @@ FeatureNotAvailableDialog Button {
 .m-0 {
     margin: $ds-space-0;
 }
+.mt-1 {
+    margin-top: $ds-space-1;
+}
+.mb-0 {
+    margin-bottom: $ds-space-0;
+}
 .border-none {
     border: none;
 }
