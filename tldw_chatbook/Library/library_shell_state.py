@@ -151,8 +151,34 @@ LIBRARY_NOTES_SORT_FILTERED_TOOLTIP = (
 LIBRARY_ACTION_LABEL_PAD = " " * (cell_len(LIBRARY_DISABLED_ACTION_MARKER) + 1)
 
 
+def library_disabled_reason_line(label: str, reason: str) -> str:
+    """One blocked control's reason, in the grammar this screen already uses.
+
+    task-32549: a disabled Library action carries its "○" marker (the
+    Library-wide blocked marker, task-32235) and its reason lives on a
+    tooltip, which never renders in a TUI -- so the control said that it was
+    unavailable and nothing else. This is the sentence for the shared
+    ``.library-disabled-reason`` line that goes with the control, the same
+    one "○ Server notes" has carried since task-32257.
+
+    The LINE rather than the label wherever the label cannot grow: three of
+    the four controls this task covers live on toolbar rows measured to the
+    cell (task-32261 had to hide the select strip's own counter to keep
+    "Export selected" on a 42-column pane), and a 29-cell reason inside the
+    label re-creates exactly the clipping task-32544 and task-32557 fix.
+
+    Args:
+        label: The blocked control's plain label, without its marker.
+        reason: Why it is blocked, with or without a trailing full stop.
+
+    Returns:
+        ``"<label> unavailable — <reason>"``.
+    """
+    return f"{label} unavailable — {reason.rstrip('.')}"
+
+
 def library_disabled_action_label(
-    label: str, disabled: bool, *, align: bool = False
+    label: str, disabled: bool, *, align: bool = False, reason: str = ""
 ) -> str:
     """Prefix ``label`` with the non-colour disabled marker when disabled.
 
@@ -164,13 +190,21 @@ def library_disabled_action_label(
             most Library actions never flip in place, and an unconditional
             two-cell indent would cost every one of them two cells of a pane
             whose floor is 36.
+        reason: Why the control is blocked (task-32549). Supply it only
+            where the row has the cells: the label grows by the whole
+            sentence, and ``library_disabled_reason_line`` above is the
+            same sentence on a line of its own for the rows that do not.
 
     Returns:
-        ``"○ <label>"`` while disabled; ``label`` unchanged otherwise, or
+        ``"○ <label>"`` while disabled -- or ``"○ <label> unavailable —
+        <reason>"`` with a reason; ``label`` unchanged otherwise, or
         blank-padded to the same width when ``align``.
     """
     if disabled:
-        return f"{LIBRARY_DISABLED_ACTION_MARKER} {label}"
+        blocked = (
+            library_disabled_reason_line(label, reason) if reason else label
+        )
+        return f"{LIBRARY_DISABLED_ACTION_MARKER} {blocked}"
     return f"{LIBRARY_ACTION_LABEL_PAD}{label}" if align else label
 
 

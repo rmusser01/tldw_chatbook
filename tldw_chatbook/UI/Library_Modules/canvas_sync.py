@@ -283,6 +283,12 @@ def _apply_library_row_toggle(
         for count_static in screen.query(f".library-{kind}-selection-count"):
             count_static.update(count_label)
         export_button.disabled = selection.count == 0
+        # task-32549: the on-screen reason line flips with the button, for
+        # the same recompose-discipline reason as the tooltip below it. By
+        # id, and tolerant of its absence: only the Notes strip composes one
+        # today, and `query` on a missing id is an empty result, not a raise.
+        for reason_line in screen.query(f"#library-{kind}-export-disabled-reason"):
+            reason_line.display = export_button.disabled
         # F-018: the reason/action tooltip flips in place with `disabled`
         # (this patcher deliberately avoids a recompose, so the compose-
         # time tooltip would otherwise go stale).

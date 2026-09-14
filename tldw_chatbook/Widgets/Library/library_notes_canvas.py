@@ -47,6 +47,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_NOTES_SORT_FILTERED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
+    library_disabled_reason_line,
 )
 from tldw_chatbook.Widgets.Library.library_rail import LibraryRailSearchInput
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -1541,6 +1542,23 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="library-notes-selection-count",
                 markup=False,
             )
+            # task-32549: "○ Export selected" said that exporting was off
+            # and nothing about why -- the reason was on a tooltip, which
+            # does not render in a TUI. It takes the shared
+            # `.library-disabled-reason` line rather than the label, the
+            # way "○ Server notes" has since task-32257: this strip has no
+            # cells to spare (task-32261 had to hide its own in-row counter
+            # to keep this very action on a 42-column pane), and a 29-cell
+            # reason inside the label re-creates that defect. The line
+            # flips in place with the button in `_apply_library_row_toggle`.
+            export_reason = Static(
+                library_disabled_reason_line(export_base, "nothing selected"),
+                id="library-notes-export-disabled-reason",
+                classes="library-disabled-reason",
+                markup=False,
+            )
+            export_reason.display = export_disabled
+            yield export_reason
         else:
             # task-4023 AC#1 (RC-07): every disabled toolbar action carries
             # the non-colour "○" marker plus an F-018 reason.
@@ -1582,7 +1600,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 new_label = library_disabled_action_label("New", running)
                 sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
                 sort_disabled = running or sort_blocked
-                sort_label = library_disabled_action_label(sort_base, sort_disabled)
+                # task-32549: "○ Sort: Newest" said that sorting was off and
+                # nothing about why; the reason was on a tooltip, which does
+                # not render in a TUI. Blocked, the control drops the value
+                # it cannot change and states the next step instead -- the
+                # one action of the three this task covers whose row has the
+                # cells for it, now that ``toolbar_action_rows`` wraps a
+                # group that outgrows its pane (task-32544).
+                sort_label = library_disabled_action_label(
+                    "Sort" if sort_blocked else sort_base,
+                    sort_disabled,
+                    reason="clear the filter" if sort_blocked else "",
+                )
                 select_disabled = rendered_count == 0 or running
                 select_label = library_disabled_action_label(
                     "Select", select_disabled

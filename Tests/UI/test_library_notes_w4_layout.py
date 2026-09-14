@@ -437,3 +437,37 @@ async def test_export_selected_states_its_reason_with_nothing_selected() -> None
         )
         assert reason.display
         assert_every_action_fits(app)
+
+
+@pytest.mark.asyncio
+async def test_resolution_history_states_its_reason_when_it_is_unreachable() -> None:
+    """task-32549 AC#2: the review's blocked history opener says why.
+
+    Composed through the real Add-from-files canvas in its review phase
+    with a source that cannot reach history, and read off the mounted
+    widgets -- the pinned action bar is one ``max-height: 3`` row, so the
+    reason takes the shared line the canvas already gives "○ Server notes".
+    """
+    from Tests.Widgets.Library.test_library_notes_add_from_files_canvas import (
+        _Host,
+        _conflict_review,
+    )
+    from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+        initial_lasting_sync_snapshot,
+    )
+
+    snapshot = dataclasses.replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=dataclasses.replace(_conflict_review(), source="setup"),
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=COMPACT) as pilot:
+        await pilot.pause()
+        history = app.query_one("#notes-sync-history-open", Button)
+        assert history.disabled
+        assert str(history.label) == "○ Resolution history"
+        reason = app.query_one("#notes-sync-history-disabled-reason", Static)
+        assert str(reason.renderable) == (
+            "Resolution history unavailable — it starts after this root is activated"
+        )
