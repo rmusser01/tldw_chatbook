@@ -3,9 +3,10 @@ id: TASK-32558
 title: >-
   Library Notes: guide sweep residual at 5fd502dbac — fifteen claims
   contradicted or overstated by critique #3
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-13 06:48'
+updated_date: '2026-09-14 22:25'
 labels:
   - library
   - notes
@@ -44,3 +45,13 @@ Critique #3 (dev 5fd502dbac), both assessors' docs tables merged (B: 52 VERIFIED
 - [ ] #2 Getting there gives the empty-profile route (Ctrl+N or the rail's New note row) as well as the Browse row
 - [ ] #3 A Verified-against stamp records the walk
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Re-walk every guide claim wave 4 touched against current dev (fd30614dcd) — verify each factual Notes claim against code or a capture, not against memory.
+2. Correct or qualify every claim that fails verification, with the supersession treatment; never delete a sentence.
+3. AC#2: Getting there gains the empty-profile route (rail STARTER = Import… / New note / Explore all tools; the Browse ▸ Notes row appears once content exists).
+4. Consolidate duplicate Verified-against stamps, blank line before each; add this wave's stamp.
+5. Mint the wave's riders; add the wave's lessons; preflight + Tests/Docs green.
+<!-- SECTION:PLAN:END -->
