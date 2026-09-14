@@ -248,6 +248,9 @@ $ds-size-44: 44;
 $ds-size-45: 45;
 $ds-size-48: 48;
 $ds-size-50: 50;
+/* task 11 (ADR-161 §3.10): 52 joins the size scale -- cross-sheet recurring
+   detail-pane floor (agentic workflows/acp, scheduling). */
+$ds-size-52: 52;
 $ds-size-60: 60;
 $ds-size-64: 64;
 $ds-size-66: 66;
@@ -281,6 +284,9 @@ $ds-fr-2: 2fr;
 $ds-fr-4: 4fr;
 $ds-fr-5: 5fr;
 $ds-fr-6: 6fr;
+/* task 11 (ADR-161 §3.10): 3fr joins the fr scale -- cross-sheet recurring
+   hub share (agentic mcp-hub rail/inspector, scheduling). */
+$ds-fr-3: 3fr;
 $ds-fr-13: 13fr;
 /* task 11 (ADR-161 §3.10): the Watchlists destination's region-grid
    shares (single-consumer feature geometry, spec 3.10 -- named, not on the
@@ -290,6 +296,14 @@ $ds-watchlists-rail-right-share: 34fr;
 $ds-watchlists-region-share: 44fr;
 $ds-watchlists-region-share-read: 50fr;
 $ds-watchlists-artifacts-detail-share: 8fr;
+/* task 11 (ADR-161 §3.10): agentic-terminal single-consumer geometry
+   (components/_agentic_terminal.tcss), named per spec 3.10: the MCP
+   overview tables' auto-hug height cap (5 tables, lockstep'd with their
+   DEFAULT_CSS baselines), the prompt-variables pane's fixed columns, and
+   the compact MCP hub canvas share. */
+$ds-agentic-mcp-table-cap: 70%;
+$ds-agentic-prompt-vars-pane: 27;
+$ds-agentic-mcp-compact-canvas-share: 7fr;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
  * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
