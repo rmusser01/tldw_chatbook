@@ -231,14 +231,14 @@ def build_media_image_widget(
             width, height = fit_image_cell_size(
                 image.width, image.height, cols, lines
             )
-            widget.styles.width = width
-            widget.styles.height = height
+            widget.set_styles(width=width)
+            widget.set_styles(height=height)
             return widget
         except Exception:
             pass
 
     mosaic, mosaic_width, mosaic_height = _mosaic_renderable(image, cols, lines)
     widget = Static(mosaic)
-    widget.styles.width = mosaic_width
-    widget.styles.height = mosaic_height
+    widget.set_styles(width=mosaic_width)
+    widget.set_styles(height=mosaic_height)
     return widget
