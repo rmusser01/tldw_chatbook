@@ -887,10 +887,14 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
                 pass
 
     _MAX_VISIBLE_BREADCRUMBS = 5
-    """Crumbs shown before the middle collapses (task-32554 AC#3).
+    """Segment count above which the middle collapses (task-32554 AC#3).
 
-    Matches ``EnhancedFileDialog``'s own ceiling so the two pickers agree on
-    how deep a path is "deep".
+    Note the off-by-two in the name, inherited deliberately: a collapsed
+    trail renders the root plus the last ``_MAX_VISIBLE_BREADCRUMBS - 2``
+    segments -- four crumbs, not five. The value and the arithmetic are
+    copied verbatim from ``EnhancedFileDialog._update_breadcrumbs`` so the
+    two pickers agree on how deep a path is "deep"; renaming it here alone
+    would make them look different when they are not.
     """
 
     def _update_breadcrumbs(self, path: Path) -> None:

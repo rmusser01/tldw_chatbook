@@ -285,9 +285,17 @@ async def test_tab_from_the_selection_pane_cycles_the_three_actions(
             focused = host.focused
             visited.append(getattr(focused, "id", None))
             assert focused is not None
-            assert "library-canvas-action" in focused.classes, (
-                f"{getattr(focused, 'id', None)!r} carries no focus-marked "
-                "canvas-action class"
+            # The COMPUTED cue, not merely the class that carries it: a
+            # regression that drops the app-tier
+            # `Button.library-canvas-action:focus` rule would leave a
+            # class-membership assertion green (review finding 4).
+            edges = (
+                focused.styles.outline_left[0],
+                focused.styles.outline_right[0],
+            )
+            assert any(edge not in ("", "none") for edge in edges), (
+                f"{getattr(focused, 'id', None)!r} shows no shape-based "
+                f"focus mark: outline edges {edges!r}"
             )
         assert tuple(visited) == _SELECTION_PANE_ACTIONS
 
@@ -313,9 +321,11 @@ async def test_tab_from_the_selection_pane_cycles_the_three_actions(
 async def test_import_once_completes_by_keyboard_alone(tmp_path) -> None:
     """AC#4. Add from files… → receipt with ``pilot.press`` only.
 
-    Nothing here presses a Button object or sets a widget value: every step
-    is a keystroke, through the real chooser, the real ``FileOpen`` dialog
-    and the real import worker.
+    The AC starts at **Add from files…**, so reaching the notes list presses
+    ``#library-row-browse-notes`` directly; from there every step is a
+    keystroke, through the real chooser, the real ``FileOpen`` dialog and the
+    real import worker. Nothing after that press touches a Button object or
+    sets a widget value.
     """
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository

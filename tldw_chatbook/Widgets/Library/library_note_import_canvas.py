@@ -227,6 +227,11 @@ bare-filename branches from drifting to different limits independently).
 """
 
 
+#: Cells the scrolling body keeps for itself around the summary line (its
+#: own padding plus room for a scrollbar), subtracted when the canvas's width
+#: stands in for the unmeasured Static's.
+_IMPORT_BODY_CHROME_CELLS = 2
+
 _FOLDER_SELECTED_PREFIX = "1 folder selected: "
 """What precedes a folder path on the confirmation line.
 
@@ -624,7 +629,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         # a couple of cells for the scrolling body's own chrome. Measured
         # live: reading the Static alone left the line at the 48-character
         # floor until the terminal was resized.
-        width = summary.content_size.width or max(self.content_size.width - 2, 0)
+        width = summary.content_size.width or max(
+            self.content_size.width - _IMPORT_BODY_CHROME_CELLS, 0
+        )
         if width <= 0:
             return
         budget = max(_SOURCE_NAME_BUDGET, width - len(_FOLDER_SELECTED_PREFIX))
