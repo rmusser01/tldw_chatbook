@@ -129,6 +129,7 @@ _RESTORE_DIAGNOSTIC_TESTS = (
     ),
 )
 _SUPPORT_DIAGNOSTIC_TESTS = (
+    "Tests/Backup_Recovery/test_console_progress_timer.py",
     "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
     "Tests/Backup_Recovery/test_console_projection_config_lifetime.py",
     "Tests/Backup_Recovery/test_console_canvas_config_order.py",
