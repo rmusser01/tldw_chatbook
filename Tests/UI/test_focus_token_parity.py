@@ -16,10 +16,9 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from tldw_chatbook.css import build_css
-from tldw_chatbook.Widgets.base_components import NavigationButton
 from tldw_chatbook.Widgets.emoji_picker import EmojiButton
 
 _CSS_DIR = Path(build_css.__file__).parent
@@ -48,35 +47,17 @@ class ParityHost(App):
             classes="console-transcript-message-selected",
             id="selected-peer",
         )
-        yield NavigationButton("Nav", id="nav-active")
-        yield NavigationButton("Nav plain", id="nav-plain")
+        # Focus sink: run_test auto-focuses the first focusable widget; a
+        # plain Button ahead of the emoji keeps the emoji UNFOCUSED at mount,
+        # which test_focused_emoji_button_matches_the_focus_token's
+        # before/after measurement depends on. (Previously the dead
+        # base_components.NavigationButton sat here.)
+        yield Button("focus sink", id="focus-sink")
         yield EmojiButton(
             {"char": "🙂", "name": "smile", "aliases": [], "group": "test"},
             id="emoji",
             classes="emoji_button",
         )
-
-
-@pytest.mark.asyncio
-async def test_active_navigation_button_matches_the_focus_token():
-    """The UNFOCUSED active nav button must resolve the bundle's focus token.
-
-    run_test auto-focuses the first focusable widget, and the bundle's
-    generic ``Button:focus`` already paints ``$ds-focus-bg`` at app tier --
-    measured focused, this test cannot see the ``.active`` rule at all
-    (it passed against the pre-fix shadowed code). The bug only shows on
-    the UNFOCUSED active state, so blur before measuring.
-    """
-    async with ParityHost().run_test(size=(80, 24)) as pilot:
-        pilot.app.query_one("#nav-active").add_class("active")
-        pilot.app.set_focus(None)
-        await pilot.pause()
-        assert "focus" not in pilot.app.query_one("#nav-active").pseudo_classes
-        peer_bg = pilot.app.query_one("#selected-peer").styles.background
-        active_bg = pilot.app.query_one("#nav-active").styles.background
-        plain_bg = pilot.app.query_one("#nav-plain").styles.background
-        assert active_bg == peer_bg
-        assert active_bg != plain_bg
 
 
 @pytest.mark.asyncio

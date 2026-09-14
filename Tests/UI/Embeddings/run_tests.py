@@ -32,8 +32,6 @@ def main():
             "all",
             "unit",
             "widgets",
-            "toast",
-            "progress",
             "activity",
             "coverage",
         ],
@@ -71,18 +69,14 @@ def main():
     elif args.suite == "unit":
         cmd.extend([str(test_dir), "-m", "not integration"])
     elif args.suite == "widgets":
-        # Run all widget tests
+        # Run all widget tests (test_toast_notifications.py and
+        # test_detailed_progress.py were removed with their dead widgets --
+        # ADR-161 task 2.)
         cmd.extend(
             [
-                str(test_dir / "test_toast_notifications.py"),
-                str(test_dir / "test_detailed_progress.py"),
                 str(test_dir / "test_activity_log.py"),
             ]
         )
-    elif args.suite == "toast":
-        cmd.append(str(test_dir / "test_toast_notifications.py"))
-    elif args.suite == "progress":
-        cmd.append(str(test_dir / "test_detailed_progress.py"))
     elif args.suite == "activity":
         cmd.append(str(test_dir / "test_activity_log.py"))
     elif args.suite == "coverage":

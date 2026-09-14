@@ -14,9 +14,7 @@ BUTTONS = ROOT / "tldw_chatbook/css/components/_buttons.tcss"
 FORMS = ROOT / "tldw_chatbook/css/components/_forms.tcss"
 LISTS = ROOT / "tldw_chatbook/css/components/_lists.tcss"
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-BASE_COMPONENTS = ROOT / "tldw_chatbook/Widgets/base_components.py"
 WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
-NAVIGATION = ROOT / "tldw_chatbook/css/components/_navigation.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CONVERSATIONS = ROOT / "tldw_chatbook/css/features/_conversations.tcss"
@@ -1123,32 +1121,13 @@ def test_top_navigation_inline_focus_uses_hybrid_contract():
     assert_non_obscuring_focus(active_focus)
 
 
-def test_shared_navigation_button_uses_non_obscuring_active_and_focus_states():
-    text = BASE_COMPONENTS.read_text(encoding="utf-8")
-    hover = css_block(text, "NavigationButton:hover")
-    assert_native_row_hover_state_contract(hover)
-    # TASK-16811: the token-dependent .active/:focus states moved into
-    # css/components/_navigation.tcss -- inside the widget's DEFAULT_CSS the
-    # local `$ds-*:` "fallbacks" they required silently shadowed the bundle's
-    # real focus tokens (unfocused .active rendered $surface, not #51677e).
-    # The widget source must stay free of local $ds declarations.
-    assert "$ds-focus-bg:" not in text and "$ds-focus-fg:" not in text
-    nav_text = NAVIGATION.read_text(encoding="utf-8")
-    focus = css_block(nav_text, "NavigationButton:focus")
-    active = css_block(nav_text, "NavigationButton.active")
-    active_focus = css_block(nav_text, "NavigationButton.active:focus")
-    assert_non_obscuring_focus(focus)
-    assert "$ds-focus-bg" in focus or "$ds-surface-raised" in focus
-    assert_readable_selected_state_contract(active)
-    assert_no_dominant_selected_geometry(active)
-    assert_non_obscuring_focus(active_focus)
-    assert "$ds-focus-bg" in active_focus or "$ds-surface-raised" in active_focus
-
-
-def test_shared_section_container_collapse_button_hover_is_non_obscuring():
-    text = BASE_COMPONENTS.read_text(encoding="utf-8")
-    hover = css_block(text, ".collapse-button:hover")
-    assert_native_row_hover_state_contract(hover)
+# test_shared_navigation_button_uses_non_obscuring_active_and_focus_states and
+# test_shared_section_container_collapse_button_hover_is_non_obscuring were
+# removed with tldw_chatbook/Widgets/base_components.py (ADR-161 task 2):
+# they asserted solely on that dead module's NavigationButton and
+# SectionContainer sources. The NavigationButton type-selector rules still
+# sitting in css/components/_navigation.tcss are dead selectors for the same
+# removed widget and are governed by the later component-pattern CSS work.
 
 
 @pytest.mark.unit
