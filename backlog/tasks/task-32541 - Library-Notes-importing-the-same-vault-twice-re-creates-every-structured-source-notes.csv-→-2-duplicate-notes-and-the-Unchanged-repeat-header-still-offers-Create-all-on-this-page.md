@@ -78,6 +78,16 @@ change" with **Skip** pre-selected, the header carrying only **Skip all on
 this page**, and the multi-record rows offering **Skip** / **Create new**
 (`wave4-caps/data-truth/data-25-third-import-unchanged-repeat`).
 
+AC#1 honesty note: in the seeded verification vault only `notes.csv` is
+multi-record; `meta.yaml` and `scratch.txt` parse to a single payload there
+(the capture shows them offering **Update existing**, which only a one-payload
+repeat may offer), and the old code already classified single-payload sources.
+So the live capture proves the CSV case for this fix; the other two rows are a
+negative control, not evidence. The critique's vault had multi-record YAML/text
+sources, and the mechanism is general in `payload_count` — the headless pins
+(`Tests/Notes/test_note_import_planner.py`,
+`Tests/Notes/test_note_import_receipts.py`) carry the multi-payload contract.
+
 Files: `tldw_chatbook/Notes/note_import_receipts.py`,
 `tldw_chatbook/Notes/note_import_planner.py`,
 `tldw_chatbook/Notes/note_import_plan_models.py`,
