@@ -550,10 +550,12 @@ on screen while the key can only report that the write is busy.)*
 
 *Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32461:
 the sibling dirty vetoes that still refused in silence now speak. The
-prompt-row switch, **Select** and every route into Library borrow Back/Escape's
-own sentence; a deep link into a prompt names the one it did not open and drops
-it rather than queueing it. The row switch, **Select** and the route-in refusal
-were driven live at 235x52 on a scratch profile with the editor showing
-"• Unsaved changes"; the deep link is pinned on the mounted screen, since no
-hand route reaches it while the editor is dirty. Fix round 1 added the fourth
-site — the navigation-into-Library barrier — after a caller sweep of all eight.)*
+prompt-row switch and **Select** borrow Back/Escape's own sentence; a deep link
+into a prompt names the one it did not open and drops it rather than queueing
+it. Both new refusals were driven live at 235x52 on a scratch profile with the
+editor showing "• Unsaved changes"; the deep link is pinned on the mounted
+screen, since no hand route reaches it while the editor is dirty. Leaving for
+another screen, and routing back into Library, already explained themselves
+before this change and still do — fix round 1 added the same sentence to the
+Library admission barrier behind them as defence in depth, after a caller sweep
+of all eight sites, with no user-visible change.)*

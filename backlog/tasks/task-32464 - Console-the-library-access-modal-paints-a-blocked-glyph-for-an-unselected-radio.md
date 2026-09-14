@@ -83,7 +83,7 @@ those surfaces (Console capture-policy / export / share dialogs, the Chatbook
 wizards, the conversation selection dialog) distinguish the chosen option by
 colour alone — the WCAG 1.4.1 problem these two subclasses exist to fix. That is
 a separate job: ~8 surfaces, and the right shape is one shared structural
-subclass instead of a third copy of this one. Needs an id.
+subclass instead of a third copy of this one. Filed as **task-32465**.
 
 The AC#2 source pin is now quote-agnostic (review F-7): `assert "●" not in
 source` rather than `'"●"'`, since the painted pin cannot tell a re-introduced

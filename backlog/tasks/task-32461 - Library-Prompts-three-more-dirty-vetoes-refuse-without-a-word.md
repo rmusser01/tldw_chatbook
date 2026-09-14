@@ -29,12 +29,18 @@ The background reconcile path is the one that needs a judgement rather than a co
 - [x] #2 Pressing Select while the open prompt is dirty states why it was refused
 - [x] #3 The entry-reconcile veto's behaviour is decided and recorded in the task (explain, defer, or deliberately silent), and matches what ships
 - [x] #4 Each wired refusal is covered by a test that fails if it becomes a silent no-op again
-- [x] #5 Navigating into Library while a dirty prompt editor is open states why the move was refused
+- [x] #5 The Library admission barrier explains a dirty-prompt refusal instead of returning silently, so any caller that reaches it without the app-level flush still tells the user why
 <!-- AC:END -->
 
-<!-- AC#5 added in fix round 1: the task review found a FOURTH silent sibling the filed
-three missed (`library_inspection_admission.py:230`, the navigation-into-Library barrier),
-and it is the one route that actually fires today. -->
+<!-- AC#5 added in fix round 1: the task review found a FOURTH silent sibling the
+filed three missed (`library_inspection_admission.py:230`, the navigation-into-
+Library barrier). Reworded in round 2 after the re-review traced it: this is
+DEFENCE IN DEPTH, not a user-visible change. Every production route that reaches
+this barrier has already crossed the app-level flush (sweep site #5,
+`app.py:13636-13666` -> `library_screen.py:10634`), which raises the identical
+sentence synchronously before the destination is even resolved, so users see no
+difference today -- the barrier simply no longer depends on a caller upstream of
+it having spoken. -->
 
 ## Implementation Plan
 
@@ -89,19 +95,40 @@ Modified: `tldw_chatbook/UI/Screens/library_screen.py`,
 
 ### Fix round 1 (task review, 2026-09-14)
 
-**AC#5 — the fourth sibling.** `_flush_library_navigation_sources`
-(`library_inspection_admission.py:230`) is the barrier every navigation INTO
-Library crosses, and it refused a dirty prompt in silence five lines above a
-skill veto that speaks. It also returns before the deep-link seam, so the AC#3
-line shipped in round 0 was correct but dormant while the live defect stood.
-One `self._notify_prompt_dirty_veto()`, in that twin's own shape (the
+**AC#5 — the fourth sibling, as defence in depth.**
+`_flush_library_navigation_sources` (`library_inspection_admission.py:230`) is
+the barrier every navigation INTO Library crosses, and it refused a dirty
+prompt in silence five lines above a skill veto that speaks. One
+`self._notify_prompt_dirty_veto()`, in that twin's own shape (the
 `is_current()` check split out, so the flag branch reads like the skill one).
+
+**What this does NOT claim (round 2 correction).** The re-review traced the
+production routes: the outgoing-screen flush in `handle_screen_navigation`
+(`app.py:13636-13666`) awaits `flush_pending_work` — sweep site #5 — before
+the destination is resolved, and site #1 only runs later, inside the worker
+`apply_navigation_context` schedules
+(`library_navigation_controller.py:114-120`). So every route that reaches site
+#1 has already raised the identical sentence from site #5, and the one state
+where site #1 could speak alone (a dormant dirty Library retained while you
+are on another screen) is unreachable, because leaving a dirty Library is
+gated by site #5 too. **Users see no change.** The value is that the barrier
+no longer depends on a caller upstream of it having spoken — round 0's
+phrasing here ("the one route that actually fires today") was wrong and is
+withdrawn.
+
 Red-first (`runs/f1-red.txt`: "the route into Library refused and said nothing
 at all"), green (`runs/f1-green2.txt`), mutation-tested by deleting the call
-(`runs/f1-mut.txt`: 1 failed, 3 passed, the right one). Live at 235x52:
-`captures/03-route-into-library-veto.txt` — palette ▸ "Media & Content: Open
-Media Library" while the Prompts editor is dirty now raises the toast, the
-route does not happen, the editor keeps its "Unsaved changes".
+(`runs/f1-mut.txt`: 1 failed, 3 passed, the right one). The pin calls
+`apply_navigation_context` directly on a mounted harness, which bypasses site
+#5 — that is what makes it a pin on THIS guard, and equally why it is not
+evidence about the live route.
+
+Live at 235x52, `captures/03-route-into-library-veto.txt`, for what it does
+prove: a palette route into Library on a dirty Prompts editor is explained
+("Unsaved Prompt changes — Save or Discard changes first."), the route does
+not happen, and the editor keeps its "Unsaved changes". It cannot attribute
+which guard emitted that toast, because sites #1 and #5 share the copy
+byte-for-byte.
 
 **Caller sweep of `_flush_library_prompt_save` — 8 sites, 8 now speak.**
 This is the check that closes the class rather than the instances; it is what
@@ -109,14 +136,14 @@ would have caught the fourth site before review.
 
 | # | Call site | Gesture | Disposition |
 |---|---|---|---|
-| 1 | `library_inspection_admission.py:230` | any route INTO Library (palette, Console hand-off, legacy alias) | **speaks** — new in this round; live-captured |
+| 1 | `library_inspection_admission.py:230` | any route INTO Library (palette, Console hand-off, legacy alias) | **speaks** — new in this round; defence in depth only, since site #5 always speaks first on these routes (pinned on the mounted screen) |
 | 2 | `library_prompts_controller.py:1440` | **Select** | speaks (round 0); live-captured |
 | 3 | `library_prompts_controller.py:1592` | **Import…** | speaks — predates this task |
 | 4 | `library_prompts_controller.py:3491` | Back / Escape (`_exit_library_prompt_editor_guarded`) | speaks — task-32393 |
-| 5 | `library_screen.py:10634` | app-level navigation guard (`flush_pending_work`, tab switch) | speaks — predates this task |
+| 5 | `library_screen.py:10634` | app-level navigation guard (`flush_pending_work`) — every screen navigation, INCLUDING routes back into Library | speaks — predates this task; this is the guard the user actually hears on a route into Library |
 | 6 | `library_screen.py:21580` | rail-row switch | speaks — predates this task |
 | 7 | `library_screen.py:25851` | prompt-row switch | speaks (round 0); live-captured |
-| 8 | `library_screen.py:33829` | deep link (`_open_library_item_by_id`) | speaks (round 0); pinned on the mounted screen — no hand route reaches it while dirty, because sites 1, 5 and 6 block every approach |
+| 8 | `library_screen.py:33829` | deep link (`_open_library_item_by_id`) | speaks (round 0); pinned on the mounted screen — no hand route reaches it while dirty, because sites 5 and 6 block every approach |
 
 No ninth site: the grep is `_flush_library_prompt_save()` across
 `tldw_chatbook/`, and the two remaining hits are the definition and the
