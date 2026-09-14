@@ -1217,50 +1217,54 @@ TabbedContent Underline {
  * ======================================== 
  * Section containers, subsections, and content areas
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* TabbedContent height fixes */
 #config-tabs {
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
 }
 
 #config-tabs TabPane {
-    height: 100%;
-    width: 100%;
-    padding: 1;
+    height: $ds-height-full;
+    width: $ds-width-full;
+    padding: $ds-space-1;
 }
 
 /* Container for the HorizontalScroll, this takes the original #tabs styling for docking */
 #tabs-outer-container {
     dock: top;
-    height: 3; /* Or your desired tab bar height */
+    height: $ds-size-3; /* Or your desired tab bar height */
     background: $background; /* Or your tab bar background */
-    padding: 0 1; /* Padding for the overall bar */
-    width: 100%;
-    margin-top: 1; /* Add buffer space above the tab bar */
+    padding: $ds-space-0 $ds-space-1; /* Padding for the overall bar */
+    width: $ds-width-full;
+    margin-top: $ds-space-1; /* Add buffer space above the tab bar */
 }
 
 /* The HorizontalScroll itself, which will contain the buttons */
 #tabs {
-    width: 100%;
-    height: 100%; /* Fill the outer container's height */
+    width: $ds-width-full;
+    height: $ds-height-full; /* Fill the outer container's height */
     overflow-x: auto !important; /* Ensure horizontal scrolling is enabled */
     /* overflow-y: hidden; /* Usually not needed for a single row of tabs */
 }
 
 #tabs Button {
     width: auto;         /* Let button width be determined by content + padding */
-    min-width: 10;       /* Minimum width to prevent squishing too much */
-    height: 100%;        /* Fill the height of the scrollable area */
+    min-width: $ds-size-10;       /* Minimum width to prevent squishing too much */
+    height: $ds-height-full;        /* Fill the height of the scrollable area */
     border: none; /* Your existing style */
     background: $panel;  /* Your existing style */
     color: $text-muted;  /* Your existing style */
-    padding: 0 2;        /* Add horizontal padding to buttons */
-    margin: 0 1 0 0;     /* Small right margin between buttons */
+    padding: $ds-space-0 $ds-space-2;        /* Add horizontal padding to buttons */
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;     /* Small right margin between buttons */
 }
 
 #tabs Button:last-of-type { /* No margin for the last button */
-    margin-right: 0;
+    margin-right: $ds-space-0;
 }
 
 #tabs Button:hover {
