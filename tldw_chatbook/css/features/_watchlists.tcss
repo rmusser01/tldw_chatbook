@@ -3,6 +3,11 @@
  * ========================================
  * Styles for the WatchlistsCollectionsScreen dashboard and panes.
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales + the named
+   $ds-watchlists-* region-grid shares), transcribed value-identically from
+   the raw literals; comments stay load-bearing. */
+
 
 /* Overview dashboard grid and cards.
  *
@@ -35,12 +40,12 @@
     grid-size: 3;
     grid-gutter: 1;
     height: auto;
-    margin: 1 0;
+    margin: $ds-space-1 $ds-space-0;
 }
 
 .overview-card {
-    height: 4;
-    padding: 0 1;
+    height: $ds-size-4;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface;
     border: round $surface-lighten-1;
     text-align: center;
@@ -49,14 +54,14 @@
 
 /* Failed runs table in overview */
 #overview-failed-runs {
-    height: 1fr;
+    height: $ds-height-fill;
     border: round $surface-lighten-1;
 }
 
 /* Empty state actions */
 #wc-empty-actions {
     height: auto;
-    margin: 1 0;
+    margin: $ds-space-1 $ds-space-0;
 }
 
 /* Section detail title */
@@ -68,27 +73,27 @@
 /* Workbench: stable chrome above a permanent horizontal centre. */
 .watchlists-workbench {
     layout: vertical;
-    width: 100%;
-    height: 1fr;
-    min-width: 0;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-width: $ds-size-0;
+    min-height: $ds-size-0;
     overflow: hidden;
 }
 
 #wl-workbench-body {
     layout: horizontal;
-    width: 100%;
-    height: 1fr;
-    min-width: 0;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-width: $ds-size-0;
+    min-height: $ds-size-0;
     overflow: hidden;
 }
 
 .watchlists-region-left_rail {
-    width: 28fr;
-    min-width: 24;
-    max-width: 28;
-    height: 100%;
+    width: $ds-watchlists-rail-left-share;
+    min-width: $ds-size-24;
+    max-width: $ds-size-28;
+    height: $ds-height-full;
     border: round $ds-grid-line;
 }
 
@@ -98,15 +103,15 @@
  * pane, is the survivor.
  */
 .watchlists-region-right_rail {
-    width: 34fr;
-    min-width: 30;
-    max-width: 34;
-    height: 100%;
+    width: $ds-watchlists-rail-right-share;
+    min-width: $ds-size-30;
+    max-width: $ds-size-34;
+    height: $ds-height-full;
     border: round $ds-grid-line;
 }
 
 .watchlists-region-right_rail Button {
-    width: 100%;
+    width: $ds-width-full;
     text-wrap: wrap;
 }
 
@@ -122,7 +127,7 @@
 
 /* Cross-cutting tab/status chrome stays above the body on every section. */
 #wl-centre-status {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
@@ -153,43 +158,43 @@
  * handoff action is painted below the viewport and cannot be reached.
  */
 #watchlists-inspector-pane {
-    height: 100%;
-    min-height: 0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
     overflow-y: auto;
 }
 
 /* ITEMS is the management canvas, but a bounded Feed Items side pane on Read. */
 .watchlists-region-items {
-    width: 44fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
+    width: $ds-watchlists-region-share;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
     border: round $ds-grid-line;
 }
 
 .watchlists-read-mode .watchlists-region-items {
-    width: 50fr;
-    min-width: 42;
-    max-width: 50;
-    height: 100%;
+    width: $ds-watchlists-region-share-read;
+    min-width: $ds-size-42;
+    max-width: $ds-size-50;
+    height: $ds-height-full;
     overflow: hidden;
 }
 
 .watchlists-read-mode #watchlists-detail-pane,
 .watchlists-read-mode #watchlists-items-pane {
-    height: 100%;
-    min-height: 0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
 }
 
 .watchlists-read-mode #items-table {
-    height: 1fr;
-    min-height: 1;
+    height: $ds-height-fill;
+    min-height: $ds-size-1;
     overflow-y: auto;
 }
 
 #items-pagination {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 #items-page-previous,
@@ -198,37 +203,37 @@
 }
 
 #items-page-label {
-    width: 1fr;
+    width: $ds-width-fill;
     text-align: center;
 }
 
 /* Reader is the permanent flexing centre; only its article body scrolls. */
 .watchlists-region-content {
-    width: 44fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
+    width: $ds-watchlists-region-share;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
     border: round $ds-grid-line;
     overflow: hidden;
 }
 
 .watchlists-has-expanded-side-pane .watchlists-region-content,
 .watchlists-has-expanded-side-pane .watchlists-region-items {
-    min-width: 44;
+    min-width: $ds-size-44;
 }
 
 .watchlists-has-expanded-side-pane.watchlists-read-mode .watchlists-region-items {
-    min-width: 42;
+    min-width: $ds-size-42;
 }
 
 #watchlists-content-pane {
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 .watchlists-read-mode #content-body-scroll {
-    height: 1fr;
-    min-height: 1;
+    height: $ds-height-fill;
+    min-height: $ds-size-1;
     overflow-y: auto;
 }
 
@@ -245,15 +250,15 @@
 
 #content-actions Button {
     width: auto;
-    min-width: 0;
+    min-width: $ds-size-0;
 }
 
 #content-position {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .watchlists-region-title {
-    height: 1;
+    height: $ds-size-1;
     text-style: bold;
     color: $ds-text-primary;
 }
@@ -263,13 +268,13 @@
 }
 
 .watchlists-pane-grip {
-    width: 5;
-    min-width: 5;
-    max-width: 5;
-    height: 100%;
-    min-height: 0;
-    padding: 0;
-    margin: 0;
+    width: $ds-size-5;
+    min-width: $ds-size-5;
+    max-width: $ds-size-5;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
     border: none;
     border-left: solid $ds-grid-line;
     color: $ds-text-muted;
@@ -308,9 +313,9 @@
  */
 .watchlists-tab-strip Button.watchlists-tab {
     width: auto;
-    min-width: 10;
-    height: 1;
-    padding: 0 1;
+    min-width: $ds-size-10;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
 }
 
@@ -436,15 +441,15 @@
  * child rather than to a row.
  */
 .watchlist-tree-actions {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
 }
 
 .watchlist-tree-actions Button.watchlist-tree-action {
     width: auto;
-    min-width: 0;
-    height: 1;
-    padding: 0;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0;
     border: none;
 }
 
@@ -454,7 +459,7 @@
  * one -- a stated reason that does not fit is not a stated reason.
  */
 .watchlist-tree-actions-note {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
 }
@@ -469,8 +474,8 @@
  * rows below it, not one of them.
  */
 .watchlist-tree-count-legend {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
     color: $ds-text-muted;
 }
 
@@ -491,10 +496,10 @@ WatchlistPickerDialog {
 #watchlist-name-dialog,
 #watchlist-add-source-dialog,
 #watchlist-pick-dialog {
-    width: 60;
+    width: $ds-size-60;
     height: auto;
-    max-height: 80%;
-    padding: 1 2;
+    max-height: $ds-percent-80;
+    padding: $ds-space-1 $ds-space-2;
     background: $surface;
     border: round $ds-grid-line;
 }
@@ -505,7 +510,7 @@ WatchlistPickerDialog {
  * Muted because it is a caption for the list below it, not an entry in it.
  */
 .watchlist-picker-instructions {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
 }
@@ -515,23 +520,23 @@ WatchlistPickerDialog {
  * this line is that the user can read why nothing happened.
  */
 #watchlist-name-error {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $error;
 }
 
 #watchlist-add-source-options,
 #watchlist-pick-options {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 16;
+    max-height: $ds-size-16;
 }
 
 #watchlist-add-source-options Button,
 #watchlist-pick-options Button {
-    width: 100%;
-    min-width: 0;
-    height: 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
     border: none;
     text-align: left;
 }
@@ -552,22 +557,22 @@ WatchlistPickerDialog {
  * task removed.
  */
 #overview-first-run {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 1 0;
+    padding: $ds-space-1 $ds-space-0;
 }
 
 .watchlists-first-run-title {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     text-style: bold;
     color: $ds-text-primary;
 }
 
 .watchlists-first-run-body {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 1 0 0 0;
+    padding: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     text-wrap: wrap;
     color: $ds-text-muted;
 }
@@ -577,7 +582,7 @@ WatchlistPickerDialog {
  * alert.
  */
 #inspector-first-run-hint {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     text-wrap: wrap;
     color: $ds-text-muted;
@@ -597,15 +602,15 @@ WatchlistPickerDialog {
  * bordered widget spends the same two rows either way.
  */
 #inspector-noise-selectors {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 4;
-    margin: 0;
+    max-height: $ds-size-4;
+    margin: $ds-space-0;
 }
 
 #inspector-save-selectors-button {
-    width: 100%;
-    margin: 0;
+    width: $ds-width-full;
+    margin: $ds-space-0;
 }
 
 /* TASK-997. The expand chevron drew on its own indented line ABOVE the
@@ -650,15 +655,15 @@ WatchlistPickerDialog {
  * with the chevron's width.
  */
 .watchlist-tree .watchlist-tree-row {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
 }
 
 .watchlist-tree Button.watchlist-tree-expander {
-    width: 3;
-    min-width: 0;
-    height: 1;
-    padding: 0;
+    width: $ds-size-3;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0;
     border: none;
 }
 
@@ -728,66 +733,66 @@ WatchlistPickerDialog {
 #items-toolbar Input,
 #items-toolbar Select,
 #watchlists-header-bar Select {
-    height: 1;
-    min-height: 1;
-    margin: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
 }
 
 #sources-search-input {
-    width: 1fr;
-    min-width: 12;
+    width: $ds-width-fill;
+    min-width: $ds-size-12;
 }
 
 #sources-type-select {
-    width: 12;
+    width: $ds-size-12;
 }
 
 #sources-status-filter {
-    width: 16;
+    width: $ds-size-16;
 }
 
 #sources-active-filter {
-    width: 12;
+    width: $ds-size-12;
 }
 
 #sources-tags-filter {
-    width: 1fr;
-    min-width: 12;
+    width: $ds-width-fill;
+    min-width: $ds-size-12;
 }
 
 #sources-new-button,
 #sources-add-several-button,
 #sources-filter-toggle {
     width: auto;
-    min-width: 0;
-    padding: 0;
+    min-width: $ds-size-0;
+    padding: $ds-space-0;
 }
 
 #sources-filter-editor .sources-filter-label {
     width: auto;
-    min-width: 0;
-    margin: 0 1 0 0;
+    min-width: $ds-size-0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 #sources-filter-editor #sources-tags-filter {
-    min-width: 8;
+    min-width: $ds-size-8;
 }
 
 #sources-selection-actions {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
 }
 
 #sources-selection-status {
-    width: 1fr;
-    height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
 }
 
 #sources-create-watchlist-selected {
     width: auto;
-    min-width: 0;
-    height: 1;
-    padding: 0;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0;
 }
 
 /* TASK-1035. The create-source form had no rule anywhere, so it took
@@ -803,7 +808,7 @@ WatchlistPickerDialog {
  */
 #sources-create-form {
     height: auto;
-    width: 100%;
+    width: $ds-width-full;
 }
 
 /* TASK-1362. Name and URL share one row so the noise field below has rows to
@@ -815,14 +820,14 @@ WatchlistPickerDialog {
  * is what this form already does for Type/Active and Tags/cadence.
  */
 #sources-create-form .sources-create-identity-row {
-    width: 100%;
-    height: 3;
+    width: $ds-width-full;
+    height: $ds-size-3;
 }
 
 #sources-create-form #sources-create-name,
 #sources-create-form #sources-create-url {
-    width: 1fr;
-    margin: 0;
+    width: $ds-width-fill;
+    margin: $ds-space-0;
 }
 
 /* Type + Active share one row. Two things are pinned here.
@@ -839,20 +844,20 @@ WatchlistPickerDialog {
  * above.
  */
 #sources-create-form .sources-create-type-row {
-    width: 100%;
-    height: 3;
+    width: $ds-width-full;
+    height: $ds-size-3;
 }
 
 #sources-create-form #sources-create-type {
-    width: 1fr;
-    margin: 0;
+    width: $ds-width-fill;
+    margin: $ds-space-0;
 }
 
 #sources-create-form .sources-create-active-label {
     width: auto;
-    height: 3;
+    height: $ds-size-3;
     content-align: left middle;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* TASK-2302 AC#3: the visible label for a Select that painted as a bare
@@ -868,9 +873,9 @@ WatchlistPickerDialog {
  */
 #sources-create-form .sources-create-field-label {
     width: auto;
-    height: 3;
+    height: $ds-size-3;
     content-align: left middle;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* TASK-2302 AC#1: the destination row. Compact (one row) for the reason the
@@ -882,18 +887,18 @@ WatchlistPickerDialog {
  * exactly that overflow.
  */
 #sources-create-form .sources-create-destination-row {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
 }
 
 #sources-create-form .sources-create-destination-row
 .sources-create-field-label {
-    height: 1;
+    height: $ds-size-1;
 }
 
 #sources-create-form #sources-create-watchlist {
-    width: 1fr;
-    margin: 0;
+    width: $ds-width-fill;
+    margin: $ds-space-0;
 }
 
 /* Tags + check cadence share the next row, for the reason spelled out above:
@@ -904,18 +909,18 @@ WatchlistPickerDialog {
  * otherwise adds a blank row beneath it and reintroduces exactly that overflow.
  */
 #sources-create-form .sources-create-tags-row {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
 }
 
 #sources-create-form #sources-create-tags {
-    width: 1fr;
-    margin: 0;
+    width: $ds-width-fill;
+    margin: $ds-space-0;
 }
 
 #sources-create-form #sources-create-frequency {
-    width: 16;
-    margin: 0;
+    width: $ds-size-16;
+    margin: $ds-space-0;
 }
 
 /* TASK-1362 (spec §2): the noise control. `max-height: 4` is the whole field
@@ -928,10 +933,10 @@ WatchlistPickerDialog {
  * defect and the same fix as `#sources-toolbar` and the form container above.
  */
 #sources-create-form #sources-create-ignore-selectors {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 4;
-    margin: 0;
+    max-height: $ds-size-4;
+    margin: $ds-space-0;
 }
 
 /* TASK-2310: a compact, one-row inline label placed immediately before a
@@ -949,9 +954,9 @@ WatchlistPickerDialog {
  */
 .watchlists-inline-select-label {
     width: auto;
-    height: 1;
+    height: $ds-size-1;
     content-align: left middle;
-    padding: 0 1 0 0;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     color: $text-muted;
 }
 
@@ -962,8 +967,8 @@ WatchlistPickerDialog {
  * to win here, just keep it visually secondary like the Select labels above.
  */
 .rules-create-threshold-help {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
     color: $text-muted;
 }
 
@@ -974,10 +979,10 @@ WatchlistPickerDialog {
  * persistent column-meaning legends (e.g. Items' Queued glyph).
  */
 .watchlists-hint-line {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $text-muted;
-    padding: 1 0;
+    padding: $ds-space-1 $ds-space-0;
 }
 
 /* `.dialog-buttons` (components/_dialogs.tcss since ADR-161 task 4)
@@ -997,24 +1002,24 @@ WatchlistPickerDialog {
  */
 #sources-create-form .sources-create-buttons {
     align: left middle;
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
 }
 
 #items-search-input {
-    width: 1fr;
-    min-width: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
 }
 
 #items-status-select {
-    width: 9;
-    min-width: 0;
+    width: $ds-size-9;
+    min-width: $ds-size-0;
 }
 
 #items-refresh-button {
     width: auto;
-    min-width: 0;
-    padding: 0;
+    min-width: $ds-size-0;
+    padding: $ds-space-0;
 }
 
 /* TASK-3791 plan task 5. The pill is a notice, not a verb: no border
@@ -1023,8 +1028,8 @@ WatchlistPickerDialog {
  */
 #items-new-items-pill {
     width: auto;
-    height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $accent;
     text-style: bold;
 }
@@ -1034,7 +1039,7 @@ WatchlistPickerDialog {
 }
 
 #watchlists-backend-select {
-    width: 12;
+    width: $ds-size-12;
 }
 
 /* TASK-1105 lived here. Clicking any Watchlists table row other than the
@@ -1065,7 +1070,7 @@ WatchlistPickerDialog {
  * claim the region's rows on the way past.
  */
 .watchlists-loading-state {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     text-wrap: wrap;
     color: $ds-text-muted;
@@ -1134,9 +1139,9 @@ WatchlistPickerDialog {
  * the list to something unusable.
  */
 #artifacts-table {
-    width: 100%;
-    height: 2fr;
-    min-height: 4;
+    width: $ds-width-full;
+    height: $ds-fr-2;
+    min-height: $ds-size-4;
 }
 
 /* Task-15779: the recompose boundary holding everything below the
@@ -1151,16 +1156,16 @@ WatchlistPickerDialog {
  * section past its bottom edge.
  */
 #artifacts-detail-region {
-    width: 100%;
-    height: 8fr;
-    min-height: 8;
+    width: $ds-width-full;
+    height: $ds-watchlists-artifacts-detail-share;
+    min-height: $ds-size-8;
     overflow-y: auto;
 }
 
 #artifacts-detail {
-    width: 100%;
-    height: 6fr;
-    min-height: 4;
+    width: $ds-width-full;
+    height: $ds-fr-6;
+    min-height: $ds-size-4;
     overflow-y: auto;
 }
 
@@ -1189,21 +1194,21 @@ WatchlistPickerDialog {
  * `1fr` allots it, same as when it was a direct sibling of the table.
  */
 #artifacts-scripts-table {
-    width: 100%;
-    height: 1fr;
-    min-height: 1;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-1;
 }
 
 #artifacts-script-detail-region {
-    width: 100%;
-    height: 1fr;
-    min-height: 1;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-1;
 }
 
 #artifacts-script-detail {
-    width: 100%;
-    height: 1fr;
-    min-height: 1;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-1;
     overflow-y: auto;
 }
 
@@ -1229,7 +1234,7 @@ WatchlistPickerDialog {
  * region, and both pinned tests stay green.
  */
 #artifacts-audio-toolbar {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 /* Belt-and-suspenders: whatever the `fr` split above computes for these
@@ -1248,7 +1253,7 @@ WatchlistPickerDialog {
  * provenance on this screen (`.watchlists-region-placeholder`).
  */
 #artifacts-scope-note {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     text-wrap: wrap;
     color: $ds-text-muted;
@@ -1258,9 +1263,9 @@ WatchlistPickerDialog {
  * owns its wrapped height so compact terminals paint the complete cadence,
  * attention, eligibility, and history state before the pane scrolls. */
 #artifacts-automation-receipt {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     text-wrap: wrap;
 }
 
@@ -1268,54 +1273,54 @@ WatchlistPickerDialog {
  * the last-good briefing list/body. It owns only the rows its bounded copy
  * needs; Retry and the owning Runs destination stay reachable beside it. */
 #artifacts-state-region {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
 }
 
 #artifacts-state-message {
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     text-wrap: wrap;
 }
 
 #artifacts-state-region Button {
     width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
 }
 
 /* Keep the collapsed disclosure to one row at the 160x42 floor. The global
  * Collapsible floor is three rows plus a margin, which would steal height
  * from the already-measured briefing body even while its contents are hidden. */
 #artifacts-more-actions {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0;
-    padding: 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
     border: none;
 }
 
 #artifacts-more-actions > CollapsibleTitle {
-    height: 1;
-    min-height: 1;
-    padding: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0;
 }
 
 #artifacts-more-actions > Contents {
     height: auto;
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 #artifacts-more-actions-toolbar {
-    width: 100%;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 /* Selection-mode, default-preset, and cadence pickers (spec #2 phase 2a,
@@ -1334,17 +1339,17 @@ WatchlistPickerDialog {
  * Sources, on a different toolbar.
  */
 #artifacts-picker-toolbar Select {
-    height: 1;
-    min-height: 1;
-    margin: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
 }
 
 #artifacts-mode-select {
-    width: 26;
+    width: $ds-size-26;
 }
 
 #artifacts-preset-select {
-    width: 24;
+    width: $ds-size-24;
 }
 
 /* Cadence's own options are the shortest of the three ("Off"/"Daily"/
@@ -1353,7 +1358,7 @@ WatchlistPickerDialog {
  * label set (features/_watchlists.tcss above).
  */
 #artifacts-cadence-select {
-    width: 16;
+    width: $ds-size-16;
 }
 
 /* Briefing preset manager modal (spec #2 phase 2a, Task 3).
@@ -1381,25 +1386,25 @@ BriefingPresetModal {
 }
 
 #bpm-dialog {
-    width: 96;
+    width: $ds-size-96;
     height: auto;
-    max-height: 90%;
-    padding: 1 2;
+    max-height: $ds-percent-90;
+    padding: $ds-space-1 $ds-space-2;
     background: $surface;
     border: round $ds-grid-line;
 }
 
 #bpm-title {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #bpm-body {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 28;
+    max-height: $ds-size-28;
 }
 
 /* One compact button per preset (task-895's own "one button per candidate
@@ -1408,59 +1413,59 @@ BriefingPresetModal {
  * are built to never listen for (see the module docstring).
  */
 #bpm-list-column {
-    width: 28;
+    width: $ds-size-28;
     height: auto;
-    max-height: 100%;
-    padding-right: 1;
+    max-height: $ds-height-full;
+    padding-right: $ds-space-1;
     border-right: solid $ds-grid-line;
 }
 
 #bpm-preset-list {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 20;
+    max-height: $ds-size-20;
 }
 
 #bpm-preset-list Button {
-    width: 100%;
-    min-width: 0;
-    height: 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
     border: none;
     text-align: left;
 }
 
 #bpm-preset-list-empty {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
 }
 
 #bpm-editor-column {
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
-    max-height: 100%;
-    padding-left: 1;
+    max-height: $ds-height-full;
+    padding-left: $ds-space-1;
 }
 
 .bpm-column-heading {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     text-style: bold;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .bpm-field {
-    width: 100%;
-    height: 3;
+    width: $ds-width-full;
+    height: $ds-size-3;
 }
 
 .bpm-field-label {
-    width: 14;
-    padding-top: 1;
+    width: $ds-size-14;
+    padding-top: $ds-space-1;
 }
 
 .bpm-field Input {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 /* One row per speaker: name, role prompt, character Select, voice Select,
@@ -1469,8 +1474,8 @@ BriefingPresetModal {
  * `#overview-total-sources` (top of this file) already documents once.
  */
 .bpm-speaker-row {
-    width: 100%;
-    height: 3;
+    width: $ds-width-full;
+    height: $ds-size-3;
 }
 
 /* UAT batch-5 review, m1: column labels for the row above, reusing the
@@ -1480,9 +1485,9 @@ BriefingPresetModal {
  * a bare `Static` needs none of that.
  */
 .bpm-speaker-header-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .bpm-speaker-column-label {
@@ -1491,20 +1496,20 @@ BriefingPresetModal {
 
 .bpm-speaker-name,
 .bpm-speaker-role {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 .bpm-speaker-character,
 .bpm-speaker-voice {
-    width: 22;
-    margin-right: 1;
+    width: $ds-size-22;
+    margin-right: $ds-space-1;
 }
 
 .bpm-speaker-row Button {
     width: auto;
-    min-width: 0;
-    height: 3;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
     border: none;
 }
 
@@ -1513,24 +1518,24 @@ BriefingPresetModal {
  * instead of being clipped, matching `#watchlist-name-error` above.
  */
 #bpm-error {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $error;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 #bpm-actions {
-    width: 100%;
-    height: 3;
+    width: $ds-width-full;
+    height: $ds-size-3;
     align-horizontal: right;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 #bpm-actions Button {
-    min-width: 12;
-    height: 3;
+    min-width: $ds-size-12;
+    height: $ds-size-3;
     border: none;
-    margin-left: 1;
+    margin-left: $ds-space-1;
 }
 
 /* Kept briefings modal (task-1780, Task 5): `KeptBriefingsModal`.
@@ -1551,25 +1556,25 @@ KeptBriefingsModal {
 }
 
 #kbm-dialog {
-    width: 104;
+    width: $ds-size-104;
     height: auto;
-    max-height: 90%;
-    padding: 1 2;
+    max-height: $ds-percent-90;
+    padding: $ds-space-1 $ds-space-2;
     background: $surface;
     border: round $ds-grid-line;
 }
 
 #kbm-title {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #kbm-body {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 32;
+    max-height: $ds-size-32;
 }
 
 /* One compact button per kept briefing -- task-895's own "one button per
@@ -1577,51 +1582,51 @@ KeptBriefingsModal {
  * `#bpm-list-column`/`#bpm-preset-list` above.
  */
 #kbm-list-column {
-    width: 32;
+    width: $ds-size-32;
     height: auto;
-    max-height: 100%;
-    padding-right: 1;
+    max-height: $ds-height-full;
+    padding-right: $ds-space-1;
     border-right: solid $ds-grid-line;
 }
 
 #kbm-kept-list {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 26;
+    max-height: $ds-size-26;
 }
 
 #kbm-kept-list Button {
-    width: 100%;
-    min-width: 0;
-    height: 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
     border: none;
     text-align: left;
 }
 
 #kbm-kept-list-empty {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
 }
 
 #kbm-detail-column {
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
-    max-height: 100%;
-    padding-left: 1;
+    max-height: $ds-height-full;
+    padding-left: $ds-space-1;
 }
 
 .kbm-column-heading {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     text-style: bold;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 #kbm-detail {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 16;
+    max-height: $ds-size-16;
     overflow-y: auto;
 }
 
@@ -1631,21 +1636,21 @@ KeptBriefingsModal {
  * above.
  */
 #kbm-error {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $error;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 #kbm-detail-actions {
-    width: 100%;
-    height: 3;
-    margin-top: 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    margin-top: $ds-space-1;
 }
 
 #kbm-detail-actions Button {
-    min-width: 12;
-    height: 3;
+    min-width: $ds-size-12;
+    height: $ds-size-3;
     border: none;
 }
 
@@ -1657,13 +1662,13 @@ KeptBriefingsModal {
  * of specificity.
  */
 #kbm-cast-toolbar Select {
-    height: 1;
-    min-height: 1;
-    margin: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
 }
 
 #kbm-preset-select {
-    width: 34;
+    width: $ds-size-34;
 }
 
 /* One block per kept script: header, then its turns. `border-top` visually
@@ -1671,31 +1676,31 @@ KeptBriefingsModal {
  * rows per entry (`ArtifactsPane.compose`'s own comment on that cost).
  */
 .kbm-script {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
     border-top: solid $ds-grid-line;
-    padding-top: 1;
+    padding-top: $ds-space-1;
 }
 
 #kbm-scripts-empty {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
 }
 
 #kbm-actions {
-    width: 100%;
-    height: 3;
+    width: $ds-width-full;
+    height: $ds-size-3;
     align-horizontal: right;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 #kbm-actions Button {
-    min-width: 12;
-    height: 3;
+    min-width: $ds-size-12;
+    height: $ds-size-3;
     border: none;
-    margin-left: 1;
+    margin-left: $ds-space-1;
 }
 
 /* Snapshot view modal (task-1494): `SnapshotViewModal`. Same centred/
@@ -1710,18 +1715,18 @@ SnapshotViewModal {
 }
 
 #svm-dialog {
-    width: 90;
+    width: $ds-size-90;
     height: auto;
-    max-height: 90%;
-    padding: 1 2;
+    max-height: $ds-percent-90;
+    padding: $ds-space-1 $ds-space-2;
     background: $surface;
     border: round $ds-grid-line;
 }
 
 #svm-header {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* The snapshot body is the one field here with no natural size cap --
@@ -1731,26 +1736,26 @@ SnapshotViewModal {
  * pair above.
  */
 #svm-body-scroll {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 28;
+    max-height: $ds-size-28;
     overflow-y: auto;
 }
 
 #svm-body {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
 #svm-actions {
-    width: 100%;
-    height: 3;
+    width: $ds-width-full;
+    height: $ds-size-3;
     align-horizontal: right;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 #svm-actions Button {
-    min-width: 12;
-    height: 3;
+    min-width: $ds-size-12;
+    height: $ds-size-3;
     border: none;
 }

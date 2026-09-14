@@ -224,8 +224,13 @@ $ds-size-17: 17;
 $ds-size-18: 18;
 $ds-size-20: 20;
 $ds-size-21: 21;
+/* task 11 (ADR-161 §3.10): 22/26/42 join the size scale -- cross-sheet
+   recurring geometry at migration time (agentic/profile/watchlists,
+   research/watchlists). */
+$ds-size-22: 22;
 $ds-size-23: 23;
 $ds-size-24: 24;
+$ds-size-26: 26;
 $ds-size-28: 28;
 $ds-size-29: 29;
 $ds-size-30: 30;
@@ -238,6 +243,7 @@ $ds-size-36: 36;
    media/lab/research/watchlists widths). */
 $ds-size-38: 38;
 $ds-size-40: 40;
+$ds-size-42: 42;
 $ds-size-44: 44;
 $ds-size-45: 45;
 $ds-size-48: 48;
@@ -276,6 +282,14 @@ $ds-fr-4: 4fr;
 $ds-fr-5: 5fr;
 $ds-fr-6: 6fr;
 $ds-fr-13: 13fr;
+/* task 11 (ADR-161 §3.10): the Watchlists destination's region-grid
+   shares (single-consumer feature geometry, spec 3.10 -- named, not on the
+   mechanical scale, because each share belongs to one named region). */
+$ds-watchlists-rail-left-share: 28fr;
+$ds-watchlists-rail-right-share: 34fr;
+$ds-watchlists-region-share: 44fr;
+$ds-watchlists-region-share-read: 50fr;
+$ds-watchlists-artifacts-detail-share: 8fr;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
  * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
