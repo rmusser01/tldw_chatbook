@@ -13659,3 +13659,25 @@ which service method the current code calls and whether the fake has it —
 contract copy; when production moves to a new seam, the fake keeps passing
 whatever it still implements. And treat a production `if not callable(...):
 return` as a place where a missing seam becomes invisible, not as a safety net.
+
+## A pane's `content_region.width` is not the width its text wraps at — measure `wrap_width`, and stamp only what you measured
+
+**task-32552, 2026-09-13/14.** AC#4 said an embed line must not wrap mid-token
+at 100x30. The first pin asserted `editor.content_region.width >= len(EMBED)`
+and passed, and the guide stamp went out saying the 28-cell
+`![[attachments/diagram.png]]` "renders on one row in the 32-cell editor".
+Driven live at 100x30 it does not: the frame is 32 cells, but a document
+taller than the pane paints a vertical scrollbar inside it and the text wraps
+at **27**, so the embed splits as `![[attachments/diagram.png]` / `]`. The pin
+had been green because its fixture note was short enough not to scroll — a
+different widget from the one the critique saw — and because
+`content_region.width` counts cells the scrollbar and padding then take back.
+
+**What to do.** For any "does this line fit" claim, assert against the
+widget's own wrap width (`TextArea.wrap_width`) and make the fixture produce
+the same scrollbar state as the real screen — for a scrolling pane, assert
+`wrapped_document.height > content_region.height` so the pin fails if the
+fixture ever stops measuring the scrolled case. And never put a layout outcome
+in a "Verified against" stamp that you did not read off a capture: this stamp
+asserted the opposite of what the terminal showed, and the pin agreed with it
+for a day.
