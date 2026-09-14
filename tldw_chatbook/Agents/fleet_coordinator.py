@@ -117,6 +117,9 @@ class FleetHandle:
     # make a previously recoverable transcript unavailable.
     undelivered_steering: int = 0
     can_resume: bool = False
+    # Admitted per-run ceiling for a lineage that has encountered a definition
+    # cap. This is deliberately not the mutable configured definition value.
+    definition_wall_seconds: float | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -174,6 +177,7 @@ class RetainedTranscript:
     retained_at: float
     steering_with_causes: tuple[tuple[str, str, str | None], ...] = ()
     isolation: str | None = None
+    definition_wall_seconds: float | None = None
 
 
 class FleetCoordinator:
@@ -241,7 +245,12 @@ class FleetCoordinator:
         self._pruned_identities: dict[str, PrunedFleetIdentity] = {}
 
     def reserve(
-        self, task: str, agent: str | None, *, isolation: str | None = None
+        self,
+        task: str,
+        agent: str | None,
+        *,
+        isolation: str | None = None,
+        definition_wall_seconds: float | None = None,
     ) -> FleetHandle | None:
         """Reserve a slot for a new task, returning a handle or None if at cap.
 
@@ -282,6 +291,7 @@ class FleetCoordinator:
                 started_at=started_at,
                 finished_at=None,
                 isolation=isolation,
+                definition_wall_seconds=definition_wall_seconds,
             )
             self._handles[handle_id] = handle
             self._live_ids.add(handle_id)
@@ -802,6 +812,7 @@ class FleetCoordinator:
             retained_at=self._clock(),
             steering_with_causes=steering_with_causes,
             isolation=handle.isolation,
+            definition_wall_seconds=handle.definition_wall_seconds,
         )
         self._evict_over_cap_locked()
         return True

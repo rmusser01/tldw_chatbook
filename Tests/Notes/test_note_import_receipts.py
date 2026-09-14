@@ -4208,3 +4208,52 @@ def test_receipt_database_and_parent_have_private_modes(tmp_path: Path) -> None:
 
     assert stat.S_IMODE(database.parent.stat().st_mode) == 0o700
     assert stat.S_IMODE(database.stat().st_mode) == 0o600
+
+
+# --- task-32541: a multi-payload receipt is one source-level observation ----
+
+
+def test_a_multi_payload_source_yields_one_source_level_observation(
+    tmp_path: Path,
+) -> None:
+    """A CSV that created two notes used to leave NO observation behind, so
+    the next review saw it as New and created both notes again."""
+    from tldw_chatbook.Notes.note_import_planner import _private_source_fingerprint
+
+    item = _create_item_with_payloads()
+    repository = _repository(tmp_path)
+    repository.begin(_approved_for_item(item), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    durable = repository.load_session_snapshot(_APPROVAL_ID)
+    note_ids = ("opaque-created-note-1", "opaque-created-note-2")
+    transitions = [
+        EffectTransition(
+            category=effect.category,
+            effect_id=effect.effect_id,
+            state=ImportEffectState.APPLIED,
+            target_note_id=note_ids[effect.payload_index],
+            observed_version=1,
+        )
+        for effect in durable.payload_effects
+    ]
+    transitions.extend(_applied_transition(effect) for effect in durable.folder_effects)
+    transitions.extend(
+        _applied_transition(effect, note_id=note_ids[effect.payload_index])
+        for effect in durable.membership_effects
+    )
+    repository.transition_effects(_APPROVAL_ID, transitions)
+    repository.transition_item(_APPROVAL_ID, "multi-create", ImportItemOutcome.IMPORTED)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.COMPLETED)
+    plan = _approved_for_item(item).plan
+
+    observations = repository.prior_observations_for_plan(plan)
+
+    assert len(observations) == 1
+    observation = observations[0]
+    assert observation.display_path == item.source.display_path
+    assert observation.match_kind is ImportMatchKind.EXACT
+    assert observation.note_id == note_ids[0]
+    assert observation.note_version == 1
+    assert observation.payload_count == 2
+    assert observation.payload_fingerprint == _private_source_fingerprint(item.payloads)
+    assert repository.prior_observations_for_plan_read_only(plan) == observations

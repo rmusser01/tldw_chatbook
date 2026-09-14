@@ -28,6 +28,25 @@ def test_reserve_returns_handle_and_emits_started():
     assert c.drain_events() == []  # drain is destructive
 
 
+def test_definition_wall_bound_survives_reservation_and_retention():
+    c = _coord()
+    handle = c.reserve(task="bounded", agent="researcher", definition_wall_seconds=0.25)
+    assert handle is not None
+    assert handle.definition_wall_seconds == 0.25
+
+    c.attach_run(handle.handle_id, "run-bounded")
+    c.finish(
+        handle.handle_id,
+        RUN_DONE,
+        result="done",
+        transcript=[],
+    )
+
+    retained = c.get_retained(handle.handle_id)
+    assert retained is not None
+    assert retained.definition_wall_seconds == 0.25
+
+
 def test_reserve_refuses_past_live_cap():
     c = _coord(max_live=2)
     assert c.reserve(task="a", agent=None) is not None

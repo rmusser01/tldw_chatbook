@@ -64,9 +64,11 @@ class PriorImportObservation:
     """Caller-supplied private evidence about one prior source-level import.
 
     Exact observations require a lowercase SHA-256 payload fingerprint. Uncertain
-    observations intentionally carry no fingerprint. A source that parses into
-    multiple notes cannot safely map this single-note observation to every payload;
-    :func:`classify_import_batch` therefore degrades it to an uncertain match.
+    observations intentionally carry no fingerprint. An observation covers the
+    ``payload_count`` notes the source parsed into last time (task-32541); a
+    source that now parses into a different number of notes cannot be mapped
+    record for record, so :func:`classify_import_batch` degrades it to an
+    uncertain match.
     """
 
     display_path: str
@@ -74,10 +76,16 @@ class PriorImportObservation:
     note_id: str
     note_version: int | None = None
     payload_fingerprint: str | None = field(default=None, repr=False)
+    #: How many notes the observed source parsed into. ``note_id`` is the
+    #: first record's target and ``payload_fingerprint`` spans every record
+    #: in order (``_private_source_fingerprint``).
+    payload_count: int = 1
 
     def __post_init__(self) -> None:
         if not isinstance(self.display_path, str):
             raise TypeError("observation display_path must be text.")
+        if type(self.payload_count) is not int or self.payload_count < 1:
+            raise ValueError("observation payload_count must be a positive integer.")
         display_path = PurePosixPath(self.display_path)
         if (
             not self.display_path
@@ -174,6 +182,45 @@ def _private_payload_fingerprint(
     return hashlib.sha256(canonical_bytes).hexdigest()
 
 
+def _private_source_fingerprint_from_digests(digests: Iterable[str]) -> str:
+    """Combine ordered per-record fingerprints into one source-level fingerprint.
+
+    Matching material like :func:`_private_payload_fingerprint`; never log it.
+    The receipt ledger already stores one ``_private_payload_fingerprint`` per
+    record, so a source that parsed into several notes is recognised from what
+    was written at execution (task-32541) -- no ledger change, and receipts
+    from before the fix count.
+    """
+    canonical_bytes = json.dumps(
+        {
+            "payload_digests": list(digests),
+            "type": "tldw_note_import_source_fingerprint",
+            "version": 1,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical_bytes).hexdigest()
+
+
+def _private_source_fingerprint(payloads: Iterable[ParsedNotePayload]) -> str:
+    """Fingerprint a whole parsed source.
+
+    One record keeps the single-record digest the ledger has always stored;
+    several records combine their per-record digests in order, which is what
+    the receipt side can rebuild from its rows.
+    """
+    copied = tuple(payloads)
+    if len(copied) == 1:
+        return _private_payload_fingerprint(copied)
+    if not copied:
+        raise ValueError("payloads must contain at least one parsed note payload.")
+    return _private_source_fingerprint_from_digests(
+        _private_payload_fingerprint((payload,)) for payload in copied
+    )
+
+
 def classify_import_batch(
     batch: ParsedImportBatch,
     bounds: ImportBounds,
@@ -183,8 +230,9 @@ def classify_import_batch(
     """Build an immutable preview without persistence or filesystem mutation.
 
     Observations are cardinality-one per relative source path. Unknown, duplicate,
-    or ambiguous batch paths are rejected rather than guessed. A multi-note parsed
-    source always degrades a source-level prior observation to ``UNCERTAIN_MATCH``.
+    or ambiguous batch paths are rejected rather than guessed. A parsed source
+    whose note count differs from its observation's ``payload_count`` degrades
+    to ``UNCERTAIN_MATCH``.
 
     Args:
         batch: Parsed sources, issues, and proposed folder hierarchy.
@@ -311,7 +359,10 @@ def _classify_parsed_source(
 
     if observation is not None:
         match_kind = observation.match_kind
-        if len(parsed.payloads) != 1:
+        # task-32541: the observation covers ``payload_count`` records. Only a
+        # source that still parses into exactly that many is compared by
+        # content; any other count cannot be mapped record for record.
+        if len(parsed.payloads) != observation.payload_count:
             match_kind = ImportMatchKind.UNCERTAIN
         match = ImportMatch(
             kind=match_kind,
@@ -322,7 +373,7 @@ def _classify_parsed_source(
             classification = ImportClassification.UNCERTAIN_MATCH
             reason = _UNCERTAIN_REASON
         else:
-            current_fingerprint = _private_payload_fingerprint(parsed.payloads)
+            current_fingerprint = _private_source_fingerprint(parsed.payloads)
             if hmac.compare_digest(
                 current_fingerprint,
                 observation.payload_fingerprint or "",
@@ -332,10 +383,12 @@ def _classify_parsed_source(
             else:
                 classification = ImportClassification.CHANGED_REPEAT
                 reason = _CHANGED_REASON
+            # A repeat of several records has no single note to update
+            # (task-32541); it can be skipped or created again, not updated.
             allowed_actions = (
-                ImportAction.SKIP,
-                ImportAction.CREATE_NEW,
-                ImportAction.UPDATE_EXISTING,
+                (ImportAction.SKIP, ImportAction.CREATE_NEW, ImportAction.UPDATE_EXISTING)
+                if len(parsed.payloads) == 1
+                else (ImportAction.SKIP, ImportAction.CREATE_NEW)
             )
 
     default_action = (

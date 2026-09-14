@@ -386,8 +386,8 @@ own. Nothing is ever painted as half a word.
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. An Obsidian callout (`> [!note] Title`) renders as a quoted block headed "Note: Title" rather than printing its `[!note]` marker. The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
 | **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
-| Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
-| Chrome strip | One row directly under the body, right-aligned: "N words · L:C" — the words in the note and the caret's line and column, both counted from 1. It follows your typing and your arrow keys with no save and no reload. Nothing on it is a control; Tab never stops there. It appears while **Edit** is the open view on a terminal 80 columns or wider; **Preview** and **Info** have no caret, and a narrower terminal gives the row back to the body. The strip does not repeat the save state — that stays on the status line above the mode controls. The editor's Created/Modified/version line lives in one place, Info → Properties; the editor pane no longer builds a second, never-shown copy of it. |
+| Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". Once a note has saved in this session the state names the time — "Saved 12:47" — **in your local time**, the same clock Info → Properties prints, so the two never disagree about when the note was last written. It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
+| Chrome strip | One row directly under the body, right-aligned: "N words · L:C" — the words in the note and the caret's line and column, both counted from 1. The count is the whole open note's, at any length: a 37 KB, 5,427-word note reads "5,427 words · 1:1" the moment it opens, whatever you had open before it, and the thousands separator is part of the number. It follows your typing and your arrow keys with no save and no reload. Nothing on it is a control; Tab never stops there. It appears while **Edit** is the open view on a terminal 80 columns or wider; **Preview** and **Info** have no caret, and a narrower terminal gives the row back to the body. The strip does not repeat the save state — that stays on the status line above the mode controls. The editor's Created/Modified/version line lives in one place, Info → Properties; the editor pane no longer builds a second, never-shown copy of it. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
@@ -687,6 +687,18 @@ repeat**, **Uncertain match**, **Unsupported**, **Skipped**, **Empty**,
 **Failed**) and each group header carries **Skip all on this page** and, where
 the group can create notes, **Create all on this page** — both act on exactly
 the rows that page's heading counts, so a later page keeps its own choices.
+**Unchanged repeat** has nothing to create, so its header carries **Skip all
+on this page** alone.
+
+Importing the same folder twice recognises every source you already
+imported, whichever kind it is: a `.md` file, and equally a `notes.csv`, a
+`meta.yaml` or a `scratch.txt` — a source that parses into several notes is
+matched on all of its records together. Unchanged ones land under **Unchanged
+repeat** with **Skip** already chosen; edit one and it moves to **Changed
+repeat**. A source that still matches but now yields a different number of
+notes than last time cannot be lined up record for record, so it lands under
+**Uncertain match** for you to decide. Multi-record sources offer **Skip** and
+**Create new** only: there is no one note for **Update existing** to write to.
 A group's header states its whole size ("New (58)"); only when the group is
 too big for one page does it read "New (25 of 58 on this page)", so the count
 on a page always says which number it means.
@@ -1477,6 +1489,34 @@ second 5-file root at 100x30 → "Notes (75)" and "▸ t13 second ⇄ Sync manag
 and **Apply reviewed** now refresh the list through the same path an import
 does; before this the list kept its old count and folder rows until
 restart.)*
+
+*Verified against fix/library-notes-w4-data-truth — 2026-09-14 (wave-4 group
+`data-truth`. task-32542: the autosave status line printed the coordinator's
+UTC clock — "Saved 05:48" at 22:48 PDT beside Info's local "Modified …
+22:54". It now renders in the reader's zone; walked live at 235x52 with the
+status line reading "Saved 07:34" beside Info's "Modified 2026-09-14 07:34 ·
+just now" at 07:34 PDT / 14:34 UTC, and the stored `last_modified` still
+`2026-09-14T14:34:57.982Z` — the conversion is display only
+(`wave4-caps/data-truth/data-23-saved-local-clock-status`,
+`data-24-info-vs-status-clock`). task-32541: a second **Import once** of an
+unchanged vault listed `notes.csv`, `meta.yaml` and `scratch.txt` under
+**New** again, offering to create every record a second time, and the
+**Unchanged repeat** header offered **Create all on this page**. A source
+that parses into several notes now leaves one source-level record behind at
+import and is recognised by its content next time; walked live — a repeat
+review of a 66-source vault read "Unchanged repeat (58)" with all three
+structured sources on it, **Skip** pre-selected, no **Create all**, and
+`notes.csv` offering only **Skip** / **Create new**
+(`data-25-third-import-unchanged-repeat`). task-32538 was investigated and
+NOT reproduced: the chrome strip's count was already the open note's — live
+"441 words · 1:1" for the 441-word "Markdown showcase", then "5,427 words ·
+1:1" for the 37,519-character note opened straight after it, whose body
+holds exactly 5,427 whitespace-separated words in the database, and the same
+value after a resize to 100x30; critique #3's own captures read "5,404 words
+· 1:1" and "5,407 words · 363:22", so the reported "404 words" was the
+thousands separator dropped in the reading. The open path is pinned rather
+than changed (`data-20-strip-short-note-441`,
+`data-21-strip-long-note-235x52`, `data-22-strip-100x30`).)*
 
 *Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32536,
 at 235x52 and 100x30 on a no-provider profile and on a 12-note profile): **Use

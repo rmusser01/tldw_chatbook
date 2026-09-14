@@ -5,6 +5,12 @@
 > boundaries. Read the [PR integration status](../../Docs/superpowers/reviews/2026-09-11-agent-orchestration-pr-integration.md)
 > for current verification and merge gates. TASK-3070 and the HandsFree ownership
 > follow-up were completed upstream; their older status notes are historical.
+> The later [remaining-work status](agent-orchestration-followups-2026-09-12.md)
+> now records completed Settings/cap delivery, repaired integration defects and
+> ordinary-Git worktree confirmation/recovery. The remaining tasks and fleet
+> parent are Done after final correction e135a085f2 and independent re-review;
+> see the [restoration record](../../Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md)
+> for current evidence, accepted limits and retained guard debt.
 
 Reviewed working tree based on `bc745f854`, including the in-flight Console
 controller extraction. This is a scoped engineering review, not an exhaustive

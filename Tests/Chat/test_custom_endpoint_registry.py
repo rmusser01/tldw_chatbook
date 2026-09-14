@@ -116,3 +116,54 @@ def test_entry_repr_hides_api_key():
     assert "family='ollama'" in repr(entry)
     assert "base_url='http://127.0.0.1:11434'" in repr(entry)
     assert "api_key_env=None" in repr(entry)
+
+def test_entry_loads_params_table():
+    config = {"custom_endpoints": {"qwen-local": {
+        "display_name": "Qwen Local", "family": "llama_cpp",
+        "base_url": "http://127.0.0.1:8080",
+        "params": {"temperature": 0.2, "top_k": 40},
+    }}}
+    entries = load_custom_endpoints(config)
+    assert entries["qwen-local"].params == (("temperature", 0.2), ("top_k", 40))
+
+def test_entry_without_params_unchanged():
+    config = {"custom_endpoints": {"plain": {
+        "display_name": "Plain", "family": "ollama",
+        "base_url": "http://127.0.0.1:11434",
+    }}}
+    assert load_custom_endpoints(config)["plain"].params == ()
+
+def test_invalid_param_key_drops_entry_with_warning(caplog):
+    config = {"custom_endpoints": {"bad": {
+        "display_name": "Bad", "family": "ollama",
+        "base_url": "http://127.0.0.1:11434",
+        "params": {"temprature": 0.2},
+    }}}
+    with caplog.at_level(logging.WARNING):
+        entries = load_custom_endpoints(config)
+    assert "bad" not in entries
+    assert any("bad" in record.getMessage() for record in caplog.records)
+
+def test_validate_entry_reports_param_errors():
+    errors = validate_entry(
+        "Name", "ollama", "http://127.0.0.1:11434",
+        params={"seed": "not-an-int"},
+    )
+    assert any("seed" in error for error in errors)
+
+def test_entry_mutation_round_trips_params():
+    entry = CustomEndpointEntry(
+        slug="qwen-local", display_name="Qwen Local", family="llama_cpp",
+        base_url="http://127.0.0.1:8080",
+        params=(("temperature", 0.2),),
+    )
+    mutation = build_entry_mutation(entry)
+    assert mutation["custom_endpoints.qwen-local"]["params"] == {
+        "temperature": 0.2,
+    }
+    reloaded = load_custom_endpoints(
+        {"custom_endpoints": {
+            "qwen-local": mutation["custom_endpoints.qwen-local"],
+        }}
+    )
+    assert reloaded["qwen-local"].params == (("temperature", 0.2),)

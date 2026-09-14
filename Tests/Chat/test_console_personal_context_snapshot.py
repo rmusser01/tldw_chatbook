@@ -359,7 +359,7 @@ async def test_agent_next_send_uses_one_pinned_snapshot_without_double_append(
 
 @pytest.mark.asyncio
 async def test_agent_next_send_reserves_the_live_library_schemas(
-    monkeypatch,
+    monkeypatch, tmp_path,
 ) -> None:
     builder = _ProfileContextBuilder()
     library_provider = LibraryToolProvider(SimpleNamespace())
@@ -370,16 +370,25 @@ async def test_agent_next_send_reserves_the_live_library_schemas(
 
     store = ConsoleChatStore()
     session = store.create_session(ephemeral=True)
-    real_bridge = object.__new__(ConsoleAgentBridge)
-    real_bridge._registry = ToolCatalogRegistry()
-    real_bridge._allowed_tools = ()
-    real_bridge._skills_service = None
-    real_bridge._native_tools_enabled = lambda: True
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = AgentRunsDB(tmp_path / "preview-runs.db")
+    real_bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=object(),
+        native_tools_enabled=lambda: True,
+    )
+
+    def preview(**kwargs):
+        try:
+            return real_bridge.build_personal_context_preview_snapshot(**kwargs)
+        finally:
+            db.close()
+
     bridge = SimpleNamespace(
         native_tool_schemas=real_bridge.native_tool_schemas,
-        build_personal_context_preview_snapshot=Mock(
-            wraps=real_bridge.build_personal_context_preview_snapshot
-        ),
+        build_personal_context_preview_snapshot=Mock(wraps=preview),
     )
     resolution = SimpleNamespace(
         ready=True,
@@ -427,21 +436,26 @@ async def test_agent_next_send_reserves_the_live_library_schemas(
         controller, "_compose_agent_request_providers", compose_providers
     )
 
-    snapshot = await controller.build_context_snapshot(
-        draft="question", session_id=session.id
-    )
-    without_library = _ProfileContextBuilder()
-    _plan(without_library)
+    try:
+        snapshot = await controller.build_context_snapshot(
+            draft="question", session_id=session.id
+        )
+        without_library = _ProfileContextBuilder()
+        _plan(without_library)
 
-    assert bridge.build_personal_context_preview_snapshot.call_count == 1
-    preview_call = bridge.build_personal_context_preview_snapshot.call_args.kwargs
-    assert preview_call["library_provider"] is library_provider
-    assert preview_call["library_authority"] is library_authority
-    assert (
-        builder.requests[0].available_input_tokens
-        < without_library.requests[0].available_input_tokens
-    )
-    assert snapshot.personal_context_snapshot is builder.snapshot
+        assert bridge.build_personal_context_preview_snapshot.call_count == 1
+        preview_call = bridge.build_personal_context_preview_snapshot.call_args.kwargs
+        assert preview_call["library_provider"] is library_provider
+        assert preview_call["library_authority"] is library_authority
+        assert (
+            builder.requests[0].available_input_tokens
+            < without_library.requests[0].available_input_tokens
+        )
+        assert snapshot.personal_context_snapshot is builder.snapshot
+    finally:
+        controller.begin_shutdown()
+        real_bridge.close_all_progress()
+        db.close()
 
 
 @pytest.mark.asyncio

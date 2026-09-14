@@ -8,16 +8,18 @@ import pytest
 import tldw_chatbook.Agents.agent_models as agent_models
 
 from tldw_chatbook.Agents.agent_models import (
-    MAX_RUN_CONTROL_STEPS,
     CHECK_AGENTS_TOOL_NAME,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     DIRECT_DISCLOSURE_CONTEXT_FRACTION,
     FORK_CHAT_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
+    LOOP_DETECTION_N,
+    MAX_RUN_CONTROL_STEPS,
     MERGE_AGENT_WORKTREE_TOOL_NAME,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
-    LOOP_DETECTION_N,
     NEW_CHAT_TOOL_NAME,
+    READ_AGENT_MESSAGES_TOOL_NAME,
+    REPORT_TO_SUPERVISOR_TOOL_NAME,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
@@ -32,6 +34,7 @@ from tldw_chatbook.Agents.agent_models import (
     SEND_TO_AGENT_TOOL_NAME,
     SPAWN_TOOL_NAME,
     TERMINAL_RUN_STATUSES,
+    WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentDefinition,
     AgentStep,
@@ -42,7 +45,6 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
-    WAIT_AGENTS_TOOL_NAME,
     clamp_child_budget,
     contain_child_budget,
     definition_fingerprint,
@@ -110,6 +112,8 @@ def test_runtime_tool_names():
         DISCARD_AGENT_WORKTREE_TOOL_NAME,
         FORK_CHAT_TOOL_NAME,
         NEW_CHAT_TOOL_NAME,
+        REPORT_TO_SUPERVISOR_TOOL_NAME,
+        READ_AGENT_MESSAGES_TOOL_NAME,
     }
     assert LOOP_DETECTION_N == 3
 
@@ -426,6 +430,35 @@ def test_valid_definition_passes():
     assert validate_agent_definition(_valid_definition()) == []
 
 
+@pytest.mark.parametrize("value", [0.25, 1, 30.0, 10**400])
+def test_definition_wall_cap_accepts_only_positive_finite_numbers(value):
+    errors = validate_agent_definition(_valid_definition(max_wall_seconds=value))
+    if value == 10**400:
+        assert any("finite positive" in error for error in errors)
+    else:
+        assert errors == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        True,
+        False,
+        "30",
+        object(),
+        float("nan"),
+        float("inf"),
+        -float("inf"),
+        0,
+        -1,
+        -0.25,
+    ],
+)
+def test_definition_wall_cap_rejects_invalid_values(value):
+    errors = validate_agent_definition(_valid_definition(max_wall_seconds=value))
+    assert any("finite positive" in error for error in errors)
+
+
 def test_name_must_be_slug():
     for bad in ("Researcher", "re searcher", "-x", "9x", "a" * 65, ""):
         assert validate_agent_definition(_valid_definition(name=bad)), bad
@@ -470,6 +503,22 @@ def test_fingerprint_covers_identity_fields_only():
     assert len(definition_fingerprint(a)) == 16
 
 
+def test_uncapped_definition_preserves_pre_field_fingerprint_bytes():
+    assert definition_fingerprint(_valid_definition()) == "e0f489b923e08bac"
+    assert definition_fingerprint(_valid_definition(max_wall_seconds=None)) == (
+        "e0f489b923e08bac"
+    )
+
+
+def test_definition_fingerprint_normalizes_numeric_wall_cap():
+    assert definition_fingerprint(_valid_definition(max_wall_seconds=30)) == (
+        definition_fingerprint(_valid_definition(max_wall_seconds=30.0))
+    )
+    assert definition_fingerprint(_valid_definition(max_wall_seconds=0.25)) != (
+        definition_fingerprint(_valid_definition())
+    )
+
+
 def test_definition_from_row_round_trip():
     row = {
         "name": "critic",
@@ -487,4 +536,97 @@ def test_definition_from_row_round_trip():
         tool_allowlist=("calculator",),
         model="m1",
         enabled=True,
+        max_wall_seconds=None,
     )
+
+
+def test_definition_from_row_reads_optional_wall_cap():
+    defn = definition_from_row(
+        {
+            "name": "critic",
+            "description": "Reviews drafts.",
+            "instructions": "Critique carefully.",
+            "tool_allowlist": [],
+            "model": "",
+            "enabled": 1,
+            "max_wall_seconds": 0.25,
+        }
+    )
+    assert defn.max_wall_seconds == 0.25
+
+
+def test_child_budget_helpers_preserve_every_other_dimension():
+    budget = RunBudget(
+        max_steps=7,
+        max_wall_seconds=91.0,
+        max_subagents=2,
+        max_subagent_result_chars=123,
+        max_tool_result_chars=456,
+        max_model_turns=8,
+        max_total_tokens=789,
+        max_tool_call_seconds=4.5,
+        max_model_retries=6,
+        budget_warning_fraction=0.37,
+        denial_circuit_breaker_limit=9,
+    )
+
+    for bounded in (
+        clamp_child_budget(budget, parent_remaining_seconds=3.0),
+        contain_child_budget(budget, max_wall_seconds=5.0),
+    ):
+        assert bounded == dataclasses.replace(
+            budget,
+            max_wall_seconds=bounded.max_wall_seconds,
+            max_subagents=0,
+        )
+
+
+def test_definition_provider_and_params_default_empty():
+    defn = AgentDefinition(name="reader", instructions="Read files.")
+    assert defn.provider == "" and defn.params == ()
+    assert validate_agent_definition(defn) == []
+
+def test_definition_rejects_unknown_provider():
+    defn = AgentDefinition(
+        name="reader", instructions="Read files.", provider="not-a-provider"
+    )
+    assert any("provider" in e for e in validate_agent_definition(defn))
+
+def test_definition_accepts_custom_ep_slug_form():
+    defn = AgentDefinition(
+        name="reader", instructions="Read files.", provider="custom-ep:qwen-local"
+    )
+    assert validate_agent_definition(defn) == []
+
+def test_definition_rejects_bad_custom_ep_slug():
+    defn = AgentDefinition(
+        name="reader", instructions="Read files.", provider="custom-ep:BAD SLUG"
+    )
+    assert validate_agent_definition(defn) != []
+
+def test_definition_rejects_unknown_param_key():
+    defn = AgentDefinition(
+        name="reader", instructions="Read files.",
+        params=(("temprature", 0.2),),
+    )
+    assert any("temprature" in e for e in validate_agent_definition(defn))
+
+def test_fingerprint_legacy_shape_unchanged_for_model_only_preset():
+    # provider/params enter the fingerprint ONLY when set, so a legacy
+    # model-only preset keeps its pre-ADR-147 fingerprint (the audit
+    # identity persisted on existing run rows stays comparable).
+    defn = AgentDefinition(name="reader", instructions="Read files.", model="m1")
+    import hashlib, json
+    legacy = hashlib.sha256(json.dumps({
+        "instructions": defn.instructions,
+        "tool_allowlist": sorted(defn.tool_allowlist),
+        "model": defn.model,
+    }, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    assert definition_fingerprint(defn) == legacy
+
+def test_fingerprint_changes_with_provider():
+    base = AgentDefinition(name="reader", instructions="Read files.", model="m1")
+    routed = AgentDefinition(
+        name="reader", instructions="Read files.", model="m1", provider="ollama"
+    )
+    assert definition_fingerprint(base) != definition_fingerprint(routed)

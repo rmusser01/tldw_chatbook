@@ -2573,7 +2573,17 @@ def test_prior_observations_do_not_fall_back_past_latest_multi_payload_receipt(
     executor.execute(first)
     executor.execute(latest)
 
-    assert receipts.prior_observations_for_plan(first.plan) == ()
+    observations = receipts.prior_observations_for_plan(first.plan)
+
+    # task-32541: the latest receipt is a source-level observation of BOTH
+    # records, never the older single-note one -- the planner degrades it
+    # for the single-payload plan because the counts differ.
+    assert len(observations) == 1
+    assert observations[0].payload_count == 2
+    assert observations[0].note_id == str(
+        uuid5(UUID("00000000-0000-4000-8000-000000000043"), "note:same-source-multi:0")
+    )
+    assert observations[0].note_id != _expected_note_id("same-source-single", 0)
 
 
 def test_prior_observations_reject_duplicate_items_in_latest_source_session(
@@ -2640,7 +2650,7 @@ def test_prior_observations_reject_duplicate_items_in_latest_source_session(
 
 
 @pytest.mark.parametrize("excluded_state", ["multi", "failed", "cancelled", "missing"])
-def test_prior_observations_omit_unconfirmed_or_non_single_payload_sources(
+def test_prior_observations_omit_unconfirmed_sources_but_keep_multi_record_ones(
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2687,7 +2697,16 @@ def test_prior_observations_omit_unconfirmed_or_non_single_payload_sources(
     elif excluded_state == "multi":
         executor.execute(approved)
 
-    assert receipts.prior_observations_for_plan(approved.plan) == ()
+    observations = receipts.prior_observations_for_plan(approved.plan)
+    if excluded_state == "multi":
+        # task-32541: a source that created several notes used to be omitted
+        # too, so the next review saw it as New and created them all again.
+        # It is now one source-level observation covering both records.
+        assert len(observations) == 1
+        assert observations[0].payload_count == len(payloads)
+        assert observations[0].match_kind is ImportMatchKind.EXACT
+    else:
+        assert observations == ()
 
 
 @pytest.mark.parametrize("fatal_type", [KeyboardInterrupt, SystemExit, GeneratorExit])

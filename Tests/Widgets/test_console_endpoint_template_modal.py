@@ -301,6 +301,63 @@ async def test_template_modal_llama_url_placeholder_explains_both_defaults(tmp_p
         assert url.placeholder == "http://127.0.0.1:8080"
 
 
+@pytest.mark.asyncio
+async def test_template_modal_prefill_filters_placeholder_model_sentinels(tmp_path):
+    """CE-004: the app's model placeholder sentinels (None/null spellings a
+    configured model list may carry) are not models -- a template seeded from
+    the provider's configured list must not prefill them into the Models
+    field (the UAT captured Models prefilled with the literal string None)."""
+    app = _TemplateModalHarness(app_config={})
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = ConsoleEndpointTemplateModal(
+            app_config=app.app_config,
+            providers_models={"llama_cpp": ["None", "null", "model-a"]},
+            template_provider="llama_cpp",
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        models = app.screen.query_one("#endpoint-template-models", Input)
+        assert models.value == "model-a"
+
+
+@pytest.mark.asyncio
+async def test_template_modal_parsed_models_drop_placeholder_entries(
+    tmp_path, monkeypatch
+):
+    """CE-004: manually entered placeholder model ids parse to nothing -- a
+    models input of 'None, real-model' must persist only the real model
+    instead of writing models = ["None", ...] into the registry entry."""
+    config_path = tmp_path / "endpoint-template-config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_settings(force_reload=True)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    try:
+        app = _TemplateModalHarness(app_config={})
+        async with app.run_test(size=(100, 40)) as pilot:
+            modal = ConsoleEndpointTemplateModal(
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                template_provider="llama_cpp",
+            )
+            await app.push_screen(modal)
+            await pilot.click("#endpoint-template-name")
+            await pilot.press(*"GPU box")
+            await pilot.click("#endpoint-template-models")
+            await pilot.press("ctrl+a", *"None, real-model")
+            await pilot.click("#endpoint-template-create")
+            await pilot.pause()
+
+        assert app.created_provider_id == "custom-ep:gpu-box"
+        entry = load_custom_endpoints(app.app_config)["gpu-box"]
+        assert entry.models == ("real-model",)
+        raw = tomllib.loads(config_path.read_text())
+        assert raw["custom_endpoints"]["gpu-box"]["models"] == ["real-model"]
+    finally:
+        config_module.load_settings(force_reload=True)
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+
 async def _activate_duplicate_option(pilot, app, label_fragment: str) -> None:
     """Highlight and commit the picker option whose label contains the
     fragment (H5: opening from an entry now preselects the same-family
