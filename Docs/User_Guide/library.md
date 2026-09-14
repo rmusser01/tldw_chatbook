@@ -1042,17 +1042,30 @@ walks the top tab bar rather than the canvas, which is why the original
 twelve-Tab capture set differed only on the nav line.)*
 
 *Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
-wave-4 guide sweep). This page's Notes-facing claims were re-checked and
-**none needed correcting** — recorded here because a page nobody stamps is a
-page the next sweep re-does from scratch. Checked: the new-profile rail is
-"Import…, New note and Explore all tools" (`library_rail.py:1076-1080`,
-titles at `library_shell_state.py:610`/`:707`) and the Get started line
-"Find it needs something to search — Import a file first." renders as
-described (`wave4-caps/docs-sweep/docs-01-empty-rail-235x52`); the footer
-Enter-chip rule at "Keyboard & commands" — an Enter action named in Edit and
-Preview, and in the notes LIST only the delete receipt's Undo and Dismiss —
-matches `_LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS` (`library_screen.py:962-964`)
-and is the correction group 6 landed, so it needed nothing further; the
-Chunking Lab row correctly places the pair under **Details ▸ Actions** with
-its Escape route, which is where `file-notes.md` was still wrong and was
-fixed against this page.)*
+wave-4 guide sweep; this stamp re-examined and re-scoped in fix round 2).
+Stamped because a page nobody stamps is a page the next sweep re-does from
+scratch — but scoped to **the four claims actually checked**, not to the
+page, because the sibling stamp on
+[Import & export](library/import-and-export.md) certified a whole page on
+that reasoning and was wrong.
+
+Checked, each against the code or a capture, and **each correct**:
+
+1. The new-profile rail is "Import…, New note and Explore all tools"
+   (`Widgets/Library/library_rail.py:1076-1080`; titles at
+   `Library/library_shell_state.py:611` and `:707`), live at
+   `wave4-caps/docs-sweep/docs-01-empty-rail-235x52:8-10`.
+2. The Get started line "Find it needs something to search — Import a file
+   first." renders as written (`docs-01:11`).
+3. The footer Enter-chip rule — stated in the **Layout tour** footer bullet,
+   not under "Keyboard & commands" — matches
+   `_LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS` (`library_screen.py:961-964`):
+   an Enter action named in Edit and Preview, and in the notes LIST only the
+   delete receipt's Undo and Dismiss. This is the correction wave-4 group 6
+   landed, so it needed nothing further.
+4. The Chunking Lab row places the pair under **Details ▸ Actions** with its
+   Escape route — which is where `file-notes.md` was still wrong, and was
+   fixed against this page.
+
+Claims on this page outside those four were not swept and carry no claim
+from this stamp.)*

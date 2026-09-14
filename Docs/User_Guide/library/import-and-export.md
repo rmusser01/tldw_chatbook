@@ -21,8 +21,9 @@ then either:
   **"Export"**.
 
 Scoped exports also arrive here on their own: use **"Export…"** in the Media,
-Notes, Conversations, or Prompts panels (or **"Export selected"** where a list
-offers it). Each opens the same Export bundle (.zip) form, pre-limited to that
+Conversations, or Prompts panels — or **"Export"**, bare, in Notes, which is
+the one canvas spelled without the ellipsis — (or **"Export selected"** where
+a list offers it). Each opens the same Export bundle (.zip) form, pre-limited to that
 content (see [Media & Conversations](media-and-conversations.md)).
 
 In server mode the **Export** rail row is disabled, with the tooltip
@@ -321,7 +322,9 @@ destination, or leaving the Import canvas cancels pending consent.
    same source and options come back staged, the pre-check re-runs against
    the fixed environment, and the warning is gone.
 5. **Export your notes as a bundle** — In the rail click Browse ▸ Notes,
-   press "Export…" above the list. On the "Export bundle (.zip)" form
+   press "Export" above the list — **no ellipsis on this one**; Notes is the
+   only browse canvas whose export action is spelled bare, where Media,
+   Conversations and Prompts all use "Export…". On the "Export bundle (.zip)" form
    confirm the scope line says "Notes · N items", adjust the name, press
    "Choose destination…", pick where the `.zip` goes, then press "Export
    bundle (.zip)".
@@ -1024,12 +1027,35 @@ sync_directory` names when nothing is remembered. Nothing on this page needed
 correcting.)*
 
 *Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
-wave-4 guide sweep). Re-checked for Notes-facing claims; **none needed
-correcting**, recorded here so the next sweep does not repeat the work. The
-export scope lines are exact — "Notes · N items" and "Selected notes · 1
-item" both come from `Library/library_export_scope.py:395-416`, as do the
-"Everything: …" and "Prompts · N items" forms this page quotes — and the
-"Export your notes as a bundle" task's route (rail ▸ Browse ▸ Notes, then
-**Export…** above the list) matches the shipped toolbar. Caveat carried over
-from [Library notes](notes.md): on a brand-new profile there is no Browse
-section to click, which that page's "Getting there" now explains.)*
+wave-4 guide sweep; corrected in fix round 2 after this stamp's first version
+certified a claim it had not checked).*
+
+***Two claims on this page were wrong, both about the Notes export control.***
+`:22-25` and `:323-326` told you to press **"Export…"** in Notes. The Notes
+list toolbar ships it **bare** — `("Export", "library-notes-export")` at
+`Widgets/Library/library_notes_canvas.py:1842` — and six of this sweep's own
+captures paint `Add from files…     Export` (`docs-03`, `docs-04`, `docs-05`,
+`docs-06`, `docs-08`, `docs-09`). Notes is the **only** browse canvas spelled
+without the ellipsis: Media (`library_media_canvas.py:1178`), Conversations
+(`library_conversations_canvas.py:150`) and Prompts
+(`library_prompts_canvas.py:890`) all ship `Export…`, which is why the
+Prompts step at `:331` was right and the Notes step was not. Both sentences
+now name the bare label and say it is the odd one out; the label
+inconsistency itself is filed as task-32590.
+
+*Checked and correct, so left alone:* the export scope lines this page quotes
+are exact — `"Notes · N items"`, `"Selected notes · 1 item"`, the
+`"Everything: …"` form and `"Prompts · N items"` all come from
+`Library/library_export_scope.py:395-417` — and the rail ▸ Browse ▸ Notes
+route, the `"Export bundle (.zip)"` form name and `"Choose destination…"` are
+as written. *Caveat carried over from* [Library notes](notes.md): on a
+brand-new profile there is no Browse section to click, which that page's
+"Getting there" now explains.
+
+*How the first version of this stamp went wrong, since it is the whole
+subject of this sweep:* it asserted "none needed correcting" for a page whose
+Notes claims had been read but not grepped.
+`scripts/check_guide_claim_strings.py` did not catch it either — `"Export…"`
+appears in a dozen source **comments and docstrings** and the checker greps
+raw source text, so the string looked emitted. That ceiling is recorded on
+the script and on task-32589.)*

@@ -83,7 +83,21 @@ def normalise(fragment: str) -> str:
 
 
 def emitted_somewhere(fragment: str, source_root: Path = SOURCE_ROOT) -> bool:
-    """True when some source file contains ``fragment`` literally."""
+    """True when some source file contains ``fragment`` literally.
+
+    ponytail: greps raw source text, so a comment or docstring counts as
+    "emitted" and the checker stays silent on a label that does not exist.
+    That is not hypothetical -- it is how this very sweep's own stamp
+    certified `import-and-export.md`'s "press Export… in Notes" claim: the
+    Notes toolbar ships a bare ``"Export"``, and ``"Export…"`` lives in a
+    dozen comments and docstrings across `UI/Library_Modules/` (including a
+    stale one at ``library_notes_controller.py:5406`` describing that very
+    action). Upgrade path: parse each module with ``ast`` and probe
+    ``ast.Constant`` string values only, which drops comments outright and
+    lets a docstring be excluded by position. Deliberately not done here --
+    a raw grep is what makes this runnable over the whole tree in seconds,
+    and the AST pass belongs with the allowlist in task-32589.
+    """
     command = ["grep", "-rqF"]
     command += [f"--include={glob}" for glob in SOURCE_GLOBS]
     command += [fragment, str(source_root)]

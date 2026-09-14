@@ -2971,8 +2971,14 @@ against a real git-backed vault that drove it end to end —
 commit") and `fix/library-notes-wave3-docs` (2026-09-12, "Trust and check
 status → … → committed"). The third, `fix/library-notes-w4-import-kbd`
 (2026-09-14), **captured the panel's own header control** and cited the
-capture — and the false heading is three lines above the control it
-captured. Each stamp was honest: each verified the claim it named. None
+capture — and **all three true strings sit inside that same captured frame**.
+`wave4-caps/import-kbd/import-21-back-cue-files.txt` paints `‹ Files` (the
+control the stamp quoted) at `:16`, then `Review session changes` at `:17`,
+`Review and commit only notes changed during this Chatbook session.` at
+`:19`, and `Up/Down select · Tab actions · Enter run · Esc back` at `:20`.
+The stamp read one line of that frame, quoted it, and shipped — while the
+lines under it contradicted three sentences of the page it was stamping.
+Each stamp was honest: each verified the claim it named. None
 re-read the chapter it sat in. The false sentences survived all fifteen, and
 `grep -rF "Prepare session for commit" tldw_chatbook/` — no hits at all —
 would have found them in one second on any of those six days.
