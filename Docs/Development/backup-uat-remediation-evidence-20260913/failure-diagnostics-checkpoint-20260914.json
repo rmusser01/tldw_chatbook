@@ -1,0 +1,38 @@
+{
+  "baseline": "db4247b8db98179a9f8bc762572d83d3bea0b254",
+  "source_sha256": {
+    "Tests/Backup_Recovery/later_failure_diagnostics.py": "203abd99da19fc3358e480246e6746bcb959c113845894732346623c8b04fea6",
+    "Tests/Backup_Recovery/test_later_failure_diagnostics.py": "4a036d7200dc0d8e2013f50e1c713fb1203e21af9510481e352dfbee43b61520",
+    "Tests/Backup_Recovery/test_later_rollback_credential_ui.py": "fdab8f512b9878fe12d848ea6ad9c49b9652c271d30619fbca28286060e912f8",
+    "Tests/Backup_Recovery/thread_diagnostics.py": "c4e9d3939ede55e6169b1e3383566916748bda6a70c4394fa41659db73161041",
+    "Tests/Backup_Recovery/test_thread_diagnostics.py": "28aed7887ec580bec18c0ea5eb792afd13cdb0c2e042a25544e01d652f57b530",
+    "Tests/Backup_Recovery/run_platform_product.py": "89d85e5fe6748268a9a3b9904a4e9c6e43cefad6ba59a3317a20f7307a2b8fec"
+  },
+  "root_tests": {
+    "passed": 30,
+    "seconds": 0.87
+  },
+  "independent_tests": {
+    "passed": 30,
+    "seconds": 0.8
+  },
+  "ruff_findings": 0,
+  "bandit": {
+    "baseline": 107,
+    "current": 134,
+    "new_test_assertions": 27,
+    "new_nonassert": 0
+  },
+  "next_windows_focused_selection": 130,
+  "replacement_selection": 31,
+  "native_windows_repeat": "pending",
+  "limits": "Test-only failure preservation; no product, deadline, callback, assertion or mode change. Does not establish unresolved Library hook/default later-child cause until native rerun.",
+  "evidence": {
+    "failure-diagnostics-independent-review-20260914.md": "5fbb236ac0f4ead4c77ee43cc73ce245f908f4e975c16f51123db4626b4487ae",
+    "failure-diagnostics-hook-report-20260914.md": "f54200e5c048d2d6e10b5c0ba97b3c3c86b16e58092da8cedf1fb5cf1dd851ff",
+    "failure-diagnostics-design-review-20260914.md": "4f1f39dc724e130e9da6f57c2f9a0baeca98d1710211785a52ce408b4decd43d",
+    "failure-diagnostics-root-tests-20260914.xml": "1e7fdb88449bdd75830bbc53e94cac2fdb0855a477f348461a09ce90a158dc8e",
+    "failure-diagnostics-root-tests-20260914.txt": "1079c18fbc7fff6f8b5916452253fd00a08c22690580c7e19c1f9e9d6160dbd5",
+    "failure-diagnostics-independent-tests-20260914.txt": "0e1d84ab7b647ded1df0d04881b991ab4677c8f7480582e961a4faaccb27d50a"
+  }
+}

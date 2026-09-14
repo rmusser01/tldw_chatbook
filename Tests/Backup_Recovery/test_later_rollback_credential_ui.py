@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
 from Tests.Backup_Recovery.native_package import (
     native_package as native_package,  # noqa: PLC0414 - installed product fixture
 )
@@ -217,7 +218,12 @@ async def main():
         assert verify_sealed(app.recovery_service.inspection(inspected)).credential_policy=='rollback'
     assert not blocked_attempts(), blocked_attempts()
 
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except BaseException as error:
+    from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
+    record_failure(home / "later-child-failure.json.log", error=error)
+    raise
 assert not blocked_attempts(), blocked_attempts()
 """
 
@@ -248,18 +254,26 @@ def test_f9_later_rollback_requires_explicit_credential_review(
         TLDW_TEST_INSTALLED_PACKAGE=str(native_package),
     )
     log = tmp_path / "later-child.log"
-    with log.open("w") as output:
-        result = subprocess.run(
-            [sys.executable, "-c", _LATER],
-            cwd=tmp_path,
-            env=environment,
-            stdout=output,
-            stderr=output,
-            text=True,
-            # Four native reviews, two execution attempts, Abort, and readback.
-            # Linux measured 189s; product operation deadlines remain unchanged.
-            timeout=900 if sys.platform == "win32" else 300,
-            check=False,
+    try:
+        with log.open("w") as output:
+            result = subprocess.run(
+                [sys.executable, "-c", _LATER],
+                cwd=tmp_path,
+                env=environment,
+                stdout=output,
+                stderr=output,
+                text=True,
+                # Four native reviews, two execution attempts, Abort, and readback.
+                # Linux measured 189s; product operation deadlines remain unchanged.
+                timeout=900 if sys.platform == "win32" else 300,
+                check=False,
+            )
+    except BaseException as error:
+        record_failure(tmp_path / "later-parent-failure.json.log", error=error)
+        raise
+    if result.returncode != 0:
+        record_failure(
+            tmp_path / "later-parent-failure.json.log", returncode=result.returncode
         )
     assert result.returncode == 0, log.read_text()[-10000:]
 

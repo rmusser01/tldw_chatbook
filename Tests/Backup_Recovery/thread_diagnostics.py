@@ -381,6 +381,7 @@ def observe_runtime_settlement(path: Path) -> Callable[[], None]:
     """Observe original settlement calls without tracing, waiting or retiring owners."""
     import hashlib
     import sqlite3
+    import time
     from collections import Counter
     from itertools import islice
 
@@ -501,20 +502,41 @@ def observe_runtime_settlement(path: Path) -> Callable[[], None]:
             failures.append(type(write_error).__name__)
 
     async def observed_stage(hooks, closed, deadline):
+        candidates, started = (), None
+        try:
+            candidates = hooks[:64] if type(hooks) in (list, tuple) else ()
+            started = time.monotonic()
+        except Exception as metadata_error:  # noqa: BLE001 - optional diagnostic setup.
+            failures.append(type(metadata_error).__name__[:80])
         try:
             return await original_stage(hooks, closed, deadline)
         except BaseException as error:
-            # False-returning drains expose only their candidate stage here.
-            # Throwing drains also identify the exact callback in the traceback.
-            record(
-                "settle_stage_failure",
-                error,
-                candidate_hooks=[
-                    hook.drain.__qualname__[:160]
-                    for hook in hooks[:64]
-                    if hook is not None
-                ],
-            )
+            try:
+                failed_hook = None
+                trace = error.__traceback__
+                for _ in range(64):
+                    if trace is None:
+                        break
+                    if trace.tb_frame.f_code is original_stage.__code__:
+                        hook = trace.tb_frame.f_locals.get("hook")
+                        if hook is not None and any(hook is candidate for candidate in candidates):
+                            # Label the hook, not which close/drain callback failed.
+                            failed_hook = hook.drain.__qualname__[:160]
+                        break
+                    trace = trace.tb_next
+                record(
+                    "settle_stage_failure",
+                    error,
+                    candidate_hooks=[
+                        hook.drain.__qualname__[:160]
+                        for hook in candidates
+                        if hook is not None
+                    ],
+                    failed_hook=failed_hook,
+                    stage_elapsed=None if started is None else max(0.0, time.monotonic() - started),
+                )
+            except BaseException as metadata_error:  # noqa: BLE001 - retain the original stage error.
+                failures.append(type(metadata_error).__name__[:80])
             raise
 
     async def observed_settle(self, deadline):

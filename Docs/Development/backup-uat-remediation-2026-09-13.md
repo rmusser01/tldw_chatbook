@@ -14,6 +14,8 @@ The fresh immutable `18f7321c0a` keyboard run has completed six-step onboarding,
 
 The [e683 Windows startup run](https://github.com/rmusser01/tldw_chatbook/actions/runs/34835129237) still exceeds the unchanged 60-second deadline in four full-app cases. The module-count exception is applied, while timing and absent-family guards remain unchanged. Linux encrypted-with-credentials diagnosis awaits the separately requested diagnostic-read approval. Earlier passes below remain revision-specific evidence.
 
+The next Windows runs include reviewed test-only failure preservation: bounded failing-hook/stage timing for runtime settlement, plus immediate later-child/parent exception metadata before suite finalization. Root and independent runs each pass all30 regressions. Existing full/support/focused selections include these cases (focused130), without changing native timeouts or assertions. See [the diagnostic checkpoint](backup-uat-remediation-evidence-20260913/failure-diagnostics-checkpoint-20260914.json). Native reruns remain pending; the newest PR Fast Lane failure is being inspected separately.
+
 ### Earlier checkpoint history — retained
 
 The PR remains open against dev, unmerged. The latest reviewed corrections address Console configuration lifetimes, later rollback of nested Persona artwork, and discovery of the canonical evaluation definition after rollback. All earlier requester-approved actions are applied. A separate measured startup module-count exception is awaiting an explicit decision under ADR-097; those limits remain unchanged.

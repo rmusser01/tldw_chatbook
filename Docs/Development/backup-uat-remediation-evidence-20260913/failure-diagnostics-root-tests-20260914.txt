@@ -1,0 +1,12 @@
+..............................                                           [100%]
+=============================== warnings summary ===============================
+Tests/Backup_Recovery/test_later_failure_diagnostics.py::test_parent_records_immediate_later_child_failure[timeout]
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+------ generated xml file: /private/tmp/uat-failure-diagnostics-root.xml -------
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+30 passed, 1 warning in 0.87s

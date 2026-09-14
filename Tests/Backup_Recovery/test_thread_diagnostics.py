@@ -6,6 +6,8 @@ import sys
 import threading
 import time
 
+import pytest
+
 from Tests.Backup_Recovery.thread_diagnostics import _frames, observe_threads
 
 
@@ -390,21 +392,27 @@ def test_runtime_observer_preserves_false_drain_and_reports_candidate_hook(tmp_p
 
     owner = Owner()
     hook = runtime._Hook(owner, Owner.close, Owner.drain, Owner.resume)
+    async def ready(owner, deadline):
+        return True
+
+    preceding = runtime._Hook(object(), lambda owner: None, ready, None)
     original = runtime._settle_stage
     path = tmp_path / "runtime.log"
     stop = observe_runtime_settlement(path)
     closed = []
     try:
         with pytest.raises(RecoveryRequired, match="runtime_work_not_settled"):
-            asyncio.run(runtime._settle_stage([hook], closed, 42))
+            asyncio.run(runtime._settle_stage([preceding, hook], closed, 42))
     finally:
         stop()
-    assert calls == ["close", 42] and closed == [hook]
+    assert calls == ["close", 42] and closed == [preceding, hook]
     assert runtime._settle_stage is original
     record = json.loads(path.read_text())[-1]
     assert record["event"] == "settle_stage_failure"
     assert record["issue"] == "runtime_work_not_settled"
-    assert record["candidate_hooks"][0].endswith("Owner.drain")
+    assert record["candidate_hooks"][1].endswith("Owner.drain")
+    assert record["failed_hook"] == record["candidate_hooks"][1]
+    assert 0 <= record["stage_elapsed"] < 5
 
 
 def test_runtime_observer_preserves_error_identity_and_hides_text(
@@ -593,3 +601,125 @@ def test_finalization_observer_preserves_original_failure_and_known_reason(tmp_p
         assert record['error']['frames'][-1]['function'] == 'finalize'
         assert 'private-finalization-secret' not in path.read_text()
     monkeypatch.setattr(publication, 'finalize_candidate', original)
+
+
+@pytest.mark.parametrize("phase", ["close", "drain"])
+def test_native_stage_observer_identifies_throwing_close_and_cancelled_drain(tmp_path, phase):
+    import asyncio
+
+    import pytest
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+
+    error = RuntimeError("private-close-detail") if phase == "close" else asyncio.CancelledError("private-cancel-detail")
+    calls = []
+
+    class Owner:
+        def close(self):
+            calls.append("close")
+            if phase == "close":
+                raise error
+
+        async def drain(self, deadline):
+            calls.append(deadline)
+            raise error
+
+    hook = runtime._Hook(Owner(), Owner.close, Owner.drain, None)
+    path = tmp_path / (phase + ".log")
+    original = runtime._settle_stage
+    stop = observe_runtime_settlement(path)
+    closed = []
+    try:
+        with pytest.raises(type(error)) as caught:
+            asyncio.run(runtime._settle_stage([None, hook], closed, 42))
+        assert caught.value is error
+    finally:
+        stop()
+    record = json.loads(path.read_text())[-1]
+    assert record["failed_hook"].endswith("Owner.drain")
+    assert 0 <= record["stage_elapsed"] < 5
+    assert closed == [hook] and calls == (["close"] if phase == "close" else ["close", 42])
+    assert "private-close-detail" not in path.read_text() and "private-cancel-detail" not in path.read_text()
+    assert runtime._settle_stage is original
+
+
+def test_native_stage_observer_bounds_original_hook_membership(tmp_path):
+    import asyncio
+
+    import pytest
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+
+    error = RuntimeError("private-native-drain")
+    metadata_phase = False
+    comparisons = []
+
+    class Owner:
+        def __init__(self, fails=False):
+            self.fails = fails
+
+        def __eq__(self, other):
+            if metadata_phase:
+                comparisons.append(True)
+                raise AssertionError("observer must use identity")
+            return self is other
+
+        def close(self):
+            pass
+
+        async def drain(self, deadline):
+            nonlocal metadata_phase
+            if self.fails:
+                metadata_phase = True
+                raise error
+            return True
+
+    hooks = [runtime._Hook(Owner(index == 64), Owner.close, Owner.drain, None) for index in range(65)]
+    path = tmp_path / "bounded.log"
+    stop = observe_runtime_settlement(path)
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            asyncio.run(runtime._settle_stage(hooks, [], 42))
+        assert caught.value is error
+    finally:
+        stop()
+    record = json.loads(path.read_text())[-1]
+    assert record["failed_hook"] is None
+    assert len(record["candidate_hooks"]) == 64
+    assert not comparisons
+
+
+@pytest.mark.parametrize("metadata_kind", ["error", "cancel"])
+def test_native_stage_observer_metadata_failure_preserves_original(tmp_path, metadata_kind):
+    import asyncio
+
+    import pytest
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+
+    error = RuntimeError("original-private-native-failure")
+    metadata_error = ValueError("private-observer-detail") if metadata_kind == "error" else asyncio.CancelledError("private-observer-cancel")
+
+    class Drain:
+        async def __call__(self, owner, deadline):
+            raise error
+
+        def __getattribute__(self, name):
+            if name == "__qualname__":
+                raise metadata_error
+            return object.__getattribute__(self, name)
+
+    hook = runtime._Hook(object(), lambda owner: None, Drain(), None)
+    original = runtime._settle_stage
+    stop = observe_runtime_settlement(tmp_path / "metadata-failure.log")
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            asyncio.run(runtime._settle_stage([hook], [], 42))
+        assert caught.value is error
+    finally:
+        with pytest.raises(RuntimeError, match="^runtime_diagnostic_write_failed$"):
+            stop()
+    assert runtime._settle_stage is original
