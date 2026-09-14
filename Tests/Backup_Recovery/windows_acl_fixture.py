@@ -50,7 +50,16 @@ def _preserve_dacl(native, handle):
                 raise OSError(result, "SetSecurityInfo failed")
             with _security(native, handle) as (_, restored):
                 if restored != original:
-                    raise AssertionError("original native security not restored")
+                    raise AssertionError(
+                        "original native security not restored: "
+                        f"owner_equal={original[0] == restored[0]} "
+                        f"original_control={original[1]} restored_control={restored[1]} "
+                        f"control_xor={original[1] ^ restored[1]} "
+                        f"original_revision={original[2]} restored_revision={restored[2]} "
+                        f"original_acl_length={len(original[3] or b'')} "
+                        f"restored_acl_length={len(restored[3] or b'')} "
+                        f"acl_equal={original[3] == restored[3]}"
+                    )
 
 
 @contextmanager

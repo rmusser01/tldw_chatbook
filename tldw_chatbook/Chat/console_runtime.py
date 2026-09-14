@@ -2661,8 +2661,10 @@ class ConsoleRuntime:
             auto_open=auto_open,
             publication_guard=publication_guard,
         )
+        if not self._canvas_enabled():
+            return None
         with self._canvas_native_lock:
-            if not self._canvas_enabled():
+            if self._disposed or self._canvas_disabled_latched:
                 return None
             self._canvas_native_view_binding = binding
             controller = self._canvas_controller
@@ -2711,8 +2713,10 @@ class ConsoleRuntime:
     def _materialize_canvas_native_authority(self) -> Any:
         """Construct the single authority for an actual publication/open."""
 
+        if not self._canvas_enabled():
+            return None
         with self._canvas_native_lock:
-            if not self._canvas_enabled():
+            if self._disposed or self._canvas_disabled_latched:
                 return None
             binding = self._canvas_native_view_binding
             controller = self._canvas_controller

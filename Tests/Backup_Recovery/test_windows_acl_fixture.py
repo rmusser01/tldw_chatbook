@@ -71,6 +71,27 @@ def test_native_restore_error_fails_and_releases_original(monkeypatch):
     assert state["released"] == 1
 
 
+@pytest.mark.parametrize("restored_acl", [b"sensitive-restored-acl", None])
+def test_restoration_mismatch_reports_only_bounded_metadata(monkeypatch, restored_acl):
+    changed = ("sensitive-restored-owner", 0x9404, 2, restored_acl)
+    helper, native, original, state = _fixture(monkeypatch, changed=changed)
+    with pytest.raises(AssertionError) as caught, helper._preserve_dacl(native, 7):
+        pass
+    expected = (
+        "original native security not restored: owner_equal=False "
+        "original_control=36868 restored_control=37892 control_xor=1024 "
+        "original_revision=1 restored_revision=2 "
+        f"original_acl_length=13 restored_acl_length={len(restored_acl or b'')} "
+        "acl_equal=False"
+    )
+    assert str(caught.value) == expected
+    assert original[0] not in expected
+    assert changed[0] not in expected
+    assert "original-dacl" not in expected
+    assert "sensitive-restored-acl" not in expected
+    assert state["released"] == 2
+
+
 def test_unprotected_original_is_not_changed_to_protected(monkeypatch):
     helper, native, original, state = _fixture(monkeypatch, control=0x8004)
     with helper._preserve_dacl(native, 7):

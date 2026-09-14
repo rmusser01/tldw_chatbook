@@ -18493,9 +18493,7 @@ class ChatScreen(BaseAppScreen):
             # THIS coroutine's task reads the cache — workers and handlers
             # interleaving during the awaits keep building live.
             with self._workspace.tick_workspace_build_scope():
-                rail_state = self._current_console_rail_state()
-                self._sync_console_settings_summary()
-                if self._sync_console_control_bar(rail_state) is False:
+                if self._sync_console_rail_and_controls() is False:
                     self._console_control_bar_replay_whole_sync = True
                     return
                 # Settings failures may arrive after Apply has returned:
@@ -21479,6 +21477,22 @@ class ChatScreen(BaseAppScreen):
             True after rendering; False when entry was deferred and a fresh
             coalesced replay owns the unfinished refresh.
         """
+        return self._run_console_config_sync(
+            lambda: self._sync_console_control_bar_under_config(rail_state)
+        )
+
+    def _sync_console_rail_and_controls(self) -> bool:
+        """Share current config across the tick's synchronous projections."""
+
+        def sync() -> None:
+            rail_state = self._current_console_rail_state()
+            self._sync_console_settings_summary()
+            self._sync_console_control_bar_under_config(rail_state)
+
+        return self._run_console_config_sync(sync)
+
+    def _run_console_config_sync(self, sync: Callable[[], None]) -> bool:
+        """Render synchronously, or defer entry to the existing coalesced retry."""
         from tldw_chatbook import config
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
         from tldw_chatbook.Backup_Recovery.config_participants import operation
@@ -21494,7 +21508,7 @@ class ChatScreen(BaseAppScreen):
             with operation(config):
                 entered = True
                 try:
-                    self._sync_console_control_bar_under_config(rail_state)
+                    sync()
                 except BaseException as error:  # noqa: BLE001 - re-raised after native owner exit.
                     # A UI error must not mark config persistence as failed.
                     # Nested config failures retain their own failure state.

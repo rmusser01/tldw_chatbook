@@ -332,16 +332,18 @@ def operation(source, *, route="config", target=None):
         storage._check_operation(core, core.path)
     storage._operation_local.operation = None
     attempt = None
-    lock = source._config_file_lock()
-    acquired = False
+    acquired = ExitStack()
     before = None
     entered = False
     try:
         attempt = storage._Acquisition()
-        while not lock.acquire(timeout=0.05):
+        # Config snapshots and rebuilds already use REBUILD -> FILE. Keep
+        # that order before entering any guarded reader or writer body.
+        for lock in (source._settings_rebuild_lock(), source._config_file_lock()):
+            while not lock.acquire(timeout=0.05):
+                attempt.check()
+            acquired.callback(lock.release)
             attempt.check()
-        acquired = True
-        attempt.check()
         before = {
             name: getattr(source, name)
             for name in _STATE_NAMES
@@ -364,8 +366,7 @@ def operation(source, *, route="config", target=None):
             source._CONFIG_PERSISTENCE_ERROR = "config_operation_failed"
         raise
     finally:
-        if acquired:
-            lock.release()
+        acquired.close()
         if attempt is not None:
             attempt.close()
         if core is not None:

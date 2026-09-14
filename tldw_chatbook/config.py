@@ -6958,7 +6958,7 @@ class ConfigPostCommitError(RuntimeError):
 def read_cli_config_snapshot() -> ConfigFileSnapshot:
     """Read exact serialized config without parsing or creating a missing file."""
 
-    with _config_file_lock():
+    with _config_participants.operation(sys.modules[__name__]):
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
             return ConfigFileSnapshot(
