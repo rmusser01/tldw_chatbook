@@ -21263,7 +21263,11 @@ class LibraryScreen(BaseAppScreen):
         if not source_type or not record_id:
             return
         self.run_worker(
-            self._open_library_item_by_id(source_type, record_id),
+            self._open_library_item_by_id(
+                source_type,
+                record_id,
+                display_name=str(getattr(event.button, "record_title", "") or ""),
+            ),
             exclusive=True,
             group="library_hub_open_recent",
         )
@@ -25842,6 +25846,10 @@ class LibraryScreen(BaseAppScreen):
         if type(prompt_id) is not int or prompt_id < 1:
             return
         if not await self._flush_library_prompt_save():
+            # task-32461: the row press was refused in silence, which reads
+            # as a dead row. Same copy as Back/Escape and the rail-row
+            # switch, which this seam sits directly beside.
+            self._notify_prompt_dirty_veto()
             return
         self._acknowledge_library_destination_change()
         self._clear_library_prompt_selection(announce=True)
@@ -26061,8 +26069,10 @@ class LibraryScreen(BaseAppScreen):
         """
         return not self._prompts_state.dirty
 
-    def _notify_prompt_dirty_veto(self) -> None:
-        return self._prompts_controller._notify_prompt_dirty_veto()
+    def _notify_prompt_dirty_veto(self, *, blocked_target: str = "") -> None:
+        return self._prompts_controller._notify_prompt_dirty_veto(
+            blocked_target=blocked_target
+        )
 
     def _apply_library_prompt_working_copy(self, *, state: PromptBlockEditorState, system_prompt: str | None, user_prompt: str | None) -> None:
         return self._prompts_controller._apply_library_prompt_working_copy(state=state, system_prompt=system_prompt, user_prompt=user_prompt)
@@ -33722,6 +33732,7 @@ class LibraryScreen(BaseAppScreen):
         source_type: str,
         record_id: str,
         *,
+        display_name: str = "",
         entry_origin: bool = False,
         required_database: Any | None = None,
         required_authority: str = "",
@@ -33743,6 +33754,11 @@ class LibraryScreen(BaseAppScreen):
                 only, since the Open action is only rendered for rows with
                 resolvable provenance (``LibraryRagResultRow.can_open``).
             record_id: The item's id within its source type.
+            display_name: What the user pressed, for a refusal to name back
+                (task-32461 fix round 1). Both hand-reachable callers already
+                hold it -- the evidence card's title, the hub recent row's
+                title -- so this is a pass-through, never a lookup. Empty
+                falls back to the id label.
             entry_origin: Whether this open belongs to the automatic Library
                 entry lifecycle and therefore must use strict retained-owner
                 synchronization with no screen-level fallback.
@@ -33797,16 +33813,30 @@ class LibraryScreen(BaseAppScreen):
             )
 
         if source_type == "prompt":
-            if not await self._flush_library_prompt_save():
-                return None
-            if not entry_is_current():
-                return LibraryEntryReconcileResult.SUPERSEDED
+            # Validated BEFORE the dirty veto so a malformed deep link is
+            # dropped silently rather than named back at the user as
+            # "Can't open Prompt <garbage>" (review F-8). Both checks are
+            # pure, so the order between them is free.
             try:
                 parsed_prompt_id = int(record_id)
             except (TypeError, ValueError):
                 return None
             if parsed_prompt_id < 1:
                 return None
+            if not await self._flush_library_prompt_save():
+                # task-32461 (controller's ruling): a deep link that
+                # evaporates is the same click-does-nothing defect one layer
+                # out -- the user pressed something, somewhere, to cause it.
+                # So name what did not open and the way out; nothing is
+                # queued to apply after the save. The name is what the user
+                # actually pressed when the caller knows it.
+                self._notify_prompt_dirty_veto(
+                    blocked_target=display_name.strip()
+                    or f"Prompt {parsed_prompt_id}"
+                )
+                return None
+            if not entry_is_current():
+                return LibraryEntryReconcileResult.SUPERSEDED
             if not entry_origin:
                 self._acknowledge_library_destination_change()
             self._clear_library_prompt_selection(announce=True)

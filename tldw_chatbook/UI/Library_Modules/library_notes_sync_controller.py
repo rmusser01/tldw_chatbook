@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import Never, Protocol
+
+from loguru import logger
+
+from tldw_chatbook.Notes.note_import_discovery import OBSIDIAN_MARKER_DIRECTORY
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LASTING_SYNC_HISTORY_PAGE_SIZE,
@@ -39,6 +44,7 @@ from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncRootSetup,
     NotesSyncRuntimeSnapshot,
     RuntimeConflictHistoryRow,
+    RuntimeBindingLabel,
     RuntimeConflictLabel,
     RuntimeConflictReceipt,
 )
@@ -48,6 +54,21 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncDirection,
     NotesSyncOperationState,
 )
+
+
+def _carries_obsidian_marker(folder: str) -> bool:
+    """Return whether the chosen folder is an Obsidian vault (task-32535).
+
+    The same marker Import once looks for. An unreadable or missing folder is
+    simply not a vault -- setup validation already has the say on those.
+    """
+
+    if not folder.strip():
+        return False
+    try:
+        return (Path(folder) / OBSIDIAN_MARKER_DIRECTORY).is_dir()
+    except OSError:
+        return False
 
 
 class LastingSyncRuntimePort(Protocol):
@@ -83,6 +104,10 @@ class LastingSyncRuntimePort(Protocol):
     async def conflict_labels(
         self, root_id: str, observation_token: str
     ) -> tuple[RuntimeConflictLabel, ...]: ...
+
+    async def binding_labels(
+        self, root_id: str, binding_ids: tuple[str, ...]
+    ) -> tuple[RuntimeBindingLabel, ...]: ...
 
     async def active_conflict_receipts(
         self, root_id: str
@@ -273,6 +298,7 @@ class LibraryNotesSyncController:
         self._refresh_notes = refresh_notes
         self._review_plan: ReconciliationPlan | None = None
         self._review_labels: dict[str, RuntimeConflictLabel] = {}
+        self._review_binding_labels: dict[str, RuntimeBindingLabel] = {}
         self._selections: dict[tuple[str, str], NotesSyncConflictChoice] = {}
         self._apply_in_flight: set[tuple[str, str]] = set()
         self._activate_in_flight: set[tuple[str, str]] = set()
@@ -343,6 +369,7 @@ class LibraryNotesSyncController:
         source: LastingSyncReviewSource | None = None,
         labels: dict[str, RuntimeConflictLabel] | None = None,
         selections: tuple[ConflictSelection, ...] | None = None,
+        binding_labels: dict[str, RuntimeBindingLabel] | None = None,
     ) -> LastingSyncReview:
         projected_labels = self._review_labels if labels is None else labels
         review = build_reconciliation_review(
@@ -353,6 +380,11 @@ class LibraryNotesSyncController:
             ),
             stale=stale,
             activation=activation,
+            labels=(
+                self._review_binding_labels
+                if binding_labels is None
+                else binding_labels
+            ),
         )
         return replace(
             review,
@@ -370,6 +402,67 @@ class LibraryNotesSyncController:
         )
 
     async def _load_review_facts(
+        self, plan: ReconciliationPlan
+    ) -> tuple[dict[str, RuntimeConflictLabel], dict[str, RuntimeBindingLabel]]:
+        """Return (conflict labels, binding labels) for one reviewed plan.
+
+        task-32535: every row with a binding is named by path and destination,
+        not only eligible conflicts. Both projections are fetched under the
+        runtime's review authority, so a label for a changed file is refused
+        as stale rather than rendered wrong -- but a name is decoration, so a
+        refused or unavailable binding-label projection leaves the rows
+        unnamed instead of discarding a review the user can still act on.
+        """
+
+        conflict_labels = await self._load_conflict_labels(plan)
+        try:
+            binding_labels = await self._load_binding_labels(plan)
+        except Exception as error:
+            # Keeping the review usable is right; losing the reason is not.
+            # Unnamed rows ARE the defect task-32535 removed, so a recurrence
+            # has to be findable. Metadata only: no message, no path.
+            logger.debug(
+                "lasting sync binding labels unavailable error_type={}",
+                type(error).__name__,
+            )
+            binding_labels = {}
+        return conflict_labels, binding_labels
+
+    async def _load_binding_labels(
+        self, plan: ReconciliationPlan
+    ) -> dict[str, RuntimeBindingLabel]:
+        # ponytail: this costs a SECOND full folder walk per projection --
+        # `binding_labels` re-observes the root to prove the plan still holds,
+        # as `conflict_labels` does, on top of the check's own walk. Acceptable
+        # while a root is a local folder the discovery pass caches; if a wide
+        # root makes the check feel slow, hand the labels out of the check's
+        # own observation instead of re-taking one.
+        binding_ids = tuple(
+            sorted(
+                {
+                    item.binding_id
+                    for item in (
+                        *plan.safe_actions,
+                        *plan.attention,
+                        *plan.managed_placement_effects,
+                    )
+                    if item.binding_id is not None
+                }
+            )
+        )
+        if not binding_ids:
+            return {}
+        labels = await self._runtime.binding_labels(plan.root_id, binding_ids)
+        if type(labels) is not tuple or any(
+            type(label) is not RuntimeBindingLabel for label in labels
+        ):
+            raise RuntimeError("invalid binding label projection")
+        projected = {label.binding_id: label for label in labels}
+        if len(projected) != len(labels) or set(projected) != set(binding_ids):
+            raise RuntimeError("incomplete binding label projection")
+        return projected
+
+    async def _load_conflict_labels(
         self, plan: ReconciliationPlan
     ) -> dict[str, RuntimeConflictLabel]:
         managed = {effect.binding_id for effect in plan.managed_placement_effects}
@@ -410,7 +503,7 @@ class LibraryNotesSyncController:
         try:
             if expected_root_id is not None and plan.root_id != expected_root_id:
                 raise RuntimeError("review root changed")
-            labels = await self._load_review_facts(plan)
+            labels, binding_labels = await self._load_review_facts(plan)
         except Exception:
             if not self._lifecycle_is_current(expected_root_id, epoch):
                 return None
@@ -418,6 +511,7 @@ class LibraryNotesSyncController:
                 self._selections.clear()
                 self._clear_comparison()
             self._review_labels.clear()
+            self._review_binding_labels.clear()
             self._state = replace(
                 self._state,
                 review=build_reconciliation_review(
@@ -439,6 +533,7 @@ class LibraryNotesSyncController:
             self._clear_comparison()
         selections = self._selections_for_plan(plan)
         self._review_labels = labels
+        self._review_binding_labels = binding_labels
         self._review_plan = plan
         self._state = replace(
             self._state,
@@ -448,6 +543,7 @@ class LibraryNotesSyncController:
                 source=source,
                 labels=labels,
                 selections=selections,
+                binding_labels=binding_labels,
             ),
             conflict_focus_binding_id=None,
         )
@@ -485,6 +581,7 @@ class LibraryNotesSyncController:
     def _invalidate_review_authority(self) -> None:
         self._selections.clear()
         self._review_labels.clear()
+        self._review_binding_labels.clear()
         self._clear_comparison()
         if self._review_plan is not None:
             self._project_review(stale=True)
@@ -703,6 +800,15 @@ class LibraryNotesSyncController:
 
     def set_setup(self, field: str, value: str) -> None:
         self._state = set_setup_value(self._state, field, value)
+        if field == "folder":
+            # task-32535: the toggle is only offered for a real vault, so
+            # detection re-runs on every folder change -- the user may pick a
+            # vault, change their mind, and pick a plain folder.
+            self._state = set_setup_value(
+                self._state,
+                "obsidian_vault",
+                "on" if _carries_obsidian_marker(self._state.setup.folder) else "off",
+            )
         self._publish()
 
     async def check_root(self, root_id: str) -> None:
@@ -814,6 +920,7 @@ class LibraryNotesSyncController:
                     canonical_path=setup.folder,
                     note_scope_id=setup.note_scope_id,
                     direction=direction,
+                    obsidian_mode=setup.obsidian_vault and setup.obsidian_mode,
                 )
             )
         except Exception as error:

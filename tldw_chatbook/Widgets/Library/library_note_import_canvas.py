@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from itertools import groupby
-from typing import Any
+from typing import Any, TypeVar
 
 from textual import on
 from textual.app import ComposeResult
@@ -87,6 +88,8 @@ def _disabled_action_label(text: str, *, disabled: bool, reason: str = "") -> st
     return f"{text} unavailable — {reason.rstrip('.')}"
 
 
+_RowT = TypeVar("_RowT")
+
 _ROW_NAME_BUDGET = 56
 """Display-width budget for the path at the head of one review row.
 
@@ -100,12 +103,12 @@ its link count. Those came last and were the first thing the row lost.
 _UNIFORM_RUN_MIN = UNIFORM_RUN_MIN
 
 
-def _bounded_row_name(name: str) -> str:
+def bounded_row_name(name: str) -> str:
     """Keep a review row's path recognizable without spending the whole row."""
     return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
 
 
-def _group_heading(label: str, *, rendered: int, total: int) -> str:
+def group_heading(label: str, *, rendered: int, total: int) -> str:
     """Name what a group heading's count means on this page.
 
     task-32250: "New (23)" on page 1 and "New (22)" on page 2 were the same
@@ -128,14 +131,26 @@ def _run_key(item: LibraryNoteImportItemSnapshot) -> tuple[str, ...]:
     )
 
 
-def _uniform_runs(
-    items: tuple[LibraryNoteImportItemSnapshot, ...],
-) -> tuple[tuple[LibraryNoteImportItemSnapshot, ...], ...]:
-    """Split one rendered group into consecutive interchangeable runs."""
-    return tuple(tuple(run) for _, run in groupby(items, key=_run_key))
+def uniform_runs(
+    items: tuple[_RowT, ...],
+    *,
+    key: Callable[[_RowT], tuple[str, ...]] = _run_key,  # type: ignore[assignment]
+) -> tuple[tuple[_RowT, ...], ...]:
+    """Split one rendered group into consecutive interchangeable runs.
+
+    task-32535: the lasting-sync review shares this with its own row type
+    and key; the run threshold stays the pager's ``UNIFORM_RUN_MIN``.
+    """
+    return tuple(tuple(run) for _, run in groupby(items, key=key))
 
 
-def _run_disclosure(title: str, *, dom_token: str) -> Collapsible:
+def run_disclosure(
+    title: str,
+    *,
+    dom_token: str,
+    id_prefix: str = "note-import-run",
+    classes: str = "note-import-run",
+) -> Collapsible:
     """Return a one-line disclosure for a collapsed run of identical rows.
 
     The app-wide ``Collapsible`` rule (a round border, a 3-row title, a 3-row
@@ -152,8 +167,8 @@ def _run_disclosure(title: str, *, dom_token: str) -> Collapsible:
         # instance comes back from `from_text` unmodified -- this is the
         # markup=False every other Static on this canvas already sets.
         title=Content(title),
-        id=f"note-import-run-{dom_token}",
-        classes="note-import-run",
+        id=f"{id_prefix}-{dom_token}",
+        classes=classes,
         collapsed=True,
     )
     disclosure.styles.min_height = 1
@@ -161,6 +176,14 @@ def _run_disclosure(title: str, *, dom_token: str) -> Collapsible:
     disclosure.styles.padding = 0
     disclosure.styles.border = ("none", "transparent")
     return disclosure
+
+
+# task-32535: the private names stay one release as aliases for the four
+# helpers the lasting-sync review now shares.
+_bounded_row_name = bounded_row_name
+_group_heading = group_heading
+_uniform_runs = uniform_runs
+_run_disclosure = run_disclosure
 
 
 def _run_summary(

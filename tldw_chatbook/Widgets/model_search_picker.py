@@ -234,6 +234,10 @@ class ModelSearchPicker(Widget):
             provider_select = self.screen.query_one(self._provider_select_id, Select)
         except Exception:
             return None
+        # TASK-32533: a blank provider select holds `Select.NULL`, a truthy
+        # sentinel whose str() is "Select.NULL" -- not a provider key.
+        if provider_select.value is Select.NULL:
+            return None
         value = str(provider_select.value or "").strip()
         return value or None
 
