@@ -608,15 +608,21 @@ staged (1)** → the commit review → committed; the "Choose File Notes Folder"
 picker's pre-filled **Folder path** selects on the click that focuses it; the
 hidden-frontmatter line reads as described.)*
 
-*Verified against fix/library-notes-w4-file-notes — 2026-09-13 (task-32543,
+*Verified against fix/library-notes-w4-file-notes — 2026-09-14 (task-32543,
 task-32552: the authority line said "Git · 1 change" on a folder with no
-`.git`; it now says "1 session change" there and "Git · 1 change" only after
-the repository check succeeds — both verified live against
-`w4-file-notes/vault-plain` and `vault-git` at 235x52 and 100x30. Ctrl+End /
-Ctrl+Home now work in the file editor (typed text used to land at the click);
-every dot-folder is hidden, so `.trash` no longer differs from `.obsidian`;
-Escape from the editor returns to the Files tree first and the footer says
-`esc files` / `esc notes` — the earlier `esc back to Library notes` chip is
-superseded. The 100x30 embed line `![[attachments/diagram.png]]` (28 cells)
-renders on one row in the 32-cell editor; a token longer than the pane
-cannot, which is why that criterion is qualified to lines the pane can hold.)*
+`.git`; it now reads "Folder files · Folder: vault-plain · 1 session change"
+there and "· Git · 1 change" only on a real repository — driven live on
+`w4-file-notes/vault-plain` and `vault-git`, at 235x52 and 100x30, after one
+Ctrl+S. Ctrl+End then typing lands at the end of the file on disk (it used to
+land at the click); the tree lists no dot-folder at all, so `.trash` no longer
+differs from `.obsidian`, and a file a previous build had already indexed
+under one leaves "Recently deleted" on the next scan; Escape from the editor
+returns to the Files tree and only the second press leaves Folder files, with
+the footer reading `esc files | ctrl+end end of file` in the editor and
+`esc notes` on the tree. Wrapping, measured rather than assumed: at 100x30
+the editor frame is 32 cells and its text wraps at 27, so
+`![[attachments/diagram.png]]` — 28 cells, one unbreakable token — still
+splits across two rows there. Nothing can render it on one row at that width,
+which is why task-32552 AC#4 is qualified to lines the pane can hold; every
+such line in that note does render on one row, and the wider layouts show the
+embed whole.)*

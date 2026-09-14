@@ -204,14 +204,14 @@ async def test_no_line_the_editor_pane_can_hold_wraps_at_100x30(
 ) -> None:
     """Critique A 57: ``![[attachments/diagram.png]]`` wrapped mid-token.
 
-    Measured live on this branch (capture ``fn-19-embed-wrap-100x30.txt``):
-    at 100x30 the Folder files editor frame is 32 cells, and a document
-    taller than the pane paints a vertical scrollbar inside it, leaving a
-    27-cell wrap width. The embed is 28 cells, so NO row can hold it and it
-    splits as ``![[attachments/diagram.png]`` / ``]`` -- which is why the
-    controller qualified AC#4 to lines the pane can hold. (In a short
-    document there is no scrollbar, the wrap width is 31, and the same embed
-    renders on one row: capture ``fn-03-embed-wrap-100x30.txt``.)
+    Measured live on this branch (captures ``fn-19-embed-wrap-100x30.txt``
+    and ``fn-40-embed-100x30.txt``): at 100x30 the Folder files editor frame
+    is 32 cells and its text wraps at 27, so the 28-cell embed splits as
+    ``![[attachments/diagram.png]`` / ``]``. No row at that width can hold
+    it -- which is why the controller qualified AC#4 to lines the pane can
+    hold. (Give the pane a document short enough not to scroll and the wrap
+    width is 31, where the same embed does render on one row: capture
+    ``fn-03-embed-wrap-100x30.txt``.)
 
     So this pins the qualified property at the REAL width, scrollbar and
     all: every line the pane can hold renders on one row. It does not pin
