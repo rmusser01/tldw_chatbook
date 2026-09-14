@@ -26,6 +26,7 @@ from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,defau
 from tldw_chatbook.Backup_Recovery import archive_reader,storage_admission
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures,observe_startup_refusals,observe_capture_review,observe_runtime_settlement,stop_observer,_write
+from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
 from Tests.Backup_Recovery.admission_diagnostics import observe_admission
 from Tests.Backup_Recovery.loop_diagnostics import observe_loop_profile
 from Tests.Backup_Recovery.initial_screen_observation import initial_screen_observation
@@ -106,7 +107,10 @@ async def main():
   await asyncio.to_thread(service.close)
  assert not blocked_attempts(),blocked_attempts()
 try:asyncio.run(main())
-finally:diagnostics.close()
+except BaseException as error:
+ record_failure(Path.home()/'mounted-child-failure.json.log',error=error)
+ raise
+finally:stop_observer(diagnostics.close)
 print('retired and reopened')
 '''
 

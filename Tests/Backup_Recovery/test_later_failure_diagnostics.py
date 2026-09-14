@@ -120,7 +120,8 @@ def test_later_phase_timing_is_bounded_and_excludes_checkpoint_values(tmp_path):
     assert rows[0]["monotonic_seconds"] <= rows[-1]["monotonic_seconds"]
 
 
-def test_failure_record_is_collected_before_pytest_finalization(tmp_path):
+@pytest.mark.parametrize("filename", ["later-child-failure.json.log", "mounted-child-failure.json.log"])
+def test_failure_record_is_collected_before_pytest_finalization(tmp_path, filename):
     from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
     from Tests.Backup_Recovery.run_platform_product import _collect_safe_logs
 
@@ -128,12 +129,12 @@ def test_failure_record_is_collected_before_pytest_finalization(tmp_path):
     child = private / "product-pytest" / "later" / "home"
     child.mkdir(parents=True)
     record_failure(
-        child / "later-child-failure.json.log",
+        child / filename,
         error=RuntimeError("private-child-message"),
     )
     artifacts = tmp_path / "artifacts"
     assert _collect_safe_logs(private, artifacts) == 1
-    recorded = next(artifacts.rglob("later-child-failure.json.log")).read_text()
+    recorded = next(artifacts.rglob(filename)).read_text()
     assert json.loads(recorded)["error"]["error_class"] == "RuntimeError"
     assert "private-child-message" not in recorded
 
@@ -161,3 +162,161 @@ def test_diagnostic_metadata_failure_does_not_replace_parent_error(
             tmp_path, tmp_path / "installed"
         )
     assert caught.value is error
+
+
+@pytest.mark.asyncio
+async def test_actual_textual_worker_preserves_original_callback_metadata(tmp_path):
+    from textual.app import App
+    from textual.worker import WorkerFailed
+
+    from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
+
+    original = RuntimeError("private-worker-message")
+
+    async def failing_callback():
+        raise original
+
+    class FailingApp(App):
+        def on_mount(self):
+            self.run_worker(failing_callback())
+
+    with pytest.raises(WorkerFailed) as caught:
+        async with FailingApp().run_test() as pilot:
+            await pilot.pause()
+    assert caught.value.error is original
+    path = tmp_path / "worker.log"
+    record_failure(path, error=caught.value)
+    encoded = path.read_text()
+    record = json.loads(encoded)
+    assert record["worker_error"]["frames"][-1]["function"] == "failing_callback"
+    assert record["worker_error"]["error_class"] == "RuntimeError"
+    assert "private-worker-message" not in encoded
+
+
+@pytest.mark.parametrize("value", ["missing", "none", "text", "self", "nested", "subclass"])
+def test_worker_metadata_is_exact_and_one_level(tmp_path, value):
+    from textual.worker import WorkerFailed
+
+    from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
+
+    class HostileWorker(WorkerFailed):
+        @property
+        def error(self):
+            raise AssertionError("private-property-was-called")
+
+    error = WorkerFailed(RuntimeError("private-inner"))
+    if value == "missing":
+        del error.error
+    elif value == "none":
+        error.error = None
+    elif value == "text":
+        error.error = "private-text"
+    elif value == "self":
+        error.error = error
+    elif value == "nested":
+        error.error = WorkerFailed(RuntimeError("private-deep"))
+    else:
+        error = Exception.__new__(HostileWorker)
+    path = tmp_path / "worker.log"
+    record_failure(path, error=error)
+    encoded = path.read_text()
+    record = json.loads(encoded)
+    assert "private-" not in encoded
+    if value == "nested":
+        assert record["worker_error"]["error_class"] == "WorkerFailed"
+        assert "worker_error" not in record["worker_error"]
+    elif value == "subclass":
+        assert "worker_error" not in record
+    else:
+        assert record["worker_error"] is None
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
+def test_worker_metadata_failure_keeps_root_record(tmp_path, monkeypatch, failure):
+    from textual.worker import WorkerFailed
+
+    from Tests.Backup_Recovery import thread_diagnostics
+    from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
+
+    original = RuntimeError("private-inner")
+    wrapper = WorkerFailed(original)
+    metadata = thread_diagnostics._error_metadata
+
+    def observed(error):
+        if error is original:
+            raise failure("private-metadata-error")
+        return metadata(error)
+
+    monkeypatch.setattr(thread_diagnostics, "_error_metadata", observed)
+    path = tmp_path / "worker.log"
+    record_failure(path, error=wrapper)
+    record = json.loads(path.read_text())
+    assert record["error"]["error_class"] == "WorkerFailed"
+    assert record["worker_error"] is None
+
+
+@pytest.mark.parametrize("primary", ["error", "cancel", "success"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+@pytest.mark.parametrize("write_fails", [False, True])
+def test_actual_mounted_entry_retains_error_and_cleanup_contract(
+    tmp_path, monkeypatch, primary, cleanup_fails, write_fails
+):
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
+    from Tests.Backup_Recovery.test_mounted_console_backup import _SCRIPT
+    from Tests.Backup_Recovery.thread_diagnostics import stop_observer
+
+    original = RuntimeError("private-mounted") if primary == "error" else asyncio.CancelledError()
+    cleanup = OSError("private-cleanup")
+    trace = None
+    closed = []
+
+    async def main():
+        nonlocal trace
+        if primary != "success":
+            try:
+                raise original
+            except BaseException as error:
+                trace = error.__traceback__
+                raise
+
+    class Diagnostics:
+        def close(self):
+            closed.append(True)
+            if cleanup_fails:
+                raise cleanup
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    if write_fails:
+        from Tests.Backup_Recovery import thread_diagnostics
+
+        def fail_write(*args):
+            raise OSError("private-output-error")
+
+        monkeypatch.setattr(thread_diagnostics, "_write", fail_write)
+    blocks = [node for node in ast.parse(_SCRIPT).body if isinstance(node, ast.Try)]
+    assert len(blocks) == 1
+    code = compile(ast.Module(body=blocks, type_ignores=[]), "mounted-child-entry", "exec")
+    namespace = {"asyncio": asyncio, "main": main, "Path": Path,
+                 "diagnostics": Diagnostics(), "stop_observer": stop_observer,
+                 "record_failure": record_failure}
+    if primary != "success" or cleanup_fails:
+        expected = original if primary != "success" else cleanup
+        with pytest.raises(type(expected)) as caught:
+            exec(code, namespace)  # noqa: S102  # nosec B102 - execute the actual fixed test entry guard.
+        assert caught.value is expected
+        if primary != "success":
+            tb = caught.value.__traceback__
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            assert tb is trace
+    else:
+        exec(code, namespace)  # noqa: S102  # nosec B102 - same fixed entry on success.
+    assert closed == [True]
+    path = tmp_path / "mounted-child-failure.json.log"
+    if primary == "success" or write_fails:
+        assert not path.exists()
+    else:
+        assert json.loads(path.read_text())["error"]["error_class"] == type(original).__name__
+        assert "private-" not in path.read_text()

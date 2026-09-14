@@ -15,6 +15,17 @@ def record_failure(
             if error is not None
             else {"event": "child_exit", "returncode": returncode}
         )
+        if error is not None:
+            try:
+                from textual.worker import WorkerFailed
+
+                if type(error) is WorkerFailed:
+                    record["worker_error"] = None
+                    inner = vars(error).get("error")
+                    if isinstance(inner, BaseException) and inner is not error:
+                        record["worker_error"] = _error_metadata(inner)
+            except BaseException:  # noqa: BLE001, S110 - optional metadata cannot discard the root error.  # nosec B110
+                pass
         _write(path, record)
     except BaseException:  # noqa: BLE001 - preserve the original failure.
         return
