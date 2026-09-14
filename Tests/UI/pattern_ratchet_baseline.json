@@ -2,7 +2,6 @@
   "dimensions": {
     "components/_lists.tcss": 1,
     "core/_variables.tcss": 24,
-    "features/_writing.tcss": 3,
     "layout/_windows.tcss": 2,
     "utilities/_overrides.tcss": 2
   },
