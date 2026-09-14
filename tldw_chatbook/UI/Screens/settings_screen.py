@@ -26393,7 +26393,13 @@ class SettingsScreen(BaseAppScreen):
         if select_value == PROVIDER_MANUAL_SELECT_VALUE:
             self._apply_provider_value_change(provider_id)
             return
-        selector.value = select_value
+        # TASK-32533: the picker rows are rebuilt from a live catalog read on
+        # every refresh; this select's options were fixed at compose time. A row
+        # the select does not offer must not raise here -- apply the provider
+        # directly instead, the way the manual branch above does, so the click
+        # still does what the user asked.
+        if not assign_select_value(selector, select_value):
+            self._apply_provider_value_change(provider_id)
 
     @on(Select.Changed, "#settings-provider-value")
     def handle_provider_value_changed(self, event: Select.Changed) -> None:
@@ -28817,8 +28823,14 @@ class SettingsScreen(BaseAppScreen):
                     revert_select = self.query_one("#settings-provider-value", Select)
                     # task-15740: prevent the posted echo the flag misses.
                     with revert_select.prevent(Select.Changed):
-                        revert_select.value = self._provider_select_value_for_provider(
-                            provider
+                        # TASK-32533: same catalog-vs-composed-options
+                        # disagreement as `_sync_provider_manual_widget`; a
+                        # refusal needs no handling here because the
+                        # `_sync_provider_manual_widget` call below falls the
+                        # select back to the manual spelling.
+                        assign_select_value(
+                            revert_select,
+                            self._provider_select_value_for_provider(provider),
                         )
                 finally:
                     self._syncing_provider_selection = False
