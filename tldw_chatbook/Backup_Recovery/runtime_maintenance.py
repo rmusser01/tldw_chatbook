@@ -687,6 +687,8 @@ async def monitor_app(app):
     abandon that handoff. A refused attempt waits for its intent to end before
     retrying, preserving user work and avoiding repeated pause/resume cycles.
     """
+    from .participants import _retire_current_thread_caches
+
     refused = False
     while True:
         await asyncio.sleep(0.1)
@@ -711,6 +713,7 @@ async def monitor_app(app):
                 if time.monotonic() >= deadline:
                     raise RecoveryRequired("runtime_native_resources_not_settled")
                 await asyncio.sleep(0.01)
+                _retire_current_thread_caches(runtime.pause)
             runtime.pause.retire_startup(runtime)
         except (OSError, ValueError, RuntimeError) as error:
             # Surface actionable local refusals without propagating arbitrary

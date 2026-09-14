@@ -113,3 +113,54 @@ def test_live_borrowers_remain_blocking(tmp_path, outcome):
 
 def test_uncached_connection_remains_caller_owned(tmp_path):
     _run(tmp_path, "workspace", "uncached", script=_SCRIPT)
+
+
+@pytest.mark.parametrize("close_failure", [False, True])
+def test_failed_notes_connection_setup_retires_only_its_new_handle(
+    tmp_path, close_failure
+):
+    script = r"""
+import sqlite3,sys,time
+from pathlib import Path
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB,CharactersRAGDBError
+from tldw_chatbook.DB.base_db import _QuiescentSQLiteConnection
+from tldw_chatbook.Backup_Recovery import storage_admission as storage
+from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+db=CharactersRAGDB(Path.home()/'notes.db',client_id='setup-failure')
+db.close_connection();participant=db._maintenance_participant
+assert not participant.connections
+blocker=sqlite3.connect(db.db_path_str,timeout=0)
+assert blocker.execute('PRAGMA journal_mode=DELETE').fetchone()[0]=='delete'
+blocker.execute('BEGIN');blocker.execute('SELECT count(*) FROM sqlite_schema').fetchone()
+original_close=_QuiescentSQLiteConnection.close
+close_failure=sys.argv[2]=='True'
+def failed_close(connection):raise sqlite3.OperationalError('synthetic close failure')
+if close_failure:_QuiescentSQLiteConnection.close=failed_close
+try:
+ try:db.get_connection()
+ except CharactersRAGDBError as error:
+  assert isinstance(error.__cause__,sqlite3.OperationalError)
+  assert error.__cause__.sqlite_errorcode==sqlite3.SQLITE_BUSY
+ else:raise AssertionError('real SQLite blocker did not refuse WAL setup')
+finally:
+ blocker.rollback();blocker.close()
+ _QuiescentSQLiteConnection.close=original_close
+assert getattr(db._local,'conn',None) is None
+pause=storage._begin_local_pause()
+try:
+ _retire_current_thread_caches(pause)
+ if close_failure:
+  assert len(participant.connections)==1
+  connection,lease=next(iter(participant.connections.items()))
+  assert lease.resource_close_failed and lease in storage._live_leases
+  assert not pause.drain(time.monotonic())
+  connection.close() # The test owns this exact failed-initialization handle.
+ assert not participant.connections,'failed initialization leaked a backup lease'
+ assert db.registered_connection_count()==0
+ assert pause.drain(time.monotonic()+2)
+finally:pause.resume()
+assert db.get_connection().execute('SELECT 1').fetchone()[0]==1
+db.close_connection()
+print('retired and reopened')
+"""
+    _run(tmp_path, "notes", str(close_failure), script=script, timeout=40)

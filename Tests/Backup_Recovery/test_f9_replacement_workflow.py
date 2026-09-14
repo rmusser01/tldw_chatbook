@@ -113,7 +113,9 @@ def assert_ordinary_profile_reopens(home: Path, package: Path, selector: Path, c
             stdout=output,
             stderr=output,
             text=True,
-            timeout=45,
+            # Native Windows construction is still progressing after 45 seconds;
+            # use the same bounded allowance as the recovered-profile Open check.
+            timeout=135 if sys.platform == "win32" else 45,
             check=False,
         )
     assert result.returncode == 0, log.read_text()[-10000:]

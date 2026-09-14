@@ -371,11 +371,20 @@ def test_capture_relation_never_repairs_unsafe_native_sources(
         else:
             os.link(original, path)
     before = bootstrap._registry(root)
-    with pytest.raises(
-        bootstrap.RecoveryRequired, match="capture_config_(parent|source)_unsafe"
-    ):
+    if sys.platform == "win32" and damage == "symlink":
+        import errno
+
+        refusal = pytest.raises(OSError, match="windows_reparse_point_refused")
+    else:
+        refusal = pytest.raises(
+            bootstrap.RecoveryRequired, match="capture_config_(parent|source)_unsafe"
+        )
+    with refusal as error:
         proof = storage._config_capture_bindings(root, (selector,))
         storage._config_capture_sources(root, (selector,), proof)
+    if sys.platform == "win32" and damage == "symlink":
+        assert error.value.errno == errno.ELOOP
+        assert error.value.strerror == "windows_reparse_point_refused"
     assert bootstrap._registry(root) == before
     if damage == "public_parent":
         assert native_os.stat(selector.parent).st_mode & 0o044

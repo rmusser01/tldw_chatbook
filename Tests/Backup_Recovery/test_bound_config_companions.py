@@ -154,7 +154,7 @@ import sys,stat,threading
 from contextlib import contextmanager
 from tldw_chatbook.Backup_Recovery import config_participants,raw_participants as raw,storage_admission as storage
 from tldw_chatbook.Backup_Recovery.admission import Admission
-from tldw_chatbook.Utils.platform_files import fcntl
+from tldw_chatbook.Utils.platform_files import fcntl,os as native_os
 mode=sys.argv[1]
 initial=selected.read_bytes();parent_stat=parent.stat()
 registry_before=bootstrap._registry(root)
@@ -230,23 +230,53 @@ if mode in ('foreign','alias','pending','cancel','uncertain'):
   os.close(fd)
  print('retired and reopened');raise SystemExit(0)
 if mode in ('write','snapshot','generic','registration','maintenance','unsafe','replaced','missing','unsafe_active'):
- if mode=='unsafe':parent.chmod(0o755)
+ def make_parent_public():
+  assert native_os.stat(parent).st_mode & 0o077 == 0
+  if sys.platform=='win32':
+   import subprocess
+   subprocess.run(['icacls',str(parent),'/grant','*S-1-1-0:(R)'],check=True,capture_output=True)
+  else:parent.chmod(0o755)
+  assert native_os.stat(parent).st_mode & 0o044
+ if mode=='unsafe':make_parent_public()
  if mode in ('unsafe','replaced','missing','unsafe_active'):
+  controls={p.relative_to(root):(p.stat().st_ino,p.read_bytes()) for p in root.rglob('*') if p.is_file()}
+  damage_applied=mode=='unsafe';rename_prevented=False
   try:
    if mode in ('replaced','missing','unsafe_active'):
     with config_participants.operation(config):
-     if mode=='unsafe_active':parent.chmod(0o755)
+     if mode=='unsafe_active':make_parent_public();damage_applied=True
      else:
-      moved=home/'old-parent';parent.rename(moved)
-      if mode=='replaced':
-       parent.mkdir(mode=0o700);selected.write_bytes(initial);selected.chmod(0o600)
-     config._prepare_config_parent(selected)
+      moved=home/'old-parent'
+      try:parent.rename(moved)
+      except OSError as error:
+       if sys.platform!='win32' or getattr(error,'winerror',None) not in (5,32):raise
+       rename_prevented=True
+      else:
+       if mode=='replaced':
+        parent.mkdir(mode=0o700);selected.write_bytes(initial);selected.chmod(0o600)
+       damage_applied=True
+     if not rename_prevented:config._prepare_config_parent(selected)
    else:config.read_cli_config_serialized()
-  except (bootstrap.RecoveryRequired,OSError,ValueError):pass
-  else:raise AssertionError('unsafe parent was admitted')
-  if mode in ('unsafe','unsafe_active'):assert stat.S_IMODE(parent.stat().st_mode)==0o755
-  if mode=='replaced':assert not (parent/'recovery-bootstrap').exists()
-  if mode=='missing':assert not parent.exists()
+  except (bootstrap.RecoveryRequired,OSError,ValueError):
+   if not damage_applied:raise
+  else:assert rename_prevented,'unsafe parent was admitted'
+  if rename_prevented:
+   # Windows pins prevent damage while active; the same move must work after release.
+   assert not raw._states and not storage._raw_operations
+   assert not moved.exists() and selected.read_bytes()==initial
+   assert (parent.stat().st_dev,parent.stat().st_ino,parent.stat().st_mode)==(parent_stat.st_dev,parent_stat.st_ino,parent_stat.st_mode)
+   assert bootstrap._records(root)[1]==before and bootstrap._registry(root)==registry_before
+   assert {p.relative_to(root):(p.stat().st_ino,p.read_bytes()) for p in root.rglob('*') if p.is_file()}==controls
+   parent.rename(moved);moved.rename(parent)
+   assert (parent.stat().st_dev,parent.stat().st_ino,parent.stat().st_mode)==(parent_stat.st_dev,parent_stat.st_ino,parent_stat.st_mode)
+   assert bootstrap._records(root)[1]==before and bootstrap._registry(root)==registry_before
+  elif mode in ('unsafe','unsafe_active'):assert native_os.stat(parent).st_mode & 0o044
+  elif mode=='replaced':assert not (parent/'recovery-bootstrap').exists()
+  elif mode=='missing':assert not parent.exists()
+  observed_parent=moved if damage_applied and mode in ('replaced','missing') else parent
+  observed_root=observed_parent/root.relative_to(parent)
+  assert (observed_parent/selected.name).read_bytes()==initial
+  assert {p.relative_to(observed_root):(p.stat().st_ino,p.read_bytes()) for p in observed_root.rglob('*') if p.is_file()}==controls
   print('retired and reopened');raise SystemExit(0)
  if mode=='write':
   loaded,backup=config.replace_cli_config_serialized(initial.decode()+'[appearance]\ntheme="textual-dark"\n')

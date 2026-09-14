@@ -3543,6 +3543,22 @@ UPDATE db_schema_version
                         f"thread={threading.get_ident()}"
                     )
                 except (sqlite3.Error, PrivatePathError) as exc:
+                    if conn is not None:
+                        # Initialization owns this unpublished handle; closing it
+                        # also retires its native backup lease. Failed closes keep
+                        # their existing lease evidence and the original error.
+                        try:
+                            conn.close()
+                        except Exception as close_error:  # noqa: BLE001 - preserve setup failure
+                            exc.add_note(
+                                "Connection initialization cleanup failed: "
+                                f"{type(close_error).__name__}"
+                            )
+                        else:
+                            self._connection_quiescence.unregister(conn)
+                            self._local.semantic_mutation_authorization = None
+                            self._local.voice_trace_import_authorization = None
+                            self._local.canvas_revision_deletion_authorization = None
                     logger.error(
                         f"Failed to connect to database "
                         f"db_sha256={self._db_diagnostic_ref} "
