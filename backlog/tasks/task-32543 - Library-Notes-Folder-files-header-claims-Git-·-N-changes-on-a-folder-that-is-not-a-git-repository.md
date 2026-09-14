@@ -67,9 +67,15 @@ confirmed_repository` (the resolver, both ways) and
 `Tests/UI/test_library_notes_w4_file_notes.py::test_the_header_says_git_only_
 when_the_folder_is_a_repository[False/True]`, which runs the REAL Git service
 against a real throwaway repository and a plain folder beside it, so the fact
-is `git rev-parse` truth rather than a flag a test set. Three existing pins
-that asserted "Git · 1 change" on a folder with no Git service attached now
-assert the new copy.
+is `git rev-parse` truth rather than a flag a test set. FOUR existing pins that asserted the
+old suffix on a folder with no Git service attached now assert the new copy;
+the fourth (`::test_configured_root_authority_state_table_is_two_line_and_
+bounded`, a 1080-case `product()` state table) was missed by the first pass
+and only surfaced in the FAILED-name comparison against a detached
+`origin/dev` worktree -- it is the one name that was red on the branch and
+green on dev. Its `f"{git_count} change"` is now `f"{git_count} session
+change"` plus `"Git" not in authority`, which is a tighter assertion, not a
+looser one.
 
 RED proofs (each by patching the fix out of a scratch copy of the file, never
 `git stash`): restoring the ungated `status_copy` line fails all three

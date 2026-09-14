@@ -3150,7 +3150,12 @@ def test_configured_root_authority_state_table_is_two_line_and_bounded(
         elif push_value in {"checking", "pushing"}:
             assert "Git ·" in authority
         elif git_count:
-            assert f"{git_count} change" in authority
+            # task-32543: no Git service is attached to this workspace, so
+            # nothing has confirmed a repository -- the count is this
+            # session's edits and the line never says "Git". (The two
+            # branches above are Git OPERATIONS, which presuppose one.)
+            assert f"{git_count} session change" in authority, (context, authority)
+            assert "Git" not in authority, (context, authority)
         else:
             assert "Git" not in authority
 
