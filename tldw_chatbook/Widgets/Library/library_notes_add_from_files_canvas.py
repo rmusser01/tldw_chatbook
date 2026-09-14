@@ -1059,7 +1059,16 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         previous_phase = self.snapshot.phase
         previous_snapshot = self.snapshot
         self.snapshot = snapshot
-        if previous_phase == snapshot.phase == "configure":
+        if (
+            previous_phase == snapshot.phase == "configure"
+            # task-32535: this fast path patches the form's fields in place so
+            # a snapshot cannot eat what the user is typing. It can only do
+            # that while the form's SHAPE is unchanged -- the Obsidian row
+            # exists for a vault and not for a plain folder, so a pick that
+            # flips that answer has to rebuild.
+            and previous_snapshot.setup.obsidian_vault
+            == snapshot.setup.obsidian_vault
+        ):
             status = self.query("#notes-sync-status")
             if status:
                 status.first(Static).update(snapshot.status_line)

@@ -15,7 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from textual.widgets import Checkbox, Collapsible, Static
+from textual.widgets import Checkbox, Collapsible, Input, Static
 
 from Tests.Widgets.Library.test_library_notes_add_from_files_canvas import (
     _Host,
@@ -40,6 +40,9 @@ from tldw_chatbook.Notes.notes_sync_runtime import (
 )
 from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
     LibraryNotesSyncController,
+)
+from tldw_chatbook.Widgets.Library.library_notes_add_from_files_canvas import (
+    LibraryNotesAddFromFilesCanvas,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -294,6 +297,50 @@ async def test_sync_setup_offers_the_obsidian_toggle_on_for_a_vault(
         assert not app.query("#notes-sync-obsidian")
     await controller.check_setup()
     assert runtime.setups[-1].obsidian_mode is False
+
+
+async def test_choosing_a_vault_adds_the_toggle_to_the_already_open_setup_form(
+    tmp_path: Path,
+) -> None:
+    """AC#3 on the live route: the form is open when the folder is picked.
+
+    Regression pin (found live, not by the test above): `sync_state` keeps a
+    fast path that patches the configure form's fields in place instead of
+    recomposing, so the user's typed name survives a snapshot. The Obsidian
+    row only EXISTS for a vault, so patching left it missing however correct
+    the state was -- picking the vault in the running app changed the folder
+    summary and nothing else.
+    """
+
+    vault = tmp_path / "vault"
+    (vault / ".obsidian").mkdir(parents=True)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    controller = LibraryNotesSyncController(
+        runtime=_SetupRuntime(), import_controller=_Importer()
+    )
+    assert controller.choose_relationship("keep_synced") == "configure"
+    controller.set_setup("display_name", "Vault")
+
+    app = _Host(controller.snapshot)
+    async with app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        assert not app.query("#notes-sync-obsidian")
+
+        controller.set_setup("folder", str(vault))
+        canvas.sync_state(controller.snapshot)
+        await pilot.pause()
+
+        assert app.query_one("#notes-sync-obsidian", Checkbox).value is True
+        # The rebuild keeps what the user typed.
+        assert app.query_one("#notes-sync-display-name", Input).value == "Vault"
+
+        # And a plain folder takes the row away again.
+        controller.set_setup("folder", str(plain))
+        canvas.sync_state(controller.snapshot)
+        await pilot.pause()
+        assert not app.query("#notes-sync-obsidian")
 
 
 def test_setup_state_defaults_the_toggle_on() -> None:
