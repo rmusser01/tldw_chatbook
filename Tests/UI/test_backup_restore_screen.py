@@ -666,3 +666,61 @@ async def test_replacement_omissions_require_explicit_review_after_untouched_abo
                 assert source.exists()
         finally:
             await asyncio.to_thread(service.close)
+
+
+@pytest.mark.asyncio
+async def test_later_credential_omissions_remain_visible_during_keyboard_review(tmp_path):
+    import asyncio
+
+    from textual.app import App
+    from textual.containers import Vertical, VerticalScroll
+    from textual.widgets import Button
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
+
+    service = RecoveryService(tmp_path / "control")
+
+    class Harness(App):
+        def on_mount(self):
+            self.push_screen(BackupRestoreScreen(service, config_paths=()))
+
+    app = Harness()
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            screen._show_mode("copies")
+            screen.query_one("#backup-later-form").display = True
+            screen._rollback_copy_id = "fixture-copy"
+            codes = tuple(
+                f"credential_unavailable:provider_{index}:native_keyring_unavailable"
+                for index in range(8)
+            )
+            await pilot.pause()
+            screen._later_review_codes_seen = codes
+            await screen._show_later_credential_review(
+                screen._revision, screen._later_selection(), codes, pending=False
+            )
+            await pilot.pause()
+            area = screen.query_one("#backup-later-credential-review", Vertical)
+            body = screen.query_one("#backup-body", VerticalScroll)
+            boxes = list(screen.query(".backup-acknowledge-later-credential"))
+            assert tuple(box.name for box in boxes) == codes
+            assert all(not box.value for box in boxes)
+            boxes[0].focus()
+            for index, box in enumerate(boxes):
+                if index:
+                    await pilot.press("tab")
+                await pilot.pause()
+                assert app.focused is box
+                visible = box.region.intersection(area.region).intersection(
+                    body.content_region
+                )
+                assert visible == box.region, "Focused omission is clipped"
+                await pilot.press("space")
+                assert box.value
+            assert all(box.value for box in boxes)
+            assert screen._rollback_plan is None
+            assert screen.query_one("#backup-later-start", Button).disabled
+    finally:
+        await asyncio.to_thread(service.close)

@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-14 12:18
+updated_date: 2026-09-14 12:47
 ---
 
 ## Description
@@ -269,6 +269,8 @@ Native Windows reruns dispatched at exact0811768fa4c4685613dddc194dfa7900d4089dd
 Stale GGUF workflow contract corrected in test only: five original evidence steps keep strict execution/failure rules, exact sixth failure-only Windows diagnostic now asserted separately with pinned baseline/exact commands. Root12PASS0.75s (contract5+observer7); independent5PASS0.70s and four mutation probes reject primary continuation, lost Windows gate, broadened node and extra step. Ruff0/Bandit29→34 onlytestassertions. Independent approved SHA daa75e510fd231e1dba7b20c21b3593fca12574af423ed25890a67ca3fbd812d. Workflow/product unchanged. Native081176support/replacement exact heads verified active. Genuine immutable18f keyboard Abort→ordinary original-note readback→Quit exit0 verified; acknowledged replacement continues.
 Independent e683 profile-open causal review proves both Windows20s inner waits timed out before actual local-content callbacks, which later returned successfully and wrote authenticated receipts at147.015/132.641s within existingchild240. Full receipt/edit/Quit assertions were not reached, so preserve failures. Reviewed minimal TEST-only observation correction: Windows recovery-check await uses existing subprocess240 bound, while nonWindows20, service255/test300, initialscreen135 andedit10 remain unchanged. Preserve all content/receipt/Quit assertions and independentGGUF60startupfailure. No product, registry or admission changes.
 Reviewed Windows profile-open observation correction complete locally: actual Console quit/edit2PASS24.08s, injected read/post-mount failure2PASS12.18s. Independent AST proof preserves entire module/child except single Windows timeout argument; Ruff0/Bandit unchanged. SHA68f29c1f1278f80416847cb9458b641a7244efccc0a879b41a81577548cfb538. NativeWindowsfullassertions still need rerun; existing081support/replacement continue unchanged. Commit test-only fix then run existing63-case nativeMac affectedscope on exact newhead. Admission read-sharing design reviewed but not implemented: race-observation changes and Windowsbenefit unproven. Genuine18fkeyboardreplacement validated74881582eb654f40ab27eef83b4e2c2e; now normalincoming/new-note and laterhandoff.
+2026-09-14 continuation: macOS b534370982 completed 74/74 passing (1196.024s), 109 artifact hashes and four installed receipts verified; source freeze released. Applying independently reproduced later credential checkbox clipping fix (existing backup-form class) with keyboard RED/GREEN regression. Windows 081 support is 126/130: Settings scheduler drain, Library scope recheck, and two prior profile-open observation failures retained. Replacement run still pending. No deadlines, admission guards or backup scope will be relaxed.
+Later credential layout correction independently approved: targeted RED1 fail, GREEN1 pass2.79s, independent1 pass2.82s; real Tab/Space full-region checks retain disabled confirmation. Full UI baseline reproduces the same9 failures/1 setup error as candidate (raw_source_selection_changed fixture imports), with only new clipping regression changing fail→pass. Ruff passes; Bandit69→77 test assertions only. Current report/plan updated with exact Mac74/74, Windows081126/130 and preserved keyboard18f clipping stop. No final acceptance or merge.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

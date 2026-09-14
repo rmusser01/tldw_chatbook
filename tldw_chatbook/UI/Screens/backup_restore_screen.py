@@ -265,7 +265,7 @@ class BackupRestoreScreen(Screen):
                     yield Button("Continue in recovery mode", id="backup-later-restart")
                     yield Button("Review later rollback", id="backup-later-review")
                     yield Static("", id="backup-later-preview", markup=False)
-                    yield Vertical(id="backup-later-credential-review")
+                    yield Vertical(id="backup-later-credential-review", classes="backup-form")
                     yield Input(
                         placeholder="New safety-copy password",
                         password=True,
