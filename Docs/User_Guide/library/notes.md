@@ -1474,4 +1474,4 @@ attribute on this Textual version, and **Choose** with nothing picked filed the
 note under a folder id of "Select.NULL". An unhandled error inside a panel no
 longer closes the app either — the screen stays open with an error
 notification naming where it happened, and the panel that failed may stop
-responding until it is closed and reopened.)*
+responding or disappear until it is reopened.)*
