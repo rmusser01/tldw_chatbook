@@ -14998,25 +14998,29 @@ Button:disabled {
  * ======================================== 
  * Metrics display styles
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* --- Metrics Screen Styling --- */
 MetricsScreen {
-    padding: 1 2; /* Add some padding around the screen content */
+    padding: $ds-space-1 $ds-space-2; /* Add some padding around the screen content */
     /* layout: vertical; /* MetricsScreen is a Static, VerticalScroll handles layout */
     /* align: center top; /* If needed, but VerticalScroll might handle this */
 }
 
 #metrics-container {
-    padding: 1;
+    padding: $ds-space-1;
     /* border: round $primary-lighten-2; /* Optional: a subtle border */
     /* background: $surface; /* Optional: a slightly different background */
 }
 
 /* Styling for individual metric labels within MetricsScreen */
 MetricsScreen Label {
-    width: 100%;
-    margin-bottom: 1; /* Space between metric items */
-    padding: 1;       /* Padding inside each label's box */
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1; /* Space between metric items */
+    padding: $ds-space-1;       /* Padding inside each label's box */
     background: $panel-lighten-1; /* A slightly lighter background for each item */
     border: round $primary-darken-1; /* Border for each item */
     /* Textual CSS doesn't allow direct styling of parts of a Label's text (like key vs value) */
@@ -15028,10 +15032,10 @@ MetricsScreen Label {
 #metrics-container > Label:first-of-type {
     text-style: bold underline;
     align: center middle;
-    padding: 1 0 2 0; /* More padding below the title */
+    padding: $ds-space-1 $ds-space-0 $ds-space-2 $ds-space-0; /* More padding below the title */
     background: transparent; /* No specific background for the title itself */
     border: none; /* No border for the title itself */
-    margin-bottom: 2; /* Extra space after the title */
+    margin-bottom: $ds-space-2; /* Extra space after the title */
 }
 
 /* Style for error messages within MetricsScreen */
