@@ -4,10 +4,11 @@ title: >-
   Library Notes: "Use in Console" fails closed on a no-provider profile with two
   disagreeing messages, and the failure text stays on the status line of the
   next note
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-13 06:45'
+updated_date: '2026-09-14 14:47'
 labels:
   - library
   - notes
@@ -30,15 +31,63 @@ Critique #3 (dev 5fd502dbac), both assessors, personas researcher/student and Al
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 On a profile with no ready model, Use in Console links the open note to the active workspace, stages it, and lands on Console's own setup card; when the link cannot be made it shows one sentence naming the real blocker with the remedy inline (for example "restart Chatbook, then try again")
-- [ ] #2 Exactly one message is shown for a failed hand-off (status line or toast, not both), and "Next: Review the error" is never offered when no error is on screen
-- [ ] #3 Opening another note, or saving the current one, clears a previous action failure from the editor status line, and the list status line never carries it
-- [ ] #4 A regression test performs a failed hand-off, opens a second note and saves it, and asserts the second note's status line reads Saved with no failure text
+- [x] #1 On a profile with no ready model, Use in Console links the open note to the active workspace, stages it, and lands on Console's own setup card; when the link cannot be made it shows one sentence naming the real blocker with the remedy inline (for example "restart Chatbook, then try again")
+- [x] #2 Exactly one message is shown for a failed hand-off (status line or toast, not both), and "Next: Review the error" is never offered when no error is on screen
+- [x] #3 Opening another note, or saving the current one, clears a previous action failure from the editor status line, and the list status line never carries it
+- [x] #4 A regression test performs a failed hand-off, opens a second note and saves it, and asserts the second note's status line reads Saved with no failure text
 <!-- AC:END -->
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Reproduce live on the fresh profile at 235x52 and headlessly (captures handoff-00..03); write the PROVEN cause into the Description and reword AC#1 per the controller ruling (done before any code change).
 2. RED pins in `Tests/UI/test_library_notes_w4_console_handoff.py`: auto-link + stage on a fresh profile with no toast and no "check Console readiness"; a registry-less hand-off shows exactly one line naming the blocker with its remedy and no "Review the error"; a failure clears on note change and on a successful save, and never reaches the list status.
 3. Fix: `_link_open_note_to_active_workspace()` on the controller (the conversation precedent minus the receipt); `_open_selected_library_note_handoff` links when the gate is closed and returns the blocker sentence instead of toasting; `LibraryNotesOperationState.failure_line` carries the one-line failure copy; `_reset_library_note_editor_state` and a SAVED outcome drop a terminal failed operation; `_build_library_notes_state` only shows navigator-region operations; the canvas does not append its generic Next when the transfer status already names one; the hand-off log becomes metadata-only.
 4. Diagnostic inventory `--write`, GREEN + dev-baseline FAILED-name comparison, live re-verify at 235x52 and 100x30, guide `notes.md` "Use a note in Console" + stamp.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Use in Console now links the note it is given.** The refusal named the remedy
+("Copy or link blocked Library sources into the active workspace") without ever
+offering it, and the status line named a *different* blocker. Per the
+controller ruling, `_open_selected_library_note_handoff` now calls a new
+`_link_open_note_to_active_workspace()` when the workspace gate is closed --
+the conversation reader's "Use as source" precedent (task-32107), minus the
+receipt -- refreshes the depth state, and proceeds. Live: a fresh note lands on
+Console's own Get started card with "notes evidence staged", and Library's
+status reads "Use in Console complete — Linked to Local Default · staged in
+Console."
+
+**One message.** The hand-off's return type changed from `bool` to
+`(blocker, linked_workspace)`; the blocker is a complete sentence with its
+remedy, carried on `LibraryNotesOperationState.failure_line` and rendered
+verbatim in place of the generic "{action} failed — …". Every toast on that
+path is gone. `library_notes_canvas.py` no longer appends "Next: Review the
+error, then keep editing." when the transfer status already carries a `Next:`
+-- that generic line offered an error that was never on screen.
+
+**Clearing.** `_reset_library_note_editor_state` alone was not enough: the
+row-press path never runs it. `_begin_library_note_load` -- the real note
+switch -- calls the same new `_clear_finished_library_notes_operation()`, and a
+SAVED outcome drops a terminal `failed` operation. `_build_library_notes_state`
+now refuses any non-navigator operation, so an editor-region failure can never
+paint the list pane beside it.
+
+**Diagnostics.** The hand-off's `logger.opt(exception=True)` became a
+metadata-only `logger.warning(..., error_type=...)`; the new link helper logs
+the same shape. Inventory re-pinned (10 -> 11 calls).
+
+Modified: `UI/Library_Modules/library_notes_controller.py`,
+`Library/library_notes_state.py`, `UI/Screens/library_screen.py`,
+`Widgets/Library/library_notes_canvas.py`,
+`Docs/security/production-diagnostic-inventory.json`,
+`Tests/UI/test_library_notes_w4_console_handoff.py` (new),
+`Tests/UI/test_library_shell.py`, `Docs/User_Guide/library/notes.md`,
+`Docs/User_Guide/console.md`.
+
+Live: 235x52 and 100x30 on a no-provider profile and a 12-note profile;
+captures `wave4-caps/console-handoff/handoff-10`, `10b`, `14`, `14b`, `15`,
+`15b`, `16`, `16b`, `17`.
+<!-- SECTION:NOTES:END -->
