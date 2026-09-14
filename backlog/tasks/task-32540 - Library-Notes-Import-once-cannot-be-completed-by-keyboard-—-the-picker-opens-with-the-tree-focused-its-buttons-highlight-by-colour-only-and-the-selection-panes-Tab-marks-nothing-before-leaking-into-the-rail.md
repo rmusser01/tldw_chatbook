@@ -4,9 +4,10 @@ title: >-
   Library Notes: Import once cannot be completed by keyboard — the picker opens
   with the tree focused, its buttons highlight by colour only, and the selection
   pane's Tab marks nothing before leaking into the rail
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-13 06:46'
+updated_date: '2026-09-14 18:32'
 labels:
   - library
   - notes
@@ -32,3 +33,12 @@ Critique #3 (dev 5fd502dbac), both assessors, personas Sam and Jordan, Obsidian 
 - [ ] #3 After Select folder, Tab from the confirmation walks Change selection → Clear → Check selection with a visible focus mark and does not leave the canvas
 - [ ] #4 Import once completes from Add from files… to the receipt with the keyboard alone; the recipe is written in notes.md
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live on a scratch power profile with a 65-file vault (done: picker opens with the tree focused, typed text is swallowed; Open/Select folder/Cancel differ by colour+underline only; after Select folder Tab x5 reaches the rail search box and never marks the three pane actions).
+2. RED pins in Tests/UI/test_library_notes_w4_import_keyboard.py against the real route.
+3. Fixes: FileOpen._focus_initial_widget focuses the input bar field when offer_select_folder (FileSave precedent, task-1479); an APP-tier FileSystemPickerScreen Button:focus outline rule (widget DEFAULT_CSS loses to components/_buttons.tcss's Button:focus { outline: none }); focus the import canvas body when a selection lands, and scope Tab to #library-notes-canvas while the Notes view is 'import' (task-32246 mechanism).
+4. GREEN + live keyboard-only walk at 235x52 and 100x30; notes.md recipe + stamps.
+<!-- SECTION:PLAN:END -->
