@@ -84,6 +84,7 @@ from ...Chat.local_reasoning import (
     supports_local_reasoning,
 )
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
+from ...Widgets.select_values import assign_select_value
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
     first_configured_endpoint,
@@ -932,25 +933,6 @@ PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
 # task-180/191: provider display names + grouping now come from the shared
 # catalog module (imported at the top) so Settings and Console match.
-
-
-def _assign_select_value_if_offered(select: Select, value: object) -> bool:
-    """Assign ``value`` only when the select currently offers it.
-
-    TASK-32533. Textual's ``Select`` raises ``InvalidSelectValueError`` for any
-    value outside its options, and an unhandled raise from a widget handler used
-    to take the whole app down with it (critique #3's P0). Every provider Select
-    on this screen is populated from a catalog that can disagree with the value a
-    config, a deep link or a stale draft carries -- a provider that is no longer
-    registered, or none at all. A stale selection is a better outcome than a
-    dead pane, so a value the select does not offer is skipped.
-
-    Returns True when the assignment happened.
-    """
-    if not any(option == value for _label, option in select._options):
-        return False
-    select.value = value
-    return True
 
 
 class _SettingsWorkspacePersonaOption(Option):
@@ -12873,7 +12855,6 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         select_value = self._provider_select_value_for_provider(provider)
-        uses_manual_entry = select_value == PROVIDER_MANUAL_SELECT_VALUE
         # task-15740: the `_syncing_*` flags alone cannot guard these
         # assignments -- `Changed` is a POSTED message, delivered after the
         # `finally` has dropped the flag, so every programmatic repopulation
@@ -12884,10 +12865,16 @@ class SettingsScreen(BaseAppScreen):
             with provider_select.prevent(Select.Changed):
                 # TASK-32533: the catalog this value comes from is read again
                 # here, after the select was composed -- registering or removing
-                # a custom endpoint moves one without the other.
-                _assign_select_value_if_offered(provider_select, select_value)
+                # a custom endpoint moves one without the other. A value this
+                # select no longer offers falls back to the manual spelling
+                # rather than leaving provider A selected with the manual row
+                # below it describing B (review fix, Minor #4).
+                if not assign_select_value(provider_select, select_value):
+                    select_value = PROVIDER_MANUAL_SELECT_VALUE
+                    assign_select_value(provider_select, select_value)
         finally:
             self._syncing_provider_selection = False
+        uses_manual_entry = select_value == PROVIDER_MANUAL_SELECT_VALUE
         self._syncing_provider_manual = True
         try:
             manual_input.disabled = not uses_manual_entry
@@ -21447,7 +21434,7 @@ class SettingsScreen(BaseAppScreen):
                 # separate BUILT_IN_TTS_PROVIDER_ORDER display tuple -- the two
                 # are hand-maintained, and a value only one of them lists would
                 # raise InvalidSelectValueError here.
-                _assign_select_value_if_offered(provider_select, target.provider_id)
+                assign_select_value(provider_select, target.provider_id)
             focus_selector = (
                 "#settings-speech-audio_cpp-base-url"
                 if target.provider_id == "audio_cpp"

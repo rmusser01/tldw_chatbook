@@ -3,11 +3,11 @@ id: TASK-32533
 title: >-
   Library Notes: the app exits with an unhandled InvalidSelectValueError during
   the first-timer edit journey, and the crash handler records no site
-status: Done
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-09-13 06:45'
-updated_date: '2026-09-14 08:10'
+updated_date: '2026-09-14 08:40'
 labels:
   - library
   - notes
@@ -35,7 +35,7 @@ Do not fix by catching the exception at the site alone: the app-level exit and t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 No provider Select reachable on a no-provider profile can be handed a value outside its options -- the Console model popover (a no-provider or unknown-provider draft mounts with a blank selection, the same guard its model select already has), the Settings Providers pane (#settings-provider-value) and the Settings Speech pane (#settings-speech-configure-provider), the last two keeping their current selection instead of raising when the catalog they read disagrees with the options they were built from
+- [ ] #1 No provider Select reachable on a no-provider profile can be handed a value outside its options -- the Console model popover (a no-provider or unknown-provider draft mounts with a blank selection, the same guard its model select already has), the Settings Providers pane (#settings-provider-value) and the Settings Speech pane (#settings-speech-configure-provider), the last two keeping their current selection instead of raising when the catalog they read disagrees with the options they were built from
 - [x] #2 An unhandled exception raised from a widget handler no longer exits the app: the screen stays alive and a notification names what failed and where to look
 - [x] #3 The persisted unhandled_exception diagnostic carries the raising frame (module:function:line, never the message) so the site of the next crash is recoverable from the profile log; the diagnostic inventory is updated
 - [x] #4 A regression test mounts the popover with a provider value absent from its options and a second one with an empty provider, and asserts no InvalidSelectValueError

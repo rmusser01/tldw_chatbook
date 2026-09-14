@@ -16,14 +16,14 @@ catalog:
 
 Both tests reproduce that disagreement the only way it can happen in one
 process -- by dropping an option the caller still believes in -- and drive the
-real route. Without ``_assign_select_value_if_offered`` both raise
-``InvalidSelectValueError``, which before this task exited the whole app.
+real route. Without ``assign_select_value`` (``Widgets/select_values.py``) both
+raise ``InvalidSelectValueError``, which before this task exited the whole app.
 """
 
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Select
+from textual.widgets import Input, Select
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -61,15 +61,19 @@ async def test_provider_pane_survives_a_catalog_value_its_select_no_longer_offer
             [(label, value) for label, value in offered if value != dropped]
         )
         await pilot.pause()
-        kept = provider_select.value
 
         screen._sync_provider_manual_widget(dropped)
         await pilot.pause()
 
         assert host.is_running, "the settings pane took the app down with it"
         assert host._exception is None, f"sync raised {host._exception!r}"
-        # A stale selection, not a dead pane.
-        assert provider_select.value == kept
+        # Not a dead pane, and not a third state either: a value the select can
+        # no longer show falls back to the manual spelling, which names the real
+        # provider in the row underneath instead of contradicting it.
+        assert provider_select.value == "__manual__"
+        manual_input = screen.query_one("#settings-provider-manual-value", Input)
+        assert manual_input.value == dropped
+        assert not manual_input.disabled
 
 
 @pytest.mark.asyncio

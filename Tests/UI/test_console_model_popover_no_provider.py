@@ -13,7 +13,7 @@ provider select.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Select
+from textual.widgets import Input, Select
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.app import TldwCli
@@ -112,6 +112,43 @@ async def _assert_mounts_with_a_blank_provider(provider: str) -> None:
         assert provider_select.value is Select.NULL
         # The membership guard must not have quietly dropped the real options.
         assert "llama_cpp" in {value for _, value in provider_select._options}
+
+
+async def test_blank_popover_survives_a_custom_model_id_keystroke() -> None:
+    """TASK-32533 review, Important #1: the UPDATE path needs the same guard.
+
+    Guarding only the mount left a blank popover two user actions from the same
+    crash: **Custom ID** is not gated on having a provider, and the first
+    keystroke rebases the draft to ``provider=""`` and reaches
+    ``_sync_controls_from_draft``'s ``provider_select.value = settings.provider``.
+    """
+    app = _PopoverHarness(_popover(""))
+    async with app.run_test(size=(120, 40)) as pilot:
+        for _ in range(200):
+            if isinstance(app.screen, ConsoleModelPopover) and app.screen.query(
+                "#console-popover-provider"
+            ):
+                break
+            await pilot.pause(0.01)
+        await pilot.pause()
+        assert app.screen.query_one("#console-popover-provider", Select).value is (
+            Select.NULL
+        )
+
+        await pilot.click("#model-search-picker-custom")
+        await pilot.pause()
+        model_input = app.screen.query_one("#model-search-picker-input", Input)
+        model_input.focus()
+        await pilot.pause()
+        await pilot.press("g")
+        await pilot.pause()
+
+        assert app.is_running, "the popover took the app down on the update path"
+        assert app._exception is None, f"the update path raised {app._exception!r}"
+        assert (
+            app.screen.query_one("#console-popover-provider", Select).value
+            is Select.NULL
+        )
 
 
 async def test_popover_mounts_with_an_empty_provider_draft() -> None:
