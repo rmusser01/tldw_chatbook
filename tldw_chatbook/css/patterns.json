@@ -210,6 +210,54 @@
         }
       },
       "note": "ADR-161 task 9 (2026-09-13): extracted tokenized from components/_agentic_terminal.tcss (base rules + .density-compact/.density-comfortable member halves; the ds-inspector/ds-recovery-callout halves of those comma rules joined in task 10). FIRST among component sheets in CSS_MODULES (atomic layer). Probe-verified computed-style-neutral (generic + density + height-1 geometry) and byte-identical SVG A/B on Home/Console/Settings/Library. ADR-161 task 10: the six leftover shell primitives (.ds-inspector, .ds-status-badge, .ds-recovery-callout, .ds-source-role, .ds-event-row, .ds-shortcut-bar + their density companions) moved in tokenized from the monolith -- ds-inspector/ds-status-badge/ds-recovery-callout are composed app-wide (MCP/Evals/Personas/ACP/Schedules/Settings/Skills/Workbench audited 2026-09-14), which is the components home. Not registry classes: they stay outside the family's canonical set until a catalog pass documents them."
+    },
+    "sizing": {
+      "owning_sheet": "utilities/_helpers.tcss",
+      "classes": {
+        "w-auto": {
+          "status": "canonical"
+        },
+        "w-full": {
+          "status": "canonical"
+        },
+        "w-fill": {
+          "status": "canonical"
+        },
+        "w-0": {
+          "status": "canonical"
+        },
+        "h-auto": {
+          "status": "canonical"
+        },
+        "h-full": {
+          "status": "canonical"
+        },
+        "h-fill": {
+          "status": "canonical"
+        },
+        "h-0": {
+          "status": "canonical"
+        },
+        "h-1": {
+          "status": "canonical"
+        },
+        "h-2": {
+          "status": "canonical"
+        },
+        "h-3": {
+          "status": "canonical"
+        },
+        "p-0": {
+          "status": "canonical"
+        },
+        "m-0": {
+          "status": "canonical"
+        },
+        "border-none": {
+          "status": "canonical"
+        }
+      },
+      "note": "ADR-161 task 12 (2026-09-13, spec 3.10 Python side): the one-dimensional tokenized replacements for legacy runtime `.styles.<dimension> = <literal>` assignments. Values trace to the $ds-size-N / $ds-space-* / $ds-width-* / $ds-height-* scales; utilities load last in the bundle so they win equal-specificity ties, but a site that must override an id-scoped rule uses the `set_styles(...)` inline escape hatch instead. Not every $ds-size-N step is a class: w-/h-N classes exist only where the Python migration consumed them (w-0, h-0..h-3 at pin time); grow the set one entry at a time as new consumers appear."
     }
   },
   "deprecated": {

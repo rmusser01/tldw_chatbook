@@ -195,6 +195,13 @@ $ds-width-full: 100%;
  * tokenized expression of `width: 1fr` on promoted fill fields (the
  * Settings compact field pair). */
 $ds-width-fill: 1fr;
+/* Auto-sizing keywords (ADR-161 task 12): the tokenized expression of the
+ * `auto` sizing keyword for the one-dimensional utility classes. The keyword
+ * itself is theme-independent, but the utility sheets express every
+ * consistent visual value through tokens, so the keyword anchors here like
+ * every other sizing value. */
+$ds-width-auto: auto;
+$ds-height-auto: auto;
 
 /* ========================================
  * SIZING SCALES (ADR-161 task 10, spec 3.5)
@@ -21622,6 +21629,19 @@ FeatureNotAvailableDialog Button {
     height: $ds-size-9;
 }
 
+/* ADR-161 task 12: sizing-utilities preview frames. The utility strip hugs
+   its content (fixed-value rows only); the share-based h-full/h-fill demos
+   need a definite-height parent or their percentage/fr values resolve
+   against the scroll viewport and balloon, so each gets its own bounded
+   frame. Geometry only. */
+.pg-frame-sizing {
+    height: $ds-height-auto;
+}
+
+.pg-frame-sizing-share {
+    height: $ds-size-4;
+}
+
 .-dark-mode .pg-msg-assistant {
     color: $ds-chat-assistant-accent-dark;
 }
@@ -21633,13 +21653,71 @@ FeatureNotAvailableDialog Button {
 /* ===== MODULE: utilities/_helpers.tcss ===== */
 /* ========================================
  * UTILITIES: Helpers
- * ======================================== 
+ * ========================================
  * Utility classes for common patterns
  * ======================================== */
 
 /* Visibility utilities */
 .hidden {
     display: none !important;
+}
+
+/* ========================================
+ * SIZING & BOX-MODEL UTILITIES (ADR-161 task 12, spec 3.10)
+ * ========================================
+ * One-dimensional companions to the semantic component classes: the
+ * tokenized replacement for the legacy runtime `.styles.<dimension> =
+ * <literal>` assignments. Use them in `classes="..."` composition; the
+ * values trace to the $ds-size-N / $ds-space-* / $ds-width-* / $ds-height-*
+ * scales in core/_variables.tcss, exactly like every other sheet rule.
+ *
+ * Precedence note: these are ordinary class rules (utilities load last in
+ * the bundle, so they win ties with feature sheets but NOT with id-scoped
+ * rules). A site whose sizing must override an id-scoped rule keeps its
+ * runtime assignment via `set_styles(...)` -- the inline-precedence
+ * escape hatch -- rather than one of these classes.
+ */
+.w-auto {
+    width: $ds-width-auto;
+}
+.w-full {
+    width: $ds-width-full;
+}
+.w-fill {
+    width: $ds-width-fill;
+}
+.w-0 {
+    width: $ds-size-0;
+}
+.h-auto {
+    height: $ds-height-auto;
+}
+.h-full {
+    height: $ds-height-full;
+}
+.h-fill {
+    height: $ds-height-fill;
+}
+.h-0 {
+    height: $ds-size-0;
+}
+.h-1 {
+    height: $ds-size-1;
+}
+.h-2 {
+    height: $ds-size-2;
+}
+.h-3 {
+    height: $ds-size-3;
+}
+.p-0 {
+    padding: $ds-space-0;
+}
+.m-0 {
+    margin: $ds-space-0;
+}
+.border-none {
+    border: none;
 }
 
 /* ===== MODULE: utilities/_states.tcss ===== */

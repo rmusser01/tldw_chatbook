@@ -85,6 +85,7 @@ Notes on the schema:
 | sections | `components/_sections.tcss` | section-title, section-header, subsection-title (all Canonical) |
 | messages | `components/_messages.tcss` | message-header, message-text, message-actions (all Canonical) |
 | ds_primitives | `components/_ds_primitives.tcss` | ds-panel, ds-toolbar, ds-field-row, ds-info-callout, ds-approval-card, ds-destination-header (all Canonical; extracted from the agentic monolith in task 9) |
+| sizing | `utilities/_helpers.tcss` | w-auto, w-full, w-fill, w-0, h-auto, h-full, h-fill, h-0, h-1, h-2, h-3, p-0, m-0, border-none (all Canonical; the tokenized replacements for runtime `.styles.*` literals, task 12) |
 
 ## Entry template
 
@@ -723,3 +724,50 @@ sheet exists, the single-definition rule applies, and the move was
 probe-verified computed-style-neutral (generic + density + height-1
 geometry contexts) with byte-identical SVG A/B on Home, Console, Settings
 and Library.
+
+## Sizing & box-model utilities
+
+**Purpose.** The one-dimensional companions to the semantic component
+classes: the tokenized replacement for the legacy runtime
+`.styles.<dimension> = <literal>` assignments (ADR-161 task 12, spec 3.10
+Python side). Compose them in `classes="..."` instead of assigning dimensions
+on widget instances at runtime.
+
+**When-not-to-use.** When a semantic class already encodes the geometry
+(e.g. `action-button` carries `$ds-control-height`, `status-area` carries
+`$ds-width-full`) — reach for the utility only for the bare dimension itself.
+Runtime-computed geometry (measured widths, adaptive row counts) is NOT a
+class: those sites keep a runtime assignment through `set_styles(...)`, the
+inline-precedence escape hatch, which the `.styles` ratchet deliberately
+still allows — the ratchet targets constant literals, not computed layout.
+A site that must override an id-scoped rule also uses `set_styles(...)`
+(utilities win equal-specificity ties as the bundle's last sheet, but never
+beat id selectors where inline styles used to).
+
+**Class inventory.**
+
+- `w-auto` / `h-auto` — auto sizing (`$ds-width-auto` / `$ds-height-auto`).
+- `w-full` / `h-full` — 100% fill (`$ds-width-full` / `$ds-height-full`).
+- `w-fill` / `h-fill` — one grid share (`$ds-width-fill` / `$ds-height-fill`).
+- `w-0` / `h-0` — collapsed axis (`$ds-size-0`).
+- `h-1` / `h-2` / `h-3` — fixed row heights (`$ds-size-1/2/3`).
+- `p-0` / `m-0` — zero padding / margin (`$ds-space-0`).
+- `border-none` — border suppression (keyword `none`; the legacy
+  `("none", "transparent")` tuple in disguise).
+
+Defined in `utilities/_helpers.tcss` (the bundle's LAST sheet, so the
+utilities win equal-specificity ties). Not every `$ds-size-N` step is a
+class: `w-`/`h-N` classes exist only where the Python migration consumed
+them; grow the set one entry at a time as new consumers appear.
+
+**States.** None — single-purpose dimension rules.
+
+**Tokens consumed.** `$ds-size-0/1/2/3`, `$ds-space-0`, `$ds-width-auto`,
+`$ds-width-full`, `$ds-width-fill`, `$ds-height-auto`, `$ds-height-full`,
+`$ds-height-fill`.
+
+**Python idiom.** `Widget(..., classes="status-area h-auto")` — or
+`widget.add_class("h-1")` / `widget.remove_class("h-1")` for state toggles.
+
+**Lifecycle.** All Canonical since ADR-161 task 12 (2026-09-13); the classes
+replaced 574 ratcheted runtime assignments across the UI layer.

@@ -183,6 +183,13 @@ $ds-width-full: 100%;
  * tokenized expression of `width: 1fr` on promoted fill fields (the
  * Settings compact field pair). */
 $ds-width-fill: 1fr;
+/* Auto-sizing keywords (ADR-161 task 12): the tokenized expression of the
+ * `auto` sizing keyword for the one-dimensional utility classes. The keyword
+ * itself is theme-independent, but the utility sheets express every
+ * consistent visual value through tokens, so the keyword anchors here like
+ * every other sizing value. */
+$ds-width-auto: auto;
+$ds-height-auto: auto;
 
 /* ========================================
  * SIZING SCALES (ADR-161 task 10, spec 3.5)

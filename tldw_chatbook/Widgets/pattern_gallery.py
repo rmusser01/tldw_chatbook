@@ -173,6 +173,28 @@ class PatternGalleryScreen(Screen):
                 yield Label("Approval card — approval-required surface")
             with Container(classes="ds-panel"):
                 yield Label("Panel content", classes="ds-field-row")
+            # sizing utilities (ADR-161 task 12): the one-dimensional
+            # companions. Fixed-value rows render directly; the share-based
+            # heights (h-full/h-fill) need definite-height parents, so each
+            # gets its own bounded frame instead of the auto strip.
+            yield Label("Sizing & box-model utilities", classes="section-header")
+            with Container(classes="pg-frame-sizing"):
+                yield Static("w-full", classes="w-full")
+                yield Static("w-fill", classes="w-fill")
+                yield Static("w-auto", classes="w-auto")
+                yield Static("w-0", classes="w-0")
+                yield Static("h-1", classes="h-1")
+                yield Static("h-2", classes="h-2")
+                yield Static("h-3", classes="h-3")
+                yield Static("h-0", classes="h-0")
+                yield Static("h-auto", classes="h-auto")
+                yield Static("p-0", classes="p-0")
+                yield Static("m-0", classes="m-0")
+                yield Static("border-none", classes="border-none")
+            with Container(classes="pg-frame-sizing-share"):
+                yield Static("h-full", classes="h-full")
+            with Container(classes="pg-frame-sizing-share"):
+                yield Static("h-fill", classes="h-fill")
 
 
 class PatternGalleryProvider(Provider):

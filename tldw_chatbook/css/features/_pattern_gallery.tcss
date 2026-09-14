@@ -64,6 +64,19 @@
     height: $ds-size-9;
 }
 
+/* ADR-161 task 12: sizing-utilities preview frames. The utility strip hugs
+   its content (fixed-value rows only); the share-based h-full/h-fill demos
+   need a definite-height parent or their percentage/fr values resolve
+   against the scroll viewport and balloon, so each gets its own bounded
+   frame. Geometry only. */
+.pg-frame-sizing {
+    height: $ds-height-auto;
+}
+
+.pg-frame-sizing-share {
+    height: $ds-size-4;
+}
+
 .-dark-mode .pg-msg-assistant {
     color: $ds-chat-assistant-accent-dark;
 }
