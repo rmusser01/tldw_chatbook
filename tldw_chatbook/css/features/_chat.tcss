@@ -22,7 +22,7 @@
     border: none;
     background: $background;
     color: $ds-text-muted;
-    padding: $ds-space-1 0 0 0;
+    padding: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     margin: $ds-space-0;
     content-align: center top;
 }
@@ -507,7 +507,7 @@ WatchlistsOperationCard {
     height: auto;
     min-height: $ds-control-height-compact;
     width: $ds-width-fill;
-    margin: $ds-space-stack 0 0 0;
+    margin: $ds-space-stack $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 .watchlists-operation-actions Button {

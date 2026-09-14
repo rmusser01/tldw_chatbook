@@ -25,7 +25,7 @@ from textual.errors import NoWidget
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.selection import Selection
@@ -241,6 +241,8 @@ _RAIL_STYLE_TEST_PREFERENCES = LibraryRailPreferences()
 
 class _LibraryRailStyleContractHarness(ConsolidatedCSSApp):
     """Mount the production rail in the grid relationship it uses in Library."""
+
+    CSS_PATH = BUNDLED_STYLESHEET
 
     CSS = """
     #rail-style-contract-host {

@@ -252,7 +252,7 @@ class PersonasLibraryPane(Vertical):
                 "Library",
                 classes="destination-section personas-column-title console-rail-title",
             )
-            title.styles.width = "1fr"
+            title.add_class("w-fill")
             yield title
             collapse_button = Button(
                 "<",
@@ -471,7 +471,7 @@ class PersonasLibraryPane(Vertical):
                 # Inline override, not CSS: app-level .console-action-subdued pins height:1 and
                 # Textual ranks app CSS above widget DEFAULT_CSS regardless of specificity/!important;
                 # inline styles beat both.
-                item.styles.height = 2
+                item.add_class("h-2")
                 items.append(item)
             else:
                 items.append(

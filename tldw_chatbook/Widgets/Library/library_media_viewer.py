@@ -258,7 +258,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
         # space and lets the text bodies wrap.
-        self.set_styles(width="1fr")
+        self.add_class("w-fill")
         self.styles.min_width = 0
 
     def compose(self) -> ComposeResult:
@@ -1251,7 +1251,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 id="library-media-analysis-edit-text",
             )
             toolbar = Horizontal(classes="ds-toolbar")
-            toolbar.set_styles(height="auto")
+            toolbar.add_class("h-auto")
             with toolbar:
                 yield Button(
                     "Save",

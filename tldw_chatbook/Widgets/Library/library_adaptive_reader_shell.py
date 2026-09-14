@@ -117,10 +117,10 @@ class LibraryAdaptiveReaderPaneGrip(Button):
             classes = f"{classes} {extra_classes}"
         super().__init__(compact=True, flat=True, classes=classes, **kwargs)
         self.sync_width(width)
-        self.set_styles(height="100%")
-        self.set_styles(padding=0)
+        self.add_class("h-full")
+        self.add_class("p-0")
         self.styles.line_pad = 0
-        self.set_styles(border=("none", "transparent"))
+        self.add_class("border-none")
         self.styles.content_align = ("center", "middle")
         self.sync_open(open)
 
@@ -134,6 +134,7 @@ class LibraryAdaptiveReaderPaneGrip(Button):
             None.
         """
         self.grip_width = width
+        # ds-runtime: profile-supplied grip columns reserved by the layout
         self.set_styles(width=width)
         self.styles.min_width = width
         self.styles.max_width = width
@@ -391,13 +392,15 @@ class LibraryAdaptiveReaderShell(Horizontal):
             if pane.disabled != (not open):
                 pane.disabled = not open
             if pane.styles.width is None or pane.styles.width.value != width:
+                pane.remove_class("w-fill", "w-3fr")
+                # ds-runtime: pane columns resolved from the measured shell width
                 pane.set_styles(width=width)
             if pane.styles.min_width is None or pane.styles.min_width.value != width:
                 pane.styles.min_width = width
             if pane.styles.max_width is None or pane.styles.max_width.value != width:
                 pane.styles.max_width = width
             if previous_layout is None:
-                pane.set_styles(height="100%")
+                pane.add_class("h-full")
             if open and not was_open and focused is grip:
                 automatic_reopen_target = next(
                     (
@@ -419,9 +422,9 @@ class LibraryAdaptiveReaderShell(Horizontal):
                 manual_reopen_name = pane_name
         if previous_layout is None:
             self.work.display = True
-            self.work.set_styles(width="1fr")
+            self.work.add_class("w-fill")
             self.work.styles.min_width = 0
-            self.work.set_styles(height="100%")
+            self.work.add_class("h-full")
         for pane_name, was_open, now_open in (
             (
                 "library",

@@ -173,6 +173,7 @@ class PatternGalleryScreen(Screen):
                 yield Label("Approval card — approval-required surface")
             with Container(classes="ds-panel"):
                 yield Label("Panel content", classes="ds-field-row")
+            # Additional override utilities are exercised below in bounded samples.
             # sizing utilities (ADR-161 task 12): the one-dimensional
             # companions. Fixed-value rows render directly; the share-based
             # heights (h-full/h-fill) need definite-height parents, so each
@@ -197,6 +198,14 @@ class PatternGalleryScreen(Screen):
                 yield Static("h-full", classes="h-full")
             with Container(classes="pg-frame-sizing-share"):
                 yield Static("h-fill", classes="h-fill")
+
+            # Bounded cells show each explicit override, including finite sizes.
+            for offset in range(0, len(EXTENDED_UTILITIES), 4):
+                with Horizontal(classes="pg-utility-row"):
+                    for utility in EXTENDED_UTILITIES[offset:offset + 4]:
+                        with Container(classes="pg-utility-cell"):
+                            yield Label(utility)
+                            yield Static("Sample", classes=utility)
 
 
 class PatternGalleryProvider(Provider):
@@ -229,3 +238,46 @@ class PatternGalleryProvider(Provider):
                     lambda: self.app.push_screen(PatternGalleryScreen()),
                     help=help_text,
                 )
+
+
+EXTENDED_UTILITIES = (
+    "w-7",
+    'w-1',
+    'w-3',
+    'w-4',
+    'w-5',
+    'w-9',
+    'w-11',
+    'w-12',
+    'w-13',
+    'w-17',
+    'w-18',
+    'w-20',
+    'w-21',
+    'w-23',
+    'w-24',
+    'w-28',
+    'w-3fr',
+    'w-4fr',
+    'w-13fr',
+    'h-4',
+    'h-5',
+    'h-6',
+    'h-7',
+    'h-8',
+    'h-9',
+    'p-inline-1',
+    'm-left-2',
+    'm-left-3',
+    'ds-text-error',
+    'ds-text-warning',
+    'ds-text-ready',
+    'ds-text-primary',
+    'ds-text-muted',
+    'w-6',
+    'w-8',
+    'w-10',
+    'w-16',
+    'h-10',
+    'p-left-1',
+)

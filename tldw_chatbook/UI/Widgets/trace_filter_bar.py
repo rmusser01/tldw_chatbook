@@ -168,9 +168,9 @@ class TraceFiltersDialog(ModalScreen[TraceFilterState | None]):
         )
         # Inline geometry wins over the later app stylesheet's global
         # ``Select { width: 100%; margin-bottom: 1; }`` rule.
-        select.styles.width = "1fr"
+        select.add_class("w-fill")
         select.styles.min_width = 0
-        select.styles.margin = 0
+        select.add_class("m-0")
         return select
 
     def compose(self) -> ComposeResult:
@@ -302,9 +302,9 @@ class TraceFilterBar(Widget):
     @staticmethod
     def _select(prompt: str, widget_id: str) -> Select[str]:
         select = Select([], prompt=prompt, allow_blank=True, id=widget_id, compact=True)
-        select.styles.width = "1fr"
+        select.add_class("w-fill")
         select.styles.min_width = 0
-        select.styles.margin = 0
+        select.add_class("m-0")
         return select
 
     def compose(self) -> ComposeResult:
@@ -324,7 +324,8 @@ class TraceFilterBar(Widget):
     def set_compact(self, compact: bool) -> None:
         self._compact = compact
         self.can_focus = compact
-        self.styles.height = 1 if compact else 3
+        self.remove_class("h-1", "h-3")
+        self.add_class("h-1" if compact else "h-3")
         self._refresh_presentation()
 
     def set_records(self, records: Iterable[TrajectoryRecord]) -> None:

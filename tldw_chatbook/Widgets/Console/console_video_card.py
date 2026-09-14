@@ -185,7 +185,7 @@ class ConsoleVideoCard(Vertical):
             )
         )
         self.border_title = CARD_TITLE
-        self.set_styles(border=("round", CARD_BORDER_COLOR))
+        self.add_class("console-generation-frame")
 
     def compose(self) -> ComposeResult:
         if self.spec.status == "ready" and self.spec.file_path:

@@ -428,7 +428,7 @@ class LibraryMediaContentSearchControls(Vertical):
         toolbar = Horizontal(
             classes="ds-toolbar", id="library-media-content-search-nav"
         )
-        toolbar.set_styles(height="auto")
+        toolbar.add_class("h-auto")
         toolbar.display = is_active
         nav_disabled = self._nav_disabled()
         prev_label, next_label = self._nav_labels()

@@ -60,7 +60,7 @@
 
 
 .form-checkbox {
-    margin: $ds-space-stack 0;
+    margin: $ds-space-stack $ds-space-0;
 }
 
 /* Form layout helpers */
@@ -85,7 +85,7 @@
 
 /* Form sections */
 .form-section-collapsible {
-    margin: $ds-space-stack 0;
+    margin: $ds-space-stack $ds-space-0;
 }
 
 .form-button {
@@ -305,7 +305,7 @@ Switch:focus {
 }
 
 .form-checkbox {
-    margin: $ds-space-stack 0;
+    margin: $ds-space-stack $ds-space-0;
 }
 
 /* Responsive metadata columns */

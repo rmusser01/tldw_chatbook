@@ -67,21 +67,31 @@ class ConsoleSpeechControls(Horizontal):
         self.auto_speak_enabled = False
         self.auto_speak_paused = False
         self.hands_free_active = False
-        self.set_styles(width="auto")
-        self.set_styles(height=1)
+        self.remove_class(*(name for name in self.classes if name.startswith("w-")))
+        self.set_styles(width=None)
+        self.add_class("w-auto")
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-1")
         self.styles.min_height = 1
         self.styles.max_height = 1
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="console-auto-speak-control") as auto_speak_control:
-            auto_speak_control.set_styles(width="auto")
-            auto_speak_control.set_styles(height=1)
+            auto_speak_control.remove_class(*(name for name in auto_speak_control.classes if name.startswith("w-")))
+            auto_speak_control.set_styles(width=None)
+            auto_speak_control.add_class("w-auto")
+            auto_speak_control.remove_class(*(name for name in auto_speak_control.classes if name.startswith("h-")))
+            auto_speak_control.set_styles(height=None)
+            auto_speak_control.add_class("h-1")
             auto_speak_label = Static(
                 "Speak replies",
                 id="console-auto-speak-label",
                 markup=False,
             )
-            auto_speak_label.set_styles(width="auto")
+            auto_speak_label.remove_class(*(name for name in auto_speak_label.classes if name.startswith("w-")))
+            auto_speak_label.set_styles(width=None)
+            auto_speak_label.add_class("w-auto")
             yield auto_speak_label
             auto_speak_switch = Switch(
                 False,
@@ -92,14 +102,20 @@ class ConsoleSpeechControls(Horizontal):
             self._size_switch(auto_speak_switch)
             yield auto_speak_switch
         with Horizontal(id="console-hands-free-control") as hands_free_control:
-            hands_free_control.set_styles(width="auto")
-            hands_free_control.set_styles(height=1)
+            hands_free_control.remove_class(*(name for name in hands_free_control.classes if name.startswith("w-")))
+            hands_free_control.set_styles(width=None)
+            hands_free_control.add_class("w-auto")
+            hands_free_control.remove_class(*(name for name in hands_free_control.classes if name.startswith("h-")))
+            hands_free_control.set_styles(height=None)
+            hands_free_control.add_class("h-1")
             hands_free_label = Static(
                 "Hands-free",
                 id="console-hands-free-label",
                 markup=False,
             )
-            hands_free_label.set_styles(width="auto")
+            hands_free_label.remove_class(*(name for name in hands_free_label.classes if name.startswith("w-")))
+            hands_free_label.set_styles(width=None)
+            hands_free_label.add_class("w-auto")
             yield hands_free_label
             hands_free_switch = Switch(
                 False,
@@ -113,12 +129,16 @@ class ConsoleSpeechControls(Horizontal):
     @staticmethod
     def _size_switch(switch: Switch) -> None:
         """Keep a switch to one terminal row in every stylesheet host."""
-        switch.set_styles(width=5)
-        switch.set_styles(height=1)
+        switch.remove_class(*(name for name in switch.classes if name.startswith("w-")))
+        switch.set_styles(width=None)
+        switch.add_class("w-5")
+        switch.remove_class(*(name for name in switch.classes if name.startswith("h-")))
+        switch.set_styles(height=None)
+        switch.add_class("h-1")
         switch.styles.min_height = 1
         switch.styles.max_height = 1
-        switch.set_styles(padding=0)
-        switch.set_styles(border=("none", "transparent"))
+        switch.add_class("p-0")
+        switch.add_class("border-none")
 
     def on_mount(self) -> None:
         """Apply state received before the composed children were mounted."""

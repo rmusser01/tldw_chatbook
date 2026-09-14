@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Switch
@@ -15,6 +16,7 @@ from tldw_chatbook.Widgets.Console.console_speech_controls import (
 
 
 class SpeechControlsHarness(App[None]):
+    CSS_PATH = str(BUNDLED_STYLESHEET)
     """Mount speech controls while recording only their public messages."""
 
     def __init__(self, *, sync_before_mount: bool = False) -> None:

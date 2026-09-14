@@ -756,7 +756,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         #: a body the controller already counted.
         self._note_chrome_word_count = 0
         self._tree_focus_intent_generation: Callable[[], int] | None = None
-        self.set_styles(width="1fr")
+        self.add_class("w-fill")
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
 
@@ -1388,7 +1388,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             action_row = Horizontal(
                 id="library-notes-selection-actions", classes="ds-toolbar"
             )
-            action_row.set_styles(height="auto")
+            action_row.add_class("h-auto")
             with action_row:
                 # task-2853 review round 2: the SAME unbounded-width defect
                 # proved live in the Media canvas's identical counter (see
@@ -1509,14 +1509,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             action_rows: Horizontal | None = None
             if merged:
                 action_rows = Horizontal(id="library-notes-action-rows")
-                action_rows.set_styles(height="auto")
+                action_rows.add_class("h-auto")
             with action_rows or nullcontext():
                 browse_actions = Horizontal(
                     id="library-notes-browse-actions", classes="ds-toolbar"
                 )
-                browse_actions.set_styles(height="auto")
+                browse_actions.add_class("h-auto")
                 if action_rows is not None:
-                    browse_actions.set_styles(width="auto")
+                    browse_actions.add_class("w-auto")
                 browse_actions.display = not sort_choices_visible
                 new_label = library_disabled_action_label("New", running)
                 sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
@@ -1587,7 +1587,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         id="library-notes-browse-actions-overflow",
                         classes="ds-toolbar",
                     )
-                    browse_overflow_row.set_styles(height="auto")
+                    browse_overflow_row.add_class("h-auto")
                     browse_overflow_row.display = not sort_choices_visible
                     with browse_overflow_row:
                         yield select_button
@@ -1613,7 +1613,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 transfer_actions = (Vertical if stacked else Horizontal)(
                     id="library-notes-transfer-actions", classes="ds-toolbar"
                 )
-                transfer_actions.set_styles(height="auto")
+                transfer_actions.add_class("h-auto")
                 with transfer_actions:
                     for label, button_id in (
                         ("Add from files…", "library-notes-add-from-files"),
@@ -1658,7 +1658,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     operation_running=list_state.operation_running
                 )
         status_row = Horizontal(id="library-notes-status-row")
-        status_row.set_styles(height="auto")
+        status_row.add_class("h-auto")
         status_row.display = not select_mode
         with status_row:
             status = Static(
@@ -1688,7 +1688,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             receipt_row = Vertical(
                 id="library-notes-delete-receipt", classes="ds-toolbar"
             )
-            receipt_row.set_styles(height="auto")
+            receipt_row.add_class("h-auto")
             with receipt_row:
                 yield Static(
                     f"✓ deleted · {title}",
@@ -1699,7 +1699,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 receipt_actions = Horizontal(
                     id="library-notes-delete-receipt-actions"
                 )
-                receipt_actions.set_styles(height="auto")
+                receipt_actions.add_class("h-auto")
                 with receipt_actions:
                     yield Button(
                         "Undo",
@@ -1822,7 +1822,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         with Vertical(id="library-notes-trash-list"):
             for index, row in enumerate(trash.rows):
                 trash_row = Horizontal(classes="library-notes-trash-row")
-                trash_row.set_styles(height="auto")
+                trash_row.add_class("h-auto")
                 with trash_row:
                     yield Static(
                         compose_note_row_label(row.title, age_label=row.age_label),
@@ -2249,7 +2249,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             primary_actions = Horizontal(
                 id="library-note-primary-actions", classes="ds-toolbar"
             )
-            primary_actions.set_styles(height="auto")
+            primary_actions.add_class("h-auto")
             with primary_actions:
                 with Horizontal(id="library-note-mode-controls", classes="ds-toolbar"):
                     yield Button(
@@ -2350,7 +2350,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             backlink_rows = Vertical(id="library-note-context-backlinks")
             # Auto height or the empty container claims the whole Info
             # scroll region and pushes Reuse & Export off the pane.
-            backlink_rows.set_styles(height="auto")
+            backlink_rows.add_class("h-auto")
             with backlink_rows:
                 yield from self._backlink_buttons(self._rendered_backlinks)
             yield Static("Reuse & Export", classes="destination-section", markup=False)
@@ -2447,7 +2447,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # strip under the body. Removed rather than left as a second,
             # invisible home for the same sentence.
             wide_actions = Horizontal(classes="ds-toolbar")
-            wide_actions.set_styles(height="auto")
+            wide_actions.add_class("h-auto")
             with wide_actions:
                 yield Button(
                     "Export Markdown",
@@ -2485,7 +2485,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             conflict_actions = Horizontal(
                 id="library-note-conflict-actions", classes="ds-toolbar"
             )
-            conflict_actions.set_styles(height="auto")
+            conflict_actions.add_class("h-auto")
             with conflict_actions:
                 yield Button(
                     "Overwrite",
@@ -2511,7 +2511,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             delete_actions = Horizontal(
                 id="library-note-delete-actions", classes="ds-toolbar"
             )
-            delete_actions.set_styles(height="auto")
+            delete_actions.add_class("h-auto")
             with delete_actions:
                 yield Button(
                     "Cancel",
@@ -2612,38 +2612,48 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             mode_controls = self.query_one("#library-note-mode-controls", Horizontal)
             task_actions = self.query_one("#library-note-task-actions", Horizontal)
             heading.styles.layout = "horizontal"
-            heading.set_styles(height=1 if compact else 3)
+            heading.set_class(compact, "h-1")
+            heading.set_class(not compact, "h-3")
             heading.styles.min_height = 1 if compact else 3
             heading.styles.max_height = 1 if compact else 3
             second_row.styles.layout = "vertical" if compact else "horizontal"
-            second_row.set_styles(height="auto" if compact else 3)
+            second_row.set_class(compact, "h-auto")
+            second_row.set_class(not compact, "h-3")
             second_row.styles.min_height = 3
             second_row.styles.max_height = 5 if compact else 3
-            status.set_styles(width="1fr")
-            status.set_styles(height="auto" if compact else 3)
+            status.add_class("w-fill")
+            status.set_class(compact, "h-auto")
+            status.set_class(not compact, "h-3")
             status.styles.min_height = 1 if compact else 3
             status.styles.max_height = 3
             status.styles.text_wrap = "wrap"
             status.styles.text_overflow = "clip"
             primary.styles.layout = "vertical" if compact else "horizontal"
-            primary.set_styles(width="100%" if compact else "auto")
-            primary.set_styles(height=2 if compact else 3)
+            primary.set_class(compact, "w-full")
+            primary.set_class(not compact, "w-auto")
+            primary.set_class(compact, "h-2")
+            primary.set_class(not compact, "h-3")
             primary.styles.min_height = 2 if compact else 3
             primary.styles.max_height = 2 if compact else 3
             for actions in (mode_controls, task_actions):
-                actions.set_styles(width="100%" if compact else "auto")
-                actions.set_styles(height=1 if compact else 3)
+                actions.set_class(compact, "w-full")
+                actions.set_class(not compact, "w-auto")
+                actions.set_class(compact, "h-1")
+                actions.set_class(not compact, "h-3")
                 actions.styles.min_height = 1 if compact else 3
                 actions.styles.max_height = 1 if compact else 3
-            authority.set_styles(width=18 if compact else "auto")
+            authority.set_class(compact, "w-18")
+            authority.set_class(not compact, "w-auto")
             authority.styles.min_width = 12 if compact else 0
             authority.styles.max_width = 18 if compact else None
-            authority.set_styles(height=1 if compact else 3)
+            authority.set_class(compact, "h-1")
+            authority.set_class(not compact, "h-3")
             authority.styles.text_wrap = "nowrap" if compact else "wrap"
             authority.styles.text_overflow = "ellipsis" if compact else "clip"
             for button in primary.query(Button):
-                button.set_styles(width="auto")
-                button.set_styles(height=1 if compact else 3)
+                button.add_class("w-auto")
+                button.set_class(compact, "h-1")
+                button.set_class(not compact, "h-3")
                 button.styles.min_height = 1 if compact else 3
                 button.styles.max_height = 1 if compact else 3
         discard_new = self.query("#library-note-discard-new")

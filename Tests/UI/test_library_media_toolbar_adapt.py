@@ -17,7 +17,7 @@ from tldw_chatbook.Library.library_media_state import (
     LibraryMediaRow,
 )
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 
 
 def _browse_state() -> LibraryMediaCanvasState:
@@ -76,6 +76,8 @@ def _select_state(
 
 
 class _CanvasApp(ConsolidatedCSSApp):
+    CSS_PATH = BUNDLED_STYLESHEET
+
     def __init__(self, state: LibraryMediaCanvasState, pager=None) -> None:
         super().__init__()
         self._state = state

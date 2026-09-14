@@ -597,7 +597,9 @@ class ConsoleComposerBar(Horizontal):
         self._send_price_available = False
         self._collapsed = bool(collapsed)
         self.can_focus = not self._collapsed
-        self.set_styles(height=self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS)
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-1")
         self.styles.min_height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.collapse_large_pastes = coerce_bool_setting(collapse_large_pastes, True)
@@ -757,9 +759,13 @@ class ConsoleComposerBar(Horizontal):
     def _bounded_button(label: str, *, width: int, **kwargs: Any) -> Button:
         kwargs.setdefault("compact", True)
         button = Button(label, **kwargs)
-        button.set_styles(width=width)
+        button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+        button.set_styles(width=None)
+        button.add_class(f"w-{width}")
         button.styles.min_width = width
-        button.set_styles(height=1)
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        button.set_styles(height=None)
+        button.add_class("h-1")
         button.styles.min_height = 1
         return button
 
@@ -776,6 +782,8 @@ class ConsoleComposerBar(Horizontal):
             actions: The ``#console-composer-actions`` row.
             width: Exact width in cells.
         """
+        actions.remove_class(*(name for name in actions.classes if name.startswith("w-")))
+        # ds-runtime: Measured send-label width and attachment visibility determine the action-row cell budget.
         actions.set_styles(width=width)
         actions.styles.min_width = width
         actions.styles.max_width = width
@@ -855,9 +863,13 @@ class ConsoleComposerBar(Horizontal):
         status.set_class(active, "console-raw-cli-danger")
         status.update(Content("RAW CLI · HOST ACCESS" if active else ""))
         status.styles.display = "block" if active else "none"
-        status.set_styles(width="auto" if active else 0)
+        status.remove_class(*(name for name in status.classes if name.startswith("w-")))
+        status.set_styles(width=None)
+        status.add_class("w-auto" if active else "w-0")
         status.styles.min_width = 0
-        status.set_styles(height=1 if active else 0)
+        status.remove_class(*(name for name in status.classes if name.startswith("h-")))
+        status.set_styles(height=None)
+        status.add_class("h-1" if active else "h-0")
         status.styles.min_height = 1 if active else 0
 
     def _canonical_draft_text(self) -> str:
@@ -1941,26 +1953,38 @@ class ConsoleComposerBar(Horizontal):
             cap = self._send_reason_width_cap()
             if cap > 0:
                 strip.styles.display = "block"
-                strip.set_styles(width="auto")
+                strip.remove_class(*(name for name in strip.classes if name.startswith("w-")))
+                strip.set_styles(width=None)
+                strip.add_class("w-auto")
                 strip.styles.min_width = 0
                 strip.styles.max_width = cap
-                strip.set_styles(height=1)
+                strip.remove_class(*(name for name in strip.classes if name.startswith("h-")))
+                strip.set_styles(height=None)
+                strip.add_class("h-1")
                 strip.styles.min_height = 1
             else:
                 strip.styles.display = "none"
-                strip.set_styles(width=0)
+                strip.remove_class(*(name for name in strip.classes if name.startswith("w-")))
+                strip.set_styles(width=None)
+                strip.add_class("w-0")
                 strip.styles.min_width = 0
                 strip.styles.max_width = 0
-                strip.set_styles(height=0)
+                strip.remove_class(*(name for name in strip.classes if name.startswith("h-")))
+                strip.set_styles(height=None)
+                strip.add_class("h-0")
                 strip.styles.min_height = 0
         else:
             if strip.content != Content(""):
                 strip.update(Content(""))
             strip.styles.display = "none"
-            strip.set_styles(width=0)
+            strip.remove_class(*(name for name in strip.classes if name.startswith("w-")))
+            strip.set_styles(width=None)
+            strip.add_class("w-0")
             strip.styles.min_width = 0
             strip.styles.max_width = 0
-            strip.set_styles(height=0)
+            strip.remove_class(*(name for name in strip.classes if name.startswith("h-")))
+            strip.set_styles(height=None)
+            strip.add_class("h-0")
             strip.styles.min_height = 0
         if self._voice_full_width_preparing:
             # The exact executor-wait copy and unchanged Mic/Send budget fill
@@ -2168,6 +2192,8 @@ class ConsoleComposerBar(Horizontal):
 
         self._send_button_width = send_button_width_for(displayed_send_label)
         send_button.label = displayed_send_label
+        send_button.remove_class(*(name for name in send_button.classes if name.startswith("w-")))
+        # ds-runtime: Current send-label text is measured in terminal cells, including price text.
         send_button.set_styles(width=self._send_button_width)
         send_button.styles.min_width = self._send_button_width
         send_button.styles.max_width = self._send_button_width
@@ -3067,6 +3093,8 @@ class ConsoleComposerBar(Horizontal):
             return
         try:
             visible_draft = self.query_one("#console-command-visible-text", Static)
+            visible_draft.remove_class(*(name for name in visible_draft.classes if name.startswith("h-")))
+            # ds-runtime: Wrapped draft content determines the visible editor row count.
             visible_draft.set_styles(height=row_count)
             visible_draft.styles.min_height = row_count
             visible_draft.styles.max_height = self.MAX_DRAFT_ROWS
@@ -3076,10 +3104,14 @@ class ConsoleComposerBar(Horizontal):
             # centered in the taller bar -- the live-gate "text hidden past
             # the cutoff" report. Grow the row with the draft it contains.
             expanded = self.query_one("#console-composer-expanded", Horizontal)
+            expanded.remove_class(*(name for name in expanded.classes if name.startswith("h-")))
+            # ds-runtime: The expanded row tracks its draft content row count.
             expanded.set_styles(height=row_count)
             expanded.styles.min_height = row_count
         except NoMatches:
             pass
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        # ds-runtime: Draft row count plus visible recovery rows determines the composer height.
         self.set_styles(height=composer_height)
         self.styles.min_height = (
             self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS + recovery_rows
@@ -3096,7 +3128,9 @@ class ConsoleComposerBar(Horizontal):
         # `_apply_draft_height` must write it again rather than trust a
         # signature captured before the collapse (task-24453).
         self._draft_geometry_signature = None
-        self.set_styles(height=1)
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-1")
         self.styles.min_height = 1
         self.styles.max_height = 1
         self.refresh(layout=True)
@@ -3574,8 +3608,8 @@ class ConsoleComposerBar(Horizontal):
           then masks only that character with a space while hidden, so the
           two phases retain identical word positions and cell widths. Both
           ``CURSOR_GLYPH`` and its ASCII fallback ``|`` are single-width.
-        * The Static's geometry is pinned by inline styles rather than
-          derived from its content: ``width: 1fr``, ``text_wrap = "nowrap"``,
+        * The Static's geometry is pinned by its fill-width class and measured
+          draft height: ``width: 1fr``, ``text_wrap = "nowrap"``,
           ``text_overflow = "clip"`` (set in ``compose``) and an explicit
           ``height``/``min_height``/``max_height`` written by
           ``_apply_draft_height``, which every size-changing path
@@ -5887,7 +5921,9 @@ class ConsoleComposerBar(Horizontal):
         if normalized:
             indicator.update(escape(resolve_glyph_text(f"📎 {normalized}")))
             indicator.styles.display = "block"
-            indicator.set_styles(width="auto")
+            indicator.remove_class(*(name for name in indicator.classes if name.startswith("w-")))
+            indicator.set_styles(width=None)
+            indicator.add_class("w-auto")
             indicator.styles.max_width = 28
             clear_button.styles.display = "block"
             self._set_actions_row_width(
@@ -5902,7 +5938,9 @@ class ConsoleComposerBar(Horizontal):
         else:
             indicator.update("")
             indicator.styles.display = "none"
-            indicator.set_styles(width=0)
+            indicator.remove_class(*(name for name in indicator.classes if name.startswith("w-")))
+            indicator.set_styles(width=None)
+            indicator.add_class("w-0")
             clear_button.styles.display = "none"
             self._set_actions_row_width(
                 actions, self._actions_row_width(attachment_visible=False)
@@ -6033,7 +6071,9 @@ class ConsoleComposerBar(Horizontal):
             self._voice_chip_last_width = 0
             self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
-            chip.set_styles(width=0)
+            chip.remove_class(*(name for name in chip.classes if name.startswith("w-")))
+            chip.set_styles(width=None)
+            chip.add_class("w-0")
             chip.styles.min_width = 0
             chip.update(Content(""))
             return
@@ -6063,7 +6103,9 @@ class ConsoleComposerBar(Horizontal):
             self._voice_chip_last_width = 0
             self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
-            chip.set_styles(width=0)
+            chip.remove_class(*(name for name in chip.classes if name.startswith("w-")))
+            chip.set_styles(width=None)
+            chip.add_class("w-0")
             chip.styles.min_width = 0
             chip.update(Content(""))
             return
@@ -6124,15 +6166,19 @@ class ConsoleComposerBar(Horizontal):
             chip.tooltip = None
         chip.styles.display = "block"
         self._voice_chip_last_width = max(width, 1)
+        chip.remove_class(*(name for name in chip.classes if name.startswith("w-")))
+        # ds-runtime: Voice status text is fitted into measured remaining composer columns.
         chip.set_styles(width=self._voice_chip_last_width)
         chip.styles.min_width = 0
-        chip.set_styles(height=1)
+        chip.remove_class(*(name for name in chip.classes if name.startswith("h-")))
+        chip.set_styles(height=None)
+        chip.add_class("h-1")
         chip.styles.min_height = 1
         self._sync_full_width_voice_presentation(full_width_preparing)
         if full_width_preparing:
-            chip.set_styles(padding=(0, 0, 0, 1))
+            chip.add_class("p-left-1")
         else:
-            chip.set_styles(padding=None)
+            chip.remove_class("p-left-1")
         chip.set_styles(margin=None)
         chip.set_class(state == "error", "console-voice-status-error")
         chip.update(Content(body))
@@ -6239,7 +6285,9 @@ class ConsoleComposerBar(Horizontal):
                 classes="console-command-visible-text",
             )
             visible_draft.can_focus = False
-            visible_draft.set_styles(width="1fr")
+            visible_draft.remove_class(*(name for name in visible_draft.classes if name.startswith("w-")))
+            visible_draft.set_styles(width=None)
+            visible_draft.add_class("w-fill")
             visible_draft.styles.min_width = 0
             # Defense-in-depth (see `_draft_renderable`): each row `"\n"`-joined
             # into the update is already budgeted to `_draft_render_width()`
@@ -6260,9 +6308,13 @@ class ConsoleComposerBar(Horizontal):
                 classes="console-composer-recovery",
             )
             recovery.styles.display = "none"
-            recovery.set_styles(width=0)
+            recovery.remove_class(*(name for name in recovery.classes if name.startswith("w-")))
+            recovery.set_styles(width=None)
+            recovery.add_class("w-0")
             recovery.styles.min_width = 0
-            recovery.set_styles(height=0)
+            recovery.remove_class(*(name for name in recovery.classes if name.startswith("h-")))
+            recovery.set_styles(height=None)
+            recovery.add_class("h-0")
             recovery.styles.min_height = 0
             yield recovery
             voice_status = Static(
@@ -6271,9 +6323,13 @@ class ConsoleComposerBar(Horizontal):
                 classes="console-voice-status",
             )
             voice_status.styles.display = "none"
-            voice_status.set_styles(width=0)
+            voice_status.remove_class(*(name for name in voice_status.classes if name.startswith("w-")))
+            voice_status.set_styles(width=None)
+            voice_status.add_class("w-0")
             voice_status.styles.min_width = 0
-            voice_status.set_styles(height=0)
+            voice_status.remove_class(*(name for name in voice_status.classes if name.startswith("h-")))
+            voice_status.set_styles(height=None)
+            voice_status.add_class("h-0")
             voice_status.styles.min_height = 0
             yield voice_status
             raw_cli_status = Static(
@@ -6282,9 +6338,13 @@ class ConsoleComposerBar(Horizontal):
                 classes="console-voice-status console-voice-status-error",
             )
             raw_cli_status.styles.display = "none"
-            raw_cli_status.set_styles(width=0)
+            raw_cli_status.remove_class(*(name for name in raw_cli_status.classes if name.startswith("w-")))
+            raw_cli_status.set_styles(width=None)
+            raw_cli_status.add_class("w-0")
             raw_cli_status.styles.min_width = 0
-            raw_cli_status.set_styles(height=0)
+            raw_cli_status.remove_class(*(name for name in raw_cli_status.classes if name.startswith("h-")))
+            raw_cli_status.set_styles(height=None)
+            raw_cli_status.add_class("h-0")
             raw_cli_status.styles.min_height = 0
             yield raw_cli_status
             attachment_indicator = Static(
@@ -6293,9 +6353,13 @@ class ConsoleComposerBar(Horizontal):
                 classes="console-attachment-indicator",
             )
             attachment_indicator.styles.display = "none"
-            attachment_indicator.set_styles(width=0)
+            attachment_indicator.remove_class(*(name for name in attachment_indicator.classes if name.startswith("w-")))
+            attachment_indicator.set_styles(width=None)
+            attachment_indicator.add_class("w-0")
             attachment_indicator.styles.min_width = 0
-            attachment_indicator.set_styles(height=1)
+            attachment_indicator.remove_class(*(name for name in attachment_indicator.classes if name.startswith("h-")))
+            attachment_indicator.set_styles(height=None)
+            attachment_indicator.add_class("h-1")
             yield attachment_indicator
             command_input = Input(
                 value="",
@@ -6307,9 +6371,13 @@ class ConsoleComposerBar(Horizontal):
             command_input.can_focus = False
             command_input.disabled = True
             command_input.styles.display = "none"
-            command_input.set_styles(width=0)
+            command_input.remove_class(*(name for name in command_input.classes if name.startswith("w-")))
+            command_input.set_styles(width=None)
+            command_input.add_class("w-0")
             command_input.styles.min_width = 0
-            command_input.set_styles(height=1)
+            command_input.remove_class(*(name for name in command_input.classes if name.startswith("h-")))
+            command_input.set_styles(height=None)
+            command_input.add_class("h-1")
             command_input.styles.min_height = 1
             yield command_input
             status = Static(
@@ -6318,9 +6386,13 @@ class ConsoleComposerBar(Horizontal):
                 classes="console-composer-status console-hidden-control",
             )
             status.styles.display = "none"
-            status.set_styles(width=0)
+            status.remove_class(*(name for name in status.classes if name.startswith("w-")))
+            status.set_styles(width=None)
+            status.add_class("w-0")
             status.styles.min_width = 0
-            status.set_styles(height=0)
+            status.remove_class(*(name for name in status.classes if name.startswith("h-")))
+            status.set_styles(height=None)
+            status.add_class("h-0")
             status.styles.min_height = 0
             yield status
             # TASK-2154.6 (FR-04): the Send disabled reason is no longer a
@@ -6335,10 +6407,14 @@ class ConsoleComposerBar(Horizontal):
                 classes="console-send-disabled-reason",
             )
             disabled_reason.styles.display = "none"
-            disabled_reason.set_styles(width=0)
+            disabled_reason.remove_class(*(name for name in disabled_reason.classes if name.startswith("w-")))
+            disabled_reason.set_styles(width=None)
+            disabled_reason.add_class("w-0")
             disabled_reason.styles.min_width = 0
             disabled_reason.styles.max_width = 0
-            disabled_reason.set_styles(height=0)
+            disabled_reason.remove_class(*(name for name in disabled_reason.classes if name.startswith("h-")))
+            disabled_reason.set_styles(height=None)
+            disabled_reason.add_class("h-0")
             disabled_reason.styles.min_height = 0
             disabled_reason.styles.text_overflow = "ellipsis"
             disabled_reason.styles.text_wrap = "nowrap"
@@ -6347,7 +6423,9 @@ class ConsoleComposerBar(Horizontal):
                 id="console-composer-actions", classes="console-composer-actions"
             )
             self._set_actions_row_width(actions, self._actions_row_width())
-            actions.set_styles(height=1)
+            actions.remove_class(*(name for name in actions.classes if name.startswith("h-")))
+            actions.set_styles(height=None)
+            actions.add_class("h-1")
             actions.styles.min_height = 1
             actions.styles.max_height = 1
             with actions:
@@ -6377,7 +6455,7 @@ class ConsoleComposerBar(Horizontal):
                     classes="destination-action-button console-dictation-button",
                     tooltip=self.DICTATION_IDLE_TOOLTIP,
                 )
-                mic_button.set_styles(margin=(0, 0, 0, MIC_SEND_GAP))
+                mic_button.add_class("m-left-2")
                 yield mic_button
                 redirect_button = self._bounded_button(
                     "Redirect",

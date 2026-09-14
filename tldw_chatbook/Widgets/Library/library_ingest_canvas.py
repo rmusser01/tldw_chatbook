@@ -311,8 +311,8 @@ class LibraryIngestPreflightSummary(Vertical):
         self.tooling_detail_expanded = bool(
             getattr(state, "tooling_detail_expanded", False)
         )
-        self.set_styles(width="1fr")
-        self.set_styles(height="auto")
+        self.add_class("w-fill")
+        self.add_class("h-auto")
 
     @on(Collapsible.Expanded)
     @on(Collapsible.Collapsed)
@@ -512,8 +512,8 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
         # ticks recompose this panel's CHILDREN while the panel itself keeps
         # identity, so an expansion survives every tick that matters.
         self.expanded_groups: set[str] = set()
-        self.set_styles(width="1fr")
-        self.set_styles(height="auto")
+        self.add_class("w-fill")
+        self.add_class("h-auto")
 
     def compose(self) -> ComposeResult:
         state = self.state
@@ -1263,7 +1263,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         self.state = state
         self.external_busy = external_busy
         self.external_status = external_status
-        self.set_styles(width="1fr")
+        self.add_class("w-fill")
         self.styles.min_width = 40
         # Value each option widget was last rendered/reported with, keyed by
         # ``(group, field name)``. Seeded by ``_compose_type_group`` so that a
@@ -1443,7 +1443,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     # TextArea defaults to ``height: 1fr``. Bound it inside
                     # an option panel so two prompts remain compact-viewport
                     # reachable instead of consuming all available height.
-                    input_widget.set_styles(height=4)
+                    input_widget.add_class("h-4")
                     input_widget.styles.min_width = 0
                 else:
                     input_widget = Input(
@@ -1456,7 +1456,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                         disabled=control_disabled,
                     )
                 if field.directory_picker:
-                    input_widget.set_styles(width="1fr")
+                    input_widget.add_class("w-fill")
                     input_widget.styles.min_width = 0
                     browse_button = Button(
                         "Browse…",
@@ -1467,14 +1467,14 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                         compact=True,
                         disabled=control_disabled,
                     )
-                    browse_button.set_styles(width="auto")
+                    browse_button.add_class("w-auto")
                     path_row = Horizontal(
                         input_widget,
                         browse_button,
                         classes="library-ingest-path-actions",
                     )
-                    path_row.set_styles(width="100%")
-                    path_row.set_styles(height=3)
+                    path_row.add_class("w-full")
+                    path_row.add_class("h-3")
                     children.append(path_row)
                     if field.name == "transcription_model_dir":
                         children.append(
@@ -1842,7 +1842,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 classes="library-ingest-quiet-line",
                 markup=False,
             )
-            start_quiet_line.set_styles(height=1)
+            start_quiet_line.add_class("h-1")
             start_quiet_line.set_class(
                 state.start_confirm_armed, "-ingest-start-confirm"
             )

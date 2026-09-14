@@ -228,7 +228,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.detail_notice = detail_notice
         self.detail_retryable = detail_retryable
         self.more_actions_open = False
-        self.set_styles(width="1fr")
+        self.add_class("w-fill")
         self.styles.min_width = 40
 
     def compose(self) -> ComposeResult:
@@ -656,7 +656,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             receipt_copy_row = Horizontal(
                 id="library-prompts-delete-receipt", classes="ds-toolbar"
             )
-            receipt_copy_row.set_styles(height="auto")
+            receipt_copy_row.add_class("h-auto")
             with receipt_copy_row:
                 yield Static(
                     receipt_copy,
@@ -668,7 +668,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 id="library-prompts-delete-receipt-actions",
                 classes="ds-toolbar",
             )
-            receipt_actions.set_styles(height="auto")
+            receipt_actions.add_class("h-auto")
             with receipt_actions:
                 yield Button(
                     library_disabled_action_label("Undo", self.mutation_in_flight),
@@ -745,7 +745,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 id="library-prompts-selection-management-actions",
                 classes="ds-toolbar",
             )
-            management_toolbar.set_styles(height="auto")
+            management_toolbar.add_class("h-auto")
             with management_toolbar:
                 yield Button(
                     # task-31959 (batch-3 review, minor 3): padded too --
@@ -790,7 +790,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     ),
                 )
             done_toolbar = Horizontal(classes="ds-toolbar")
-            done_toolbar.set_styles(height="auto")
+            done_toolbar.add_class("h-auto")
             with done_toolbar:
                 yield Button(
                     library_disabled_action_label("Done", self.mutation_in_flight),
@@ -805,7 +805,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 ("Delete selected", "library-prompts-delete-selected"),
             ):
                 selection_toolbar = Horizontal(classes="ds-toolbar")
-                selection_toolbar.set_styles(height="auto")
+                selection_toolbar.add_class("h-auto")
                 with selection_toolbar:
                     yield Button(
                         # task-31959: same marker-width reservation as
@@ -838,7 +838,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 "sort", _SORT_LABELS.get(self.sort_mode, "Newest")
             )
             management_toolbar = Horizontal(classes="ds-toolbar")
-            management_toolbar.set_styles(height="auto")
+            management_toolbar.add_class("h-auto")
             # task-14902: the sort choice strip replaces only this row;
             # Import/Export remain available below it.
             management_toolbar.display = not self.sort_choices_visible
@@ -883,7 +883,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     disabled=self.mutation_in_flight,
                 )
             transfer_toolbar = Horizontal(classes="ds-toolbar")
-            transfer_toolbar.set_styles(height="auto")
+            transfer_toolbar.add_class("h-auto")
             with transfer_toolbar:
                 for label, action_id in (
                     ("Import…", "library-prompts-import"),
@@ -1072,7 +1072,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             previous_disabled = pager.previous_disabled or self.mutation_in_flight
             next_disabled = pager.next_disabled or self.mutation_in_flight
             toolbar = Horizontal(classes="ds-toolbar")
-            toolbar.set_styles(height="auto")
+            toolbar.add_class("h-auto")
             with toolbar:
                 yield Button(
                     library_disabled_action_label("Previous", previous_disabled),
@@ -1120,10 +1120,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             id="library-prompts-page-label",
             markup=False,
         )
-        page_label.set_styles(height="auto")
+        page_label.add_class("h-auto")
         yield page_label
         toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.set_styles(height="auto")
+        toolbar.add_class("h-auto")
         with toolbar:
             yield Button(
                 library_disabled_action_label("Previous", self.mutation_in_flight),
@@ -1162,7 +1162,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             disabled=self.mutation_in_flight,
         )
         toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.set_styles(height="auto")
+        toolbar.add_class("h-auto")
         with toolbar:
             # Task 8b D4: Browse… picks a FILE via the same FileOpen dialog
             # the media-ingest form's Browse action uses -- that dialog has
@@ -1336,7 +1336,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 header_actions = Horizontal(
                     id="library-prompt-header-actions", classes="ds-toolbar"
                 )
-                header_actions.set_styles(height="auto")
+                header_actions.add_class("h-auto")
                 with header_actions:
                     use_console = Button(
                         "Use in Console",

@@ -104,7 +104,10 @@ from tldw_chatbook.css import build_css
 #: no rules to that stream (the Import canvas's own 393 B scoped stanza was
 #: one of them). Landed at a measured 743,638 B. Pinned at measured + the
 #: standard 25,000 B slack, rounded down. Lowering needs no ledger row.
-MAX_BOOT_PARSED_CSS_BYTES = 768_000
+#: TIGHTENED 2026-09-14 (TASK-32532): omit authoring comments from generated
+#: module payloads, preserving source prose, quoted strings and selector semantics.
+#: Measured 609,050 B; bank the reduction with ADR-097 standard 25,000 B slack.
+MAX_BOOT_PARSED_CSS_BYTES = 634_050
 
 #: Anti-vacuity floor: the app bundle alone is ~470 KB post-split, so a
 #: census that comes in under this did not measure the real boot-parsed set

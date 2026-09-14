@@ -5,7 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
+
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 import tldw_chatbook
@@ -22,11 +24,13 @@ from tldw_chatbook.Widgets.destination_rail import (
 )
 
 
-class _SectionHeaderHarness(App[None]):
+class _SectionHeaderHarness(ConsolidatedCSSApp):
     """Minimal host: one section header, over a body Static the header's
     own owning screen would normally show/hide -- mirrors how every real
     consumer (Console/Home/Library rails) wires the toggle Button's
     ``Pressed`` message to its own open/closed state."""
+
+    CSS_PATH = [str(BUNDLED_STYLESHEET)]
 
     def __init__(self) -> None:
         super().__init__()
@@ -42,7 +46,9 @@ class _SectionHeaderHarness(App[None]):
             self.pressed_ids.append(event.button.id)
 
 
-class _HandleHarness(App[None]):
+class _HandleHarness(ConsolidatedCSSApp):
+    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+
     def __init__(self, handle: DestinationRailHandle) -> None:
         super().__init__()
         self._handle = handle

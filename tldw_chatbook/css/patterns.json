@@ -261,6 +261,123 @@
         },
         "border-none": {
           "status": "canonical"
+        },
+        "w-1": {
+          "status": "canonical"
+        },
+        "w-3": {
+          "status": "canonical"
+        },
+        "w-4": {
+          "status": "canonical"
+        },
+        "w-5": {
+          "status": "canonical"
+        },
+        "w-9": {
+          "status": "canonical"
+        },
+        "w-11": {
+          "status": "canonical"
+        },
+        "w-12": {
+          "status": "canonical"
+        },
+        "w-13": {
+          "status": "canonical"
+        },
+        "w-17": {
+          "status": "canonical"
+        },
+        "w-18": {
+          "status": "canonical"
+        },
+        "w-20": {
+          "status": "canonical"
+        },
+        "w-21": {
+          "status": "canonical"
+        },
+        "w-23": {
+          "status": "canonical"
+        },
+        "w-24": {
+          "status": "canonical"
+        },
+        "w-28": {
+          "status": "canonical"
+        },
+        "w-3fr": {
+          "status": "canonical"
+        },
+        "w-4fr": {
+          "status": "canonical"
+        },
+        "w-13fr": {
+          "status": "canonical"
+        },
+        "h-4": {
+          "status": "canonical"
+        },
+        "h-5": {
+          "status": "canonical"
+        },
+        "h-6": {
+          "status": "canonical"
+        },
+        "h-7": {
+          "status": "canonical"
+        },
+        "h-8": {
+          "status": "canonical"
+        },
+        "h-9": {
+          "status": "canonical"
+        },
+        "p-inline-1": {
+          "status": "canonical"
+        },
+        "m-left-2": {
+          "status": "canonical"
+        },
+        "m-left-3": {
+          "status": "canonical"
+        },
+        "ds-text-error": {
+          "status": "canonical"
+        },
+        "ds-text-warning": {
+          "status": "canonical"
+        },
+        "ds-text-ready": {
+          "status": "canonical"
+        },
+        "ds-text-primary": {
+          "status": "canonical"
+        },
+        "ds-text-muted": {
+          "status": "canonical"
+        },
+        "w-6": {
+          "status": "canonical"
+        },
+        "w-8": {
+          "status": "canonical"
+        },
+        "w-10": {
+          "status": "canonical"
+        },
+        "w-16": {
+          "status": "canonical"
+        },
+        "h-10": {
+          "status": "canonical"
+        },
+        "p-left-1": {
+          "status": "canonical"
+        },
+        "w-7": {
+          "status": "canonical"
         }
       },
       "note": "ADR-161 task 12 (2026-09-13, spec 3.10 Python side): the one-dimensional tokenized replacements for legacy runtime `.styles.<dimension> = <literal>` assignments. Values trace to the $ds-size-N / $ds-space-* / $ds-width-* / $ds-height-* scales; utilities load last in the bundle so they win equal-specificity ties, but a site that must override an id-scoped rule uses the `set_styles(...)` inline escape hatch instead. Not every $ds-size-N step is a class: w-/h-N classes exist only where the Python migration consumed them (w-0, h-0..h-3 at pin time); grow the set one entry at a time as new consumers appear."

@@ -18,57 +18,97 @@
  * values trace to the $ds-size-N / $ds-space-* / $ds-width-* / $ds-height-*
  * scales in core/_variables.tcss, exactly like every other sheet rule.
  *
- * Precedence note: these are ordinary class rules (utilities load last in
- * the bundle, so they win ties with feature sheets but NOT with id-scoped
- * rules). A site whose sizing must override an id-scoped rule keeps its
- * runtime assignment via `set_styles(...)` -- the inline-precedence
- * escape hatch -- rather than one of these classes.
+ * Explicit overrides use !important to retain the precedence of the inline
+ * assignments they replace. Keep at most one override per property; remove
+ * its class before restoring normal cascade or computed inline geometry.
  */
 .w-auto {
-    width: $ds-width-auto;
+    width: $ds-width-auto !important;
 }
 .w-full {
-    width: $ds-width-full;
+    width: $ds-width-full !important;
 }
 .w-fill {
-    width: $ds-width-fill;
+    width: $ds-width-fill !important;
 }
 .w-0 {
-    width: $ds-size-0;
+    width: $ds-size-0 !important;
 }
 .h-auto {
-    height: $ds-height-auto;
+    height: $ds-height-auto !important;
 }
 .h-full {
-    height: $ds-height-full;
+    height: $ds-height-full !important;
 }
 .h-fill {
-    height: $ds-height-fill;
+    height: $ds-height-fill !important;
 }
 .h-0 {
-    height: $ds-size-0;
+    height: $ds-size-0 !important;
 }
 .h-1 {
-    height: $ds-size-1;
+    height: $ds-size-1 !important;
 }
 .h-2 {
-    height: $ds-size-2;
+    height: $ds-size-2 !important;
 }
 .h-3 {
-    height: $ds-size-3;
+    height: $ds-size-3 !important;
 }
 .p-0 {
-    padding: $ds-space-0;
+    padding: $ds-space-0 !important;
 }
 .m-0 {
-    margin: $ds-space-0;
+    margin: $ds-space-0 !important;
 }
 .mt-1 {
-    margin-top: $ds-space-1;
+    margin-top: $ds-space-1 !important;
 }
 .mb-0 {
-    margin-bottom: $ds-space-0;
+    margin-bottom: $ds-space-0 !important;
 }
 .border-none {
-    border: none;
+    border: none !important;
 }
+
+.w-1 { width: $ds-size-1 !important; }
+.w-3 { width: $ds-size-3 !important; }
+.w-4 { width: $ds-size-4 !important; }
+.w-5 { width: $ds-size-5 !important; }
+.w-9 { width: $ds-size-9 !important; }
+.w-11 { width: $ds-size-11 !important; }
+.w-12 { width: $ds-size-12 !important; }
+.w-13 { width: $ds-size-13 !important; }
+.w-17 { width: $ds-size-17 !important; }
+.w-18 { width: $ds-size-18 !important; }
+.w-20 { width: $ds-size-20 !important; }
+.w-21 { width: $ds-size-21 !important; }
+.w-23 { width: $ds-size-23 !important; }
+.w-24 { width: $ds-size-24 !important; }
+.w-28 { width: $ds-size-28 !important; }
+.w-3fr { width: $ds-fr-3 !important; }
+.w-4fr { width: $ds-fr-4 !important; }
+.w-13fr { width: $ds-fr-13 !important; }
+.h-4 { height: $ds-size-4 !important; }
+.h-5 { height: $ds-size-5 !important; }
+.h-6 { height: $ds-size-6 !important; }
+.h-7 { height: $ds-size-7 !important; }
+.h-8 { height: $ds-size-8 !important; }
+.h-9 { height: $ds-size-9 !important; }
+.p-inline-1 { padding: $ds-space-0 $ds-space-1 !important; }
+.m-left-2 { margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-2 !important; }
+.m-left-3 { margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-3 !important; }
+.ds-text-error { color: $ds-status-error-readable !important; }
+.ds-text-warning { color: $ds-status-warning !important; }
+.ds-text-ready { color: $ds-status-ready !important; }
+.ds-text-primary { color: $ds-text-primary !important; }
+.ds-text-muted { color: $ds-text-muted !important; }
+
+.w-6 { width: $ds-size-6 !important; }
+.w-8 { width: $ds-size-8 !important; }
+.w-10 { width: $ds-size-10 !important; }
+.w-16 { width: $ds-size-16 !important; }
+.h-10 { height: $ds-size-10 !important; }
+.p-left-1 { padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1 !important; }
+
+.w-7 { width: $ds-size-7 !important; }

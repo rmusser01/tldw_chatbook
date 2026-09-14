@@ -272,7 +272,7 @@ class SetupWizardProgress(WizardProgress):
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
-        self.styles.width = "100%"
+        self.add_class("w-full")
         self.items = items
         self._sync_compatibility_state()
 

@@ -130,3 +130,49 @@
     width: $ds-width-full;
     height: $ds-height-full;
 }
+
+/* Theme editor selectable swatches and preview contrast (ADR-161). */
+
+    SettingsThemeEditor .theme-preset-blues-0 { background: $ds-theme-preset-blues-0; }
+    SettingsThemeEditor .theme-preset-blues-1 { background: $ds-theme-preset-blues-1; }
+    SettingsThemeEditor .theme-preset-blues-2 { background: $ds-theme-preset-blues-2; }
+    SettingsThemeEditor .theme-preset-blues-3 { background: $ds-theme-preset-blues-3; }
+    SettingsThemeEditor .theme-preset-blues-4 { background: $ds-theme-preset-blues-4; }
+    SettingsThemeEditor .theme-preset-greens-0 { background: $ds-theme-preset-greens-0; }
+    SettingsThemeEditor .theme-preset-greens-1 { background: $ds-theme-preset-greens-1; }
+    SettingsThemeEditor .theme-preset-greens-2 { background: $ds-theme-preset-greens-2; }
+    SettingsThemeEditor .theme-preset-greens-3 { background: $ds-theme-preset-greens-3; }
+    SettingsThemeEditor .theme-preset-greens-4 { background: $ds-theme-preset-greens-4; }
+    SettingsThemeEditor .theme-preset-reds-0 { background: $ds-theme-preset-reds-0; }
+    SettingsThemeEditor .theme-preset-reds-1 { background: $ds-theme-preset-reds-1; }
+    SettingsThemeEditor .theme-preset-reds-2 { background: $ds-theme-preset-reds-2; }
+    SettingsThemeEditor .theme-preset-reds-3 { background: $ds-theme-preset-reds-3; }
+    SettingsThemeEditor .theme-preset-reds-4 { background: $ds-theme-preset-reds-4; }
+    SettingsThemeEditor .theme-preset-purples-0 { background: $ds-theme-preset-purples-0; }
+    SettingsThemeEditor .theme-preset-purples-1 { background: $ds-theme-preset-purples-1; }
+    SettingsThemeEditor .theme-preset-purples-2 { background: $ds-theme-preset-purples-2; }
+    SettingsThemeEditor .theme-preset-purples-3 { background: $ds-theme-preset-purples-3; }
+    SettingsThemeEditor .theme-preset-purples-4 { background: $ds-theme-preset-purples-4; }
+    SettingsThemeEditor .theme-preset-grays-0 { background: $ds-theme-preset-grays-0; }
+    SettingsThemeEditor .theme-preset-grays-1 { background: $ds-theme-preset-grays-1; }
+    SettingsThemeEditor .theme-preset-grays-2 { background: $ds-theme-preset-grays-2; }
+    SettingsThemeEditor .theme-preset-grays-3 { background: $ds-theme-preset-grays-3; }
+    SettingsThemeEditor .theme-preset-grays-4 { background: $ds-theme-preset-grays-4; }
+    SettingsThemeEditor .theme-preset-material-0 { background: $ds-theme-preset-material-0; }
+    SettingsThemeEditor .theme-preset-material-1 { background: $ds-theme-preset-material-1; }
+    SettingsThemeEditor .theme-preset-material-2 { background: $ds-theme-preset-material-2; }
+    SettingsThemeEditor .theme-preset-material-3 { background: $ds-theme-preset-material-3; }
+    SettingsThemeEditor .theme-preset-material-4 { background: $ds-theme-preset-material-4; }
+    SettingsThemeEditor .theme-preset-pastels-0 { background: $ds-theme-preset-pastels-0; }
+    SettingsThemeEditor .theme-preset-pastels-1 { background: $ds-theme-preset-pastels-1; }
+    SettingsThemeEditor .theme-preset-pastels-2 { background: $ds-theme-preset-pastels-2; }
+    SettingsThemeEditor .theme-preset-pastels-3 { background: $ds-theme-preset-pastels-3; }
+    SettingsThemeEditor .theme-preset-pastels-4 { background: $ds-theme-preset-pastels-4; }
+    SettingsThemeEditor .theme-preset-dark-0 { background: $ds-theme-preset-dark-0; }
+    SettingsThemeEditor .theme-preset-dark-1 { background: $ds-theme-preset-dark-1; }
+    SettingsThemeEditor .theme-preset-dark-2 { background: $ds-theme-preset-dark-2; }
+    SettingsThemeEditor .theme-preset-dark-3 { background: $ds-theme-preset-dark-3; }
+    SettingsThemeEditor .theme-preset-dark-4 { background: $ds-theme-preset-dark-4; }
+    SettingsThemeEditor .theme-preview-dark-ink { color: $ds-theme-preview-dark-ink !important; }
+    SettingsThemeEditor .theme-preview-light-ink { color: $ds-theme-preview-light-ink !important; }
+    SettingsThemeEditor .theme-preview-invalid { background: $ds-theme-preview-invalid !important; color: $ds-theme-preview-light-ink !important; }

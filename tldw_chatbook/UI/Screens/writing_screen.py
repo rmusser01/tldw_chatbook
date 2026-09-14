@@ -39,7 +39,7 @@ class WritingScreen(BaseAppScreen):
             classes="window",
         )
         # Leave room for the destination header above the window.
-        self.writing_window.set_styles(height="1fr")
+        self.writing_window.add_class("h-fill")
         if self._pending_restore_state is not None:
             self.writing_window.restore_state(self._pending_restore_state)
             self._pending_restore_state = None

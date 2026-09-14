@@ -7,6 +7,7 @@ import json
 import re
 
 import pytest
+from textual.css.tokenize import tokenize
 
 from tldw_chatbook.css import build_css as css_builder
 
@@ -33,6 +34,12 @@ _GENERATED_SHEETS = (
     _CSS_ROOT / "screen_feature_scheduling.tcss",
     _CSS_ROOT / "screen_feature_watchlists.tcss",
 )
+
+
+def _css_tokens(css: str) -> list[tuple[str, str]]:
+    """Compare emitted rules/values independently of source prose and spacing."""
+    return [(t.name, t.value) for t in tokenize(css, ("integrity", ""))
+            if t.name != "whitespace"]
 
 
 def _generated_css_text() -> str:
@@ -421,22 +428,20 @@ def _generated_agentic_css() -> str:
 
 
 def test_library_notes_compact_source_module_is_exactly_bundled() -> None:
-    """Every byte of every split source reaches exactly one generated output.
+    """Every CSS token reaches its output; split sheets reproduce exactly.
 
     Pre-split this was `bundle section == source` for the agentic monolith.
     The carve (ADR-161 task 10) moved each vocabulary to its own source
     sheets, so the contract now runs per split over the COMMITTED outputs:
-    each module's bundle section must equal the splitter's remainder for
-    that module, and each split sheet must EXACTLY equal a fresh rebuild.
-    The unsplit monolith is checked the old way (section == source).
+    each module's bundle section must retain the splitter's remainder tokens,
+    and each split sheet must EXACTLY equal a fresh rebuild. Source prose is
+    deliberately omitted from the boot bundle (ADR-161 close-out).
     """
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
 
-    # The monolith is no longer a split source: its section is verbatim.
-    assert (
+    assert _css_tokens(
         _bundled_module(bundle, "components/_agentic_terminal.tcss")
-        == _AGENTIC_SOURCE.read_text(encoding="utf-8").strip()
-    )
+    ) == _css_tokens(_AGENTIC_SOURCE.read_text(encoding="utf-8"))
 
     import tempfile
 
@@ -452,7 +457,7 @@ def test_library_notes_compact_source_module_is_exactly_bundled() -> None:
             )
             remainders, _ = css_builder.split_owned_modules(texts, split, later)
             for module, remainder in zip(split.modules, remainders):
-                assert _bundled_module(bundle, module) == remainder.strip()
+                assert _css_tokens(_bundled_module(bundle, module)) == _css_tokens(remainder)
             for filename in split.sheets.values():
                 committed = (_CSS_ROOT / filename).read_text(encoding="utf-8")
                 rebuilt = (Path(rebuilt_dir) / filename).read_text("utf-8")
@@ -596,7 +601,7 @@ def test_settings_splash_theme_rules_have_source_and_bundle_integrity() -> None:
     module_marker = "/* ===== MODULE: components/_settings_splash_theme.tcss ===== */"
     assert module_marker in bundle
     bundled_module = bundle.split(module_marker, 1)[1].split("/* ===== MODULE:", 1)[0]
-    assert bundled_module.strip() == settings_source.strip()
+    assert _css_tokens(bundled_module) == _css_tokens(settings_source)
     assert "(NOT FOUND)" not in bundle
 
 
@@ -970,7 +975,7 @@ def test_screen_owned_module_is_exactly_partitioned(module: str) -> None:
     remainder, _ = css_builder.split_owned_module(source, spec, css_dir=_CSS_ROOT)
 
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
-    assert _bundled_module(bundle, module) == remainder.strip()
+    assert _css_tokens(_bundled_module(bundle, module)) == _css_tokens(remainder)
 
     import tempfile
 

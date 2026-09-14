@@ -64,9 +64,10 @@ class ConsoleRailHandle(DestinationRailHandle):
             self.add_class("console-inspector-rail-handle")
         if self.vertical:
             self.add_class("console-rail-handle-vertical")
-            # ADR-161 task 12: inline via set_styles (identical semantics) --
-            # Console-tree widgets also mount in stylesheet-less test hosts.
-            self.set_styles(width=self.VERTICAL_WIDTH)
+
+            self.remove_class(*(name for name in self.classes if name.startswith("w-")))
+            self.set_styles(width=None)
+            self.add_class("w-3")
             self.styles.min_width = self.VERTICAL_WIDTH
             self.styles.max_width = self.VERTICAL_WIDTH
 
@@ -79,18 +80,30 @@ class ConsoleRailHandle(DestinationRailHandle):
         for child in super().compose():
             if self.vertical and isinstance(child, Button):
                 child.add_class("console-rail-handle-button-vertical")
-                child.set_styles(width=self.VERTICAL_CONTENT_WIDTH, height="1fr")
+                child.remove_class(*(name for name in child.classes if name.startswith("w-")))
+                child.set_styles(width=None)
+                child.add_class("w-1")
+                child.remove_class(*(name for name in child.classes if name.startswith("h-")))
+                child.set_styles(height=None)
+                child.add_class("h-fill")
                 child.styles.max_width = self.VERTICAL_CONTENT_WIDTH
                 child.styles.clear_rule("min_height")
                 child.styles.clear_rule("max_height")
                 child.styles.line_pad = 0
             elif self.vertical and isinstance(child, Static):
                 child.add_class("console-rail-handle-badge-vertical")
-                child.set_styles(width=self.VERTICAL_CONTENT_WIDTH)
+                child.remove_class(*(name for name in child.classes if name.startswith("w-")))
+                child.set_styles(width=None)
+                child.add_class("w-1")
                 child.styles.min_width = 0
                 child.styles.max_width = self.VERTICAL_CONTENT_WIDTH
             elif self.side == "right" and isinstance(child, Button):
-                child.set_styles(width="100%", height="1fr")
+                child.remove_class(*(name for name in child.classes if name.startswith("w-")))
+                child.set_styles(width=None)
+                child.add_class("w-full")
+                child.remove_class(*(name for name in child.classes if name.startswith("h-")))
+                child.set_styles(height=None)
+                child.add_class("h-fill")
                 child.styles.max_width = "100%"
                 child.styles.min_height = 0
                 child.styles.max_height = "100%"

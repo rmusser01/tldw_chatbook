@@ -45,7 +45,7 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
 CONSOLE_CLOSE_TAB_BUTTON_HEIGHT = 1
 # RAG-47: at 12, the "Temporary" tab-strip button (9 chars) clipped to
-# "Temporar" -- the fixed inline `width`/`min_width`/`max_width` below win
+# "Temporar" -- the fixed token width and min/max width bounds below win
 # over the CSS `padding: 0 1` (`_agentic_terminal.tcss`
 # `#console-new-chat-tab, #console-new-temporary-tab`), and Textual's
 # `Button` also reserves its own `line-pad: 1` on each side, so the usable
@@ -258,7 +258,9 @@ class ConsoleSessionSurface(Vertical):
             id="console-transcript-title",
             classes="destination-section console-transcript-title",
         )
-        title.set_styles(height=1)
+        title.remove_class(*(name for name in title.classes if name.startswith("h-")))
+        title.set_styles(height=None)
+        title.add_class("h-1")
         title.styles.min_height = 1
         yield title
 
@@ -284,19 +286,25 @@ class ConsoleSessionSurface(Vertical):
         query keeps resolving.
         """
         tab_strip = ConsoleSessionTabStrip(id="console-native-tab-strip")
-        tab_strip.set_styles(height=1)
+        tab_strip.remove_class(*(name for name in tab_strip.classes if name.startswith("h-")))
+        tab_strip.set_styles(height=None)
+        tab_strip.add_class("h-1")
         tab_strip.styles.min_height = 1
         tab_strip.styles.max_height = 1
-        # The row owns the strip family's bottom margin now; this inline
-        # zero beats the shared `#console-native-tab-strip` CSS rule so a
+        # The row owns the strip family's bottom margin; the zero-margin
+        # utility overrides the shared `#console-native-tab-strip` rule so a
         # margin never eats the row's single line.
-        tab_strip.set_styles(margin=(0, 0, 0, 0))
-        tab_strip.set_styles(width="1fr")
+        tab_strip.add_class("m-0")
+        tab_strip.remove_class(*(name for name in tab_strip.classes if name.startswith("w-")))
+        tab_strip.set_styles(width=None)
+        tab_strip.add_class("w-fill")
         tab_strip.on_overflow_state_changed = self._sync_tab_overflow_hints
         tab_strip.compose_add_child(self._build_new_tab_button())
 
         strip_row = Horizontal(classes="console-session-tab-strip")
-        strip_row.set_styles(height=1)
+        strip_row.remove_class(*(name for name in strip_row.classes if name.startswith("h-")))
+        strip_row.set_styles(height=None)
+        strip_row.add_class("h-1")
         strip_row.styles.min_height = 1
         strip_row.styles.max_height = 1
         # Children attach via compose_add_child (mirrors the
@@ -319,10 +327,14 @@ class ConsoleSessionSurface(Vertical):
         """Build one (initially hidden) 1-cell tab-strip overflow hint."""
         hint = Static(resolve_glyph(glyph), id=hint_id, markup=False)
         hint.tooltip = "More tabs this way — scroll the tab strip (mouse wheel)."
-        hint.set_styles(width=CONSOLE_TAB_OVERFLOW_HINT_WIDTH)
+        hint.remove_class(*(name for name in hint.classes if name.startswith("w-")))
+        hint.set_styles(width=None)
+        hint.add_class("w-1")
         hint.styles.min_width = CONSOLE_TAB_OVERFLOW_HINT_WIDTH
         hint.styles.max_width = CONSOLE_TAB_OVERFLOW_HINT_WIDTH
-        hint.set_styles(height=1)
+        hint.remove_class(*(name for name in hint.classes if name.startswith("h-")))
+        hint.set_styles(height=None)
+        hint.add_class("h-1")
         hint.styles.min_height = 1
         hint.styles.max_height = 1
         # Qodo PR #2327 review: hide with VISIBILITY, not display:none —
@@ -368,19 +380,25 @@ class ConsoleSessionSurface(Vertical):
             id="console-fleet-coachmark",
             classes="console-fleet-coachmark",
         )
-        row.set_styles(height=1)
+        row.remove_class(*(name for name in row.classes if name.startswith("h-")))
+        row.set_styles(height=None)
+        row.add_class("h-1")
         row.styles.min_height = 1
         row.styles.max_height = 1
         row.styles.display = "none"
         text = Static("", id="console-fleet-coachmark-text")
-        text.set_styles(width="1fr")
+        text.remove_class(*(name for name in text.classes if name.startswith("w-")))
+        text.set_styles(width=None)
+        text.add_class("w-fill")
         dismiss = Button(
             resolve_glyph(GLYPH_CLOSE),
             id="console-fleet-coachmark-dismiss",
             compact=True,
         )
         dismiss.tooltip = "Dismiss"
-        dismiss.set_styles(width=CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH)
+        dismiss.remove_class(*(name for name in dismiss.classes if name.startswith("w-")))
+        dismiss.set_styles(width=None)
+        dismiss.add_class("w-3")
         dismiss.styles.min_width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
         dismiss.styles.max_width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
         # Children are composed via `compose_add_child` rather than a
@@ -420,10 +438,14 @@ class ConsoleSessionSurface(Vertical):
         """Return the compact symbolic Console new-session control."""
         button = Button("New tab", id="console-new-chat-tab", compact=True)
         button.tooltip = "New Console tab"
-        button.set_styles(width=CONSOLE_NEW_TAB_BUTTON_WIDTH)
+        button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+        button.set_styles(width=None)
+        button.add_class("w-13")
         button.styles.min_width = CONSOLE_NEW_TAB_BUTTON_WIDTH
         button.styles.max_width = CONSOLE_NEW_TAB_BUTTON_WIDTH
-        button.set_styles(height=CONSOLE_NEW_TAB_BUTTON_HEIGHT)
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        button.set_styles(height=None)
+        button.add_class("h-1")
         button.styles.min_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
         button.styles.max_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
         return button
@@ -432,15 +454,14 @@ class ConsoleSessionSurface(Vertical):
         """Return the tab-strip control for a chat that is never saved."""
         button = Button("Temporary", id="console-new-temporary-tab", compact=True)
         button.tooltip = "New temporary Console tab — not saved locally"
-        for style, value in (
-            ("width", CONSOLE_NEW_TAB_BUTTON_WIDTH),
-            ("min_width", CONSOLE_NEW_TAB_BUTTON_WIDTH),
-            ("max_width", CONSOLE_NEW_TAB_BUTTON_WIDTH),
-            ("height", CONSOLE_NEW_TAB_BUTTON_HEIGHT),
-            ("min_height", CONSOLE_NEW_TAB_BUTTON_HEIGHT),
-            ("max_height", CONSOLE_NEW_TAB_BUTTON_HEIGHT),
-        ):
-            setattr(button.styles, style, value)
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+        button.set_styles(width=None)
+        button.add_class("w-13", "h-1")
+        button.styles.min_width = CONSOLE_NEW_TAB_BUTTON_WIDTH
+        button.styles.max_width = CONSOLE_NEW_TAB_BUTTON_WIDTH
+        button.styles.min_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
+        button.styles.max_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
         return button
 
     @classmethod
@@ -505,10 +526,14 @@ class ConsoleSessionSurface(Vertical):
             marker=marker,
             queued_count=queued_count,
         )
-        button.set_styles(width=CONSOLE_SESSION_TAB_WIDTH)
+        button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+        button.set_styles(width=None)
+        button.add_class("w-21")
         button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.max_width = CONSOLE_SESSION_TAB_WIDTH
-        button.set_styles(height=1)
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        button.set_styles(height=None)
+        button.add_class("h-1")
         button.styles.min_height = 1
         button.styles.max_height = 1
         return button
@@ -577,10 +602,14 @@ class ConsoleSessionSurface(Vertical):
             compact=True,
         )
         close_button.tooltip = "Close Console tab"
-        close_button.set_styles(width=CONSOLE_CLOSE_TAB_BUTTON_WIDTH)
+        close_button.remove_class(*(name for name in close_button.classes if name.startswith("w-")))
+        close_button.set_styles(width=None)
+        close_button.add_class("w-3")
         close_button.styles.min_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
         close_button.styles.max_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
-        close_button.set_styles(height=CONSOLE_CLOSE_TAB_BUTTON_HEIGHT)
+        close_button.remove_class(*(name for name in close_button.classes if name.startswith("h-")))
+        close_button.set_styles(height=None)
+        close_button.add_class("h-1")
         close_button.styles.min_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
         close_button.styles.max_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
         return close_button

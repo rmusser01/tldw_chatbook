@@ -258,7 +258,9 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         self.state = state
         self._on_reconcile = on_reconcile
         self.add_class("console-settings-summary")
-        self.set_styles(height="auto")
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         self.styles.min_height = 0
 
     def sync_state(self, state: ConsoleSettingsSummaryState) -> None:
@@ -300,13 +302,17 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
             ),
             CONSOLE_SETTINGS_BUTTON_MAX_WIDTH,
         )
+        button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+        # ds-runtime: Action-label text length determines the bounded button width.
         button.set_styles(width=button_width)
         button.styles.min_width = button_width
         button.styles.max_width = button_width
-        button.set_styles(height=CONSOLE_SETTINGS_ROW_HEIGHT)
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        button.set_styles(height=None)
+        button.add_class("h-1")
         button.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
         button.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
-        button.set_styles(margin=0)
+        button.add_class("m-0")
 
     @staticmethod
     def _row_text(value: str | None) -> str:
@@ -416,7 +422,9 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         header = Horizontal(
             id="console-settings-header", classes="console-settings-header"
         )
-        header.set_styles(height=CONSOLE_SETTINGS_ROW_HEIGHT)
+        header.remove_class(*(name for name in header.classes if name.startswith("h-")))
+        header.set_styles(height=None)
+        header.add_class("h-1")
         header.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
         header.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
         with header:
@@ -425,9 +433,13 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
                 id="console-settings-title",
                 classes="destination-section console-settings-title",
             )
-            title.set_styles(width="1fr")
+            title.remove_class(*(name for name in title.classes if name.startswith("w-")))
+            title.set_styles(width=None)
+            title.add_class("w-fill")
             title.styles.min_width = 0
-            title.set_styles(height=CONSOLE_SETTINGS_ROW_HEIGHT)
+            title.remove_class(*(name for name in title.classes if name.startswith("h-")))
+            title.set_styles(height=None)
+            title.add_class("h-1")
             title.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
             title.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
             yield title

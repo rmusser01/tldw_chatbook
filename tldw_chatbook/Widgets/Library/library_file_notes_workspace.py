@@ -1733,7 +1733,7 @@ class LibraryFileNotesWorkspace(Vertical):
             # compact mode chips are deliberately one row tall, so keep the
             # semantic class while preventing a selected chip from growing
             # to two rows and clipping its label.
-            button.set_styles(border=("none", "transparent"))
+            button.add_class("border-none")
         exact_path = self.query_one("#file-notes-exact-path", Static)
         relative_path = self._current_path or self._selected_deleted_path
         if relative_path and self._root is not None:
@@ -3073,7 +3073,7 @@ class LibraryFileNotesWorkspace(Vertical):
             toolbar.styles.grid_columns = "1fr" if single_column else None
             for button in toolbar.query(Button):
                 button.styles.column_span = 1 if single_column else None
-                button.set_styles(width="1fr" if single_column else None)
+                button.set_class(single_column, "w-fill")
         delete = self.query_one("#file-notes-delete", Button)
         self.query_one("#file-notes-delete-spacer", Static).display = (
             delete.display and not needs_stack

@@ -905,8 +905,10 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if not self.is_attached:
             return
         clamped = self._display_geometry(geometry)
-        self.styles.width = clamped.width
-        self.styles.height = clamped.height
+        # ds-runtime: apply the user-positioned buddy bounds clamped to the available viewport.
+        self.set_styles(width=clamped.width)
+        # ds-runtime: apply the user-positioned buddy bounds clamped to the available viewport.
+        self.set_styles(height=clamped.height)
         offset = Offset(clamped.x, clamped.y)
         if self.absolute_offset != offset:
             # `absolute_offset` is a plain attribute, not a style: assigning it
@@ -919,14 +921,16 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self.absolute_offset = offset
             self.refresh(layout=True)
         frame = self.query_one("#persona-buddy-frame", Static)
-        frame.styles.width = "100%"
-        frame.styles.height = "100%"
+        frame.add_class("w-full")
+        frame.add_class("h-full")
         collapse = self.query_one("#persona-buddy-collapse", Button)
         close = self.query_one("#persona-buddy-close", Button)
         collapse_width = len(str(collapse.label)) + 2
         close_width = len(str(close.label)) + 2
-        collapse.styles.width = collapse_width
-        close.styles.width = close_width
+        collapse.remove_class("w-3", "w-6")
+        collapse.add_class("w-6" if len(str(collapse.label)) > 1 else "w-3")
+        close.remove_class("w-3", "w-7")
+        close.add_class("w-7" if len(str(close.label)) > 1 else "w-3")
         content_width = clamped.width - (
             0 if self.has_class("persona-buddy-compact") else _BOUNDARY_SIZE
         )

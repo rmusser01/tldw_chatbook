@@ -490,7 +490,8 @@ class TrajectoryTimeline(Widget):
         self._selected = old_selected if old_selected in keys else None
         self._range_anchor = old_anchor if old_anchor in keys else None
         self._drag_x = None
-        self.styles.height = STRIP_HEIGHT if self._model.has_data else 1
+        self.remove_class("h-1", "h-4", "h-6")
+        self.add_class("h-6" if self._model.has_data else "h-1")
         self.refresh()
 
     # -- rendering ----------------------------------------------------------

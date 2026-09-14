@@ -190,7 +190,7 @@ class SettingsThemeEditor(Vertical):
                         id=f"settings-theme-preset-{palette_name}-{idx}",
                         classes="color-preset-swatch",
                     )
-                    swatch.styles.background = color
+                    swatch.add_class(f"theme-preset-{palette_name.lower()}-{idx}")
                     swatch.can_focus = True
                     swatch.tooltip = f"Apply {color} to the selected color"
                     yield swatch
@@ -405,9 +405,11 @@ class SettingsThemeEditor(Vertical):
             foreground = self.current_theme_data.get(fg_key)
             try:
                 if background:
-                    row.styles.background = background
+                    # ds-runtime: preview the user-edited theme palette.
+                    row.set_styles(background=background)
                 if foreground:
-                    row.styles.color = foreground
+                    # ds-runtime: preview the user-edited theme palette.
+                    row.set_styles(color=foreground)
             except Exception:  # noqa: BLE001 - a half-typed hex must not break painting
                 continue
 
@@ -422,15 +424,19 @@ class SettingsThemeEditor(Vertical):
         if color_name in self.color_swatches:
             try:
                 parsed_color = Color.parse(color_value)
-                self.color_swatches[color_name].styles.background = color_value
-                self.color_swatches[color_name].update(color_value.upper())
-                self.color_swatches[color_name].styles.color = (
-                    "black" if parsed_color.brightness > 0.5 else "white"
-                )
+                swatch = self.color_swatches[color_name]
+                swatch.remove_class("theme-preview-invalid")
+                swatch.set_class(parsed_color.brightness > 0.5, "theme-preview-dark-ink")
+                swatch.set_class(parsed_color.brightness <= 0.5, "theme-preview-light-ink")
+                # ds-runtime: preview the user-entered theme color before applying it.
+                swatch.set_styles(background=color_value)
+                swatch.update(color_value.upper())
             except Exception:
-                self.color_swatches[color_name].styles.background = "#808080"
-                self.color_swatches[color_name].update("Invalid")
-                self.color_swatches[color_name].styles.color = "white"
+                swatch = self.color_swatches[color_name]
+                swatch.set_styles(background=None)
+                swatch.remove_class("theme-preview-dark-ink", "theme-preview-light-ink")
+                swatch.add_class("theme-preview-invalid")
+                swatch.update("Invalid")
 
     def _validate_color_input(self, color_value: str) -> bool:
         """Validate a color input value."""

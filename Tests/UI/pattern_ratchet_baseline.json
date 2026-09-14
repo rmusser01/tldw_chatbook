@@ -1,28 +1,3 @@
 {
-  "python_styles": {
-    "Event_Handlers/ingest_status_helper.py": 3,
-    "UI/Watchlists_Modules/article_list.py": 1,
-    "UI/Watchlists_Modules/watchlists_tab_strip.py": 1,
-    "UI/Widgets/trace_filter_bar.py": 5,
-    "UI/Widgets/trajectory_timeline.py": 1,
-    "UI/Wizards/FirstRunSetupWizard.py": 1,
-    "UI/destination_recovery.py": 3,
-    "Widgets/Home/home_canvas.py": 3,
-    "Widgets/Home/home_rail.py": 4,
-    "Widgets/NewIngest/UnifiedProcessor.py": 1,
-    "Widgets/Persona_Widgets/actor_pack_import_review.py": 3,
-    "Widgets/Persona_Widgets/persona_buddy_widget.py": 6,
-    "Widgets/Persona_Widgets/personas_character_editor_widget.py": 6,
-    "Widgets/Persona_Widgets/personas_inspector_pane.py": 4,
-    "Widgets/Persona_Widgets/personas_library_pane.py": 2,
-    "Widgets/Prompts/prompt_block_editor.py": 1,
-    "Widgets/audio_troubleshooting_dialog.py": 4,
-    "Widgets/destination_rail.py": 4,
-    "Widgets/destination_workbench.py": 1,
-    "Widgets/form_components.py": 1,
-    "Widgets/llamacpp_snapshot_manager.py": 2,
-    "Widgets/settings_splash_screen_viewer.py": 3,
-    "Widgets/settings_theme_editor.py": 7,
-    "Widgets/voice_input_widget.py": 1
-  }
+  "python_styles": {}
 }

@@ -2637,3 +2637,19 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     text-opacity: 1;
     color: rgb(245,245,245);
 }
+
+/* Explicit Console frame states (ADR-161): replace inline edge painting.
+ * Each transition removes the prior edge set; quiet clears all four edges.
+ */
+.console-frame-solid, .console-frame-quiet { border: none !important; }
+.console-frame-solid.console-frame-top { border-top: solid $ds-console-frame !important; }
+.console-frame-solid.console-frame-right { border-right: solid $ds-console-frame !important; }
+.console-frame-solid.console-frame-bottom { border-bottom: solid $ds-console-frame !important; }
+.console-frame-solid.console-frame-left { border-left: solid $ds-console-frame !important; }
+.console-frame-solid.console-frame-right.console-edge-region-focused { border-right: solid $ds-focus-accent !important; }
+.console-frame-solid.console-frame-left.console-edge-region-focused { border-left: solid $ds-focus-accent !important; }
+
+.console-conversation-appearance-spacing {
+    margin: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-0 !important;
+}
+.console-generation-frame { border: round $ds-console-frame !important; }

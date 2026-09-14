@@ -18,7 +18,7 @@ import pytest
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.library_media_rows import summary_row
 from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, OptionList, Static
@@ -156,6 +156,8 @@ def _trash_state(**kwargs):
 
 
 class _TrashCanvasApp(ConsolidatedCSSApp):
+    CSS_PATH = BUNDLED_STYLESHEET
+
     def __init__(self, state, **presentation):
         super().__init__()
         self._state = state
@@ -3070,6 +3072,8 @@ async def test_media_list_toolbar_offers_trash_outside_select_mode():
     list_state = build_library_media_state([{"id": "1", "title": "One", "type": "pdf"}])
 
     class _ListApp(ConsolidatedCSSApp):
+        CSS_PATH = BUNDLED_STYLESHEET
+
         def __init__(self, state):
             super().__init__()
             self._state = state
@@ -3124,6 +3128,8 @@ async def test_confirm_copies_and_receipt_point_at_trash():
     )
 
     class _ConfirmApp(ConsolidatedCSSApp):
+        CSS_PATH = BUNDLED_STYLESHEET
+
         def __init__(self, state):
             super().__init__()
             self._state = state
@@ -3149,6 +3155,8 @@ async def test_confirm_copies_and_receipt_point_at_trash():
         assert receipt == "✓ deleted · 2 items · in Trash"
 
     class _ViewerApp(ConsolidatedCSSApp):
+        CSS_PATH = BUNDLED_STYLESHEET
+
         def compose(self):
             yield LibraryMediaViewer(
                 build_library_media_viewer_state(

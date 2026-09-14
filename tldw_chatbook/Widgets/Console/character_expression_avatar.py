@@ -52,6 +52,9 @@ class CharacterExpressionAvatar(Widget):
         self._disposed = False
         self._graphics: Any = None
         self._surface: Static | None = None
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.remove_class(*(name for name in self.classes if name.startswith("w-")))
+        # ds-runtime: The owning rail fits this image box to its measured columns and image aspect ratio.
         self.set_styles(width=box[0], height=box[1])
 
     @property
@@ -64,6 +67,9 @@ class CharacterExpressionAvatar(Widget):
     def compose(self) -> ComposeResult:
         surface = Static("Preparing expression…")
         self._surface = surface
+        surface.remove_class(*(name for name in surface.classes if name.startswith("h-")))
+        surface.remove_class(*(name for name in surface.classes if name.startswith("w-")))
+        # ds-runtime: The owning rail fits this image box to its measured columns and image aspect ratio.
         surface.set_styles(width=self._box[0], height=self._box[1])
         yield surface
 
@@ -177,6 +183,9 @@ class CharacterExpressionAvatar(Widget):
                                 )
 
                         self._graphics = FixedImage(image)
+                        self._graphics.remove_class(*(name for name in self._graphics.classes if name.startswith("h-")))
+                        self._graphics.remove_class(*(name for name in self._graphics.classes if name.startswith("w-")))
+                        # ds-runtime: The owning rail fits this image box to its measured columns and image aspect ratio.
                         self._graphics.set_styles(
                             width=self._box[0], height=self._box[1]
                         )

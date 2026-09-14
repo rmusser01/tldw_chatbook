@@ -27,25 +27,31 @@ bundle membership:
    (ADR-150's "raw hex legal only in token definitions", same principle
    for dimensions) — the counting regex is name-blind and would otherwise
    match ``height: 3`` inside ``$ds-control-height: 3;``.
-6. **Python ad-hoc style ratchet** — per-file counts of
-   ``.styles.<visual-property> = <literal>`` assignments, pinned the same
-   way; may only decrease, floor zero.
+6. **Python ad-hoc style floor (hard zero)** — a shared AST inventory
+   covers assignments, set_styles and setattr, including runtime exceptions.
+   Only documented nonliteral runtime values and None resets are exempt.
 
-The counting regexes are byte-identical to ``pin_pattern_ratchets.py`` --
-if you change one, change both (spec 3.7 pins them as one contract).
+The dimension regex matches ``pin_pattern_ratchets.py``; the Python checker
+is imported from the same pure helper by governance and pinning.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
+
 import tldw_chatbook
+from Tests.UI.python_style_inventory import inventory_styles
 from tldw_chatbook.css.build_css import CSS_MODULES
 from tldw_chatbook.css.widget_css import (
-    WIDGET_ATTR,
     SCREEN_ATTR,
+    WIDGET_ATTR,
     iter_blocks,
     split_scoped_css,
 )
@@ -56,16 +62,12 @@ PKG = Path(tldw_chatbook.__file__).parent
 REGISTRY = json.loads((CSS / "patterns.json").read_text(encoding="utf-8"))
 CATALOG = ROOT / "backlog/docs/component-patterns.md"
 GALLERY = PKG / "Widgets/pattern_gallery.py"
-BASELINE = json.loads(
-    (Path(__file__).parent / "pattern_ratchet_baseline.json").read_text(
-        encoding="utf-8"
-    )
-)
 
 _COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
-_DIM = re.compile(r"\b(?:padding|margin|width|height)(?:-(?:top|right|bottom|left))?\s*:\s*[0-9]")
-_PYSTYLE = re.compile(r"\.styles\.(?:background|color|border\w*|width|height|padding\w*|margin\w*|opacity\w*)\s*=\s*[^=]")
+_DIM = re.compile(
+    r"\b(?:padding|margin|width|height)(?:-(?:top|right|bottom|left))?\s*:\s*(?:[^;{}\s]+\s+)*[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)"
+)
 
 #: A local ``$ds-*:`` definition inside a bundled screen block -- the
 #: TASK-15993 trap this test bans going forward.
@@ -147,7 +149,7 @@ def _canonical() -> dict[str, str]:
     nothing -- they are not yet canonical and must not be flagged.
     """
     out: dict[str, str] = {}
-    for fam, spec_ in REGISTRY["families"].items():
+    for spec_ in REGISTRY["families"].values():
         for cls, meta in spec_["classes"].items():
             if meta["status"] == "canonical":
                 out[cls] = meta.get("owning_sheet", spec_["owning_sheet"])
@@ -215,9 +217,7 @@ def test_deprecated_names_ratchet_down() -> None:
         sheet_count = 0
         offenders: list[str] = []
         for src, css in _sheet_sources().items():
-            hits = len(
-                re.findall(rf"(?<![\w-]){re.escape(cls)}(?![\w-])", css)
-            )
+            hits = len(re.findall(rf"(?<![\w-]){re.escape(cls)}(?![\w-])", css))
             if hits:
                 offenders.append(f"{src}x{hits}")
             sheet_count += hits
@@ -276,21 +276,27 @@ def test_dimension_literal_ratchet() -> None:
     assert not offenders, (
         "Raw numeric dimension literals remain (ADR-161 spec 3.10: the "
         "floor is hard zero; raw values are legal only in token "
-        "definitions, which live in core/_variables.tcss):\n  "
-        + "\n  ".join(offenders)
+        "definitions, which live in core/_variables.tcss):\n  " + "\n  ".join(offenders)
     )
 
 
 def test_python_style_ratchet() -> None:
-    """Per-file .styles.<visual-property> assignment counts may only decrease."""
-    for p in sorted(PKG.rglob("*.py")):
-        rel = str(p.relative_to(PKG))
-        count = len(_PYSTYLE.findall(p.read_text(encoding="utf-8", errors="ignore")))
-        allowance = BASELINE["python_styles"].get(rel, 0)
-        assert count <= allowance, (
-            f"{rel}: {count} ad-hoc .styles.* assignments > pinned {allowance}. "
-            "Compose token-backed CSS classes instead (ADR-161 spec 3.10)."
-        )
+    """No token-covered static or unmarked Python visual writes remain."""
+    offenders: list[str] = []
+    for path in sorted(PKG.rglob("*.py")):
+        relative = path.relative_to(PKG)
+        for write in inventory_styles(path.read_text(encoding="utf-8")):
+            if write.violation:
+                offenders.append(
+                    f"{relative}:{write.line}: {write.form} {write.property} "
+                    f"({write.value_kind})"
+                )
+    assert not offenders, (
+        "Ad-hoc Python visual writes remain (ADR-161 spec 3.10, HARD ZERO). "
+        "Compose token-backed classes. Only nonliteral runtime geometry/user "
+        "previews with an adjacent '# ds-runtime: <specific reason>' and "
+        "None resets are exempt:\n  " + "\n  ".join(offenders)
+    )
 
 
 #: Spec 3.5's size ceiling for hand-authored source sheets. Load-bearing
@@ -328,8 +334,65 @@ def test_ratchet_regexes_match_pin_script() -> None:
     pin_source = (Path(__file__).parent / "pin_pattern_ratchets.py").read_text(
         encoding="utf-8"
     )
-    for pattern in (_DIM.pattern, _PYSTYLE.pattern):
+    for pattern in (_DIM.pattern,):
         assert pattern in pin_source, (
             f"Ratchet regex drifted from pin_pattern_ratchets.py: {pattern!r}. "
             "Update both files together or the baseline stops matching the test."
         )
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "padding: $ds-space-1 0 0 0;",
+        "margin: $ds-space-stack 0;",
+        "margin: $ds-space-0 -2;",
+        "padding: $ds-space-1 .5;",
+        "width: -1.5;",
+        "height: +.25;",
+    ],
+)
+def test_dimension_floor_and_pin_reject_every_numeric_slot(
+    declaration, tmp_path, monkeypatch
+):
+    """Mixed shorthand and signed/decimal literals cannot bypass either floor."""
+    source = "Widget { " + declaration + " }"
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_sheet_sources",
+        lambda: {"features/_probe.tcss": source},
+    )
+    with pytest.raises(AssertionError, match="Raw numeric dimension literals"):
+        test_dimension_literal_ratchet()
+
+    test_dir = tmp_path / "Tests" / "UI"
+    test_dir.mkdir(parents=True)
+    for name in ("pin_pattern_ratchets.py", "python_style_inventory.py"):
+        shutil.copy(Path(__file__).parent / name, test_dir / name)
+    sheet = tmp_path / "tldw_chatbook" / "css" / "features" / "_probe.tcss"
+    sheet.parent.mkdir(parents=True)
+    sheet.write_text(source)
+    result = subprocess.run(
+        [sys.executable, str(test_dir / "pin_pattern_ratchets.py")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "refusing to pin: raw numeric dimension literals" in result.stderr
+    assert not (test_dir / "pattern_ratchet_baseline.json").exists()
+
+
+def test_dimension_floor_ignores_tokens_and_token_definitions(monkeypatch):
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_sheet_sources",
+        lambda: {
+            "core/_variables.tcss": "$ds-size-1: 1; $ds-space-half: .5;",
+            "features/_probe.tcss": (
+                "Widget { padding: $ds-space-1 $ds-space-0; "
+                "width: auto; height: $ds-height-fill; }"
+            ),
+        },
+    )
+    test_dimension_literal_ratchet()

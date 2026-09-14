@@ -293,7 +293,7 @@ class STTSScreen(LabScreen):
             playground_axis_values=self._restored_playground_axes,
             local_dependencies=dependencies,
         )
-        self.stts_window.set_styles(height="1fr")
+        self.stts_window.add_class("h-fill")
         return self.stts_window
 
     def save_state(self) -> dict[str, object]:

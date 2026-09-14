@@ -220,10 +220,16 @@ class LlamaCppSnapshotManager(Vertical):
         slots = self.query_one("#snapshot-slots", DataTable)
         records = self.query_one("#snapshot-records", DataTable)
         narrow = self.size.width < 60
-        slots.styles.height = min(5, max(2, 1 + len(view.slots))) if narrow else 5
-        records.styles.height = (
-            min(5, max(2, 1 + 2 * len(view.catalog.records))) if narrow else 5
-        )
+        slots.set_class(not narrow, "h-5")
+        records.set_class(not narrow, "h-5")
+        if narrow:
+            # ds-runtime: fit the current server slot count inside the compact viewport.
+            slots.set_styles(height=min(5, max(2, 1 + len(view.slots))))
+            # ds-runtime: fit the current snapshot record count inside the compact viewport.
+            records.set_styles(height=min(5, max(2, 1 + 2 * len(view.catalog.records))))
+        else:
+            slots.set_styles(height=None)
+            records.set_styles(height=None)
         valid_slots = {slot.slot_id for slot in view.slots}
         if self._slot_id not in valid_slots:
             self._slot_id = None

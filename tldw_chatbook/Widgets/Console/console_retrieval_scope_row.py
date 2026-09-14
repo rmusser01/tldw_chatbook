@@ -107,7 +107,9 @@ class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
         # button(s) off past the row's own bounds -- mirrors
         # ``_frame_console_region``'s own inline-Python-styles-over-CSS
         # discipline for exactly this reason.
-        label_widget.set_styles(width="1fr")
+        label_widget.remove_class(*(name for name in label_widget.classes if name.startswith("w-")))
+        label_widget.set_styles(width=None)
+        label_widget.add_class("w-fill")
         label_widget.styles.min_width = 0
         if self.state.is_empty:
             # Cause folded into the label's tooltip, same wording and same
@@ -139,7 +141,9 @@ class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
     @staticmethod
     def _action_button(label: str, button_id: str, classes: str) -> Button:
         button = Button(label, id=button_id, classes=classes, compact=True)
-        button.set_styles(width="auto")
+        button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+        button.set_styles(width=None)
+        button.add_class("w-auto")
         return button
 
     def sync_state(self, state: ConsoleRetrievalScopeState) -> None:

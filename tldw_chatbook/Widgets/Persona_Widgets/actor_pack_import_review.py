@@ -233,9 +233,9 @@ def _portrait_widget(preview: ActorPackPortraitPreview) -> Any | None:
         widget = TerminalImage(image)
         widget.id = "actor-pack-import-portrait-preview"
         widget.add_class("actor-pack-import-portrait")
-        widget.styles.width = 18
-        widget.styles.height = 7
-        widget.styles.margin_top = 1
+        widget.add_class("w-18")
+        widget.add_class("h-7")
+        widget.add_class("mt-1")
         return widget
     except Exception:
         return None

@@ -184,7 +184,7 @@ class LibraryCollectionsScopeRows(Vertical):
     ) -> None:
         super().__init__(**kwargs)
         self.presentation = presentation
-        self.set_styles(height="auto")
+        self.add_class("h-auto")
 
     def compose(self) -> ComposeResult:
         """Render bounded built-ins, saved searches, and continuation."""
@@ -304,7 +304,7 @@ class LibraryCollectionsItemsPane(Vertical):
     ) -> None:
         super().__init__(**kwargs)
         self.presentation = presentation
-        self.set_styles(width="1fr")
+        self.add_class("w-fill")
         self.styles.min_width = 0
 
     def compose(self) -> ComposeResult:
@@ -498,7 +498,7 @@ class LibraryCollectionsItemsPane(Vertical):
                 else None
             )
             rows = VerticalScroll(id="library-collections-items-scroll")
-            rows.set_styles(height="1fr")
+            rows.add_class("h-fill")
             with rows:
                 for index, item in enumerate(page.items):
                     selected = item.identity == state.selected_identity
@@ -515,7 +515,7 @@ class LibraryCollectionsItemsPane(Vertical):
                         compact=True,
                         capture_identity=item.identity,
                     )
-                    button.set_styles(height=2)
+                    button.add_class("h-2")
                     button.styles.min_height = 2
                     yield button
 
@@ -665,7 +665,7 @@ class LibraryCollectionsWorkPane(VerticalScroll):
     ) -> None:
         super().__init__(**kwargs)
         self.presentation = presentation
-        self.set_styles(width="1fr")
+        self.add_class("w-fill")
         self.styles.min_width = 0
 
     def compose(self) -> ComposeResult:

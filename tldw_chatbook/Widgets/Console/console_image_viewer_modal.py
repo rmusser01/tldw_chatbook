@@ -104,14 +104,26 @@ class ConsoleImageViewerModal(SafeModalDismissMixin, ModalScreen[None]):
         width = getattr(widget.styles.width, "value", None) or 0
         height = getattr(widget.styles.height, "value", None) or 0
         if width and height:
+            body.remove_class(*(name for name in body.classes if name.startswith("w-")))
+            # ds-runtime: Fitted image or rendered mosaic cell dimensions determine the viewer size.
             body.set_styles(width=width)
+            body.remove_class(*(name for name in body.classes if name.startswith("h-")))
+            # ds-runtime: Fitted image or rendered mosaic cell dimensions determine the viewer size.
             body.set_styles(height=height)
         else:
-            body.set_styles(width="auto")
-            body.set_styles(height="auto")
+            body.remove_class(*(name for name in body.classes if name.startswith("w-")))
+            body.set_styles(width=None)
+            body.add_class("w-auto")
+            body.remove_class(*(name for name in body.classes if name.startswith("h-")))
+            body.set_styles(height=None)
+            body.add_class("h-auto")
         outer = self.query_one("#console-image-viewer")
-        outer.set_styles(width="auto")
-        outer.set_styles(height="auto")
+        outer.remove_class(*(name for name in outer.classes if name.startswith("w-")))
+        outer.set_styles(width=None)
+        outer.add_class("w-auto")
+        outer.remove_class(*(name for name in outer.classes if name.startswith("h-")))
+        outer.set_styles(height=None)
+        outer.add_class("h-auto")
         await body.mount(widget)
 
     def _build_full_size_widget(self) -> Static:
@@ -138,7 +150,11 @@ class ConsoleImageViewerModal(SafeModalDismissMixin, ModalScreen[None]):
                 w, h = fit_image_cell_size(
                     self._image.width, self._image.height, cols, lines
                 )
+                widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+                # ds-runtime: Fitted image or rendered mosaic cell dimensions determine the viewer size.
                 widget.set_styles(width=w)
+                widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+                # ds-runtime: Fitted image or rendered mosaic cell dimensions determine the viewer size.
                 widget.set_styles(height=h)
                 return widget
             except Exception:
@@ -150,7 +166,11 @@ class ConsoleImageViewerModal(SafeModalDismissMixin, ModalScreen[None]):
         widget = Static(mosaic, id="console-image-viewer-image")
         # Explicit fitted size (same guard as the graphics branch): the
         # mosaic's own line grid is the authoritative cell size.
+        widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+        # ds-runtime: Fitted image or rendered mosaic cell dimensions determine the viewer size.
         widget.set_styles(width=max(len(line) for line in lines_out))
+        widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+        # ds-runtime: Fitted image or rendered mosaic cell dimensions determine the viewer size.
         widget.set_styles(height=len(lines_out))
         return widget
 

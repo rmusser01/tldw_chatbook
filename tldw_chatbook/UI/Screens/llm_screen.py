@@ -4975,7 +4975,7 @@ class LLMScreen(LabScreen):
             on_import_lane_changed=self._set_local_gguf_import_active,
             classes="window",
         )
-        self.llm_window.set_styles(height="1fr")
+        self.llm_window.add_class("h-fill")
         return self.llm_window
 
     def on_lab_body_ready(self) -> None:

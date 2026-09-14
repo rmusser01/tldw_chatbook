@@ -889,8 +889,36 @@ def build_screen_owned_sheets(css_dir: Path, output_dir: Path) -> None:
                 seen[selector] = filename
 
 
+_SOURCE_COMMENT_OR_STRING = re.compile(
+    r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|/\*.*?\*/''',
+    re.DOTALL,
+)
+_TRAILING_SPACE_OR_STRING = re.compile(
+    r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[ \t]+(?=\n|$)''',
+    re.DOTALL,
+)
+
+
+def _without_source_comments(css: str) -> str:
+    """Remove comment bytes without changing Textual's selector boundaries.
+
+    Textual skips comments without inserting whitespace, so ``Button/*x*/.on``
+    must remain a compound selector. Existing surrounding whitespace stays
+    intact. Quoted text is protected in both the comment and trailing-space
+    passes, including strings containing comment markers or trailing spaces.
+    Module provenance banners are added separately by the builder.
+    """
+    without_comments = _SOURCE_COMMENT_OR_STRING.sub(
+        lambda match: "" if match.group().startswith("/*") else match.group(), css
+    )
+    return _TRAILING_SPACE_OR_STRING.sub(
+        lambda match: match.group() if match.group()[0] in "\"'" else "",
+        without_comments,
+    )
+
+
 def build_css(css_dir: Path, output_file: Path) -> None:
-    """Concatenate all declared CSS modules into a single file.
+    """Concatenate declared CSS modules, retaining prose in source files only.
 
     Args:
         css_dir: Root directory containing the modular stylesheets.
@@ -951,7 +979,7 @@ def build_css(css_dir: Path, output_file: Path) -> None:
 
         # Add module separator
         combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
-        combined_css.append(content)
+        combined_css.append(_without_source_comments(content))
 
         # Ensure there's a newline at the end
         if not content.endswith("\n"):

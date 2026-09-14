@@ -73,6 +73,7 @@ class TopicBar(Container):
         percentage = (self.count / self.max_count * 100) if self.max_count > 0 else 0
         try:
             bar = self.query_one(f"#bar-{self.topic}")
+            # ds-runtime: scale the bar to the measured share of usage.
             bar.set_styles(width=f"{percentage}%")
         except Exception:
             pass
@@ -228,7 +229,7 @@ class StatsScreen(BaseAppScreen):
             id="stats-container",
         )
         # Leave room for the destination header above the stats content.
-        stats_container.set_styles(height="1fr")
+        stats_container.add_class("h-fill")
         yield stats_container
 
     def watch_is_loading(self, is_loading: bool) -> None:

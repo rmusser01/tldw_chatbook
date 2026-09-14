@@ -49,7 +49,9 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
     def __init__(self, state: ConsoleWorkspaceContextState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.state = state
-        self.set_styles(height="auto")
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         self.styles.min_height = 0
 
     def sync_state(self, state: ConsoleWorkspaceContextState) -> None:

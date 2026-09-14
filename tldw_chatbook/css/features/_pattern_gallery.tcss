@@ -84,3 +84,6 @@
 .-light-mode .pg-msg-assistant {
     color: $ds-chat-assistant-accent-light;
 }
+
+.pg-utility-row { height: $ds-size-12; }
+.pg-utility-cell { width: $ds-width-fill; height: $ds-height-full; }

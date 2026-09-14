@@ -417,14 +417,17 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
             level_text.update(f"Level: {level_percent}%")
 
             # Add visual feedback for level ranges
+            level_text.remove_class(
+                "ds-text-error", "ds-text-warning", "ds-text-ready", "ds-text-primary"
+            )
             if level_percent > 80:
-                level_text.styles.color = "red"
+                level_text.add_class("ds-text-error")
             elif level_percent > 50:
-                level_text.styles.color = "green"
+                level_text.add_class("ds-text-ready")
             elif level_percent > 20:
-                level_text.styles.color = "yellow"
+                level_text.add_class("ds-text-warning")
             else:
-                level_text.styles.color = "white"
+                level_text.add_class("ds-text-primary")
 
         except Exception as e:
             logger.error(f"Failed to update level meter: {e}")

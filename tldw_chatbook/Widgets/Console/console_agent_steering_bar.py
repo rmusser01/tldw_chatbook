@@ -143,8 +143,12 @@ class ConsoleAgentSteeringBar(Vertical):
         super().__init__(**kwargs)
         self._state = state if state is not None else STEERING_STATE_HIDDEN
         # Explicit sizing (module docstring): never inherit a 1fr default.
-        self.set_styles(width="100%")
-        self.set_styles(height="auto")
+        self.remove_class(*(name for name in self.classes if name.startswith("w-")))
+        self.set_styles(width=None)
+        self.add_class("w-full")
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         self.styles.display = "block" if self._state.visible else "none"
 
     def compose(self) -> ComposeResult:
@@ -152,21 +156,33 @@ class ConsoleAgentSteeringBar(Vertical):
             placeholder="Steer this sub-agent…",
             id=STEERING_INPUT_ID,
         )
-        steer_input.set_styles(width="100%")
-        steer_input.set_styles(height=3)
+        steer_input.remove_class(*(name for name in steer_input.classes if name.startswith("w-")))
+        steer_input.set_styles(width=None)
+        steer_input.add_class("w-full")
+        steer_input.remove_class(*(name for name in steer_input.classes if name.startswith("h-")))
+        steer_input.set_styles(height=None)
+        steer_input.add_class("h-3")
         yield steer_input
         queued = Static(
             _queued_text(self._state.queued),
             id=STEERING_QUEUED_ID,
             markup=False,
         )
-        queued.set_styles(width="100%")
-        queued.set_styles(height="auto")
+        queued.remove_class(*(name for name in queued.classes if name.startswith("w-")))
+        queued.set_styles(width=None)
+        queued.add_class("w-full")
+        queued.remove_class(*(name for name in queued.classes if name.startswith("h-")))
+        queued.set_styles(height=None)
+        queued.add_class("h-auto")
         queued.styles.display = "block" if self._state.queued > 0 else "none"
         yield queued
         note = Static("", id=STEERING_NOTE_ID, markup=False)
-        note.set_styles(width="100%")
-        note.set_styles(height="auto")
+        note.remove_class(*(name for name in note.classes if name.startswith("w-")))
+        note.set_styles(width=None)
+        note.add_class("w-full")
+        note.remove_class(*(name for name in note.classes if name.startswith("h-")))
+        note.set_styles(height=None)
+        note.add_class("h-auto")
         note.styles.display = "none"
         yield note
 

@@ -17,7 +17,7 @@ from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.color import Color
 from textual.containers import Vertical, VerticalScroll
 from textual.widget import Widget
@@ -102,6 +102,8 @@ def test_action_layout_tolerates_rows_not_yet_mounted(
 
 class _PanelHarness(ConsolidatedCSSApp):
     """Mount one panel and record its typed presentation messages."""
+
+    CSS_PATH = BUNDLED_STYLESHEET
 
     def __init__(self, panel: LibraryFileNotesGitPanel) -> None:
         super().__init__()
@@ -210,6 +212,8 @@ class _PanelWithOutsideControlHarness(_PanelHarness):
 class _DialogHarness(ConsolidatedCSSApp):
     """Open a Session Git trust dialog at mount."""
 
+    CSS_PATH = BUNDLED_STYLESHEET
+
     def __init__(self, dialog: SessionGitTrustDialog) -> None:
         super().__init__()
         self.dialog = dialog
@@ -225,6 +229,8 @@ class _DialogHarness(ConsolidatedCSSApp):
 class _WorkspaceHarness(ConsolidatedCSSApp):
     """Mount one real File Notes workspace."""
 
+    CSS_PATH = BUNDLED_STYLESHEET
+
     def __init__(self, workspace: LibraryFileNotesWorkspace) -> None:
         super().__init__()
         self.workspace = workspace
@@ -235,6 +241,8 @@ class _WorkspaceHarness(ConsolidatedCSSApp):
 
 class _RemountWorkspaceHarness(ConsolidatedCSSApp):
     """Mount one retained workspace beneath a removable host."""
+
+    CSS_PATH = BUNDLED_STYLESHEET
 
     def __init__(self, workspace: LibraryFileNotesWorkspace) -> None:
         super().__init__()

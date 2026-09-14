@@ -397,7 +397,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         first frame rather than flashing the unfiltered page.
         """
         toolbar = Vertical(id="items-toolbar")
-        toolbar.styles.height = 2
+        toolbar.add_class("h-2")
         toolbar.styles.min_height = 2
         with toolbar:
             with Horizontal(

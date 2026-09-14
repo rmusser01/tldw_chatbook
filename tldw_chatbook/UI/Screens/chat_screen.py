@@ -2333,6 +2333,8 @@ class ChatScreen(BaseAppScreen):
             next_sibling = siblings[siblings.index(current) + 1]
         except (IndexError, ValueError):
             return
+        replacement.remove_class(*(name for name in replacement.classes if name.startswith("w-")))
+        # ds-runtime: The replacement preserves the existing mounted region width during a context swap.
         replacement.set_styles(width=current.styles.width)
         replacement.styles.min_width = current.styles.min_width
         replacement.styles.min_height = current.styles.min_height
@@ -12612,8 +12614,12 @@ class ChatScreen(BaseAppScreen):
                 # (2026-08-29 UX audit). Stay mounted so the id keeps
                 # resolving, but paint nothing.
                 blank = Static("", id="console-character-avatar-empty")
-                blank.set_styles(width=0)
-                blank.set_styles(height=0)
+                blank.remove_class(*(name for name in blank.classes if name.startswith("w-")))
+                blank.set_styles(width=None)
+                blank.add_class("w-0")
+                blank.remove_class(*(name for name in blank.classes if name.startswith("h-")))
+                blank.set_styles(height=None)
+                blank.add_class("h-0")
                 blank.styles.display = "none"
                 return blank
             # width auto, not the Static default 100%: the holder is
@@ -12621,12 +12627,18 @@ class ChatScreen(BaseAppScreen):
             # an auto container resolves to 0x0 under Textual 8.x -- the
             # placeholder would mount but paint nothing (task-3793).
             placeholder = Static("no avatar", id="console-character-avatar-empty")
-            placeholder.set_styles(width="auto")
+            placeholder.remove_class(*(name for name in placeholder.classes if name.startswith("w-")))
+            placeholder.set_styles(width=None)
+            placeholder.add_class("w-auto")
             return placeholder
         if box == (0, 0):
             hidden = Static("", id="console-character-avatar-image")
-            hidden.set_styles(width=0)
-            hidden.set_styles(height=0)
+            hidden.remove_class(*(name for name in hidden.classes if name.startswith("w-")))
+            hidden.set_styles(width=None)
+            hidden.add_class("w-0")
+            hidden.remove_class(*(name for name in hidden.classes if name.startswith("h-")))
+            hidden.set_styles(height=None)
+            hidden.add_class("h-0")
             hidden.styles.display = "none"
             return hidden
         resolved_box = box or character_avatar_box(
@@ -12656,7 +12668,11 @@ class ChatScreen(BaseAppScreen):
                     box_cols,
                     box_lines,
                 )
+                widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+                # ds-runtime: The image aspect ratio is fitted to the measured available avatar cell box.
                 widget.set_styles(width=w)
+                widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+                # ds-runtime: The fitted image aspect ratio determines its terminal row count.
                 widget.set_styles(height=h)
                 return widget
             except Exception:
@@ -12693,9 +12709,16 @@ class ChatScreen(BaseAppScreen):
             # which is sized for the box anyway.
             grid_size = explicit_cell_size(pixels)
             if grid_size is not None:
+                widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+                widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+                # ds-runtime: The image aspect ratio is fitted to the measured available avatar cell box.
                 widget.set_styles(width=grid_size[0], height=grid_size[1])
             else:
+                widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+                # ds-runtime: The image aspect ratio is fitted to the measured available avatar cell box.
                 widget.set_styles(width=box_cols)
+                widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+                # ds-runtime: The avatar fallback uses the image-fitted cell box row count.
                 widget.set_styles(height=box_lines)
             widget.styles.max_width = box_cols
             widget.styles.max_height = box_lines
@@ -12703,7 +12726,9 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             logger.opt(exception=True).debug("avatar: pixels build failed")
             placeholder = Static("no avatar", id="console-character-avatar-empty")
-            placeholder.set_styles(width="auto")
+            placeholder.remove_class(*(name for name in placeholder.classes if name.startswith("w-")))
+            placeholder.set_styles(width=None)
+            placeholder.add_class("w-auto")
             return placeholder
 
     def _console_messages_from_conversation_tree(
@@ -14782,7 +14807,9 @@ class ChatScreen(BaseAppScreen):
             id=card_state.container_id,
             classes=card_state.container_classes,
         )
-        container.set_styles(height="auto")
+        container.remove_class(*(name for name in container.classes if name.startswith("h-")))
+        container.set_styles(height=None)
+        container.add_class("h-auto")
         container.styles.min_height = 0
         return container
 
@@ -14795,7 +14822,9 @@ class ChatScreen(BaseAppScreen):
             markup=False,
         )
         widget.styles.display = "none"
-        widget.set_styles(height=0)
+        widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+        widget.set_styles(height=None)
+        widget.add_class("h-0")
         widget.styles.min_height = 0
         widget.styles.max_height = 0
         return widget
@@ -14806,7 +14835,9 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleControlBar:
         """Keep the legacy Console control seam mounted without layout cost."""
         widget.styles.display = "none"
-        widget.set_styles(height=0)
+        widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+        widget.set_styles(height=None)
+        widget.add_class("h-0")
         widget.styles.min_height = 0
         widget.styles.max_height = 0
         return widget
@@ -14814,7 +14845,9 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _compact_console_workbench_widget(widget: Any, height: int = 1) -> Any:
         """Keep Console Workbench primitives visible without shrinking the grid."""
-        widget.set_styles(height=height)
+        widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+        widget.set_styles(height=None)
+        widget.add_class(f"h-{height}")
         widget.styles.min_height = height
         widget.styles.max_height = height
         return widget
@@ -14823,7 +14856,9 @@ class ChatScreen(BaseAppScreen):
     def _hidden_console_workbench_widget(widget: Any) -> Any:
         """Keep Console Workbench compatibility seams mounted without layout cost."""
         widget.styles.display = "none"
-        widget.set_styles(height=0)
+        widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+        widget.set_styles(height=None)
+        widget.add_class("h-0")
         widget.styles.min_height = 0
         widget.styles.max_height = 0
         return widget
@@ -15076,12 +15111,16 @@ class ChatScreen(BaseAppScreen):
         if should_show:
             row_count = copy.count("\n") + 1
             widget.styles.display = "block"
+            widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+            # ds-runtime: Recovery copy line count determines its visible row count.
             widget.set_styles(height=row_count)
             widget.styles.min_height = row_count
             widget.styles.max_height = row_count
         else:
             widget.styles.display = "none"
-            widget.set_styles(height=0)
+            widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+            widget.set_styles(height=None)
+            widget.add_class("h-0")
             widget.styles.min_height = 0
             widget.styles.max_height = 0
         widget._console_copy_block_applied = cache_value
@@ -15550,7 +15589,9 @@ class ChatScreen(BaseAppScreen):
             id="console-library-search-region",
             classes="console-inspector-context-section",
         )
-        container.set_styles(height="auto")
+        container.remove_class(*(name for name in container.classes if name.startswith("h-")))
+        container.set_styles(height=None)
+        container.add_class("h-auto")
         container.styles.min_height = 0
         return container
 
@@ -15600,7 +15641,9 @@ class ChatScreen(BaseAppScreen):
             id=readiness.container_id,
             classes=readiness.container_classes,
         )
-        container.set_styles(height="auto")
+        container.remove_class(*(name for name in container.classes if name.startswith("h-")))
+        container.set_styles(height=None)
+        container.add_class("h-auto")
         container.styles.min_height = 0
         return container
 
@@ -16050,7 +16093,9 @@ class ChatScreen(BaseAppScreen):
                 left_handle_width = (
                     ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 13
                 )
-                left_handle.set_styles(width=left_handle_width)
+                left_handle.remove_class(*(name for name in left_handle.classes if name.startswith("w-")))
+                left_handle.set_styles(width=None)
+                left_handle.add_class("w-3" if stack_rail_labels else "w-13")
                 left_handle.styles.min_width = left_handle_width
                 left_handle.styles.max_width = left_handle_width
                 if rail_state.left_open or rail_state.single_pane:
@@ -16199,7 +16244,9 @@ class ChatScreen(BaseAppScreen):
                     default_durability_state=(self._console_default_durability_state()),
                 )
                 left_rail.can_focus = True
-                left_rail.set_styles(width="3fr")
+                left_rail.remove_class(*(name for name in left_rail.classes if name.startswith("w-")))
+                left_rail.set_styles(width=None)
+                left_rail.add_class("w-3fr")
                 # TASK-19639 (formerly TASK-18913) compact contract: at exactly 100 columns the
                 # workspace grid has all 100 application columns. Default
                 # horizontal-label geometry resolves as Context 30 + main
@@ -16221,7 +16268,9 @@ class ChatScreen(BaseAppScreen):
                 # sizing stays here because it describes this pane among its
                 # rail siblings (3fr / 13fr / 4fr).
                 main_column = self._build_console_center()
-                main_column.set_styles(width="13fr")
+                main_column.remove_class(*(name for name in main_column.classes if name.startswith("w-")))
+                main_column.set_styles(width=None)
+                main_column.add_class("w-13fr")
                 # TASK-2154.1 (LY-09): below 84 the handles hide and the main
                 # minimum is waived. The default layout is transcript-only;
                 # budget-eligible explicit rails may still render from their
@@ -16310,7 +16359,9 @@ class ChatScreen(BaseAppScreen):
                     agent_fleet_section_state=agent_fleet_section_state,
                 )
                 right_rail.can_focus = True
-                right_rail.set_styles(width="4fr")
+                right_rail.remove_class(*(name for name in right_rail.classes if name.startswith("w-")))
+                right_rail.set_styles(width=None)
+                right_rail.add_class("w-4fr")
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
@@ -16328,7 +16379,9 @@ class ChatScreen(BaseAppScreen):
                 right_handle_width = (
                     ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 11
                 )
-                right_handle.set_styles(width=right_handle_width)
+                right_handle.remove_class(*(name for name in right_handle.classes if name.startswith("w-")))
+                right_handle.set_styles(width=None)
+                right_handle.add_class("w-3" if stack_rail_labels else "w-11")
                 right_handle.styles.min_width = right_handle_width
                 right_handle.styles.max_width = right_handle_width
                 if rail_state.right_open or rail_state.single_pane:

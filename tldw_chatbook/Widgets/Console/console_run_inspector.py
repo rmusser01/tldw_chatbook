@@ -135,7 +135,9 @@ class ConsoleInspectorMore(Vertical):
         body.display = open
         body.styles.display = "block" if open else "none"
         super().__init__(toggle, body, id="console-inspector-more")
-        self.set_styles(height="auto" if open else 2)
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto" if open else "h-2")
 
     def on_mount(self) -> None:
         """Apply the initial disclosure state after mounting."""
@@ -154,7 +156,9 @@ class ConsoleInspectorMore(Vertical):
         body = bodies.first(Vertical)
         body.display = self.open
         body.styles.display = "block" if self.open else "none"
-        self.set_styles(height="auto" if self.open else 2)
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto" if self.open else "h-2")
         for heading in body.query(".console-inspector-group-heading"):
             heading.can_focus = self.open
 
@@ -238,7 +242,9 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         self._pending_more_focus_recovery = False
         self._pending_more_focus_section_id: str | None = None
         self._report_unowned_content(ownership)
-        self.set_styles(height="auto")
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         self.styles.min_height = 0
         #: Count of wholesale recomposes taken by ``sync_state`` (test seam).
         self.recompose_count = 0
@@ -600,7 +606,9 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         # affordance and the explanation -- DESIGN.md forbids hiding why an
         # action is unavailable and names this surface -- and made action rows
         # appear and vanish between turns, costing spatial memory.
-        button.set_styles(height=1)
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        button.set_styles(height=None)
+        button.add_class("h-1")
         button.styles.min_height = 1
         return button
 

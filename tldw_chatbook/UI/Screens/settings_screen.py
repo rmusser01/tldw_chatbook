@@ -21095,7 +21095,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 # Inline height: same bundle-collapse guard as the impact
                 # pane below.
-                detail_pane.set_styles(height="100%")
+                detail_pane.add_class("h-full")
                 yield detail_pane
                 yield self._column_divider("settings-detail-impact-divider")
                 impact_pane = SettingsRegion(
@@ -21108,7 +21108,7 @@ class SettingsScreen(BaseAppScreen):
                 # sizes a scroll container, not a plain Vertical -- without
                 # this the 1fr body below collapses to zero (StyledSettings
                 # harness caught it; the plain harness cannot).
-                impact_pane.set_styles(height="100%")
+                impact_pane.add_class("h-full")
                 yield impact_pane
             # task-2835: keyboard-reachable mirror of the focused control's
             # hover-only tooltip; updated by handle_descendant_focus.
@@ -21138,7 +21138,7 @@ class SettingsScreen(BaseAppScreen):
         # (RAG showed no State line at all in evidence).
         yield self._render_category_state_banner(active_summary.category)
         detail_body = detail_pane_container(id="settings-detail-pane-body")
-        detail_body.set_styles(height="1fr")
+        detail_body.add_class("h-fill")
         detail_body.styles.scrollbar_size_vertical = 1
         with detail_body:
             yield from self._render_detail_pane()
@@ -21150,7 +21150,7 @@ class SettingsScreen(BaseAppScreen):
         # Inline styles, not CSS: the app-tier bundle outranks screen CSS and
         # a 100%-height default would collapse inside the auto-flow wrapper
         # (same guard as the image viewer modal).
-        impact_body.set_styles(height="1fr")
+        impact_body.add_class("h-fill")
         impact_body.styles.scrollbar_size_vertical = 1
         with impact_body:
             yield from self._render_impact_pane_body()
@@ -21161,8 +21161,8 @@ class SettingsScreen(BaseAppScreen):
             "▼ more — scroll the inspector",
             id="settings-impact-overflow-hint",
         )
-        overflow_hint.set_styles(height=1)
-        overflow_hint.set_styles(color="gray")
+        overflow_hint.add_class("h-1")
+        overflow_hint.add_class("ds-text-muted")
         overflow_hint.display = False
         yield overflow_hint
 

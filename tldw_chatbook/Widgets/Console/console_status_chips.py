@@ -407,7 +407,9 @@ class ConsoleStatusChips(Horizontal):
         self._cost_state = cost_state
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
         self._collapsed = bool(collapsed)
-        self.set_styles(height=1)
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-1")
         self.styles.min_height = 1
         self.styles.max_height = 1
 
@@ -442,13 +444,17 @@ class ConsoleStatusChips(Horizontal):
                 compact=True,
             )
             collapse_button.tooltip = "Collapse status details."
-            collapse_button.set_styles(width=9)
+            collapse_button.remove_class(*(name for name in collapse_button.classes if name.startswith("w-")))
+            collapse_button.set_styles(width=None)
+            collapse_button.add_class("w-9")
             collapse_button.styles.min_width = 9
             collapse_button.styles.max_width = 9
             collapse_button.styles.line_pad = 0
             yield collapse_button
             chip_scroll = HorizontalScroll(id="console-status-chip-scroll")
-            chip_scroll.set_styles(height=1)
+            chip_scroll.remove_class(*(name for name in chip_scroll.classes if name.startswith("h-")))
+            chip_scroll.set_styles(height=None)
+            chip_scroll.add_class("h-1")
             chip_scroll.styles.min_height = 1
             chip_scroll.styles.max_height = 1
             chip_scroll.styles.scrollbar_size_horizontal = 0
@@ -530,7 +536,9 @@ class ConsoleStatusChips(Horizontal):
                 compact=True,
             )
             expand_button.tooltip = "Expand status details."
-            expand_button.set_styles(width=9)
+            expand_button.remove_class(*(name for name in expand_button.classes if name.startswith("w-")))
+            expand_button.set_styles(width=None)
+            expand_button.add_class("w-9")
             expand_button.styles.min_width = 9
             expand_button.styles.max_width = 9
             expand_button.styles.line_pad = 0

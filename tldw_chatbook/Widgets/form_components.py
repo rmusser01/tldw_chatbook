@@ -165,7 +165,7 @@ def create_status_area(
     # Apply dynamic styling
     area.styles.min_height = min_height
     area.styles.max_height = max_height
-    area.styles.height = "auto"
+    area.add_class("h-auto")
     yield area
 
 

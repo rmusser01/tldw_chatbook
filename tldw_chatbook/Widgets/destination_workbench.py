@@ -71,5 +71,5 @@ class DestinationModeStrip(Horizontal):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.styles.height = DESTINATION_MODE_STRIP_HEIGHT
+        self.add_class("h-1")
         self.styles.min_height = DESTINATION_MODE_STRIP_HEIGHT

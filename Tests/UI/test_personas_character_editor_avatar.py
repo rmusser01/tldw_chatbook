@@ -15,7 +15,7 @@ from textual.app import App, ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.widgets import Button
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
@@ -47,6 +47,9 @@ from Tests.UI.test_personas_dictionaries import PersonasTestApp, patch_character
 
 
 class _Host(ConsolidatedCSSApp):
+    # Fixed thumbnail dimensions now come from app-tier token classes.
+    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+
     def __init__(self):
         super().__init__()
         self.removed = 0
@@ -462,7 +465,6 @@ class TestCharacterEditorAvatarThumbnailFit:
             assert len(editor.query("#personas-char-editor-avatar-thumb > *")) == 1
 
 
-
 # ===================================================================
 # task-3793: no-fold thumbnail pins.
 #
@@ -540,9 +542,7 @@ async def test_expression_thumbnail_static_matches_mosaic_grid_no_fold():
         mosaic = _cover_mosaic()
         ed.set_expression_thumbnail("thinking", mosaic)
         await pilot.pause()
-        thumb_box = ed.query_one(
-            "#personas-char-editor-expr-thinking-thumb", Container
-        )
+        thumb_box = ed.query_one("#personas-char-editor-expr-thinking-thumb", Container)
         static = thumb_box.query_one(Static)
         assert static.region.height == len(mosaic.plain.split("\n"))
         assert static.region.width <= thumb_box.content_size.width
@@ -583,9 +583,7 @@ async def test_thumbnails_fall_back_to_box_dims_for_non_text_renderable():
         ed.set_expression_thumbnail("thinking", Panel("thinking"))
         await pilot.pause()
         avatar_box = ed.query_one("#personas-char-editor-avatar-thumb", Container)
-        expr_box = ed.query_one(
-            "#personas-char-editor-expr-thinking-thumb", Container
-        )
+        expr_box = ed.query_one("#personas-char-editor-expr-thinking-thumb", Container)
         for box in (avatar_box, expr_box):
             static = box.query_one(Static)
             assert static.styles.width.value == AVATAR_THUMB_COLS

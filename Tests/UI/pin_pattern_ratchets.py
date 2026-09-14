@@ -1,26 +1,13 @@
-"""Pin current Python ad-hoc style counts as the ratchet baseline (spec 3.7/3.10).
+"""Verify both hard-zero floors before writing the empty baseline artifact.
 
-Usage (from the repo root)::
+Usage: .venv/bin/python Tests/UI/pin_pattern_ratchets.py
 
-    .venv/bin/python Tests/UI/pin_pattern_ratchets.py
-
-Rewrites ``Tests/UI/pattern_ratchet_baseline.json`` with the current
-comment-stripped ``python_styles`` counts, then prints the total.  The
-governance test (``Tests/UI/test_component_pattern_governance.py``) fails on
-any count above this baseline; the floor is zero.  Run this deliberately when
-an intentional migration step lowers counts and you want to re-pin, and
-commit the resulting JSON with the change that earned it (ADR-161).
-
-The dimension side needs NO baseline since ADR-161 task 11 reached its hard
-zero: the governance test flat-bans raw numeric dimension literals in every
-sheet except token definitions (``core/_variables.tcss`` -- raw values are
-legal only there by design, ADR-150).  This script still scans dimensions
-with the same regex as a GUARD: it refuses to write a baseline while any
-non-tokens sheet carries a literal, so a regression cannot be pinned away.
-
-The counting regexes here are byte-identical to the ones in the governance
-test -- if you change one, change both (spec 3.7 pins them as one contract).
+Neither floor can be raised by pinning. The shared AST inventory covers all
+Python write forms and preserves explicitly documented runtime exceptions.
+The dimension regex matches the governance test; token definitions alone are
+exempt from the sheet scan. No arguments are accepted to avoid accidental pins.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,19 +15,24 @@ import re
 import sys
 from pathlib import Path
 
+from python_style_inventory import inventory_styles
+
 # This script has NO argument parser ON PURPOSE: any invocation re-pins the
 # baseline (an accidental `--help` run executed the pin during ADR-161 task 11
 # -- luckily onto identical counts). Refuse stray argv instead of guessing.
 if len(sys.argv) != 1:
-    sys.exit("refusing: this script takes no arguments (it re-pins the ratchet baseline); pass none to pin")
+    sys.exit(
+        "refusing: this script takes no arguments (it re-pins the ratchet baseline); pass none to pin"
+    )
 
 ROOT = Path(__file__).resolve().parents[2]
 CSS = ROOT / "tldw_chatbook/css"
 PKG = ROOT / "tldw_chatbook"
 
 _COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-_DIM = re.compile(r"\b(?:padding|margin|width|height)(?:-(?:top|right|bottom|left))?\s*:\s*[0-9]")
-_PYSTYLE = re.compile(r"\.styles\.(?:background|color|border\w*|width|height|padding\w*|margin\w*|opacity\w*)\s*=\s*[^=]")
+_DIM = re.compile(
+    r"\b(?:padding|margin|width|height)(?:-(?:top|right|bottom|left))?\s*:\s*(?:[^;{}\s]+\s+)*[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)"
+)
 
 
 def sheets() -> list[Path]:
@@ -68,11 +60,21 @@ if dim_offenders:
         + "\n  ".join(dim_offenders)
     )
 
+offenders = []
+for path in sorted(PKG.rglob("*.py")):
+    for write in inventory_styles(path.read_text(encoding="utf-8")):
+        if write.violation:
+            offenders.append(
+                f"{path.relative_to(PKG)}:{write.line}: "
+                f"{write.form} {write.property} ({write.value_kind})"
+            )
+if offenders:
+    sys.exit(
+        "refusing to pin: Python visual-style floor is HARD ZERO "
+        "(ADR-161 task 12):\n  " + "\n  ".join(offenders)
+    )
+
 baseline: dict[str, dict[str, int]] = {"python_styles": {}}
-for p in sorted(PKG.rglob("*.py")):
-    n = len(_PYSTYLE.findall(p.read_text(encoding="utf-8", errors="ignore")))
-    if n:
-        baseline["python_styles"][str(p.relative_to(PKG))] = n
 Path(__file__).parent.joinpath("pattern_ratchet_baseline.json").write_text(
     json.dumps(baseline, indent=2, sort_keys=True) + "\n", encoding="utf-8"
 )

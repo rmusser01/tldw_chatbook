@@ -22,11 +22,8 @@ from .consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 
 FIXTURES = Path(__file__).parent / "snapshots" / "pattern_gallery"
 
-#: Tall enough that every family preview (content is ~207 rows at 120
-#: columns after task 12 added the sizing-utilities strip) is on screen;
-#: an exact fit would risk a scrollbar flickering into the snapshot on
-#: rounding.
-SIZE = (120, 208)
+#: Includes the bounded utility samples added during the Python migration.
+SIZE = (120, 360)
 
 
 def _normalize(svg: str) -> str:

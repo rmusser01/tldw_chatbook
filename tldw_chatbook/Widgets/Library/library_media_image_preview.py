@@ -231,7 +231,9 @@ def build_media_image_widget(
             width, height = fit_image_cell_size(
                 image.width, image.height, cols, lines
             )
+            # ds-runtime: image aspect ratio fitted to the measured preview box
             widget.set_styles(width=width)
+            # ds-runtime: image aspect ratio fitted to the measured preview box
             widget.set_styles(height=height)
             return widget
         except Exception:
@@ -239,6 +241,8 @@ def build_media_image_widget(
 
     mosaic, mosaic_width, mosaic_height = _mosaic_renderable(image, cols, lines)
     widget = Static(mosaic)
+    # ds-runtime: image aspect ratio fitted to the measured preview box
     widget.set_styles(width=mosaic_width)
+    # ds-runtime: image aspect ratio fitted to the measured preview box
     widget.set_styles(height=mosaic_height)
     return widget
