@@ -409,13 +409,13 @@ jobs:
     name: Backup product qualification - Windows 2022 - Python 3.12 - ${{ matrix.selection }}
     runs-on: windows-2022
     if: github.event_name == 'workflow_dispatch' && inputs.backup_platform_only == true
-    timeout-minutes: 90
+    timeout-minutes: ${{ matrix.selection == 'support' && 135 || 90 }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        selection: ${{ fromJSON(inputs.backup_platform_selection == 'full' && '["plain","encrypted","encrypted-credentials","roundtrip","replacement","rollback","support"]' || inputs.backup_platform_selection == 'replacement-diagnostic' && '["replacement"]' || inputs.backup_platform_selection == 'encrypted-diagnostic' && '["encrypted"]' || inputs.backup_platform_selection == 'support-diagnostic' && '["support"]' || inputs.backup_platform_selection == 'native-close-diagnostic' && '["native-close-diagnostic"]' || '["restore-diagnostic"]') }}
+        selection: ${{ fromJSON(inputs.backup_platform_selection == 'full' && '["plain","encrypted","encrypted-credentials","roundtrip","replacement","rollback","support"]' || inputs.backup_platform_selection == 'replacement-diagnostic' && '["replacement"]' || inputs.backup_platform_selection == 'encrypted-diagnostic' && '["encrypted"]' || inputs.backup_platform_selection == 'support-diagnostic' && '["support-diagnostic"]' || inputs.backup_platform_selection == 'native-close-diagnostic' && '["native-close-diagnostic"]' || '["restore-diagnostic"]') }}
 
     steps:
     - uses: actions/checkout@v4

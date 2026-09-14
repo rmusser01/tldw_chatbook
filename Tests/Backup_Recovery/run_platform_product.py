@@ -67,6 +67,7 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_runtime_cache_revisit.py",
     "Tests/Backup_Recovery/test_initial_screen_observation.py",
     "Tests/Backup_Recovery/test_caller_cache_retirement.py",
+    "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
     "Tests/Backup_Recovery/test_prompt_count_admission.py",
     "Tests/Backup_Recovery/test_capture_root_order.py",
     "Tests/Backup_Recovery/test_admission_diagnostics.py",
@@ -116,10 +117,21 @@ _RESTORE_DIAGNOSTIC_TESTS = (
         "test_f9_created_archive_restores_and_opens_through_actual_controls[plain]"
     ),
 )
+_SUPPORT_DIAGNOSTIC_TESTS = (
+    "Tests/Backup_Recovery/test_mounted_console_backup.py",
+    "Tests/Backup_Recovery/test_profile_open.py::test_profile_open_requires_actual_mounted_local_reads[console_quit]",
+    "Tests/Backup_Recovery/test_profile_open.py::test_profile_open_requires_actual_mounted_local_reads[console_edit]",
+    "Tests/Backup_Recovery/test_large_recovery_records.py::test_large_collection_completes_actual_isolated_publication",
+    "Tests/Backup_Recovery/test_bound_config_siblings.py::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-emoji]",
+    "Tests/Backup_Recovery/test_bound_config_siblings.py::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-runtime]",
+    "Tests/Backup_Recovery/test_bound_config_siblings.py::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-sidebar]",
+)
 _PRODUCT_SELECTIONS = {
     "full": (
         *_PRODUCT_TESTS,
         "Tests/Backup_Recovery/test_default_service_replacement.py",
+        "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py",
+        "Tests/Backup_Recovery/test_eval_rollback_retention.py",
     ),
     "restore-diagnostic": _RESTORE_DIAGNOSTIC_TESTS,
     "plain": _RESTORE_DIAGNOSTIC_TESTS,
@@ -129,9 +141,12 @@ _PRODUCT_SELECTIONS = {
     "replacement": (
         *_PRODUCT_TESTS[3:4],
         "Tests/Backup_Recovery/test_default_service_replacement.py",
+        "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py",
+        "Tests/Backup_Recovery/test_eval_rollback_retention.py",
     ),
     "rollback": _PRODUCT_TESTS[4:5],
     "support": (_PRODUCT_TESTS[0], *_PRODUCT_TESTS[5:]),
+    "support-diagnostic": _SUPPORT_DIAGNOSTIC_TESTS,
     "native-close-diagnostic": (
         "Tests/TTS/test_profile_native_close_contract.py::test_native_repository_close_preserves_proven_state_and_exclusion",
     ),
@@ -739,7 +754,7 @@ def run(
         phase="product",
         tests=product_tests,
         noconftest=False,
-        timeout_seconds=80 * 60,
+        timeout_seconds=(120 if product_selection == "support" else 80) * 60,
     )
 
     installed = _installed_receipts(private_root)

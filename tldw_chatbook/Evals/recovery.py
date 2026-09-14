@@ -408,6 +408,8 @@ def _original_definition_paths(
     from tldw_chatbook.Backup_Recovery.journal import _Rollback
     from tldw_chatbook.Backup_Recovery.restore_plan import _ancestor
 
+    from . import _default_config_path
+
     target = plan.target
     if target is None or not target.complete:
         raise ValueError("eval_retained_originals_unverified")
@@ -447,6 +449,10 @@ def _original_definition_paths(
         path = item.path
         if path is None or item.status != "included":
             raise ValueError("eval_retained_owner_unverified")
+        if preserved_only and path == _default_config_path():
+            # Native discovery already declares the installed canonical file;
+            # it is not an extra source authorized by this recovery copy.
+            continue
         saved = safety.get(item.logical_id)
         covered = (
             not preserved_only

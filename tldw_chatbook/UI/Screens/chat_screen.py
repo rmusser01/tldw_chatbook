@@ -21448,6 +21448,31 @@ class ChatScreen(BaseAppScreen):
                 and inspector state). Other callers may omit it; it is
                 computed on demand when not given.
         """
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery.config_participants import operation
+
+        # Nested readers still check the current source; keep its native
+        # lifetime continuous for this synchronous refresh, never an await.
+        failure: BaseException | None = None
+        try:
+            with operation(config):
+                try:
+                    self._sync_console_control_bar_under_config(rail_state)
+                except BaseException as error:  # noqa: BLE001 - re-raised after native owner exit.
+                    # A UI error must not mark config persistence as failed.
+                    # Nested config failures retain their own failure state.
+                    failure = error
+        except BaseException as error:
+            if failure is not None and error is not failure:
+                raise error from failure
+            raise
+        if failure is not None:
+            raise failure
+
+    def _sync_console_control_bar_under_config(
+        self, rail_state: ConsoleRailState | None = None
+    ) -> None:
+        """Refresh the controls under the caller's checked config lifetime."""
         self._sync_console_pending_delete_confirmation()
         self._library_activity.sync_projection()
         control_state = self._build_console_control_state(

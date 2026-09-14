@@ -2,6 +2,7 @@
 
 import shutil
 from dataclasses import replace
+from pathlib import Path
 from threading import Event
 
 import pytest
@@ -26,10 +27,17 @@ def rolled_back_eval(tmp_path, monkeypatch, helper_resource_root, request):
     monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
     with replacement_case(tmp_path, monkeypatch, prepared=False) as case:
         candidate, plan, _, _, _, selector = case
-        covered = getattr(request, "param", True)
-        selected = selector.parent / "retained-eval.yaml"
-        selected.write_bytes(b"tasks:\n  original: true\n")
-        selected.chmod(0o600)
+        choice = getattr(request, "param", True)
+        covered = choice is True
+        if choice == "canonical-preserved":
+            from tldw_chatbook.Evals import _default_config_path
+
+            selected = _default_config_path()
+            assert selected.is_file()
+        else:
+            selected = selector.parent / "retained-eval.yaml"
+            selected.write_bytes(b"tasks:\n  original: true\n")
+            selected.chmod(0o600)
         item = StorageItem(
             "eval.definitions",
             "profile:profile:eval.definitions",
@@ -92,6 +100,37 @@ def test_known_original_without_rollback_coverage_refuses(rolled_back_eval):
     assert selected.read_bytes() == b"tasks:\n  original: true\n"
     with pytest.raises(ValueError, match="eval_retained_originals_unverified"):
         _DefinitionsAdapter().discover(context)
+
+
+@pytest.mark.parametrize("rolled_back_eval", ["canonical-preserved"], indirect=True)
+def test_preserved_canonical_eval_needs_no_retained_source_authority(rolled_back_eval):
+    from tldw_chatbook.Backup_Recovery.journal import _Prepared
+    from tldw_chatbook.Backup_Recovery.plan_records import load_plan
+    from tldw_chatbook.Evals.recovery import _original_definition_paths
+
+    journal, selected, selector, _ = rolled_back_eval
+    before = selected.read_bytes()
+    with journal._locked(exclusive=False) as parent:
+        rows = journal._records(parent)
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in rows if row.event == "prepared")
+    )
+    plan = load_plan(journal)
+    binding = next(
+        row
+        for row in bootstrap._records(Path(prepared.publication.bootstrap_root))[1]
+        if row["selector"] == str(selector)
+    )
+    assert ("profile:profile:eval.definitions", selected) in plan.preserve
+    assert "profile:profile:eval.definitions" not in plan.safety_scope
+    # Canonical native declaration needs no retained-extra root authority.
+    assert (
+        _original_definition_paths(
+            selector, binding, rows, prepared, plan, preserved_only=True
+        )
+        == ()
+    )
+    assert selected.read_bytes() == before
 
 
 def test_original_eval_retained_and_captured_without_incoming_owner_or_candidate(

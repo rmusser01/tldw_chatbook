@@ -4,6 +4,7 @@ import hashlib
 import shutil
 import stat
 import tomllib
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
@@ -459,6 +460,60 @@ def _stage_read_sources(plan):
             and item.path == root.path / item.metadata.relative_path
         ):
             sources[item.logical_id] = item
+    active_roots = {
+        item.metadata.root_id
+        for item in plan.target.items
+        if item.owner == "persona.assets"
+        and item.status == "included_directory"
+        and item.metadata is not None
+        and item.metadata.parent_id is not None
+        and retired.get(item.logical_id) == item.path
+    }
+    for key in active_roots:
+        semantic = [row for row in plan.target.items if row.logical_id == key]
+        parts = key.split(":")
+        if (
+            len(semantic) != 1
+            or len(parts) != 3
+            or parts[0] != "profile"
+            or parts[2] != "persona.assets"
+            or semantic[0].owner != "persona.assets"
+            or semantic[0].status != "included_directory"
+            or semantic[0].metadata is None
+            or semantic[0].metadata.kind != "directory"
+            or semantic[0].metadata.parent_id is not None
+            or semantic[0].metadata.root_id != key
+        ):
+            raise ValueError("local_snapshot_created_scope_unverified")
+        root = semantic[0]
+        core_key = f"profile:{parts[1]}:db.chachanotes.primary"
+        config_key = f"profile:{parts[1]}:config"
+        core = [row for row in plan.target.items if row.logical_id == core_key]
+        configs = [row for row in plan.target.items if row.logical_id == config_key]
+        if (
+            len(core) != 1
+            or core[0].owner != "db.chachanotes.primary"
+            or core[0].status != "included"
+            or core_key not in root.dependencies
+            or len(configs) != 1
+            or configs[0].owner != "config"
+            or configs[0].status != "included"
+            or config_key not in root.dependencies
+            or config_key not in core[0].dependencies
+        ):
+            raise ValueError("local_snapshot_created_scope_unverified")
+        sources[core_key] = core[0]
+        sources[config_key] = configs[0]
+        for item in plan.target.items:
+            if item.owner != root.owner or item.status != "included":
+                continue
+            if item.metadata is not None and item.metadata.root_id == key:
+                if (
+                    item.metadata.kind != "file"
+                    or item.path != root.path / item.metadata.relative_path
+                ):
+                    raise ValueError("local_snapshot_created_scope_unverified")
+                sources[item.logical_id] = item
     return tuple(sources.values())
 
 
@@ -956,6 +1011,144 @@ def _created_config_file_targets(
     return result
 
 
+def _created_persona_subtree(
+    item, saved, target, config, owner, prepared, *, session=None
+):
+    """Map an authenticated nested publication to its unchanged native graph."""
+    from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
+    from .profile_paths import database_path
+    from .storage_admission import _preview_reads, _read_recovery_file
+
+    root = saved.get(item.metadata.root_id)
+    identity = root.logical_id.split(":") if root is not None else ()
+    if (
+        root is None
+        or len(identity) != 3
+        or identity[0] != "profile"
+        or identity[2] != "persona.assets"
+        or root.owner != item.owner
+        or root.status != "included_directory"
+        or root.metadata is None
+        or root.metadata.kind != "directory"
+        or root.metadata.parent_id is not None
+        or root.metadata.root_id != root.logical_id
+        or root.metadata.relative_path != ""
+    ):
+        raise ValueError("local_snapshot_created_scope_unverified")
+    current, seen, ancestors = item, set(), []
+    while current is not root:
+        if current.logical_id in seen or current.metadata is None:
+            raise ValueError("local_snapshot_created_scope_unverified")
+        seen.add(current.logical_id)
+        parent = saved.get(current.metadata.parent_id)
+        if (
+            parent is None
+            or parent.owner != root.owner
+            or parent.status != "included_directory"
+            or parent.metadata is None
+            or parent.metadata.kind != "directory"
+            or current.metadata.kind != "directory"
+            or parent.metadata.root_id != root.logical_id
+            or current.metadata.root_id != root.logical_id
+            or current.path != root.path / current.metadata.relative_path
+            or parent.path != current.path.parent
+        ):
+            raise ValueError("local_snapshot_created_scope_unverified")
+        ancestors.append(parent)
+        current = parent
+    source_config = saved.get(f"profile:{identity[1]}:config")
+    source_core = saved.get(f"profile:{identity[1]}:db.chachanotes.primary")
+    if (
+        source_config is None
+        or source_config.owner != "config"
+        or source_config.status != "included"
+        or source_config.path != config.path
+        or source_core is None
+        or source_core.owner != "db.chachanotes.primary"
+        or source_core.status != "included"
+        or not {source_config.logical_id, source_core.logical_id}
+        <= set(root.dependencies)
+    ):
+        raise ValueError("local_snapshot_created_scope_unverified")
+    data = tomllib.loads(
+        _read_recovery_file("config", config.path, max_bytes=16 * 1024**2).decode(
+            "utf-8"
+        )
+    )
+    profile = config.logical_id.split(":", 2)[1]
+    data[DISCOVERY_CONTEXT_KEY] = DiscoveryContext(config.path, profile)
+    local_core = [
+        row
+        for row in target.items
+        if row.logical_id == f"profile:{profile}:db.chachanotes.primary"
+    ]
+    if (
+        owner._root(data) != root.path
+        or len(local_core) != 1
+        or local_core[0].owner != source_core.owner
+        or local_core[0].status != "included"
+        or local_core[0].path != source_core.path
+        or database_path(data, "chachanotes_db_path") != source_core.path
+    ):
+        raise ValueError("local_snapshot_created_scope_unverified")
+    # Native references must inspect a verified main/WAL copy, not live SHM.
+    # The held caller already supplies the existing finite capture scope.
+    with _preview_reads() if session is None else nullcontext():
+        observed = owner.discover(data)
+    current = {row.logical_id: row for row in target.items}
+    paths = {row.path for row in observed}
+    keys = {row.logical_id for row in observed}
+    matched = [
+        row for row in target.items if row.path in paths or row.logical_id in keys
+    ]
+    if (
+        len(current) != len(target.items)
+        or len(paths) != len(observed)
+        or len(keys) != len(observed)
+        or len(matched) != len(observed)
+        or any(
+            row.status not in {"included", "included_directory"}
+            or current.get(row.logical_id) != row
+            for row in observed
+        )
+    ):
+        raise ValueError("local_snapshot_created_owner_conflict")
+    matching = [row for row in observed if row.path == item.path]
+    if (
+        len(matching) != 1
+        or matching[0].metadata is None
+        or matching[0].metadata.relative_path != item.metadata.relative_path
+        or matching[0].metadata.root_id != f"profile:{profile}:persona.assets"
+        or matching[0].metadata.parent_id is None
+    ):
+        raise ValueError("local_snapshot_created_scope_unverified")
+    recorded = {
+        row.previous.path: row.previous
+        for row in prepared.directory_metadata
+        if row.owner_id == "persona.assets"
+    }
+    native = {row.logical_id: row for row in observed}
+    current, proved = matching[0], []
+    while current.metadata.parent_id is not None:
+        current = native[current.metadata.parent_id]
+        prior = recorded.get(str(current.path))
+        if (
+            prior is None
+            or not any(row.path == current.path for row in ancestors)
+            or current.status != "included_directory"
+            or current.metadata.kind != "directory"
+        ):
+            raise ValueError("local_snapshot_created_scope_unverified")
+        with pinned_directory(current.path) as descriptor:
+            info = os.fstat(descriptor)
+            if (info.st_dev, info.st_ino) != (prior.device, prior.inode):
+                raise ValueError("local_snapshot_created_root_changed")
+        proved.append((current.logical_id, current.path, info.st_dev, info.st_ino))
+    if len(proved) != len(ancestors):
+        raise ValueError("local_snapshot_created_scope_unverified")
+    return matching[0].logical_id, tuple(proved)
+
+
 def _created_destination_target(
     journal, original, prepared, rows, target, *, session=None, config_files=()
 ):
@@ -990,19 +1183,28 @@ def _created_destination_target(
         )
     ]
     if not artifacts or rows[-1].event != "committed":
-        return target, {}
+        return target, {}, {}
     document, _ = _created_manifest(journal, original, prepared, rows)
     limits = ArchiveLimits()
     saved = _items(document, original)
     owners = {owner.owner_id: owner for owner in install_adapters()}
     updated = list(target.items)
-    mapped_roots, observations = {}, []
+    mapped_roots, observations, active_ancestors = {}, [], {}
     for artifact in artifacts:
         item = saved.get(artifact.logical_id)
+        active_persona = (
+            item is not None
+            and item.owner == "persona.assets"
+            and item.status == "included_directory"
+            and item.metadata is not None
+            and item.metadata.kind == "directory"
+            and item.metadata.parent_id is not None
+        )
         if (
             item is None
             or item.metadata is None
             or item.metadata.parent_id is not None
+            and not active_persona
             or artifact.candidate is None
             or artifact.candidate.kind != "directory"
             or item.path != Path(artifact.target)
@@ -1014,10 +1216,16 @@ def _created_destination_target(
             and type(owner) is _Assets
             or item.owner == "eval.definitions"
             and type(owner) is _DefinitionsAdapter
+            or active_persona
+            and type(owner) is _Assets
         ):
             raise ValueError("local_snapshot_absence_unclassified")
         members = [
-            row for row in saved.values() if row.metadata.root_id == item.logical_id
+            row
+            for row in saved.values()
+            if row.metadata.root_id == item.logical_id
+            or active_persona
+            and (row.path == item.path or item.path in row.path.parents)
         ]
         if any(row.owner != item.owner for row in members) or not any(
             row.status == "included" for row in members
@@ -1107,6 +1315,21 @@ def _created_destination_target(
                 artifact.candidate.inode,
             ):
                 raise ValueError("local_snapshot_created_root_changed")
+            if active_persona:
+                (
+                    mapped_roots[artifact.logical_id],
+                    active_ancestors[artifact.logical_id],
+                ) = _created_persona_subtree(
+                    item, saved, target, config, owner, prepared, session=session
+                )
+                if (
+                    bootstrap._control_records(bootstrap.default_bootstrap_root())
+                    != before
+                ):
+                    raise ValueError("local_snapshot_created_scope_unverified")
+                if lease is not None and generation not in _witnesses(item.path, lease):
+                    raise ValueError("local_snapshot_created_scope_unverified")
+                continue
             context = DiscoveryContext(config.path, config.logical_id.split(":", 2)[1])
             entries = _RawDeclaration(item.owner)._tree(
                 {DISCOVERY_CONTEXT_KEY: context}, item.path
@@ -1167,15 +1390,21 @@ def _created_destination_target(
         items=tuple(sorted(updated, key=lambda row: row.logical_id)),
         scope_digest="",
     )
-    return replace(
-        result,
-        scope_digest=_evidence_digest(
-            {
-                "target": TypeAdapter(type(result)).dump_python(result, mode="json"),
-                "observed": observations,
-            }
+    return (
+        replace(
+            result,
+            scope_digest=_evidence_digest(
+                {
+                    "target": TypeAdapter(type(result)).dump_python(
+                        result, mode="json"
+                    ),
+                    "observed": observations,
+                }
+            ),
         ),
-    ), mapped_roots
+        mapped_roots,
+        active_ancestors,
+    )
 
 
 def _created_builtin_members(plan, root, *, seen=()):
@@ -1374,7 +1603,7 @@ def validate_snapshot_builtin_restore(
     return True
 
 
-def _known_absences(plan, original, prepared, created=None):
+def _known_absences(plan, original, prepared, created=None, *, active_ancestors=None):
     """Expose exact locally recorded absent targets as reviewed retirements."""
     from .projection_publication import dependent_retirements
     from .restore_plan import _fingerprint, _paths
@@ -1453,12 +1682,40 @@ def _known_absences(plan, original, prepared, created=None):
                 in {path.with_name(path.name + suffix) for suffix in ("-wal", "-shm")}
                 and entry.path.exists()
             ]
+        retained_ancestors = set()
+        for key, ancestor, device, inode in (active_ancestors or {}).get(
+            artifact.logical_id, ()
+        ):
+            row = current.get(key)
+            if (
+                created_key is None
+                or item.owner != "persona.assets"
+                or row is None
+                or row.owner != item.owner
+                or row.path != ancestor
+                or ancestor not in item.path.parents
+                or row.status != "included_directory"
+                or row.metadata is None
+                or item.metadata is None
+                or row.metadata.kind != "directory"
+                or row.metadata.root_id != item.metadata.root_id
+                or (key, ancestor) not in plan.restore
+                or ancestor in dict(plan.retire).values()
+                or ancestor in dict(plan.containers).values()
+            ):
+                raise ValueError("local_snapshot_absence_overlap")
+            with pinned_directory(ancestor) as descriptor:
+                info = os.fstat(descriptor)
+                if (info.st_dev, info.st_ino) != (device, inode):
+                    raise ValueError("local_snapshot_created_root_changed")
+            retained_ancestors.add((key, ancestor))
         if any(
             entry.path == restored
             or entry.path in restored.parents
             or restored in entry.path.parents
+            and (key, restored) not in retained_ancestors
             for entry in selected
-            for _, restored in plan.restore
+            for key, restored in plan.restore
         ):
             raise ValueError("local_snapshot_absence_overlap")
         retired.update((entry.logical_id, entry.path) for entry in selected)
@@ -1530,7 +1787,7 @@ def _preview(journal, proof, archive, target, acknowledged, *, session=None):
     config_files = _created_config_file_targets(
         journal, original, prepared, rows, target, session=session
     )
-    target, created = _created_destination_target(
+    target, created, active_ancestors = _created_destination_target(
         journal,
         original,
         prepared,
@@ -1583,7 +1840,9 @@ def _preview(journal, proof, archive, target, acknowledged, *, session=None):
         acknowledged_credential_issues=acknowledged,
         local_snapshot=snapshot,
     )
-    plan = _known_absences(plan, original, prepared, created)
+    plan = _known_absences(
+        plan, original, prepared, created, active_ancestors=active_ancestors
+    )
     verify_snapshot_source(plan, archive)
     _current_config_scope(plan, document)
     recheck_targets(plan)
