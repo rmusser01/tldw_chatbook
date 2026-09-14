@@ -27,6 +27,7 @@ from Tests.UI.test_library_shell import (
     _LibraryEvidenceGates,
     _active_library_screen,
     _build_test_app,
+    _link_library_items_to_active_workspace,
     _new_library_onboarding_app,
     _open_note_editor,
     _seed_conversations,
@@ -209,6 +210,80 @@ async def test_a_previous_hand_off_failure_clears_on_note_change_and_on_save():
         assert "failed" not in painted.lower()
 
     app.open_chat_with_handoff.assert_not_called()
+
+
+def _note_memberships(app, note_id: str) -> list:
+    return list(
+        app.workspace_registry_service.get_item_memberships(
+            item_type="note", item_id=note_id
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_hand_off_console_cannot_take_writes_no_workspace_link():
+    """Fix round 1: the seam is checked BEFORE the link is written.
+
+    Nothing in the app can remove an ``item_type="note"`` membership, so a
+    hand-off that cannot succeed must not leave one behind.
+    """
+    host, app = _notes_host(_two_notes()[:1])
+    app.open_chat_with_handoff = None
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        assert (
+            screen._library_workspace_depth_state(refresh=True).context_handoff_enabled
+            is False
+        ), "control: the gate is closed, so the link branch is the one taken"
+
+        screen.query_one("#library-note-use-in-console").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _transfer_status(screen) == (
+            "Can't use this note in Console — Console handoff is unavailable. "
+            "Next: restart Chatbook, then try again."
+        )
+
+    assert _note_memberships(app, "n-1") == []
+    app.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_hand_off_that_raises_rolls_back_the_link_it_wrote():
+    """Fix round 1: the only post-write failure undoes its own write."""
+    host, app = _notes_host(_two_notes()[:1])
+    app.open_chat_with_handoff = Mock(side_effect=RuntimeError("Console unavailable"))
+    registry = app.workspace_registry_service
+    real_link = registry.link_membership
+    links: list[str] = []
+
+    def recording_link(workspace_id, **kwargs):
+        links.append(kwargs["item_id"])
+        return real_link(workspace_id, **kwargs)
+
+    registry.link_membership = recording_link
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-use-in-console").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _transfer_status(screen) == (
+            "Can't use this note in Console — Console could not take it. "
+            "Next: try again."
+        )
+
+    assert links == ["n-1"], "control: the link really was written first"
+    assert _note_memberships(app, "n-1") == []
+    app.notify.assert_not_called()
 
 
 # --- task-32555 ---------------------------------------------------------------

@@ -4244,7 +4244,7 @@ class LibraryNotesController:
                 "keywords": keywords,
             },
         )
-    def _link_open_note_to_active_workspace(self) -> str:
+    def _link_open_note_to_active_workspace(self) -> tuple[str, str]:
         """Link the open note into the active workspace (task-32536 AC#1).
 
         The remedy the refusal used to name without offering -- the
@@ -4252,18 +4252,23 @@ class LibraryNotesController:
         the receipt: the hand-off's own status line reports the link.
 
         Returns:
-            The active workspace's display name, or ``""`` when nothing was
-            linked (no registry, no active workspace, no open note, or the
-            write failed) -- the hand-off stages nothing on ``""``.
+            ``(workspace_name, written_workspace_id)``. ``workspace_name`` is
+            the active workspace the note belongs to once this returns, or
+            ``""`` when nothing could be linked (no registry, no active
+            workspace, no open note, or the write failed) -- the hand-off
+            stages nothing on ``""``. ``written_workspace_id`` is set only
+            when THIS call inserted the membership, so the caller can roll
+            that insert back when the hand-off then fails.
         """
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         note_id = str(self._selected_note_id or "").strip()
         if registry is None or not note_id:
-            return ""
+            return "", ""
+        written_workspace_id = ""
         try:
             active = registry.get_active_workspace()
             if active is None:
-                return ""
+                return "", ""
             # ``link_membership`` is INSERT OR IGNORE; read first so a stale
             # cached gate never writes a membership that is already there.
             already_linked = any(
@@ -4281,14 +4286,48 @@ class LibraryNotesController:
                     item_id=note_id,
                     title=title or "Untitled Note",
                 )
+                written_workspace_id = active.workspace_id
         except Exception as error:
             logger.warning(
                 "Library note could not be linked to the active workspace",
                 error_type=type(error).__name__,
             )
-            return ""
+            return "", ""
         self._invalidate_library_workspace_depth_state()
-        return self._library_workspace_depth_state().workspace_name
+        return (
+            self._library_workspace_depth_state().workspace_name,
+            written_workspace_id,
+        )
+
+    def _unlink_open_note_from_workspace(self, workspace_id: str) -> bool:
+        """Undo the membership this hand-off just wrote.
+
+        No surface in the app removes an ``item_type="note"`` membership --
+        Notes has no unlink affordance and the only other unlink call site
+        (``Research_Workspace/local_adapter.remove_source``) is hardcoded to
+        media -- so a hand-off that fails after linking has to undo its own
+        write rather than strand one the user can neither see nor remove.
+
+        Args:
+            workspace_id: Workspace this hand-off linked the open note into.
+
+        Returns:
+            Whether the membership is gone.
+        """
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        note_id = str(self._selected_note_id or "").strip()
+        if registry is None or not note_id:
+            return False
+        try:
+            registry.unlink_membership(workspace_id, item_type="note", item_id=note_id)
+        except Exception as error:
+            logger.warning(
+                "Library note workspace link could not be rolled back",
+                error_type=type(error).__name__,
+            )
+            return False
+        self._invalidate_library_workspace_depth_state()
+        return True
 
     def _open_selected_library_note_handoff(self) -> tuple[str, str]:
         """Stage the note open in the editor into Console via the shared handoff.
@@ -4300,39 +4339,47 @@ class LibraryNotesController:
         active workspace first, and only a failed link refuses.
 
         Returns:
-            ``(blocker, linked_workspace)``. ``blocker`` is ``""`` on success,
-            else one sentence naming what stopped the hand-off and its
+            ``(blocker, completion)``. ``blocker`` is ``""`` on success, else
+            one complete sentence naming what stopped the hand-off and its
             remedy -- the operation's only message (AC#2), never a toast.
-            ``linked_workspace`` is the workspace display name when this
-            call made the link, else ``""``.
+            ``completion`` is the success line's clause naming the link this
+            call made, else ``""``.
         """
         payload = self._selected_library_note_handoff_payload()
         if payload is None:
-            return "no note is open. Next: open a note, then try again", ""
-        linked = ""
+            return "No note is open. Next: open a note, then try again.", ""
+        open_chat_with_handoff = getattr(
+            self.app_instance, "open_chat_with_handoff", None
+        )
+        # Read BEFORE the link below: nothing in the app removes a note
+        # membership, so a hand-off that cannot succeed must not write one.
+        if not callable(open_chat_with_handoff):
+            return (
+                "Can't use this note in Console — Console handoff is "
+                "unavailable. Next: restart Chatbook, then try again."
+            ), ""
+        completion = ""
+        workspace = ""
+        written_workspace_id = ""
         if not self._library_workspace_depth_state().context_handoff_enabled:
-            linked = self._link_open_note_to_active_workspace()
-            if not linked:
+            workspace, written_workspace_id = (
+                self._link_open_note_to_active_workspace()
+            )
+            if not workspace:
                 registry = getattr(
                     self.app_instance, "workspace_registry_service", None
                 )
                 if registry is None:
                     return (
-                        "the workspace registry is unavailable. "
-                        "Next: restart Chatbook, then try again"
+                        "Can't use this note in Console — the workspace "
+                        "registry is unavailable. Next: restart Chatbook, "
+                        "then try again."
                     ), ""
                 return (
-                    "the note could not be linked to the active workspace. "
-                    "Next: try again"
+                    "Can't use this note in Console — the note could not be "
+                    "linked to the active workspace. Next: try again."
                 ), ""
-        open_chat_with_handoff = getattr(
-            self.app_instance, "open_chat_with_handoff", None
-        )
-        if not callable(open_chat_with_handoff):
-            return (
-                "Console handoff is unavailable. "
-                "Next: restart Chatbook, then try again"
-            ), ""
+            completion = f"Linked to {workspace} · staged in Console"
         try:
             open_chat_with_handoff(payload, action_label="Use in Console")
         except Exception as error:
@@ -4340,8 +4387,19 @@ class LibraryNotesController:
                 "Library note Console handoff failed",
                 error_type=type(error).__name__,
             )
-            return "Console could not take it. Next: try again", ""
-        return "", linked
+            if written_workspace_id and not self._unlink_open_note_from_workspace(
+                written_workspace_id
+            ):
+                return (
+                    "Can't use this note in Console — Console could not take "
+                    f"it, and the note stayed linked to {workspace}. "
+                    "Next: try again."
+                ), ""
+            return (
+                "Can't use this note in Console — Console could not take it. "
+                "Next: try again."
+            ), ""
+        return "", completion
     @on(Button.Pressed, "#library-note-context-use-in-console")
     @on(Button.Pressed, "#library-note-use-in-console")
     def handle_library_note_use_in_console(self, event: Button.Pressed) -> None:
@@ -4355,16 +4413,12 @@ class LibraryNotesController:
         operation = self._begin_library_notes_operation("console")
         if operation is None:
             return
-        blocker, linked = self._open_selected_library_note_handoff()
+        blocker, completion = self._open_selected_library_note_handoff()
         self._finish_library_notes_operation(
             operation,
             success=not blocker,
-            completion_next_action=(
-                f"Linked to {linked} · staged in Console" if linked else ""
-            ),
-            failure_line=(
-                f"Can't use this note in Console — {blocker}." if blocker else ""
-            ),
+            completion_next_action=completion,
+            failure_line=blocker,
         )
     @on(Button.Pressed, "#library-notes-source-files")
     async def _show_library_file_notes(self, event: Button.Pressed) -> None:
