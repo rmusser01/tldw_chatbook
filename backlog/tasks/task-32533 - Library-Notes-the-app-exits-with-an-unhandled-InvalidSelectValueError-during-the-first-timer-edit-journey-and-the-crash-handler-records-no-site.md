@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-13 06:45'
-updated_date: '2026-09-14 08:50'
+updated_date: '2026-09-14 09:00'
 labels:
   - library
   - notes
@@ -161,8 +161,10 @@ itself, not one handed in, so there is nothing to check it against. (2) The
 keep-alive had no `pump is not self` clause, so an exception from a handler the
 App itself dispatches broke the *application* loop with no return code and no
 `panic()` -- the app would vanish on exit 0 with nothing in the log, the P0's
-symptom with less evidence than before. Without the clause the new pin does not
-fail, it hangs the pilot. Minors fixed with them: the notification now says the
+symptom with less evidence than before. The RED here is better evidence than the prediction was: with the clause
+removed the pin does not fail an assertion, it hangs the pilot for 35 s and
+dies on `textual.pilot.WaitForScreenTimeout` -- the silent vanish observed
+rather than reasoned about. Minors fixed with them: the notification now says the
 panel may "stop responding or disappear" (Textual prunes the widget on the
 handler path); the keep-alive covers `_flush_next_callbacks` and the inline
 `on_idle` dispatch as well as `_dispatch_message`; `_safe_identifier` keeps
