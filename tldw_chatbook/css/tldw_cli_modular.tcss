@@ -17914,13 +17914,17 @@ DetailGroup Contents {
 /* ========================================
  * Code Repository Copy/Paste Feature Styles
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* Repository browser container - now embedded in tab */
 .repo-window-container {
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
     background: $surface;
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 /* ========================================
@@ -17929,9 +17933,9 @@ DetailGroup Contents {
 
 .repo-header {
     dock: top;
-    height: 7;
+    height: $ds-size-7;
     background: $boost;
-    padding: 1;
+    padding: $ds-space-1;
     border-bottom: solid $primary;
 }
 
@@ -17941,23 +17945,23 @@ DetailGroup Contents {
     grid-columns: 3fr 1fr 1fr 1fr;
     grid-rows: 3 2;
     grid-gutter: 1 1;
-    width: 100%;
+    width: $ds-width-full;
 }
 
 .repo-url-input {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 #repo-url-input {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 #load-repo-btn {
-    min-width: 10;
+    min-width: $ds-size-10;
 }
 
 #token-config-btn {
-    min-width: 8;
+    min-width: $ds-size-8;
 }
 
 #token-config-btn.token-configured {
@@ -17966,12 +17970,12 @@ DetailGroup Contents {
 }
 
 #branch-selector {
-    min-width: 15;
+    min-width: $ds-size-15;
 }
 
 #repo-settings-btn {
-    width: 3;
-    min-width: 3;
+    width: $ds-size-3;
+    min-width: $ds-size-3;
 }
 
 /* Selection summary */
@@ -17981,7 +17985,7 @@ DetailGroup Contents {
     grid-size: 3 1;
     grid-columns: 1fr 1fr 1fr;
     align: left middle;
-    width: 100%;
+    width: $ds-width-full;
 }
 
 .summary-stat {
@@ -17995,29 +17999,29 @@ DetailGroup Contents {
 
 .filter-bar {
     dock: top;
-    height: 3;
+    height: $ds-size-3;
     background: $panel;
     layout: grid;
     grid-size: 6 1;
     grid-columns: 2fr 1fr 3 3 3 1fr;
     grid-gutter: 0 1;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     border-bottom: solid $primary-darken-1;
 }
 
 #file-search {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 #file-type-filter {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 .filter-quick-btn {
-    width: 3;
-    height: 3;
-    min-width: 3;
-    padding: 0;
+    width: $ds-size-3;
+    height: $ds-size-3;
+    min-width: $ds-size-3;
+    padding: $ds-space-0;
     background: $surface;
     border: solid $primary-darken-2;
 }
@@ -18035,7 +18039,7 @@ DetailGroup Contents {
     layout: grid;
     grid-size: 2 1;
     grid-columns: 2fr 3fr;
-    height: 1fr;
+    height: $ds-height-fill;
     background: $background;
 }
 
@@ -18043,43 +18047,43 @@ DetailGroup Contents {
 .tree-container {
     border-right: solid $primary;
     overflow: hidden;
-    padding: 1;
+    padding: $ds-space-1;
     background: $surface;
 }
 
 #repo-tree {
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
     border: none;
 }
 
 /* Preview container - now split into two sections */
 .preview-panel {
-    padding: 1;
+    padding: $ds-space-1;
     overflow: hidden;
     background: $surface;
     layout: vertical;
-    height: 100%;
+    height: $ds-height-full;
 }
 
 /* Aggregated text container (top half) */
 .aggregated-text-container {
-    height: 50%;
-    margin-bottom: 1;
+    height: $ds-percent-50;
+    margin-bottom: $ds-space-1;
     layout: vertical;
 }
 
 /* File preview container (bottom half) */
 .file-preview-container {
-    height: 50%;
+    height: $ds-percent-50;
     layout: vertical;
 }
 
 .preview-header {
-    height: 3;
+    height: $ds-size-3;
     border-bottom: dashed $primary-darken-2;
-    margin-bottom: 1;
-    padding: 0 1;
+    margin-bottom: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
     align: left middle;
 }
 
@@ -18094,25 +18098,25 @@ DetailGroup Contents {
 }
 
 .preview-content {
-    height: 1fr;
+    height: $ds-height-fill;
     border: round $primary-darken-2;
-    padding: 1;
+    padding: $ds-space-1;
     background: $surface-darken-1;
     overflow-y: auto;
 }
 
 #file-preview {
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
     background: $surface-darken-1;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 #aggregated-text {
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
     background: $surface-darken-1;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* ========================================
@@ -18120,47 +18124,47 @@ DetailGroup Contents {
  * ======================================== */
 
 TreeView {
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
     overflow-y: auto;
     overflow-x: hidden;
     border: solid $primary-darken-2;
-    padding: 1;
+    padding: $ds-space-1;
     background: $surface;
 }
 
 .tree-container {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
 .tree-loading {
-    width: 100%;
+    width: $ds-width-full;
     text-align: center;
-    padding: 2;
+    padding: $ds-space-2;
     color: $text-muted;
 }
 
 .tree-empty {
-    width: 100%;
+    width: $ds-width-full;
     text-align: center;
-    padding: 4;
+    padding: $ds-size-4;
     color: $text-muted;
 }
 
 /* Tree node styles */
 TreeNode {
-    height: 3;
-    width: 100%;
+    height: $ds-size-3;
+    width: $ds-width-full;
 }
 
 .tree-node-row {
     layout: grid;
     grid-size: 4 1;
     grid-columns: auto 3 3 1fr;
-    height: 3;
+    height: $ds-size-3;
     align: left middle;
-    width: 100%;
+    width: $ds-width-full;
 }
 
 .tree-node-row:hover {
@@ -18179,12 +18183,12 @@ TreeNode {
 }
 
 .tree-expand-btn {
-    width: 3;
-    height: 3;
-    min-width: 3;
+    width: $ds-size-3;
+    height: $ds-size-3;
+    min-width: $ds-size-3;
     background: transparent;
     border: none;
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 .tree-expand-btn:hover {
@@ -18193,18 +18197,18 @@ TreeNode {
 }
 
 .tree-expand-spacer {
-    width: 3;
-    height: 3;
+    width: $ds-size-3;
+    height: $ds-size-3;
 }
 
 .tree-checkbox {
-    width: 3;
-    height: 3;
+    width: $ds-size-3;
+    height: $ds-size-3;
 }
 
 .tree-content {
-    padding-left: 1;
-    width: 100%;
+    padding-left: $ds-space-1;
+    width: $ds-width-full;
     content-align: left middle;
 }
 
@@ -18214,27 +18218,27 @@ TreeNode {
 
 .action-bar {
     dock: bottom;
-    height: 3;
+    height: $ds-size-3;
     background: $panel;
     layout: grid;
     grid-size: 6 1;
     grid-columns: 1fr auto auto auto auto 1fr;
     grid-gutter: 0 1;
     align: center middle;
-    padding: 0 2;
+    padding: $ds-space-0 $ds-space-2;
     border-top: solid $primary;
 }
 
 .action-bar Button {
-    min-width: 15;
+    min-width: $ds-size-15;
 }
 
 #reset-btn {
-    min-width: 10;
+    min-width: $ds-size-10;
 }
 
 #generate-compilation-btn {
-    min-width: 20;
+    min-width: $ds-size-20;
 }
 
 /* ========================================
@@ -18243,8 +18247,8 @@ TreeNode {
 
 .loading-overlay {
     dock: top;
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
     background: $background 90%;
     align: center middle;
     layer: above;
@@ -18255,12 +18259,12 @@ TreeNode {
 }
 
 .loading-overlay LoadingIndicator {
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 .loading-label {
     text-align: center;
-    margin-top: 2;
+    margin-top: $ds-space-2;
     text-style: bold;
     color: $text;
 }
@@ -18272,7 +18276,7 @@ TreeNode {
 .error-message {
     color: $error;
     text-align: center;
-    padding: 2;
+    padding: $ds-space-2;
     text-style: bold;
 }
 
