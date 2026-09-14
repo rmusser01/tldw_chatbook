@@ -1,11 +1,11 @@
 ---
 id: TASK-32461
 title: 'Library Prompts: three more dirty vetoes refuse without a word'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-12 00:10'
-updated_date: '2026-09-14 14:25'
+updated_date: '2026-09-14 15:28'
 labels:
   - library
   - prompts
@@ -30,26 +30,6 @@ The background reconcile path is the one that needs a judgement rather than a co
 - [x] #3 The entry-reconcile veto's behaviour is decided and recorded in the task (explain, defer, or deliberately silent), and matches what ships
 - [x] #4 Each wired refusal is covered by a test that fails if it becomes a silent no-op again
 <!-- AC:END -->
-
-## Decision
-
-**AC#3 — the entry-reconcile veto explains** (the controller's call, recorded
-verbatim; revisitable):
-
-> RULING on AC#3 (mine, so you do not stall): the entry-reconcile veto
-> **explains**. A deep link into a prompt that silently evaporates is the same
-> click-does-nothing defect one layer further out — the user pressed something
-> somewhere to cause it. Name the blocked target and the way out in one line
-> (e.g. the pending prompt's title plus "save or discard the open prompt
-> first"). Do NOT build a queue that applies the deep link after the save —
-> that is machinery for a case nobody has asked for.
-
-What ships matches: `_open_library_item_by_id`'s prompt branch raises
-`LIBRARY_PROMPT_ENTRY_DIRTY_VETO_COPY` — "Can't open Prompt 7 — Save or
-Discard the open Prompt first." — and still returns `None`, so the link is
-dropped exactly as before and nothing is queued. The target is named by id
-rather than title because no caller passes a display name down to that seam
-(the editor's own unresolved-name fallback has the same shape).
 
 ## Implementation Plan
 
@@ -102,3 +82,23 @@ Modified: `tldw_chatbook/UI/Screens/library_screen.py`,
 `Tests/UI/test_library_prompt_dirty_vetoes.py` (new),
 `Docs/User_Guide/library/prompts.md`.
 <!-- SECTION:NOTES:END -->
+
+## Decision
+
+**AC#3 — the entry-reconcile veto explains** (the controller's call, recorded
+verbatim; revisitable):
+
+> RULING on AC#3 (mine, so you do not stall): the entry-reconcile veto
+> **explains**. A deep link into a prompt that silently evaporates is the same
+> click-does-nothing defect one layer further out — the user pressed something
+> somewhere to cause it. Name the blocked target and the way out in one line
+> (e.g. the pending prompt's title plus "save or discard the open prompt
+> first"). Do NOT build a queue that applies the deep link after the save —
+> that is machinery for a case nobody has asked for.
+
+What ships matches: `_open_library_item_by_id`'s prompt branch raises
+`LIBRARY_PROMPT_ENTRY_DIRTY_VETO_COPY` — "Can't open Prompt 7 — Save or
+Discard the open Prompt first." — and still returns `None`, so the link is
+dropped exactly as before and nothing is queued. The target is named by id
+rather than title because no caller passes a display name down to that seam
+(the editor's own unresolved-name fallback has the same shape).
