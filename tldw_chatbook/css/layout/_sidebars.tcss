@@ -333,15 +333,6 @@
     height: 100%;
 }
 
-/* Setting labels and inputs with better spacing */
-.setting-label {
-    margin-top: 1;
-    margin-bottom: 0;
-    text-style: bold;
-    color: $text-muted;
-    text-align: left;
-}
-
 .setting-input {
     width: 100%;
     margin-bottom: 1;

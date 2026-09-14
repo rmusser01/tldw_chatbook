@@ -556,6 +556,7 @@ def test_splash_theme_module_has_no_bare_or_generic_component_selectors() -> Non
     # None of the relocated generic component classes -- matched as a selector
     # token anywhere (not as the prefix of a longer name like `.preview-panel-demo`).
     for cls in (
+        # Historical TASK-394 name: dead elsewhere, still banned here.
         "setting-label",
         "section-header",
         "help-text",
@@ -605,7 +606,7 @@ def test_relocated_shared_component_rules_are_present() -> None:
     bundle = _generated_css_text()
     owning_sheets = _registry_class_owning_sheets()
     for selector in (
-        ".setting-label",
+        ".form-label",
         ".section-header",
         ".preview-panel",
         ".action-buttons",

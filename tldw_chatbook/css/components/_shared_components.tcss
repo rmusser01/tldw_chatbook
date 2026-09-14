@@ -45,12 +45,6 @@
     border-top: solid $primary;
 }
 
-.setting-label {
-    width: 20;
-    text-align: right;
-    margin-right: 1;
-}
-
 .help-text {
     text-style: italic;
     color: $text-muted;

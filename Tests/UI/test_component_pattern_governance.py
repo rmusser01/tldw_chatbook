@@ -180,13 +180,23 @@ def test_canonical_owning_sheets_are_bundled() -> None:
 
 
 def test_deprecated_names_ratchet_down() -> None:
-    """Python use sites of Deprecated names may only decrease."""
+    """Python use sites of Deprecated names may only decrease.
+
+    Counted with CSS-token boundaries (``(?<![\\w-])name(?![\\w-])``), not
+    regex word boundaries: live prefixed variant classes such as
+    ``speech-setting-label`` / ``library-prompt-field-label`` contain the
+    deprecated names as hyphen-suffixes, and ``\\b`` matches at a hyphen --
+    those variants would count against the ceiling (ADR-161 task 7 pinned
+    ``field-label``'s word-boundary count at ~76 of pure variant hits) and
+    hand the ratchet 76 units of false headroom. Token semantics match the
+    integrity test's relocated-class matcher.
+    """
     for cls, meta in REGISTRY["deprecated"].items():
         count = 0
         for p in PKG.rglob("*.py"):
             count += len(
                 re.findall(
-                    rf"\b{re.escape(cls)}\b",
+                    rf"(?<![\w-]){re.escape(cls)}(?![\w-])",
                     p.read_text(encoding="utf-8", errors="ignore"),
                 )
             )

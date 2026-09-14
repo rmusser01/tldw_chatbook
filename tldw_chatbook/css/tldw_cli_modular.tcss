@@ -796,15 +796,6 @@ Tabs:focus .-active {
     height: 100%;
 }
 
-/* Setting labels and inputs with better spacing */
-.setting-label {
-    margin-top: 1;
-    margin-bottom: 0;
-    text-style: bold;
-    color: $text-muted;
-    text-align: left;
-}
-
 .setting-input {
     width: 100%;
     margin-bottom: 1;
@@ -6898,12 +6889,6 @@ PersonalContextLinkModal {
     border-top: solid $primary;
 }
 
-.setting-label {
-    width: 20;
-    text-align: right;
-    margin-right: 1;
-}
-
 .help-text {
     text-style: italic;
     color: $text-muted;
@@ -7610,13 +7595,6 @@ WatchlistsOperationCard {
     height: 1fr;
     overflow-y: auto;
     padding: 1;
-}
-
-.field-label {
-    margin-top: 1;
-    margin-bottom: 0;
-    color: $text-muted;
-    text-style: bold;
 }
 
 .field-value {
@@ -9240,11 +9218,6 @@ MediaDetailsWidget {
     height: auto;
 }
 
-.settings-label {
-    margin-bottom: 1;
-    text-style: bold;
-}
-
 .settings-select, .settings-input {
     width: 100%;
     margin-bottom: 1;
@@ -9316,11 +9289,6 @@ MediaDetailsWidget {
     padding: 1;
     margin-bottom: 2;
     border: round $primary-background;
-}
-
-.settings-label {
-    margin: 1 0 0 0;
-    color: $text-muted;
 }
 
 .settings-input {
@@ -11564,12 +11532,6 @@ SplashScreen.hidden {
     padding: 1;
     background: $panel;
     border: round $primary-darken-3;
-}
-
-.settings-label {
-    text-style: bold;
-    margin-bottom: 1;
-    color: $primary;
 }
 
 .settings-input {

@@ -76,7 +76,7 @@ Notes on the schema:
 
 | Family | Owning sheet | Classes (status) |
 |---|---|---|
-| forms | `components/_forms.tcss` | form-label, form-row, form-col, form-input, form-textarea, form-select, form-checkbox, form-button, form-section-title, form-section-collapsible, form-actions (all Canonical) |
+| forms | `components/_forms.tcss` | form-label, form-row, form-col, form-input, form-textarea, form-select, form-checkbox, form-button, form-section-title, form-section-collapsible, form-actions (all Canonical); settings-input-label (Canonical variant of form-label, owning sheet `components/_agentic_terminal.tcss`) |
 | buttons | `components/_buttons.tcss` | action-button, button-group, button-group-left, button-group-center, button-group-right, sidebar-toggle (all Canonical) |
 | lists | `components/_lists.tcss` | none — widget contract (ListView/DataTable/OptionList cursor-hover-selected type selectors) |
 | dialogs | `components/_dialogs.tcss` | dialog-title, dialog-buttons (all Canonical) |
@@ -132,6 +132,13 @@ def compose_form(self):
 **Class inventory.**
 
 - `form-label` — field label. No interactive states.
+- `settings-input-label` — documented **variant** of `form-label` (ADR-161
+  task 7, probe-measured): the settings grid-row label column — fixed
+  24-col width (min 12), height 1, `$ds-surface-panel` background,
+  `$ds-text-primary`; not density-equivalent to `form-label`, kept as a
+  variant rather than force-merged. Owning sheet
+  `components/_agentic_terminal.tcss`; scoped compounds (RAG card width 20,
+  imagegen backend rows width 12, stacked rows width 100%) compose on top.
 - `form-row` — horizontal field-grouping container; stack with `$ds-space-stack`.
 - `form-col` — equal-width (`1fr`) column inside a `form-row`; edge columns drop
   their outer `$ds-space-inline` padding.
@@ -168,7 +175,18 @@ text `$ds-text-muted`, `$ds-text-primary`; surfaces `$ds-surface-raised`; focus
 **Python idiom.** `Widgets/form_components.py` builders exist (2 importers) —
 optional, not canonical. Hand-compose.
 
-**Lifecycle.** All Canonical (owning sheet `components/_forms.tcss`).
+**Lifecycle.** All Canonical (owning sheet `components/_forms.tcss`), plus
+the `settings-input-label` variant (Canonical, owning sheet
+`components/_agentic_terminal.tcss`).
+
+**Consolidation record (ADR-161 task 7, 2026-09-13).** The competing label
+conventions were renamed onto `form-label` and their definitions deleted:
+`field-label` (probe-identical computed styles), `form-field-label` (had no
+CSS anywhere — gained the winner's styling), `settings-label` (color-only
+divergence on the deprecated legacy Tools & Settings window — intended
+consistency change: `$primary` → `$text-muted`, spacing total unchanged),
+`setting-label` (dead CSS, zero compose sites — deleted). All four are
+Deprecated in the registry with ceiling 0.
 
 ---
 

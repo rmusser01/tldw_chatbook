@@ -109,11 +109,6 @@
     height: auto;
 }
 
-.settings-label {
-    margin-bottom: 1;
-    text-style: bold;
-}
-
 .settings-select, .settings-input {
     width: 100%;
     margin-bottom: 1;
@@ -185,11 +180,6 @@
     padding: 1;
     margin-bottom: 2;
     border: round $primary-background;
-}
-
-.settings-label {
-    margin: 1 0 0 0;
-    color: $text-muted;
 }
 
 .settings-input {

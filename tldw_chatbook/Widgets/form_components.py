@@ -193,7 +193,7 @@ class FormField(Container):
     def compose(self) -> ComposeResult:
         """Compose the form field."""
         label_text = f"{self.label}*" if self.required else self.label
-        yield Label(f"{label_text}:", classes="form-field-label")
+        yield Label(f"{label_text}:", classes="form-label")
         yield self.widget
 
 

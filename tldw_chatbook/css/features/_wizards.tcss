@@ -253,12 +253,6 @@
     border: round $primary-darken-3;
 }
 
-.settings-label {
-    text-style: bold;
-    margin-bottom: 1;
-    color: $primary;
-}
-
 .settings-input {
     width: 100%;
     margin-bottom: 0;

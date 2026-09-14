@@ -60,6 +60,14 @@ class PatternGalleryScreen(Screen):
                     with Horizontal(classes="form-row"):
                         yield Label("Temperature", classes="form-label")
                         yield Input(placeholder="0.7", classes="form-input")
+                    # ADR-161 task 7: the settings grid-row label variant --
+                    # fixed 24-col column with panel background; a documented
+                    # variant of form-label, NOT a merge candidate (probe).
+                    with Horizontal(classes="form-row"):
+                        yield Static(
+                            "Palette limit", classes="settings-input-label"
+                        )
+                        yield Static("24", classes="settings-compact-input")
                     yield Label(
                         "Generation parameters", classes="form-section-title"
                     )

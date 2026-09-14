@@ -5,6 +5,12 @@
       "owning_sheet": "components/_forms.tcss",
       "classes": {
         "form-label": { "status": "canonical" },
+        "settings-input-label": {
+          "status": "canonical",
+          "owning_sheet": "components/_agentic_terminal.tcss",
+          "variant_of": "form-label",
+          "note": "Documented variant (ADR-161 task 7 probe, 2026-09-13): fixed 24-col width (min 12), height 1, panel background, primary-text color -- the settings grid-row label column. NOT equivalent to form-label (auto width, muted, margin-top 1); do not force-merge. Compounds (#settings-library-rag-card width 20, .settings-imagegen-backend-row width 12, stacked rows width 100%) compose on top."
+        },
         "form-row": { "status": "canonical" },
         "form-col": { "status": "canonical" },
         "form-input": { "status": "canonical" },
@@ -82,5 +88,10 @@
       }
     }
   },
-  "deprecated": {}
+  "deprecated": {
+    "setting-label": { "renamed_to": "form-label", "ceiling": 0 },
+    "settings-label": { "renamed_to": "form-label", "ceiling": 0 },
+    "field-label": { "renamed_to": "form-label", "ceiling": 1, "note": "single remaining count is prose: the 'Title Case field-label convention' comment in UI/Screens/settings_screen.py (about label wording, not the CSS class)" },
+    "form-field-label": { "renamed_to": "form-label", "ceiling": 0 }
+  }
 }
