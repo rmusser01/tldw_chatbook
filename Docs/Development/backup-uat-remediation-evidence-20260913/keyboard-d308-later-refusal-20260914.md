@@ -1,0 +1,13 @@
+# Corrected immutable keyboard UAT — later rollback refusal
+
+Revision d3082ef98211e3ad42273ac2d2dcbbf43b6d93cc. Inherited cwd remains the shared checkout; corrected recovery handoff visibly discovered Evals/assets below this fixture installed package. All 5349 installed file hashes remain identical after the refusal.
+
+Passed actual keyboard outcomes: six-step onboarding; original note save and Complete plain archive with sealed-payload readback; credential-stop/untouched Abort; ordinary original-note readback/Quit; explicit required safety group and all21 individually verified credential omissions; replacement Restoration validated (6251e3317f2d4823839949574b9444ad); ordinary incoming-note readback and new-note save. After Ctrl+Q a copied Notes DB contains exactly incoming and new note. Its terminal window lacked remain-on-exit, so no exit-code claim is made for that one Quit; the helper post-Quit session-not-found error is retained.
+
+Later rollback review in ordinary mounted app succeeded and advertised available. Captured full reviewed tuple sections:93 Restore,147 Retire,149 Preserve; all mutation paths under private power, installed sources Preserve only. After reentering old password, distinct new password pair, and consequence checkbox, confirmation immediately displayed target_changed (final-later-064). No retry or new review followed.
+
+Read-only causal evidence: review started10:52:42 UTC; confirmation10:58:07. Only retained mtime/ctime changes in that window: application log10:52:56.036 and control-work directory10:52:56.554. No current config/core/sidecar has a timestamp in that interval. App log is explicitly a Preserve path; it records UI event_loop_stall messages during review. restore_plan._fingerprint includes ordinary preserved paths and their size/mtime/ctime; controls have a separate stable-identity treatment. This makes the log a concrete invalidation candidate, not a proven attribution: service discards original exception frames and the approved in-memory fingerprint is not persisted. No live SQLite connection or app instrumentation was used.
+
+Current journal evidence: only prior replacement committed and two prepublication_aborted preparations exist. No new operation directory or pending filename under service/fixed bootstrap. No rollback/publication/repair/retry was performed after refusal. The ordinary app remains idle on this failed review for controller direction.
+
+Pending acceptance: later rollback completion; ordinary original-note readback/new-note absence; subsequent Complete backup and new safety-copy content verification. Do not claim full acceptance.

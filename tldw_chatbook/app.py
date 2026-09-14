@@ -18018,7 +18018,7 @@ class TldwCli(
         )
 
     def request_recovery_restart(
-        self, archive: Path | None, target: Path
+        self, archive: Path | None, target: Path, *, recovery_copies: bool = False
     ) -> Worker[None] | None:
         """Use ordinary guarded shutdown before the CLI starts recovery alone."""
         from .Backup_Recovery.recovery_restart import RecoveryRestart
@@ -18034,7 +18034,7 @@ class TldwCli(
             if RuntimeMaintenance(self).unsaved_editors():
                 self.notify("Save or discard unsaved work before continuing in recovery mode.", severity="warning")
                 return
-            request = RecoveryRestart(archive, target)
+            request = RecoveryRestart(archive, target, recovery_copies=recovery_copies)
         except (OSError, ValueError, RuntimeError):
             self.notify("Recovery mode is unavailable while current work is unsettled.", severity="warning")
             return

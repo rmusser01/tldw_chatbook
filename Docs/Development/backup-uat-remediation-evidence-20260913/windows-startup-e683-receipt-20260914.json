@@ -1,0 +1,14 @@
+{
+  "revision": "e683efb86433d3598a99e31033da38f778b59896",
+  "run": 34835129237,
+  "windows_job": 103947107667,
+  "log_sha256": "fce94026fb3846bbe1bd4fddd42f88c5b3f70424c9e70ae2be1819dfc0b7a9d3",
+  "windows_non_ui": "31PASS9.93s",
+  "original_full_app_cases": "four existing60s timeouts",
+  "fresh_diagnostic_dev": "1PASS47.99s; observer51.375s",
+  "fresh_diagnostic_candidate": "60s timeout; finalobserver59.531s",
+  "profile_records": 8,
+  "all_observed_sources_match": true,
+  "observer_errors": [],
+  "interpretation": "Cumulative instrumented times overlap and cannot be summed. Candidate cold startup still spends substantial time in native config/storage admission before the new Console projection group can determine completion. No timing guard is raised; no Windows startup acceptance."
+}

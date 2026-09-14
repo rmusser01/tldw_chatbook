@@ -4,6 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.native_package import (
+    native_package as native_package,  # noqa: PLC0414 - native installed fixture
+)
+
 
 @pytest.mark.parametrize(
     "source,target",
@@ -40,7 +44,7 @@ def test_restart_exec_uses_fixed_fresh_interpreter_and_filtered_environment(
     executable, argv, environment = calls[0]
     assert executable == sys.executable
     assert argv[1:3] == ["-P", "-c"]
-    assert argv[-2:] == [str(request.archive), str(request.target_config)]
+    assert argv[-3:] == [str(request.archive), str(request.target_config), "inspect"]
     assert "TEST_PROVIDER_API_KEY" not in environment
     assert environment["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
     assert "private-fixture-key" not in repr(calls)
@@ -146,7 +150,16 @@ async def main():
   app.screen.query_one('#settings-backup-restore',Button).focus()
   await pilot.press('enter');await pilot.pause()
   screen=app.screen
-  if sys.argv[2]=='handoff':
+  if sys.argv[2]=='later':
+   screen._show_mode('copies')
+   screen._select_rollback(Button.Pressed(Button('old copy',name='old-copy')))
+   screen.query_one('#backup-later-target',Input).value=str(selector)
+   password_field=screen.query_one('#backup-copy-password',Input)
+   password_field.value='not-carried-test-password'
+   await pilot.pause()
+   assert screen.query_one('#backup-later-review',Button).disabled
+   screen.query_one('#backup-later-restart',Button).focus();await pilot.press('enter')
+  elif sys.argv[2]=='handoff':
    await pilot.click('#backup-open-inspect')
    screen.query_one('#backup-source',Input).value=str(source)
    await pilot.click('#backup-inspect')
@@ -169,15 +182,17 @@ async def main():
    assert not getattr(app,'_recovery_restart_request',None)
    assert not app._quit_in_progress
    release.set()
-  if sys.argv[2]=='handoff':
+  if sys.argv[2] in ('handoff','later'):
    async with asyncio.timeout(15):
     while app.is_running:await asyncio.sleep(.03)
  release.set()
  assert app.recovery_service._closed
- if sys.argv[2]=='handoff':
+ if sys.argv[2] in ('handoff','later'):
   request=app._recovery_restart_request
   assert type(request) is RecoveryRestart
-  assert request.archive==source and request.target_config==selector
+  assert request.archive==(None if sys.argv[2]=='later' else source)
+  assert request.target_config==selector
+  assert request.recovery_copies==(sys.argv[2]=='later')
   assert 'not-carried-test-password' not in repr(request)
   assert password_field.value==''
  assert not blocked_attempts(),blocked_attempts()
@@ -186,7 +201,7 @@ asyncio.run(main())
 """
 
 
-@pytest.mark.parametrize("mode", ["handoff", "busy", "cancel", "unsupported"])
+@pytest.mark.parametrize("mode", ["handoff", "later", "busy", "cancel", "unsupported"])
 def test_actual_normal_app_guarded_recovery_handoff(tmp_path, mode):
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
     from Tests.ProductionApp.test_backup_restore_composition import _ENTRY
@@ -201,24 +216,42 @@ def test_actual_normal_app_guarded_recovery_handoff(tmp_path, mode):
 
 
 _EXEC_DRIVER = r"""
-from Tests.network_guard import install,blocked_attempts
-install()
+import runpy
+_guard=runpy.run_path(NETWORK_GUARD)
+_guard["install"]()
+blocked_attempts=_guard["blocked_attempts"]
 import asyncio,os,sys
 from pathlib import Path
 from textual.app import App
-from textual.widgets import Input,Select,Button
+from textual.widgets import Input,Select,Button,Static
 assert 'tldw_chatbook.app' not in sys.modules
 assert 'tldw_chatbook.config' not in sys.modules
 assert 'TEST_PROVIDER_API_KEY' not in os.environ
-source,target=map(Path,sys.argv[1:])
+source,target=map(Path,sys.argv[1:3])
+copies=sys.argv[3]=="copies"
 original=target.read_bytes()
 def headless(app,*args,**kwargs):
  async def mounted():
-  async with app.run_test(size=(100,36)):
+  async with app.run_test(size=(100,36)) as pilot:
    screen=app.screen
-   assert screen.query_one('#backup-source',Input).value==str(source)
-   assert screen.query_one('#backup-target-config',Input).value==str(target)
-   assert screen.query_one('#backup-restore-mode',Select).value=='replace'
+   for name in ('tldw_chatbook','tldw_chatbook.Backup_Recovery.recovery_restart',
+                'tldw_chatbook.Backup_Recovery.launcher',
+                'tldw_chatbook.UI.Screens.backup_restore_screen'):
+    relative='tldw_chatbook/__init__.py' if name=='tldw_chatbook' else name.replace('.','/')+'.py'
+    assert Path(sys.modules[name].__file__).resolve()==Path(EXPECTED_INSTALLED)/relative
+   if copies:
+    assert screen._mode=='copies'
+    assert screen.query_one('#backup-later-target',Input).value==str(target)
+    assert screen._rollback_copy_id is None and screen._rollback_plan is None
+    assert not screen.query_one('#backup-later-form').display
+    await screen.workers.wait_for_complete()
+    await pilot.pause()
+    rows=list(screen.query_one('#backup-list').query(Static))
+    assert len(rows)==1 and 'No local entries.' in str(rows[0].render()), ([str(row.render()) for row in rows],screen._list_delivery)
+   else:
+    assert screen.query_one('#backup-source',Input).value==str(source)
+    assert screen.query_one('#backup-target-config',Input).value==str(target)
+    assert screen.query_one('#backup-restore-mode',Select).value=='replace'
    assert screen._inspection_id is None
    assert screen.query_one('#backup-start-restore',Button).disabled
    assert app.recovery_service.current() is None
@@ -233,7 +266,8 @@ App.run=headless
 """
 
 
-def test_actual_handoff_execs_fresh_recovery_ui(tmp_path):
+@pytest.mark.parametrize("mode", ["handoff", "later"])
+def test_actual_handoff_execs_fresh_recovery_ui(tmp_path, mode, native_package):
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
     from Tests.ProductionApp.test_backup_restore_composition import _ENTRY
 
@@ -248,16 +282,31 @@ def test_actual_handoff_execs_fresh_recovery_ui(tmp_path):
         "recovery_restart.restart(request)\n",
     )
     assert body != _HANDOFF_BODY
+    expected = str(native_package.resolve())
+    driver = (
+        "EXPECTED_INSTALLED=" + repr(expected) + "\nNETWORK_GUARD="
+        + repr(str(Path(__file__).resolve().parents[1] / "network_guard.py"))
+        + "\n" + _EXEC_DRIVER
+    )
+    origin_check = (
+        "\nimport tldw_chatbook\n"
+        "assert Path(tldw_chatbook.__file__).resolve()==Path(" + repr(expected)
+        + ")/'tldw_chatbook'/'__init__.py'\n"
+        "assert Path(sys.modules['tldw_chatbook.app'].__file__).resolve()==Path("
+        + repr(expected) + ")/'tldw_chatbook'/'app.py'\n"
+    )
     _run(
         tmp_path,
         "restart",
-        "handoff",
+        mode,
         script="DRIVER="
-        + repr(_EXEC_DRIVER)
+        + repr(driver)
         + "\n"
         + _ENTRY.split("async def main():", 1)[0]
+        + origin_check
         + body,
         timeout=70,
+        installed_package=native_package,
     )
 
 

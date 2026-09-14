@@ -258,6 +258,11 @@ class BackupRestoreScreen(Screen):
                         placeholder="Current profile configuration to review",
                         id="backup-later-target",
                     )
+                    yield Static(
+                        "Close Chatbook and continue in recovery mode, then select this copy and review again.",
+                        id="backup-later-restart-note", markup=False,
+                    )
+                    yield Button("Continue in recovery mode", id="backup-later-restart")
                     yield Button("Review later rollback", id="backup-later-review")
                     yield Static("", id="backup-later-preview", markup=False)
                     yield Vertical(id="backup-later-credential-review")
@@ -320,7 +325,12 @@ class BackupRestoreScreen(Screen):
 
     def on_mount(self):
         self._show_mode("home")
-        if self._restart_request is not None:
+        if self._restart_request is not None and self._restart_request.recovery_copies:
+            target = self.query_one("#backup-later-target", Input)
+            with target.prevent(Input.Changed):
+                target.value = str(self._restart_request.target_config)
+            self.call_after_refresh(self._open_copies)
+        elif self._restart_request is not None:
             self._show_mode("inspect")
             if self._restart_request.archive is not None:
                 self.query_one("#backup-source", Input).value = str(self._restart_request.archive)
@@ -762,6 +772,11 @@ class BackupRestoreScreen(Screen):
 
     @on(Button.Pressed, "#backup-later-review")
     def _review_rollback(self):
+        if self._requires_recovery_restart():
+            self.query_one("#backup-message", Static).update(
+                "Continue in recovery mode before reviewing later rollback."
+            )
+            return
         if self._rollback_copy_id is None:
             return
         target = Path(self._input("backup-later-target")).expanduser()
@@ -857,7 +872,8 @@ class BackupRestoreScreen(Screen):
                 )
         self.query_one("#backup-later-preview", Static).update(message)
         self.query_one("#backup-later-start", Button).disabled = (
-            plan is None or availability is not None and not availability[0]
+            self._requires_recovery_restart()
+            or plan is None or availability is not None and not availability[0]
         )
         codes = tuple(code for code in review_issues if code.startswith("credential_"))
         if codes:
@@ -872,6 +888,11 @@ class BackupRestoreScreen(Screen):
 
     @on(Button.Pressed, "#backup-later-start")
     def _start_rollback(self):
+        if self._requires_recovery_restart():
+            self.query_one("#backup-message", Static).update(
+                "Continue in recovery mode before reviewing later rollback."
+            )
+            return
         if self._rollback_availability is None or not self._rollback_availability[0]:
             reason = (
                 self._rollback_availability[1]
@@ -2072,6 +2093,10 @@ class BackupRestoreScreen(Screen):
         return callable(getattr(self.app, "request_recovery_restart", None))
 
     def _sync_replacement_host(self):
+        later_required = self._requires_recovery_restart()
+        self.query_one("#backup-later-restart-note").display = later_required
+        self.query_one("#backup-later-restart").display = later_required
+        self.query_one("#backup-later-review", Button).disabled = later_required
         replacing = self.query_one("#backup-restore-mode", Select).value == "replace"
         self.query_one("#backup-setup-destination").display = replacing and bool(
             (self._inspection_summary or {}).get("setup_destination_required")
@@ -2109,6 +2134,21 @@ class BackupRestoreScreen(Screen):
         archive = Path(source).expanduser() if source else None
         self._clear_passwords()
         self.app.request_recovery_restart(archive, target)
+
+    @on(Button.Pressed, "#backup-later-restart")
+    def _restart_for_rollback(self):
+        if not self._requires_recovery_restart():
+            return
+        target = Path(self._input("backup-later-target").strip()).expanduser()
+        if not target.is_absolute():
+            self.query_one("#backup-message", Static).update(
+                "Choose the existing local configuration before continuing."
+            )
+            return
+        self._invalidate()
+        self._forget_later_credential_review()
+        self._clear_passwords()
+        self.app.request_recovery_restart(None, target, recovery_copies=True)
 
     @on(Button.Pressed, "#backup-cancel")
     def _cancel(self):

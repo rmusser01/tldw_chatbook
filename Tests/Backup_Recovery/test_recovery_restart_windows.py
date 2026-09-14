@@ -10,11 +10,13 @@ from tldw_chatbook.Backup_Recovery import recovery_restart
 
 
 @pytest.mark.parametrize("spawn_failure", [False, True])
+@pytest.mark.parametrize("recovery_copies", [False, True])
 def test_windows_restart_spawns_with_filtered_environment_before_exit(
-    tmp_path, monkeypatch, spawn_failure
+    tmp_path, monkeypatch, spawn_failure, recovery_copies
 ):
     request = recovery_restart.RecoveryRestart(
-        tmp_path / "archive with spaces Ω.zip", tmp_path / "config with spaces.toml"
+        tmp_path / "archive with spaces Ω.zip", tmp_path / "config with spaces.toml",
+        recovery_copies=recovery_copies,
     )
     events = []
     failure = OSError("synthetic spawn failure")
@@ -53,6 +55,7 @@ def test_windows_restart_spawns_with_filtered_environment_before_exit(
     assert argv == [
         sys.executable, "-P", "-c", recovery_restart._ENTRY,
         str(request.archive), str(request.target_config),
+        "copies" if recovery_copies else "inspect",
     ]
     assert options.keys() == {"env", "stdin", "stdout", "stderr", "close_fds"}
     assert (options["stdin"], options["stdout"], options["stderr"]) == (0, 1, 2)

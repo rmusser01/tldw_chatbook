@@ -16,8 +16,11 @@ class RecoveryRestart:
 
     archive: Path | None
     target_config: Path
+    recovery_copies: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.recovery_copies) is not bool:
+            raise ValueError("invalid_recovery_restart")
         paths = (self.target_config,) + ((self.archive,) if self.archive else ())
         if any(
             not isinstance(path, Path) or not path.is_absolute() or ".." in path.parts
@@ -30,8 +33,10 @@ _ENTRY = (
     "import sys; from pathlib import Path; "
     "from tldw_chatbook.Backup_Recovery.recovery_restart import RecoveryRestart; "
     "from tldw_chatbook.Backup_Recovery.launcher import minimal_recovery; "
+    "\nif sys.argv[3] not in ('inspect', 'copies'): raise ValueError('invalid_recovery_restart')\n"
     "raise SystemExit(minimal_recovery('replacement_requested', "
-    "restart_request=RecoveryRestart(Path(sys.argv[1]) if sys.argv[1] else None, Path(sys.argv[2]))))"
+    "restart_request=RecoveryRestart(Path(sys.argv[1]) if sys.argv[1] else None, "
+    "Path(sys.argv[2]), recovery_copies=sys.argv[3]=='copies')))"
 )
 
 
@@ -49,6 +54,7 @@ def restart(request: RecoveryRestart) -> None:
         _ENTRY,
         str(request.archive) if request.archive else "",
         str(request.target_config),
+        "copies" if request.recovery_copies else "inspect",
     ]
     environment = _launch_environment()
     if os.name == "nt":
