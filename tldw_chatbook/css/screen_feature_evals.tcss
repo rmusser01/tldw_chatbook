@@ -166,6 +166,7 @@ $ds-percent-75: 75%;
 $ds-percent-80: 80%;
 $ds-percent-85: 85%;
 $ds-percent-90: 90%;
+$ds-percent-92: 92%;
 $ds-percent-94: 94%;
 $ds-percent-95: 95%;
 $ds-percent-96: 96%;
@@ -191,6 +192,8 @@ $ds-new-ingest-file-panel-share: 55%;
 $ds-new-ingest-card-desc-leading: 1.2;
 $ds-new-ingest-scrollbar-gutter: 6px;
 $ds-conversations-ai-generate-share: 12%;
+$ds-profile-link-modal-cols: 88;
+$ds-profile-link-modal-body-share: 82%;
 $ds-console-frame: #6f7782;
 
 $ds-duration-fast: 0.2s;

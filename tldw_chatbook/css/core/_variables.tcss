@@ -294,6 +294,9 @@ $ds-percent-75: 75%;
 $ds-percent-80: 80%;
 $ds-percent-85: 85%;
 $ds-percent-90: 90%;
+/* task 11 (ADR-161 §3.10): 92% joins the scale -- cross-sheet recurring
+   modal cap (profile-interview cancel modal, settings personal-context). */
+$ds-percent-92: 92%;
 $ds-percent-94: 94%;
 $ds-percent-95: 95%;
 $ds-percent-96: 96%;
@@ -337,6 +340,10 @@ $ds-new-ingest-scrollbar-gutter: 6px;
 /* task 11 (ADR-161 §3.10): the Conversations character-editor AI-generate
    button's narrow fill (single consumer). */
 $ds-conversations-ai-generate-share: 12%;
+/* task 11 (ADR-161 §3.10): Profile-interview link modal geometry
+   (single consumer). */
+$ds-profile-link-modal-cols: 88;
+$ds-profile-link-modal-body-share: 82%;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
  * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
