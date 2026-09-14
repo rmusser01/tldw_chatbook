@@ -1031,15 +1031,21 @@ wave-4 guide sweep; corrected in fix round 2 after this stamp's first version
 certified a claim it had not checked).*
 
 ***Two claims on this page were wrong, both about the Notes export control.***
-`:22-25` and `:323-326` told you to press **"Export…"** in Notes. The Notes
+The "Scoped exports also arrive here on their own" paragraph near the top of
+this page, and step 5 of "Common tasks" ("Export your notes as a bundle"),
+both told you to press **"Export…"** in Notes. (Named, not numbered: a line
+citation inside the page it cites is wrong on the next edit — which is how
+this stamp's first version already went wrong once.) The Notes
 list toolbar ships it **bare** — `("Export", "library-notes-export")` at
 `Widgets/Library/library_notes_canvas.py:1842` — and six of this sweep's own
 captures paint `Add from files…     Export` (`docs-03`, `docs-04`, `docs-05`,
 `docs-06`, `docs-08`, `docs-09`). Notes is the **only** browse canvas spelled
 without the ellipsis: Media (`library_media_canvas.py:1178`), Conversations
 (`library_conversations_canvas.py:150`) and Prompts
-(`library_prompts_canvas.py:890`) all ship `Export…`, which is why the
-Prompts step at `:331` was right and the Notes step was not. Both sentences
+(`library_prompts_canvas.py:890`) all ship `Export…`, which is why step 6
+("Export all Prompts and Recipes") was right and the Notes step was not.
+(Source line numbers are kept — they point at another file, which a reader
+can check and which this page's edits cannot move.) Both sentences
 now name the bare label and say it is the odd one out; the label
 inconsistency itself is filed as task-32590.
 
