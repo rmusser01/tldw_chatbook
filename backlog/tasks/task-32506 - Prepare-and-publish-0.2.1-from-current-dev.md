@@ -1,11 +1,11 @@
 ---
 id: TASK-32506
 title: Prepare and publish 0.2.1 from current dev
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 02:12'
-updated_date: '2026-09-14 00:43'
+updated_date: '2026-09-14 03:13'
 labels:
   - release
   - packaging
@@ -21,8 +21,8 @@ Publish the newer committed dev changes requested by the release owner while pre
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Release metadata and changelog describe 0.2.1 from current dev392ce191fd with main reconciled.
-- [ ] #2 Fresh package build, metadata and installed-distribution checks pass on the release source.
-- [ ] #3 The release is integrated to main, published to PyPI, and tagged with verified installable artifacts.
+- [x] #2 Fresh package build, metadata and installed-distribution checks pass on the release source.
+- [x] #3 The release is integrated to main, published to PyPI, and tagged with verified installable artifacts.
 - [x] #4 The README current-version statement matches the published release metadata.
 - [x] #5 Library release verification uses current focus, empty-reader allocation, and destructive-action spacing contracts, with failing legacy assertions repaired without application behavior changes.
 - [x] #6 All four runtime Canvas guide topics are required in both distributions; only the three fixed guide Markdown files are exempt from the development-document exclusion.
@@ -82,4 +82,10 @@ Final local installed-runtime regression passed in44.31seconds: the app-only whe
 TestPyPI run34791909137 failed before upload:179 installed-distribution tests passed and the real installed-app lifecycle probe hit ScreenStackError in on_base_app_screen_contents_rebuilt after Textual emptied the screen stack. This is a timing-dependent shutdown defect despite the local probe passing. Add deterministic late-event regressions and guard empty-stack Buddy notifications under existing ADR-074; no new architecture or visual-token change.
 
 Shutdown repair: both late Buddy event regressions reproduced ScreenStackError before the empty-stack guards. All 29 Buddy lifecycle tests pass, and the installed app/immutable-assets/entry-point probe passes in 42.61 seconds. Independent review approved the bounded repair under ADR-074. The full hosted installed-distribution gate must pass again before publication.
+
+PR #2674 merged as 4631b60f8dd9623fc55bf16f4a37e29fcb1240c7 after required CI run 34793585841 passed. TestPyPI publishing run 34794286775 passed all 180 installed-distribution tests and 24 metadata tests, then uploaded 0.2.1. Both registry files match their workflow artifact SHA-256 values. A fresh Python 3.12 installation from the published TestPyPI wheel passed pip check, runtime version, app-only voice qualification, and both CLI entry points. Main was fast-forwarded to that exact commit; production publishing run 34795954783 is now validating it. PyPI upload and the release tag remain pending.
+
+Main broader CI run 34795954804 core shards 1 and 2 aborted during xdist collection because import-time gzip.compress fixtures in Tests/Petdex/test_network.py include timestamps in generated parameter IDs. Both job logs show that same case; all 41 tests in the exact-source file pass directly. Independent review found no product defect, while emphasizing that aborted shards provide no broad execution evidence. This test-harness limitation does not replace or weaken the mandatory packaging gates; the production package gate remains pending.
+
+Released 0.2.1 successfully. Production workflow 34795954783 passed 180 installed-distribution tests in 1401.55 seconds and 24 metadata tests, then published through the existing PyPI environment approval. PyPI wheel and source archive SHA-256 values match the production workflow artifacts. A fresh Python 3.12 installation of the registry wheel passed pip check, runtime version 0.2.1, disabled experimental voice qualification, and tldw-cli/tldw-serve help. Main and annotated tag v0.2.1 both resolve to 4631b60f8dd9623fc55bf16f4a37e29fcb1240c7. GitHub release: https://github.com/rmusser01/tldw_chatbook/releases/tag/v0.2.1. PyPI: https://pypi.org/project/tldw-chatbook/0.2.1/. TestPyPI run: https://github.com/rmusser01/tldw_chatbook/actions/runs/34794286775. Production run: https://github.com/rmusser01/tldw_chatbook/actions/runs/34795954783. Broader core shards 1 through 4 encountered the same reviewed gzip fixture collection issue; no passing full-suite claim is made, and remaining automatic matrix jobs were still pending at release verification. Release-specific gates and main derived-artifact, CSS, backlog and performance checks passed. The user checkout was preserved; final evidence documentation lives on codex/release-0.2.1-evidence.
 <!-- SECTION:NOTES:END -->
