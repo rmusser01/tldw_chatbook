@@ -168,6 +168,12 @@ def _safe_identifier(value: Any) -> str:
 
     if isinstance(value, str):
         normalized = value.strip()
+        # TASK-32533 (review, Minor #3): CPython names synthetic frames
+        # `<lambda>`, `<module>`, `<genexpr>`, `<listcomp>`. Those are not
+        # identifiers, so they used to serialize to "invalid" -- the same dead
+        # end this field exists to remove. Keep the name, drop the brackets.
+        if len(normalized) > 2 and normalized[0] == "<" and normalized[-1] == ">":
+            normalized = normalized[1:-1]
         if (
             0 < len(normalized) <= 128
             and normalized.isascii()

@@ -25,6 +25,8 @@ from textual import work
 from textual.widgets import Button
 from textual.worker import WorkerFailed
 
+from textual.message import Message
+
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import load_settings
@@ -74,7 +76,20 @@ def persisted_records() -> list[str]:
         logger.setLevel(previous_level)
 
 
-def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
+class ZqBoom(Message):
+    """A message the App itself handles -- dispatched on the App's own pump."""
+
+
+class _AppLevelRaisingApp(TldwCli):
+    """Raises from an App-level handler, like `@on(Worker.StateChanged)` would."""
+
+    def on_zq_boom(self, message: ZqBoom) -> None:
+        raise RuntimeError(_CANARY)
+
+
+def _production_app(
+    monkeypatch: pytest.MonkeyPatch, cls: type[TldwCli] = TldwCli
+) -> TldwCli:
     """The real app from the sandbox config, splash off, wizard not offered."""
 
     real_get_cli_setting = app_module.get_cli_setting
@@ -85,7 +100,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
         return real_get_cli_setting(section, key, default)
 
     monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
-    app = TldwCli()
+    app = cls()
     app.app_config = load_settings(force_reload=True)
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
@@ -238,5 +253,47 @@ async def test_headless_runs_keep_raising_by_default(
                     if app._exception is not None:
                         break
                 assert isinstance(app._exception, RuntimeError)
+    finally:
+        await _close_production_app(app)
+
+
+@pytest.mark.asyncio
+async def test_an_app_level_handler_exception_still_reports_the_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    persisted_records: list[str],
+) -> None:
+    """TASK-32533 review, Important #2: keep-alive must not swallow the App's own pump.
+
+    `App._process_messages` runs the application loop. Skipping `super()` for a
+    handler the App itself dispatches breaks out of that loop with no
+    `_return_code` and no `panic()`: the app vanishes on exit 0 with no
+    traceback and nothing in the log -- the P0's symptom with *less* evidence
+    than before the fix. The `pump is not self` clause sends it to `super()`.
+    """
+    app = _production_app(monkeypatch, cls=_AppLevelRaisingApp)
+    app._keep_screen_alive_on_handler_error = True
+    try:
+        with pytest.raises(RuntimeError, match=_CANARY):
+            async with app.run_test(size=(140, 48)) as pilot:
+                for _ in range(500):
+                    if getattr(app, "_ui_ready", False):
+                        break
+                    await pilot.pause(0.01)
+                app.post_message(ZqBoom())
+                for _ in range(100):
+                    await pilot.pause(0.01)
+                    if app._exception is not None:
+                        break
+                # Textual recorded it as fatal, so the failure is reported
+                # rather than unwinding the app loop in silence.
+                assert isinstance(app._exception, RuntimeError)
+                assert app.return_code == 1
+        records = _crash_records(persisted_records)
+        assert len(records) == 1, persisted_records
+        assert "exception_type=RuntimeError" in records[0]
+        assert _field(records[0], "widget_type") == "_AppLevelRaisingApp"
+        assert _CANARY not in records[0]
+        # No notification: the app is going down the normal way.
+        assert [n.message for n in app._notifications] == []
     finally:
         await _close_production_app(app)

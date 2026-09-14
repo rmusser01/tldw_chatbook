@@ -1026,6 +1026,16 @@ def _usable_cpu_count() -> int:
 # here belongs to the application lifecycle.
 _DIAGNOSTICS_COMPONENT_APP = "app"
 
+# TASK-32533. The three `textual.message_pump` frames that mean "one pump's own
+# handler raised": `_dispatch_message` (a message handler, and the compose/mount
+# dispatch in `_pre_process` -- the P0's own path), `_flush_next_callbacks`
+# (`call_after_refresh` / `call_later`) and `_process_messages_loop` (the
+# `on_idle` dispatch inlined there). Everything else -- workers, the run loop,
+# the compositor, the driver -- has none of them and still exits.
+_PUMP_DISPATCH_FRAMES = frozenset(
+    {"_dispatch_message", "_flush_next_callbacks", "_process_messages_loop"}
+)
+
 
 def _exception_frames(error: BaseException) -> list[tuple[str, str, int | None]]:
     """Return ``(module, function, line)`` for each traceback frame, outermost first.
@@ -18339,13 +18349,20 @@ class TldwCli(
         # the notification warns that the panel may stop responding.
         keep_alive = (
             underlying is None
+            # The App's OWN pump must still go to super(). `App._process_messages`
+            # runs the application loop; breaking out of it without `super()`
+            # unwinds with no return code and no panic() -- the app would vanish
+            # on exit 0 with nothing in the log, which is the P0's symptom with
+            # LESS evidence than before (review fix 2).
+            and pump is not None
+            and pump is not self
             and bool(
                 getattr(
                     self, "_keep_screen_alive_on_handler_error", not self.is_headless
                 )
             )
             and any(
-                module == "textual.message_pump" and function == "_dispatch_message"
+                module == "textual.message_pump" and function in _PUMP_DISPATCH_FRAMES
                 for module, function, _line in frames
             )
         )
@@ -18361,8 +18378,8 @@ class TldwCli(
                 self.bell()
                 self.notify(
                     f"Something went wrong in {where} — the screen was kept open. "
-                    "That panel may stop responding until you close and reopen it; "
-                    "details are in the log file.",
+                    "That panel may stop responding or disappear until you "
+                    "reopen it; details are in the log file.",
                     severity="error",
                     timeout=12,
                     markup=False,
