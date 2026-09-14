@@ -53,9 +53,10 @@ The operator procedure, privacy boundary, audible-sample warning, and exact proj
 command are in
 [speculative-voice-qualification.md](speculative-voice-qualification.md).
 
-## App-only release exception (0.2.1)
+## App-only release exception (0.2.2)
 
-The owner approved application 0.2.1 without the unavailable native companion.
+The owner approved version-only application 0.2.2 with the same app-only scope as
+0.2.1, without the unavailable native companion.
 Ordinary `speech_recording` dependencies remain; experimental duplex voice stays
 unqualified and unavailable. No acoustic flag or qualification evidence changes.
 The ADR-098 app-only amendment governs this exception.

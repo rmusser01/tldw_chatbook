@@ -42,9 +42,9 @@ branch pushes, and it skips the upload when the built version already exists on
 PyPI or is older than the latest published version. Publish jobs only download
 built artifacts and request the PyPI OIDC token.
 
-## App-only 0.2.1 scope
+## App-only 0.2.2 scope
 
-This release omits the unavailable `tldw-voice-aec` dependency. Ordinary recording
+This version-only release continues the 0.2.1 app-only scope and omits the unavailable `tldw-voice-aec` dependency. Ordinary recording
 support remains available; experimental duplex voice keeps its unqualified runtime
 gate. Run `python Packaging/check_voice_aec_version_sync.py --app-only` before
 building. See `Docs/Development/TTS/voice-aec-release.md` and ADR-098 for the
