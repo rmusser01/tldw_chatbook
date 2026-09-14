@@ -3524,7 +3524,18 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_fr
         "---\ntitle: Library ▸ Notes review\ntags: [project, ux]\n---\n# Heading\n"
     )
     (root_path / "Projects" / "Library review.md").write_text(review_text, encoding="utf-8")
-    (root_path / "People" / "Sam.md").write_text("# Sam\n", encoding="utf-8")
+    # One ordinary Obsidian alias longer than an execution request accepts.
+    # Import once bounds a keyword at 512 and the request refuses one over 256,
+    # and the request is built inside a loop over EVERY safe action -- so this
+    # single file used to abort the whole root's activation (task-32535 fix
+    # round 1). It must activate, with the over-long alias dropped and the
+    # file's other keywords kept.
+    long_alias = "Attention Is All You Need " + "and more title " * 20
+    assert len(long_alias) > 256
+    (root_path / "People" / "Sam.md").write_text(
+        f'---\ntags: [people]\naliases: ["{long_alias}"]\n---\n# Sam\n',
+        encoding="utf-8",
+    )
     _store(tmp_path)
     owner, folders, local_notes = _vault_owner(tmp_path)
     await owner.start()
@@ -3575,6 +3586,8 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_fr
         "project",
         "ux",
     )
+    # The over-long alias is gone; the note and its other keyword are not.
+    assert local_notes.note_keywords(str(notes_by_title["Sam"]["id"])) == ("people",)
     # Both notes sit directly in the root folder. Keeping the vault's own
     # folder chain (AC#4) is NOT implemented: `note_folders` refuses a manual
     # child of a subtree that already holds a managed placement

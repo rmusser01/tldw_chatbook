@@ -299,6 +299,13 @@ _INTERNAL_REASONS = frozenset(
         "undo_expired",
     }
 )
+MAX_SYNC_KEYWORD_LENGTH = 256
+"""Longest keyword one execution request may carry (task-32535).
+
+The contract a file-reading caller has to honour: a frontmatter tag or alias
+longer than this is dropped at the lift, not carried here to throw.
+"""
+
 _TYPED_REASON_CODES = frozenset(
     {
         "comparison_root_unavailable",
@@ -618,7 +625,7 @@ class NotesSyncExecutionRequest:
         if type(self.desired_keywords) is not tuple or any(
             type(value) is not str
             or not value.strip()
-            or len(value) > 256
+            or len(value) > MAX_SYNC_KEYWORD_LENGTH
             or "\x00" in value
             for value in self.desired_keywords
         ):

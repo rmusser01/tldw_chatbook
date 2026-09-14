@@ -74,6 +74,7 @@ from tldw_chatbook.Notes.notes_sync_models import (
 )
 from tldw_chatbook.Notes.notes_sync_executor import (
     CONFLICT_RECOVERY_RETENTION_NS,
+    MAX_SYNC_KEYWORD_LENGTH,
     NotesSyncDirectionOverride,
     NotesSyncExecutionRequest,
     NotesSyncExecutionResult,
@@ -378,9 +379,19 @@ def _lifted_note_metadata(
     if not obsidian or type(text) is not str:
         return stem, ()
     metadata, _body = _split_frontmatter(text)
+    # Import once bounds a keyword at 512; an execution request refuses one
+    # over MAX_SYNC_KEYWORD_LENGTH, and the request is built inside a loop over
+    # every safe action -- so one 300-character `aliases:` entry used to abort
+    # the whole root's activation rather than cost its own note a keyword. The
+    # rule: a keyword the executor cannot carry is dropped, never truncated,
+    # because half an alternate name is a name nothing has (task-32535).
     return (
         _frontmatter_title(metadata) or stem,
-        _frontmatter_keywords(metadata, _FRONTMATTER_BOUNDS),
+        tuple(
+            keyword
+            for keyword in _frontmatter_keywords(metadata, _FRONTMATTER_BOUNDS)
+            if len(keyword) <= MAX_SYNC_KEYWORD_LENGTH
+        ),
     )
 
 
