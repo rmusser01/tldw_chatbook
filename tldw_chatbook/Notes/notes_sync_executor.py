@@ -384,18 +384,6 @@ def _decoded_keywords(value: object) -> tuple[str, ...]:
     return tuple(value)
 
 
-def _derived_folder_id(root_id: str, segments: tuple[str, ...]) -> str:
-    """Return the deterministic candidate id for one synced subfolder.
-
-    Deterministic so a resumed or retried operation asks for the same folder
-    rather than a second one; only a candidate, because an existing folder at
-    that path wins (task-32535).
-    """
-
-    payload = "\0".join((root_id, *segments)).encode("utf-8")
-    return f"sync-folder-{hashlib.sha256(payload).hexdigest()}"
-
-
 def _file_relative_path(snapshot: _FileSnapshot) -> str:
     return (
         snapshot.relative_path
@@ -790,10 +778,6 @@ class _NoteAuthority(Protocol):
 
     async def delete(self, expected: NotesSyncNoteSnapshot) -> None: ...
 
-    async def ensure_sync_subfolder(
-        self, *, folder_id: str, parent_id: str, name: str
-    ) -> str: ...
-
     async def create_or_verify_manual_folder(
         self, request: ManualFolderRequest
     ) -> VerifiedFolder: ...
@@ -884,7 +868,6 @@ class NotesSyncExecutor:
         self._filesystem = filesystem
         self._capacity = recovery_capacity_bytes
         self._after_stage = after_stage
-        self._sync_folder_ids: dict[tuple[str, str], str] = {}
 
     @staticmethod
     def stable_identity_digest(snapshot: _FileSnapshot) -> str:
@@ -3370,14 +3353,7 @@ class NotesSyncExecutor:
                 note, file = await self._require_new_desired(request)
                 desired = list(await self._desired_managed_memberships(request))
                 if request.action_kind is not NotesSyncActionKind.MOVE_FILE:
-                    desired.append(
-                        (
-                            await self._sync_folder_id(
-                                request, _file_relative_path(file)
-                            ),
-                            note.note_id,
-                        )
-                    )
+                    desired.append((request.logical_folder_id, note.note_id))
                 _, cancelled = await self._joined_thread_call(
                     lambda: run_worker_coroutine(
                         self._notes.reconcile_managed_memberships(
@@ -3614,54 +3590,12 @@ class NotesSyncExecutor:
         reconcile returns. See TASK-21129.
         """
 
-        placements = await asyncio.to_thread(
-            self._store.active_binding_placements,
+        note_ids = await asyncio.to_thread(
+            self._store.active_binding_note_ids,
             request.root_id,
             exclude_binding_id=exclude_binding_id,
         )
-        return tuple(
-            [
-                (await self._sync_folder_id(request, relative_path), note_id)
-                for note_id, relative_path in placements
-            ]
-        )
-
-    async def _sync_folder_id(
-        self,
-        request: NotesSyncExecutionRequest,
-        relative_path: str,
-    ) -> str:
-        """Return the Library folder a file at this path belongs in.
-
-        task-32535: every synced note used to land directly in the root
-        folder, so a 71-file vault arrived as one flat list and the user lost
-        the structure they organised it with. The folder chain below the root
-        mirrors the folder chain on disk, created once and then verified.
-
-        ponytail: one create-or-verify call per distinct folder, memoized for
-        this executor. Resolving from the binding rows instead would need a
-        folder column on `notes_sync_bindings` and its migration -- worth it
-        only if a very wide root makes these calls measurable.
-        """
-
-        parent = PurePosixPath(relative_path).parent
-        segments = tuple(part for part in parent.parts if part not in {"", "."})
-        folder_id = request.logical_folder_id
-        for depth in range(len(segments)):
-            key = (folder_id, segments[depth])
-            cached = self._sync_folder_ids.get(key)
-            if cached is None:
-                cached = await self._notes.ensure_sync_subfolder(
-                    folder_id=_derived_folder_id(
-                        request.root_id, segments[: depth + 1]
-                    ),
-                    parent_id=folder_id,
-                    name=segments[depth],
-                )
-                validate_notes_sync_opaque_id(cached, field_name="folder_id")
-                self._sync_folder_ids[key] = cached
-            folder_id = cached
-        return folder_id
+        return tuple((request.logical_folder_id, note_id) for note_id in note_ids)
 
     @staticmethod
     def _request_note_scope_id(request: NotesSyncExecutionRequest) -> str:

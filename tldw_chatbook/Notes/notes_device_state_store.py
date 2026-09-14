@@ -1166,34 +1166,8 @@ class NotesDeviceStateStore:
             validate_notes_sync_opaque_id(
                 exclude_binding_id, field_name="exclude_binding_id"
             )
-        return tuple(
-            note_id
-            for note_id, _ in self.active_binding_placements(
-                root_id, exclude_binding_id=exclude_binding_id
-            )
-        )
-
-    def active_binding_placements(
-        self,
-        root_id: str,
-        *,
-        exclude_binding_id: str | None = None,
-    ) -> tuple[tuple[str, str], ...]:
-        """Return this root's active ``(note_id, relative path)`` pairs.
-
-        task-32535: managed placement used to need only the note ids, because
-        every synced note went into the root folder. Keeping the folder's own
-        structure needs each note's path as well; the extra column rides the
-        same index-served read as before.
-        """
-
-        validate_notes_sync_opaque_id(root_id, field_name="root_id")
-        if exclude_binding_id is not None:
-            validate_notes_sync_opaque_id(
-                exclude_binding_id, field_name="exclude_binding_id"
-            )
         statement = (
-            "SELECT note_id, normalized_relative_path FROM notes_sync_bindings "
+            "SELECT note_id FROM notes_sync_bindings "
             "WHERE root_id = ? AND state = 'active'"
         )
         parameters: tuple[str, ...] = (root_id,)
@@ -1203,7 +1177,7 @@ class NotesDeviceStateStore:
         statement += " ORDER BY binding_id"
         with self.transaction() as connection:
             rows = connection.execute(statement, parameters).fetchall()
-        return tuple((str(row[0]), str(row[1])) for row in rows)
+        return tuple(str(row[0]) for row in rows)
 
     def has_binding_for_note_or_path(
         self,

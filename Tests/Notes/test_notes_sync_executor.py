@@ -40,7 +40,6 @@ from tldw_chatbook.Notes.notes_sync_executor import (
     NotesSyncExecutionResult,
     NotesSyncExecutor,
     NotesSyncRecoveryChoice,
-    _derived_folder_id,
 )
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncActionKind,
@@ -1159,13 +1158,6 @@ class CreatingNoteAuthority(FakeNoteAuthority):
         self.create_calls = 0
         self.delete_calls = 0
         self.keywords: tuple[str, ...] = ()
-        self.folders: list[tuple[str, str, str]] = []
-
-    async def ensure_sync_subfolder(
-        self, *, folder_id: str, parent_id: str, name: str
-    ) -> str:
-        self.folders.append((folder_id, parent_id, name))
-        return folder_id
 
     async def observe(self, note_id: str) -> NotesSyncNoteSnapshot:
         if not self.created:
@@ -3942,12 +3934,6 @@ def test_public_results_and_executor_source_disclose_no_private_values() -> None
     assert "Notes_Library" not in source
 
 
-#: task-32535: these fixtures bind `folder/note-NNN.md`, so the managed
-#: placement is the sync subfolder for `folder/`, not the root folder. The
-#: fake authority returns the deterministic candidate id it is handed.
-_IN_FOLDER = _derived_folder_id("root-1", ("folder",))
-
-
 class _BindingReadCensus:
     """Shadow the store's binding reads and record where each one ran.
 
@@ -3962,7 +3948,7 @@ class _BindingReadCensus:
         self._store = store
         for name in (
             "list_bindings",
-            "active_binding_placements",
+            "active_binding_note_ids",
             "has_binding_for_note_or_path",
         ):
             setattr(store, name, self._wrap(name, getattr(store, name)))
@@ -4029,7 +4015,7 @@ async def test_executor_never_reads_every_binding_and_projects_off_the_loop(
     # No site materializes every binding of the root any more.
     assert census.named("list_bindings") == []
     # The membership projection ran, and every call ran off the event loop.
-    projections = census.named("active_binding_placements")
+    projections = census.named("active_binding_note_ids")
     assert projections, "the executor never projected managed memberships"
     assert all(on_loop is False for _name, on_loop in projections), projections
     # The candidate-owner guard is deliberately still synchronous: nothing may
@@ -4083,13 +4069,13 @@ async def test_membership_projection_sees_a_binding_committed_moments_before(
         )
         # No await between the commit and the read other than the hop itself.
         projected = await executor._desired_managed_memberships(request)
-        assert projected[-1] == (_IN_FOLDER, f"note-{index:03d}"), projected
+        assert projected[-1] == ("folder-1", f"note-{index:03d}"), projected
         assert len(projected) == index + 1
 
     excluded = await executor._desired_managed_memberships(
         request, exclude_binding_id="binding-000"
     )
-    assert (_IN_FOLDER, "note-000") not in excluded
+    assert ("folder-1", "note-000") not in excluded
     assert len(excluded) == 11
 
 
@@ -4130,7 +4116,9 @@ async def test_concurrent_membership_projections_never_observe_a_torn_set(
                 note_version=1,
             )
         )
-    everything = tuple((_IN_FOLDER, f"note-{index:03d}") for index in range(6))
+    everything = tuple(
+        ("folder-1", f"note-{index:03d}") for index in range(6)
+    )
     without_last = everything[:-1]
 
     async def flip() -> None:
@@ -4176,7 +4164,7 @@ async def test_projection_failure_becomes_attention_not_an_unhandled_exception(
     def failing(*_args, **_kwargs):
         raise NotesDeviceStateError("private read failed")
 
-    store.active_binding_placements = failing
+    store.active_binding_note_ids = failing
 
     result = await NotesSyncExecutor(
         store,
@@ -4208,7 +4196,7 @@ async def test_shutdown_cancel_during_the_projection_leaves_a_resumable_operatio
     entered = threading.Event()
     release = threading.Event()
     finished = threading.Event()
-    real = store.active_binding_placements
+    real = store.active_binding_note_ids
     completed: list[int] = []
 
     def blocking(*args, **kwargs):
@@ -4219,7 +4207,7 @@ async def test_shutdown_cancel_during_the_projection_leaves_a_resumable_operatio
         finished.set()
         return answer
 
-    store.active_binding_placements = blocking
+    store.active_binding_note_ids = blocking
 
     task = asyncio.create_task(
         NotesSyncExecutor(
@@ -4247,51 +4235,9 @@ async def test_shutdown_cancel_during_the_projection_leaves_a_resumable_operatio
     )
     store.close()
     # A closed store re-arms, exactly as the shutdown contract documents.
-    assert store.active_binding_placements is blocking
-    store.active_binding_placements = real
-    assert store.active_binding_placements("root-1") == ()
-
-
-@pytest.mark.asyncio
-async def test_create_note_places_the_note_under_the_files_folder_path(
-    tmp_path: Path,
-) -> None:
-    """task-32535 AC#4: People/Sam.md lands in <root folder> / People."""
-    store, _ = _store(tmp_path)
-    notes = CreatingNoteAuthority()
-    file = _file_at("People/Sam.md", content="# Sam\n")
-    files = FakeFilesystem(file)
-    request = NotesSyncExecutionRequest(
-        operation_id="operation-1",
-        root_id="root-1",
-        logical_folder_id="folder-1",
-        direction=NotesSyncDirection.BIDIRECTIONAL,
-        binding_id="binding-1",
-        observation_token="observation-1",
-        action_kind=NotesSyncActionKind.CREATE_NOTE,
-        note=None,
-        file=file,
-        desired_title="Sam",
-        recovery_id="recovery-operation-1",
-        recovery_expires_at=100_000,
-        candidate_note_scope_id="local_note",
-        candidate_note_id="note-1",
-    )
-
-    result = await NotesSyncExecutor(
-        store,
-        notes,
-        files,
-        recovery_capacity_bytes=4096,
-    ).execute(request)
-
-    assert result.state is NotesSyncOperationState.COMPLETED
-    assert len(notes.folders) == 1
-    people_id, parent_id, name = notes.folders[0]
-    assert (parent_id, name) == ("folder-1", "People")
-    assert people_id != "folder-1"
-    assert notes.memberships == [("root-1", ((people_id, "note-1"),))]
-    assert store.get_binding("binding-1").normalized_relative_path == "People/Sam.md"
+    assert store.active_binding_note_ids is blocking
+    store.active_binding_note_ids = real
+    assert store.active_binding_note_ids("root-1") == ()
 
 
 @pytest.mark.asyncio
@@ -4334,5 +4280,4 @@ async def test_create_note_lifts_frontmatter_title_and_tags_into_the_note(
     assert notes.keywords == ("project", "ux")
     # The frontmatter block is kept byte-exact: sync writes the body back.
     assert notes.snapshot.content == content
-    assert notes.folders == []
     assert notes.memberships == [("root-1", (("folder-1", "note-1"),))]

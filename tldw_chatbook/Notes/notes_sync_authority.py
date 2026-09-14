@@ -417,29 +417,6 @@ class NotesScopeSyncAuthority:
             raise NotesSyncAuthorityError("folder_mutation_failed")
         return await self._verified_folder(winner, request, expected_path)
 
-    async def ensure_sync_subfolder(
-        self, *, folder_id: str, parent_id: str, name: str
-    ) -> str:
-        """Return the id of one folder under ``parent_id``, creating it once.
-
-        task-32535: synced notes keep the folder's own structure, so the
-        executor asks for the chain below the root folder before placing a
-        note. Delegates to the same create-or-verify winner logic the
-        conflict folders use, so a folder a user already made at that path
-        wins over the deterministic candidate.
-        """
-
-        parent = await self._read_folder_id(parent_id)
-        if parent is None or parent.deleted:
-            raise NotesSyncAuthorityError("folder_owner_missing")
-        segments = tuple(
-            part for part in str(parent.path or "").split("/") if part
-        ) + (name,)
-        folder = await self.create_or_verify_manual_folder(
-            ManualFolderRequest(folder_id, parent_id, name, segments)
-        )
-        return folder.folder_id
-
     async def create_or_verify_conflict_note(
         self,
         request: ConflictNoteRequest,

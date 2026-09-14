@@ -3502,7 +3502,7 @@ async def test_binding_labels_returns_relative_path_and_destination_per_binding(
 
 
 @pytest.mark.asyncio
-async def test_setup_review_under_obsidian_mode_skips_vault_folders_lifts_frontmatter_and_keeps_the_tree(
+async def test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_frontmatter(
     tmp_path: Path,
 ) -> None:
     """task-32535 AC#3/#4 on the real adapter, executor and folder chain."""
@@ -3571,22 +3571,25 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_lifts_frontm
         "project",
         "ux",
     )
-    # Each note sits under <root> / <its folder>.
+    # Both notes sit directly in the root folder. Keeping the vault's own
+    # folder chain (AC#4) is NOT implemented: `note_folders` refuses a manual
+    # child of a subtree that already holds a managed placement
+    # (`_require_manual_folder_subtree`, reason `sync_managed_folder`), and a
+    # subfolder that DID get made then reads as managed-owned, which the
+    # authority's verify path rejects as `folder_authority_changed` on the
+    # next run. Sync needs its own folder door first -- see task-32535's
+    # notes; this pin holds the flat placement until then so a half-nested
+    # tree cannot ship.
     by_path = {folder.path: folder for folder in folders.folders.values()}
-    assert set(by_path) == {"/Vault", "/Vault/Projects", "/Vault/People"}
-    root_folder = by_path["/Vault"]
-    assert by_path["/Vault/Projects"].parent_id == root_folder.folder_id
-    # Every managed placement of the run, not only the last call's: the
-    # reconcile is (folder_id, note_id) pairs, so the note is the value.
+    assert set(by_path) == {"/Vault"}
     placements = {
         note_id: folder_id
         for _owner, desired in folders.reconciled
         for folder_id, note_id in desired
     }
-    assert placements[str(notes_by_title["Library ▸ Notes review"]["id"])] == by_path[
-        "/Vault/Projects"
-    ].folder_id
-    assert placements[str(notes_by_title["Sam"]["id"])] == by_path["/Vault/People"].folder_id
+    root_folder = by_path["/Vault"].folder_id
+    assert placements[str(notes_by_title["Library ▸ Notes review"]["id"])] == root_folder
+    assert placements[str(notes_by_title["Sam"]["id"])] == root_folder
     # A later Check of the activated root runs the same pass: the flag is
     # resolved from the vault marker the walk already reports, so a file
     # dropped into .trash/ after activation is still skipped with a reason.
