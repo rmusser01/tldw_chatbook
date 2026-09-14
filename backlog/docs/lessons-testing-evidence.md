@@ -13844,3 +13844,14 @@ restoration invalidation to navigation keys and actual type-ahead matches fixed
 both picker families. For safety during asynchronous UI replacement, exercise
 real key dispatch as well as direct actions; verify an intentional movement key
 still overrides restoration.
+
+
+## Deliver queued Buddy notifications after the screen stack closes
+
+**TASK-32506, 2026-09-13.** The installed app passed its lifecycle probe locally
+but failed Linux release run 34791909137 during shutdown: a queued ContentsRebuilt
+message read `app.screen` after Textual emptied the stack. The related BuddyChanged
+route could do the same. Delivering both actual messages after the real shutdown
+order reproduced ScreenStackError deterministically. Empty-stack guards fixed both
+paths; all 29 Buddy lifecycle tests passed. A local successful shutdown alone did
+not establish that late queued messages were harmless.
