@@ -1929,25 +1929,17 @@ Select.-textual-compact:focus > SelectCurrent {
     color: $background;
 }
 
-/* NavigationButton active/focus states (TASK-16811): moved here from the
-   widget's DEFAULT_CSS -- these need the real $ds-focus-* tokens, and the
-   widget-local `$var:` "fallbacks" that used to sit beside them shadowed
-   the bundle's values for that whole source (active nav rendered $surface
-   instead of the focus colour). */
-NavigationButton.active {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    border: none;
-}
-
-NavigationButton:focus,
-NavigationButton.active:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    outline: none;
-}
+/* ADR-161 task 8b: the `NavigationButton.active` / `:focus` /
+   `.active:focus` rules that used to sit here were dead: they were moved
+   here (TASK-16811) from the DEFAULT_CSS of the base_components
+   NavigationButton deleted with Widgets/base_components.py in ADR-161
+   task 2. The surviving UI/Navigation/main_navigation.py NavigationButton
+   shares the CSS type name but never receives an `active` class (only
+   `is-active`) and always carries `nav-button`, whose scoped BUNDLED_CSS
+   rules (`MainNavigationBar .nav-button:focus` etc.) outrank a bare type
+   selector on every property those rules set -- probe-verified on the
+   real mounted bar: focused plain and is-active+focused buttons computed
+   byte-identical before and after the deletion. */
 
 /* ===== MODULE: components/_change_review.tcss ===== */
 /* Agent Change Review screen (TASK-1973). A pushed overlay: header with the

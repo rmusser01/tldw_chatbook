@@ -449,11 +449,18 @@ def compose_sidebar(self):
 - `sidebar-section-collapsible` — grouped collapsible section;
   `:focus-within` recolours via `$ds-focus-accent` / `$ds-focus-bg`.
 - `nav-button` — destination button in the main navigation strip; owning
-  sheet `components/_navigation.tcss` (per-class override — the states and
-  the `.nav-button-clip-ghost` scroll-edge override live there; base geometry
-  comes from `MainNavigationBar.DEFAULT_CSS` and migrates during
-  consolidation per the BUNDLED_CSS rule). `NavigationButton.active` /
-  `:focus` recolour via `$ds-focus-bg` / `$ds-focus-fg` with bold underline.
+  sheet `components/_navigation.tcss` (per-class override — the
+  `.nav-button-clip-ghost` scroll-edge override lives there; base geometry
+  and the focus/active states come from `MainNavigationBar`'s scoped
+  `BUNDLED_CSS` rules, `.nav-button:focus` / `.nav-button.is-active`,
+  which migrate per the BUNDLED_CSS rule). The TASK-16811
+  `NavigationButton.active`/`:focus` type-selector rules that sat in the
+  owning sheet were deleted as dead in ADR-161 task 8b: they were moved
+  there from the DEFAULT_CSS of the base_components NavigationButton that
+  task 2 deleted, and the surviving `UI/Navigation/main_navigation.py`
+  NavigationButton (same CSS type name) never receives an `active` class
+  and carries the higher-specificity scoped rules for every property they
+  set — probe-verified computed-identical on the mounted bar.
 
 **States.** §2.7 for the interactive classes (buttons take the Button type
 contract; `sidebar-section-collapsible` carries the `:focus-within` recolour).
