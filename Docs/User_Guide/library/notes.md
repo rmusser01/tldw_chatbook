@@ -895,7 +895,13 @@ the same reasons: `.obsidian/`, `.trash/` and `Templates/` while the
 **Obsidian vault** toggle is on, and an empty or whitespace-only file
 whatever the toggle says. (Keep a folder synced does not remember the toggle
 across a restart — see "Obsidian vaults" above.) Both read the frontmatter, so `title` becomes the
-note's title and `tags`/`aliases` become its keywords.
+note's title and `tags`/`aliases` become its keywords. A synced note bounds
+both: a tag or alias longer than 256 characters is dropped (half an alternate
+name is a name nothing has, and the note keeps its other keywords), while a
+`title:` longer than 4,096 characters is cut to the first 4,096 (a title is
+the note's only name, so cutting it keeps the note findable where dropping it
+would silently rename the note to its file name). Neither costs you the note,
+and neither stops the rest of the folder from syncing.
 
 Two things still differ:
 

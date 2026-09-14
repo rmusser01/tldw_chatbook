@@ -306,6 +306,15 @@ The contract a file-reading caller has to honour: a frontmatter tag or alias
 longer than this is dropped at the lift, not carried here to throw.
 """
 
+MAX_SYNC_TITLE_LENGTH = 4096
+"""Longest title one execution request may carry (task-32535).
+
+Same contract as the keyword bound, opposite remedy: a title is the note's
+only name, so a frontmatter `title:` longer than this is truncated at the
+lift rather than dropped -- the first 4096 characters still name the note,
+while dropping it would silently rename the note to its file stem.
+"""
+
 _TYPED_REASON_CODES = frozenset(
     {
         "comparison_root_unavailable",
@@ -618,7 +627,7 @@ class NotesSyncExecutionRequest:
         if (
             type(self.desired_title) is not str
             or not self.desired_title
-            or len(self.desired_title) > 4096
+            or len(self.desired_title) > MAX_SYNC_TITLE_LENGTH
             or "\x00" in self.desired_title
         ):
             raise ValueError("desired_title must be bounded non-empty text.")

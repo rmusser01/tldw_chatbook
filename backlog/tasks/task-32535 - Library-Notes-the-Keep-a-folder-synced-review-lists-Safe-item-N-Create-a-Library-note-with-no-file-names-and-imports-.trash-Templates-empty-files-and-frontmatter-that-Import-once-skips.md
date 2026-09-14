@@ -149,4 +149,39 @@ swallowed label failure, a doubled conflict path, a pin that stat-ed the real
 home directory); one declined with evidence (merging `conflict_labels` and
 `binding_labels` would put three behaviour flags through an authority path
 where the two rules genuinely differ).
+
+**Fix round 2 (re-review, controller ruling).** The re-review's new Minor is
+Important 1 one field over, so it is fixed here rather than filed: the same
+`return` bounded the keywords but not the title, and
+`NotesSyncExecutionRequest.__post_init__` refuses a `desired_title` over 4096
+inside the same per-action loop — probed at 5,000 characters — so a long
+frontmatter `title:` still aborted the whole root's activation.
+`MAX_SYNC_TITLE_LENGTH` is now exported beside `MAX_SYNC_KEYWORD_LENGTH` and
+read by both the validator and the lift, so the two bounds cannot drift.
+
+**Truncate, not drop, and why.** The keyword rule was *drop*: an alias is an
+alternate name, and half a name finds nothing, while the note keeps its other
+keywords. A title is the note's **only** name: dropping it falls back
+silently to the file stem, renaming the user's note without telling them, and
+the note is then findable under a name the vault never used. Truncation keeps
+the note under the name its author gave it, and the stated rule is "the first
+4096 characters". Display is unaffected either way — `_bounded_label` already
+cuts a review row's title to 160.
+
+**No other frontmatter field was exposed.** `_lifted_note_metadata` returns
+exactly two values, and `grep -rn "_lifted_note_metadata\|_frontmatter_title\|
+_frontmatter_keywords" tldw_chatbook/` finds only its definition and two call
+sites (`build_execution_request`, and `binding_labels`, which is already
+`_bounded_label`-capped). `grep -nE "len\(self\.[a-z_]+\) > "
+tldw_chatbook/Notes/notes_sync_executor.py` returns exactly two hits —
+`desired_title` and `desired_keywords` — so those two *are* every length-bound
+an execution request carries; every other field is an opaque id, an enum, a
+snapshot, or a path normalized by `normalize_notes_sync_relative_path`.
+
+Pinned end to end on the real adapter: the Obsidian vault pin in
+`Tests/Notes/test_notes_sync_runtime.py` grew a `Reading/Deep work.md` whose
+frontmatter title is 5,120 characters. RED without the slice:
+`assert result.accepted is True` fails — the whole root refuses to activate.
+GREEN with it: three notes created, the long-title note stored under the first
+4096 characters, and the other two notes and their keywords untouched.
 <!-- SECTION:NOTES:END -->

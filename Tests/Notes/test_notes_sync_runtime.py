@@ -3511,8 +3511,18 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_fr
     """task-32535 AC#3/#4 on the real adapter, executor and folder chain."""
     from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
 
+    from tldw_chatbook.Notes.notes_sync_executor import MAX_SYNC_TITLE_LENGTH
+
     root_path = tmp_path / "vault"
-    for folder in (".obsidian", ".trash", "Templates", "Inbox", "Projects", "People"):
+    for folder in (
+        ".obsidian",
+        ".trash",
+        "Templates",
+        "Inbox",
+        "Projects",
+        "People",
+        "Reading",
+    ):
         (root_path / folder).mkdir(parents=True)
     (root_path / ".obsidian" / "app.json").write_text("{}", encoding="utf-8")
     (root_path / ".trash" / "Old idea.md").write_text("# Old\n", encoding="utf-8")
@@ -3535,6 +3545,17 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_fr
         f'---\ntags: [people]\naliases: ["{long_alias}"]\n---\n# Sam\n',
         encoding="utf-8",
     )
+    # The same defect one field over: an execution request refuses a title
+    # over MAX_SYNC_TITLE_LENGTH, so a 5,000-character `title:` aborted the
+    # whole root the same way. A title is the note's only name, so this one is
+    # truncated rather than dropped (task-32535 fix round 2).
+    long_title = "Deep work notes " * 320
+    assert len(long_title.strip()) > MAX_SYNC_TITLE_LENGTH
+    (root_path / "Reading" / "Deep work.md").write_text(
+        f'---\ntitle: "{long_title}"\n---\n# Deep work\n',
+        encoding="utf-8",
+    )
+    truncated_title = long_title.strip()[:MAX_SYNC_TITLE_LENGTH]
     _store(tmp_path)
     owner, folders, local_notes = _vault_owner(tmp_path)
     await owner.start()
@@ -3551,14 +3572,14 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_fr
     # Off: the vault's own folders come back as creates. The two empty files
     # do not -- Import once refuses an empty source whatever folder it is in.
     off = await owner.review_setup(setup(False))
-    assert len(off.safe_actions) == 4
+    assert len(off.safe_actions) == 5
     assert sorted((skip.relative_path, skip.reason_code) for skip in off.item_skips) == [
         ("Inbox/Untitled.md", "empty_file"),
         ("Untitled 1.md", "empty_file"),
     ]
 
     on = await owner.review_setup(setup(True))
-    assert len(on.safe_actions) == 2
+    assert len(on.safe_actions) == 3
     assert sorted((skip.relative_path, skip.reason_code) for skip in on.item_skips) == [
         (".trash/Old idea.md", "obsidian_trash"),
         ("Inbox/Untitled.md", "empty_file"),
@@ -3571,14 +3592,20 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_fr
     assert {label.relative_path: label.note_title for label in labels} == {
         "Projects/Library review.md": "Library ▸ Notes review",
         "People/Sam.md": "Sam",
+        # Single-spaced already, so the display bound is a plain slice.
+        "Reading/Deep work.md": truncated_title[:160],
     }
 
     result = await owner.activate_root(on.root_id, on.observation_token)
 
     assert result.accepted is True
-    assert result.applied_count == 2
+    assert result.applied_count == 3
     notes_by_title = {note["title"]: note for note in local_notes.notes.values()}
-    assert set(notes_by_title) == {"Library ▸ Notes review", "Sam"}
+    assert set(notes_by_title) == {
+        "Library ▸ Notes review",
+        "Sam",
+        truncated_title,
+    }
     # The frontmatter block stays byte-exact: sync writes the body back.
     assert notes_by_title["Library ▸ Notes review"]["content"] == review_text
     assert local_notes.note_keywords(str(notes_by_title["Library ▸ Notes review"]["id"])) == (
@@ -3606,6 +3633,7 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_fr
     root_folder = by_path["/Vault"].folder_id
     assert placements[str(notes_by_title["Library ▸ Notes review"]["id"])] == root_folder
     assert placements[str(notes_by_title["Sam"]["id"])] == root_folder
+    assert placements[str(notes_by_title[truncated_title]["id"])] == root_folder
     # A later Check of the activated root runs the same pass: the flag is
     # resolved from the vault marker the walk already reports, so a file
     # dropped into .trash/ after activation is still skipped with a reason.

@@ -72,6 +72,7 @@ from tldw_chatbook.Notes.notes_sync_models import (
 from tldw_chatbook.Notes.notes_sync_executor import (
     CONFLICT_RECOVERY_RETENTION_NS,
     MAX_SYNC_KEYWORD_LENGTH,
+    MAX_SYNC_TITLE_LENGTH,
     NotesSyncDirectionOverride,
     NotesSyncExecutionRequest,
     NotesSyncExecutionResult,
@@ -384,8 +385,14 @@ def _lifted_note_metadata(
     # the whole root's activation rather than cost its own note a keyword. The
     # rule: a keyword the executor cannot carry is dropped, never truncated,
     # because half an alternate name is a name nothing has (task-32535).
+    #
+    # The title is the same defect with the opposite remedy: it is the note's
+    # ONLY name, so an over-long `title:` is cut to MAX_SYNC_TITLE_LENGTH
+    # rather than dropped -- the first 4096 characters still identify the
+    # note, while dropping it would silently rename the note to its file stem.
+    # Both bounds are read from the executor so the two cannot drift.
     return (
-        _frontmatter_title(metadata) or stem,
+        (_frontmatter_title(metadata) or stem)[:MAX_SYNC_TITLE_LENGTH],
         tuple(
             keyword
             for keyword in _frontmatter_keywords(metadata, _FRONTMATTER_BOUNDS)
