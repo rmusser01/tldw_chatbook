@@ -104,14 +104,14 @@ class ConsoleImageViewerModal(SafeModalDismissMixin, ModalScreen[None]):
         width = getattr(widget.styles.width, "value", None) or 0
         height = getattr(widget.styles.height, "value", None) or 0
         if width and height:
-            body.styles.width = width
-            body.styles.height = height
+            body.set_styles(width=width)
+            body.set_styles(height=height)
         else:
-            body.styles.width = "auto"
-            body.styles.height = "auto"
+            body.set_styles(width="auto")
+            body.set_styles(height="auto")
         outer = self.query_one("#console-image-viewer")
-        outer.styles.width = "auto"
-        outer.styles.height = "auto"
+        outer.set_styles(width="auto")
+        outer.set_styles(height="auto")
         await body.mount(widget)
 
     def _build_full_size_widget(self) -> Static:
@@ -138,8 +138,8 @@ class ConsoleImageViewerModal(SafeModalDismissMixin, ModalScreen[None]):
                 w, h = fit_image_cell_size(
                     self._image.width, self._image.height, cols, lines
                 )
-                widget.styles.width = w
-                widget.styles.height = h
+                widget.set_styles(width=w)
+                widget.set_styles(height=h)
                 return widget
             except Exception:
                 pass
@@ -150,8 +150,8 @@ class ConsoleImageViewerModal(SafeModalDismissMixin, ModalScreen[None]):
         widget = Static(mosaic, id="console-image-viewer-image")
         # Explicit fitted size (same guard as the graphics branch): the
         # mosaic's own line grid is the authoritative cell size.
-        widget.styles.width = max(len(line) for line in lines_out)
-        widget.styles.height = len(lines_out)
+        widget.set_styles(width=max(len(line) for line in lines_out))
+        widget.set_styles(height=len(lines_out))
         return widget
 
     def _resolve_mode(self) -> str:

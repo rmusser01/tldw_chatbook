@@ -258,7 +258,7 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         self.state = state
         self._on_reconcile = on_reconcile
         self.add_class("console-settings-summary")
-        self.styles.height = "auto"
+        self.set_styles(height="auto")
         self.styles.min_height = 0
 
     def sync_state(self, state: ConsoleSettingsSummaryState) -> None:
@@ -300,13 +300,13 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
             ),
             CONSOLE_SETTINGS_BUTTON_MAX_WIDTH,
         )
-        button.styles.width = button_width
+        button.set_styles(width=button_width)
         button.styles.min_width = button_width
         button.styles.max_width = button_width
-        button.styles.height = CONSOLE_SETTINGS_ROW_HEIGHT
+        button.set_styles(height=CONSOLE_SETTINGS_ROW_HEIGHT)
         button.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
         button.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
-        button.styles.margin = 0
+        button.set_styles(margin=0)
 
     @staticmethod
     def _row_text(value: str | None) -> str:
@@ -416,7 +416,7 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         header = Horizontal(
             id="console-settings-header", classes="console-settings-header"
         )
-        header.styles.height = CONSOLE_SETTINGS_ROW_HEIGHT
+        header.set_styles(height=CONSOLE_SETTINGS_ROW_HEIGHT)
         header.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
         header.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
         with header:
@@ -425,9 +425,9 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
                 id="console-settings-title",
                 classes="destination-section console-settings-title",
             )
-            title.styles.width = "1fr"
+            title.set_styles(width="1fr")
             title.styles.min_width = 0
-            title.styles.height = CONSOLE_SETTINGS_ROW_HEIGHT
+            title.set_styles(height=CONSOLE_SETTINGS_ROW_HEIGHT)
             title.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
             title.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
             yield title

@@ -92,7 +92,7 @@ class ConsoleCommandPopup(Widget):
             return
         self._suggestions = list(suggestions)
         self._desired_height = min(len(self._suggestions), MAX_VISIBLE_ROWS)
-        self.styles.height = self._desired_height
+        self.set_styles(height=self._desired_height)
         # Set the final width BEFORE rebuilding the OptionList: option row
         # heights are computed (and cached) against the width at add time, so
         # adding options while the popup is still narrow wraps rows, inflates
@@ -205,4 +205,4 @@ class ConsoleCommandPopup(Widget):
             offset_y = max(y, 0)
         self._anchor_offset_y = offset_y
         self.styles.offset = (max(x, 0), offset_y)
-        self.styles.width = max(anchor.width, MIN_WIDTH)
+        self.set_styles(width=max(anchor.width, MIN_WIDTH))

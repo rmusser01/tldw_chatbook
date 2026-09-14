@@ -487,23 +487,23 @@ class ConsoleSessionSwitcherModal(
         self._compact_layout = viewport_height <= 20 or viewport_width <= 52
         modal.styles.max_height = min(35, viewport_height)
         if self._compact_layout:
-            modal.styles.width = min(52, viewport_width)
-            modal.styles.height = viewport_height
-            results.styles.height = max(2, viewport_height - chrome_rows)
+            modal.set_styles(width=min(52, viewport_width))
+            modal.set_styles(height=viewport_height)
+            results.set_styles(height=max(2, viewport_height - chrome_rows))
             results.styles.max_height = max(2, viewport_height - chrome_rows)
         else:
-            modal.styles.width = min(76, viewport_width)
+            modal.set_styles(width=min(76, viewport_width))
             section_count = len(
                 {str(getattr(entry, "section", "") or "") for entry in self._entries}
             )
             result_rows = min(22, (2 * len(self._entries)) + section_count)
             estimated_rows = chrome_rows + result_rows
             modal_height = min(35, viewport_height, max(14, estimated_rows))
-            modal.styles.height = modal_height
+            modal.set_styles(height=modal_height)
             visible_result_rows = max(
                 2, min(22, result_rows, modal_height - chrome_rows)
             )
-            results.styles.height = visible_result_rows
+            results.set_styles(height=visible_result_rows)
             results.styles.max_height = visible_result_rows
         self._update_receipt_status()
 

@@ -135,7 +135,7 @@ class ConsoleInspectorMore(Vertical):
         body.display = open
         body.styles.display = "block" if open else "none"
         super().__init__(toggle, body, id="console-inspector-more")
-        self.styles.height = "auto" if open else 2
+        self.set_styles(height="auto" if open else 2)
 
     def on_mount(self) -> None:
         """Apply the initial disclosure state after mounting."""
@@ -154,7 +154,7 @@ class ConsoleInspectorMore(Vertical):
         body = bodies.first(Vertical)
         body.display = self.open
         body.styles.display = "block" if self.open else "none"
-        self.styles.height = "auto" if self.open else 2
+        self.set_styles(height="auto" if self.open else 2)
         for heading in body.query(".console-inspector-group-heading"):
             heading.can_focus = self.open
 
@@ -238,7 +238,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         self._pending_more_focus_recovery = False
         self._pending_more_focus_section_id: str | None = None
         self._report_unowned_content(ownership)
-        self.styles.height = "auto"
+        self.set_styles(height="auto")
         self.styles.min_height = 0
         #: Count of wholesale recomposes taken by ``sync_state`` (test seam).
         self.recompose_count = 0
@@ -600,7 +600,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         # affordance and the explanation -- DESIGN.md forbids hiding why an
         # action is unavailable and names this surface -- and made action rows
         # appear and vanish between turns, costing spatial memory.
-        button.styles.height = 1
+        button.set_styles(height=1)
         button.styles.min_height = 1
         return button
 

@@ -397,7 +397,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         # `set_view_all_busy` updates both this and the live widget.
         self._view_all_busy = False
         self.suppress_summary_when_open = bool(suppress_summary_when_open)
-        self.styles.height = "auto"
+        self.set_styles(height="auto")
         self.styles.min_height = 0
         self.add_class("console-inspector-section")
         self.recompose_count = 0
@@ -452,7 +452,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             row widgets, and the optional "View all" ``Button``.
         """
         header = Horizontal(id=self._header_id, classes="console-inspector-section-header")
-        header.styles.height = 1
+        header.set_styles(height=1)
         header.styles.min_height = 1
         with header:
             title = Static(
@@ -461,7 +461,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 classes="console-inspector-section-title",
                 markup=False,
             )
-            title.styles.width = "1fr"
+            title.set_styles(width="1fr")
             title.styles.min_width = 0
             yield title
             if self.summary:
@@ -475,9 +475,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 # for any host, including a bare test harness that never
                 # loads the app's CSS bundle (the CSS class carries the
                 # cosmetic color/dim styling only).
-                summary.styles.width = "auto"
+                summary.set_styles(width="auto")
                 summary.styles.min_width = 0
-                summary.styles.height = 1
+                summary.set_styles(height=1)
                 if self._summary_is_suppressed():
                     summary.styles.display = "none"
                 yield summary
@@ -497,14 +497,14 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                     compact=True,
                 )
                 toggle.tooltip = self._toggle_tooltip()
-                toggle.styles.width = SECTION_TOGGLE_WIDTH
+                toggle.set_styles(width=SECTION_TOGGLE_WIDTH)
                 toggle.styles.min_width = SECTION_TOGGLE_WIDTH
                 toggle.styles.max_width = SECTION_TOGGLE_WIDTH
-                toggle.styles.height = 1
+                toggle.set_styles(height=1)
                 yield toggle
 
         body = Vertical(id=self._body_id, classes="console-inspector-section-body")
-        body.styles.height = "auto"
+        body.set_styles(height="auto")
         body.styles.min_height = 0
         if not self.open:
             body.styles.display = "none"
@@ -513,7 +513,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 yield self._build_row_widget(row, index)
             if self.notice:
                 notice = Static(self.notice, id=self._notice_id, markup=False)
-                notice.styles.height = "auto"
+                notice.set_styles(height="auto")
                 notice.styles.text_wrap = "wrap"
                 yield notice
 
@@ -945,7 +945,7 @@ class ConsoleInspectorSectionRow(Vertical):
             self._secondary_text,
             indent=self.indent * ROW_INDENT_COLUMNS,
         )
-        self.styles.height = "auto"
+        self.set_styles(height="auto")
         # Inline as well as in the CSS: a bare test harness loads neither
         # the app bundle nor the console-owned split sheet, and geometry
         # has to be right for any host (the same reason the header's
@@ -960,7 +960,7 @@ class ConsoleInspectorSectionRow(Vertical):
             # whatever padding the host supplies, so the indent is exactly
             # `ROW_INDENT_COLUMNS` per level in BOTH hosts. Inline because
             # the depth is per-row DATA, not a class.
-            self.styles.margin = (0, 0, 0, self.indent * ROW_INDENT_COLUMNS)
+            self.set_styles(margin=(0, 0, 0, self.indent * ROW_INDENT_COLUMNS))
             # Deliberately unstyled today (round-1 review M2): the class is
             # the styling hook containment theming would need -- a guide
             # rule, a muted child colour -- and stamping it here is what
@@ -1004,7 +1004,7 @@ class ConsoleInspectorSectionRow(Vertical):
             classes="console-inspector-section-row-primary",
             markup=False,
         )
-        primary.styles.height = 1
+        primary.set_styles(height=1)
         return primary
 
     def _make_secondary(self) -> Static:
@@ -1014,7 +1014,7 @@ class ConsoleInspectorSectionRow(Vertical):
             classes="console-inspector-section-row-secondary",
             markup=False,
         )
-        secondary.styles.height = "auto" if self._wrap_secondary else 1
+        secondary.set_styles(height="auto" if self._wrap_secondary else 1)
         if self._wrap_secondary:
             secondary.styles.text_wrap = "wrap"
         return secondary
@@ -1036,18 +1036,18 @@ class ConsoleInspectorSectionRow(Vertical):
         """
         if self._one_line:
             line = Horizontal(classes="console-inspector-section-row-line")
-            line.styles.height = 1
-            line.styles.width = "100%"
+            line.set_styles(height=1)
+            line.set_styles(width="100%")
             with line:
                 primary = self._make_primary()
                 # `1fr` + `auto` is the header's own title/summary split:
                 # the primary takes everything the secondary does not, which
                 # is what puts the secondary flush against the right edge.
-                primary.styles.width = "1fr"
+                primary.set_styles(width="1fr")
                 primary.styles.min_width = 0
                 yield primary
                 secondary = self._make_secondary()
-                secondary.styles.width = "auto"
+                secondary.set_styles(width="auto")
                 secondary.styles.min_width = 0
                 yield secondary
             return

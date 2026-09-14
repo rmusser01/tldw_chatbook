@@ -258,7 +258,7 @@ class ConsoleSessionSurface(Vertical):
             id="console-transcript-title",
             classes="destination-section console-transcript-title",
         )
-        title.styles.height = 1
+        title.set_styles(height=1)
         title.styles.min_height = 1
         yield title
 
@@ -284,19 +284,19 @@ class ConsoleSessionSurface(Vertical):
         query keeps resolving.
         """
         tab_strip = ConsoleSessionTabStrip(id="console-native-tab-strip")
-        tab_strip.styles.height = 1
+        tab_strip.set_styles(height=1)
         tab_strip.styles.min_height = 1
         tab_strip.styles.max_height = 1
         # The row owns the strip family's bottom margin now; this inline
         # zero beats the shared `#console-native-tab-strip` CSS rule so a
         # margin never eats the row's single line.
-        tab_strip.styles.margin = (0, 0, 0, 0)
-        tab_strip.styles.width = "1fr"
+        tab_strip.set_styles(margin=(0, 0, 0, 0))
+        tab_strip.set_styles(width="1fr")
         tab_strip.on_overflow_state_changed = self._sync_tab_overflow_hints
         tab_strip.compose_add_child(self._build_new_tab_button())
 
         strip_row = Horizontal(classes="console-session-tab-strip")
-        strip_row.styles.height = 1
+        strip_row.set_styles(height=1)
         strip_row.styles.min_height = 1
         strip_row.styles.max_height = 1
         # Children attach via compose_add_child (mirrors the
@@ -319,10 +319,10 @@ class ConsoleSessionSurface(Vertical):
         """Build one (initially hidden) 1-cell tab-strip overflow hint."""
         hint = Static(resolve_glyph(glyph), id=hint_id, markup=False)
         hint.tooltip = "More tabs this way — scroll the tab strip (mouse wheel)."
-        hint.styles.width = CONSOLE_TAB_OVERFLOW_HINT_WIDTH
+        hint.set_styles(width=CONSOLE_TAB_OVERFLOW_HINT_WIDTH)
         hint.styles.min_width = CONSOLE_TAB_OVERFLOW_HINT_WIDTH
         hint.styles.max_width = CONSOLE_TAB_OVERFLOW_HINT_WIDTH
-        hint.styles.height = 1
+        hint.set_styles(height=1)
         hint.styles.min_height = 1
         hint.styles.max_height = 1
         # Qodo PR #2327 review: hide with VISIBILITY, not display:none —
@@ -368,19 +368,19 @@ class ConsoleSessionSurface(Vertical):
             id="console-fleet-coachmark",
             classes="console-fleet-coachmark",
         )
-        row.styles.height = 1
+        row.set_styles(height=1)
         row.styles.min_height = 1
         row.styles.max_height = 1
         row.styles.display = "none"
         text = Static("", id="console-fleet-coachmark-text")
-        text.styles.width = "1fr"
+        text.set_styles(width="1fr")
         dismiss = Button(
             resolve_glyph(GLYPH_CLOSE),
             id="console-fleet-coachmark-dismiss",
             compact=True,
         )
         dismiss.tooltip = "Dismiss"
-        dismiss.styles.width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
+        dismiss.set_styles(width=CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH)
         dismiss.styles.min_width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
         dismiss.styles.max_width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
         # Children are composed via `compose_add_child` rather than a
@@ -420,10 +420,10 @@ class ConsoleSessionSurface(Vertical):
         """Return the compact symbolic Console new-session control."""
         button = Button("New tab", id="console-new-chat-tab", compact=True)
         button.tooltip = "New Console tab"
-        button.styles.width = CONSOLE_NEW_TAB_BUTTON_WIDTH
+        button.set_styles(width=CONSOLE_NEW_TAB_BUTTON_WIDTH)
         button.styles.min_width = CONSOLE_NEW_TAB_BUTTON_WIDTH
         button.styles.max_width = CONSOLE_NEW_TAB_BUTTON_WIDTH
-        button.styles.height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
+        button.set_styles(height=CONSOLE_NEW_TAB_BUTTON_HEIGHT)
         button.styles.min_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
         button.styles.max_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
         return button
@@ -505,10 +505,10 @@ class ConsoleSessionSurface(Vertical):
             marker=marker,
             queued_count=queued_count,
         )
-        button.styles.width = CONSOLE_SESSION_TAB_WIDTH
+        button.set_styles(width=CONSOLE_SESSION_TAB_WIDTH)
         button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.max_width = CONSOLE_SESSION_TAB_WIDTH
-        button.styles.height = 1
+        button.set_styles(height=1)
         button.styles.min_height = 1
         button.styles.max_height = 1
         return button
@@ -577,10 +577,10 @@ class ConsoleSessionSurface(Vertical):
             compact=True,
         )
         close_button.tooltip = "Close Console tab"
-        close_button.styles.width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
+        close_button.set_styles(width=CONSOLE_CLOSE_TAB_BUTTON_WIDTH)
         close_button.styles.min_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
         close_button.styles.max_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
-        close_button.styles.height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
+        close_button.set_styles(height=CONSOLE_CLOSE_TAB_BUTTON_HEIGHT)
         close_button.styles.min_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
         close_button.styles.max_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
         return close_button
