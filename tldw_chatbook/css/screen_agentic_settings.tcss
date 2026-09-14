@@ -195,6 +195,7 @@ $ds-new-ingest-scrollbar-gutter: 6px;
 $ds-conversations-ai-generate-share: 12%;
 $ds-profile-link-modal-cols: 88;
 $ds-profile-link-modal-body-share: 82%;
+$ds-widgets-skeleton-title-share: 60%;
 $ds-console-frame: #6f7782;
 
 $ds-duration-fast: 0.2s;

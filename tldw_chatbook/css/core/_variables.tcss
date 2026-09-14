@@ -347,6 +347,9 @@ $ds-conversations-ai-generate-share: 12%;
    (single consumer). */
 $ds-profile-link-modal-cols: 88;
 $ds-profile-link-modal-body-share: 82%;
+/* task 11 (ADR-161 §3.10): the skeleton-loading title bar's fill
+   (components/_widgets.tcss, single consumer). */
+$ds-widgets-skeleton-title-share: 60%;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
  * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
