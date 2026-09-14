@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-14 18:53
+updated_date: 2026-09-14 19:03
 ---
 
 ## Description
@@ -307,6 +307,8 @@ Mounted worker diagnostic complete locally and independently approved: root152PA
 Dev advanced again to2f97a42c9a (File Notes); only file_notes_service.py conflicts. Read-only semantic review active; preserve existing serialization/native file and replica authority while accepting upstream hidden-file recovery-preservation behavior. No new Windows rerun replaces activee4f8replacement34880766232 or15c154support34881797168. Scheduler2private causal probes pass; independent review confirms expected blocked-worker/refusal/recovery behavior but no Windows performance/failure resolution.
 dev 2f97 File Notes merge: isolated native Git probe regression now has valid RED (2 expected maintenance-refusal failures, 2 unrelated-error/cancellation passes). Initial shared-profile 4 failures were fixture setup, not product RED, and retained as such. Applied narrow exact maintenance refusal handling with binding-aware retry reset. Hidden tombstone regression previously 4 RED; fixed by preserving existing fresh recovery-pairing gate. Fresh combined 33-case verification started. Windows replacement 34880766232 and support 34881797168 remain running on their recorded earlier commits.
 dev2f97 resolution verification complete: 33 focused native backup/File Notes PASS44.39s, independent new8 PASS9.28s, seven unchanged upstream hidden-folder/Git header bodies PASS in fixed private profiles. Narrow pairing/maintenance fixes reviewed with exact source hashes. Product static4files: zero new Ruff or Bandit findings; tests add only assertions. Recorded dev-2f97-merge-checkpoint/review and Scheduler/startup causal evidence. Those probes do not resolve Windows timing or justify speculative product changes. Completing merge commit/push; no all-platform acceptance or dev merge requested.
+Pushed conflict-free merge043d2cb639 (PR remains open againstdev). Fresh installed macOS Library backup/readback/resumed writes PASS108.42s; 2475sourcePython hashes match,2867installedfiles preserved. Windows e4f8 default/Evals terminal all42native+10productPASS with37artifact hashes/source receipt verified; independent final artifact review underway. Add only the eight new File Notes merge regression cases to existing native full/support diagnostic selections before the next current-head run; no new workflow/mode or timing change.
+Independent Windows e4f8 default/Evals review APPROVED actual complete success: 42native+10product allPASS,37hashes,2475Python blobs/2867installed files verified. Default1541.985s; later checkpoint interval781.016s; actual child passes unchanged900s and outer2400s. Retire unapproved budget-sharing proposal without implementing it; prior timeout cause remains unknown. Current043d installed Library PASS108.42s. New8File Notes native regression inclusion independently reviewed: AST differs only four literals,283support cases collect,19existingworkflow contracts pass, Ruff/Bandit0. Recorded exact results; pending Persona/support and Linux metadata approval remain.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
