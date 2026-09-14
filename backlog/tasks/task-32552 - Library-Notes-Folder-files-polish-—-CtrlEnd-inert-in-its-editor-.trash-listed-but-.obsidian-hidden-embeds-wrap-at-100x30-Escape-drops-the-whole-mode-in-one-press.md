@@ -4,11 +4,11 @@ title: >-
   Library Notes: Folder files polish — Ctrl+End inert in its editor, .trash
   listed but .obsidian hidden, embeds wrap at 100x30, Escape drops the whole
   mode in one press
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-13 06:47'
-updated_date: '2026-09-13 15:13'
+updated_date: '2026-09-14 15:45'
 labels:
   - library
   - notes

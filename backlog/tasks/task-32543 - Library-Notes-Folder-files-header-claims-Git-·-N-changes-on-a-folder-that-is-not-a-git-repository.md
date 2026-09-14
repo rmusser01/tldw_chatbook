@@ -3,11 +3,11 @@ id: TASK-32543
 title: >-
   Library Notes: Folder files header claims "Git · N change(s)" on a folder that
   is not a git repository
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-13 06:46'
-updated_date: '2026-09-13 15:13'
+updated_date: '2026-09-14 15:45'
 labels:
   - library
   - notes
