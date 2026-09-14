@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Some kind of Versioning
     
+## [0.2.2] - 2026-09-14
+
+### Changed
+- Version-only release of 0.2.1; application behavior and dependency constraints
+  are unchanged.
+- Continues the app-only scope: ordinary speech recording remains available,
+  while experimental duplex voice stays disabled pending qualification.
+
 ## [0.2.1] - 2026-09-13
 
 Includes the newer committed development changes from `dev` and supersedes

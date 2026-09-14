@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -90,16 +91,18 @@ def test_app_only_rejects_missing_or_qualified_authority(release_root, state):
 def test_strict_companion_release_still_requires_exact_pin(release_root):
     project = release_root / "pyproject.toml"
     source = project.read_text()
+    version = tomllib.loads(source)["project"]["version"]
+    exact_pin = f"tldw-voice-aec=={version}"
     project.write_text(
         source.replace(
             "speech_recording = [",
-            'speech_recording = [\n    "tldw-voice-aec==0.2.1",',
+            f'speech_recording = [\n    "{exact_pin}",',
             1,
         )
     )
     assert check_version_sync(release_root) == []
     project.write_text(
-        project.read_text().replace("tldw-voice-aec==0.2.1", "tldw-voice-aec>=0.2.1")
+        project.read_text().replace(exact_pin, f"tldw-voice-aec>={version}")
     )
     assert any(
         "exact companion pin" in error for error in check_version_sync(release_root)
