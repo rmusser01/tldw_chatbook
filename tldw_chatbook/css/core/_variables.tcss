@@ -284,6 +284,9 @@ $ds-percent-42: 42%;
    fill (sidebars/settings-splash/conversations/new-ingest). */
 $ds-percent-45: 45%;
 $ds-percent-50: 50%;
+/* task 11 (ADR-161 §3.10): 70%/80% join the scale -- cross-sheet recurring
+   fills (agentic table caps, widgets/splash/watchlists/wizards, sidebars). */
+$ds-percent-70: 70%;
 $ds-percent-75: 75%;
 /* task 11 (ADR-161 §3.10): 80% joins the scale -- cross-sheet recurring fill
    (wizards progress/summary, widgets, splash, watchlists per the spread

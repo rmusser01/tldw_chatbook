@@ -4,6 +4,10 @@
  * Generic sidebar patterns and collapsible behavior
  * Used across multiple features
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* ----------------------------------------
  * Enhanced Sidebar Styles
@@ -11,14 +15,14 @@
 
 /* Enhanced sidebar container */
 .enhanced-sidebar {
-    height: 100%;
+    height: $ds-height-full;
     background: $boost;
 }
 
 /* Sidebar header with improved visibility */
 .sidebar-header {
-    height: 3;
-    padding: 0 1;
+    height: $ds-size-3;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface;
     border-bottom: solid $surface-lighten-1;
     align: center middle;
@@ -32,14 +36,14 @@
 
 /* Search container with better visibility */
 .search-container {
-    height: 3;
-    padding: 0 1;
+    height: $ds-size-3;
+    padding: $ds-space-0 $ds-space-1;
     background: transparent;
     border-bottom: none;
 }
 
 .search-input {
-    width: 100%;
+    width: $ds-width-full;
     border: round $surface-lighten-1;
     background: $background;
 }
@@ -50,23 +54,23 @@
 
 /* Quick Actions Bar */
 .quick-actions-bar {
-    height: 3;
-    padding: 0 1;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    padding: $ds-space-0 $ds-space-1;
+    margin-bottom: $ds-space-1;
     background: $primary 10%;
     border-bottom: solid $primary;
 }
 
 .quick-action-btn {
     width: auto;
-    margin: 0 1;
-    padding: 0 1;
+    margin: $ds-space-0 $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Search Input */
 .sidebar-search-input {
-    width: 100%;
-    margin: 1 0;
+    width: $ds-width-full;
+    margin: $ds-space-1 $ds-space-0;
     border: round $accent;
 }
 
@@ -74,22 +78,22 @@
 .group-header {
     text-style: bold;
     color: $text-muted;
-    margin: 1 0;
-    padding: 0 1;
+    margin: $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Section Dividers */
 .sidebar-section-divider {
-    height: 1;
-    margin: 2 0;
+    height: $ds-size-1;
+    margin: $ds-space-2 $ds-space-0;
     border-top: solid $primary 30%;
     opacity: 50%;
 }
 
 /* Settings Groups with Enhanced Visibility */
 .settings-group {
-    padding-left: 1;
-    margin: 1 0;
+    padding-left: $ds-space-1;
+    margin: $ds-space-1 $ds-space-0;
 }
 
 /* Improved contrast - from 5% to 15-20% */
@@ -107,8 +111,8 @@
 
 /* Enhanced setting groups with clear visual hierarchy */
 .setting-group {
-    margin: 2 0;
-    padding: 1;
+    margin: $ds-space-2 $ds-space-0;
+    padding: $ds-space-1;
 }
 
 .setting-group-essential {
@@ -130,48 +134,48 @@
 .priority-high > CollapsibleTitle {
     text-style: bold;
     border-left: thick $success;
-    padding-left: 1;
+    padding-left: $ds-space-1;
 }
 
 /* Nested indentation */
 .settings-group .settings-collapsible {
-    margin-left: 1;
+    margin-left: $ds-space-1;
 }
 
 /* Fix for Collapsible widgets in sidebars */
 .settings-collapsible {
     height: auto;
-    min-height: 3;  /* Ensure title is visible */
+    min-height: $ds-size-3;  /* Ensure title is visible */
 }
 
 .settings-collapsible CollapsibleTitle {
     height: auto;
-    min-height: 1;
-    padding: 0 1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .settings-collapsible Contents {
     height: auto;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* Ensure checkboxes and other controls are visible */
 .settings-collapsible Checkbox {
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .settings-collapsible Input {
     height: auto;
-    min-height: 3;
-    margin: 0 0 1 0;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .settings-collapsible Select {
     height: auto;
-    min-height: 3;
-    margin: 0 0 1 0;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Sidebar Styling */
@@ -183,48 +187,48 @@
     min-width: $ds-sidebar-min-width; /* Reduced from 45 */
     max-width: $ds-sidebar-max-width; /* Maximum width (optional) */
     background: $boost;
-    padding: 0 $ds-space-inline;
+    padding: $ds-space-0 $ds-space-inline;
     border-right: solid $surface;
-    height: 100%;
+    height: $ds-height-full;
     overflow-y: auto;
     overflow-x: hidden;
 }
 /* Collapsed state for the existing left sidebar */
 .sidebar.collapsed {
-    width: 0 !important;
-    min-width: 0 !important; /* Ensure min-width is also 0 */
+    width: $ds-size-0 !important;
+    min-width: $ds-size-0 !important; /* Ensure min-width is also 0 */
     border-right: none !important;
-    padding: 0 !important;
+    padding: $ds-space-0 !important;
     overflow: hidden !important;
     display: none; /* ensures it doesn't grab focus */
 }
 
 /* Common sidebar elements */
-.sidebar-title { text-style: bold; margin-bottom: 1; width: 100%; text-align: left; }
+.sidebar-title { text-style: bold; margin-bottom: $ds-space-1; width: $ds-width-full; text-align: left; }
 
 /* Sidebar header with resize controls */
 .sidebar-header-with-resize {
-    height: 2;
+    height: $ds-size-2;
     align: left middle;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .sidebar-header-with-resize .flex-grow {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
-.sidebar-label { margin-top: 1; text-style: bold; }
+.sidebar-label { margin-top: $ds-space-1; text-style: bold; }
 .sidebar-input {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
     border: solid $primary-lighten-2;
     border-bottom: solid $primary-lighten-2;
 }
 .sidebar-textarea { 
-    width: 100%; 
-    height: 5;  /* Default height for text areas */
+    width: $ds-width-full; 
+    height: $ds-size-5;  /* Default height for text areas */
     border: round $surface; 
-    margin-bottom: 1; 
+    margin-bottom: $ds-space-1; 
 }
 
 /* Notes expand button */
@@ -235,10 +239,10 @@
  * sidebar's "Notes" expand control). */
 .notes-expand-button {
     width: auto;
-    min-width: 12;
-    height: 3;
-    margin-left: 1;
-    padding: 0 2;
+    min-width: $ds-size-12;
+    height: $ds-size-3;
+    margin-left: $ds-space-1;
+    padding: $ds-space-0 $ds-space-2;
     color: $text;
     background: $surface;
     text-style: bold;
@@ -257,31 +261,31 @@
  * full-group replacement, so the computed margin was already (0, 0, 1, 0).
  * The folded form reproduces exactly that. */
 .sidebar-button {
-    width: 100%;
-    height: 3;
+    width: $ds-width-full;
+    height: $ds-size-3;
     margin-bottom: $ds-space-1;
-    padding: 0 2;
+    padding: $ds-space-0 $ds-space-2;
     text-align: center;
 }
 
 /* Notes textarea states */
 .notes-textarea-normal {
-    height: 10;
+    height: $ds-size-10;
 }
 
 .notes-textarea-expanded {
-    height: 25;
+    height: $ds-size-25;
     border: round $accent;
 }
 .sidebar Select { 
-    width: 100%; 
-    margin-bottom: 1; 
+    width: $ds-width-full; 
+    margin-bottom: $ds-space-1; 
     border: solid $primary-lighten-2;
     border-bottom: solid $primary-lighten-2;
 }
 
 .prompt-display-textarea {
-    height: 7; /* Example height */
+    height: $ds-size-7; /* Example height */
     border: round $primary-lighten-2;
     background: $primary-background;
 }
@@ -290,7 +294,7 @@
  * features/_conversations.tcss duplicate (margin, border color); the
  * computed styles are unchanged. */
 .sidebar-listview {
-    height: 10; /* Example height for listviews in sidebars */
+    height: $ds-size-10; /* Example height for listviews in sidebars */
     margin-bottom: $ds-space-1;
     border: round $surface;
     background: $primary-background;
@@ -298,7 +302,7 @@
 
 /* Enhanced sidebar sections with UX improvements */
 .sidebar-section-collapsible {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     border: round $surface-lighten-1;
     background: $surface;
 }
@@ -311,7 +315,7 @@
 /* Section loading state */
 .section-loading {
     align: center middle;
-    height: 3;
+    height: $ds-size-3;
 }
 
 .loading-fade {
@@ -329,13 +333,13 @@
 
 /* Tab content styling */
 .tab-content {
-    padding: 1;
-    height: 100%;
+    padding: $ds-space-1;
+    height: $ds-height-full;
 }
 
 .setting-input {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
     border: solid $primary-lighten-1;
     border-bottom: solid $primary-lighten-1;
 }
@@ -348,58 +352,58 @@
 
 /* Temperature visual indicator */
 .temperature-container {
-    height: 3;
+    height: $ds-size-3;
     align: left middle;
 }
 
 .temperature-input {
-    width: 70%;
+    width: $ds-percent-70;
 }
 
 .temp-indicator {
-    width: 30%;
+    width: $ds-percent-30;
     text-align: center;
-    padding-left: 1;
+    padding-left: $ds-space-1;
 }
 
 /* System prompt styling */
 .system-prompt-input {
-    width: 100%;
-    height: 8;
+    width: $ds-width-full;
+    height: $ds-size-8;
     border: round $surface;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     background: $background 5%;
 }
 
 /* New chat buttons */
 .new-chat-buttons {
-    height: 3;
-    margin: 1 0;
+    height: $ds-size-3;
+    margin: $ds-space-1 $ds-space-0;
     align: center middle;
 }
 
 .primary-button {
-    width: 45%;
-    margin: 0 1;
+    width: $ds-percent-45;
+    margin: $ds-space-0 $ds-space-1;
 }
 
 .secondary-button {
-    width: 45%;
-    margin: 0 1;
+    width: $ds-percent-45;
+    margin: $ds-space-0 $ds-space-1;
 }
 
 /* Info display fields */
 .info-display {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
     background: $surface 20%;
     color: $text-muted;
 }
 
 /* Checkbox styling */
 .streaming-toggle, .advanced-toggle {
-    margin: 1 0;
-    padding: 0 1;
+    margin: $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* TabbedContent customization */
@@ -408,17 +412,17 @@ TabbedContent {
 }
 
 TabbedContent > TabPane {
-    padding: 0;
+    padding: $ds-space-0;
     height: auto;
 }
 
 TabbedContent Tabs {
     background: $surface 10%;
-    height: 3;
+    height: $ds-size-3;
 }
 
 TabbedContent Tab {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 TabbedContent Tab.-active {
@@ -429,18 +433,18 @@ TabbedContent Tab.-active {
 
 /* Hide the tab underline indicator */
 TabbedContent Underline {
-    height: 0;
+    height: $ds-size-0;
     display: none;
 }
 
 /* Search results styling */
 .search-results {
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 .search-result-item {
-    margin: 1 0;
-    padding: 1;
+    margin: $ds-space-1 $ds-space-0;
+    padding: $ds-space-1;
     background: $surface 10%;
     border: round $surface-lighten-1;
 }
@@ -460,15 +464,15 @@ TabbedContent Underline {
 /* Loading indicator for lazy tabs */
 .tab-loading {
     align: center middle;
-    height: 10;
+    height: $ds-size-10;
 }
 
 /* Reset button styling */
 .reset-button {
     width: auto;
-    min-width: 3;
-    height: 2;
-    padding: 0 1;
+    min-width: $ds-size-3;
+    height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
     background: $warning 20%;
     border: tall $warning;
 }

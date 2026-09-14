@@ -161,6 +161,7 @@ $ds-percent-40: 40%;
 $ds-percent-42: 42%;
 $ds-percent-45: 45%;
 $ds-percent-50: 50%;
+$ds-percent-70: 70%;
 $ds-percent-75: 75%;
 $ds-percent-80: 80%;
 $ds-percent-85: 85%;
