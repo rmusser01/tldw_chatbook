@@ -4,7 +4,6 @@
     "components/_dialogs.tcss": 4,
     "components/_lists.tcss": 1,
     "components/_messages.tcss": 16,
-    "components/_shared_components.tcss": 17,
     "core/_base.tcss": 5,
     "core/_variables.tcss": 24,
     "features/_logs.tcss": 15,

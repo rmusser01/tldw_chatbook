@@ -10,59 +10,63 @@
  * duplicate definitions scattered across feature modules is a larger,
  * out-of-scope cleanup; this move only relocates the splash module's copies.)
  */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* Scrollable card / preview lists */
 .card-list {
-    height: 1fr;
+    height: $ds-height-fill;
     scrollbar-size: 1 1;
 }
 
 /* Preview panels shared by settings, coderepo, dataset, eval, chunk previews */
 .preview-panel {
-    width: 1fr;
-    height: 100%;
+    width: $ds-width-fill;
+    height: $ds-height-full;
     border: solid $primary;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 .preview-container {
-    width: 1fr;
+    width: $ds-width-fill;
     layout: vertical;
     border: solid $primary;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 .preview-content {
-    padding: 1;
+    padding: $ds-space-1;
     text-align: center;
 }
 
 /* Settings form components */
 .settings-section {
     height: auto;
-    padding: 1;
-    margin-top: 1;
+    padding: $ds-space-1;
+    margin-top: $ds-space-1;
     border-top: solid $primary;
 }
 
 .help-text {
     text-style: italic;
     color: $text-muted;
-    padding: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     text-align: center;
 }
 
 /* Action button rows */
 .action-buttons {
-    height: 3;
+    height: $ds-size-3;
     layout: horizontal;
     align: center middle;
-    padding: 1;
-    margin-top: 1;
+    padding: $ds-space-1;
+    margin-top: $ds-space-1;
 }
 
 .action-buttons Button {
-    margin: 0 1;
+    margin: $ds-space-0 $ds-space-1;
 }
 
 /* Generic window heading. Relocated from features/_ingest_tldw_api_tabs.tcss
@@ -74,7 +78,7 @@
 .window-title {
     text-style: bold;
     text-align: center;
-    padding: 1 0;
+    padding: $ds-space-1 $ds-space-0;
     background: $primary;
     color: $text;
 }
@@ -85,9 +89,9 @@
    and MediaViewerPanel (.param-group) still mount them. Deleting the sheet
    without moving these would have silently unstyled both live widgets. */
 .action-spacer {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .param-group {
-    width: 1fr;
+    width: $ds-width-fill;
 }
