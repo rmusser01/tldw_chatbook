@@ -79,6 +79,32 @@ paint the list pane beside it.
 metadata-only `logger.warning(..., error_type=...)`; the new link helper logs
 the same shape. Inventory re-pinned (10 -> 11 calls).
 
+**Fix round 1 (review of task 4).**
+
+- *The link is no longer written on a path that cannot succeed.* The
+  `open_chat_with_handoff` seam is read before the link block, and the one
+  remaining post-write failure (the seam raising) rolls its own insert back
+  through `_unlink_open_note_from_workspace` -- nothing in the app removes an
+  `item_type="note"` membership, so a failed hand-off must not strand one.
+  Only a failed rollback names the link that stayed. Inventory re-pinned
+  again (11 -> 12 calls) for the rollback's metadata-only warning.
+- *The completion line stopped claiming a link it had not made:* "Linked to
+  {workspace} · staged in Console" / "Already linked to {workspace} · staged
+  in Console" / "Staged in Console", by branch. The no-note blocker reads
+  "No note is open. Next: open a note, then try again." -- the shared "Can't
+  use this note in Console — " lead-in moved into the blocker strings (same
+  rendered text for every other branch) so that one branch stops refusing
+  "this note" while reporting that none is open.
+- *Note for a future reader (review Minor #2):* `context_handoff_enabled` is
+  no longer load-bearing on this path. The gate is profile-wide
+  (`display_state.py`: any unlinked source row closes it), so linking this
+  note usually leaves it False and the hand-off proceeds regardless -- by the
+  ruling's intent. It is read only to decide whether to attempt the link.
+- Added pins: `test_a_hand_off_console_cannot_take_writes_no_workspace_link`,
+  `test_a_hand_off_that_raises_rolls_back_the_link_it_wrote`,
+  `test_the_status_says_already_linked_when_it_made_no_link`,
+  `test_the_status_claims_no_link_when_the_gate_is_open`.
+
 Modified: `UI/Library_Modules/library_notes_controller.py`,
 `Library/library_notes_state.py`, `UI/Screens/library_screen.py`,
 `Widgets/Library/library_notes_canvas.py`,

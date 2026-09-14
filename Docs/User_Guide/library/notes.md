@@ -1494,3 +1494,18 @@ beside the editor never carried it. Before this the hand-off refused every
 fresh note with a toast about workspace linking AND a status line about
 Console readiness — two messages naming two different blockers, the second of
 which was not the real one.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32536
+fix round 1, 235x52 on the 12-note profile): the completion line names the
+branch it took. On "Grocery plan", already a member, it reads "Saved · Use in
+Console complete — Already linked to Local Default · staged in Console."
+(`wave4-caps/console-handoff/handoff-30-already-linked-status`) and
+`workspace_memberships` stayed at three note rows; on "Ideas backlog", a
+member of nothing, it reads "… Linked to Local Default · staged in Console."
+(`31-fresh-link-status`) and exactly one row appeared; pressing it a second
+time on the same note reads "Already linked …" and wrote nothing
+(`32-second-press-already-linked`, still four rows). Before this every
+closed-gate press claimed "Linked to" — the gate is profile-wide, so that was
+the common case, not an edge. The two hand-off FAILURE paths changed in this
+round (the Console seam missing, and the seam raising) cannot be induced from
+the UI — they are pinned by tests, not walked.)*
