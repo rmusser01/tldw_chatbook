@@ -4258,7 +4258,10 @@ class LibraryNotesController:
             workspace, no open note, or the write failed) -- the hand-off
             stages nothing on ``""``. ``written_workspace_id`` is set only
             when THIS call inserted the membership, so the caller can roll
-            that insert back when the hand-off then fails.
+            that insert back when the hand-off then fails and can say what
+            actually happened -- the gate is profile-wide (any unlinked
+            source row closes it), so an already-linked note takes this
+            branch too and used to be announced as a fresh link.
         """
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         note_id = str(self._selected_note_id or "").strip()
@@ -4342,8 +4345,9 @@ class LibraryNotesController:
             ``(blocker, completion)``. ``blocker`` is ``""`` on success, else
             one complete sentence naming what stopped the hand-off and its
             remedy -- the operation's only message (AC#2), never a toast.
-            ``completion`` is the success line's clause naming the link this
-            call made, else ``""``.
+            ``completion`` is the success line's clause, naming what actually
+            happened to the workspace link: linked, already linked, or staged
+            without linking.
         """
         payload = self._selected_library_note_handoff_payload()
         if payload is None:
@@ -4358,7 +4362,7 @@ class LibraryNotesController:
                 "Can't use this note in Console — Console handoff is "
                 "unavailable. Next: restart Chatbook, then try again."
             ), ""
-        completion = ""
+        completion = "Staged in Console"
         workspace = ""
         written_workspace_id = ""
         if not self._library_workspace_depth_state().context_handoff_enabled:
@@ -4379,7 +4383,11 @@ class LibraryNotesController:
                     "Can't use this note in Console — the note could not be "
                     "linked to the active workspace. Next: try again."
                 ), ""
-            completion = f"Linked to {workspace} · staged in Console"
+            completion = (
+                f"Linked to {workspace} · staged in Console"
+                if written_workspace_id
+                else f"Already linked to {workspace} · staged in Console"
+            )
         try:
             open_chat_with_handoff(payload, action_label="Use in Console")
         except Exception as error:

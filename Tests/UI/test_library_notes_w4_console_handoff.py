@@ -286,6 +286,59 @@ async def test_a_hand_off_that_raises_rolls_back_the_link_it_wrote():
     app.notify.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_the_status_says_already_linked_when_it_made_no_link():
+    """Fix round 1: the gate is profile-wide, so an already-linked note takes
+    the same branch -- and used to be reported as freshly "Linked to"."""
+    host, app = _notes_host(_two_notes())
+    _link_library_items_to_active_workspace(app, (("note", "n-1", "Q3 retro"),))
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot, "n-1")
+        gate = screen._library_workspace_depth_state(refresh=True)
+        assert gate.context_handoff_enabled is False, (
+            "control: n-2 is unlinked, so the profile-wide gate is still closed"
+        )
+
+        screen.query_one("#library-note-use-in-console").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _transfer_status(screen) == (
+            f"Use in Console complete — Already linked to {gate.workspace_name} "
+            "· staged in Console."
+        )
+
+    assert len(_note_memberships(app, "n-1")) == 1
+    app.open_chat_with_handoff.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_the_status_claims_no_link_when_the_gate_is_open():
+    """Fix round 1: with the gate open nothing is linked, so nothing is claimed."""
+    host, app = _notes_host(_two_notes()[:1])
+    _link_library_items_to_active_workspace(app, (("note", "n-1", "Q3 retro"),))
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        assert (
+            screen._library_workspace_depth_state(refresh=True).context_handoff_enabled
+            is True
+        ), "control: every source row is linked, so the gate is open"
+
+        screen.query_one("#library-note-use-in-console").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _transfer_status(screen) == "Use in Console complete — Staged in Console."
+
+    app.open_chat_with_handoff.assert_called_once()
+
+
 # --- task-32555 ---------------------------------------------------------------
 
 

@@ -875,7 +875,9 @@ automatic-sync setting.
 2. The note is linked to your active workspace on the way — a new note
    belongs to no workspace, and that is what the hand-off needs — so the
    status line reads "Use in Console complete — Linked to *workspace* ·
-   staged in Console."
+   staged in Console." The line says what actually happened: "Already
+   linked to *workspace* · staged in Console." when the note was a member
+   already, and "Staged in Console." when no linking was needed at all.
 3. You land in the Console with the note staged as context and the
    prompt "Use this note as context and help me work with it." ready to
    send or rewrite. On a profile with no provider set up yet, the note is
@@ -886,7 +888,9 @@ If the hand-off cannot be made, the editor's status line is the only
 message, and it names what stopped it and what to do — for example
 "Can't use this note in Console — the workspace registry is unavailable.
 Next: restart Chatbook, then try again." Opening another note, or saving
-this one, clears it.
+this one, clears it. A hand-off that fails leaves no workspace link behind
+— if it linked the note on the way, it removes that link again, and says
+so if it could not.
 
 ### Capture a Console answer as a note
 The return leg of **Use in Console**. In the Console, select an assistant

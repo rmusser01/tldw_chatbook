@@ -22830,9 +22830,12 @@ async def test_library_shell_note_use_in_console_triggers_handoff():
         await pilot.pause()
         await pilot.pause()
 
+        # task-32536 fix round 1: the note is already a member here (the gate
+        # is open), so the line says what happened without claiming a link
+        # this press did not make.
         assert str(
             screen.query_one("#library-note-transfer-status", Static).renderable
-        ) == ("Use in Console complete.")
+        ) == ("Use in Console complete — Staged in Console.")
 
     app.open_chat_with_handoff.assert_called_once()
     payload = app.open_chat_with_handoff.call_args.args[0]
