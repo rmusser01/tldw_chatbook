@@ -3,7 +3,6 @@
     "components/_buttons.tcss": 5,
     "components/_dialogs.tcss": 4,
     "components/_lists.tcss": 1,
-    "components/_messages.tcss": 16,
     "core/_base.tcss": 5,
     "core/_variables.tcss": 24,
     "features/_logs.tcss": 15,

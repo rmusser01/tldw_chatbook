@@ -197,6 +197,8 @@ $ds-conversations-ai-generate-share: 12%;
 $ds-profile-link-modal-cols: 88;
 $ds-profile-link-modal-body-share: 82%;
 $ds-widgets-skeleton-title-share: 60%;
+$ds-messages-scroll-cap: 50vh;
+$ds-messages-text-scroll-cap: 40vh;
 $ds-console-frame: #6f7782;
 
 $ds-duration-fast: 0.2s;

@@ -364,6 +364,10 @@ $ds-profile-link-modal-body-share: 82%;
 /* task 11 (ADR-161 §3.10): the skeleton-loading title bar's fill
    (components/_widgets.tcss, single consumer). */
 $ds-widgets-skeleton-title-share: 60%;
+/* task 11 (ADR-161 §3.10): message-body viewport scroll caps
+   (components/_messages.tcss, single consumer). */
+$ds-messages-scroll-cap: 50vh;
+$ds-messages-text-scroll-cap: 40vh;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
  * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
@@ -2701,19 +2705,24 @@ ChangeGitPushModal {
  * hover. The widgets' DEFAULT_CSS copies (identical or bundle-wins
  * subsets) were deleted; ChatMessage now has no DEFAULT_CSS at all.
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales + named
+   \$ds-messages-* viewport scroll caps), transcribed value-identically
+   from the raw literals; comments stay load-bearing. */
+
 
 ChatMessage {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 50vh;  /* Limit message height to 50% of viewport */
-    margin-bottom: 1;
+    max-height: $ds-messages-scroll-cap;  /* Limit message height to 50% of viewport */
+    margin-bottom: $ds-space-1;
     overflow-y: auto;  /* Allow scrolling within long messages */
 }
 ChatMessage > Vertical {
     border: round $surface;
     background: $panel;
-    padding: 0 1;
-    width: 100%;
+    padding: $ds-space-0 $ds-space-1;
+    width: $ds-width-full;
     height: auto;
 }
 ChatMessage.-user > Vertical {
@@ -2729,17 +2738,17 @@ ChatMessage.-tool-result > Vertical {
     border: round $success;
 }
 .message-header {
-    width: 100%;
-    padding: 0 1;
+    width: $ds-width-full;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface-darken-1;
     text-style: bold;
-    height: 1; /* Ensure header is minimal height */
+    height: $ds-size-1; /* Ensure header is minimal height */
 }
 .message-text {
-    padding: 1; /* Padding around the text itself */
-    width: 100%;
+    padding: $ds-space-1; /* Padding around the text itself */
+    width: $ds-width-full;
     height: auto;
-    max-height: 40vh;  /* Limit text area to 40% of viewport */
+    max-height: $ds-messages-text-scroll-cap;  /* Limit text area to 40% of viewport */
     overflow-y: auto;  /* Allow scrolling within long text */
 }
 
@@ -2749,17 +2758,17 @@ ChatMessage.-tool-result > Vertical {
 }
 .message-actions {
     height: auto;
-    width: 100%;
-    padding: 1; /* Add padding around buttons */
+    width: $ds-width-full;
+    padding: $ds-space-1; /* Add padding around buttons */
     /* Use a VALID border type */
     border-top: solid $surface-lighten-1; /* CHANGED thin to solid */
     align: right middle; /* Align buttons to the right */
     display: block; /* Default display state */
 }
 .message-actions Button {
-    min-width: 8;
-    height: 1;
-    margin: 0 0 0 1; /* Space between buttons */
+    min-width: $ds-size-8;
+    height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1; /* Space between buttons */
     border: none;
     background: $surface-lighten-2;
     color: $text-muted;
