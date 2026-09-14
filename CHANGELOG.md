@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Some kind of Versioning
     
-## [0.2.1] - 2026-09-12
+## [0.2.1] - 2026-09-13
 
 Includes the newer committed development changes from `dev` and supersedes
 the unpublished PyPI 0.2.0 release candidate.
@@ -14,8 +14,11 @@ the unpublished PyPI 0.2.0 release candidate.
 - Console conversation archive recovery and retained local reasoning history.
 - Expanded Persona Buddy management and Petdex import support.
 - Custom endpoint registry, a chat tokenization sheet, and artifact web export.
+- Agent provider routing and configurable Console run hooks.
 
 ### Changed
+- App-only release: ordinary speech recording no longer depends on the unavailable
+  native AEC companion. Experimental duplex voice remains disabled pending qualification.
 - Python 3.12 or newer is now required.
 - Library keeps its canvas resident while switching views, with revised media
   and Notes layouts, navigation, import feedback, and recovery controls.
