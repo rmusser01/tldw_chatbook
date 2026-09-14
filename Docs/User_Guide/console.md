@@ -271,12 +271,16 @@ they are, the empty transcript reads "Ready — type a message to begin."
 A second action, **Write a note in Library**, stays available beside it for
 as long as the card is showing — it needs no provider, and opens Library's
 New note view directly. A local-first user who came for notes is not stuck
-behind a provider-only card.
+behind a provider-only card. Both actions are drawn as buttons with a
+rounded edge, one under the other; Tab moves between them and the focused
+one grows heavy side rails, so which one Enter will press is visible
+without reading the text.
 
 If you land here with a handoff already staged — e.g. from Library's
-**Use in Console** on a Search/RAG result while a provider isn't set up
-yet — the card shows an extra line under "Get started" naming what's
-staged and that finishing setup is what unlocks it (for example,
+**Use in Console** on a Search/RAG result or on an open note while a
+provider isn't set up yet — the card shows an extra line under
+"Get started" naming what's staged and that finishing setup is what
+unlocks it (for example,
 "Library Search/RAG evidence staged — finish provider setup to use it.").
 The handoff itself is never lost: it's the same staged context the
 composer-level strip below shows once setup completes.
@@ -724,3 +728,13 @@ added the "Write a note in Library" action beside the Get started card's
 provider steps — needs no provider, opens Library's New note view, and
 stays available for the whole time the card is blocking. Widget-level
 check in `Tests/UI/test_library_notes_wave_onboarding.py`.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
+AC#1, at 235x52 and 100x30): the Get started card's actions render as bordered
+buttons — "Set up provider", "Write a note in Library" and, when one is found,
+"Use detected llama.cpp …" — and the focused one is marked by heavy left and
+right rails rather than by text styling
+(`wave4-caps/console-handoff/handoff-10-console-card`, `11-card-focus`,
+`10b-console-card-100x30`). They were `compact` Buttons before, which Textual
+renders with `border: none !important`, so all three read as plain text lines
+two rows apart.*

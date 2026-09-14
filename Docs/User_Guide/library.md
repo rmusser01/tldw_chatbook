@@ -80,9 +80,11 @@ choice independently of which rail sections are open. While the expanded
 Library is still authoritatively empty, **Back to Get started** is available.
 Adding any usable content permanently graduates the profile to the full
 Library; deleting that content later does not hide tools again. Graduation
-announces itself once, as the toast "Library tools are now available." — the
-rail growing is the durable evidence, so nothing is added to the canvas, and
-whatever you were reading or typing is left alone.
+is silent: the rail growing is the evidence, nothing is added to the canvas,
+and whatever you were reading or typing is left alone. (Graduation was
+announced by the toast "Library tools are now available." — superseded by
+task-32555, which dropped it: the words described the rail rather than what
+the reader had just done.)
 
 Compact presentation never blocks navigation. Deep links and command-palette
 routes, including **Tab Navigation: Library — Skills**, can open a tool that is
@@ -869,9 +871,10 @@ relaunched before its first Library visit — the lifecycle is recorded at
 profile creation instead of being inferred from a missing key.)*
 
 *Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32063:
-"Library tools are now available." fires only when the compact Get started
-rail actually gives way to the full one, not on a populated profile's first
-source read. task-32064: the "Chunking Lab / Try selected text" strip left the
+"Library tools are now available." *was* fired only when the compact Get
+started rail actually gives way to the full one, not on a populated profile's
+first source read — the toast itself was dropped by task-32555; see the stamp
+at the end of this file. task-32064: the "Chunking Lab / Try selected text" strip left the
 top of every canvas for Details ▸ Actions, with a one-line gloss, and Escape
 in the Lab returns to the Library canvas it was opened from. task-32069: the
 rail search box has an "x" and no longer carries a stale query onto another
@@ -985,3 +988,9 @@ column keeps its full copy and hangs its continuation lines two cells in, so
 the blocked Handoff row's reason and next step read as one row — live at
 235x52 on a seeded profile, and pinned on the painted lines at 235x52 and
 60x24.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
+AC#2, at 235x52 on a profile stamped `starter` with an empty notes database):
+creating and saving the first note grows the rail from the compact Get started
+list to the full Browse / Create / Study / Import-Export rail and raises no
+toast (`wave4-caps/console-handoff/handoff-13-no-toast`).*
