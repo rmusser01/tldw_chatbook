@@ -20,7 +20,15 @@ from tldw_chatbook.Notes.note_import_discovery import (
     ImportSelectionError,
     discover_import_sources,
 )
-from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
+from tldw_chatbook.Notes.note_import_parsers import (
+    _frontmatter_keywords,
+    _frontmatter_title,
+    _split_frontmatter,
+)
+from tldw_chatbook.Notes.note_import_plan_models import (
+    MAX_IMPORT_KEYWORDS_PER_NOTE,
+    ImportBounds,
+)
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
     NotesSyncBindingRecord,
@@ -324,6 +332,48 @@ def _destination_folder(root_name: str, relative_path: str) -> str:
     return " / ".join((root_name, *PurePosixPath(relative_path).parent.parts))
 
 
+_FRONTMATTER_BOUNDS = ImportBounds(
+    max_files=1,
+    max_file_bytes=1,
+    max_total_bytes=1,
+    max_depth=1,
+    max_keywords_per_note=MAX_IMPORT_KEYWORDS_PER_NOTE,
+)
+"""Import once's own keyword cap for the frontmatter lift (task-32535).
+
+Only ``max_keywords_per_note`` is read here; the walk limits belong to the
+discovery pass and are set to their minimum so they cannot be mistaken for
+one.
+"""
+
+
+def _lifted_note_metadata(
+    file: object | None,
+    relative_path: str,
+    *,
+    obsidian: bool,
+) -> tuple[str, tuple[str, ...]]:
+    """Return the title and keywords a discovered file becomes.
+
+    task-32535: the same lift Import once performs -- `title:` (or the file
+    name) and `tags:`/`aliases:`. The frontmatter block itself stays in the
+    note body: lasting sync is bidirectional and UPDATE_FILE writes the body
+    back, so stripping it would delete the user's Obsidian properties on the
+    next Chatbook edit (controller ruling, wave 4; Folder files keeps the
+    block the same way, task-32264).
+    """
+
+    stem = Path(relative_path).stem
+    text = getattr(file, "text", None)
+    if not obsidian or type(text) is not str:
+        return stem, ()
+    metadata, _body = _split_frontmatter(text)
+    return (
+        _frontmatter_title(metadata) or stem,
+        _frontmatter_keywords(metadata, _FRONTMATTER_BOUNDS),
+    )
+
+
 def _bounded_label(value: str) -> str:
     return (" ".join(value.split()) or "Untitled")[:_DISPLAY_LABEL_MAX_CHARS]
 
@@ -433,6 +483,8 @@ class _FreshAuthority:
 
 class _RuntimeAdapter(Protocol):
     async def observe_root(self, root: NotesSyncRootRecord) -> ReconciliationInput: ...
+
+    def remember_obsidian_mode(self, root_id: str, enabled: bool) -> None: ...
 
     async def build_execution_request(
         self,
@@ -564,6 +616,8 @@ class _ProductionRuntimeAdapter:
         self._bundles: dict[str, Mapping[str, _ObservedBinding]] = {}
         self._root_signatures: dict[str, tuple[object, ...]] = {}
         self._observation_reuse: dict[str, _ObservationReuse] = {}
+        self._obsidian_modes: dict[str, bool] = {}
+        self._obsidian_active: dict[str, bool] = {}
         file_limit = min(recovery_capacity_bytes, 10 * 1024 * 1024)
         self._discovery_bounds = ImportBounds(
             max_files=1_000,
@@ -615,6 +669,30 @@ class _ProductionRuntimeAdapter:
             self._filesystems[root.root_id] = filesystem
         return filesystem
 
+    def obsidian_mode(self, root_id: str) -> bool:
+        """Return whether this root's last observation ran the Obsidian pass.
+
+        Resolved once per observation from the vault marker the discovery walk
+        already reports, so the planner, the frontmatter lift and the review
+        labels all read the same answer (task-32535).
+        """
+
+        return self._obsidian_active.get(root_id, False)
+
+    def remember_obsidian_mode(self, root_id: str, enabled: bool) -> None:
+        """Record the setup review's answer to the Obsidian toggle.
+
+        ponytail: in memory only. The device store's settings table CHECK-
+        constrains ``setting_key`` to two literal keys, so persisting a
+        per-root flag there means a schema version and a table rebuild. A
+        vault therefore runs the pass again after a restart even if the user
+        declined it at setup -- and the pass only ever leaves NEVER-BOUND
+        files alone, so nothing already synced changes. Persist it with the
+        next device-schema version if anyone reports the re-default.
+        """
+
+        self._obsidian_modes[root_id] = enabled
+
     async def observe_root(self, root: NotesSyncRootRecord) -> ReconciliationInput:
         notes = self._notes(root)
         filesystem = self._filesystem(root)
@@ -630,6 +708,12 @@ class _ProductionRuntimeAdapter:
                 "root_discovery_incomplete",
                 detail=f"{len(discovery.failures)} paths could not be listed",
             )
+        # task-32535: the walk already reports the vault marker, so the pass
+        # costs no extra filesystem read -- and a folder that stops being a
+        # vault stops being treated as one.
+        self._obsidian_active[root.root_id] = discovery.vault_detected and (
+            self._obsidian_modes.get(root.root_id, True)
+        )
         # TASK-23027: reuse is validated per item against state read fresh
         # this pass; see _ObservationReuse. A miss (edit, add, rename, touch,
         # or a cold cache) takes exactly the pre-existing read path.
@@ -828,6 +912,7 @@ class _ProductionRuntimeAdapter:
                     bound=False,
                     baseline_serialization=file.observation.serialization,
                     serialization=file.observation.serialization,
+                    file_blank=not file.text.strip(),
                 )
             )
             bundle[binding_id] = _ObservedBinding(candidate, None, file)
@@ -841,6 +926,7 @@ class _ProductionRuntimeAdapter:
             expected_generation=max(
                 (item.note_version for item in observed), default=0
             ),
+            obsidian_mode=self.obsidian_mode(root.root_id),
         )
         token = plan_reconciliation(request).observation_token
         if len(self._bundles) >= _OBSERVATION_BUNDLE_LIMIT:
@@ -933,6 +1019,17 @@ class _ProductionRuntimeAdapter:
         ).hexdigest()
         note = binding.note
         file = binding.file
+        # task-32535: only a create needs a title and keywords lifted off the
+        # file; an existing note already carries both.
+        desired_title, desired_keywords = (
+            (note.title, ())
+            if note is not None
+            else _lifted_note_metadata(
+                file,
+                binding.record.normalized_relative_path,
+                obsidian=self.obsidian_mode(root.root_id),
+            )
+        )
         return NotesSyncExecutionRequest(
             operation_id=operation_id,
             root_id=root.root_id,
@@ -943,11 +1040,8 @@ class _ProductionRuntimeAdapter:
             action_kind=action.kind,
             note=note,
             file=file,
-            desired_title=(
-                note.title
-                if note is not None
-                else Path(binding.record.normalized_relative_path).stem
-            ),
+            desired_title=desired_title,
+            desired_keywords=desired_keywords,
             recovery_id=f"recovery-{operation_id}",
             recovery_expires_at=time.time_ns() + 86_400_000_000_000,
             candidate_note_scope_id=(
@@ -1152,7 +1246,11 @@ class _ProductionRuntimeAdapter:
             title = (
                 binding.note.title
                 if binding.note is not None
-                else Path(relative_path).stem
+                else _lifted_note_metadata(
+                    binding.file,
+                    relative_path,
+                    obsidian=self.obsidian_mode(root.root_id),
+                )[0]
             )
             labels.append(
                 RuntimeBindingLabel(
@@ -1946,6 +2044,9 @@ class NotesSyncRuntimeOwner:
                 state=NotesSyncRootState.PENDING,
             )
             self._root_paths[root_id] = setup.canonical_path
+            # task-32535: the pass runs during this review, so the flag has
+            # to be known before the folder is observed.
+            self._adapter.remember_obsidian_mode(root_id, setup.obsidian_mode)
             # TASK-32243: one release for every failure. The lease refusal used
             # to skip this, leaking `_root_paths` and rejecting the same folder
             # as `lasting_root_overlap` for the rest of the session.

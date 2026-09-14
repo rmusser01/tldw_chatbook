@@ -11,7 +11,7 @@ import time
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, TypeVar, cast
 
 from tldw_chatbook.Notes.notes_device_state_store import (
@@ -362,6 +362,40 @@ _TYPED_REASON_CODES = frozenset(
 _FileSnapshot = NotesSyncFileSnapshot | WindowsNotesSyncObservation
 
 
+def _keywords_metadata(request: "NotesSyncExecutionRequest") -> dict[str, object]:
+    """Return the keyword entry for one recovery envelope, or nothing.
+
+    Omitted when empty: the envelope has a byte budget, and every action but
+    a frontmatter-bearing create carries no keywords at all (task-32535).
+    """
+
+    if not request.desired_keywords:
+        return {}
+    return {"desired_keywords": list(request.desired_keywords)}
+
+
+def _decoded_keywords(value: object) -> tuple[str, ...]:
+    """Return the frontmatter keywords a resumed create must still apply."""
+
+    if value is None:
+        return ()
+    if type(value) is not list or any(type(item) is not str for item in value):
+        raise RuntimeError("recovery_authority_changed")
+    return tuple(value)
+
+
+def _derived_folder_id(root_id: str, segments: tuple[str, ...]) -> str:
+    """Return the deterministic candidate id for one synced subfolder.
+
+    Deterministic so a resumed or retried operation asks for the same folder
+    rather than a second one; only a candidate, because an existing folder at
+    that path wins (task-32535).
+    """
+
+    payload = "\0".join((root_id, *segments)).encode("utf-8")
+    return f"sync-folder-{hashlib.sha256(payload).hexdigest()}"
+
+
 def _file_relative_path(snapshot: _FileSnapshot) -> str:
     return (
         snapshot.relative_path
@@ -518,6 +552,8 @@ class NotesSyncExecutionRequest:
     desired_title: str
     recovery_id: str
     recovery_expires_at: int
+    desired_keywords: tuple[str, ...] = ()
+    """Keywords lifted from the file's frontmatter for a create (task-32535)."""
     journal_kind: str | None = None
     direction_override: NotesSyncDirectionOverride | None = None
     keep_both: NotesSyncKeepBothAuthority | None = None
@@ -591,6 +627,14 @@ class NotesSyncExecutionRequest:
             or "\x00" in self.desired_title
         ):
             raise ValueError("desired_title must be bounded non-empty text.")
+        if type(self.desired_keywords) is not tuple or any(
+            type(value) is not str
+            or not value.strip()
+            or len(value) > 256
+            or "\x00" in value
+            for value in self.desired_keywords
+        ):
+            raise ValueError("desired_keywords must be bounded non-empty text.")
         if type(self.recovery_expires_at) is not int or self.recovery_expires_at <= 0:
             raise ValueError("recovery_expires_at must be positive.")
         if self.journal_kind is not None and (
@@ -741,9 +785,14 @@ class _NoteAuthority(Protocol):
         note_id: str,
         title: str,
         content: str,
+        keywords: tuple[str, ...] = (),
     ) -> NotesSyncNoteSnapshot: ...
 
     async def delete(self, expected: NotesSyncNoteSnapshot) -> None: ...
+
+    async def ensure_sync_subfolder(
+        self, *, folder_id: str, parent_id: str, name: str
+    ) -> str: ...
 
     async def create_or_verify_manual_folder(
         self, request: ManualFolderRequest
@@ -835,6 +884,7 @@ class NotesSyncExecutor:
         self._filesystem = filesystem
         self._capacity = recovery_capacity_bytes
         self._after_stage = after_stage
+        self._sync_folder_ids: dict[tuple[str, str], str] = {}
 
     @staticmethod
     def stable_identity_digest(snapshot: _FileSnapshot) -> str:
@@ -1175,6 +1225,7 @@ class NotesSyncExecutor:
             note_id = self._required_metadata_text(metadata, "note_id")
             relative_path = self._required_metadata_text(metadata, "file_relative_path")
             desired_title = self._required_metadata_text(metadata, "desired_title")
+            desired_keywords = _decoded_keywords(metadata.get("desired_keywords"))
             recovery_title = self._required_metadata_text(metadata, "recovery_title")
         except (KeyError, TypeError, ValueError):
             raise RuntimeError("recovery_authority_changed") from None
@@ -1325,6 +1376,7 @@ class NotesSyncExecutor:
             note=note,
             file=file,
             desired_title=desired_title,
+            desired_keywords=desired_keywords,
             recovery_id=recovery.recovery_id,
             recovery_expires_at=recovery.expires_at,
             journal_kind=(operation.kind if resolution_action is not None else None),
@@ -1350,6 +1402,7 @@ class NotesSyncExecutor:
             note_id = self._required_metadata_text(metadata, "note_id")
             file_path = self._required_metadata_text(metadata, "file_relative_path")
             desired_title = self._required_metadata_text(metadata, "desired_title")
+            desired_keywords = _decoded_keywords(metadata.get("desired_keywords"))
         except (KeyError, TypeError, ValueError):
             raise RuntimeError("recovery_authority_changed") from None
         raw_override = metadata.get("direction_override")
@@ -1448,6 +1501,7 @@ class NotesSyncExecutor:
             note=note,
             file=file,
             desired_title=desired_title,
+            desired_keywords=desired_keywords,
             recovery_id=recovery.recovery_id,
             recovery_expires_at=recovery.expires_at,
             direction_override=direction_override,
@@ -3204,6 +3258,7 @@ class NotesSyncExecutor:
             ),
             "binding_id": request.binding_id,
             "cleanup_pending": False,
+            **_keywords_metadata(request),
             "desired_title": request.desired_title,
             "direction": request.direction.value,
             "direction_override": _encoded_override(request.direction_override),
@@ -3315,7 +3370,14 @@ class NotesSyncExecutor:
                 note, file = await self._require_new_desired(request)
                 desired = list(await self._desired_managed_memberships(request))
                 if request.action_kind is not NotesSyncActionKind.MOVE_FILE:
-                    desired.append((request.logical_folder_id, note.note_id))
+                    desired.append(
+                        (
+                            await self._sync_folder_id(
+                                request, _file_relative_path(file)
+                            ),
+                            note.note_id,
+                        )
+                    )
                 _, cancelled = await self._joined_thread_call(
                     lambda: run_worker_coroutine(
                         self._notes.reconcile_managed_memberships(
@@ -3394,6 +3456,7 @@ class NotesSyncExecutor:
                         note_id=self._request_note_id(request),
                         title=request.desired_title,
                         content=request.file.text,
+                        keywords=request.desired_keywords,
                     )
                 )
             )
@@ -3551,12 +3614,54 @@ class NotesSyncExecutor:
         reconcile returns. See TASK-21129.
         """
 
-        note_ids = await asyncio.to_thread(
-            self._store.active_binding_note_ids,
+        placements = await asyncio.to_thread(
+            self._store.active_binding_placements,
             request.root_id,
             exclude_binding_id=exclude_binding_id,
         )
-        return tuple((request.logical_folder_id, note_id) for note_id in note_ids)
+        return tuple(
+            [
+                (await self._sync_folder_id(request, relative_path), note_id)
+                for note_id, relative_path in placements
+            ]
+        )
+
+    async def _sync_folder_id(
+        self,
+        request: NotesSyncExecutionRequest,
+        relative_path: str,
+    ) -> str:
+        """Return the Library folder a file at this path belongs in.
+
+        task-32535: every synced note used to land directly in the root
+        folder, so a 71-file vault arrived as one flat list and the user lost
+        the structure they organised it with. The folder chain below the root
+        mirrors the folder chain on disk, created once and then verified.
+
+        ponytail: one create-or-verify call per distinct folder, memoized for
+        this executor. Resolving from the binding rows instead would need a
+        folder column on `notes_sync_bindings` and its migration -- worth it
+        only if a very wide root makes these calls measurable.
+        """
+
+        parent = PurePosixPath(relative_path).parent
+        segments = tuple(part for part in parent.parts if part not in {"", "."})
+        folder_id = request.logical_folder_id
+        for depth in range(len(segments)):
+            key = (folder_id, segments[depth])
+            cached = self._sync_folder_ids.get(key)
+            if cached is None:
+                cached = await self._notes.ensure_sync_subfolder(
+                    folder_id=_derived_folder_id(
+                        request.root_id, segments[: depth + 1]
+                    ),
+                    parent_id=folder_id,
+                    name=segments[depth],
+                )
+                validate_notes_sync_opaque_id(cached, field_name="folder_id")
+                self._sync_folder_ids[key] = cached
+            folder_id = cached
+        return folder_id
 
     @staticmethod
     def _request_note_scope_id(request: NotesSyncExecutionRequest) -> str:
@@ -3728,6 +3833,7 @@ class NotesSyncExecutor:
             },
             "cleanup_pending": False,
             "desired_digest": desired_digest,
+            **_keywords_metadata(request),
             "desired_title": request.desired_title,
             "direction": request.direction.value,
             "direction_override": _encoded_override(request.direction_override),
@@ -3843,6 +3949,7 @@ class NotesSyncExecutor:
             "conflict_substage": "recovery_admitted",
             "conflict_substage_padding": " " * (longest - len("recovery_admitted")),
             "desired_digest": _file_content_digest(file),
+            **_keywords_metadata(request),
             "desired_title": request.desired_title,
             "direction": request.direction.value,
             "direction_override": _encoded_override(request.direction_override),

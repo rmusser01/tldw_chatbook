@@ -345,6 +345,10 @@ class _Adapter:
         self.executor = _Executor()
         self.created_folders: list[str] = []
         self.rolled_back_folders: list[object] = []
+        self.obsidian_modes: dict[str, bool] = {}
+
+    def remember_obsidian_mode(self, root_id: str, enabled: bool) -> None:
+        self.obsidian_modes[root_id] = enabled
 
     async def observe_root(self, _root: NotesSyncRootRecord) -> ReconciliationInput:
         result = self.observations[min(self.observe_calls, len(self.observations) - 1)]
@@ -3530,9 +3534,14 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_lifts_frontm
             obsidian_mode=obsidian_mode,
         )
 
+    # Off: the vault's own folders come back as creates. The two empty files
+    # do not -- Import once refuses an empty source whatever folder it is in.
     off = await owner.review_setup(setup(False))
-    assert len(off.safe_actions) == 6
-    assert off.item_skips == ()
+    assert len(off.safe_actions) == 4
+    assert sorted((skip.relative_path, skip.reason_code) for skip in off.item_skips) == [
+        ("Inbox/Untitled.md", "empty_file"),
+        ("Untitled 1.md", "empty_file"),
+    ]
 
     on = await owner.review_setup(setup(True))
     assert len(on.safe_actions) == 2
@@ -3567,11 +3576,33 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_lifts_frontm
     assert set(by_path) == {"/Vault", "/Vault/Projects", "/Vault/People"}
     root_folder = by_path["/Vault"]
     assert by_path["/Vault/Projects"].parent_id == root_folder.folder_id
-    placements = dict(folders.reconciled[-1][1])
+    # Every managed placement of the run, not only the last call's: the
+    # reconcile is (folder_id, note_id) pairs, so the note is the value.
+    placements = {
+        note_id: folder_id
+        for _owner, desired in folders.reconciled
+        for folder_id, note_id in desired
+    }
     assert placements[str(notes_by_title["Library ▸ Notes review"]["id"])] == by_path[
         "/Vault/Projects"
     ].folder_id
     assert placements[str(notes_by_title["Sam"]["id"])] == by_path["/Vault/People"].folder_id
-    # The mode is remembered for later checks of the persisted root.
-    assert owner._store.get_setting(f"obsidian_mode:{on.root_id}").value == "on"
+    # A later Check of the activated root runs the same pass: the flag is
+    # resolved from the vault marker the walk already reports, so a file
+    # dropped into .trash/ after activation is still skipped with a reason.
+    (root_path / ".trash" / "Newer idea.md").write_text("# New\n", encoding="utf-8")
+    checked = await owner.check_root(on.root_id)
+    assert sorted(
+        (skip.relative_path, skip.reason_code) for skip in checked.item_skips
+    ) == [
+        (".trash/Newer idea.md", "obsidian_trash"),
+        (".trash/Old idea.md", "obsidian_trash"),
+        ("Inbox/Untitled.md", "empty_file"),
+        ("Templates/Daily.md", "obsidian_template"),
+        ("Untitled 1.md", "empty_file"),
+    ]
+    assert all(
+        action.kind is NotesSyncActionKind.NO_CHANGE
+        for action in checked.safe_actions
+    )
     await owner.shutdown()

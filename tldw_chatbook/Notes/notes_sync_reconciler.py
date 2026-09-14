@@ -411,27 +411,28 @@ def _empty_plan(
     )
 
 
-def _obsidian_item_skip(binding: BindingObservation) -> ReconciliationItemSkip | None:
-    """Return why the Obsidian pass leaves this discovered file alone, if it does.
+def _item_skip(
+    binding: BindingObservation, *, obsidian: bool
+) -> ReconciliationItemSkip | None:
+    """Return why the planner leaves this discovered file alone, if it does.
 
     task-32535: only files the sync has never bound. An already-synced note
     emptied in Chatbook is an edit to carry back to disk, not a file to drop,
     and a folder the user later named ``Templates`` keeps its synced notes.
+    The vault folders need the toggle; an empty file does not, because Import
+    once refuses one whatever folder it came from (``empty_source``).
     """
 
     if binding.bound or binding.file_digest is None:
         return None
     parts = PurePosixPath(binding.relative_path).parts
-    reason = (
-        OBSIDIAN_SKIPPED_ROOT_FOLDERS.get(parts[0].casefold())
-        if len(parts) > 1
-        else None
-    )
-    if reason is None and binding.file_blank:
-        reason = "empty_file"
-    if reason is None:
-        return None
-    return ReconciliationItemSkip(binding.relative_path, reason)
+    if obsidian and len(parts) > 1:
+        reason = OBSIDIAN_SKIPPED_ROOT_FOLDERS.get(parts[0].casefold())
+        if reason is not None:
+            return ReconciliationItemSkip(binding.relative_path, reason)
+    if binding.file_blank:
+        return ReconciliationItemSkip(binding.relative_path, "empty_file")
+    return None
 
 
 def _plan_unbound(
@@ -691,11 +692,10 @@ def plan_reconciliation(request: ReconciliationInput) -> ReconciliationPlan:
     item_skips: list[ReconciliationItemSkip] = []
     for binding in sorted(request.bindings, key=lambda item: item.binding_id):
         if not binding.bound:
-            if request.obsidian_mode:
-                item_skip = _obsidian_item_skip(binding)
-                if item_skip is not None:
-                    item_skips.append(item_skip)
-                    continue
+            item_skip = _item_skip(binding, obsidian=request.obsidian_mode)
+            if item_skip is not None:
+                item_skips.append(item_skip)
+                continue
             action, issue = _plan_unbound(request, token, binding)
             effect = None
         else:

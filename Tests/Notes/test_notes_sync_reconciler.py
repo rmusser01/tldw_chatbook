@@ -558,10 +558,15 @@ def test_obsidian_mode_skips_config_trash_templates_and_empty_files_with_reasons
     assert plan.skips == ()
     assert "Old idea" not in repr(plan)
 
-    # Off: every file is a create again, and the token knows the difference.
+    # Off: the vault's folders are creates again. An empty file is not -- the
+    # toggle covers the three folders and the frontmatter lift, while Import
+    # once refuses an empty source whatever folder it came from.
     off = plan_reconciliation(replace(request, obsidian_mode=False))
-    assert off.item_skips == ()
-    assert len(off.safe_actions) == 7
+    assert off.item_skips == (
+        ReconciliationItemSkip("Inbox/Untitled.md", "empty_file"),
+        ReconciliationItemSkip("Untitled 1.md", "empty_file"),
+    )
+    assert len(off.safe_actions) == 5
     assert off.observation_token != plan.observation_token
 
     # A bound file is never dropped by the pass: an emptied synced note is an
