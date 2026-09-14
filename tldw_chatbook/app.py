@@ -1030,8 +1030,14 @@ _DIAGNOSTICS_COMPONENT_APP = "app"
 # handler raised": `_dispatch_message` (a message handler, and the compose/mount
 # dispatch in `_pre_process` -- the P0's own path), `_flush_next_callbacks`
 # (`call_after_refresh` / `call_later`) and `_process_messages_loop` (the
-# `on_idle` dispatch inlined there). Everything else -- workers, the run loop,
-# the compositor, the driver -- has none of them and still exits.
+# `on_idle` dispatch inlined there). Workers, the compositor and the driver
+# carry none of these and still exit.
+#
+# The application's OWN run loop is the exception: it runs through
+# `_process_messages_loop` too, so this frame set alone would make run-loop
+# errors non-fatal. It is excluded instead by `keep_alive`'s `pump is not self`
+# clause. Neither clause works without the other -- do not remove one because
+# the other "already covers it".
 _PUMP_DISPATCH_FRAMES = frozenset(
     {"_dispatch_message", "_flush_next_callbacks", "_process_messages_loop"}
 )
@@ -18338,22 +18344,30 @@ class TldwCli(
         except Exception:
             # Diagnostics must never be the reason a crash handler fails.
             pass
-        # TASK-32533: a widget or screen message handler that raises reaches
-        # here through `MessagePump._dispatch_message`; Textual's default then
-        # exits the whole app for one panel's bug. Keep the screen alive for
-        # that case only -- not for a worker (`underlying`), not for the run
-        # loop, compositor or driver paths, which have no dispatch frame -- and
-        # only outside headless `run_test`, so the suite keeps its exception
-        # signal. Textual has already broken the raising widget's own message
-        # loop (`_process_messages_loop` breaks after this call), which is why
-        # the notification warns that the panel may stop responding.
+        # TASK-32533: a widget or screen pump that raises inside its own
+        # dispatch reaches here through one of `_PUMP_DISPATCH_FRAMES`;
+        # Textual's default then exits the whole app for one panel's bug. Keep
+        # the screen alive for that case only -- not for a worker
+        # (`underlying`), not for the compositor or driver, and only outside
+        # headless `run_test` so the suite keeps its exception signal. Where the
+        # raise came from the handler dispatch itself, Textual has already
+        # broken that widget's message loop (`_process_messages_loop` breaks
+        # after this call), which is why the notification warns that the panel
+        # may stop responding.
+        #
+        # TWO clauses do the pump filtering and BOTH are load-bearing. `pump` is
+        # Textual's `active_message_pump`: `App._context()` sets it to the app
+        # around the application loop, `MessagePump._context()` sets it to the
+        # widget around each widget task (including `_pre_process`, so a
+        # mount-time widget failure is still kept alive and still names the
+        # widget). `pump is not self` therefore excludes exactly the application
+        # loop -- which also runs through `_process_messages_loop` and so is
+        # matched by the frame set. Without it, breaking out of
+        # `App._process_messages` without `super()` unwinds with no return code
+        # and no `panic()`: the app vanishes on exit 0 with nothing in the log,
+        # the P0's symptom with LESS evidence than before.
         keep_alive = (
             underlying is None
-            # The App's OWN pump must still go to super(). `App._process_messages`
-            # runs the application loop; breaking out of it without `super()`
-            # unwinds with no return code and no panic() -- the app would vanish
-            # on exit 0 with nothing in the log, which is the P0's symptom with
-            # LESS evidence than before (review fix 2).
             and pump is not None
             and pump is not self
             and bool(
