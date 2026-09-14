@@ -32,6 +32,8 @@ eggs/
 lib/
 lib64/
 parts/
+# The vendored picker's parts directory contains source, not build output.
+!/tldw_chatbook/Third_Party/textual_fspicker/parts/
 sdist/
 var/
 wheels/

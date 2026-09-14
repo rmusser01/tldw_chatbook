@@ -518,3 +518,22 @@ async def test_survivor_tick_is_idempotent_and_final_paints_before_stop() -> Non
         ("console-fleet-survivor-tick",),
     )
     assert edges.controller._console_fleet_survivor_timer is None
+
+
+def test_live_usage_adds_no_lifecycle_timer_to_idle_or_active_fleet() -> None:
+    """Live usage must reuse the sole survivor interval and own nothing while idle."""
+    edges = _Edges()
+    timer = _Timer(edges.calls)
+    edges.replace("chat_controller_available", lambda: True)
+    edges.replace("create_interval", lambda seconds, callback: timer)
+    edges.replace("transcript_sync_timer_active", lambda: False)
+
+    edges.replace("fleet_has_unsettled_children", lambda: False)
+    edges.controller._maybe_start_console_fleet_survivor_tick()
+    assert "create_interval" not in edges.call_names
+
+    edges.replace("fleet_has_unsettled_children", lambda: True)
+    edges.controller._maybe_start_console_fleet_survivor_tick()
+    assert [call for call in edges.calls if call[0] == "create_interval"] == [
+        ("create_interval", (1.0, edges.controller._console_fleet_survivor_tick))
+    ]

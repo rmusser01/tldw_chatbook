@@ -5,7 +5,9 @@
 On your first launch, chatbook offers a guided setup. It is entirely optional —
 most steps can be skipped (Next moves on without configuring it; the one
 exception is a cloud provider you've picked, which needs its API key before
-Next continues), Escape asks before closing, and anything you configure (or
+Next continues — press **Enter** in the empty key field instead and the
+provider step is skipped outright, which the field's own hint says), Escape
+asks before closing, and anything you configure (or
 don't) can be changed later in Settings.
 
 If a step can't save what you entered, the reason appears just above the
@@ -14,7 +16,8 @@ navigation buttons — fix it and press Next again, or go Back.
 ## Keyboard
 
 - **Enter** continues to the next step (from a choice list or a text field;
-  in the API-key field it first tests the key). **Ctrl+N** / **Ctrl+B** also
+  in the API-key field it first tests a key you typed, and with the field
+  empty it skips the provider step). **Ctrl+N** / **Ctrl+B** also
   move next/back, and **Escape** asks before leaving setup.
 - **Arrow keys select** as they move through a choice list — what you land on
   is what you get; no extra keypress needed.
@@ -119,3 +122,14 @@ settled the wizard had advanced, so the toast landed over the Protect step's
 buttons or the Summary's exit actions, "Write your first note" among them. The
 wizard's save no longer announces itself; the step that made it still reports
 every outcome in place.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
+AC#3, at 235x52): on the Provider step with OpenAI picked and no key, the key
+field's hint ends "No key yet? Enter skips this step — you can add a provider
+later in Settings." and Enter in the empty field moves from Step 2 of 6 to Step
+3 of 6; the Summary then reads "✗ Provider — no credentials or saved endpoint"
+(`wave4-caps/console-handoff/handoff-12a-wizard-key-hint`, `12-wizard-skip`,
+`12b-wizard-summary`). Enter used to do nothing there — no probe, no advance,
+no message. A provider that is already ready without a typed key (an exported
+environment variable, a local server) is not cleared by that Enter; the hint
+does not offer the skip in that state.*

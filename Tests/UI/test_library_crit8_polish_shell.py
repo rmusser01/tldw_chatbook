@@ -737,74 +737,48 @@ def _graduation_notifications(app) -> list:
     return sent
 
 
-@pytest.mark.asyncio
-async def test_graduation_notice_is_silent_on_a_populated_profiles_first_visit():
-    """task-32063: the notice fired on any transition into GRADUATED.
+@pytest.mark.parametrize(
+    "stored_lifecycle, expected",
+    [
+        (None, LibraryLifecycle.EXPANDED),
+        ("starter", LibraryLifecycle.STARTER),
+        ("unknown", LibraryLifecycle.UNKNOWN),
+    ],
+)
+def test_graduation_is_silent_from_every_lifecycle(stored_lifecycle, expected):
+    """task-32555 AC#2: the graduation announcement is gone, from every start.
 
-    A returning, already-populated profile has no stored lifecycle, settles to
-    EXPANDED, and graduates on the first source read -- nothing became
-    available, so nothing should announce it. Seen live on the seeded profile.
+    task-32063 narrowed the notice to the two lifecycles that paint the rail
+    COMPACT (STARTER, UNKNOWN) so a returning populated profile -- which
+    settles to EXPANDED and graduates on its first source read -- stopped
+    hearing that something had "become available" when nothing had. Critique
+    #3 (persona Jordan) found the surviving two cases no better: "Library
+    tools are now available." describes the rail in the product's words, and
+    the rail visibly growing is the evidence. No transition announces now, so
+    ``_apply_graduation_notice`` and its config-derived narrowing are gone.
     """
     app = _build_test_app()
     sent = _graduation_notifications(app)
+    if stored_lifecycle is not None:
+        app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+            "lifecycle"
+        ] = stored_lifecycle
     screen = LibraryScreen(app)
-    assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
+    assert screen._library_lifecycle is expected
+    assert not hasattr(screen, "_apply_graduation_notice")
 
     screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
-    screen._apply_graduation_notice(LibraryLifecycle.EXPANDED)
 
     assert sent == []
 
 
 @pytest.mark.asyncio
-async def test_graduation_notice_fires_when_the_compact_rail_gives_way():
-    """The transition it exists for: the Get started rail becomes the full one."""
-    app = _build_test_app()
-    sent = _graduation_notifications(app)
-    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
-        "lifecycle"
-    ] = "starter"
-    screen = LibraryScreen(app)
-    assert screen._library_lifecycle is LibraryLifecycle.STARTER
-
-    screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
-    screen._apply_graduation_notice(LibraryLifecycle.STARTER)
-
-    assert sent == [
-        ("Library tools are now available.", {"severity": "information"})
-    ]
-
-
-@pytest.mark.asyncio
-async def test_graduation_notice_fires_for_a_new_profile_that_never_saw_starter():
-    """Review of #2531: a new profile is stamped UNKNOWN and paints compact.
-
-    Evidence that finds content aggregates straight to GRADUATED without ever
-    settling on STARTER, so requiring STARTER silenced the notice for exactly
-    the user whose hidden tools had just appeared.
-    """
-    app = _build_test_app()
-    sent = _graduation_notifications(app)
-    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
-        "lifecycle"
-    ] = "unknown"
-    screen = LibraryScreen(app)
-    assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
-
-    screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
-    screen._apply_graduation_notice(LibraryLifecycle.UNKNOWN)
-
-    assert sent == [
-        ("Library tools are now available.", {"severity": "information"})
-    ]
-
-
-@pytest.mark.asyncio
-async def test_graduation_notice_is_a_toast_and_not_a_second_canvas_line():
-    """task-32063 AC: the notice IS a toast -- one event, one surface.
+async def test_graduation_announces_on_neither_a_toast_nor_a_canvas_line():
+    """task-32063's AC was one surface for one event; task-32555 AC#2 is none.
 
     The first pass kept the in-canvas `#library-lifecycle-status` line beside
-    the toast, which is the duplication the critique called out.
+    the toast, which is the duplication critique #8 called out. The line stays
+    gone, and the toast that replaced it is gone too.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -817,14 +791,10 @@ async def test_graduation_notice_is_a_toast_and_not_a_second_canvas_line():
 
         screen._set_library_lifecycle(LibraryLifecycle.STARTER)
         screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
-        screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
 
-        assert sent[-1] == (
-            "Library tools are now available.",
-            {"severity": "information"},
-        )
+        assert sent == []
         status = screen.query_one("#library-lifecycle-status", Static)
         assert "Library tools are now available." not in str(status.renderable)
         assert status.display is False

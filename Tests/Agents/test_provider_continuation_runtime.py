@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolLoadSelection,
     ToolRecordProjection,
     ToolResult,
+    ToolReviewDecision,
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
@@ -32,6 +33,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
     ContinuationRound,
     ProviderContinuationCheckpoint,
+    transition_provider_call,
 )
 
 CALCULATOR = ToolSchema(
@@ -700,6 +702,87 @@ def test_cycle_4a_persistence_failure_stops_before_side_effect_or_next_model() -
     ]
     assert outcome.steps[-1].kind == "error"
     assert "PRIVATE-CHECKPOINT-CANARY" not in outcome.steps[-1].summary
+
+
+def test_denial_breaker_yields_to_continuation_result_persistence_failure() -> None:
+    call = ToolCall(
+        "calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}'
+    )
+    checkpoint = _checkpoint(_pending_call())
+
+    def persist(event) -> None:
+        if isinstance(event, ToolCallFinished):
+            raise OSError("result persistence failed")
+
+    outcome = run_agent_loop(
+        replace(CONFIG, budget=RunBudget(denial_circuit_breaker_limit=1)),
+        [],
+        [CALCULATOR],
+        _deps(
+            [_native_turn((call,), checkpoint)],
+            order=[],
+            persist=persist,
+            invoke=lambda actual: ToolResult.blocked(
+                "denied", approval_decision="denied"
+            ),
+        ),
+    )
+    assert outcome.status == RUN_ERROR and outcome.denial_count == 0
+
+
+def test_denial_breaker_yields_to_post_batch_cancellation() -> None:
+    call = ToolCall(
+        "calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}'
+    )
+    checkpoint = _checkpoint(_pending_call())
+    invoked = False
+
+    def invoke(actual):
+        nonlocal invoked
+        invoked = True
+        return ToolResult.blocked("denied", approval_decision="denied")
+
+    outcome = run_agent_loop(
+        replace(CONFIG, budget=RunBudget(denial_circuit_breaker_limit=1)),
+        [],
+        [CALCULATOR],
+        _deps(
+            [_native_turn((call,), checkpoint)],
+            order=[],
+            persist=lambda event: None,
+            invoke=invoke,
+            cancel=lambda: invoked,
+        ),
+    )
+    assert outcome.status == "cancelled" and outcome.denial_count == 0, outcome.steps
+
+
+def test_structured_continuation_refusal_trips_after_settled_history() -> None:
+    call = ToolCall(
+        "calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}'
+    )
+    checkpoint = _checkpoint(_pending_call())
+    model_calls = []
+    deps = _deps(
+        [_native_turn((call,), checkpoint), ModelTurn(text="must not run")],
+        order=model_calls,
+        persist=lambda event: None,
+        invoke=lambda actual: pytest.fail("refused call must not dispatch"),
+        review=lambda calls: {calls[0].call_id: ToolReviewDecision("denied", "denied")},
+    )
+    outcome = run_agent_loop(
+        replace(CONFIG, budget=RunBudget(denial_circuit_breaker_limit=1)),
+        [],
+        [CALCULATOR],
+        deps,
+    )
+    assert outcome.status == "stuck" and outcome.denial_count == 1, outcome.steps
+    assert model_calls.count("model") == 1
+    assert [
+        row["tool_call_id"]
+        for row in outcome.final_messages
+        if row.get("role") == "tool"
+    ] == ["call-1"]
 
 
 def test_model_turn_continuation_defaults_to_none() -> None:
@@ -1765,7 +1848,7 @@ def test_restored_pending_message_call_refuses_before_execution(name):
     )
     deps.report_to_supervisor = lambda args: invoked.append(args) or ToolResult(True)
     outcome = run_agent_loop(
-        CONFIG,
+        replace(CONFIG, budget=RunBudget(denial_circuit_breaker_limit=1)),
         [],
         [],
         deps,
@@ -1776,11 +1859,61 @@ def test_restored_pending_message_call_refuses_before_execution(name):
         resume_provider_continuation=True,
     )
     assert outcome.status == "cancelled"
+    assert outcome.denial_count == 0
+    assert outcome.final_messages == []
     assert invoked == []
     assert [type(event) for event in events] == [ToolCallFinished]
     assert events[0].target_state == "failed"
     assert events[0].result.value == "ERROR: restored_pending"
     assert len(inbox.snapshot()) == 1
+
+
+def test_restored_pending_denied_review_does_not_trip_before_next_model() -> None:
+    """Synthetic restoration never counts a pre-override review denial."""
+    events = []
+    model_calls = []
+    checkpoint = _checkpoint(_pending_call(name="read_agent_messages", args={}))
+    settled = transition_provider_call(
+        checkpoint,
+        call_id="call-1",
+        expected_revision=1,
+        target="failed",
+        result=ContinuationResult("ERROR: restored_pending"),
+    )
+    deps = _deps(
+        [
+            ModelTurn(
+                text="continued answer",
+                provider_continuation=replace(
+                    settled,
+                    checkpoint_revision=settled.checkpoint_revision + 1,
+                    state="complete",
+                ),
+            )
+        ],
+        order=model_calls,
+        persist=events.append,
+        invoke=lambda call: pytest.fail("restored pending call must not dispatch"),
+        expand=lambda checkpoint: [],
+        review=lambda calls: {calls[0].call_id: ToolReviewDecision("denied", "denied")},
+    )
+    outcome = run_agent_loop(
+        replace(CONFIG, budget=RunBudget(denial_circuit_breaker_limit=1)),
+        [],
+        [],
+        deps,
+        restore_provider_continuation=checkpoint,
+        restore_provider_target=ContinuationRestoreTarget(
+            "deepseek", "deepseek-v4-flash", "responses", "https://api.deepseek.com/v1"
+        ),
+        resume_provider_continuation=True,
+    )
+
+    assert outcome.status == RUN_DONE, outcome.steps
+    assert outcome.denial_count == 0
+    assert model_calls.count("model") == 1
+    assert [type(event) for event in events] == [ToolCallFinished, FinalContinuation]
+    assert events[0].result.value == "ERROR: restored_pending"
 
 
 @pytest.mark.parametrize("fail_at", ["executing", "result", None])

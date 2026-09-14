@@ -727,11 +727,14 @@ class ImportPreviewItem:
         }:
             if self.match is None or self.match.kind is not ImportMatchKind.EXACT:
                 raise ValueError("Repeat classifications require an exact match.")
-            expected_actions = {
-                ImportAction.SKIP,
-                ImportAction.CREATE_NEW,
-                ImportAction.UPDATE_EXISTING,
-            }
+            expected_actions = {ImportAction.SKIP, ImportAction.CREATE_NEW}
+            # A repeat of several records (task-32541: a two-row CSV imported
+            # twice) has no single note to update -- "Update authorization
+            # requires one payload" below would reject it -- so it offers Skip
+            # and Create only. ``<= 1`` leaves an empty payload tuple to its
+            # own, more specific rejection.
+            if len(self.payloads) <= 1:
+                expected_actions.add(ImportAction.UPDATE_EXISTING)
         else:
             if self.match is None or self.match.kind not in {
                 ImportMatchKind.UNCERTAIN,

@@ -17,6 +17,11 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import ApprovalDecision
+from tldw_chatbook.Agents.approval_provenance import (
+    ApprovalStamp,
+    approval_stamp,
+)
 from tldw_chatbook.MCP.permission_store import (
     _DEFAULT_PROFILE_ID,
     BUILTIN_TOOL_SERVER_KEY,
@@ -27,6 +32,15 @@ from tldw_chatbook.MCP.permission_store import (
 )
 from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 from tldw_chatbook.Tools.tool_executor import Tool
+
+
+@dataclass(frozen=True, slots=True)
+class BuiltinGateDecision:
+    """One permission check, including only its authoritative answer fact."""
+
+    refusal: str | None
+    approval_decision: ApprovalDecision | None = None
+
 
 #: Stamp values that permit execution for this turn.
 _PERMITTING = {"approve_once", "approve_session", "always_allow"}
@@ -105,7 +119,7 @@ class BuiltinToolGate:
         # the worst a concurrent child's invalidation can cost a sibling
         # is one extra `store.load()`, never a wrong answer.
         self._payload: dict | None = None
-        self._stamps: dict[tuple[str, str], str] = {}
+        self._stamps: dict[tuple[str, str], ApprovalStamp] = {}
         # RLock, not Lock. To be precise about why, since a plain Lock
         # would work today: NOTHING here currently re-enters the lock --
         # `check()` deliberately does not hold it across `resolve()`,
@@ -211,10 +225,16 @@ class BuiltinToolGate:
         Returns:
             The decision string this run stamped this turn, or ``None``.
         """
+        stamp = self._stamp_detail(run_id, tool_name)
+        return stamp.decision if stamp is not None else None
+
+    def _stamp_detail(self, run_id: str, tool_name: str) -> ApprovalStamp | None:
         with self._lock:
             return self._stamps.get((run_id, tool_name))
 
-    def stamp(self, run_id: str, tool_name: str, decision: str) -> None:
+    def stamp(
+        self, run_id: str, tool_name: str, decision: str, *, unanswered: bool = False
+    ) -> None:
         """Record ``run_id``'s decision for ``tool_name`` this turn.
 
         ``"always_allow"`` is accepted as a permitting stamp for THIS
@@ -231,7 +251,9 @@ class BuiltinToolGate:
             decision: The verdict string from the approval card.
         """
         with self._lock:
-            self._stamps[(run_id, tool_name)] = decision
+            self._stamps[(run_id, tool_name)] = approval_stamp(
+                decision, unanswered=unanswered
+            )
         # Outside the lock on purpose: a session approval calls into the
         # control-plane service, and no gate lock is ever held across a
         # call into foreign code.
@@ -399,6 +421,10 @@ class BuiltinToolGate:
             return False
 
     def check(self, tool: Tool, run_id: str) -> str | None:
+        """Keep the compatible refusal-string API over one detailed check."""
+        return self.check_detailed(tool, run_id).refusal
+
+    def check_detailed(self, tool: Tool, run_id: str) -> BuiltinGateDecision:
         """Execution-time verdict for ``run_id``'s call to ``tool``.
 
         Args:
@@ -414,8 +440,9 @@ class BuiltinToolGate:
                 keying.
 
         Returns:
-            ``None`` when the call may proceed, else a human-readable
-            refusal reason for a failed ``ToolResult``. Never raises for
+            A detailed result whose refusal is ``None`` when the call may
+            proceed, else the existing human-readable refusal reason.
+            Its optional fact never overrides this gate decision. Never raises for
             a well-formed ``Tool`` (a subclass whose ``name``/
             ``description``/``parameters``/``risk_tags`` property itself
             raises would still propagate here); callers still wrap this
@@ -427,7 +454,7 @@ class BuiltinToolGate:
             # `Agents.tool_refusals.TOOL_KILL_SWITCH_REFUSAL` -- this was
             # a raw literal, and the other four sites each had their own
             # copy, while downstream classifiers key on the wording.
-            return TOOL_KILL_SWITCH_REFUSAL
+            return BuiltinGateDecision(TOOL_KILL_SWITCH_REFUSAL)
 
         # An effective `deny` (the user set the tool -- or its server
         # default -- to "Off") is absolute: it must be consulted BEFORE
@@ -442,22 +469,27 @@ class BuiltinToolGate:
         # this adds no extra I/O within a turn.
         state = self.resolve(tool)
         if state.state == "deny":
-            return f"tool is set to Off: {tool.name}"
+            return BuiltinGateDecision(f"tool is set to Off: {tool.name}", "denied")
 
-        stamp = self.stamped(run_id, tool.name)
+        detail = self._stamp_detail(run_id, tool.name)
+        stamp = detail.decision if detail is not None else None
         if stamp == "deny":
-            return user_denial_refusal(tool.name)
-        if stamp in _PERMITTING:
-            return None
+            return BuiltinGateDecision(
+                user_denial_refusal(tool.name), detail.approval_decision
+            )
+        if isinstance(stamp, str) and stamp in _PERMITTING:
+            return BuiltinGateDecision(None, detail.approval_decision)
 
         if state.state == "allow":
-            return None
+            return BuiltinGateDecision(None)
         if self._session_approved(tool.name):
-            return None
+            return BuiltinGateDecision(None, "approved")
         # "ask" with no stamp and no session approval: fail closed. In P1
         # this is unreachable (nothing is tagged high-risk yet); P2's
         # mutating tools make it live.
-        return f"tool requires approval and none was granted: {tool.name}"
+        return BuiltinGateDecision(
+            f"tool requires approval and none was granted: {tool.name}"
+        )
 
 
 def build_builtin_gate(

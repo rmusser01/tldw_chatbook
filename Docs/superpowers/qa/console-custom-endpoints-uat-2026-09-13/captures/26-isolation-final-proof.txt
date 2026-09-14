@@ -1,0 +1,14 @@
+# Isolation evidence — final check (before tmux kill)
+
+## Real config fingerprint
+pre:  6c2577fb39ab993eb01fa7c6a69900e36e9d59db  /Users/macbook-dev/.config/tldw_cli/config.toml
+post: 6c2577fb39ab993eb01fa7c6a69900e36e9d59db  /Users/macbook-dev/.config/tldw_cli/config.toml
+
+## Real data dir (~/.local/share/tldw_cli) files newer than /tmp/uat-marker-real-data:
+NONE
+
+## App process (PID 95916) real-profile handles (lsof | grep tldw_cli/.config/tldw):
+NONE — only scratch handles under /tmp/uat-scratch/data/uat_ce/
+
+## Scratch config final parse: OK (custom_endpoints: local-llama, gemma-relay)
+## Scratch config keys set at launch: [general] users_name=uat_ce, [paths] data_dir=/tmp/uat-scratch/data, [splash_screen] enabled=false, [model_catalog] auto_refresh_enabled=false

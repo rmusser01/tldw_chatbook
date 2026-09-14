@@ -52,6 +52,47 @@ TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
 _EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
 
 
+def validate_file_picker_sort_key(value: object) -> str:
+    """Validate an exact file-picker sort key without coercion.
+
+    Args:
+        value: Candidate sort key from a selector event.
+
+    Returns:
+        The supported sort key unchanged.
+
+    Raises:
+        ValueError: The value is not a supported string sort key.
+    """
+    if not isinstance(value, str) or value not in (
+        "discovery",
+        "name",
+        "modified",
+        "accessed",
+        "created",
+        "size",
+    ):
+        raise ValueError("Invalid file picker sort key")
+    return value
+
+
+def validate_file_picker_sort_direction(value: object) -> str:
+    """Validate an exact file-picker sort direction without coercion.
+
+    Args:
+        value: Candidate direction from a selector event.
+
+    Returns:
+        The supported ascending or descending value unchanged.
+
+    Raises:
+        ValueError: The value is not a supported string direction.
+    """
+    if not isinstance(value, str) or value not in ("ascending", "descending"):
+        raise ValueError("Invalid file picker sort direction")
+    return value
+
+
 def validate_tts_inference_device(value: object) -> str:
     """Admit an exact device family for the opt-in TTS qualification runner.
 
@@ -264,6 +305,26 @@ def validate_vllm_draft_input(control_id: object, value: object) -> str:
         ).value
     except PydanticValidationError:
         raise ValueError("vLLM setup value is invalid") from None
+
+
+class WorktreeRecoveryActionInput(BaseModel):
+    """A recovery operation selected by a tool or the Console picker."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    action: Literal["apply", "merge", "discard"]
+
+
+class WorktreeRecoveryConfirmationInput(BaseModel):
+    """Exact boolean consent from the host's current confirmation round.
+
+    Additional host metadata is ignored; it never contributes authority.
+    Numeric and string lookalikes cannot become an affirmative decision.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+
+    allow: bool
 
 
 class ToolArgumentsInput(BaseModel):

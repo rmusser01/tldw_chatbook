@@ -1095,6 +1095,8 @@ MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 2000
 
 # TASK-18600: the Console agent's run budget, exposed in Settings ▸ Console
 # Behavior and resolved per run by `console_agent_bridge.console_run_budget()`.
+# `[agents] denial_circuit_breaker_limit` is resolved separately per run;
+# default 3 stops after a fully settled denied tail, while 0 disables it.
 # These override `Agents.agent_models.RunBudget`'s own dataclass defaults
 # (8 steps / 240s / 30 turns / 0 tokens / 300s per tool call), which stay
 # deliberately conservative for any non-Console caller.
@@ -3831,6 +3833,11 @@ openai_cache_key = false
 # already in flight.
 # child_max_wall_seconds = 1800.0
 #
+# Stop one run after a fully settled batch leaves this many consecutive
+# authoritative tool denials. The default is 3; 0 disables the breaker.
+# denial_circuit_breaker_limit = 3  # Consecutive denied calls; 0 disables.
+# TLDW_AGENTS_DENIAL_CIRCUIT_BREAKER_LIMIT overrides this value for Console runs.
+#
 # TASK-25911: deterministic stale tool-result pruning on the agent send
 # payload -- big old tool outputs shrink to a bounded head plus a note,
 # with no LLM call. OFF by default; the thresholds below are the shipped
@@ -3853,6 +3860,22 @@ openai_cache_key = false
 # every completion (toast, badge, durable mark); the wake turn just never
 # fires.
 # autowake_enabled = true
+#
+# --- Sub-agent routing (ADR-147) ---
+# Default provider/model for spawned sub-agents when neither the spawn call
+# nor the named agent preset routes them. Empty = inherit the parent's.
+# subagent_default_provider = ""
+# subagent_default_model = ""
+#
+# Let the supervisor model pass ad-hoc provider/model args to
+# spawn_subagent. Off by default: routing then comes only from presets and
+# the default above. Ad-hoc args never carry URLs or sampling params.
+# spawn_override_enabled = false
+#
+# Ad-hoc targets the supervisor may pick. One entry per list item: a
+# provider id ("llama_cpp", "custom-ep:qwen-local") or "provider/model-glob"
+# ("llama_cpp/qwen3.8-*"). Presets are user-authored and never gated.
+# spawn_override_allowlist = []
 
 [splash_screen]
 # Splash screen configuration for startup animations

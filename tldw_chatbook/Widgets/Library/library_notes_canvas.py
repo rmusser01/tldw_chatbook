@@ -965,6 +965,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 next_action = "Resolve the conflict or reload the note."
             elif state.snapshot.saving or state.transfer_running:
                 next_action = ""
+            elif "Next:" in state.transfer_status:
+                # task-32536 AC#2: a hand-off failure names its own remedy;
+                # a second "Next:" here would offer "Review the error" for
+                # an error that is not on screen.
+                next_action = ""
             elif "failed" in f"{status} {state.transfer_status}".lower():
                 next_action = "Review the error, then keep editing."
             elif state.presentation == "preview":

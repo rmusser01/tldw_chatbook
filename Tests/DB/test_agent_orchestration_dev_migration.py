@@ -57,6 +57,10 @@ def _upstream_v15_database(path):
         run_id=run_id,
     )
     with db.transaction() as conn:
+        # Remove later feature shape as well as version rows: this fixture
+        # must actually enter the v19/v20 upgrade path when reopened.
+        conn.execute("DROP TABLE agent_worktrees")
+        conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
         names = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' "
             "AND name LIKE 'automatic_%'"
@@ -127,7 +131,17 @@ def test_v15_upgrade_preserves_upstream_records_and_authority(tmp_path, standalo
                     conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[
                         0
                     ]
-                    == 18
+                    == AgentRunsDB._CURRENT_SCHEMA_VERSION
+                )
+                assert (
+                    conn.execute("SELECT COUNT(*) FROM agent_worktrees").fetchone()[0]
+                    == 0
+                )
+                assert (
+                    conn.execute(
+                        "SELECT COUNT(*) FROM agent_definitions WHERE max_wall_seconds IS NOT NULL"
+                    ).fetchone()[0]
+                    == 0
                 )
         finally:
             db.close()

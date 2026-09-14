@@ -71,6 +71,72 @@ def test_abandoned_worker_keeps_slot_and_blocks_its_run_until_real_completion(ca
     assert capacity.snapshot().executions == ()
 
 
+@pytest.mark.parametrize("root_first", [True, False])
+def test_drain_callback_runs_once_outside_lock_after_physical_completion(root_first):
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    operation = owner.reserve_tool()
+    observed = []
+    owner.on_drained(lambda proven: observed.append((proven, capacity.snapshot())))
+    if root_first:
+        owner.finish_root()
+        assert observed == []
+        operation.finish()
+    else:
+        operation.finish()
+        assert observed == []
+        owner.finish_root()
+    owner.finish_root()
+    operation.finish()
+    assert len(observed) == 1
+    assert observed[0][0] is True
+    assert observed[0][1].executions == ()
+
+
+def test_drain_callbacks_isolate_failures_and_late_registration_sees_outcome():
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    observed = []
+
+    def fail(_proven):
+        raise RuntimeError("callback failed")
+
+    owner.on_drained(fail)
+    owner.on_drained(observed.append)
+    owner.finish_root()
+    owner.on_drained(lambda proven: observed.append(("late", proven)))
+    assert observed == [True, ("late", True)]
+
+
+def test_cleanup_unproven_is_sticky_through_actual_worker_finally():
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    gate = threading.Event()
+    workers = []
+    observed = []
+
+    def tool():
+        workers.append(threading.current_thread())
+        assert gate.wait(5)
+        return ToolResult(ok=True, content="late")
+
+    try:
+        result = _call_with_timeout(tool, 0.02, "slow", lambda: False, owner=owner)
+        assert not result.ok
+        owner.on_drained(observed.append)
+        owner.mark_cleanup_unproven()
+        owner.mark_cleanup_unproven()
+        owner.finish_root()
+        assert observed == []
+    finally:
+        gate.set()
+        for worker in workers:
+            worker.join(5)
+    assert observed == [False]
+    owner.on_drained(lambda proven: observed.append(proven))
+    assert observed == [False, False]
+
+
 def test_thread_start_failure_and_repeated_release_do_not_lose_capacity(monkeypatch):
     capacity = RuntimeCapacity(max_tool_workers=1, reserved_manual_tool_workers=0)
     owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
