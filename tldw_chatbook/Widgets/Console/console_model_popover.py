@@ -76,6 +76,9 @@ class ConsoleModelPopoverResult:
 _CONSOLE_POPOVER_TEMPERATURE_MIN = 0.0
 _CONSOLE_POPOVER_TEMPERATURE_MAX = 2.0
 _FULL_SETTINGS_ACTION = "full_settings"
+#: Viewport width where the popover's wide tier engages, matching the
+#: Conversation settings modal's wide tier (PR #2670).
+_CONSOLE_POPOVER_WIDE_VIEWPORT_COLUMNS = 150
 
 
 class DraftRebaser(Protocol):
@@ -165,6 +168,19 @@ class ConsoleModelPopover(
         border: tall $surface-lighten-1;
         background: $panel;
         padding: 1 2;
+    }
+
+    /* Wide-terminal tier (viewport >= 150 columns): the fixed 60-column
+       quick popover reads as cramped next to the wide-tiered Conversation
+       settings modal on wide terminals, so grow the container to 85% of
+       the viewport, capped at 170 columns -- deliberately below the
+       settings modal's 196 so the quick surface stays visually lighter.
+       The class is toggled by Python from the app viewport width -- the
+       container's own width cannot drive this without a chicken-and-egg
+       loop. Everything else (height, padding, borders) is unchanged. */
+    #console-model-popover.-console-popover-wide {
+        width: 85%;
+        max-width: 170;
     }
 
     #console-model-popover-body {
@@ -651,9 +667,37 @@ class ConsoleModelPopover(
         """Settle the narrow-height fold affordance after first layout."""
         self._sync_default_content()
         self.call_after_refresh(self._sync_fold_hint)
+        self.call_after_refresh(self._sync_responsive_width)
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Recompute the fold affordance when the terminal size changes."""
+        """Re-sync the fold hint and the responsive width tier on resize.
+
+        One terminal resize now drives two syncs, each re-run after the
+        resize settles via ``call_after_refresh``: the narrow-height fold
+        affordance (``_sync_fold_hint``) and the wide-terminal width tier
+        (``_sync_responsive_width``), which itself re-chains the fold hint
+        because a tier flip changes body overflow.
+
+        Args:
+            _event: The terminal resize event; unused directly because
+                the wide tier reads the app viewport width, not the
+                event's size.
+        """
+        self.call_after_refresh(self._sync_fold_hint)
+        self.call_after_refresh(self._sync_responsive_width)
+
+    def _sync_responsive_width(self) -> None:
+        """Derive the wide-terminal layout tier from the viewport width."""
+        try:
+            container = self.query_one("#console-model-popover", Vertical)
+        except NoMatches:
+            return
+        # The wide tier keys off the app viewport, never the container's own
+        # width: sizing the container from the container would oscillate.
+        container.set_class(
+            self.app.size.width >= _CONSOLE_POPOVER_WIDE_VIEWPORT_COLUMNS,
+            "-console-popover-wide",
+        )
         self.call_after_refresh(self._sync_fold_hint)
 
     def _sync_fold_hint(self) -> None:

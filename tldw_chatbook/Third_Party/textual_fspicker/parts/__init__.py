@@ -2,8 +2,10 @@
 
 ##############################################################################
 # Local imports.
-from .directory_navigation import DirectoryNavigation
 from .drive_navigation import DriveNavigation
+from .progressive_directory_navigation import (
+    ProgressiveDirectoryNavigation as DirectoryNavigation,
+)
 
 ##############################################################################
 # Export public items.

@@ -31,7 +31,11 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
 )
-from tldw_chatbook.Chat.console_agent_bridge import AgentLiveSnapshot, AgentLiveStep
+from tldw_chatbook.Chat.console_agent_bridge import (
+    AgentLiveSnapshot,
+    AgentLiveStep,
+    AgentLiveTurnUsage,
+)
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -108,6 +112,78 @@ async def _paint(
 
 def _snapshot(*steps, status: str = "running") -> AgentLiveSnapshot:
     return AgentLiveSnapshot(status=status, step=len(steps), steps=tuple(steps))
+
+
+def _usage(tokens: int, source: str = "local", *, started_at: float = 100.0):
+    return AgentLiveTurnUsage(
+        output_tokens=tokens,
+        source=source,
+        started_at=started_at,
+        sequence=1,
+    )
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        (_usage(17, "provider"), "17 provider output tok"),
+        (_usage(17), "~17 local output tok"),
+        (_usage(0, "provider"), ""),
+        (None, ""),
+    ],
+)
+def test_live_usage_label_preserves_provenance_and_omits_zero(usage, expected):
+    """A missing/wrong provenance branch would make the visible count dishonest."""
+    from tldw_chatbook.UI.Console_Modules.agent import _live_usage_label
+
+    assert _live_usage_label(usage) == expected
+
+
+def test_live_usage_augments_generating_and_thinking_with_call_elapsed():
+    """Dropping the usage base would hide elapsed before the first primary step."""
+    generating = AgentLiveSnapshot(status="running", turn_usage=_usage(5))
+    thinking = AgentLiveSnapshot(
+        status="running",
+        step=1,
+        steps=(AgentLiveStep(STEP_MODEL, "answer", AGENT_KIND_PRIMARY, 103.0),),
+        turn_usage=_usage(9, "provider"),
+    )
+
+    assert console_turn_activity_text(generating, now=105.0) == (
+        f"{CONSOLE_GENERATING_PLACEHOLDER} · 5s · ~5 local output tok"
+    )
+    assert console_turn_activity_text(thinking, now=106.0) == (
+        f"{CONSOLE_TURN_ACTIVITY_THINKING} · 3s · 9 provider output tok"
+    )
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "kwargs"),
+    [
+        (
+            AgentLiveSnapshot(
+                status="setup", setup_started_at=100.0, turn_usage=_usage(4)
+            ),
+            {},
+        ),
+        (
+            _snapshot(
+                AgentLiveStep(STEP_TOOL_CALL, "read_file", AGENT_KIND_PRIMARY, 100.0)
+            ),
+            {},
+        ),
+        (
+            _snapshot(AgentLiveStep(STEP_MODEL, "answer", AGENT_KIND_PRIMARY, 100.0)),
+            {"pending_approval": True},
+        ),
+        (AgentLiveSnapshot(status="done", turn_usage=_usage(4)), {}),
+        (AgentLiveSnapshot(turn_usage=_usage(4)), {}),
+    ],
+)
+def test_live_usage_is_absent_outside_active_model_activity(snapshot, kwargs):
+    """A stale call scalar must not leak into setup, tools, approval, or terminal UI."""
+    text = console_turn_activity_text(snapshot, now=105.0, **kwargs)
+    assert "output tok" not in text
 
 
 # --------------------------------------------------------------------------
@@ -887,6 +963,8 @@ def _sync_stub(activity: str, effective: str | None = None):
     transcript = SimpleNamespace(
         pending_selection_id=None,
         set_presentation_context=Mock(),
+        set_model_thinking_visible=Mock(),
+        set_memory_banner_presentation=Mock(),
         set_change_review_provider_factory=Mock(),
         set_messages=Mock(),
         apply_turn_activity=Mock(
@@ -904,10 +982,14 @@ def _sync_stub(activity: str, effective: str | None = None):
     )
     screen = MagicMock()
     screen.query_one = Mock(return_value=transcript)
+    screen._message._native_console_messages.return_value = []
+    screen._message.sync_selected_fork_eligibility.return_value = (None, None)
+    screen._change_review_projection.project.return_value = []
     screen._console_transcript_region_or_none = Mock(return_value=None)
     screen._native_console_messages = Mock(return_value=[])
     screen._console_original_attempt_previews = {}
     screen._console_citation_counts = {}
+    screen._console_annotation_previews = {}
     screen._console_speech_states = {}
     screen._console_image_preparing = set()
     screen._pending_console_swipe_selection = None
@@ -927,6 +1009,8 @@ def _sync_stub(activity: str, effective: str | None = None):
     )
     screen._recent_console_image_messages = Mock(return_value=())
     screen._agent.console_turn_activity = Mock(return_value=activity)
+    screen._agent.console_turn_activity_abandon_action.return_value = ""
+    screen._library_activity.sync_transcript.return_value = {}
     return screen, transcript
 
 
@@ -954,6 +1038,23 @@ async def test_a_ticking_elapsed_alone_repaints_the_transcript():
     screen._agent.console_turn_activity.return_value = "⚙ read_file · 5s"
     await ChatScreen._sync_native_console_transcript(screen)
 
+    assert transcript.refresh_messages.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_published_token_usage_repaints_once_per_changed_scalar():
+    """Repeated chunk observations cannot churn the DOM until publication changes."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen, transcript = _sync_stub("Generating… · 2s · ~3 local output tok")
+    await ChatScreen._sync_native_console_transcript(screen)
+    await ChatScreen._sync_native_console_transcript(screen)
+    assert transcript.refresh_messages.await_count == 1
+
+    changed = "Generating… · 2s · ~11 local output tok"
+    screen._agent.console_turn_activity.return_value = changed
+    transcript.apply_turn_activity.return_value = changed
+    await ChatScreen._sync_native_console_transcript(screen)
     assert transcript.refresh_messages.await_count == 2
 
 

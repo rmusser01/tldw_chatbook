@@ -1499,3 +1499,34 @@ async def test_a_superseded_ingest_selection_cannot_win(
         work()
 
     assert saved == [("library.ingest", "last_directory", str(newer))]
+
+
+# --- task-32541 -----------------------------------------------------------
+
+
+async def test_the_unchanged_repeat_header_offers_no_create_all() -> None:
+    """An unchanged repeat has nothing to create; its header offered "Create
+    all on this page" anyway (A 61), one press from re-creating 56 notes."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 2 items before import.",
+            preview_items=(
+                _item(
+                    1,
+                    classification="unchanged_repeat",
+                    action="skip",
+                    reason="This source matches an unchanged existing note.",
+                    effect_summary="Content: no change.",
+                    membership_summary="Folder placement: no change.",
+                ),
+                _item(2),
+            ),
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#note-import-group-unchanged_repeat-skip", Button)
+        assert not app.query("#note-import-group-unchanged_repeat-create")
+        assert app.query_one("#note-import-group-new-create", Button)

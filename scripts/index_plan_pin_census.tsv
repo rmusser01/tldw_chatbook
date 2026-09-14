@@ -39,6 +39,7 @@ idx_actor_pack_persona_intents_state	pre-convention	plan never captured without 
 idx_agent_definitions_name	pre-convention	plan never captured without stats
 idx_agent_runs_conversation	pre-convention	plan never captured without stats
 idx_agent_runs_parent	pre-convention	plan never captured without stats
+idx_agent_worktrees_scope	plan-pinned	Tests/DB/test_agent_worktree_recovery.py
 idx_briefing_audio_script	pre-convention	plan never captured without stats
 idx_briefing_items_item	pre-convention	plan never captured without stats
 idx_briefing_scripts_briefing	pre-convention	plan never captured without stats

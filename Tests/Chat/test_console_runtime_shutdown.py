@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import weakref
+from dataclasses import replace
 
 import pytest
 
@@ -421,6 +422,7 @@ def test_session_close_fences_late_wakes_before_cancelling_children():
 
 def test_failed_stop_settlement_aborts_the_provisional_fleet_fence():
     _runtime, controller, bridge, store, session = _runtime_with_fleet()
+    controller._chat_create_session_grants[session.id] = {"fork_chat"}
     assistant = store.append_message(
         session.id,
         role=ConsoleMessageRole.ASSISTANT,
@@ -448,11 +450,15 @@ def test_failed_stop_settlement_aborts_the_provisional_fleet_fence():
         f"fleet-abort:{session.id}",
     ]
     assert session.id not in controller._session_close_generations
+    assert controller._chat_create_session_grants[session.id] == {"fork_chat"}
 
 
 @pytest.mark.asyncio
 async def test_session_close_fences_admission_and_deletes_only_after_fleet_drain():
     runtime, controller, bridge, store, session = _runtime_with_fleet()
+    other = store.create_session(title="Other", activate=False)
+    controller._chat_create_session_grants[session.id] = {"fork_chat"}
+    controller._chat_create_session_grants[other.id] = {"new_chat"}
     revision = controller.lifecycle_impact(session_id=session.id).revision
 
     closing = asyncio.create_task(
@@ -460,7 +466,8 @@ async def test_session_close_fences_admission_and_deletes_only_after_fleet_drain
     )
     await bridge.await_started.wait()
 
-    assert [item.id for item in store.sessions()] == [session.id]
+    assert {item.id for item in store.sessions()} == {session.id, other.id}
+    assert controller._chat_create_session_grants[session.id] == {"fork_chat"}
     with pytest.raises(RuntimeError, match="closed"):
         runtime._raise_if_disposed_or_session_fenced(session.id)
     assert bridge.cancelled == [session.id]
@@ -468,13 +475,41 @@ async def test_session_close_fences_admission_and_deletes_only_after_fleet_drain
     bridge.release.set()
     await closing
 
-    assert store.sessions() == []
+    assert [item.id for item in store.sessions()] == [other.id]
+    assert controller._chat_create_session_grants == {other.id: {"new_chat"}}
     assert bridge.released == [session.id]
+
+
+@pytest.mark.parametrize(
+    "refusal", ("missing_ticket", "mismatched_ticket", "generation")
+)
+def test_rejected_session_close_finalization_preserves_chat_create_grants(refusal):
+    _runtime, controller, _bridge, store, session = _runtime_with_fleet()
+    controller._chat_create_session_grants[session.id] = {"fork_chat"}
+    ticket = controller.begin_session_close(
+        session.id,
+        expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
+    )
+    if refusal == "missing_ticket":
+        ticket = replace(ticket, close_id="unknown-close")
+    elif refusal == "mismatched_ticket":
+        ticket = replace(ticket, expected_revision=ticket.expected_revision + 1)
+    else:
+        controller._session_close_generations[session.id] += 1
+
+    with pytest.raises(
+        RuntimeError, match="close (ticket is stale|generation changed)"
+    ):
+        controller.finalize_session_close(ticket)
+
+    assert [item.id for item in store.sessions()] == [session.id]
+    assert controller._chat_create_session_grants[session.id] == {"fork_chat"}
 
 
 @pytest.mark.asyncio
 async def test_session_close_revision_mismatch_reopens_runtime_admission():
     runtime, controller, _bridge, store, session = _runtime_with_fleet()
+    controller._chat_create_session_grants[session.id] = {"fork_chat"}
     stale_revision = controller.lifecycle_impact(session_id=session.id).revision
     controller._advance_lifecycle_revision(session.id)
 
@@ -486,6 +521,7 @@ async def test_session_close_revision_mismatch_reopens_runtime_admission():
 
     runtime._raise_if_disposed_or_session_fenced(session.id)
     assert [item.id for item in store.sessions()] == [session.id]
+    assert controller._chat_create_session_grants[session.id] == {"fork_chat"}
 
 
 @pytest.mark.asyncio
@@ -507,6 +543,7 @@ async def test_session_close_rechecks_revision_after_fleet_admission_is_fenced()
         provider_gateway=StreamingGateway(),
         agent_bridge=bridge,
     )
+    controller._chat_create_session_grants[session.id] = {"fork_chat"}
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_agent_bridge(bridge)
@@ -522,6 +559,7 @@ async def test_session_close_rechecks_revision_after_fleet_admission_is_fenced()
     ]
     runtime._raise_if_disposed_or_session_fenced(session.id)
     assert [item.id for item in store.sessions()] == [session.id]
+    assert controller._chat_create_session_grants[session.id] == {"fork_chat"}
 
 
 @pytest.mark.asyncio

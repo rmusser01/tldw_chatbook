@@ -11,6 +11,8 @@ import tldw_chatbook.Agents.tool_catalog as tool_catalog
 from tldw_chatbook.Agents.agent_models import (
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
+    AgentDefinition,
+    RunBudget,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
     ToolResult,
@@ -24,6 +26,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     PathAwareToolProvider,
     ToolCatalogRegistry,
     ToolPathTarget,
+    build_spawn_schema,
 )
 
 
@@ -80,6 +83,57 @@ def test_pseudo_tool_schemas():
     assert "task" in SPAWN_TOOL_SCHEMA.parameters["properties"]
     assert FIND_TOOLS_SCHEMA.name == FIND_TOOLS_NAME
     assert LOAD_TOOLS_SCHEMA.name == LOAD_TOOLS_NAME
+
+
+# --- ADR-147 (TASK-32477 Task 7): spawn schema gating + master visibility ---
+#
+# The spawn tool advertises `provider`/`model` override args ONLY when the
+# operator opted in via [agents] spawn_override_enabled, enumerates the
+# allowlisted targets (identity only -- provider ids and model names, never
+# URLs or params), and carries routing info on preset roster lines.
+
+PRESET = AgentDefinition(
+    name="implementer",
+    description="Implements a well-scoped change.",
+    instructions="Implement exactly what is asked.",
+    provider="custom-ep:qwen-local",
+    model="qwen3.8-27b",
+)
+
+
+def test_spawn_schema_omits_override_args_when_disabled():
+    schema = build_spawn_schema([PRESET], override_enabled=False)
+    assert "provider" not in schema.parameters["properties"]
+    assert "model" not in schema.parameters["properties"]
+
+
+def test_spawn_schema_offers_override_args_when_enabled():
+    schema = build_spawn_schema(
+        [PRESET], override_enabled=True,
+        override_targets=(("custom-ep:qwen-local", ("qwen3.8-27b",)),),
+    )
+    props = schema.parameters["properties"]
+    assert props["provider"]["type"] == "string"
+    assert props["model"]["type"] == "string"
+    assert "custom-ep:qwen-local" in props["provider"]["description"]
+    assert "qwen3.8-27b" in props["provider"]["description"]
+
+
+def test_roster_lines_carry_routing():
+    schema = build_spawn_schema([PRESET])
+    desc = schema.parameters["properties"]["agent"]["description"]
+    assert "implementer" in desc and "custom-ep:qwen-local" in desc
+
+
+def test_roster_lines_omit_routing_when_unrouted():
+    plain = AgentDefinition(name="reader", instructions="Read.")
+    schema = build_spawn_schema([plain])
+    desc = schema.parameters["properties"]["agent"]["description"]
+    assert "runs on" not in desc
+
+
+def test_identity_schema_unchanged_with_no_definitions():
+    assert build_spawn_schema([]) is SPAWN_TOOL_SCHEMA
 
 
 def test_tool_for_returns_the_real_tool_invoke_would_dispatch():

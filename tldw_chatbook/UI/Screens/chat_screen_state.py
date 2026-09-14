@@ -44,6 +44,7 @@ class TaskResumeState:
     # `ConsoleChatController` round is armed, and `from_dict` below never
     # repopulates it for the same dead-card reason.
     pending_chat_create: dict[str, Any] | None = None
+    pending_worktree_merge: dict[str, Any] | None = None
     diff_summary: str = ""
     next_action: str = ""
     followed_watchlists_operations: tuple[str, ...] = ()

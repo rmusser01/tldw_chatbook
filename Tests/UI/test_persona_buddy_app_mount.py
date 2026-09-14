@@ -795,3 +795,23 @@ async def test_unmount_after_controller_shutdown_raises_no_worker_error():
         await pilot.pause()
 
     assert app._exception is None, app._exception
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event", ["rebuild", "buddy_change"])
+async def test_late_buddy_notifications_after_screen_teardown_are_ignored(
+    event: str,
+) -> None:
+    """Queued Buddy events must tolerate Textual's already-empty screen stack."""
+    from tldw_chatbook.UI.Navigation.persona_buddy_overlay import PersonaBuddyChanged
+
+    app = _ShutdownOrderBuddyApp(PersonaBuddyPreferences())
+    async with app.run_test(size=(100, 30)):
+        rebuilt = BaseAppScreen.ContentsRebuilt(app.initial_screen)
+    assert app.screen_stack == []
+    assert getattr(app, "_persona_buddy_overlay", None) is None
+    if event == "rebuild":
+        app.on_base_app_screen_contents_rebuilt(rebuilt)
+    else:
+        app.on_persona_buddy_changed(PersonaBuddyChanged())
+    assert getattr(app, "_persona_buddy_overlay", None) is None

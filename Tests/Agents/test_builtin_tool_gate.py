@@ -330,7 +330,9 @@ def test_stamp_scope_restores_stamps_after_a_nested_run():
 
     # Parent's verdict is back, and the child's is gone (restore, not merge).
     assert gate.check(_Mutating(), RUN) is None
-    assert gate._stamps == {(RUN, "write_thing"): "approve_once"}
+    assert {key: value.decision for key, value in gate._stamps.items()} == {
+        (RUN, "write_thing"): "approve_once"
+    }
 
 
 def test_stamp_scope_restores_even_when_the_nested_run_raises():
@@ -357,8 +359,12 @@ def test_stamp_scope_is_reentrant_for_nested_scopes():
         gate.stamp(RUN, "write_thing", "deny")
         with gate.stamp_scope(RUN):
             gate.begin_turn(RUN)
-        assert gate._stamps == {(RUN, "write_thing"): "deny"}
-    assert gate._stamps == {(RUN, "write_thing"): "approve_once"}
+        assert {key: value.decision for key, value in gate._stamps.items()} == {
+            (RUN, "write_thing"): "deny"
+        }
+    assert {key: value.decision for key, value in gate._stamps.items()} == {
+        (RUN, "write_thing"): "approve_once"
+    }
 
 
 # --- task-627 (P2 Task 2): settings-time enumeration -------------------------
@@ -822,3 +828,86 @@ def test_service_less_gate_has_nothing_to_list_or_revoke():
 
     assert gate.list_session_approvals() == []
     assert gate.revoke_session_approval("agent:builtin", "write_thing") is False
+
+
+@pytest.mark.parametrize(
+    "raw,unanswered,expected",
+    [
+        ("deny", False, "denied"),
+        ("deny", True, None),
+        ("approve_once", False, "approved"),
+        ("timeout", False, None),
+        (None, False, None),
+    ],
+)
+def test_builtin_detailed_gate_preserves_answer_authority(raw, unanswered, expected):
+    gate = BuiltinToolGate(service=None)
+    tool = _Mutating()
+    if raw is not None:
+        gate.stamp(RUN, tool.name, raw, unanswered=unanswered)
+    detailed = gate.check_detailed(tool, RUN)
+    assert detailed.approval_decision == expected
+    assert detailed.refusal == gate.check(tool, RUN)
+    with gate.stamp_scope(RUN):
+        gate.stamp(RUN, tool.name, "approve_once")
+    assert gate.check_detailed(tool, RUN) == detailed
+    gate.begin_turn(RUN)
+    assert gate.check_detailed(tool, RUN).approval_decision is None
+
+
+@pytest.mark.parametrize(
+    "state,kill,expected",
+    [("deny", False, "denied"), ("ask", True, None), ("ask", False, None)],
+)
+def test_builtin_invocation_off_vs_kill_or_unstamped(state, kill, expected):
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+
+    gate = BuiltinToolGate(service=None)
+    reads = []
+    gate._kill_switch = lambda: kill
+    gate.resolve = lambda tool: (
+        reads.append(tool.name)
+        or EffectiveToolState(state=state, origin="tool_override")
+    )
+    provider = BuiltinToolProvider(gate=gate)
+    provider._tools["write_thing"] = _Mutating()
+    result = provider.invoke("builtin:write_thing", {})
+    assert not result.ok and result.outcome == "blocked"
+    assert result.approval_decision == expected
+    assert len(reads) == (0 if kill else 1)
+
+
+def test_builtin_approved_execution_failure_retains_fact():
+    from tldw_chatbook.Agents.run_context import use_run_id
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    class Failing(_Mutating):
+        async def execute(self, **kwargs):
+            raise RuntimeError("ordinary failure")
+
+    gate = BuiltinToolGate(service=None)
+    provider = BuiltinToolProvider(gate=gate)
+    provider._tools["write_thing"] = Failing()
+    gate.stamp(RUN, "write_thing", "approve_once")
+    with use_run_id(RUN):
+        result = provider.invoke("builtin:write_thing", {})
+    assert not result.ok and result.outcome is None
+    assert result.approval_decision == "approved"
+
+
+def test_builtin_ephemeral_refusal_is_not_an_approval_fact():
+    from tldw_chatbook.Agents.run_context import use_run_id
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+    from tldw_chatbook.Tools.file_operation_tools import WriteFileTool
+
+    gate = BuiltinToolGate(service=None)
+    provider = BuiltinToolProvider(gate=gate, ephemeral=True)
+    provider._tools["write_file"] = WriteFileTool()
+    gate.stamp(RUN, "write_file", "approve_once")
+    with use_run_id(RUN):
+        result = provider.invoke(
+            "builtin:write_file", {"file_path": "unused", "content": "unused"}
+        )
+    assert not result.ok and result.outcome == "blocked"
+    assert result.approval_decision is None

@@ -1,0 +1,15 @@
+=== R5 config after creating 'Probe spare' with Models input 'None, gemma-probe' ===
+
+[custom_endpoints.gemma-relay]
+display_name = "Gemma relay"
+family = "llama_cpp"
+base_url = "http://127.0.0.1:9099"
+models = []
+
+[custom_endpoints.probe-spare]
+display_name = "Probe spare"
+family = "llama_cpp"
+base_url = "http://127.0.0.1:9099"
+models = [ "gemma-probe",]
+created_from = "llama_cpp"
+
