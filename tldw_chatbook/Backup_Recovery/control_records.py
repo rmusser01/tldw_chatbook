@@ -291,10 +291,25 @@ def bind_profile(
         )
 
 
+def _stat_identity(info):
+    """Keep file identity and mutation checks stable across read-induced atime."""
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_nlink,
+        info.st_uid,
+        info.st_gid,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
 def _activation_record_identity(parent, name, expected):
     """Capture only the exact checked record or verified absence."""
     try:
-        identity = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        identity = _stat_identity(os.stat(name, dir_fd=parent, follow_symlinks=False))
     except FileNotFoundError:
         if expected is not None:
             raise ValueError("activation_record_changed") from None
@@ -302,7 +317,8 @@ def _activation_record_identity(parent, name, expected):
     if (
         expected is None
         or _read(parent, name) != expected
-        or os.stat(name, dir_fd=parent, follow_symlinks=False) != identity
+        or _stat_identity(os.stat(name, dir_fd=parent, follow_symlinks=False))
+        != identity
     ):
         raise ValueError("activation_record_changed")
     return identity
@@ -323,7 +339,8 @@ def _publish_activation_record(root, parent, name, before, after, temporary, ide
     else:
         if (
             _read(parent, name) != before
-            or os.stat(name, dir_fd=parent, follow_symlinks=False) != identity
+            or _stat_identity(os.stat(name, dir_fd=parent, follow_symlinks=False))
+            != identity
         ):
             raise ValueError("activation_record_changed")
         os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
@@ -976,7 +993,9 @@ def _recover_activation_pairs(journal, prepared, session):
                 registry,
             )
             key = _key(update.selector)
-            intent_identity = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            intent_identity = _stat_identity(
+                os.stat(name, dir_fd=parent, follow_symlinks=False)
+            )
             for index, prefix in ((1, "activation-"), (0, "profile-")):
                 target = prefix + key + ".json"
                 temporary = "activation-stage-" + key + "-" + str(1 - index) + ".json"
@@ -994,7 +1013,7 @@ def _recover_activation_pairs(journal, prepared, session):
             _recovery_pending(root, journal, prepared)
             if (
                 _read(parent, name) != update.model_dump()
-                or os.stat(name, dir_fd=parent, follow_symlinks=False)
+                or _stat_identity(os.stat(name, dir_fd=parent, follow_symlinks=False))
                 != intent_identity
             ):
                 raise ValueError("activation_record_changed")
@@ -1019,7 +1038,7 @@ def _resume_activation_record(root, parent, name, temporary, before, after):
     if staged is not None and staged != after:
         raise ValueError("activation_record_changed")
     staged_identity = (
-        os.stat(temporary, dir_fd=parent, follow_symlinks=False)
+        _stat_identity(os.stat(temporary, dir_fd=parent, follow_symlinks=False))
         if staged is not None
         else None
     )
@@ -1030,7 +1049,7 @@ def _resume_activation_record(root, parent, name, temporary, before, after):
             raise ValueError("activation_record_changed")
         if _read(parent, temporary) != after or (
             staged_identity is not None
-            and os.stat(temporary, dir_fd=parent, follow_symlinks=False)
+            and _stat_identity(os.stat(temporary, dir_fd=parent, follow_symlinks=False))
             != staged_identity
         ):
             raise ValueError("activation_record_changed")
@@ -1047,7 +1066,7 @@ def _resume_activation_record(root, parent, name, temporary, before, after):
     elif staged is not None:
         if (
             _read(parent, temporary) != after
-            or os.stat(temporary, dir_fd=parent, follow_symlinks=False)
+            or _stat_identity(os.stat(temporary, dir_fd=parent, follow_symlinks=False))
             != staged_identity
         ):
             raise ValueError("activation_record_changed")

@@ -20,6 +20,72 @@ from tldw_chatbook.Backup_Recovery.control_records import (
 )
 
 
+@pytest.mark.parametrize(
+    "changed_field",
+    (
+        "st_atime_ns",
+        "st_dev",
+        "st_ino",
+        "st_mode",
+        "st_nlink",
+        "st_uid",
+        "st_gid",
+        "st_size",
+        "st_mtime_ns",
+        "st_ctime_ns",
+    ),
+)
+def test_record_read_ignores_access_time_but_rejects_identity_changes(
+    tmp_path, monkeypatch, changed_field
+):
+    from tldw_chatbook.Backup_Recovery import control_records
+    from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
+
+    record = tmp_path / "record.json"
+    record.write_text('{"version":1}')
+    record.chmod(0o600)
+    native_stat = control_records.os.stat
+    observations = 0
+
+    def changed_stat(path, *args, **kwargs):
+        nonlocal observations
+        info = native_stat(path, *args, **kwargs)
+        if path != record.name:
+            return info
+        observations += 1
+        fields = {key: getattr(info, key) for key in dir(info) if key.startswith("st_")}
+        fields[changed_field] += observations
+        rows = list(info)
+        indices = {
+            "st_mode": 0,
+            "st_ino": 1,
+            "st_dev": 2,
+            "st_nlink": 3,
+            "st_uid": 4,
+            "st_gid": 5,
+            "st_size": 6,
+            "st_atime_ns": 7,
+        }
+        if changed_field in indices:
+            rows[indices[changed_field]] += observations
+        return os.stat_result(rows, fields)
+
+    with pinned_directory(tmp_path) as parent:
+        monkeypatch.setattr(control_records.os, "stat", changed_stat)
+        if changed_field == "st_atime_ns":
+            assert (
+                control_records._activation_record_identity(
+                    parent, record.name, {"version": 1}
+                )
+                is not None
+            )
+        else:
+            with pytest.raises(ValueError, match="activation_record_changed"):
+                control_records._activation_record_identity(
+                    parent, record.name, {"version": 1}
+                )
+
+
 def pending(tmp_path, operation="op"):
     selector = tmp_path / "config.toml"
     selector.write_text("[general]\n")

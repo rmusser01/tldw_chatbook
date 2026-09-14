@@ -25,6 +25,33 @@ before=json.loads(record_path.read_bytes());activation_before=association.read_b
 requirements_before=profile_requirements(profile,control)
 config_before=selected.read_bytes()
 original=config.atomic_private_write_text
+if mode in ('access_time','access_time_cleanup'):
+ from tldw_chatbook.Backup_Recovery import config_binding
+ native_stat=config_binding.os.stat
+ native_replace=config_binding.os.replace
+ accesses=0;publication_rejected=False
+ def accessed_stat(path,*args,**kwargs):
+  global accesses
+  info=native_stat(path,*args,**kwargs)
+  if Path(path).name not in (selected.name,name,association.name) and not Path(path).name.startswith('config-binding-'):
+   return info
+  accesses+=1
+  fields={key:getattr(info,key) for key in dir(info) if key.startswith('st_')}
+  fields['st_atime_ns']+=accesses*1000000000
+  rows=list(info);rows[7]+=accesses
+  return os.stat_result(rows,fields)
+ def rejected_replace(source,*args,**kwargs):
+  global publication_rejected
+  if Path(source).name.startswith('config-binding-'):
+   publication_rejected=True
+   raise PermissionError('synthetic binding publication failure')
+  return native_replace(source,*args,**kwargs)
+ config_binding.os.stat=accessed_stat
+ # This observer delegates the native dir_fd/follow_symlinks behavior unchanged.
+ for capability in ('supports_dir_fd','supports_follow_symlinks'):
+  supported=getattr(config_binding.os,capability)
+  if native_stat in supported:setattr(config_binding.os,capability,supported|{accessed_stat})
+ if mode=='access_time_cleanup':config_binding.os.replace=rejected_replace
 def injected(*args,**kwargs):
  if mode=='failed_write':raise OSError('synthetic write failure')
  result=original(*args,**kwargs)
@@ -50,7 +77,7 @@ elif mode=='outside_path':
 else:
  result=config.save_setting_to_cli_config('general','default_theme','textual-light')
 after=json.loads(record_path.read_bytes())
-if mode in ('theme','provider','outside_path'):
+if mode in ('theme','provider','outside_path','access_time'):
  assert result,'installed settings write did not succeed'
  assert after==dict(before,fingerprint=hashlib.sha256(selected.read_bytes()).hexdigest()),'binding did not follow successful owned write'
  assert after['fingerprint']!=before['fingerprint']
@@ -69,6 +96,11 @@ else:
   try:_launch_descriptor(profile,control)
   except (ValueError,OSError):pass
   else:raise AssertionError('unverified changed config remained launchable')
+if mode in ('access_time','access_time_cleanup'):
+ assert not list((root/'admission').glob('config-binding-*.json')),'verified temporary binding was not cleaned up'
+ if mode=='access_time_cleanup':
+  assert publication_rejected,'write failed before the intended publication error'
+  assert selected.read_bytes()!=config_before,'config owner did not publish its write'
 print('verified config binding outcome',mode)
 """
 
@@ -85,6 +117,8 @@ print('verified config binding outcome',mode)
         "generation_race",
         "failed_write",
         "interrupted",
+        "access_time",
+        "access_time_cleanup",
     ),
 )
 def test_owned_config_write_preserves_only_verified_binding(tmp_path, mode):

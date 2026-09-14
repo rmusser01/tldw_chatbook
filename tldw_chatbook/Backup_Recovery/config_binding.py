@@ -11,7 +11,7 @@ from tldw_chatbook.Utils.private_paths import PrivateFileWritePrecondition
 from . import bootstrap, raw_participants
 from .activation import _private
 from .admission import Admission, fcntl
-from .control_records import _activation_record_identity
+from .control_records import _activation_record_identity, _stat_identity
 from .native_files import flush_directory
 
 
@@ -82,9 +82,10 @@ def preserve_owned_binding(source, selected, serialized):
                 raise bootstrap.RecoveryRequired("config_binding_authority_changed")
 
         check_authority()
-        if (
-            bootstrap._fingerprint(selected) != previous["fingerprint"]
-            or os.stat(selected, follow_symlinks=False) != selected_before
+        if bootstrap._fingerprint(selected) != previous[
+            "fingerprint"
+        ] or _stat_identity(os.stat(selected, follow_symlinks=False)) != _stat_identity(
+            selected_before
         ):
             raise bootstrap.RecoveryRequired("config_binding_preimage_changed")
         state.config_publication = None
@@ -98,7 +99,8 @@ def preserve_owned_binding(source, selected, serialized):
             if (
                 state.config_publication != (selected, (info.st_dev, info.st_ino))
                 or bootstrap._fingerprint(selected) != expected_hash
-                or os.stat(selected, follow_symlinks=False) != info
+                or _stat_identity(os.stat(selected, follow_symlinks=False))
+                != _stat_identity(info)
             ):
                 raise bootstrap.RecoveryRequired("config_binding_publication_changed")
 
@@ -106,7 +108,9 @@ def preserve_owned_binding(source, selected, serialized):
         check_authority()
         temporary = "config-binding-" + secrets.token_hex(16) + ".json"
         Admission._write_new_record(staging, temporary, json.dumps(after).encode())
-        temporary_identity = os.stat(temporary, dir_fd=staging, follow_symlinks=False)
+        temporary_identity = _stat_identity(
+            os.stat(temporary, dir_fd=staging, follow_symlinks=False)
+        )
         try:
             flush_directory(staging)
             check_publication()
@@ -129,7 +133,7 @@ def preserve_owned_binding(source, selected, serialized):
                 pass
             else:
                 if (
-                    remaining == temporary_identity
+                    _stat_identity(remaining) == temporary_identity
                     and _activation_record_identity(staging, temporary, after)
                     == temporary_identity
                 ):
