@@ -29,7 +29,12 @@ The background reconcile path is the one that needs a judgement rather than a co
 - [x] #2 Pressing Select while the open prompt is dirty states why it was refused
 - [x] #3 The entry-reconcile veto's behaviour is decided and recorded in the task (explain, defer, or deliberately silent), and matches what ships
 - [x] #4 Each wired refusal is covered by a test that fails if it becomes a silent no-op again
+- [x] #5 Navigating into Library while a dirty prompt editor is open states why the move was refused
 <!-- AC:END -->
+
+<!-- AC#5 added in fix round 1: the task review found a FOURTH silent sibling the filed
+three missed (`library_inspection_admission.py:230`, the navigation-into-Library barrier),
+and it is the one route that actually fires today. -->
 
 ## Implementation Plan
 
@@ -81,6 +86,53 @@ Modified: `tldw_chatbook/UI/Screens/library_screen.py`,
 `tldw_chatbook/UI/Library_Modules/screen_constants.py`,
 `Tests/UI/test_library_prompt_dirty_vetoes.py` (new),
 `Docs/User_Guide/library/prompts.md`.
+
+### Fix round 1 (task review, 2026-09-14)
+
+**AC#5 — the fourth sibling.** `_flush_library_navigation_sources`
+(`library_inspection_admission.py:230`) is the barrier every navigation INTO
+Library crosses, and it refused a dirty prompt in silence five lines above a
+skill veto that speaks. It also returns before the deep-link seam, so the AC#3
+line shipped in round 0 was correct but dormant while the live defect stood.
+One `self._notify_prompt_dirty_veto()`, in that twin's own shape (the
+`is_current()` check split out, so the flag branch reads like the skill one).
+Red-first (`runs/f1-red.txt`: "the route into Library refused and said nothing
+at all"), green (`runs/f1-green2.txt`), mutation-tested by deleting the call
+(`runs/f1-mut.txt`: 1 failed, 3 passed, the right one). Live at 235x52:
+`captures/03-route-into-library-veto.txt` — palette ▸ "Media & Content: Open
+Media Library" while the Prompts editor is dirty now raises the toast, the
+route does not happen, the editor keeps its "Unsaved changes".
+
+**Caller sweep of `_flush_library_prompt_save` — 8 sites, 8 now speak.**
+This is the check that closes the class rather than the instances; it is what
+would have caught the fourth site before review.
+
+| # | Call site | Gesture | Disposition |
+|---|---|---|---|
+| 1 | `library_inspection_admission.py:230` | any route INTO Library (palette, Console hand-off, legacy alias) | **speaks** — new in this round; live-captured |
+| 2 | `library_prompts_controller.py:1440` | **Select** | speaks (round 0); live-captured |
+| 3 | `library_prompts_controller.py:1592` | **Import…** | speaks — predates this task |
+| 4 | `library_prompts_controller.py:3491` | Back / Escape (`_exit_library_prompt_editor_guarded`) | speaks — task-32393 |
+| 5 | `library_screen.py:10634` | app-level navigation guard (`flush_pending_work`, tab switch) | speaks — predates this task |
+| 6 | `library_screen.py:21580` | rail-row switch | speaks — predates this task |
+| 7 | `library_screen.py:25851` | prompt-row switch | speaks (round 0); live-captured |
+| 8 | `library_screen.py:33829` | deep link (`_open_library_item_by_id`) | speaks (round 0); pinned on the mounted screen — no hand route reaches it while dirty, because sites 1, 5 and 6 block every approach |
+
+No ninth site: the grep is `_flush_library_prompt_save()` across
+`tldw_chatbook/`, and the two remaining hits are the definition and the
+controller's late-binding accessor.
+
+**Deep-link copy, id → title (review F-5).** Shipped: `_open_library_item_by_id`
+takes an optional `display_name`, and both hand-reachable callers pass the value
+they already hold — the evidence card's `row.title`
+(`library_rag_search_controller.py`) and the hub recent row's title (carried on
+the button beside the `(source_type, record_id)` pair it already routes on).
+No lookup, no fetch. Empty falls back to `Prompt <id>`, and both branches are
+pinned.
+
+**Review F-8.** The id parse moved above the veto, so a malformed deep link is
+dropped without naming its garbage back; pinned (`"not-an-id"` raises nothing).
+
 <!-- SECTION:NOTES:END -->
 
 ## Decision

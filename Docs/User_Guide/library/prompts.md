@@ -250,8 +250,9 @@ it; the membership outcome never says that the Prompt itself was saved.
 
 Nothing autosaves here. While you have unsaved edits the meta line shows an "Unsaved
 changes" marker, and leaving the editor (Back, Escape, another row, another screen)
-is blocked until you save or resolve the edit. Every one of those refusals says so:
-Back, Escape, pressing another prompt row and pressing **Select** all raise
+is blocked until you save or resolve the edit. Every one of those refusals says so —
+Back, Escape, pressing another prompt row, pressing **Select**, switching rail rows,
+and leaving for another screen (including a route that lands back on Library) all raise
 "Unsaved Prompt changes — Save or Discard changes first.", and while the
 editor is dirty the footer's Escape chip reads **esc save or discard first**
 instead of "esc back to list", so the key and the chip agree. The same holds while
@@ -548,8 +549,11 @@ well as the unsaved edit — a clean deletion no longer leaves "esc back to list
 on screen while the key can only report that the write is busy.)*
 
 *Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32461:
-the three sibling dirty vetoes that still refused in silence now speak. The
-prompt-row switch and **Select** borrow Back/Escape's own sentence; a deep
-link into a prompt names the one it did not open and drops it rather than
-queueing it — live at 235x52 on a scratch profile, with the editor showing
-"• Unsaved changes".)*
+the sibling dirty vetoes that still refused in silence now speak. The
+prompt-row switch, **Select** and every route into Library borrow Back/Escape's
+own sentence; a deep link into a prompt names the one it did not open and drops
+it rather than queueing it. The row switch, **Select** and the route-in refusal
+were driven live at 235x52 on a scratch profile with the editor showing
+"• Unsaved changes"; the deep link is pinned on the mounted screen, since no
+hand route reaches it while the editor is dirty. Fix round 1 added the fourth
+site — the navigation-into-Library barrier — after a caller sweep of all eight.)*
