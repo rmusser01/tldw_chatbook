@@ -618,7 +618,13 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             summary = self.query_one("#note-import-source-summary", Static)
         except Exception:
             return
-        width = summary.content_size.width
+        # The Static itself is freshly mounted on every recompose and is
+        # often still unmeasured when this runs, while the CANVAS keeps its
+        # width across child recomposes -- so it is the reliable ruler, less
+        # a couple of cells for the scrolling body's own chrome. Measured
+        # live: reading the Static alone left the line at the 48-character
+        # floor until the terminal was resized.
+        width = summary.content_size.width or max(self.content_size.width - 2, 0)
         if width <= 0:
             return
         budget = max(_SOURCE_NAME_BUDGET, width - len(_FOLDER_SELECTED_PREFIX))

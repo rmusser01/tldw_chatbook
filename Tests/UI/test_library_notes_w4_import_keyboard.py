@@ -268,6 +268,17 @@ async def test_tab_from_the_selection_pane_cycles_the_three_actions(
             f"it was on {getattr(host.focused, 'id', None)!r}"
         )
 
+        # task-32554 AC#2 on the real route, not a bare host: the path budget
+        # follows the mounted pane rather than the 48-character compact
+        # floor. (This harness's work pane is narrower than a real 235-column
+        # terminal, so a pytest tmp path still elides -- what is pinned here
+        # is that the line uses the width it has.)
+        canvas = screen.query_one("#library-note-import-canvas")
+        summary = screen.query_one("#note-import-source-summary", Static)
+        summary_text = getattr(summary.renderable, "plain", str(summary.renderable))
+        assert len(summary_text) <= canvas.content_size.width, summary_text
+        assert len(summary_text) > len("1 folder selected: ") + 48, summary_text
+
         visited: list[str | None] = []
         for _ in range(len(_SELECTION_PANE_ACTIONS)):
             await pilot.press("tab")

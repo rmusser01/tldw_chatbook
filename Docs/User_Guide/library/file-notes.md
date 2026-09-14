@@ -41,7 +41,10 @@ between Edit and Manage, autosaving, resolving a conflict, or resizing does
 not close it again. The automatic close resets only when you close or clear
 the open Folder files file, switch between Folder files and Library notes,
 change the linked folder, clear the selected Library note, or leave Notes.
-Using compact **Back to navigator** does not reset it.
+Using compact **‹ Files** does not reset it. (Was "**Back to navigator**" —
+superseded by task-32553 below: the Session Git panel and the Folder-files
+work pane now use the same "‹ " cue as the Notes editor, naming where it
+goes.)
 
 ## Layout tour
 
@@ -102,7 +105,7 @@ Using compact **Back to navigator** does not reset it.
   Manage groups path details, file actions, Session Git, and Danger.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
-  from the row list, **Esc** or **Back to navigator** returns to the files.
+  from the row list, **Esc** or **‹ Files** returns to the files.
   In the file editor itself, **Esc** returns to the **Files** tree; a second
   **Esc** leaves Folder files.
   During commit or push, **Esc** follows the phase-specific safe action in the

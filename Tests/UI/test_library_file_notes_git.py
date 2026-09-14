@@ -2328,10 +2328,22 @@ async def test_action_controls_fit_from_visible_label_cells_and_recompute() -> N
         await pilot.pause()
         assert not panel.has_class("-stack-actions")
 
-        await pilot.resize_terminal(40, 20)
+        # task-32553 shortened this header's back cue from "Back to
+        # navigator" (17 cells) to "‹ Files" (7), so the untrusted header now
+        # fits at 40 columns and the threshold sits between 32 and 34. The
+        # WIDTH is re-picked, not the rule -- and both sides of the new
+        # threshold are pinned, where the old test crossed it once.
+        await pilot.resize_terminal(34, 20)
+        await pilot.pause()
+        assert not panel.has_class("-stack-actions")
+
+        await pilot.resize_terminal(32, 20)
         await pilot.pause()
         assert panel.has_class("-stack-actions")
-        await _assert_visible_panel_buttons_fit(panel, pilot)
+        # No fit assertion at 32: `#file-notes-git-bulk-toggle` is 35 cells
+        # wide whatever this class does, so no layout fits there. Fit at the
+        # narrowest width the app supports is pinned by
+        # `test_focused_controls_keep_complete_labels_and_fit[(40, 20)]`.
 
         panel.render_status(
             _status(
@@ -2344,6 +2356,9 @@ async def test_action_controls_fit_from_visible_label_cells_and_recompute() -> N
         )
         await pilot.pause()
         assert not panel.has_class("-stack-actions")
+
+        await pilot.resize_terminal(70, 28)
+        await pilot.pause()
         await _assert_visible_panel_buttons_fit(panel, pilot)
 
 
