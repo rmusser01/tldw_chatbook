@@ -113,7 +113,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: at open time, precisely so this ratchet does not grow for a modal used
 #: a handful of times per session. Snapshot refreshed via
 #: ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
-MAX_TLDW_MODULES_AT_UI_READY = 973
+#: 973 -> 975 (2026-09-12, PR #2651, ADR-097 exception ledger): agent
+#: provider routing adds exactly two UI-ready residents --
+#: ``Agents.agent_routing`` and ``Chat.sampling_params`` -- pure,
+#: dependency-free modules (375 / ~150 lines) riding the already-resident
+#: AgentService import path. Deferring them would mean lazy-import surgery
+#: across four resident core modules (agent_service, agent_models,
+#: AgentRuns_DB, console_session_settings) for a microsecond-scale import
+#: cost; the count grows for intentional feature surface, not drift.
+#: Owner sign-off recorded in PR #2651. Snapshot refreshed via
+#: ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
+MAX_TLDW_MODULES_AT_UI_READY = 975
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the

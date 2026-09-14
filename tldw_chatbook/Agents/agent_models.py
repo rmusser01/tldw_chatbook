@@ -23,6 +23,11 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
     ProviderContinuationCheckpoint,
 )
+from tldw_chatbook.Chat.sampling_params import (
+    params_to_dict,
+    params_to_tuple,
+    validate_sampling_params,
+)
 
 
 class WorkOrigin(Enum):
@@ -404,6 +409,30 @@ class ToolCall:
     rationale: str = ""
 
 
+ApprovalDecision: TypeAlias = Literal["approved", "denied"]  # noqa: UP040
+
+
+@dataclass(frozen=True)
+class ToolReviewDecision:
+    """A review verdict with optional authoritative approval provenance."""
+
+    verdict: str
+    approval_decision: ApprovalDecision | None = None
+
+
+ToolReviewValue: TypeAlias = str | ToolReviewDecision  # noqa: UP040
+
+
+def normalize_tool_review(value: ToolReviewValue) -> ToolReviewDecision:
+    """Normalize one selected review value without inferring provenance."""
+    if isinstance(value, ToolReviewDecision):
+        fact = value.approval_decision
+        return ToolReviewDecision(
+            value.verdict, fact if fact in ("approved", "denied") else None
+        )
+    return ToolReviewDecision(value)
+
+
 @dataclass(frozen=True)
 class ToolResult:
     ok: bool
@@ -412,18 +441,28 @@ class ToolResult:
     # Optional refusal provenance lets the runtime distinguish a permission
     # block from an ordinary failed dispatch without interpreting payload text.
     outcome: ToolOutcome | None = None
+    approval_decision: ApprovalDecision | None = field(default=None, kw_only=True)
 
     @classmethod
-    def blocked(cls, error: str) -> ToolResult:
+    def blocked(
+        cls, error: str, *, approval_decision: ApprovalDecision | None = None
+    ) -> ToolResult:
         """Return a permission/policy refusal with structured provenance.
 
         Args:
             error: User-visible refusal reason.
+            approval_decision: Optional authoritative approval fact supplied by
+                the review owner. This metadata never grants permission.
 
         Returns:
             A failed tool result explicitly classified as blocked.
         """
-        return cls(ok=False, error=error, outcome=TOOL_OUTCOME_BLOCKED)
+        return cls(
+            ok=False,
+            error=error,
+            outcome=TOOL_OUTCOME_BLOCKED,
+            approval_decision=approval_decision,
+        )
 
 
 @dataclass(frozen=True)
@@ -554,6 +593,23 @@ class ModelTurn:
     provider_continuation: ProviderContinuationCheckpoint | None = None
 
 
+DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT = 3
+
+
+def coerce_denial_circuit_breaker_limit(value: object) -> int:
+    """Resolve the per-run denial limit without accepting bools or numerics."""
+    if type(value) is int and value >= 0:
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isascii() and stripped.isdigit():
+            try:
+                return int(stripped)
+            except ValueError:
+                pass
+    return DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT
+
+
 @dataclass(frozen=True)
 class RunBudget:
     """Caps bounding one agent run: steps, wall-clock, sub-agents, and
@@ -623,6 +679,7 @@ class RunBudget:
     #: once to start wrapping up. The notice rides the newest tool result --
     #: never a synthetic user turn -- so the prompt-cache prefix stays intact.
     budget_warning_fraction: float = 0.8
+    denial_circuit_breaker_limit: int = DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT
 
     def __post_init__(self) -> None:
         if self.max_steps > MAX_RUN_CONTROL_STEPS:
@@ -630,6 +687,11 @@ class RunBudget:
                 f"max_steps must be <= {MAX_RUN_CONTROL_STEPS} to preserve "
                 "agent trace storage bands"
             )
+        object.__setattr__(
+            self,
+            "denial_circuit_breaker_limit",
+            coerce_denial_circuit_breaker_limit(self.denial_circuit_breaker_limit),
+        )
 
 
 #: Fleet spec §4: validation caps for user-authored agent definitions.
@@ -651,8 +713,13 @@ class AgentDefinition:
     identity contract: console_agent_bridge detects sub-agent turns by
     prefix-matching it). ``tool_allowlist`` only ever narrows the child's
     inherited allow-list (intersection, never union); empty means inherit.
-    ``model`` overrides the parent's model on the SAME provider endpoint;
-    empty means inherit.
+    ``model`` overrides the parent's model on the preset's ``provider``
+    endpoint (ADR-147): ``provider`` is "" (inherit the parent's endpoint —
+    the legacy behavior), a bare provider id, or a ``custom-ep:<slug>``
+    registry id; ``model`` without ``provider`` keeps the legacy
+    same-endpoint behavior, and empty ``model`` means inherit the model.
+    ``params`` are the role-owned top layer of the child's sampling stack —
+    sorted ``(name, value)`` pairs; empty means the preset adds nothing.
     """
 
     name: str
@@ -661,6 +728,9 @@ class AgentDefinition:
     tool_allowlist: tuple[str, ...] = ()
     model: str = ""
     enabled: bool = True
+    max_wall_seconds: float | None = None
+    provider: str = ""
+    params: tuple[tuple[str, object], ...] = ()
 
 
 def validate_agent_definition(defn: AgentDefinition) -> list[str]:
@@ -688,29 +758,70 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
         errors.append(
             f"instructions exceed {AGENT_DEFINITION_INSTRUCTIONS_MAX_CHARS} chars"
         )
+    cap = defn.max_wall_seconds
+    if cap is not None:
+        valid_cap = isinstance(cap, (int, float)) and not isinstance(cap, bool)
+        if valid_cap:
+            try:
+                valid_cap = math.isfinite(cap) and cap > 0
+            except (OverflowError, TypeError, ValueError):
+                valid_cap = False
+        if not valid_cap:
+            errors.append("max_wall_seconds must be a finite positive number")
+    if defn.provider:
+        if defn.provider.startswith("custom-ep:"):
+            # Lazy: keeps Agents/ -> Chat/ edges out of module import time.
+            from tldw_chatbook.Chat.custom_endpoint_registry import (
+                SLUG_PATTERN,
+                split_custom_endpoint_id,
+            )
+            slug = split_custom_endpoint_id(defn.provider)
+            if slug is None or not SLUG_PATTERN.fullmatch(slug):
+                errors.append("provider custom-ep id has an invalid slug")
+        else:
+            from tldw_chatbook.Chat.console_provider_support import (
+                supported_console_provider_readiness_keys,
+            )
+            from tldw_chatbook.Chat.provider_readiness import provider_config_key
+            if provider_config_key(defn.provider) not in set(
+                supported_console_provider_readiness_keys()
+            ):
+                errors.append(
+                    f"provider '{defn.provider}' is not a known provider id"
+                )
+    errors.extend(validate_sampling_params(params_to_dict(defn.params)))
     return errors
 
 
 def definition_fingerprint(defn: AgentDefinition) -> str:
     """16-hex-char content hash of the fields that shape a child run.
 
-    Covers instructions/tool_allowlist/model ONLY — the audit identity of
-    what actually ran (spec §4). description/enabled are presentation.
+    Covers instructions, tool allow-list, model, an optional wall cap, plus
+    provider/params WHEN SET (spec §4, ADR-147) — the audit identity of what
+    actually ran. Description/enabled are presentation. The conditional
+    inclusion keeps a legacy provider-less/params-less preset's payload
+    byte-identical to its pre-ADR-147 shape, so fingerprints persisted on
+    existing run rows stay comparable.
     """
-    payload = json.dumps(
-        {
-            "instructions": defn.instructions,
-            "tool_allowlist": sorted(defn.tool_allowlist),
-            "model": defn.model,
-        },
-        sort_keys=True,
-    )
+    payload_dict = {
+        "instructions": defn.instructions,
+        "tool_allowlist": sorted(defn.tool_allowlist),
+        "model": defn.model,
+    }
+    if defn.max_wall_seconds is not None:
+        payload_dict["max_wall_seconds"] = float(defn.max_wall_seconds)
+    if defn.provider:
+        payload_dict["provider"] = defn.provider
+    if defn.params:
+        payload_dict["params"] = [list(pair) for pair in defn.params]
+    payload = json.dumps(payload_dict, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def definition_from_row(row: dict) -> AgentDefinition:
     """Build an ``AgentDefinition`` from an ``agent_definitions`` DB row
-    (``tool_allowlist`` already JSON-decoded to a list by the DB layer)."""
+    (``tool_allowlist`` already JSON-decoded to a list and ``params`` to a
+    dict by the DB layer)."""
     return AgentDefinition(
         name=row["name"],
         description=row["description"],
@@ -718,6 +829,9 @@ def definition_from_row(row: dict) -> AgentDefinition:
         tool_allowlist=tuple(row["tool_allowlist"]),
         model=row["model"],
         enabled=bool(row["enabled"]),
+        max_wall_seconds=row.get("max_wall_seconds"),
+        provider=row.get("provider", ""),
+        params=params_to_tuple(row.get("params", {})),
     )
 
 
@@ -825,6 +939,15 @@ class AgentConfig:
             default so existing request bytes are unchanged.
         response_reserve_tokens: Non-negative output-token capacity excluded
             from project-instruction input admission.
+        base_url: The resolved request-pinned endpoint override handed to
+            ``chat_api_call`` (ADR-147 spawn routing); ``None`` for a
+            primary and for children inheriting a built-in provider.
+        sampling_params: The resolved target's own sampling/API params as
+            ``(key, value)`` pairs (keys from
+            ``Chat.sampling_params.KNOWN_SAMPLING_PARAM_KEYS``), applied to
+            this run's model calls; empty for a primary. A child NEVER
+            inherits its parent's params — these come from the resolver's
+            six-layer stack for the child's own provider.
     """
 
     model: str
@@ -836,6 +959,11 @@ class AgentConfig:
     workspace_context_note: str = ""
     personal_context_block: str = ""
     response_reserve_tokens: int = 2048
+    # ADR-147 (TASK-32477 Task 6): the spawn resolver's target for THIS run.
+    # Both stay empty for a primary; ``AgentService``'s spawn closure fills
+    # them on a child's config from the resolved SpawnTarget.
+    base_url: str | None = field(default=None, kw_only=True)
+    sampling_params: tuple[tuple[str, object], ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
         if self.response_reserve_tokens < 0:
@@ -870,6 +998,7 @@ class RunOutcome:
     # coordinator's retention store reads it off the outcome;
     # ``AgentService._persist`` never writes it to the database.
     final_messages: list[dict] | None = None
+    denial_count: int = 0
 
 
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:
@@ -924,17 +1053,12 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
     ``max_subagents`` is zeroed — depth-1 sub-agents never spawn.
     Steps are per-run and stay at the child's own default.
     """
-    return RunBudget(
-        max_steps=child.max_steps,
+    return replace(
+        child,
         max_wall_seconds=min(
             child.max_wall_seconds, max(parent_remaining_seconds, 1.0)
         ),
         max_subagents=0,
-        max_subagent_result_chars=child.max_subagent_result_chars,
-        max_tool_result_chars=child.max_tool_result_chars,
-        max_model_turns=child.max_model_turns,
-        max_total_tokens=child.max_total_tokens,
-        max_tool_call_seconds=child.max_tool_call_seconds,
     )
 
 
@@ -1052,13 +1176,8 @@ def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget
     """
     if not math.isfinite(max_wall_seconds):
         max_wall_seconds = 1.0
-    return RunBudget(
-        max_steps=child.max_steps,
+    return replace(
+        child,
         max_wall_seconds=max(max_wall_seconds, 1.0),
         max_subagents=0,
-        max_subagent_result_chars=child.max_subagent_result_chars,
-        max_tool_result_chars=child.max_tool_result_chars,
-        max_model_turns=child.max_model_turns,
-        max_total_tokens=child.max_total_tokens,
-        max_tool_call_seconds=child.max_tool_call_seconds,
     )

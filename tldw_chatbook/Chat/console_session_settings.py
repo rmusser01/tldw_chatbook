@@ -52,6 +52,25 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderTestEvidence,
 )
+from tldw_chatbook.Chat.sampling_params import (
+    _is_blank_value,
+    _parse_optional_int,
+    _string_value,
+    bool_setting_from_sources as _bool_setting_from_sources,
+    float_setting_from_sources as _float_setting_from_sources,
+    optional_float_setting_from_sources as _optional_float_setting_from_sources,
+    optional_int_setting_from_sources as _optional_int_setting_from_sources,
+    optional_string_setting_from_sources as _optional_string_setting_from_sources,
+)
+# The enum sets canonicalize in sampling_params.py (ADR-147's shared leaf)
+# so presets, registry entries, and Console settings validate against ONE
+# contract; the underscore aliases keep this module's call sites unchanged.
+from tldw_chatbook.Chat.sampling_params import (
+    REASONING_EFFORT_VALUES as _REASONING_EFFORT_VALUES,
+    REASONING_SUMMARY_VALUES as _REASONING_SUMMARY_VALUES,
+    THINKING_EFFORT_VALUES as _THINKING_EFFORT_VALUES,
+    VERBOSITY_VALUES as _VERBOSITY_VALUES,
+)
 from tldw_chatbook.config import (
     ProviderSettingsError,
     provider_settings_for_key,
@@ -284,12 +303,6 @@ CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS = {
     "openai": 8001,
     "mistral": 32000,
 }
-_REASONING_EFFORT_VALUES = frozenset(
-    {"none", "minimal", "low", "medium", "high", "xhigh"}
-)
-_REASONING_SUMMARY_VALUES = frozenset({"auto", "concise", "detailed", "none"})
-_VERBOSITY_VALUES = frozenset({"low", "medium", "high"})
-_THINKING_EFFORT_VALUES = frozenset({"off", "low", "medium", "high", "xhigh", "max"})
 _LEGACY_CHAT_PROVIDER_ALIASES = {
     "openai_compatible": "openai",
 }
@@ -1028,8 +1041,19 @@ def build_default_console_session_settings(
     model: str | None = None,
     *,
     excluded_model_profile_fields: frozenset[str] = frozenset(),
+    extra_sources: Sequence[Mapping[str, object]] = (),
 ) -> ConsoleSessionSettings:
-    """Build default Console settings from chat defaults and provider config."""
+    """Build default Console settings from chat defaults and provider config.
+
+    Args:
+        app_config: The live app configuration snapshot.
+        provider: An explicit provider override, or ``None``.
+        model: An explicit model override, or ``None``.
+        extra_sources: Optional param-name → value mappings slotted between
+            the saved console provider defaults and ``chat_defaults`` in the
+            precedence walk (ADR-147: registry entry params ride this seam).
+            The default ``()`` keeps the source order unchanged.
+    """
     chat_defaults = _chat_defaults_with_streaming_compat(
         _mapping_value(app_config, "chat_defaults")
     )
@@ -1059,7 +1083,9 @@ def build_default_console_session_settings(
         _mapping_value(_mapping_value(app_config, "console"), "provider_defaults"),
         configured_provider,
     )
-    default_sources = (model_profile, saved_defaults, chat_defaults, provider_settings)
+    default_sources = (
+        model_profile, saved_defaults, *extra_sources, chat_defaults, provider_settings
+    )
 
     return ConsoleSessionSettings(
         provider=configured_provider,
@@ -2349,10 +2375,6 @@ def _optional_int_at_least(value: object, minimum: int) -> bool:
     return parsed is not None and parsed >= minimum
 
 
-def _is_blank_value(value: object) -> bool:
-    return value is None or (isinstance(value, str) and not value.strip())
-
-
 def _float_setting(
     primary: Mapping[str, object],
     fallback: Mapping[str, object],
@@ -2376,105 +2398,6 @@ def _setting_value_from_sources(
             value = source.get(key)
             if not _is_blank_value(value):
                 return value
-    return default
-
-
-def _float_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-    default: float,
-) -> float:
-    for source in sources:
-        if key not in source:
-            continue
-        value = source.get(key)
-        if _is_blank_value(value):
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return default
-
-
-def _optional_float_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-) -> float | None:
-    for source in sources:
-        if key not in source:
-            continue
-        value = source.get(key)
-        if _is_blank_value(value):
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-def _optional_int_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-) -> int | None:
-    for source in sources:
-        if key not in source:
-            continue
-        value = source.get(key)
-        if _is_blank_value(value):
-            continue
-        parsed = _parse_optional_int(value)
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _optional_string_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-) -> str | None:
-    for source in sources:
-        value = source.get(key)
-        text = _string_value(value)
-        if text:
-            return text
-    return None
-
-
-@overload
-def _bool_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-    default: bool,
-) -> bool: ...
-
-
-@overload
-def _bool_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-    default: None,
-) -> bool | None: ...
-
-
-def _bool_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-    default: bool | None,
-) -> bool | None:
-    for source in sources:
-        if key not in source:
-            continue
-        value = source.get(key)
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"true", "1"}:
-                return True
-            if normalized in {"false", "0"}:
-                return False
     return default
 
 
@@ -2505,24 +2428,6 @@ def _optional_int_setting(
     else:
         value = fallback.get(key)
     return _parse_optional_int(value)
-
-
-def _parse_optional_int(value: object) -> int | None:
-    if _is_blank_value(value):
-        return None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value) if value.is_integer() else None
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped.isdecimal():
-            return int(stripped)
-        if stripped.startswith("-") and stripped[1:].isdecimal():
-            return int(stripped)
-    return None
 
 
 def _estimate_tokens_locally(
@@ -2607,13 +2512,6 @@ def _first_string(*values: object) -> str | None:
 
 def _string_setting(source: Mapping[str, object], key: str) -> str:
     return _string_value(source.get(key)) or ""
-
-
-def _string_value(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    return stripped or None
 
 
 def normalize_console_model_value(value: object) -> str | None:

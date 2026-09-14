@@ -2,10 +2,11 @@
 
 import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import AgentDefinition
+from tldw_chatbook.Agents.agent_models import AgentDefinition, definition_from_row
 from tldw_chatbook.Chat.console_raw_cli import local_command_resume_marker
 from tldw_chatbook.DB.AgentRuns_DB import (
     AgentRunsDB,
@@ -1159,6 +1160,42 @@ def test_definition_crud_round_trip(db):
     assert db.list_agent_definitions() == []
 
 
+def test_definition_wall_cap_crud_round_trip(db):
+    definition_id = db.create_agent_definition(_defn(max_wall_seconds=0.25))
+    assert db.get_agent_definition(definition_id)["max_wall_seconds"] == 0.25
+
+    db.update_agent_definition(definition_id, _defn(max_wall_seconds=30))
+    assert db.get_agent_definition(definition_id)["max_wall_seconds"] == 30.0
+
+    db.update_agent_definition(definition_id, _defn(max_wall_seconds=None))
+    assert db.get_agent_definition(definition_id)["max_wall_seconds"] is None
+
+
+def test_large_finite_integer_definition_wall_cap_binds_as_real(db):
+    definition_id = db.create_agent_definition(_defn(max_wall_seconds=10**30))
+    assert db.get_agent_definition(definition_id)["max_wall_seconds"] == float(10**30)
+
+    db.update_agent_definition(definition_id, _defn(max_wall_seconds=10**40))
+    assert db.get_agent_definition(definition_id)["max_wall_seconds"] == float(10**40)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [True, "30", float("nan"), float("inf"), 0, -1, 10**400],
+)
+def test_invalid_definition_wall_cap_does_not_write(db, value):
+    definition_id = db.create_agent_definition(_defn(description="original"))
+    before = db.get_agent_definition(definition_id)
+
+    with pytest.raises(ValueError, match="finite positive"):
+        db.update_agent_definition(
+            definition_id,
+            _defn(description="must not persist", max_wall_seconds=value),
+        )
+
+    assert db.get_agent_definition(definition_id) == before
+
+
 def test_duplicate_name_raises_and_frees_after_soft_delete(db):
     definition_id = db.create_agent_definition(_defn())
     with pytest.raises(ValueError, match="already exists"):
@@ -1209,6 +1246,222 @@ def test_definitions_survive_reopen_and_migration_is_idempotent(tmp_path):
             for row in conn.execute("SELECT version FROM schema_version").fetchall()
         }
     assert 5 in versions
+
+
+def _seed_v18_definitions(path):
+    """Build the complete production schema, seed prior data, then restore v18."""
+    database = AgentRunsDB(path, client_id="build-v18-predecessor")
+    try:
+        live_id = database.create_agent_definition(_defn(name="live-agent"))
+        disabled_id = database.create_agent_definition(
+            _defn(name="disabled-agent", enabled=False)
+        )
+        deleted_id = database.create_agent_definition(_defn(name="deleted-agent"))
+        database.soft_delete_agent_definition(deleted_id)
+        with database.transaction() as conn:
+            conn.execute(
+                """INSERT INTO automatic_work_chains
+                   (id, conversation_id, root_submission_id, limits_json,
+                    status, created_at, last_observed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                ("chain", "migration-conversation", "root", "{}", "active", 1.0, 1.0),
+            )
+            conn.execute(
+                """INSERT INTO automatic_work_runtime_owner(singleton, owner_id)
+                   VALUES (?, ?)""",
+                (1, "migration-owner"),
+            )
+        run_id = database.create_run(
+            conversation_id="migration-conversation",
+            agent_kind="primary",
+            work_chain_id="chain",
+        )
+        database.append_steps(
+            run_id, [{"index": 0, "kind": "model", "summary": "existing"}]
+        )
+    finally:
+        database.close()
+
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
+        conn.execute("DELETE FROM schema_version WHERE version >= ?", (19,))
+        conn.execute("DROP TABLE agent_worktrees")
+        conn.commit()
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(agent_definitions)")
+        }
+        assert "max_wall_seconds" not in columns
+        assert (
+            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 18
+        )
+        return live_id, disabled_id, deleted_id, _snapshot_v18_data(conn)
+    finally:
+        conn.close()
+
+
+def _snapshot_v18_data(conn):
+    return {
+        "agent_definitions": [
+            tuple(row)
+            for row in conn.execute(
+                """SELECT id, name, description, instructions, tool_allowlist,
+                          model, enabled, deleted, created_at, updated_at
+                   FROM agent_definitions ORDER BY id"""
+            )
+        ],
+        "agent_runs": [tuple(row) for row in conn.execute("SELECT * FROM agent_runs")],
+        "agent_run_steps": [
+            tuple(row) for row in conn.execute("SELECT * FROM agent_run_steps")
+        ],
+        "automatic_work_chains": [
+            tuple(row) for row in conn.execute("SELECT * FROM automatic_work_chains")
+        ],
+        "automatic_work_runtime_owner": [
+            tuple(row)
+            for row in conn.execute("SELECT * FROM automatic_work_runtime_owner")
+        ],
+    }
+
+
+def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
+    path = tmp_path / "definitions-v18.db"
+    live_id, disabled_id, deleted_id, before = _seed_v18_definitions(path)
+
+    first = AgentRunsDB(path, client_id="upgrade-v18")
+    try:
+        with first.connection() as conn:
+            after = _snapshot_v18_data(conn)
+            caps = conn.execute(
+                "SELECT id, max_wall_seconds FROM agent_definitions ORDER BY id"
+            ).fetchall()
+            version = conn.execute(
+                "SELECT MAX(version) FROM schema_version"
+            ).fetchone()[0]
+        assert after == before
+        assert [tuple(row) for row in caps] == sorted(
+            [(deleted_id, None), (disabled_id, None), (live_id, None)]
+        )
+        assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
+        capped_id = first.create_agent_definition(
+            _defn(
+                name="migrated-capped",
+                description="Created after v18 migration.",
+                instructions="Work within the migrated cap.",
+                tool_allowlist=("calculator",),
+                model="migrated-model",
+                enabled=False,
+                max_wall_seconds=0.25,
+            )
+        )
+        uncapped_id = first.create_agent_definition(
+            _defn(
+                name="migrated-uncapped",
+                description="Created after v18 migration without a cap.",
+                instructions="Use inherited timing policy.",
+                tool_allowlist=(),
+                model="",
+                enabled=True,
+                max_wall_seconds=None,
+            )
+        )
+        expected_capped = first.get_agent_definition(capped_id)
+        expected_uncapped = first.get_agent_definition(uncapped_id)
+        assert expected_capped is not None
+        assert expected_uncapped is not None
+        assert expected_capped == {
+            "id": capped_id,
+            "provider": "",
+            "params": {},
+            "name": "migrated-capped",
+            "description": "Created after v18 migration.",
+            "instructions": "Work within the migrated cap.",
+            "tool_allowlist": ["calculator"],
+            "model": "migrated-model",
+            "enabled": 0,
+            "max_wall_seconds": 0.25,
+            "created_at": expected_capped["created_at"],
+            "updated_at": expected_capped["created_at"],
+        }
+        assert expected_uncapped == {
+            "id": uncapped_id,
+            "provider": "",
+            "params": {},
+            "name": "migrated-uncapped",
+            "description": "Created after v18 migration without a cap.",
+            "instructions": "Use inherited timing policy.",
+            "tool_allowlist": [],
+            "model": "",
+            "enabled": 1,
+            "max_wall_seconds": None,
+            "created_at": expected_uncapped["created_at"],
+            "updated_at": expected_uncapped["created_at"],
+        }
+    finally:
+        first.close()
+
+    for client_id in ("reopen-once", "reopen-twice"):
+        reopened = AgentRunsDB(path, client_id=client_id)
+        try:
+            assert reopened.get_agent_definition(live_id)["max_wall_seconds"] is None
+            assert reopened.get_agent_definition(capped_id) == expected_capped
+            assert reopened.get_agent_definition(uncapped_id) == expected_uncapped
+        finally:
+            reopened.close()
+
+
+def test_v18_upgrade_is_guarded_when_definition_cap_column_already_exists(tmp_path):
+    path = tmp_path / "guarded-v18.db"
+    _seed_v18_definitions(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("ALTER TABLE agent_definitions ADD COLUMN max_wall_seconds REAL")
+        conn.commit()
+    finally:
+        conn.close()
+
+    database = AgentRunsDB(path, client_id="guarded-v18")
+    try:
+        with database.connection() as conn:
+            columns = [
+                row[1] for row in conn.execute("PRAGMA table_info(agent_definitions)")
+            ]
+            version = conn.execute(
+                "SELECT MAX(version) FROM schema_version"
+            ).fetchone()[0]
+        assert columns.count("max_wall_seconds") == 1
+        assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
+    finally:
+        database.close()
+
+
+def test_standalone_v18_to_v19_sql_migrates_real_predecessor_shape(tmp_path):
+    path = tmp_path / "standalone-v18.db"
+    live_id, disabled_id, deleted_id, before = _seed_v18_definitions(path)
+    migration = (
+        Path(__file__).parents[2]
+        / "tldw_chatbook/DB/migrations/agent_runs_v18_to_v19_definition_wall_seconds.sql"
+    ).read_text(encoding="utf-8")
+
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(migration)
+        columns = [
+            row[1] for row in conn.execute("PRAGMA table_info(agent_definitions)")
+        ]
+        rows = conn.execute(
+            "SELECT id, max_wall_seconds FROM agent_definitions ORDER BY id"
+        ).fetchall()
+        after = _snapshot_v18_data(conn)
+        version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        assert columns.count("max_wall_seconds") == 1
+        assert rows == sorted(
+            [(deleted_id, None), (disabled_id, None), (live_id, None)]
+        )
+        assert after == before
+        assert version == 19
+    finally:
+        conn.close()
 
 
 # --- Task 3: agent_definition + definition_fingerprint audit columns ---
@@ -1424,7 +1677,7 @@ def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
         columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
         recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert "spawn_event_id" in columns
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 18
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
     parent = first.create_run(conversation_id="c", agent_kind="primary")
     child = first.create_run(
         conversation_id="c",
@@ -1480,7 +1733,7 @@ def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
     assert "CHECK(transition_revision > 0)" in table_sql
     assert "CHECK(session_id IS NOT NULL OR conversation_id IS NOT NULL)" in table_sql
     assert "idx_console_activity_receipts_unseen" in indexes
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 18
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
     assert database.receipt_capability_available is True
 
 
@@ -1580,7 +1833,9 @@ def test_receipt_capability_ddl_failure_keeps_core_database_usable(tmp_path):
             is None
         )
         assert (
-            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 18
+            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            == AgentRunsDB._CURRENT_SCHEMA_VERSION
+            == 21
         )
         assert (
             conn.execute("SELECT 1 FROM schema_version WHERE version = 15").fetchone()
@@ -1754,3 +2009,216 @@ def test_receipt_operations_raise_focused_error_when_capability_is_unavailable(
 
     with pytest.raises(ConsoleActivityReceiptsUnavailable):
         database.list_unseen_console_activity()
+
+
+# --- Task 4 (ADR-147, TASK-32477): schema v21 -- preset routing columns on
+# agent_definitions, resolved-target snapshot on agent_runs. ---
+
+
+def test_schema_v21_definition_columns(db):
+    with db.connection() as conn:
+        cols = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(agent_definitions)"
+            ).fetchall()
+        }
+    assert {"provider", "params_json"} <= cols
+
+
+def test_schema_v21_run_snapshot_columns(db):
+    with db.connection() as conn:
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+        }
+    assert {
+        "resolved_provider",
+        "resolved_model",
+        "resolved_base_url",
+        "resolved_params_json",
+    } <= cols
+
+
+def test_definition_round_trip_with_routing(db):
+    defn = AgentDefinition(
+        name="implementer",
+        instructions="Implement the task.",
+        provider="custom-ep:qwen-local",
+        model="qwen3.8-27b",
+        params=(("temperature", 0.2),),
+    )
+    defn_id = db.create_agent_definition(defn)
+    # Row dicts carry the Task 3 contract: provider verbatim, params
+    # JSON-decoded (same contract as tool_allowlist).
+    loaded = db.get_agent_definition(defn_id)
+    assert loaded["provider"] == "custom-ep:qwen-local"
+    assert loaded["params"] == {"temperature": 0.2}
+    rebuilt = definition_from_row(loaded)
+    assert rebuilt.provider == "custom-ep:qwen-local"
+    assert rebuilt.params == (("temperature", 0.2),)
+
+
+def test_definition_legacy_defaults(db):
+    defn_id = db.create_agent_definition(
+        AgentDefinition(name="reader", instructions="Read files.")
+    )
+    loaded = db.get_agent_definition(defn_id)
+    assert loaded["provider"] == "" and loaded["params"] == {}
+    rebuilt = definition_from_row(loaded)
+    assert rebuilt.provider == "" and rebuilt.params == ()
+
+
+def test_run_snapshot_persists(db):
+    run_id = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        resolved_provider="custom-ep:qwen-local",
+        resolved_model="qwen3.8-27b",
+        resolved_base_url="http://127.0.0.1:8080",
+        resolved_params_json='{"temperature": 0.2}',
+    )
+    row = db.get_run(run_id)
+    assert row["resolved_provider"] == "custom-ep:qwen-local"
+    assert row["resolved_model"] == "qwen3.8-27b"
+    assert row["resolved_base_url"] == "http://127.0.0.1:8080"
+    assert row["resolved_params_json"] == '{"temperature": 0.2}'
+
+
+def test_run_snapshot_defaults_null(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    row = db.get_run(run_id)
+    assert row["resolved_provider"] is None
+    assert row["resolved_model"] is None
+    assert row["resolved_base_url"] is None
+    assert row["resolved_params_json"] is None
+
+
+#: The pre-v21 shape: both tables as the v12-era DDL left them -- every
+#: column EXCEPT the v21 routing/snapshot ones (and the v13-v20 columns
+#: the intervening dev migrations add, which this test does not assert on).
+_LEGACY_PRE_V21_DDL = """
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        parent_run_id TEXT,
+        agent_kind TEXT NOT NULL,
+        task TEXT,
+        status TEXT NOT NULL,
+        steps TEXT NOT NULL DEFAULT '[]',
+        result TEXT,
+        budget TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        assistant_message_id TEXT,
+        agent_definition TEXT,
+        definition_fingerprint TEXT,
+        wake_delivered_at TEXT,
+        resumed_from_run_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_definitions (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        instructions TEXT NOT NULL DEFAULT '',
+        tool_allowlist TEXT NOT NULL DEFAULT '[]',
+        model TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        deleted INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+"""
+
+
+def test_pre_v21_db_gains_v21_columns_on_open(tmp_path):
+    """ALTER path (the two PRAGMA tests above cover the fresh-DDL path): a
+    pre-v21 file gains all six columns via the guarded ALTERs on open, and
+    writes through them work."""
+    path = tmp_path / "legacy_pre_v21.db"
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.executescript(_LEGACY_PRE_V21_DDL)
+        conn.commit()
+    finally:
+        conn.close()
+
+    db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
+    with db.connection() as conn:
+        run_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+        }
+        def_cols = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(agent_definitions)"
+            ).fetchall()
+        }
+    assert {
+        "resolved_provider",
+        "resolved_model",
+        "resolved_base_url",
+        "resolved_params_json",
+    } <= run_cols
+    assert {"provider", "params_json"} <= def_cols
+
+    run_id = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        resolved_provider="custom-ep:qwen-local",
+        resolved_params_json='{"temperature": 0.2}',
+    )
+    assert db.get_run(run_id)["resolved_provider"] == "custom-ep:qwen-local"
+    defn_id = db.create_agent_definition(
+        AgentDefinition(
+            name="implementer",
+            instructions="Implement the task.",
+            provider="custom-ep:qwen-local",
+            params=(("temperature", 0.2),),
+        )
+    )
+    assert db.get_agent_definition(defn_id)["params"] == {"temperature": 0.2}
+
+
+def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_path):
+    path = tmp_path / "routing-v20.db"
+    database = AgentRunsDB(path)
+    definition_id = database.create_agent_definition(_defn(max_wall_seconds=12.5))
+    run_id = database.create_run(conversation_id="c", agent_kind="primary")
+    with database.connection() as conn:
+        for column in ("provider", "params_json"):
+            conn.execute(f"ALTER TABLE agent_definitions DROP COLUMN {column}")
+        for column in ("resolved_provider", "resolved_model", "resolved_base_url", "resolved_params_json"):
+            conn.execute(f"ALTER TABLE agent_runs DROP COLUMN {column}")
+        conn.execute("DELETE FROM schema_version WHERE version > 20")
+        before = _snapshot_v18_data(conn)
+        worktree_schema = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'agent_worktrees'"
+        ).fetchone()[0]
+    database.close()
+    for _ in range(2):
+        database = AgentRunsDB(path)
+        try:
+            assert database.get_agent_definition(definition_id)["max_wall_seconds"] == 12.5
+            assert database.get_agent_definition(definition_id)["provider"] == ""
+            assert database.get_run_resolved_target(run_id) is None
+            with database.connection() as conn:
+                after = _snapshot_v18_data(conn)
+                # The new snapshot columns append to the historical run shape.
+                after["agent_runs"] = [row[:-4] for row in after["agent_runs"]]
+                assert after == before
+                assert conn.execute("SELECT sql FROM sqlite_master WHERE name = 'agent_worktrees'").fetchone()[0] == worktree_schema
+                assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 21
+                assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        finally:
+            database.close()

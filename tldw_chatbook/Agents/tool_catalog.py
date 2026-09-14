@@ -146,39 +146,83 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
 )
 
 
-def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
+def build_spawn_schema(
+    definitions: Sequence[AgentDefinition],
+    *,
+    override_enabled: bool = False,
+    override_targets: Sequence[tuple[str, tuple[str, ...]]] = (),
+) -> ToolSchema:
     """The spawn tool's schema for THIS run.
 
-    With no definitions, returns ``SPAWN_TOOL_SCHEMA`` itself (identity —
-    byte-identical payloads for every pre-definition caller). With
-    definitions, adds an OPTIONAL ``agent`` parameter carrying both an
-    ``enum`` (native tool-calling) and a prose roster in the description
-    (fence-protocol models read prose better than schema; this text rides
-    every fence-model turn, which is why AgentDefinition.description is
-    hard-capped).
+    With no definitions AND the override gate closed, returns
+    ``SPAWN_TOOL_SCHEMA`` itself (identity — byte-identical payloads for
+    every pre-ADR-147 caller). With definitions, adds an OPTIONAL ``agent``
+    parameter carrying both an ``enum`` (native tool-calling) and a prose
+    roster in the description (fence-protocol models read prose better than
+    schema; this text rides every fence-model turn, which is why
+    AgentDefinition.description is hard-capped). A definition that sets
+    ``provider`` or ``model`` (ADR-147) gets its roster line suffixed with
+    ``(runs on <provider> / <model>)`` so the master can SEE the preset's
+    routing; an unrouted definition's line is unchanged.
+
+    When ``override_enabled`` ([agents] spawn_override_enabled), also adds
+    OPTIONAL ``provider``/``model`` string args — the exact names Task 6's
+    spawn dispatch parses. ``override_targets`` enumerates the allowlisted
+    targets as ``(provider, models)`` pairs rendered into the ``provider``
+    description so the master can pick a VALID target; the enumeration is
+    identity-only (provider ids and model names — never base URLs or
+    params), and allowlist globs are NOT expanded (the model description
+    says so: the master picks from the enumerated models).
+
+    Args:
+        definitions: This turn's named agent presets (may be empty).
+        override_enabled: Whether ad-hoc provider/model spawn args are
+            offered at all.
+        override_targets: Allowlisted ``(provider, models)`` pairs to
+            enumerate in the ``provider`` description.
+
+    Returns:
+        ``SPAWN_TOOL_SCHEMA`` itself when there is nothing to add, else a
+        new ToolSchema sharing its id/name/description.
     """
-    if not definitions:
+    if not definitions and not override_enabled:
         return SPAWN_TOOL_SCHEMA
     roster = "\n".join(
-        f"- {d.name} — {d.description}" if d.description else f"- {d.name}"
-        for d in definitions
+        _spawn_roster_line(d) for d in definitions
     )
+    properties: dict[str, Any] = {
+        # Shallow-copied so no future consumer of the built schema can
+        # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
+        "task": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["task"]),
+        "isolation": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["isolation"]),
+    }
+    if definitions:
+        properties["agent"] = {
+            "type": "string",
+            "enum": [d.name for d in definitions],
+            "description": (
+                "Optional: run the task as one of these named agents "
+                "(omit for a generic sub-agent):\n" + roster
+            ),
+        }
+    if override_enabled:
+        properties["provider"] = {
+            "type": "string",
+            "description": _override_provider_description(override_targets),
+        }
+        properties["model"] = {
+            "type": "string",
+            "description": (
+                "Optional: run the sub-agent on this model instead of the "
+                "resolved default. Pick one of the models enumerated under "
+                "your chosen provider above; allowlist globs are NOT "
+                "expanded here, so a model that is not listed will be "
+                "refused."
+            ),
+        }
     parameters = {
         "type": "object",
-        "properties": {
-            # Shallow-copied so no future consumer of the built schema can
-            # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
-            "task": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["task"]),
-            "isolation": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["isolation"]),
-            "agent": {
-                "type": "string",
-                "enum": [d.name for d in definitions],
-                "description": (
-                    "Optional: run the task as one of these named agents "
-                    "(omit for a generic sub-agent):\n" + roster
-                ),
-            },
-        },
+        "properties": properties,
         "required": ["task"],
     }
     return ToolSchema(
@@ -187,6 +231,39 @@ def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
         description=SPAWN_TOOL_SCHEMA.description,
         parameters=parameters,
     )
+
+
+def _spawn_roster_line(d: AgentDefinition) -> str:
+    """One roster line; ADR-147 routing suffix only when routed."""
+    line = f"- {d.name} — {d.description}" if d.description else f"- {d.name}"
+    if d.provider or d.model:
+        line += (
+            f" (runs on {d.provider or 'parent'}"
+            f" / {d.model or 'default model'})"
+        )
+    return line
+
+
+def _override_provider_description(
+    override_targets: Sequence[tuple[str, tuple[str, ...]]],
+) -> str:
+    """The ``provider`` arg description: enumerated allowlisted targets.
+
+    Identity only — provider ids and model names; base URLs and params
+    never reach the schema.
+    """
+    header = (
+        "Optional: run the sub-agent on this provider instead of the "
+        "resolved default. Allowed targets:"
+    )
+    if not override_targets:
+        return header + "\n(none configured — any override will be refused)"
+    lines = "\n".join(
+        f"- {provider} (models: {', '.join(models)})" if models
+        else f"- {provider}"
+        for provider, models in override_targets
+    )
+    return header + "\n" + lines
 
 
 # Fleet (PR2a Task 6). Pinned together with the spawn schema, and only
@@ -285,14 +362,14 @@ MERGE_AGENT_WORKTREE_SCHEMA = ToolSchema(
     id="runtime:merge_agent_worktree",
     name=MERGE_AGENT_WORKTREE_TOOL_NAME,
     description=(
-        "Land a FINISHED isolation=\"worktree\" sub-agent's changes into "
+        'Land a FINISHED isolation="worktree" sub-agent\'s changes into '
         "the shared workspace. Both modes require the user's explicit "
         "confirmation: 'apply' lands the changes as UNCOMMITTED edits for "
         "the user to review and commit themselves; 'merge' creates a real "
         "merge commit on the shared branch. The child must have finished "
         "(check with check_agents or wait_agents first). Only handles "
-        "from THIS turn's spawns are available -- merge or discard before "
-        "the turn ends, or the worktree is left on disk for manual cleanup."
+        "from THIS turn's spawns are available. Older recorded work is available "
+        "through Console Recover agent work. The source checkout is retained."
     ),
     parameters={
         "type": "object",
@@ -318,12 +395,11 @@ DISCARD_AGENT_WORKTREE_SCHEMA = ToolSchema(
     id="runtime:discard_agent_worktree",
     name=DISCARD_AGENT_WORKTREE_TOOL_NAME,
     description=(
-        "Permanently discard a FINISHED isolation=\"worktree\" sub-agent's "
-        "changes -- deletes its worktree and branch. Its work is not "
-        "recoverable afterward. Requires the user's explicit confirmation. "
-        "Only handles from THIS turn's spawns are available -- merge or "
-        "discard before the turn ends, or the worktree is left on disk "
-        "for manual cleanup."
+        'Permanently discard a FINISHED isolation="worktree" sub-agent\'s '
+        "changes and exact branch, retaining a detached baseline checkout. "
+        "Requires the user's explicit confirmation and positive writer drain. "
+        "Only handles from THIS turn's spawns are available. Older recorded "
+        "work is available through Console Recover agent work."
     ),
     parameters={
         "type": "object",
@@ -1369,11 +1445,20 @@ class BuiltinToolProvider:
         # ever writes, so such a call falls through to the resolved
         # permission state exactly as it did before per-run keying.
         try:
-            refusal = self._resolve_gate().check(tool, current_run_id())
+            gate = self._resolve_gate()
+            detailed_check = getattr(gate, "check_detailed", None)
+            if callable(detailed_check):
+                decision = detailed_check(tool, current_run_id())
+                refusal = decision.refusal
+                approval_decision = decision.approval_decision
+            else:
+                # Legacy injected gates retain their string-only contract.
+                refusal = gate.check(tool, current_run_id())
+                approval_decision = None
         except Exception as exc:  # noqa: BLE001 — fail closed
             return ToolResult(ok=False, error=f"permission check failed: {exc}")
         if refusal is not None:
-            return ToolResult.blocked(refusal)
+            return ToolResult.blocked(refusal, approval_decision=approval_decision)
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
 
         authority = (
@@ -1381,6 +1466,7 @@ class BuiltinToolProvider:
             if name in _FILE_AUTHORITY_BUILTIN_NAMES
             else nullcontext()
         )
+        execution_started = False
         try:
             # Providers bridge async tools; the loop's interface is sync.
             # Safe here: the service runs in a worker thread with no
@@ -1397,16 +1483,19 @@ class BuiltinToolProvider:
                 write_binding_ids=self._workspace_write_binding_ids,
                 binding_authority=self._workspace_binding_authority,
             ):
+                execution_started = True
                 raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
             return ToolResult(
                 ok=False,
                 error=redact_root_locator(str(exc), self._sandbox_root),
+                approval_decision=approval_decision if execution_started else None,
             )
         if isinstance(raw, dict) and raw.get("error"):
             return ToolResult(
                 ok=False,
                 error=redact_root_locator(str(raw["error"]), self._sandbox_root),
+                approval_decision=approval_decision,
             )
         if isinstance(raw, dict):
             # Raw before/after contents captured for UI diff rendering
@@ -1447,7 +1536,7 @@ class BuiltinToolProvider:
             }
         raw = redact_root_locator(raw, self._sandbox_root)
         content = json.dumps(raw) if isinstance(raw, (dict, list)) else str(raw)
-        return ToolResult(ok=True, content=content)
+        return ToolResult(ok=True, content=content, approval_decision=approval_decision)
 
 
 def intersect_skill_tools(

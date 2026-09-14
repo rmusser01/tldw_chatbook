@@ -73,16 +73,33 @@ def test_an_unresolved_verdict_is_not_audited_as_an_explicit_denial():
     existing `denied-timeout` vocabulary, and the audit view treats it as
     Blocked (the call never reached the tool).
     """
-    import inspect
+    import asyncio
 
+    from Tests.Agents.test_mcp_tool_provider import (
+        FakeMCPService,
+        _catalog_record,
+        _compose,
+        _tool_dict,
+    )
     from tldw_chatbook.Agents import mcp_tool_provider as mtp
     from tldw_chatbook.UI.MCP_Modules import mcp_audit_mode as audit
 
-    src = inspect.getsource(mtp.MCPToolProvider._apply_verdict)
-    assert '"denied-unresolved"' in src, (
-        "the unresolved branch records plain 'denied' -- the audit log "
-        "reports an explicit denial nobody made"
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
+    loop = asyncio.new_event_loop()
+    try:
+        provider = mtp.MCPToolProvider(
+            service=service, main_loop=loop, approval_callback=lambda rows: {}
+        )
+        _compose(provider)
+        result = provider.invoke("mcp__srv__run", {})
+        assert result.ok is False and result.outcome == "blocked"
+        assert result.error == mtp.UNRESOLVED_REFUSAL
+        assert result.approval_decision is None
+        assert service.record_tool_decision_calls[-1][2] == "denied-unresolved"
+    finally:
+        loop.close()
     assert "denied-unresolved" in audit._BLOCKED_DECISIONS, (
         "the audit Outcome column would route an unresolved refusal through "
         "the attempted-run failure template"
