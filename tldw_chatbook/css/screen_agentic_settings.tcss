@@ -145,6 +145,7 @@ $ds-size-64: 64;
 $ds-size-66: 66;
 $ds-size-70: 70;
 $ds-size-76: 76;
+$ds-size-80: 80;
 $ds-size-84: 84;
 $ds-size-90: 90;
 $ds-size-92: 92;
