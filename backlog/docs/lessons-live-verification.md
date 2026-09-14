@@ -2945,3 +2945,77 @@ the rows it will never see again (here: forget them, `FileNotesReplica.
 forget_file`, never tombstone). Pin it with a replica seeded by hand
 (`Tests/Notes/test_file_notes_service.py::test_a_file_indexed_under_a_dot_
 directory_is_forgotten_not_recently_deleted`).
+
+## A "Verified against" stamp verifies what it names, not the page around it (task-32558, 2026-09-14)
+
+**task-32558, 2026-09-14.** `Docs/User_Guide/library/file-notes.md` told
+readers the Session Git panel is headed "Prepare session for commit", with
+the scope line "Session paths only · stages complete file state" and the
+keyboard guide "Up/Down Select | Tab Actions | Enter Run | Esc Back". All
+three were true once. All three were rewritten by task-15122 on **2026-08-11**
+and the page was never touched. Between then and the sweep this page received
+**five** "Verified against" stamps — two of them from live walks against a
+real git-backed vault that drove that very panel through trust, staging and a
+real commit. Each stamp was honest: each verified the claim it named. None
+re-read the chapter it sat in. The false sentences survived every one of
+them, and a `grep -rF "Prepare session for commit" tldw_chatbook/` — no hits
+at all — would have found them in one second on any of those five days.
+
+Same sweep, same disease elsewhere: `file-notes.md` described a "Chunking
+Lab | Try selected text" strip under every Library canvas that task-32064 had
+already removed (and said its removal was "tracked as task-32064", which was
+Done); `console.md` said the Get started card has two actions, four
+paragraphs above its own task-32555 stamp naming three. Eight
+authoritative-sounding false guide sentences in one wave, and none of them
+was found by the stamp process.
+
+**What to do.**
+
+1. **Grep the quoted strings, don't re-read the prose.** A guide sentence
+   that quotes what the app prints is falsifiable in one command. Extract
+   every quoted string on a page you are stamping and `grep -rF` each against
+   `tldw_chatbook/`; composed lines (f-strings) need the longest literal run.
+   Most hits are noise; the misses are the list worth reading.
+2. **A stamp should say what was CHECKED, not only what was fixed.** Listing
+   the claims that HELD is what makes the next sweep cheaper and what stops a
+   reader assuming an unstamped paragraph was looked at. The task-32558
+   stamps do this deliberately.
+3. **Say which half of a correction you walked.** Some of this sweep's fixes
+   came from a capture (the empty-profile rail, the 100x30 heading clip) and
+   some from reading the widget's `compose` (the Session Git strings, the
+   Console card's third action). The stamps name which is which, because a
+   stamp that implies a walk it did not do is the failure stamps exist to
+   prevent.
+4. **When a task that a guide cites as "tracked" closes, the citation is now
+   a claim.** `grep -n "tracked as task-" Docs/` and check each one's status
+   before stamping; three of this wave's false sentences were of exactly that
+   shape.
+
+## A correction in a lessons file must stay next to the entry it corrects (task-32558, 2026-09-14)
+
+**Wave 4, PR #2678 conflict resolution, 2026-09-14.** `dev` and the P0 branch
+had both appended sections to `lessons-live-verification.md`, and the house
+rule for that conflict is "compose both, dev's block first". Here that rule
+happened to be right for a reason bigger than the rule: dev's block contained
+a **correction to a lesson one of this wave's own earlier agents had
+written** — teeing the app's stderr into the tmux launch line makes the pane
+render blank and fills the log with rendered frames, which the earlier entry
+had recommended. Resolving the conflict by ordering the blocks any other way,
+or by deduplicating the two nearly-identical launch-recipe sections, would
+have parked the correction somewhere a reader of the original entry never
+reaches.
+
+These files are append-only and long. A reader arrives by grep, reads the
+entry the grep hit, and leaves. A correction three thousand lines away is a
+correction nobody receives, and the entry it corrects goes on being followed
+— which is exactly how the tee-stderr advice was still in use after it had
+been disproved.
+
+**What to do.** When composing lessons files across a merge, or adding a
+census, caveat or reversal to an existing entry: put it immediately under
+that entry's own heading, not in a new section at the end, and say what it
+corrects. The task-32558 wave-4 self-supplied-pin census in
+`lessons-testing-evidence.md` is placed that way on purpose and says so in
+its first line. Never reorder a block that contains a correction away from
+its subject to satisfy a merge convention; the convention is a tiebreaker for
+independent additions, not a licence to separate the two.

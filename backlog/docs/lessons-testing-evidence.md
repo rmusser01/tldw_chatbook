@@ -13968,6 +13968,68 @@ layout, but it is evidence about the widget only. Corollary from the same
 task: `git grep` the exact old string across `tldw_chatbook/` after the edit —
 two call sites producing the same line is the normal case, not the odd one.
 
+**Wave-4 census, added by task-32558 and kept HERE rather than in a section
+of its own, because a lesson separated from its evidence stops being read.**
+The rule above was written from one instance. By the end of wave 4 there were
+**six**, in six different groups, and three were caught by the implementer or
+reviewer rather than by anything failing:
+
+1. **task-32545** — the entry above; the receipt line fixed at one producer
+   and missed at the other.
+2. **task-32534** — `test_sync_copy_uses_no_engineering_terms` supplied its
+   own `receipt_line` and never rendered the phases holding four of its six
+   forbidden terms. Vacuous, caught in review, never red.
+3. **task-32534, fix round** — the implementer's own first overlay-clearing
+   pin PASSED WITHOUT THE FIX, because the stub's resume refuses; driving a
+   real accepted resume then exposed an inverse defect nobody had named.
+4. **task-32534, third dead pin** —
+   `test_receipt_keeps_durable_status_and_back_visible` fed the canvas
+   "1 applied · durable receipt recorded" and asserted "durable receipt"
+   back: a string with no producer left in the tree. Green forever, evidence
+   about nothing.
+5. **task-32557** — a layout pin poked the canvas's `pane_width` directly,
+   where the value is 0 and the fallback works, so it never entered the
+   defective state and passed with the fix disabled.
+6. **task-32535** — the configure form's Obsidian checkbox pin was green
+   while the checkbox never appeared in the running app, because the canvas
+   patches that form in place instead of recomposing it.
+
+**The test for whether you have one:** take the fix out and run the pin. If
+it still passes, the pin is not about the fix. Do that before you claim RED —
+"I wrote a test and it passes" is the shape all six of these had.
+
+## Delete the fix before you call a pin RED; deleting the only assertion of a property is not a repair (task-32540, 2026-09-14)
+
+**task-32540 review, 2026-09-14.** Shortening the Session Git back cue to
+`‹ Files` moved the panel's stacking threshold from 40 columns to between 32
+and 34. The implementer removed `_assert_visible_panel_buttons_fit` at the
+stacked width, and the removal was locally justified — the 31-cell bulk
+toggle is hidden in the untrusted state that assertion ran in, so the line
+could not fail there any more. The reviewer then checked what else asserted
+the property and found the answer was nothing: `-stack-actions` is asserted
+only in that test, and with the shorter cue
+`test_focused_controls_keep_complete_labels_and_fit[(40,20)]` no longer
+stacks in either render. So after a change that made stacking MORE likely, no
+test anywhere asserted that buttons fit while stacked.
+
+**What to do.**
+
+1. **Before deleting an assertion, grep for the property, not the test.** The
+   question is never "is this line still meaningful here" but "does anything
+   else assert this at all". `git grep -n -- '-stack-actions' Tests/` took
+   seconds and answered it.
+2. **Prove a restored assertion has teeth by breaking production, not by
+   reading it.** The implementer restored the line and then proved it bites
+   by removing `#file-notes-git-header` from the `.-stack-actions` vertical
+   rule, so the header kept horizontal layout while still carrying the class:
+   the test then failed ON THAT LINE with `assert 22 <= 14`. Its first
+   attempt — lengthening a label — fired on the neighbouring threshold
+   assertion instead and would have proved the wrong thing.
+3. **Do the probe out of tree.** The reviewer reproduced the same proof with
+   a pytest plugin that patched `DEFAULT_CSS` in memory, leaving
+   `git status --porcelain` empty. Patching production to prove a test works
+   is how a probe gets committed.
+
 ## A duplicate dict key is a silent overwrite, and only the SOURCE can show it (task-32534, 2026-09-14)
 
 **task-32534 fix round 1, 2026-09-14.** Three reason codes were added to
@@ -14108,3 +14170,39 @@ and that worker never ran in tests at all.
    their tests. Only the tmux walk distinguished them, and only a patched
    `queue_after_recompose`/`recompose` pair printing what was queued and what
    ran located the eviction.
+
+## Derive your test set from the strings you CHANGED, not the files you remember touching (wave 4, 2026-09-14)
+
+**Wave 4, four separate incidents, 2026-09-14.** Every group ran "its own"
+test files plus the sibling pins its brief named, compared FAILED-name sets
+against a detached `origin/dev` worktree, and was green. Four reds were still
+hiding, and all four were in files the group's own list did not contain:
+
+1. **task-32543.** Commit `58e5ed6bde` changed the Folder-files authority
+   line from "N change" to "N session change".
+   `test_configured_root_authority_state_table_is_two_line_and_bounded` — a
+   1,080-case `product()` table in a file the group never substantively
+   touched — asserted `f"{git_count} change"`, which "N session change" does
+   not contain. It was the only branch-red-green-on-dev name in the tree, and
+   invisible to anyone running just the new pins.
+2. **task-32534.** `test_import_back_retains_canvas_and_shows_truthful_lasting_availability`
+   asserted a loose `"unavailable"` substring in a file no commit of that
+   group touched. Found by grepping the changed strings across 24
+   lasting-sync files; exactly one hit, and it was real.
+3. **task-32534, again.** `test_receipt_keeps_durable_status_and_back_visible`
+   asserted a string no producer emits any more — dead, not red, and only a
+   string grep can see that kind.
+4. **task-32544 landing.**
+   `test_both_notes_selection_counts_move_together_on_one_toggle` came back
+   branch-only-red from the post-merge re-grep, again in a file the group's
+   list never ran.
+
+**What to do.** After the last edit, take the set of user-visible strings the
+branch changed — old spelling and new — and `git grep -F` each one across
+`Tests/` and `Docs/`, then run every file that comes back. Do it AGAIN after
+merging dev, because dev moves and the merge can add producers. This is
+additive to the FAILED-name-SET diff over whole files against a detached
+`origin/dev`, not a replacement for it: the set diff finds reds, the string
+grep finds the dead pins that will never be red. And when one comes back:
+tighten it to the shipped string. Loosening an assertion to clear a red is a
+defect, and a pin loosened to a substring becomes the tripwire in incident 2.
