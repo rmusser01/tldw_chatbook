@@ -549,16 +549,20 @@ Toast.-success {
  * ======================================== 
  * Tab navigation and tab button styles
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
 
-#tabs { dock: top; height: 4; background: $background; padding: 0 1; }
+
+#tabs { dock: top; height: $ds-size-4; background: $background; padding: $ds-space-0 $ds-space-1; }
 #tabs Button { 
-    width: 1fr; 
-    height: 100%; 
-    min-height: 4;
+    width: $ds-width-fill; 
+    height: $ds-height-full; 
+    min-height: $ds-size-4;
     border: none;  /* No border for tab buttons */
     background: $panel; 
     color: $text-muted; 
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 #tabs Button:hover { 
     background: $panel-lighten-1; 
@@ -573,9 +577,9 @@ Toast.-success {
 /* Single-line tab links navigation */
 #tab-links-container {
     dock: top;
-    height: 4;
+    height: $ds-size-4;
     background: $panel;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     border: solid $accent;
 }
 
@@ -584,19 +588,19 @@ Toast.-success {
     height: auto;
     width: auto;
     background: transparent;
-    margin: 0;
-    padding: 0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
 }
 
 #tab-links-inner > Static {
     width: auto;
-    height: 1;
-    margin: 0;
+    height: $ds-size-1;
+    margin: $ds-space-0;
 }
 
 .tab-link {
     color: $text-muted;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     text-style: none;
     width: auto;
     height: auto;
@@ -627,30 +631,30 @@ Tabs:focus .-active {
 
 .tab-separator {
     color: $text-muted;
-    padding: 0;
+    padding: $ds-space-0;
     width: auto;
-    height: 1;
+    height: $ds-size-1;
 }
 
 /* Group separators - visually heavier than within-group separators */
 .tab-group-separator {
     color: $accent;
-    padding: 0 2;
+    padding: $ds-space-0 $ds-space-2;
     width: auto;
-    height: 1;
+    height: $ds-size-1;
     text-style: bold;
 }
 
 /* Group separator in button-based tab bar */
 #tabs .tab-group-separator {
     width: auto;
-    min-width: 3;
-    height: 100%;
-    min-height: 4;
+    min-width: $ds-size-3;
+    height: $ds-height-full;
+    min-height: $ds-size-4;
     background: transparent;
     color: $accent;
     border: none;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* ===== MODULE: layout/_sidebars.tcss ===== */
